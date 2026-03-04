@@ -1,0 +1,349 @@
+---
+title: "Events & Schedule"
+icon: "calendar"
+description: "API for discovering and working with F1 events and sessions"
+keywords:
+  - "F1 events"
+  - "Grand Prix schedule"
+  - "session discovery"
+  - "F1 calendar"
+---
+
+The events module provides functions to discover what data is available in the TracingInsights CDN for specific years and events.
+
+## `get_events`
+
+```python
+def get_events(year: int) -> list[str]
+```python
+
+Returns a list of all Grand Prix events that took place in the specified year.
+
+**Parameters:**
+- `year`: The season year (2018-current)
+
+**Returns:**
+- List of event names (e.g., `["Australian Grand Prix", "Chinese Grand Prix", ...]`)
+
+**Example:**
+```python
+import tif1
+
+events = tif1.get_events(2025)
+print(f"Found {len(events)} events in 2025")
+for event in events:
+    print(f"  - {event}")
+```python
+
+---
+
+## `get_sessions`
+
+```python
+def get_sessions(year: int, event: str) -> list[str]
+```python
+
+Returns a list of all available sessions for a specific Grand Prix.
+
+**Parameters:**
+- `year`: The season year
+- `event`: The Grand Prix name (must match one returned by `get_events`)
+
+**Returns:**
+- List of session names (e.g., `["Practice 1", "Qualifying", "Race"]`)
+
+**Example:**
+```python
+import tif1
+
+sessions = tif1.get_sessions(2025, "British Grand Prix")
+# ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
+
+for session in sessions:
+    print(f"  - {session}")
+```python
+
+---
+
+## `get_event`
+
+```python
+def get_event(
+    year: int,
+    gp: int | str,
+    exact_match: bool = False
+) -> Event
+```python
+
+Get an Event object for a specific Grand Prix by name or round number.
+
+**Parameters:**
+- `year`: The season year
+- `gp`: Grand Prix name (string) or round number (int)
+- `exact_match`: If `True`, requires exact name match. If `False`, uses fuzzy matching
+
+**Returns:**
+- `Event` object with event metadata
+
+**Raises:**
+- `DataNotFoundError`: If the event is not found
+
+**Example:**
+```python
+import tif1
+
+# By name (fuzzy matching)
+event = tif1.get_event(2025, "Monaco")
+
+# By round number
+event = tif1.get_event(2025, 6)
+
+# Exact match
+event = tif1.get_event(2025, "Monaco Grand Prix", exact_match=True)
+
+print(f"Event: {event.name}")
+print(f"Year: {event.year}")
+```python
+
+---
+
+## `get_event_by_round`
+
+```python
+def get_event_by_round(year: int, round_number: int) -> Event
+```python
+
+Get an Event object by round number.
+
+**Parameters:**
+- `year`: The season year
+- `round_number`: The round number (1-indexed)
+
+**Returns:**
+- `Event` object
+
+**Example:**
+```python
+import tif1
+
+# Get the 6th race of 2025
+event = tif1.get_event_by_round(2025, 6)
+print(f"Round 6: {event.name}")
+```python ---
+
+## `get_event_by_name`
+
+```python
+def get_event_by_name(
+    year: int,
+    name: str,
+    exact_match: bool = False
+) -> Event
+```python
+
+Get an Event object by name with optional fuzzy matching.
+
+**Parameters:**
+- `year`: The season year
+- `name`: Event name (e.g., "Monaco Grand Prix" or "Monaco")
+- `exact_match`: If `True`, requires exact match. If `False`, uses fuzzy matching
+
+**Returns:**
+- `Event` object
+
+**Example:**
+```python
+import tif1
+
+# Fuzzy match
+event = tif1.get_event_by_name(2025, "Monaco")
+
+# Exact match
+event = tif1.get_event_by_name(2025, "Monaco Grand Prix", exact_match=True)
+```python
+
+---
+
+## `get_event_schedule`
+
+```python
+def get_event_schedule(year: int) -> dict
+```python
+
+Get the complete event schedule for a year including all events and their sessions.
+
+**Parameters:**
+- `year`: The season year
+
+**Returns:**
+- Dictionary with schedule data structure
+
+**Example:**
+```python
+import tif1
+
+schedule = tif1.get_event_schedule(2025)
+print(f"Events: {schedule['events']}")
+print(f"Sessions: {schedule['sessions']}")
+```python
+
+---
+
+## Event
+
+The `Event` class represents a single Grand Prix event with metadata and session access.
+
+### Properties
+
+<ResponseField name="year" type="int">
+  The season year.
+</ResponseField>
+
+<ResponseField name="name" type="str">
+  The official event name (e.g., "Monaco Grand Prix").
+</ResponseField>
+
+<ResponseField name="location" type="str">
+  The event location (derived from name).
+</ResponseField>
+
+<ResponseField name="metadata" type="dict | None">
+  Additional event metadata if available.
+</ResponseField>
+
+### Methods
+
+#### `get_session(session_name)`
+
+```python
+def get_session(session_name: str) -> Session
+```python
+
+Get a Session object for a specific session within this event.
+
+**Parameters:**
+- `session_name`: Session name (e.g., "Qualifying", "Race")
+
+**Returns:**
+- `Session` object ready to load data
+
+**Example:**
+```python
+import tif1
+
+event = tif1.get_event(2025, "Monaco")
+qualifying = event.get_session("Qualifying")
+race = event.get_session("Race")
+
+# Load data
+qualifying.load()
+print(f"Drivers: {qualifying.drivers}")
+```python
+
+---
+
+## Session name formats
+
+While `tif1` is flexible with session names, use these standard formats for consistency:
+
+| Session Type | Standard Name |
+| :--- | :--- |
+| Practice | `Practice 1`, `Practice 2`, `Practice 3` |
+| Qualifying | `Qualifying` |
+| Sprint Qualifying | `Sprint Qualifying`, `Sprint Shootout` |
+| Sprint Race | `Sprint` |
+| Main Race | `Race` |
+| Testing | `Pre-Season Testing` |
+
+<Note>
+  `tif1` uses fuzzy matching internally, so "P1", "FP1", and "Practice 1" all resolve to the same session. However, using standard names improves code clarity.
+</Note>
+
+---
+
+## Complete Examples
+
+### List all events and sessions
+
+```python
+import tif1
+
+year = 2025
+
+# Get all events
+events = tif1.get_events(year)
+print(f"Season {year} has {len(events)} events\n")
+
+# Get sessions for each event
+for event_name in events:
+    sessions = tif1.get_sessions(year, event_name)
+    print(f"{event_name}:")
+    for session in sessions:
+        print(f"  - {session}")
+    print()
+```python
+
+### Work with event objects
+
+```python
+import tif1
+
+# Get event by round
+event = tif1.get_event_by_round(2025, 6)
+print(f"Round 6: {event.name}")
+print(f"Location: {event.location}")
+
+# Get all sessions for this event
+sessions = tif1.get_sessions(event.year, event.name)
+print(f"Sessions: {sessions}")
+
+# Load a specific session
+race = event.get_session("Race")
+race.load()
+print(f"Drivers: {race.drivers}")
+```python ### Fuzzy event matching
+
+```python
+import tif1
+
+# All of these work with fuzzy matching
+event1 = tif1.get_event(2025, "Monaco")
+event2 = tif1.get_event(2025, "monaco grand prix")
+event3 = tif1.get_event(2025, "MONACO GP")
+
+# All resolve to the same event
+assert event1.name == event2.name == event3.name
+```python
+
+### Iterate through season
+
+```python
+import tif1
+
+year = 2025
+events = tif1.get_events(year)
+
+for i, event_name in enumerate(events, 1):
+    event = tif1.get_event_by_round(year, i)
+    sessions = tif1.get_sessions(year, event_name)
+
+    print(f"Round {i}: {event.name}")
+    print(f"  Location: {event.location}")
+    print(f"  Sessions: {', '.join(sessions)}")
+```python
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Schedule" href="/api-reference/schedule">
+    Schedule validation
+  </Card>
+  <Card title="Core API" href="/api-reference/core">
+    Load sessions
+  </Card>
+  <Card title="Examples" href="/examples">
+    Event discovery examples
+  </Card>
+</CardGroup>

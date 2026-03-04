@@ -1,0 +1,93 @@
+---
+title: "Jupyter Integration"
+icon: "book-open"
+description: "Rich HTML displays for interactive F1 data analysis"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` comes with built-in support for Jupyter Notebooks and Lab, providing rich HTML representations for its core objects. This makes interactive exploration of F1 data much more intuitive and visually appealing.
+
+## Rich HTML Displays
+
+When you display a `Session`, `Driver`, or `Lap` object in a Jupyter cell, `tif1` automatically renders a formatted HTML table instead of the standard string representation.
+
+### Session Info
+The session display shows key metadata including the year, event name, session type, data lib, and the number of drivers (if loaded).
+
+```python
+import tif1
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+session # This will render the rich HTML display
+```sql
+
+### Driver Info
+The driver display highlights the 3-letter driver code and indicates whether their lap data has been fetched from the cdn.
+
+```python
+ver = session.get_driver("VER")
+ver
+```python
+
+### Lap Info
+The lap display shows the lap number, driver, and whether high-frequency telemetry data has been loaded.
+
+```python
+lap = ver.get_lap(19)
+lap
+```python
+
+---
+
+## DataFrame Summaries
+
+`tif1` also includes a helper to display a clean summary of its DataFrames, showing the number of rows, columns, and total memory usage.
+
+```python
+from tif1.jupyter import display_dataframe_summary
+
+laps = session.laps
+display_dataframe_summary(laps)
+```python
+
+<Info>
+  This works seamlessly with both **Pandas** and **Polars** backends.
+</Info>
+
+---
+
+## How it Works
+
+The integration is automatically enabled if `tif1` detects it is running in a Jupyter environment. It uses the `_repr_html_` protocol supported by IPython.
+
+### Manual Enable/Disable
+
+If you need to manually trigger the display setup (e.g., in some niche notebook environments):
+
+```python
+from tif1.jupyter import enable_jupyter_display
+
+enable_jupyter_display()
+```sql
+
+---
+
+## Visual Themes
+
+The HTML components are designed to be theme-agnostic. They use semi-transparent borders and backgrounds to ensure they are readable in both **Light Mode** and **Dark Mode**.
+
+<CardGroup cols={2}>
+  <Card title="Light Mode" icon="sun">
+    Clean, subtle borders with light background.
+  </Card>
+  <Card title="Dark Mode" icon="moon">
+    Transparent overlays that adapt to your notebook's dark theme.
+  </Card>
+</CardGroup>
+
+<Tip>
+  If you are using **Polars**, `tif1` objects will still render rich HTML, and you'll benefit from even faster data processing in your interactive sessions.
+</Tip>

@@ -1,0 +1,388 @@
+---
+title: "Exceptions"
+icon: "circle-exclamation"
+description: "Error handling and exception hierarchy"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` uses a structured exception hierarchy to help you handle errors gracefully. All exceptions inherit from `TIF1Error` and include contextual information.
+
+## Exception Hierarchy
+
+```python
+TIF1Error (base)
+├── DataNotFoundError
+│   ├── DriverNotFoundError
+│   └── LapNotFoundError
+├── NetworkError
+├── InvalidDataError
+├── CacheError
+└── SessionNotLoadedError
+```python
+
+---
+
+## Base Exception
+
+### `TIF1Error`
+
+Base exception for all tif1 errors. All exceptions accept `**context` kwargs for structured error information.
+
+```python
+class TIF1Error(Exception):
+    def __init__(self, message: str, **context: Any) -> None
+```python
+
+**Attributes:**
+- `message`: Error message string
+- `context`: Dictionary of contextual information
+
+**Example:**
+```python
+try:
+    session = tif1.get_session(2025, "Invalid GP", "Race")
+except tif1.TIF1Error as e:
+    print(f"Error: {e.message}")
+    print(f"Context: {e.context}")
+```python
+
+---
+
+## Data Errors
+
+### `DataNotFoundError`
+
+Raised when requested data is not available in the CDN.
+
+```python
+class DataNotFoundError(TIF1Error):
+    def __init__(
+        self,
+        year: int | None = None,
+        event: str | None = None,
+        session: str | None = None,
+        **context: Any
+    ) -> None
+```python
+
+**Context:**
+- `year`: The requested year
+- `event`: The requested event name
+- `session`: The requested session name
+
+**Example:**
+```python
+try:
+    session = tif1.get_session(2030, "Future GP", "Race")
+except tif1.DataNotFoundError as e:
+    print(f"Data not found: {e.context}")
+    # {'year': 2030, 'event': 'Future GP', 'session': 'Race'}
+```python
+
+### `DriverNotFoundError`
+
+Raised when a driver code is not found in the session.
+
+```python
+class DriverNotFoundError(DataNotFoundError):
+    def __init__(self, driver: str, **context: Any) -> None
+```python
+
+**Context:**
+- `driver`: The requested driver code
+
+**Example:**
+```python
+try:
+    driver = session.get_driver("XXX")
+except tif1.DriverNotFoundError as e:
+    print(f"Driver '{e.context['driver']}' not found")
+    print(f"Available: {session.drivers}")
+```text ### `LapNotFoundError`
+
+Raised when a lap number is not found for a driver.
+
+```python
+class LapNotFoundError(DataNotFoundError):
+    def __init__(
+        self,
+        lap_number: int | None = None,
+        driver: str | None = None,
+        **context: Any
+    ) -> None
+```python
+
+**Context:**
+- `lap_number`: The requested lap number
+- `driver`: The driver code
+
+**Example:**
+```python
+try:
+    lap = driver.get_lap(999)
+except tif1.LapNotFoundError as e:
+    print(f"Lap {e.context['lap_number']} not found for {e.context['driver']}")
+```python
+
+---
+
+## Network Errors
+
+### `NetworkError`
+
+Raised when network requests fail after all retries and CDN fallbacks are exhausted.
+
+```python
+class NetworkError(TIF1Error):
+    def __init__(
+        self,
+        url: str | None = None,
+        status_code: int | None = None,
+        **context: Any
+    ) -> None
+```python
+
+**Context:**
+- `url`: The URL that failed
+- `status_code`: HTTP status code (if available)
+
+**Example:**
+```python
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = session.laps
+except tif1.NetworkError as e:
+    print(f"Network error: {e.message}")
+    print(f"URL: {e.context.get('url')}")
+    print(f"Status: {e.context.get('status_code')}")
+```python
+
+---
+
+## Data validation errors
+
+### `InvalidDataError`
+
+Raised when fetched data is invalid, corrupted, or fails validation.
+
+```python
+class InvalidDataError(TIF1Error):
+    def __init__(self, reason: str | None = None, **context: Any) -> None
+```python
+
+**Context:**
+- `reason`: Description of why the data is invalid
+
+**Example:**
+```python
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = session.laps
+except tif1.InvalidDataError as e:
+    print(f"Invalid data: {e.context.get('reason')}")
+```python
+
+---
+
+## Cache Errors
+
+### `CacheError`
+
+Raised when cache operations fail (e.g., SQLite errors, disk full).
+
+```python
+class CacheError(TIF1Error)
+```python
+
+**Example:**
+```python
+try:
+    cache = tif1.get_cache()
+    cache.clear()
+except tif1.CacheError as e:
+    print(f"Cache error: {e.message}")
+```python ---
+
+## Session state errors
+
+### `SessionNotLoadedError`
+
+Raised when accessing session data before it has been loaded.
+
+```python
+class SessionNotLoadedError(TIF1Error):
+    def __init__(self, attribute: str | None = None) -> None
+```python
+
+**Context:**
+- `attribute`: The attribute that was accessed
+
+**Example:**
+```python
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    # Accessing data without loading first (if lazy loading is disabled)
+    drivers = session._drivers  # Internal attribute
+except tif1.SessionNotLoadedError as e:
+    print(f"Session not loaded. Call session.load() first.")
+```python
+
+---
+
+## Error handling patterns
+
+### Basic Try-Catch
+
+```python
+import tif1
+
+try:
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = session.laps
+    fastest = session.get_fastest_laps()
+except tif1.DataNotFoundError as e:
+    print(f"Data not found: {e.message}")
+except tif1.NetworkError as e:
+    print(f"Network error: {e.message}")
+except tif1.TIF1Error as e:
+    print(f"General error: {e.message}")
+```python
+
+### Specific error handling
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Handle driver not found
+try:
+    driver = session.get_driver("XXX")
+except tif1.DriverNotFoundError:
+    print(f"Driver not found. Available: {session.drivers}")
+    driver = session.get_driver(session.drivers[0])
+
+# Handle lap not found
+try:
+    lap = driver.get_lap(999)
+except tif1.LapNotFoundError:
+    print("Lap not found. Using fastest lap instead.")
+    lap_df = driver.get_fastest_lap()
+```python
+
+### Retry with Fallback
+
+```python
+import tif1
+import time
+
+def load_session_with_retry(year, gp, session_name, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            session = tif1.get_session(year, gp, session_name)
+            laps = session.laps
+            return session
+        except tif1.NetworkError as e:
+            if attempt < max_retries - 1:
+                print(f"Network error, retrying... ({attempt + 1}/{max_retries})")
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                print("Max retries exceeded")
+                raise
+        except tif1.DataNotFoundError:
+            print("Data not found, cannot retry")
+            raise
+
+session = load_session_with_retry(2025, "Monaco", "Race")
+```python
+
+### Context-aware error handling
+
+```python
+import tif1
+
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    driver = session.get_driver("VER")
+    lap = driver.get_lap(19)
+    tel = lap.telemetry
+except tif1.TIF1Error as e:
+    # Access structured context
+    print(f"Error: {e.message}")
+
+    if 'year' in e.context:
+        print(f"Year: {e.context['year']}")
+    if 'driver' in e.context:
+        print(f"Driver: {e.context['driver']}")
+    if 'lap_number' in e.context:
+        print(f"Lap: {e.context['lap_number']}")
+
+    # Log full context for debugging
+    print(f"Full context: {e.context}")
+```python
+
+### Graceful Degradation
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Try to get telemetry, fall back to lap data only
+drivers_data = {}
+
+for driver_code in session.drivers:
+    try:
+        driver = session.get_driver(driver_code)
+        fastest_tel = driver.get_fastest_lap_tel()
+        drivers_data[driver_code] = {
+            'has_telemetry': True,
+            'telemetry': fastest_tel
+        }
+    except tif1.TIF1Error as e:
+        # Fall back to lap data only
+        fastest_lap = driver.get_fastest_lap()
+        drivers_data[driver_code] = {
+            'has_telemetry': False,
+            'lap_data': fastest_lap
+        }
+        print(f"Warning: No telemetry for {driver_code}: {e.message}")
+```yaml
+
+---
+
+## Best Practices
+
+1. **Catch specific exceptions first**: Handle `DriverNotFoundError` before `DataNotFoundError`, and `DataNotFoundError` before `TIF1Error`.
+
+2. **Use context information**: All exceptions include structured context via the `context` attribute.
+
+3. **Don't swallow errors silently**: Always log or handle errors appropriately.
+
+4. **Implement retries for network errors**: Network errors are often transient.
+
+5. **Validate user input early**: Check driver codes and lap numbers before making expensive API calls.
+
+6. **Use try-finally for cleanup**: Ensure resources are cleaned up even if errors occur.
+
+```python
+cache = tif1.get_cache()
+try:
+    # ... operations ...
+    pass
+finally:
+    cache.close()
+```python 7. **Log context for debugging**: The `context` dict contains valuable debugging information.
+
+```python
+import logging
+
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+except tif1.TIF1Error as e:
+    logging.error(f"Error: {e.message}", extra=e.context)
+```python

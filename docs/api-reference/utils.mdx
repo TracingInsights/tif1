@@ -1,0 +1,318 @@
+---
+title: "Utilities API"
+icon: "screwdriver-wrench"
+description: "Helper functions for data manipulation and conversion"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `utils` module provides utility functions for working with F1 data, including time conversions, delta calculations, and data access helpers.
+
+## Time conversion functions
+
+### `to_timedelta`
+
+```python
+def to_timedelta(x: Any) -> pd.Timedelta
+```python
+
+Convert various time representations to pandas Timedelta.
+
+**Parameters:**
+- `x`: Time value in various formats:
+  - `timedelta`: Returned as-is
+  - `str`: Parsed as time string (e.g., "1:23.456" or "00:01:23.456")
+  - `int` or `float`: Interpreted as seconds
+  - Other pandas-compatible formats
+
+**Returns:**
+- `pd.Timedelta` object
+
+**Example:**
+```python
+from tif1.utils import to_timedelta
+
+# From string
+td1 = to_timedelta("1:23.456")  # 1 minute, 23.456 seconds
+td2 = to_timedelta("00:01:23.456")  # Same as above
+
+# From seconds
+td3 = to_timedelta(83.456)  # 83.456 seconds
+
+# From timedelta
+import datetime
+td4 = to_timedelta(datetime.timedelta(seconds=83.456))
+
+print(td1.total_seconds())  # 83.456
+```python
+
+**Use cases:**
+- Converting lap times from strings to timedeltas
+- Normalizing time formats across different data sources
+- Calculating time differences
+
+---
+
+### `to_datetime`
+
+```python
+def to_datetime(x: Any) -> pd.Timestamp
+```python
+
+Convert various datetime representations to pandas Timestamp.
+
+**Parameters:**
+- `x`: Datetime value in various formats:
+  - `str`: Parsed as ISO 8601 or other common formats
+  - `datetime`: Converted to Timestamp
+  - Unix timestamp (int/float)
+  - Other pandas-compatible formats
+
+**Returns:**
+- `pd.Timestamp` object
+
+**Example:**
+```python
+from tif1.utils import to_datetime
+
+# From ISO string
+dt1 = to_datetime("2025-05-25T14:00:00Z")
+
+# From datetime
+import datetime
+dt2 = to_datetime(datetime.datetime(2025, 5, 25, 14, 0, 0))
+
+# From Unix timestamp
+dt3 = to_datetime(1748181600)
+
+print(dt1)  # 2025-05-25 14:00:00+00:00
+```python
+
+**Use cases:**
+- Converting session start times
+- Parsing timestamp strings from JSON
+- Normalizing datetime formats
+
+---
+
+## Data analysis functions
+
+### `delta_time`
+
+```python
+def delta_time(
+    reference_lap: Lap,
+    compare_lap: Lap
+) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
+```python
+
+Calculate time delta between two laps at each telemetry sample point.
+
+**Parameters:**
+- `reference_lap`: The reference lap (baseline)
+- `compare_lap`: The lap to compare against the reference
+
+**Returns:**
+- Tuple of `(delta_series, reference_telemetry, compare_telemetry)`:
+  - `delta_series`: Time delta at each distance point (seconds)
+  - `reference_telemetry`: Telemetry DataFrame for reference lap
+  - `compare_telemetry`: Telemetry DataFrame for comparison lap
+
+**Example:**
+```python
+import tif1
+from tif1.utils import delta_time
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Get two laps to compare
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+
+ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
+ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
+
+# Calculate delta
+delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
+
+# Plot delta
+import matplotlib.pyplot as plt
+plt.plot(ver_tel['Distance'], delta)
+plt.axhline(y=0, color='k', linestyle='--')
+plt.xlabel('Distance (m)')
+plt.ylabel('Delta (s)')
+plt.title('VER vs HAM - Time Delta')
+plt.show()
+```python
+
+**Use cases:**
+- Comparing driver performance lap-by-lap
+- Identifying where time is gained/lost on track
+- Visualizing performance differences
+
+<Note>
+  The delta is calculated by interpolating telemetry to common distance points. Positive values mean the compare lap is slower than the reference.
+</Note>
+
+---
+
+## Data access functions
+
+### `recursive_dict_get`
+
+```python
+def recursive_dict_get(
+    d: dict,
+    *keys: str,
+    default_none: bool = False
+) -> Any
+```python
+
+Safely access nested dictionary values with multiple keys.
+
+**Parameters:**
+- `d`: The dictionary to access
+- `*keys`: Variable number of keys to traverse
+- `default_none`: If `True`, returns `None` on missing keys. If `False`, returns `{}`
+
+**Returns:**
+- The value at the nested key path, or default value if not found
+
+**Example:**
+```python
+from tif1.utils import recursive_dict_get
+
+data = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix",
+            "year": 2025
+        }
+    }
+}
+
+# Access nested value
+name = recursive_dict_get(data, "session", "info", "name")
+print(name)  # "Monaco Grand Prix"
+
+# Missing key with default_none=False
+missing = recursive_dict_get(data, "session", "missing", "key")
+print(missing)  # {}
+
+# Missing key with default_none=True
+missing = recursive_dict_get(data, "session", "missing", "key", default_none=True)
+print(missing)  # None
+```python **Use cases:**
+- Safely accessing nested JSON data
+- Avoiding KeyError exceptions
+- Providing default values for missing data
+
+---
+
+## Complete Examples
+
+### Lap Time Analysis
+
+```python
+import tif1
+from tif1.utils import to_timedelta
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+laps = session.laps
+
+# Convert lap times to timedeltas
+laps['LapTimeDelta'] = laps['LapTime'].apply(to_timedelta)
+
+# Find fastest lap
+fastest_time = laps['LapTimeDelta'].min()
+print(f"Fastest lap: {fastest_time}")
+
+# Calculate gap to fastest
+laps['GapToFastest'] = laps['LapTimeDelta'] - fastest_time
+print(laps[['Driver', 'LapNumber', 'GapToFastest']].head())
+```python
+
+### Session timing analysis
+
+```python
+import tif1
+from tif1.utils import to_datetime
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Convert session start time
+start_time = to_datetime(session.session_start_time)
+print(f"Session started at: {start_time}")
+
+# Calculate elapsed time for each lap
+laps = session.laps
+laps['ElapsedTime'] = (laps['Time'] - start_time).dt.total_seconds()
+
+# Find when fastest laps were set
+fastest_laps = session.get_fastest_laps(by_driver=True)
+fastest_laps['ElapsedTime'] = (fastest_laps['Time'] - start_time).dt.total_seconds()
+print(fastest_laps[['Driver', 'LapTime', 'ElapsedTime']])
+```python
+
+### Delta time visualization
+
+```python
+import tif1
+from tif1.utils import delta_time
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Get fastest laps for two drivers
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+
+ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
+ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
+
+# Calculate delta
+delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
+
+# Create visualization
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+# Speed comparison
+ax1.plot(ver_tel['Distance'], ver_tel['Speed'], label='VER', color='blue')
+ax1.plot(ham_tel['Distance'], ham_tel['Speed'], label='HAM', color='cyan')
+ax1.set_ylabel('Speed (km/h)')
+ax1.legend()
+ax1.grid(True)
+
+# Delta time
+ax2.plot(ver_tel['Distance'], delta, color='red')
+ax2.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+ax2.fill_between(ver_tel['Distance'], 0, delta, where=(delta > 0), color='red', alpha=0.3, label='HAM slower')
+ax2.fill_between(ver_tel['Distance'], 0, delta, where=(delta < 0), color='green', alpha=0.3, label='HAM faster')
+ax2.set_xlabel('Distance (m)')
+ax2.set_ylabel('Delta (s)')
+ax2.legend()
+ax2.grid(True)
+
+plt.tight_layout()
+plt.show()
+```yaml
+
+---
+
+## Performance Considerations
+
+- **to_timedelta**: Fast for single values, use vectorized operations for DataFrames
+- **to_datetime**: Optimized for pandas-compatible formats
+- **delta_time**: Requires telemetry interpolation, can be slow for many laps
+- **recursive_dict_get**: O(n) where n is the number of keys
+
+---
+
+## Related APIs
+
+- **[Core API](/api-reference/core)**: Uses utils for time conversions
+- **[Plotting API](/api-reference/plotting)**: Uses delta_time for visualizations
+- **[Types API](/api-reference/types)**: Defines type hints for utility functions

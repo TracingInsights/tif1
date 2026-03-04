@@ -1,0 +1,223 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "tif1",
+  "theme": "mint",
+  "description": "High-performance Formula 1 data analysis for Python with a FastF1-compatible API.",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#00FF00",
+    "light": "#39FF6A",
+    "dark": "#00C853"
+  },
+  "fonts": {
+    "heading": {
+      "family": "Bebas Neue",
+      "weight": 700
+    },
+    "body": {
+      "family": "Roboto",
+      "weight": 400
+    }
+  },
+  "appearance": {
+    "default": "dark",
+    "strict": false
+  },
+  "background": {
+    "decoration": "grid",
+    "color": {
+      "light": "#EAF3FF",
+      "dark": "#002451"
+    }
+  },
+  "styling": {
+    "eyebrows": "section",
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "github-dark"
+      }
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "type": "github",
+        "href": "https://github.com/TracingInsights/tif1"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get started",
+      "href": "https://github.com/TracingInsights/tif1#quickstart"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "getting-started",
+              "quickstart",
+              "examples",
+              "migration-from-fastf1"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/best-practices",
+              "guides/error-handling",
+              "guides/working-with-large-datasets",
+              "guides/production-deployment",
+              "guides/data-visualization",
+              "guides/integration-patterns",
+              "guides/testing-strategies",
+              "guides/common-use-cases"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/sessions",
+              "concepts/backends",
+              "concepts/caching-strategy",
+              "concepts/cli",
+              "concepts/jupyter",
+              "concepts/data-flow"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/performance",
+              "advanced/reliability",
+              "advanced/caching",
+              "advanced/ultra-cold-start"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "architecture",
+              "reference/data-schema",
+              "reference/environment-variables",
+              "reference/cli-commands",
+              "reference/faq",
+              "reference/troubleshooting",
+              "reference/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tutorials",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/race-analysis",
+              "tutorials/race-pace-analysis",
+              "tutorials/qualifying-analysis",
+              "tutorials/tire-strategy",
+              "tutorials/weather-impact",
+              "tutorials/telemetry-comparison",
+              "tutorials/advanced-telemetry",
+              "tutorials/data-export"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "api-reference/overview"
+            ]
+          },
+          {
+            "group": "Core API",
+            "pages": [
+              "api-reference/core",
+              "api-reference/models",
+              "api-reference/events",
+              "api-reference/schedule"
+            ]
+          },
+          {
+            "group": "Data Pipeline",
+            "pages": [
+              "api-reference/io-pipeline",
+              "api-reference/async-fetch",
+              "api-reference/http",
+              "api-reference/http-session",
+              "api-reference/cdn"
+            ]
+          },
+          {
+            "group": "Configuration & Cache",
+            "pages": [
+              "api-reference/config",
+              "api-reference/cache",
+              "api-reference/retry"
+            ]
+          },
+          {
+            "group": "Visualization & Tools",
+            "pages": [
+              "api-reference/plotting",
+              "api-reference/cli",
+              "api-reference/jupyter"
+            ]
+          },
+          {
+            "group": "Utilities & Helpers",
+            "pages": [
+              "api-reference/utils",
+              "api-reference/utilities",
+              "api-reference/core-utils",
+              "api-reference/types",
+              "api-reference/validation",
+              "api-reference/fuzzy",
+              "api-reference/lap-operations"
+            ]
+          },
+          {
+            "group": "Compatibility & Errors",
+            "pages": [
+              "api-reference/fastf1-compat",
+              "api-reference/exceptions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/TracingInsights/tif1"
+    }
+  },
+  "seo": {
+    "indexing": "all"
+  },
+  "analytics": {
+    "ga4": {
+      "measurementId": "G-XXXXXXXXXX"
+    },
+    "posthog": {
+      "apiKey": "phc_XXXXXXXXXX"
+    }
+  }
+}

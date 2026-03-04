@@ -1,0 +1,302 @@
+---
+title: "I/O Pipeline API"
+icon: "arrows-turn-right"
+description: "Internal data transformation and DataFrame construction"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `io_pipeline` module contains internal helpers for transforming raw JSON data into structured DataFrames. These functions handle column renaming, type coercion, and data validation.
+
+<Warning>
+  This module contains internal implementation details. The API is subject to change. Most users should use the high-level `Session` API instead.
+</Warning>
+
+## Overview
+
+The I/O pipeline follows this flow:
+
+```mermaid
+graph LR
+    A[Raw JSON] --> B[_validate_json_payload]
+    B --> C[_extract_driver_info_map]
+    B --> D[_create_lap_df]
+    D --> E[_process_lap_df]
+    E --> F[Final DataFrame]
+```python
+
+---
+
+## Functions
+
+### `_validate_json_payload`
+
+```python
+def _validate_json_payload(
+    path: str,
+    data: dict[str, Any],
+    config: Config
+) -> dict[str, Any]
+```python
+
+Validate raw JSON payload using Pydantic schemas if validation is enabled.
+
+**Parameters:**
+- `path`: Resource path for error context (e.g., "laps/VER")
+- `data`: Raw JSON dictionary
+- `config`: Configuration object
+
+**Returns:**
+- Validated JSON dictionary
+
+**Raises:**
+- `InvalidDataError`: If validation fails
+
+---
+
+### `_extract_driver_codes`
+
+```python
+def _extract_driver_codes(session_data: dict[str, Any]) -> list[str]
+```python
+
+Extract list of driver codes from session data.
+
+**Parameters:**
+- `session_data`: Raw session JSON
+
+**Returns:**
+- List of 3-letter driver codes (e.g., ["VER", "HAM", "LEC"])
+
+---
+
+### `_extract_driver_info_map`
+
+```python
+def _extract_driver_info_map(
+    session_data: dict[str, Any]
+) -> dict[str, dict[str, Any]]
+```python
+
+Extract driver metadata from session data into a lookup map.
+
+**Parameters:**
+- `session_data`: Raw session JSON
+
+**Returns:**
+- Dictionary mapping driver codes to metadata dictionaries containing:
+  - `DriverNumber`: Car number
+  - `Team`: Team name
+  - `FirstName`: Driver's first name
+  - `LastName`: Driver's last name
+  - `TeamColor`: Hex color code
+  - `HeadshotUrl`: URL to driver photo
+
+**Example:**
+```python
+{
+    "VER": {
+        "DriverNumber": "33",
+        "Team": "Red Bull Racing",
+        "FirstName": "Max",
+        "LastName": "Verstappen",
+        "TeamColor": "#3671C6",
+        "HeadshotUrl": "https://..."
+    },
+    ...
+}
+```python
+
+---
+
+### `_create_lap_df`
+
+```python
+def _create_lap_df(
+    lap_data: list[dict[str, Any]],
+    lib: Literal["pandas", "polars"]
+) -> DataFrame
+```python
+
+Create a DataFrame from raw lap data JSON.
+
+**Parameters:**
+- `lap_data`: List of lap dictionaries from JSON
+- `lib`: DataFrame library to use
+
+**Returns:**
+- DataFrame with lap timing data
+
+**Columns created:**
+- `LapNumber`: Lap number (1-indexed)
+- `LapTime`: Lap time in seconds
+- `Sector1Time`, `Sector2Time`, `Sector3Time`: Sector times
+- `Compound`: Tire compound
+- `TyreLife`: Tire age in laps
+- `Stint`: Stint number
+- `IsPersonalBest`: Boolean flag
+- `SpeedI1`, `SpeedI2`, `SpeedFL`, `SpeedST`: Speed trap values
+- `TrackStatus`: Track status code
+- `Position`: Position at lap end
+- `Deleted`: Lap deleted flag
+- `DeletedReason`: Reason for deletion
+- `FastF1Generated`: Data source flag
+
+---
+
+### `_create_session_df`
+
+```python
+def _create_session_df(
+    session_data: dict[str, Any],
+    lib: Literal["pandas", "polars"]
+) -> DataFrame
+```python
+
+Create a DataFrame from session-level data.
+
+**Parameters:**
+- `session_data`: Raw session JSON
+- `lib`: DataFrame library to use
+
+**Returns:**
+- DataFrame with session metadata
+
+---
+
+### `_process_lap_df`
+
+```python
+def _process_lap_df(
+    df: DataFrame,
+    driver_info: dict[str, Any],
+    lib: Literal["pandas", "polars"]
+) -> DataFrame
+```python Post-process lap DataFrame by adding driver metadata and reordering columns.
+
+**Parameters:**
+- `df`: Raw lap DataFrame
+- `driver_info`: Driver metadata dictionary
+- `lib`: DataFrame library
+
+**Returns:**
+- Processed DataFrame with additional columns:
+  - `Driver`: 3-letter driver code
+  - `DriverNumber`: Car number
+  - `Team`: Team name
+  - `Time`: Lap timestamp
+
+**Column order:**
+The function ensures a consistent column order for compatibility with fastf1:
+1. Core identifiers: `Time`, `Driver`, `DriverNumber`, `LapNumber`
+2. Timing: `LapTime`, `Sector1Time`, `Sector2Time`, `Sector3Time`
+3. Tire info: `Compound`, `TyreLife`, `Stint`
+4. Speed traps: `SpeedI1`, `SpeedI2`, `SpeedFL`, `SpeedST`
+5. Metadata: `Team`, `Position`, `TrackStatus`, etc.
+
+---
+
+## Column naming conventions
+
+The I/O pipeline follows fastf1 naming conventions:
+
+| Internal Name | Public Name | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `lap_number` | `LapNumber` | int | Lap number (1-indexed) |
+| `lap_time` | `LapTime` | float | Lap time in seconds |
+| `sector_1_time` | `Sector1Time` | float | Sector 1 time |
+| `sector_2_time` | `Sector2Time` | float | Sector 2 time |
+| `sector_3_time` | `Sector3Time` | float | Sector 3 time |
+| `compound` | `Compound` | str | Tire compound (SOFT, MEDIUM, HARD) |
+| `tyre_life` | `TyreLife` | int | Tire age in laps |
+| `stint` | `Stint` | int | Stint number |
+| `is_personal_best` | `IsPersonalBest` | bool | Personal best lap flag |
+| `speed_i1` | `SpeedI1` | float | Speed trap 1 (km/h) |
+| `speed_i2` | `SpeedI2` | float | Speed trap 2 (km/h) |
+| `speed_fl` | `SpeedFL` | float | Finish line speed (km/h) |
+| `speed_st` | `SpeedST` | float | Speed trap (km/h) |
+
+---
+
+## Lib Conversion
+
+The pipeline supports both pandas and polars backends:
+
+```python
+# Create DataFrame with pandas lib
+df_pandas = _create_lap_df(lap_data, lib="pandas")
+
+# Create DataFrame with polars lib
+df_polars = _create_lap_df(lap_data, lib="polars")
+```yaml
+
+Lib-specific optimizations:
+- **pandas**: Uses `pd.DataFrame.from_records()` for efficient construction
+- **polars**: Uses `pl.DataFrame()` with schema inference and lazy evaluation
+
+---
+
+## Data Validation
+
+When `validate_data` is enabled in config, the pipeline validates:
+
+1. **Required fields**: Ensures all required columns are present
+2. **Type checking**: Validates data types match schema
+3. **Value ranges**: Checks values are within expected ranges
+4. **Referential integrity**: Validates driver codes, lap numbers, etc.
+
+**Example validation error:**
+```python
+InvalidDataError: Invalid lap data at laps/VER/19
+  - Missing required field: lap_time
+  - Invalid type for sector_1_time: expected float, got str
+  - Lap number out of range: 0 (must be >= 1)
+```yaml
+
+---
+
+## Performance Considerations
+
+The I/O pipeline is optimized for:
+
+- **Batch processing**: Processes all laps at once rather than one-by-one
+- **Lazy evaluation**: Defers expensive operations until data is accessed
+- **Memory efficiency**: Uses views and references where possible
+- **Type coercion**: Minimizes type conversions
+
+**Typical performance:**
+- Process 50 laps: ~5-10ms
+- Process 1000 laps: ~50-100ms
+- Full session (20 drivers × 50 laps): ~200-300ms
+
+---
+
+## Internal Implementation
+
+<Accordion title="Column Renaming Strategy">
+  The pipeline maintains two sets of column names:
+  - **Internal names**: snake_case for JSON keys
+  - **Public names**: PascalCase for DataFrame columns
+
+  Renaming happens in `_process_lap_df()` using a predefined mapping dictionary.
+</Accordion>
+
+<Accordion title="Type Coercion">
+  The pipeline coerces types to ensure consistency:
+  - Timestamps → datetime64[ns]
+  - Lap times → float64 (seconds)
+  - Lap numbers → int64
+  - Boolean flags → bool
+  - Categorical data → category (pandas) or Enum (polars)
+</Accordion>
+
+<Accordion title="Missing Data Handling">
+  Missing values are handled gracefully:
+  - Numeric fields: NaN (pandas) or null (polars)
+  - String fields: empty string or null
+  - Boolean fields: False or null
+  - Required fields: Raises `InvalidDataError`
+</Accordion>

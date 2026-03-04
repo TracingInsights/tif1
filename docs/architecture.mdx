@@ -1,0 +1,101 @@
+---
+title: "Architecture"
+icon: "sitemap"
+description: "Internal architecture, module ownership, and data flow in tif1"
+keywords:
+  - "tif1 architecture"
+  - "system design"
+  - "module structure"
+  - "data flow"
+  - "design patterns"
+  - "internal architecture"
+---
+
+tif1 is built with a modular architecture focused on performance, reliability, and maintainability. Each module has a clear responsibility and well-defined boundaries.
+
+## System Overview
+
+```mermaid
+graph TB
+    User[User Code] --> Session[Session API]
+    Session --> Cache[Cache Layer]
+    Cache --> |Hit| Memory[LRU Memory Cache]
+    Cache --> |Miss| SQLite[SQLite Cache]
+    SQLite --> |Miss| CDN[CDN Manager]
+    CDN --> HTTP[HTTP/2 Session]
+    HTTP --> JS[jsDelivr CDN]
+    JS --> Data[JSON Data]
+    Data --> Pipeline[I/O Pipeline]
+    Pipeline --> DF[DataFrame]
+    DF --> User
+```yaml
+
+## Module Ownership
+
+- `tif1.session`: canonical session entrypoint (`Session`, `get_session`).
+- `tif1.models`: canonical dataframe-backed domain models (`Laps`, `Lap`, `Driver`, `Telemetry`).
+- `tif1.io_pipeline`: payload normalization helpers used by session loading paths.
+- `tif1.lap_ops`: lap-number/time coercion and lap-column helpers.
+- `tif1.http_session`: sole owner of HTTP session lifecycle and connection metrics.
+- `tif1.async_fetch`: async fetch orchestration and executor lifecycle.
+- `tif1.cache`: SQLite + in-memory caching.
+- `tif1.events`: event/session lookup via packaged JSON schedules.
+- `tif1.schedule_schema`: schema validation for schedule assets.
+
+## Data Flow
+
+The data pipeline transforms raw JSON from the CDN into structured DataFrames:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Session
+    participant Cache
+    participant CDN
+    participant Pipeline
+
+    User->>Session: get_session(2025, "Monaco", "Race")
+    Session->>Cache: Check for cached data
+    alt Cache Hit
+        Cache-->>Session: Return cached DataFrame
+    else Cache Miss
+        Session->>CDN: Fetch JSON from jsdelivr
+        CDN-->>Session: Return JSON payload
+        Session->>Pipeline: Transform JSON
+        Pipeline-->>Session: Return DataFrame
+        Session->>Cache: Store in cache
+    end
+    Session-->>User: Return Session object
+    User->>Session: Access .laps property
+    Session-->>User: Return laps DataFrame
+```yaml
+
+### Data transformation steps
+
+1. **CDN Fetch**: Parallel HTTP/2 requests to jsdelivr CDN
+2. **JSON Parse**: Fast parsing with orjson
+3. **DataFrame Construction**: Column mapping and type conversion
+4. **Enrichment**: Add weather data, calculate derived fields
+5. **Caching**: Store in SQLite + memory LRU
+6. **Return**: Pandas or Polars DataFrame
+
+## Data Flow
+
+1. `get_session(...)` resolves event/session aliases and creates a `Session`.
+2. `Session` methods load JSON payloads via CDN manager + shared HTTP session.
+3. `io_pipeline` helpers normalize payloads into lib dataframes.
+4. `cache` stores/retrieves JSON payloads and telemetry batches.
+5. `models` expose dataframe-centric APIs for lap/driver/telemetry access.
+
+## Schedule System
+
+- Static schedules are packaged as JSON files in `src/tif1/data/schedules/f1schedule/` (one file per year: `schedule_2018.json`, `schedule_2019.json`, etc.).
+- `events.py` reads these assets through `importlib.resources` and converts them to the internal format.
+- `schedule_schema.validate_schedule_payload` enforces structure and schema versioning.
+- CDN fallback fetches missing years from jsdelivr (f1schedule repository).
+
+## Design Rules
+
+- No compatibility shims for unsupported FastF1 namespaces.
+- Shared network session ownership stays in `http_session`.
+- Performance benchmarks live under `tests/benchmarks` and are excluded from default pytest runs.

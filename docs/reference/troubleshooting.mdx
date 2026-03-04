@@ -1,0 +1,156 @@
+---
+title: "Troubleshooting"
+icon: "wrench"
+description: "Common issues and solutions"
+keywords:
+  - "troubleshooting"
+  - "common issues"
+  - "debugging"
+  - "problem solving"
+---
+
+## Installation Issues
+
+### Polars Not Available
+
+**Error:** `PolarsNotAvailableError` or lib falls back to pandas
+
+**Solution:**
+```bash
+pip install tif1[polars]
+```python
+
+### Duckdb import error
+
+**Error:** `ModuleNotFoundError: No module named 'duckdb'`
+
+**Solution:**
+DuckDB is an optional dependency for advanced analytics. You must install it separately:
+```bash
+pip install duckdb
+```python
+
+---
+
+## Data access issues
+
+### DataNotFoundError
+
+**Error:** `DataNotFoundError: Data not found for 2025/Abu Dhabi Grand Prix/Practice 1`
+
+**Causes:**
+- Event name misspelled (use `get_events` to check).
+- Session name misspelled (use `get_sessions` to check).
+- Data not yet available in the archive.
+
+**Solutions:**
+```python
+# Check available events for the year
+events = tif1.get_events(2025)
+
+# Check available sessions for that event
+sessions = tif1.get_sessions(2025, "British Grand Prix")
+```python
+
+### NetworkError
+
+**Error:** `NetworkError: Failed to fetch data from CDN`
+
+**Solutions:**
+1. **Enable Debug Logging:** See which CDN is failing.
+   ```python
+   import tif1, logging
+   tif1.setup_logging(logging.DEBUG)
+```bash
+2. **Reset Circuit Breaker:** If you've had many failures, the breaker might be open.
+   ```python
+   tif1.reset_circuit_breaker()
+```yaml
+3. **Check jsDelivr Status:** Our primary CDN is jsDelivr. Ensure your network doesn't block it.
+
+---
+
+## Performance Issues
+
+### Slow cold start
+
+**Problem:** The first time loading a session takes several seconds.
+
+**Solutions:**
+1. **Async Loading:** Use `await session.laps_async()` to fetch all drivers in parallel.
+2. **Ultra Cold Start:** For real-time apps, enable Ultra Cold Start in your `.tif1rc` to skip validation and background-fill the cache.
+
+### High memory usage
+
+**Problem:** Analyzing an entire season consumes too much RAM.
+
+**Solutions:**
+1. **Use Polars:** It is significantly more memory-efficient than Pandas.
+2. **Categorical Types:** `tif1` automatically uses categoricals for columns like `Driver` and `Team`. Ensure you aren't casting them back to strings.
+
+---
+
+## Cache Issues
+
+### Cache Permissions
+
+**Error:** `OperationalError: attempt to write a readonly database`
+
+**Solution:**
+Ensure `tif1` has write permissions to your home directory (default cache is `~/.tif1/cache`). On shared systems, the directory should ideally have `0o700` permissions.
+
+```bash
+chmod 700 ~/.tif1
+```yaml
+
+### Corrupted Cache
+
+**Problem:** Unexpected `KeyError` or `InvalidDataError` after a successful load.
+
+**Solution:**
+Wipe the local cache and re-download the data.
+```python
+tif1.get_cache().clear()
+```yaml
+
+---
+
+## API & Schema Issues
+
+### Column name keyerror
+
+**Error:** `KeyError: 'time'` or `KeyError: 'speed'`
+
+**Solution:**
+`tif1` uses **PascalCase** for all column names. Use `LapTime` instead of `time`, and `Speed` instead of `speed`.
+
+| Wrong | Right |
+| :--- | :--- |
+| `laps["time"]` | `laps["LapTime"]` |
+| `telemetry["rpm"]` | `telemetry["RPM"]` |
+| `lap.get_telemetry()` | `lap.telemetry` |
+
+---
+
+## Getting Help
+
+If you're still stuck:
+1. Check the [GitHub Issues](https://github.com/TracingInsights/tif1/issues).
+2. Run with `logging.DEBUG` and include the logs in your report.
+3. Provide a minimal reproducible example (MRE).
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="FAQ" href="/reference/faq">
+    Common questions
+  </Card>
+  <Card title="Error Handling" href="/guides/error-handling">
+    Handle errors
+  </Card>
+  <Card title="Installation" href="/installation">
+    Setup issues
+  </Card>
+</CardGroup>

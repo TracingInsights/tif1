@@ -1,0 +1,135 @@
+---
+title: "Data Schema Reference"
+icon: "table"
+description: "Complete reference for all data columns, units, and formulas"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` provides data in a structured format consistent with `fastf1`. Below is the exhaustive reference for every column in the main DataFrames.
+
+<Note>
+  `tif1` uses **PascalCase** for all column names in Lap and Telemetry DataFrames (e.g., `LapTime`, `Speed`).
+</Note>
+
+## ⏱️ Lap Data (`session.laps`)
+
+The `laps` DataFrame contains one row for every lap completed by every driver in the session.
+
+### Core Timing
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `LapNumber` | `int` | - | Which lap this is (starts at 1). |
+| `LapTime` | `float` | Seconds | The total time to complete the lap. |
+| `SessionTime` | `float` | Seconds | Time when the lap ended relative to session start. |
+| `LapStartTime` | `float` | Seconds | Time when the lap started relative to session start. |
+| `LapStartDate` | `str` | ISO8601 | Absolute calendar timestamp when the lap started. |
+
+### Sectors & speed traps
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Sector1Time` | `float` | Seconds | Time taken to complete Sector 1. |
+| `Sector2Time` | `float` | Seconds | Time taken to complete Sector 2. |
+| `Sector3Time` | `float` | Seconds | Time taken to complete Sector 3. |
+| `Sector1SessionTime` | `float` | Seconds | Session time when Sector 1 was completed. |
+| `Sector2SessionTime` | `float` | Seconds | Session time when Sector 2 was completed. |
+| `Sector3SessionTime` | `float` | Seconds | Session time when Sector 3 was completed. |
+| `SpeedI1` | `float` | km/h | Speed at intermediate point 1 (Sector 1 trap). |
+| `SpeedI2` | `float` | km/h | Speed at intermediate point 2 (Sector 2 trap). |
+| `SpeedFL` | `float` | km/h | Speed at the finish line. |
+| `SpeedST` | `float` | km/h | Speed at the speed trap (usually longest straight). |
+
+### Tires & Strategy
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `Compound` | `str` | Tire compound used (`SOFT`, `MEDIUM`, `HARD`, `INTERMEDIATE`, `WET`). |
+| `TyreLife` | `int` | Number of laps driven on this set of tires. |
+| `FreshTyre` | `bool` | `True` if the set was new when fitted. |
+| `Stint` | `int` | The stint number (starts at 1). |
+
+### Status & Metadata
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `Driver` | `str` | 3-letter driver identifier (e.g., `VER`). |
+| `DriverNumber` | `str` | The car number (e.g., `33`, `44`). |
+| `Team` | `str` | Team name. |
+| `Position` | `int` | Running position at the end of the lap. |
+| `TrackStatus` | `str` | Status codes (1=Green, 2=Yellow, 4=SC, 6=VSC). |
+| `IsPersonalBest` | `bool` | Whether this was the driver's fastest valid lap. |
+| `IsAccurate` | `bool` | `True` if timing data passed basic accuracy checks. |
+| `Deleted` | `bool` | `True` if the lap was deleted (e.g., track limits). |
+| `DeletedReason` | `str` | Reason for lap deletion if applicable. |
+| `FastF1Generated` | `bool` | `True` if the lap was interpolated to fill gaps. |
+
+---
+
+## 🎯 Telemetry Data (`lap.telemetry`)
+
+High-frequency samples (approx. 4Hz) recorded throughout a lap.
+
+### Car Metrics
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Time` | `float` | Seconds | Time from the start of the lap. |
+| `Speed` | `float` | km/h | Current speed of the car. |
+| `RPM` | `int` | RPM | Engine revolutions per minute. |
+| `nGear` | `int` | - | Current gear (1-8, 0 for Neutral, -1 for Reverse). |
+| `Throttle` | `float` | % | Throttle pedal position (0-100). |
+| `Brake` | `bool` | - | `True` if the brake pedal is being pressed. |
+| `DRS` | `int` | - | DRS status (0=Off, 10+=On/Open). |
+
+### Spatial Data
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Distance` | `float` | Meters | Distance driven since the start of the lap. |
+| `RelativeDistance`| `float` | - | Normalized distance (0.0 to 1.0). |
+| `X`, `Y`, `Z` | `float` | Meters | 3D coordinates of the car on the track. |
+
+### Acceleration (G-Forces)
+These are mathematically derived and smoothed from position and speed data.
+
+| Column | Direction | Computation Formula |
+| :--- | :--- | :--- |
+| `AccelerationX` | Longitudinal | `ax = gradient(v_ms) / gradient(time)` |
+| `AccelerationY` | Lateral | `ay = v² × Curvature` |
+| `AccelerationZ` | Vertical | `az = v² × Vertical_Curvature` |
+
+<Note>
+  Longitudinal acceleration is smoothed with a 3-point moving average. Lateral and Vertical are smoothed with a 9-point moving average to reduce noise.
+</Note>
+
+---
+
+## 🌡️ Weather Data (`session.weather`)
+
+Environmental conditions recorded once per minute.
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Time` | `float` | Seconds | Time since session start. |
+| `AirTemp` | `float` | °C | Ambient air temperature. |
+| `TrackTemp` | `float` | °C | Asphalt surface temperature. |
+| `Humidity` | `float` | % | Relative humidity. |
+| `Pressure` | `float` | mbar | Atmospheric pressure. |
+| `Rainfall` | `bool` | - | `True` if it is currently raining. |
+| `WindDirection` | `int` | ° | Compass bearing (0-359). |
+| `WindSpeed` | `float` | m/s | Current wind speed. |
+
+---
+
+## 🚩 Race Control (`session.race_control_messages`)
+
+Official messages issued during the session.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `Time` | `float` | Time since session start. |
+| `Category` | `str` | Message type (`Flag`, `Drs`, `CarEvent`). |
+| `Message` | `str` | Human-readable description. |
+| `Flag` | `str` | Type of flag (`GREEN`, `YELLOW`, `RED`, etc.). |
+| `Scope` | `str` | Impact area (`Track`, `Sector`, `Driver`). |
+| `Sector` | `int` | The affected mini-sector (1-24). |
+| `Driver` | `str` | The affected driver (if applicable). |

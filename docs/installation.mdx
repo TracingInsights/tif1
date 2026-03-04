@@ -1,0 +1,116 @@
+---
+title: "Installation"
+icon: "download"
+description: "How to install and configure tif1"
+keywords:
+  - "install tif1"
+  - "pip install tif1"
+  - "Python F1 library"
+  - "F1 data library"
+  - "polars"
+  - "pandas"
+  - "uv package manager"
+---
+
+## Requirements
+
+- **Python:** 3.10 or higher
+- **OS:** Windows, macOS, or Linux
+
+## Quick Install
+
+<Steps>
+  <Step title="Choose your package manager">
+    `tif1` is available on PyPI and can be installed with your favorite package manager.
+    <CodeGroup>
+      ```bash pip
+      pip install tif1
+```bash
+      ```bash uv
+      uv add tif1
+```bash
+      ```bash poetry
+      poetry add tif1
+```bash
+    </CodeGroup>
+  </Step>
+  <Step title="Install Optional Extras">
+    Enhance `tif1` with high-performance backends:
+    ```bash
+    # Highly recommended for speed
+    pip install "tif1[polars]"
+```python
+  </Step>
+  <Step title="Verify Installation">
+    Run a quick check to ensure everything is working:
+    ```python
+    import tif1
+    print(f"tif1 version: {tif1.__version__}")
+    print(f"2025 Events: {len(tif1.get_events(2025))}")
+```yaml
+  </Step>
+</Steps>
+
+---
+
+## Configuration
+
+### Environment Variables
+You can configure `tif1` using environment variables. These are useful for CI/CD environments.
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `TIF1_CACHE_DIR` | Path to the cache directory | `~/.tif1/cache` |
+| `TIF1_LIB` | Default data lib (`pandas` or `polars`) | `pandas` |
+| `TIF1_ENABLE_CACHE` | Enable or disable caching (`true`/`false`) | `true` |
+| `TIF1_ULTRA_COLD_START` | Enable ultra-low latency mode | `false` |
+
+### Config File (.tif1rc)
+For permanent settings, create a `.tif1rc` (JSON) file in your home directory:
+
+```json
+{
+  "lib": "polars",
+  "max_retries": 5,
+  "enable_cache": true
+}
+```python
+
+---
+
+## Advanced Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="HTTP/2 SSL Errors">
+    `tif1` uses `niquests` for HTTP/2 support. If you encounter SSL errors, ensure your system's `openssl` is up to date and that your certificate store is correctly configured.
+  </Accordion>
+  <Accordion title="SQLite Database Locking">
+    If you see "database is locked" errors, it usually means multiple processes are trying to write to the cache simultaneously. `tif1` uses WAL mode to mitigate this, but extremely high concurrency on slow disks may still trigger it.
+  </Accordion>
+  <Accordion title="Polars Version Mismatch">
+    Ensure you are using `polars>=1.36.0` to avoid compatibility issues with `tif1`'s categorical optimization.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  Using the **Polars** lib can reduce memory usage by up to **50%** when processing full race telemetry.
+</Tip>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart">
+    Start using tif1
+  </Card>
+  <Card title="Configuration" href="/api-reference/config">
+    Configure tif1
+  </Card>
+  <Card title="Troubleshooting" href="/reference/troubleshooting">
+    Solve common issues
+  </Card>
+  <Card title="Environment Variables" href="/reference/environment-variables">
+    Configure via env vars
+  </Card>
+</CardGroup>

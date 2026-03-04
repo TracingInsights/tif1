@@ -1,0 +1,136 @@
+---
+title: "Introduction"
+icon: "flag-checkered"
+description: "A faster alternative to fastf1 with the same bindings"
+keywords:
+  - "tif1"
+  - "Formula 1 data"
+  - "F1 telemetry"
+  - "F1 data analysis"
+  - "fastf1 alternative"
+  - "racing data"
+  - "Python F1 library"
+---
+
+<img
+  className="block dark:hidden"
+  src="/logo/light.svg"
+  alt="tif1 - High-performance Formula 1 data analysis library for Python"
+/>
+<img
+  className="hidden dark:block"
+  src="/logo/dark.svg"
+  alt="tif1 - High-performance Formula 1 data analysis library for Python"
+/>
+
+# Welcome to tif1
+
+`tif1` is a high-performance Python library designed for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from the TracingInsights (2018-current).
+
+Built as a faster alternative to `fastf1`, it maintains API compatibility while introducing massive performance improvements through asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
+
+## Why tif1?
+
+<CardGroup cols={2}>
+  <Card title="Blazing Fast" icon="bolt">
+    4-5x faster data loading with parallel async requests and HTTP/2.
+  </Card>
+  <Card title="API Compatible" icon="code">
+    Same bindings as `fastf1`, making migration a breeze.
+  </Card>
+  <Card title="Flexible Backends" icon="database">
+    Choose between **Pandas** for compatibility or **Polars** for 2x faster processing.
+  </Card>
+  <Card title="Advanced Caching" icon="shield-check">
+    Multi-layer caching using in-memory LRU and SQLite for persistent storage.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+- **Fast**: Direct CDN access via jsDelivr with SQLite caching
+- **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and more
+- **Historical**: Data from 2018-current
+- **Reliable**: Automatic retry logic with circuit breaker and CDN fallback
+- **Async**: Parallel data fetching for better performance
+- **HTTP/2**: Uses niquests for 20-30% faster network requests
+- **Flexible**: Supports both pandas and polars backends
+- **Type-Safe**: Comprehensive type hints for IDE support
+- **Jupyter-Ready**: Rich HTML display in notebooks
+
+## Performance Comparison
+
+| Operation | fastf1 | tif1 (Async) | Speedup |
+| :--- | :--- | :--- | :--- |
+| Load 20 Drivers Laps | ~12.0s | ~2.5s | **4.8x** |
+| Load 20 Drivers Telemetry | ~11.2s | ~0.4s | **28x** |
+| Hot Cache Load | ~1.0s | ~0.05s | **20x** |
+
+## Core Architecture
+
+`tif1` uses a modern networking stack and a multi-tiered caching strategy to ensure you spend less time waiting for data and more time analyzing it.
+
+```mermaid
+graph TD
+    User[User Script] --> Session[tif1 Session]
+    Session --> MemCache[Memory LRU Cache]
+    MemCache -- Miss --> SQLite[SQLite Persistent Cache]
+    SQLite -- Miss --> CDN[TracingInsights CDN]
+    CDN --> JS[jsDelivr / GitHub]
+    JS -- Data --> SQLite
+    SQLite -- Data --> MemCache
+    MemCache -- Data --> Session
+```yaml
+
+## Data Available
+
+- Lap times and sectors (S1, S2, S3) with LapTime as Timedelta and LapTimeSeconds as numeric helper
+- Tire compounds and stint information
+- Telemetry: speed, throttle, brake, RPM, gear, DRS
+- Position data (X, Y, Z coordinates)
+- Acceleration data (X, Y, Z axes)
+- Weather data automatically included in laps
+- Driver metadata with team colors and headshots
+- Race control messages
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get tif1 installed on your system.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Load your first session in under 30 seconds.
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Common patterns and code examples.
+  </Card>
+  <Card title="Migration Guide" icon="arrow-right-arrow-left" href="/migration-from-fastf1">
+    Coming from fastf1? See what's different.
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/overview">
+    Explore the full power of the tif1 API.
+  </Card>
+  <Card title="Tutorials" icon="graduation-cap" href="/tutorials/race-pace-analysis">
+    Learn with detailed analysis examples.
+  </Card>
+</CardGroup>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Installation" href="/installation">
+    Get tif1 installed
+  </Card>
+  <Card title="Quickstart" href="/quickstart">
+    Load your first session
+  </Card>
+  <Card title="API Reference" href="/api-reference/overview">
+    Explore the API
+  </Card>
+  <Card title="Tutorials" href="/tutorials/race-analysis">
+    Learn with examples
+  </Card>
+</CardGroup>

@@ -1,0 +1,426 @@
+---
+title: "Caching Strategy"
+icon: "database"
+description: "Understanding tif1 multi-layer caching system"
+keywords:
+  - "caching strategy"
+  - "cache architecture"
+  - "SQLite cache"
+  - "LRU cache"
+---
+
+`tif1` uses a sophisticated multi-layer caching system to minimize network requests and maximize performance.
+
+## Cache Architecture
+
+```mermaid
+graph TD
+    A[User Request] --> B{Memory Cache?}
+    B -->|Hit| C[Return Data]
+    B -->|Miss| D{SQLite Cache?}
+    D -->|Hit| E[Load to Memory]
+    E --> C
+    D -->|Miss| F[Fetch from CDN]
+    F --> G[Store in SQLite]
+    G --> E
+```python
+
+## Layer 1: Memory Cache (LRU)
+
+The first layer is an in-memory LRU (Least Recently Used) cache that stores recently accessed data.
+
+### Characteristics
+
+- Fastest access (microseconds)
+- Limited size (default: 100 items)
+- Process-specific (not shared across processes)
+- Cleared when process exits
+
+### Configuration
+
+```python
+import tif1
+
+# Configure memory cache size
+config = tif1.get_config()
+config.memory_cache_size = 200  # Store 200 items
+
+# Or via environment variable
+# export TIF1_MEMORY_CACHE_SIZE=200
+```yaml
+
+### What gets cached
+
+- Session metadata
+- Lap DataFrames
+- Telemetry DataFrames
+- Weather data
+- Race control messages
+
+### Cache Keys
+
+Cache keys are generated from request parameters:
+
+```python
+# Key format: {year}_{event}_{session_type}_{data_type}
+# Example: 2025_monaco_race_laps
+```yaml
+
+## Layer 2: sqlite persistent cache
+
+The second layer is a SQLite database that persists data across sessions.
+
+### Characteristics
+
+- Fast access (milliseconds)
+- Unlimited size (disk-limited)
+- Shared across processes
+- Survives process restarts
+
+### Location
+
+Default cache location:
+
+```bash
+~/.tif1/cache/tif1_cache.db
+```python
+
+Custom location:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.cache_dir = "/custom/cache/path"
+```yaml
+
+### Schema
+
+The cache database has a simple schema:
+
+```sql
+CREATE TABLE cache (
+    key TEXT PRIMARY KEY,
+    value BLOB,
+    created_at TIMESTAMP,
+    accessed_at TIMESTAMP,
+    size_bytes INTEGER
+);
+
+CREATE INDEX idx_accessed_at ON cache(accessed_at);
+```python
+
+### Data Storage
+
+Data is stored as compressed Parquet blobs:
+
+1. DataFrame → Parquet bytes
+2. Compress with zstd
+3. Store in SQLite BLOB column
+
+This provides:
+- Fast serialization/deserialization
+- Efficient compression (60-80% size reduction)
+- Type preservation
+
+## Cache Operations
+
+### Reading from Cache
+
+```python
+import tif1
+
+# First access - fetches from CDN
+session = tif1.get_session(2025, "Monaco", "Race")
+laps = session.laps  # ~2.5s (cold)
+
+# Second access - from SQLite cache
+session2 = tif1.get_session(2025, "Monaco", "Race")
+laps2 = session2.laps  # ~50ms (warm)
+
+# Third access - from memory cache
+laps3 = session2.laps  # ~1ms (hot)
+```python
+
+### Cache Statistics
+
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Get cache stats
+stats = cache.get_stats()
+print(f"Total entries: {stats['total_entries']}")
+print(f"Total size: {stats['total_size_mb']:.2f} MB")
+print(f"Hit rate: {stats['hit_rate']:.1%}")
+```python ### Clearing Cache
+
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Clear all cache
+cache.clear()
+
+# Clear specific session
+cache.clear_session(2025, "Monaco", "Race")
+
+# Clear old entries (older than 30 days)
+cache.clear_old(days=30)
+```python
+
+## Cache Invalidation
+
+### Manual Invalidation
+
+```python
+import tif1
+
+# Disable cache for specific request
+session = tif1.get_session(
+    2025,
+    "Monaco",
+    "Race",
+    enable_cache=False  # Skip cache, always fetch fresh
+)
+```python
+
+### Automatic Invalidation
+
+Cache entries are automatically invalidated when:
+
+1. Data structure changes (detected by schema version)
+2. CDN data is updated (detected by ETag/Last-Modified headers)
+3. Cache corruption is detected
+
+### Time-Based Invalidation
+
+```python
+import tif1
+from datetime import timedelta
+
+config = tif1.get_config()
+
+# Set cache TTL (time to live)
+config.cache_ttl = timedelta(days=7)
+
+# Entries older than 7 days will be refetched
+```python
+
+## Cache Warming
+
+Pre-populate cache for better performance.
+
+### Warm entire season
+
+```python
+import tif1
+import asyncio
+
+async def warm_season(year: int):
+    """Pre-cache all races for a season."""
+    events = tif1.get_events(year)
+
+    tasks = []
+    for event in events:
+        session = tif1.get_session(year, event, "Race")
+        tasks.append(session.laps_async())
+
+    await asyncio.gather(*tasks)
+    print(f"Cached {len(events)} races")
+
+# Run warming
+asyncio.run(warm_season(2025))
+```python
+
+### Warm specific data
+
+```python
+import tif1
+
+def warm_telemetry(year: int, event: str):
+    """Pre-cache telemetry for all drivers."""
+    session = tif1.get_session(year, event, "Race")
+
+    # This fetches and caches all telemetry
+    tels = session.get_fastest_laps_tels(by_driver=True)
+
+    print(f"Cached telemetry for {len(tels)} drivers")
+
+warm_telemetry(2025, "Monaco")
+```python
+
+## Cache Performance
+
+### Benchmark Results
+
+| Operation | Cold Cache | Warm Cache | Hot Cache |
+| :--- | :--- | :--- | :--- |
+| Load 20 drivers laps | ~2.5s | ~50ms | ~1ms |
+| Load telemetry | ~400ms | ~20ms | ~1ms |
+| Load weather | ~100ms | ~5ms | &lt;1ms |
+
+### Memory Usage
+
+Typical memory usage per cached session:
+
+- Lap data: 2-5 MB
+- Telemetry (all drivers): 10-20 MB
+- Weather: &lt;1 MB
+- Race control: &lt;1 MB
+
+## Cache Maintenance
+
+### Monitoring cache size
+
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Check cache size
+size_mb = cache.get_size_mb()
+print(f"Cache size: {size_mb:.2f} MB")
+
+# List cached sessions
+sessions = cache.list_sessions()
+for session in sessions:
+    print(f"{session['year']} {session['event']} - {session['size_mb']:.2f} MB")
+```python
+
+### Automatic Cleanup
+
+Configure automatic cleanup:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable automatic cleanup
+config.cache_auto_cleanup = True
+
+# Max cache size (in MB)
+config.cache_max_size_mb = 1000
+
+# When cache exceeds max size, remove oldest entries
+```python
+
+## Cache in Production
+
+### Shared Cache
+
+For multi-process applications, use a shared cache directory:
+
+```python
+import tif1
+
+# All processes use same cache
+config = tif1.get_config()
+config.cache_dir = "/shared/cache/tif1"
+```python ### Read-Only Cache
+
+For read-only deployments:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.cache_readonly = True  # Prevent writes
+
+# Will read from cache but not write new entries
+```python
+
+### Cache Replication
+
+Replicate cache across servers:
+
+```bash
+# On server 1: export cache
+tar -czf tif1_cache.tar.gz ~/.tif1/cache/
+
+# On server 2: import cache
+tar -xzf tif1_cache.tar.gz -C ~/
+```python
+
+## Troubleshooting
+
+### Cache Corruption
+
+If you encounter cache errors:
+
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Verify cache integrity
+if not cache.verify():
+    print("Cache corrupted, clearing...")
+    cache.clear()
+```python
+
+### Cache Not Working
+
+Check cache configuration:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+print(f"Cache enabled: {config.cache_enabled}")
+print(f"Cache dir: {config.cache_dir}")
+print(f"Cache writable: {os.access(config.cache_dir, os.W_OK)}")
+```python
+
+### Performance Issues
+
+If cache is slow:
+
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Rebuild cache indexes
+cache.rebuild_indexes()
+
+# Vacuum database (reclaim space)
+cache.vacuum()
+```python
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Cache Enabled" icon="bolt">
+    Only disable for debugging or testing.
+  </Card>
+  <Card title="Warm Critical Data" icon="fire">
+    Pre-cache frequently accessed sessions.
+  </Card>
+  <Card title="Monitor Size" icon="chart-line">
+    Set up alerts for cache size limits.
+  </Card>
+  <Card title="Regular Cleanup" icon="broom">
+    Clear old entries periodically.
+  </Card>
+</CardGroup>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Cache API" href="/api-reference/cache">
+    Cache management
+  </Card>
+  <Card title="Performance" href="/advanced/performance">
+    Optimization
+  </Card>
+  <Card title="Architecture" href="/architecture">
+    System design
+  </Card>
+</CardGroup>

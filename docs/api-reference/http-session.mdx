@@ -1,0 +1,305 @@
+---
+title: "HTTP Session"
+icon: "network-wired"
+description: "Shared HTTP session management with connection pooling and DoH support"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The http_session module manages a shared HTTP session with optimized connection pooling, DNS-over-HTTPS (DoH) fallback, and connection reuse tracking.
+
+## `get_session`
+
+```python
+def get_session() -> niquests.Session
+```python
+
+Get or create the shared HTTP session (thread-safe singleton).
+
+**Returns:**
+- Shared `niquests.Session` instance with optimized settings
+
+**Example:**
+```python
+from tif1.http_session import get_session
+
+session = get_session()
+response = session.get("https://example.com")
+```python
+
+<Note>
+  This is an internal API. Most users don't need to interact with the HTTP session directly. The library handles all HTTP requests automatically.
+</Note>
+
+---
+
+## `close_session`
+
+```python
+def close_session() -> None
+```python
+
+Close the shared HTTP session and cleanup resources. Called automatically on exit.
+
+**Example:**
+```python
+from tif1.http_session import close_session
+
+# Manually close session (rarely needed)
+close_session()
+```python
+
+---
+
+## Connection Statistics
+
+### `get_connection_stats`
+
+```python
+def get_connection_stats() -> dict[str, Any]
+```python
+
+Get current connection pool statistics for monitoring and debugging.
+
+**Returns:**
+- Dictionary with connection metrics:
+  - `total_requests`: Total number of requests made
+  - `connections_reused`: Number of requests that reused connections
+  - `connections_created`: Number of connection pools created
+  - `reuse_rate`: Percentage of requests that reused connections (0-100)
+
+**Example:**
+```python
+from tif1.http_session import get_connection_stats
+
+stats = get_connection_stats()
+print(f"Total requests: {stats['total_requests']}")
+print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
+```python
+
+### `reset_connection_stats`
+
+```python
+def reset_connection_stats() -> None
+```python
+
+Reset connection statistics. Useful for testing or benchmarking.
+
+**Example:**
+```python
+from tif1.http_session import reset_connection_stats
+
+reset_connection_stats()
+```python ---
+
+## Configuration
+
+The HTTP session is configured via the global config object. Key settings:
+
+| Config Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `http_multiplexed` | `bool` | `False` | Enable HTTP/2 multiplexing |
+| `http_disable_http3` | `bool` | `False` | Disable HTTP/3 support |
+| `pool_connections` | `int` | `256` | Number of connection pools |
+| `pool_maxsize` | `int` | `512` | Maximum connections per pool |
+| `keepalive_timeout` | `int` | `120` | Keep-alive timeout in seconds |
+| `keepalive_max_requests` | `int` | `1000` | Max requests per connection |
+| `user_agent` | `str` | `"tif1/0.1.0"` | User-Agent header |
+| `http_resolvers` | `list[str]` | `["standard", "doh://cloudflare", "doh://google"]` | DNS resolvers with DoH fallback |
+
+**Example:**
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable HTTP/2 multiplexing
+config.set("http_multiplexed", True)
+
+# Increase connection pool size
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+
+# Configure DNS resolvers
+config.set("http_resolvers", ["standard", "doh://cloudflare"])
+```python
+
+---
+
+## DNS-over-HTTPS (DoH) Support
+
+The HTTP session automatically falls back to DoH resolvers if standard DNS fails. This improves reliability in restrictive network environments.
+
+**Default resolver order:**
+1. Standard DNS
+2. Cloudflare DoH (`doh://cloudflare`)
+3. Google DoH (`doh://google`)
+
+**Custom resolvers:**
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use only DoH
+config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+
+# Use only standard DNS
+config.set("http_resolvers", ["standard"])
+
+# Custom DoH provider
+config.set("http_resolvers", ["standard", "doh://custom-provider"])
+```python
+
+---
+
+## Connection Pooling
+
+The HTTP session uses aggressive connection pooling for maximum performance:
+
+- **Connection reuse**: Keeps connections alive for multiple requests
+- **Pool sizing**: Dynamically sized based on concurrency settings
+- **Keep-alive**: Configurable timeout and max requests per connection
+- **Thread-safe**: Single shared session across all threads
+
+**Performance benefits:**
+- Eliminates TCP handshake overhead
+- Reduces TLS negotiation time
+- Improves throughput for parallel requests
+- Lowers latency for sequential requests
+
+**Example monitoring:**
+```python
+import tif1
+from tif1.http_session import get_connection_stats
+
+# Load session data
+session = tif1.get_session(2025, "Monaco", "Race")
+laps = session.laps
+
+# Check connection reuse
+stats = get_connection_stats()
+print(f"Requests: {stats['total_requests']}")
+print(f"Reused: {stats['connections_reused']}")
+print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
+```python
+
+---
+
+## Advanced Configuration
+
+### HTTP/2 Multiplexing
+
+Enable HTTP/2 multiplexing to send multiple requests over a single connection:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.set("http_multiplexed", True)
+```python
+
+<Warning>
+  HTTP/2 multiplexing can improve performance but may cause issues with some CDN configurations. Test thoroughly before enabling in production.
+</Warning>
+
+### Custom pool sizing
+
+Adjust pool size based on your concurrency needs:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# For high concurrency (e.g., loading full season data)
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+
+# For low concurrency (e.g., single session analysis)
+config.set("pool_connections", 64)
+config.set("pool_maxsize", 256)
+```python
+
+### Keep-Alive Tuning
+
+Adjust keep-alive settings for different network conditions:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Longer keep-alive for stable connections
+config.set("keepalive_timeout", 300)
+config.set("keepalive_max_requests", 5000)
+
+# Shorter keep-alive for unstable connections
+config.set("keepalive_timeout", 30)
+config.set("keepalive_max_requests", 100)
+```python
+
+---
+
+## Troubleshooting
+
+### Connection pool exhaustion
+
+If you see connection pool warnings, increase pool size:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.set("pool_maxsize", 1024)
+```python
+
+### DNS Resolution Failures
+
+If standard DNS fails, DoH fallback activates automatically. To force DoH:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+```python ### Connection reuse issues
+
+Monitor connection reuse rate to identify issues:
+
+```python
+from tif1.http_session import get_connection_stats
+
+stats = get_connection_stats()
+if stats['reuse_rate'] < 50:
+    print("Warning: Low connection reuse rate")
+    print("Consider increasing keepalive_timeout")
+```yaml
+
+---
+
+## Best Practices
+
+1. **Don't create multiple sessions**: Use the shared session for all requests
+2. **Monitor connection stats**: Track reuse rate to optimize performance
+3. **Tune pool size**: Match pool size to your concurrency needs
+4. **Use DoH in restrictive networks**: Configure DoH resolvers for reliability
+5. **Enable HTTP/2 carefully**: Test thoroughly before enabling multiplexing
+6. **Let the library manage cleanup**: Session closes automatically on exit
+
+---
+
+## Summary
+
+The http_session module provides:
+- Shared HTTP session with connection pooling
+- DNS-over-HTTPS fallback for reliability
+- Connection reuse tracking and statistics
+- Configurable pool sizing and keep-alive
+- Thread-safe singleton pattern
+- Automatic resource cleanup
+
+This infrastructure enables high-performance data fetching with minimal latency.

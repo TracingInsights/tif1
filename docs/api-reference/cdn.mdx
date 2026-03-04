@@ -1,0 +1,432 @@
+---
+title: "CDN API"
+icon: "cloud"
+description: "Multi-source CDN management with automatic fallback and minification"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `cdn` module manages multiple CDN sources with automatic fallback when a source fails. It provides resilient data fetching with health tracking and priority-based source selection.
+
+## Overview
+
+The CDN system provides:
+- **Multi-source fallback**: Automatically tries alternative CDNs if primary fails
+- **Health tracking**: Disables sources after repeated failures
+- **Priority-based routing**: Uses highest-priority available source
+- **Minification support**: Optional JSON minification for reduced bandwidth
+- **Configurable sources**: Add custom CDN endpoints
+
+<Warning>
+  Never use `raw.githubusercontent.com` as a CDN source. It has strict rate limits and is not supported by tif1.
+</Warning>
+
+---
+
+## `get_cdn_manager`
+
+```python
+def get_cdn_manager() -> CDNManager
+```
+
+Returns the global CDN manager singleton instance.
+
+**Returns:**
+- `CDNManager` singleton
+
+**Example:**
+```python
+from tif1.cdn import get_cdn_manager
+
+cdn = get_cdn_manager()
+print(f"Active sources: {len(cdn.get_sources())}")
+
+# Check source health
+for source in cdn.get_sources():
+    print(f"{source.name}: priority={source.priority}, enabled={source.enabled}")
+```
+
+---
+
+## CDNManager
+
+The CDN manager handles source selection, fallback logic, and health tracking.
+
+### Methods
+
+#### `get_sources()`
+
+```python
+def get_sources() -> list[CDNSource]
+```
+
+Get enabled CDN sources sorted by priority, excluding sources that have exceeded failure threshold.
+
+**Returns:**
+- List of available `CDNSource` objects
+
+**Example:**
+```python
+cdn = get_cdn_manager()
+sources = cdn.get_sources()
+
+for source in sources:
+    print(f"{source.name}: {source.base_url}")
+    print(f"  Priority: {source.priority}")
+    print(f"  Minification: {source.use_minification}")
+```
+
+---
+
+#### `add_source()`
+
+```python
+def add_source(source: CDNSource) -> None
+```
+
+Add a new CDN source to the manager. Sources are automatically sorted by priority.
+
+**Parameters:**
+- `source`: CDNSource object to add
+
+**Example:**
+```python
+from tif1.cdn import get_cdn_manager, CDNSource
+
+cdn = get_cdn_manager()
+
+# Add custom CDN
+custom_source = CDNSource(
+    name="Custom CDN",
+    base_url="https://custom.cdn.com/f1data",
+    priority=2,
+    enabled=True,
+    use_minification=False
+)
+cdn.add_source(custom_source)
+
+print(f"Total sources: {len(cdn.sources)}")
+```
+
+---
+
+#### `mark_failure()`
+
+```python
+def mark_failure(source_name: str) -> None
+```
+
+Mark a CDN source as failed. After reaching the failure threshold (default: 3), the source is automatically disabled.
+
+**Parameters:**
+- `source_name`: Name of the CDN source
+
+**Example:**
+```python
+cdn = get_cdn_manager()
+
+# Simulate failure
+cdn.mark_failure("jsDelivr")
+
+# Check if source is still available
+sources = cdn.get_sources()
+print(f"Available sources: {[s.name for s in sources]}")
+```
+
+---
+
+#### `mark_success()`
+
+```python
+def mark_success(source_name: str) -> None
+```
+
+Reset failure count for a CDN source, indicating successful data fetch.
+
+**Parameters:**
+- `source_name`: Name of the CDN source
+
+**Example:**
+```python
+cdn = get_cdn_manager()
+
+# Mark successful fetch
+cdn.mark_success("jsDelivr")
+```
+
+---
+
+#### `reset()`
+
+```python
+def reset() -> None
+```
+
+Reset all failure counts for all CDN sources, re-enabling previously disabled sources.
+
+**Example:**
+```python
+cdn = get_cdn_manager()
+
+# Reset all sources after network issues resolved
+cdn.reset()
+
+print(f"All sources re-enabled: {len(cdn.get_sources())}")
+```
+
+---
+
+#### `try_sources()`
+
+```python
+def try_sources(
+    year: int,
+    gp: str,
+    session: str,
+    path: str,
+    fetch_func: Callable[[str], Any]
+) -> Any
+```
+
+Try fetching data from CDN sources with automatic fallback. This is the core method that implements the multi-source fallback logic.
+
+**Parameters:**
+- `year`: Season year (e.g., 2021)
+- `gp`: Grand Prix name, URL-encoded (e.g., "Belgian%20Grand%20Prix")
+- `session`: Session name (e.g., "Race", "Qualifying")
+- `path`: Resource path (e.g., "drivers.json", "laps.json")
+- `fetch_func`: Function that takes a URL and returns the fetched data
+
+**Returns:**
+- Fetched data from the first successful CDN source
+
+**Raises:**
+- `DataNotFoundError`: If resource doesn't exist (404)
+- `NetworkError`: If all CDN sources fail
+
+**Example:**
+```python
+from tif1.cdn import get_cdn_manager
+import requests
+
+cdn = get_cdn_manager()
+
+def fetch_json(url: str) -> dict:
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+# Fetch 2021 Belgian Grand Prix Race drivers
+data = cdn.try_sources(
+    year=2021,
+    gp="Belgian%20Grand%20Prix",
+    session="Race",
+    path="drivers.json",
+    fetch_func=fetch_json
+)
+
+print(f"Fetched {len(data.get('drivers', []))} drivers")
+```
+
+---
+
+## CDNSource
+
+Dataclass representing a CDN source configuration.
+
+### Constructor
+
+```python
+@dataclass
+class CDNSource:
+    name: str
+    base_url: str
+    priority: int = 0
+    enabled: bool = True
+    use_minification: bool = False
+```
+
+**Attributes:**
+- `name`: Human-readable source name
+- `base_url`: Base URL for the CDN (must be HTTPS)
+- `priority`: Priority level (lower number = higher priority, default: 0)
+- `enabled`: Whether source is currently enabled (default: True)
+- `use_minification`: Enable JSON minification (appends `.min` before `.json`, default: False)
+
+**Example:**
+```python
+from tif1.cdn import CDNSource
+
+# Primary source with minification
+primary = CDNSource(
+    name="jsDelivr",
+    base_url="https://cdn.jsdelivr.net/gh/TracingInsights",
+    priority=1,
+    enabled=True,
+    use_minification=True
+)
+```
+
+---
+
+### Methods
+
+#### `format_url()`
+
+```python
+def format_url(year: int, gp: str, session: str, path: str) -> str
+```
+
+Format a complete CDN URL for a specific resource with optional minification support.
+
+**Parameters:**
+- `year`: Season year (e.g., 2021)
+- `gp`: Grand Prix name, URL-encoded (e.g., "Belgian%20Grand%20Prix")
+- `session`: Session name (e.g., "Race", "Qualifying")
+- `path`: Resource path (e.g., "drivers.json")
+
+**Returns:**
+- Complete CDN URL string
+
+**URL Format:**
+```
+{base_url}/{year}@main/{gp}/{session}/{path}
+```
+
+If `use_minification=True` and path ends with `.json`, the path is transformed from `file.json` to `file.min.json`.
+
+**Example:**
+```python
+from tif1.cdn import CDNSource
+
+# Without minification
+source = CDNSource(
+    name="jsDelivr",
+    base_url="https://cdn.jsdelivr.net/gh/TracingInsights",
+    use_minification=False
+)
+
+url = source.format_url(
+    year=2021,
+    gp="Belgian%20Grand%20Prix",
+    session="Race",
+    path="drivers.json"
+)
+# Result: https://cdn.jsdelivr.net/gh/TracingInsights/2021@main/Belgian%20Grand%20Prix/Race/drivers.json
+
+# With minification
+minified_source = CDNSource(
+    name="jsDelivr",
+    base_url="https://cdn.jsdelivr.net/gh/TracingInsights",
+    use_minification=True
+)
+
+minified_url = minified_source.format_url(
+    year=2021,
+    gp="Belgian%20Grand%20Prix",
+    session="Race",
+    path="drivers.json"
+)
+# Result: https://cdn.jsdelivr.net/gh/TracingInsights/2021@main/Belgian%20Grand%20Prix/Race/drivers.min.json
+```
+
+---
+
+## Configuration
+
+CDN behavior can be configured via the global config:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Set custom CDN sources
+config.set("cdns", [
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://backup.cdn.com/f1data"
+])
+
+# Enable minification for bandwidth savings
+config.set("cdn_use_minification", True)
+
+# Save configuration
+config.save()
+```
+
+---
+
+## Practical Example: 2021 Belgian Grand Prix
+
+Here's a complete example showing how the CDN system works when fetching data for the 2021 Belgian Grand Prix Race:
+
+```python
+from tif1.cdn import get_cdn_manager, CDNSource
+
+# Get the global CDN manager
+cdn = get_cdn_manager()
+
+# Check available sources
+print("Available CDN sources:")
+for source in cdn.get_sources():
+    print(f"  {source.name} (priority {source.priority})")
+
+# Add a backup CDN source
+backup = CDNSource(
+    name="Backup CDN",
+    base_url="https://backup.example.com/f1data",
+    priority=2,
+    enabled=True,
+    use_minification=False
+)
+cdn.add_source(backup)
+
+# Format URL for Belgian GP 2021 Race drivers data
+primary_source = cdn.get_sources()[0]
+url = primary_source.format_url(
+    year=2021,
+    gp="Belgian%20Grand%20Prix",
+    session="Race",
+    path="drivers.json"
+)
+print(f"\nFetching from: {url}")
+
+# The CDN manager automatically handles fallback
+# If jsDelivr fails, it tries the backup source
+def fetch_data(url: str) -> dict:
+    import requests
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+try:
+    data = cdn.try_sources(
+        year=2021,
+        gp="Belgian%20Grand%20Prix",
+        session="Race",
+        path="drivers.json",
+        fetch_func=fetch_data
+    )
+    print(f"Successfully fetched data with {len(data.get('drivers', []))} drivers")
+except Exception as e:
+    print(f"All CDN sources failed: {e}")
+
+# Check source health after fetch
+print("\nCDN source health:")
+for source in cdn.sources:
+    failures = cdn._failure_counts.get(source.name, 0)
+    status = "healthy" if failures < 3 else "disabled"
+    print(f"  {source.name}: {failures} failures ({status})")
+```
+
+---
+
+## Related APIs
+
+- **[HTTP Session API](/api-reference/http)**: Underlying HTTP client
+- **[Retry API](/api-reference/retry)**: Retry logic and circuit breaker
+- **[Config API](/api-reference/config)**: CDN configuration
+- **[Exceptions API](/api-reference/exceptions)**: NetworkError and DataNotFoundError

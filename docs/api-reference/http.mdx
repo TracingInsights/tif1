@@ -1,0 +1,483 @@
+---
+title: "HTTP & Networking"
+icon: "globe"
+description: "HTTP session management, async fetching, and network utilities"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The HTTP module provides the networking layer for `tif1`, including connection pooling, async parallel fetching, and rate limiting.
+
+## HTTP Session
+
+### `get_http_session`
+
+Get the global HTTP session instance with connection pooling.
+
+```python
+def get_http_session()
+```python
+
+Returns a `niquests.Session` instance configured with:
+- Connection pooling for reuse
+- Automatic retries with exponential backoff
+- Circuit breaker protection
+- Custom headers and timeouts
+
+**Returns:**
+- Configured HTTP session instance
+
+**Example:**
+```python
+from tif1.http_session import get_http_session
+
+session = get_http_session()
+response = session.get("https://example.com/data.json")
+data = response.json()
+```python
+
+<Note>
+  The HTTP session is automatically managed. You rarely need to interact with it directly.
+</Note>
+
+---
+
+### `close_http_session`
+
+Close the global HTTP session and release connections.
+
+```python
+def close_http_session() -> None
+```python
+
+**Example:**
+```python
+from tif1.http_session import close_http_session
+import atexit
+
+# Close session on program exit
+atexit.register(close_http_session)
+```python
+
+---
+
+## Async Fetching
+
+The async fetch module provides high-performance parallel data loading using `niquests` async capabilities.
+
+### `fetch_json_async`
+
+Asynchronously fetch and parse JSON data from a URL.
+
+```python
+async def fetch_json_async(
+    url: str,
+    timeout: int | None = None,
+    validate: bool = True,
+    path: str | None = None
+) -> dict
+```python
+
+**Parameters:**
+- `url`: URL to fetch
+- `timeout`: Request timeout in seconds. If `None`, uses global config
+- `validate`: Enable Pydantic validation of response data
+- `path`: Optional path for validation context (e.g., "laps.json")
+
+**Returns:**
+- Parsed JSON data as dictionary
+
+**Raises:**
+- `NetworkError`: If request fails
+- `DataNotFoundError`: If resource returns 404
+- `InvalidDataError`: If JSON parsing or validation fails
+
+**Example:**
+```python
+import asyncio
+from tif1.async_fetch import fetch_json_async
+
+async def load_data():
+    url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race/laps_VER.json"
+    data = await fetch_json_async(url)
+    print(f"Loaded {len(data['LapNumber'])} laps")
+
+asyncio.run(load_data())
+```python
+
+---
+
+### `fetch_multiple_async`
+
+Fetch multiple URLs in parallel with rate limiting.
+
+```python
+async def fetch_multiple_async(
+    urls: list[str],
+    timeout: int | None = None,
+    validate: bool = True,
+    paths: list[str] | None = None,
+    max_concurrent: int = 10
+) -> list[dict]
+```python
+
+**Parameters:**
+- `urls`: List of URLs to fetch
+- `timeout`: Request timeout in seconds
+- `validate`: Enable validation for all responses
+- `paths`: Optional list of paths for validation context (must match urls length)
+- `max_concurrent`: Maximum concurrent requests (default: 10)
+
+**Returns:**
+- List of parsed JSON data dictionaries in same order as urls
+
+**Raises:**
+- `NetworkError`: If any request fails after retries
+
+**Example:**
+```python
+import asyncio
+from tif1.async_fetch import fetch_multiple_async
+
+async def load_multiple_drivers():
+    base_url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race"
+    urls = [
+        f"{base_url}/laps_VER.json",
+        f"{base_url}/laps_HAM.json",
+        f"{base_url}/laps_LEC.json",
+    ]
+
+    results = await fetch_multiple_async(urls)
+
+    for i, data in enumerate(results):
+        print(f"Driver {i+1}: {len(data['LapNumber'])} laps")
+
+asyncio.run(load_multiple_drivers())
+```python ---
+
+### `fetch_with_rate_limit`
+
+Fetch a single URL with rate limiting to prevent overwhelming the CDN.
+
+```python
+async def fetch_with_rate_limit(
+    url: str,
+    timeout: int | None = None
+) -> bytes
+```python
+
+**Parameters:**
+- `url`: URL to fetch
+- `timeout`: Request timeout in seconds
+
+**Returns:**
+- Raw response bytes
+
+**Example:**
+```python
+import asyncio
+from tif1.async_fetch import fetch_with_rate_limit
+
+async def fetch_raw():
+    url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race/drivers.json"
+    data = await fetch_with_rate_limit(url)
+    print(f"Fetched {len(data)} bytes")
+
+asyncio.run(fetch_raw())
+```python
+
+---
+
+### `close_session`
+
+Close the async HTTP session and release resources.
+
+```python
+def close_session() -> None
+```python
+
+**Example:**
+```python
+from tif1.async_fetch import close_session
+import atexit
+
+atexit.register(close_session)
+```python
+
+---
+
+### `cleanup_resources`
+
+Clean up all async resources including session and executor.
+
+```python
+def cleanup_resources() -> None
+```python
+
+**Example:**
+```python
+from tif1.async_fetch import cleanup_resources
+
+# At program exit
+cleanup_resources()
+```python
+
+---
+
+## Rate Limiting
+
+The async fetch module includes automatic rate limiting to prevent CDN throttling:
+
+- Maximum 10 concurrent requests by default
+- Configurable via `max_concurrent` parameter
+- Automatic backoff on rate limit errors
+- Per-session rate limiting
+
+**Example with custom concurrency:**
+```python
+import asyncio
+from tif1.async_fetch import fetch_multiple_async
+
+async def load_all_telemetry():
+    urls = [...]  # 100+ URLs
+
+    # Limit to 5 concurrent requests
+    results = await fetch_multiple_async(urls, max_concurrent=5)
+    return results
+```yaml
+
+---
+
+## Connection Pooling
+
+The HTTP session uses connection pooling for efficiency:
+
+- Reuses TCP connections across requests
+- Reduces latency for multiple requests to same host
+- Automatic connection cleanup
+- Thread-safe for concurrent use
+
+**Benefits:**
+- 30-50% faster for multiple requests
+- Lower CPU usage
+- Reduced network overhead
+
+---
+
+## Retry Logic
+
+All HTTP requests include automatic retry with exponential backoff:
+
+- Default: 3 retries
+- Backoff: 2^attempt seconds with jitter
+- Retries on: Connection errors, timeouts, 5xx errors
+- No retry on: 404 (data not found), 4xx client errors
+
+**Example retry behavior:**
+```python Attempt 1: Immediate
+Attempt 2: Wait ~2 seconds
+Attempt 3: Wait ~4 seconds
+Attempt 4: Fail with NetworkError
+```python
+
+---
+
+## Circuit breaker integration
+
+HTTP requests are protected by a circuit breaker to prevent cascading failures:
+
+- Opens after 5 consecutive failures (configurable)
+- Blocks requests for 60 seconds when open
+- Automatically tests recovery in half-open state
+- Closes on successful request
+
+See [Retry & Reliability](/api-reference/retry) for details.
+
+---
+
+## Complete Examples
+
+### Parallel session loading
+
+```python
+import asyncio
+import tif1
+from tif1.async_fetch import fetch_multiple_async
+
+async def load_session_parallel():
+    """Load all session data in parallel."""
+    session = tif1.get_session(2025, "Monaco", "Race")
+
+    base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race"
+
+    # Build URLs for all drivers
+    drivers = session.drivers
+    urls = [f"{base_url}/laps_{driver}.json" for driver in drivers]
+
+    # Fetch all in parallel
+    results = await fetch_multiple_async(urls, max_concurrent=10)
+
+    print(f"Loaded data for {len(results)} drivers")
+    return results
+
+asyncio.run(load_session_parallel())
+```python
+
+### Custom timeout handling
+
+```python
+import asyncio
+from tif1.async_fetch import fetch_json_async
+from tif1.exceptions import NetworkError
+
+async def fetch_with_custom_timeout():
+    """Fetch with custom timeout and error handling."""
+    url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race/laps_VER.json"
+
+    try:
+        # Use 60 second timeout for slow connections
+        data = await fetch_json_async(url, timeout=60)
+        print(f"Success: {len(data['LapNumber'])} laps")
+    except NetworkError as e:
+        print(f"Network error: {e.message}")
+        print(f"URL: {e.url}")
+        print(f"Status: {e.status_code}")
+
+asyncio.run(fetch_with_custom_timeout())
+```python
+
+### Batch processing with rate limiting
+
+```python
+import asyncio
+from tif1.async_fetch import fetch_multiple_async
+
+async def batch_fetch_telemetry(driver_lap_pairs):
+    """Fetch telemetry for multiple driver/lap combinations."""
+    base_url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race"
+
+    # Build URLs
+    urls = []
+    for driver, lap in driver_lap_pairs:
+        urls.append(f"{base_url}/telemetry_{driver}_{lap}.json")
+
+    # Fetch in batches of 20
+    batch_size = 20
+    all_results = []
+
+    for i in range(0, len(urls), batch_size):
+        batch = urls[i:i+batch_size]
+        results = await fetch_multiple_async(batch, max_concurrent=10)
+        all_results.extend(results)
+        print(f"Processed batch {i//batch_size + 1}")
+
+    return all_results
+
+# Usage
+pairs = [("VER", 1), ("VER", 2), ("HAM", 1), ("HAM", 2)]
+asyncio.run(batch_fetch_telemetry(pairs))
+```python
+
+### Resource Cleanup
+
+```python
+import asyncio
+import atexit
+from tif1.async_fetch import cleanup_resources, fetch_json_async
+
+# Register cleanup on exit
+atexit.register(cleanup_resources)
+
+async def main():
+    """Main application with automatic cleanup."""
+    url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco_Grand_Prix/Race/drivers.json"
+    data = await fetch_json_async(url)
+    print(f"Loaded {len(data)} drivers")
+
+asyncio.run(main())
+# cleanup_resources() called automatically on exit
+```yaml
+
+---
+
+## Performance Tips
+
+1. **Use async methods for multiple requests**: 5-10x faster than sequential fetching.
+
+2. **Tune max_concurrent for your network**: Higher values for fast connections, lower for slow.
+
+3. **Disable validation in production**: Saves 10-15% processing time.
+
+```python
+data = await fetch_json_async(url, validate=False)
+```python
+
+4. **Reuse the session**: Don't create new sessions for each request.
+
+5. **Use connection pooling**: Automatically enabled, no configuration needed.
+
+6. **Monitor circuit breaker**: Check state if experiencing network issues.
+
+```python
+from tif1.retry import get_circuit_breaker
+
+cb = get_circuit_breaker()
+print(f"Circuit breaker state: {cb.state}")
+```python
+
+7. **Clean up resources**: Call `cleanup_resources()` on program exit.
+
+---
+
+## Troubleshooting
+
+### Slow Requests
+
+```python
+import logging
+import tif1
+
+# Enable debug logging to see request timing
+tif1.setup_logging(logging.DEBUG)
+
+# Check timeout setting
+config = tif1.get_config()
+print(f"Timeout: {config.get('timeout')}s")
+
+# Increase if needed
+config.set("timeout", 60)
+```text ### Connection Errors
+
+```python
+from tif1.retry import get_circuit_breaker, reset_circuit_breaker
+
+# Check circuit breaker
+cb = get_circuit_breaker()
+if cb.state == "open":
+    print("Circuit breaker is open, waiting...")
+    import time
+    time.sleep(60)
+    reset_circuit_breaker()
+```python
+
+### Rate Limiting
+
+```python
+# Reduce concurrent requests
+results = await fetch_multiple_async(urls, max_concurrent=5)
+```yaml
+
+### Memory Issues
+
+```python
+# Process in smaller batches
+batch_size = 10
+for i in range(0, len(urls), batch_size):
+    batch = urls[i:i+batch_size]
+    results = await fetch_multiple_async(batch)
+    # Process results
+    del results  # Free memory
+```python

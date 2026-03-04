@@ -1,0 +1,128 @@
+---
+title: "Telemetry Deep Dive"
+icon: "code-compare"
+description: "Comparing speed, throttle, and braking between drivers"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+Telemetry data allows you to see exactly where one driver is gaining time over another. In this tutorial, we will compare the fastest laps of two drivers to see their different driving styles.
+
+## Step 1: get fastest laps
+
+We'll use the 2025 Monaco Grand Prix Qualifying session.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+
+# Get fastest laps for two drivers
+ver = session.get_driver("VER")
+lec = session.get_driver("LEC")
+
+ver_fastest = ver.get_fastest_lap()
+lec_fastest = lec.get_fastest_lap()
+```
+
+## Step 2: load telemetry
+
+Now we load the high-frequency telemetry data for those specific laps.
+
+```python
+ver_tel = ver.get_lap(ver_fastest["LapNumber"].iloc[0]).telemetry
+lec_tel = lec.get_lap(lec_fastest["LapNumber"].iloc[0]).telemetry
+
+# Normalize distance to ensure they are comparable
+# (tif1 does this automatically in the 'Distance' column)
+```
+
+## Step 3: plot speed comparison
+
+The most basic comparison is Speed vs. Distance.
+
+```python
+plt.figure(figsize=(14, 6))
+plt.plot(ver_tel["Distance"], ver_tel["Speed"], label="VER", color="blue")
+plt.plot(lec_tel["Distance"], lec_tel["Speed"], label="LEC", color="red")
+
+plt.title("Qualifying Battle: VER vs LEC")
+plt.xlabel("Distance (m)")
+plt.ylabel("Speed (km/h)")
+plt.legend()
+plt.show()
+```
+
+## Step 4: Analyze Cornering (Throttle & Brake)
+
+To see *how* they achieve those speeds, we look at their inputs.
+
+```python
+fig, ax = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+# Throttle
+ax[0].plot(ver_tel["Distance"], ver_tel["Throttle"], color="blue", label="VER")
+ax[0].plot(lec_tel["Distance"], lec_tel["Throttle"], color="red", label="LEC")
+ax[0].set_ylabel("Throttle %")
+ax[0].legend()
+
+# Brake
+ax[1].plot(ver_tel["Distance"], ver_tel["Brake"], color="blue", label="VER")
+ax[1].plot(lec_tel["Distance"], lec_tel["Brake"], color="red", label="LEC")
+ax[1].set_ylabel("Brake (On/Off)")
+ax[1].set_xlabel("Distance (m)")
+
+plt.tight_layout()
+plt.show()
+```
+
+### What to look for:
+- **Braking Points:** Who brakes later into the corner?
+- **Throttle Application:** Who gets back on the power earlier?
+- **Mid-Corner Speed:** Who carries more speed through the apex?
+
+## Step 5: calculating time delta
+
+A "Time Delta" plot shows exactly where a driver is losing or gaining time cumulative across the lap.
+
+```python
+# Note: Calculating accurate delta requires interpolating telemetry
+# to a common distance grid.
+
+import numpy as np
+
+# Create a common distance grid
+dist_grid = np.linspace(0, ver_tel["Distance"].max(), 2000)
+
+# Interpolate speeds
+ver_speed_interp = np.interp(dist_grid, ver_tel["Distance"], ver_tel["Speed"])
+lec_speed_interp = np.interp(dist_grid, lec_tel["Distance"], lec_tel["Speed"])
+
+# Convert speed to m/s
+ver_v = ver_speed_interp / 3.6
+lec_v = lec_speed_interp / 3.6
+
+# Calculate time per segment (dt = ds / v)
+ds = dist_grid[1] - dist_grid[0]
+ver_t = np.cumsum(ds / ver_v)
+lec_t = np.cumsum(ds / lec_v)
+
+# Delta LEC - VER
+delta = lec_t - ver_t
+
+plt.figure(figsize=(14, 4))
+plt.plot(dist_grid, delta, color="purple")
+plt.axhline(0, color='black', linestyle='--')
+plt.title("Time Delta (LEC vs VER)")
+plt.ylabel("Delta (s)")
+plt.xlabel("Distance (m)")
+plt.show()
+```
+
+## Summary
+
+Telemetry analysis is the ultimate tool for understanding performance. With `tif1`, you can access this data in milliseconds, allowing for real-time analysis during a session or deep research after the race.

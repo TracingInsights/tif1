@@ -1,0 +1,355 @@
+---
+title: "Fuzzy Matching"
+icon: "magnifying-glass"
+description: "Fuzzy string matching for event and session name resolution"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The fuzzy matching module provides intelligent string matching for resolving event and session names. This allows you to use partial or informal names when loading data.
+
+## Overview
+
+`tif1` uses fuzzy matching to resolve:
+- Grand Prix names (e.g., "Monaco" → "Monaco Grand Prix")
+- Session names (e.g., "Q" → "Qualifying", "FP1" → "Practice 1")
+- Driver codes (e.g., "max" → "VER")
+
+This makes the API more forgiving and user-friendly.
+
+---
+
+## `fuzzy_matcher`
+
+Core fuzzy matching function using RapidFuzz for fast string similarity.
+
+```python
+def fuzzy_matcher(
+    query: str,
+    reference: list[list[str]]
+) -> tuple[int, bool]
+```python
+
+**Parameters:**
+- `query`: The string to match (e.g., "Monaco", "Q", "FP1")
+- `reference`: List of lists where each sub-list contains feature strings for one element
+
+**Returns:**
+- Tuple of `(index, exact)` where:
+  - `index`: Index of best matching element in reference list
+  - `exact`: `True` if match is exact substring, `False` if fuzzy
+
+**Matching Strategy:**
+1. Normalize query and reference (lowercase, remove spaces)
+2. Check for exact substring matches first
+3. If exactly one substring match found, return as exact
+4. Otherwise, use fuzzy ratio matching with RapidFuzz
+5. Return best match with confidence indicator
+
+**Example:**
+```python
+from tif1.fuzzy import fuzzy_matcher
+
+# Reference data: each sub-list represents one event
+reference = [
+    ["Monaco Grand Prix", "Monaco", "Monte Carlo"],
+    ["British Grand Prix", "Silverstone", "Britain"],
+    ["Italian Grand Prix", "Monza", "Italy"]
+]
+
+# Exact substring match
+index, exact = fuzzy_matcher("Monaco", reference)
+# Returns: (0, True)
+
+# Fuzzy match
+index, exact = fuzzy_matcher("Monac", reference)
+# Returns: (0, False)
+
+# Multiple feature strings
+index, exact = fuzzy_matcher("Silverstone", reference)
+# Returns: (1, True)
+```yaml
+
+---
+
+## How fuzzy matching works
+
+### 1. Normalization
+
+All strings are normalized before matching:
+- Convert to lowercase
+- Remove spaces
+- Remove special characters
+
+```python
+"Monaco Grand Prix" → "monacograndprix"
+"FP1" → "fp1"
+"Practice 1" → "practice1"
+```yaml
+
+### 2. exact substring matching
+
+First, check if query is a substring of any feature string:
+
+```python
+query = "monaco"
+features = ["monacograndprix", "monaco", "montecarlo"]
+# "monaco" is substring of "monacograndprix" and exact match of "monaco"
+# Returns as exact match
+```python
+
+### 3. fuzzy ratio matching
+
+If no exact substring match, use Levenshtein distance ratio:
+
+```python
+from rapidfuzz import fuzz
+
+query = "monac"
+feature = "monaco"
+ratio = fuzz.ratio(query, feature)  # 91 (out of 100)
+```yaml
+
+### 4. Disambiguation
+
+If multiple elements have the same max ratio, disambiguate using less common features:
+
+```python
+# If "Grand Prix" appears in multiple events, prioritize unique features
+reference = [
+    ["Monaco Grand Prix", "Monaco"],
+    ["British Grand Prix", "Silverstone"]
+]
+
+query = "Grand Prix"
+# Disambiguates using "Monaco" vs "Silverstone"
+```python
+
+---
+
+## Usage in tif1
+
+Fuzzy matching is used internally by `get_session()` and `get_event()`:
+
+### Event name matching
+
+```python
+import tif1
+
+# All of these work:
+session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2025, "monaco grand prix", "Race")
+session = tif1.get_session(2025, "MONACO GP", "Race")
+session = tif1.get_session(2025, "Monte Carlo", "Race")
+
+# All resolve to the same event
+```python
+
+### Session name matching
+
+```python
+import tif1
+
+# All of these work:
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2025, "Monaco", "Q")
+session = tif1.get_session(2025, "Monaco", "quali")
+session = tif1.get_session(2025, "Monaco", "QUALIFYING")
+
+# Practice sessions
+session = tif1.get_session(2025, "Monaco", "Practice 1")
+session = tif1.get_session(2025, "Monaco", "FP1")
+session = tif1.get_session(2025, "Monaco", "P1")
+session = tif1.get_session(2025, "Monaco", "practice1")
+```python ---
+
+## Exact Matching
+
+To disable fuzzy matching and require exact names:
+
+```python
+from tif1.events import get_event
+
+# Fuzzy matching (default)
+event = get_event(2025, "Monaco")  # Works
+
+# Exact matching
+event = get_event(2025, "Monaco", exact_match=True)  # Fails
+event = get_event(2025, "Monaco Grand Prix", exact_match=True)  # Works
+```yaml
+
+---
+
+## Performance
+
+Fuzzy matching is optimized for speed:
+
+- **Exact substring matching**: O(n×m) where n=reference size, m=feature count
+- **Fuzzy matching**: O(n×m×k) where k=string length
+- **Typical performance**: &lt;1ms for event/session matching
+
+**Benchmarks:**
+```yaml
+Event name matching: ~0.5ms
+Session name matching: ~0.3ms
+100 fuzzy matches: ~50ms
+```python
+
+---
+
+## Common Patterns
+
+### Event name variations
+
+```python
+# Monaco
+"Monaco", "monaco", "MONACO"
+"Monaco Grand Prix", "Monaco GP"
+"Monte Carlo"
+
+# British grand prix
+"British", "Britain", "Silverstone"
+"British Grand Prix", "British GP"
+
+# United states grand prix
+"USA", "US", "Austin", "COTA"
+"United States Grand Prix", "US GP"
+```python
+
+### Session name variations
+
+```python
+# Practice
+"Practice 1", "FP1", "P1", "practice1"
+"Practice 2", "FP2", "P2", "practice2"
+"Practice 3", "FP3", "P3", "practice3"
+
+# Qualifying
+"Qualifying", "Q", "Quali", "qualifying"
+
+# Sprint
+"Sprint", "Sprint Race", "sprint"
+"Sprint Qualifying", "SQ", "sprint quali"
+
+# Race
+"Race", "R", "race", "RACE"
+```python
+
+---
+
+## Error Handling
+
+If no good match is found, `tif1` raises `DataNotFoundError`:
+
+```python
+import tif1
+from tif1.exceptions import DataNotFoundError
+
+try:
+    session = tif1.get_session(2025, "InvalidEventName", "Race")
+except DataNotFoundError as e:
+    print(f"Event not found: {e.message}")
+    print(f"Available events: {tif1.get_events(2025)}")
+```python
+
+---
+
+## Best Practices
+
+1. **Use common abbreviations**: "Monaco", "Q", "FP1" are all recognized.
+
+2. **Don't worry about case**: Matching is case-insensitive.
+
+3. **Spaces don't matter**: "Monaco Grand Prix" = "MonacoGrandPrix".
+
+4. **Use exact match for validation**: When you need to ensure exact names.
+
+```python
+# Validation mode
+event = get_event(2025, user_input, exact_match=True)
+```python
+
+5. **Check available names**: Use `get_events()` and `get_sessions()` to see valid names.
+
+```python
+events = tif1.get_events(2025)
+print(f"Valid events: {events}")
+```python 6. **Provide feedback**: Show resolved name to user for confirmation.
+
+```python
+session = tif1.get_session(2025, "Monaco", "Q")
+print(f"Loaded: {session.name}")  # "Monaco Grand Prix - Qualifying"
+```python
+
+---
+
+## Implementation Details
+
+<Accordion title="RapidFuzz Integration">
+  `tif1` uses RapidFuzz for fast fuzzy string matching. RapidFuzz is a C++ implementation of Levenshtein distance that's 10-100x faster than pure Python implementations.
+</Accordion>
+
+<Accordion title="Caching">
+  Fuzzy match results are not cached since matching is already very fast (&lt;1ms). The overhead of caching would exceed the matching time.
+</Accordion>
+
+<Accordion title="Normalization Strategy">
+  Normalization removes spaces and converts to lowercase to maximize match success while maintaining reasonable accuracy. Special characters are preserved to distinguish similar names.
+</Accordion>
+
+---
+
+## Complete Example
+
+```python
+import tif1
+from tif1.fuzzy import fuzzy_matcher
+
+def find_best_event_match(query: str, year: int) -> str:
+    """Find best matching event for a query string."""
+    # Get all events for the year
+    events = tif1.get_events(year)
+
+    # Build reference list (each event has one feature string)
+    reference = [[event] for event in events]
+
+    # Find best match
+    index, exact = fuzzy_matcher(query, reference)
+
+    matched_event = events[index]
+    match_type = "exact" if exact else "fuzzy"
+
+    print(f"Query: '{query}'")
+    print(f"Match: '{matched_event}' ({match_type})")
+
+    return matched_event
+
+# Usage
+event = find_best_event_match("Monaco", 2025)
+# Query: 'Monaco'
+# Match: 'Monaco Grand Prix' (exact)
+
+event = find_best_event_match("Monac", 2025)
+# Query: 'Monac'
+# Match: 'Monaco Grand Prix' (fuzzy)
+
+event = find_best_event_match("Silverstone", 2025)
+# Query: 'Silverstone'
+# Match: 'British Grand Prix' (exact)
+```yaml
+
+---
+
+## Summary
+
+Fuzzy matching makes `tif1` more user-friendly by:
+- Accepting partial names ("Monaco" instead of "Monaco Grand Prix")
+- Being case-insensitive
+- Handling common abbreviations ("Q", "FP1", "P1")
+- Providing exact match mode for validation
+- Fast performance (&lt;1ms per match)
+
+Use fuzzy matching for interactive applications and exact matching for validation or automated systems.

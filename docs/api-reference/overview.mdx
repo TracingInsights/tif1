@@ -1,0 +1,356 @@
+---
+title: "API Overview"
+icon: "book-open"
+description: "A comprehensive map of the tif1 programmatic interface"
+keywords:
+  - "tif1 API"
+  - "F1 API reference"
+  - "Session API"
+  - "Driver API"
+  - "telemetry API"
+---
+
+The `tif1` API is designed to be simple, predictable, and compatible with `fastf1`. Most users will only need to interact with the top-level functions and the `Session` object.
+
+## Quick Start
+
+```python
+import tif1
+
+# Load a session
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+
+# Get all laps
+laps = session.laps
+
+# Get specific driver
+driver = session.get_driver("VER")
+
+# Get fastest lap telemetry
+telemetry = driver.get_fastest_lap_tel()
+```yaml
+
+---
+
+## Entry Points
+
+| Function | Purpose | Documentation |
+| :--- | :--- | :--- |
+| `get_session()` | Load data for a specific GP session | [Core API](/api-reference/core#get_session) |
+| `get_events()` | List all available Grand Prix events for a year | [Events API](/api-reference/events#get_events) |
+| `get_sessions()` | List all available sessions for an event | [Events API](/api-reference/events#get_sessions) |
+| `get_config()` | Access global configuration | [Config API](/api-reference/config#get_config) |
+| `get_cache()` | Access cache management | [Cache API](/api-reference/cache#get_cache) |
+
+---
+
+## Core Objects
+
+Once you have a `Session`, you can navigate the data hierarchy:
+
+```mermaid
+graph TD
+    get_session["get_session()"] --> Session
+    Session --> Driver["get_driver()"]
+    Session --> Laps[".laps"]
+    Session --> Weather[".weather"]
+    Session --> Messages[".race_control_messages"]
+    Driver --> DrvLaps[".laps"]
+    Driver --> Lap["get_lap()"]
+    Lap --> Telemetry[".telemetry"]
+```python
+
+### Primary Objects
+
+- **[Session](/api-reference/core#session):** Represents an entire F1 session. Contains all laps, drivers, weather, and race control data.
+- **[Driver](/api-reference/core#driver):** Represents a specific driver within a session. Provides convenient access to driver-specific data.
+- **[Lap](/api-reference/core#lap):** Represents a single lap by a driver, containing high-frequency telemetry data.
+
+### Data Models
+
+- **[Laps](/api-reference/models#laps):** Collection of lap data with filtering methods
+- **[Telemetry](/api-reference/models#telemetry):** High-frequency telemetry data (Speed, RPM, Throttle, etc.)
+- **[SessionResults](/api-reference/models#sessionresults):** Final classification and results
+- **[CircuitInfo](/api-reference/models#circuitinfo):** Circuit metadata and track information
+
+---
+
+## API Categories
+
+### Core data access
+
+Essential APIs for loading and working with F1 data:
+
+- **[Core API](/api-reference/core)** - Session, Driver, Lap classes and data loading
+- **[Models](/api-reference/models)** - Data model classes and structures
+- **[Events](/api-reference/events)** - Event and session discovery
+- **[Schedule](/api-reference/schedule)** - Schedule validation and schema
+
+### Data Pipeline
+
+Internal data transformation and fetching:
+
+- **[I/O Pipeline](/api-reference/io-pipeline)** - DataFrame construction and transformation
+- **[Async Fetch](/api-reference/async-fetch)** - Parallel HTTP fetching with niquests
+- **[HTTP](/api-reference/http)** - HTTP session and networking
+- **[HTTP Session](/api-reference/http-session)** - Connection pooling and DoH support
+- **[CDN](/api-reference/cdn)** - Multi-source CDN management with fallback
+
+### Configuration & Cache
+
+Performance and reliability management:
+
+- **[Config](/api-reference/config)** - Global configuration management
+- **[Cache](/api-reference/cache)** - SQLite-backed caching system
+- **[Retry](/api-reference/retry)** - Circuit breaker and retry logic
+
+### Visualization & Tools
+
+User-facing utilities:
+
+- **[Plotting](/api-reference/plotting)** - F1-themed visualization utilities
+- **[CLI](/api-reference/cli)** - Command-line interface
+- **[Jupyter](/api-reference/jupyter)** - Notebook integration and rich displays
+
+### Utilities & Helpers
+
+Supporting functionality:
+
+- **[Utils](/api-reference/utils)** - General utility functions
+- **[Utilities](/api-reference/utilities)** - Helper functions for configuration and logging
+- **[Core Utils](/api-reference/core-utils)** - Internal utilities for DataFrame operations
+- **[Types](/api-reference/types)** - Type definitions and hints
+- **[Validation](/api-reference/validation)** - Pydantic models and data validation
+- **[Fuzzy](/api-reference/fuzzy)** - Fuzzy string matching for event/session names
+- **[Lap Operations](/api-reference/lap-operations)** - Utilities for working with lap data
+
+### Compatibility & Errors
+
+Integration and error handling:
+
+- **[FastF1 Compat](/api-reference/fastf1-compat)** - FastF1 compatibility layer
+- **[Exceptions](/api-reference/exceptions)** - Exception hierarchy and error handling
+
+---
+
+## Common Workflows
+
+### Load and explore session
+
+```python
+import tif1
+
+# Load session
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+
+# Explore drivers
+print(f"Drivers: {session.drivers}")
+
+# Get all laps
+laps = session.laps
+print(f"Total laps: {len(laps)}")
+
+# Get fastest laps per driver
+fastest = session.get_fastest_laps(by_driver=True)
+print(fastest[["Driver", "LapTime", "Compound"]].head())
+```python
+
+### Analyze driver performance
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Get specific driver
+ver = session.get_driver("VER")
+
+# Get driver's laps
+ver_laps = ver.laps
+print(f"Laps completed: {len(ver_laps)}")
+
+# Get fastest lap
+fastest = ver.get_fastest_lap()
+print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+
+# Get telemetry
+tel = ver.get_fastest_lap_tel()
+print(f"Max speed: {tel['Speed'].max():.1f} km/h")
+```python
+
+### Parallel data loading
+
+```python
+import asyncio
+import tif1
+
+async def load_session():
+    session = tif1.get_session(2025, "Monaco", "Race")
+
+    # Load laps in parallel
+    laps = await session.laps_async()
+
+    # Get telemetry for multiple drivers in parallel
+    tels = await session.get_fastest_laps_tels_async(
+        by_driver=True,
+        drivers=["VER", "HAM", "LEC"]
+    )
+
+    for driver, tel in tels.items():
+        print(f"{driver}: {tel['Speed'].max():.1f} km/h")
+
+asyncio.run(load_session())
+```python
+
+### Configuration and Optimization
+
+```python
+import tif1
+
+# Get config
+config = tif1.get_config()
+
+# Use polars lib for better performance
+config.set("lib", "polars")
+
+# Enable ultra-cold start for minimal latency
+config.set("ultra_cold_start", True)
+
+# Increase concurrency
+config.set("max_workers", 100)
+
+# Save configuration
+config.save()
+```yaml
+
+---
+
+## Error Handling
+
+`tif1` uses a hierarchy of specific exceptions to help you handle common issues:
+
+### Exception Hierarchy
+
+```python
+TIF1Error (base)
+├── DataNotFoundError
+│   ├── DriverNotFoundError
+│   └── LapNotFoundError
+├── NetworkError
+├── InvalidDataError
+├── CacheError
+└── SessionNotLoadedError
+```python ### Common Exceptions
+
+- **`DataNotFoundError`**: The requested GP, year, or session doesn't exist
+- **`NetworkError`**: All CDN sources failed or timed out
+- **`InvalidDataError`**: The data fetched from the CDN was corrupted
+- **`DriverNotFoundError`**: The driver code provided is not in this session
+- **`LapNotFoundError`**: The requested lap number does not exist for this driver
+- **`CacheError`**: Cache operation failed
+- **`SessionNotLoadedError`**: Attempted to access data before loading session
+
+### Error handling example
+
+```python
+import tif1
+from tif1.exceptions import DataNotFoundError, NetworkError, DriverNotFoundError
+
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    driver = session.get_driver("VER")
+    lap = driver.get_lap(19)
+
+except DataNotFoundError as e:
+    print(f"Data not found: {e.message}")
+    print(f"Context: {e.context}")
+
+except NetworkError as e:
+    print(f"Network error: {e.message}")
+    print(f"URL: {e.context.get('url')}")
+
+except DriverNotFoundError as e:
+    print(f"Driver not found: {e.message}")
+    print(f"Available drivers: {session.drivers}")
+```yaml
+
+See [Exceptions API](/api-reference/exceptions) for complete documentation.
+
+---
+
+## Performance Tips
+
+1. **Use async methods for parallel loading**: 5-10x faster than sequential
+   ```python
+   laps = await session.laps_async()
+```yaml
+
+2. **Enable ultra-cold start for single queries**: Minimal latency
+   ```python
+   config.set("ultra_cold_start", True)
+```yaml
+
+3. **Use polars lib for large datasets**: Better memory efficiency
+   ```python
+   config.set("lib", "polars")
+```python
+
+4. **Disable validation in production**: 10-15% performance boost
+   ```python
+   config.set("validate_data", False)
+```yaml
+
+5. **Increase concurrency for bulk operations**: Faster parallel fetching
+   ```python
+   config.set("max_workers", 100)
+```python
+
+See [Best Practices](/guides/best-practices) for more optimization tips.
+
+---
+
+## Type Hints
+
+All public APIs include comprehensive type hints for better IDE support:
+
+```python
+from tif1 import Session, Driver
+from tif1.core import Lap
+import pandas as pd
+
+session: Session = tif1.get_session(2025, "Monaco", "Race")
+driver: Driver = session.get_driver("VER")
+lap: Lap = driver.get_lap(19)
+laps: pd.DataFrame = session.laps
+telemetry: pd.DataFrame = lap.telemetry
+```python
+
+See [Types API](/api-reference/types) for complete type definitions.
+
+---
+
+## Next Steps
+
+- **[Core API](/api-reference/core)** - Start with Session, Driver, and Lap classes
+- **[Tutorials](/tutorials/race-analysis)** - Learn through practical examples
+- **[Best Practices](/guides/best-practices)** - Optimize your code
+- **[FAQ](/reference/faq)** - Common questions and answers
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Core API" href="/api-reference/core">
+    Session, Driver, Lap
+  </Card>
+  <Card title="Models" href="/api-reference/models">
+    Data models
+  </Card>
+  <Card title="Events" href="/api-reference/events">
+    Event discovery
+  </Card>
+  <Card title="Examples" href="/examples">
+    Code examples
+  </Card>
+</CardGroup>

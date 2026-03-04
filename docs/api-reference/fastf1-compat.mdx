@@ -1,0 +1,256 @@
+---
+title: "FastF1 Compatibility API"
+icon: "code-compare"
+description: "Drop-in replacement functions for migrating from fastf1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `fastf1_compat` module provides compatibility shims for applications migrating from `fastf1`. These functions maintain the same API surface while using tif1's optimized lib.
+
+<Info>
+  For new projects, use the native tif1 API. This compatibility layer is provided to ease migration from fastf1.
+</Info>
+
+## Cache Class
+
+The `Cache` class provides fastf1-compatible cache management.
+
+### `Cache.enable_cache`
+
+```python
+@staticmethod
+def enable_cache(
+    cache_dir: str | Path | None = None,
+    ignore_version: bool = True,
+    force_renew: bool = False,
+    use_requests_cache: bool = True
+) -> Cache
+```python
+
+Enable caching with fastf1-compatible API.
+
+**Parameters:**
+- `cache_dir`: Directory for cache storage. If `None`, uses `~/.tif1/cache`
+- `ignore_version`: Ignored for compatibility (tif1 handles versioning automatically)
+- `force_renew`: Ignored for compatibility (use `Cache.clear_cache()` instead)
+- `use_requests_cache`: Ignored for compatibility (tif1 uses SQLite cache)
+
+**Returns:**
+- Cache instance
+
+**Example:**
+```python
+import tif1
+
+# Enable cache with default location
+tif1.Cache.enable_cache()
+
+# Enable cache with custom directory
+tif1.Cache.enable_cache(cache_dir="./my_cache")
+```python
+
+**Migration from fastf1:**
+```python
+# fastf1 code
+import fastf1
+fastf1.Cache.enable_cache("./cache")
+
+# tif1 equivalent
+import tif1
+tif1.Cache.enable_cache("./cache")
+```python
+
+---
+
+### `Cache.clear_cache`
+
+```python
+@staticmethod
+def clear_cache() -> None
+```python
+
+Clear all cached data.
+
+**Example:**
+```python
+import tif1
+
+# Clear the cache
+tif1.Cache.clear_cache()
+```python
+
+**Migration from fastf1:**
+```python
+# fastf1 code
+import fastf1
+fastf1.Cache.clear_cache()
+
+# tif1 equivalent (identical)
+import tif1
+tif1.Cache.clear_cache()
+```python
+
+---
+
+## Logging Functions
+
+### `set_log_level`
+
+```python
+def set_log_level(level: int = logging.WARNING) -> None
+```python
+
+Set the logging level for tif1 logger.
+
+**Parameters:**
+- `level`: Python logging level (e.g., `logging.DEBUG`, `logging.INFO`, `logging.WARNING`)
+
+**Example:**
+```python
+import logging
+import tif1
+
+# Enable debug logging
+tif1.set_log_level(logging.DEBUG)
+
+# Disable most logging
+tif1.set_log_level(logging.ERROR)
+```python **Migration from fastf1:**
+```python
+# fastf1 code
+import fastf1
+import logging
+fastf1.set_log_level(logging.DEBUG)
+
+# tif1 equivalent (identical)
+import tif1
+import logging
+tif1.set_log_level(logging.DEBUG)
+```python
+
+---
+
+## Complete migration example
+
+Here's a complete example showing how to migrate a fastf1 script to tif1:
+
+**Original fastf1 code:**
+```python
+import fastf1
+import logging
+
+# Setup
+fastf1.Cache.enable_cache("./cache")
+fastf1.set_log_level(logging.INFO)
+
+# Load session
+session = fastf1.get_session(2024, "Monaco", "Q")
+session.load()
+
+# Get driver
+ver = session.get_driver("VER")
+fastest = ver.pick_fastest()
+
+# Get telemetry
+tel = fastest.get_telemetry()
+print(f"Max speed: {tel['Speed'].max()}")
+```python
+
+**Migrated tif1 code (minimal changes):**
+```python
+import tif1
+import logging
+
+# Setup (identical API)
+tif1.Cache.enable_cache("./cache")
+tif1.set_log_level(logging.INFO)
+
+# Load session (identical API)
+session = tif1.get_session(2024, "Monaco", "Q")
+session.load()
+
+# Get driver (identical API)
+ver = session.get_driver("VER")
+fastest = ver.pick_fastest()
+
+# Get telemetry (identical API)
+tel = fastest.get_telemetry()
+print(f"Max speed: {tel['Speed'].max()}")
+```python
+
+---
+
+## API Differences
+
+While tif1 maintains API compatibility, there are some differences to be aware of:
+
+### Supported Features
+
+| Feature | fastf1 | tif1 | Notes |
+| :--- | :--- | :--- | :--- |
+| `Cache.enable_cache()` | ✅ | ✅ | Identical API |
+| `Cache.clear_cache()` | ✅ | ✅ | Identical API |
+| `set_log_level()` | ✅ | ✅ | Identical API |
+| `get_session()` | ✅ | ✅ | Identical API |
+| `Session.load()` | ✅ | ✅ | Identical API |
+| `Session.laps` | ✅ | ✅ | Identical API |
+| `Session.get_driver()` | ✅ | ✅ | Identical API |
+| `Driver.laps` | ✅ | ✅ | Identical API |
+| `Lap.get_telemetry()` | ✅ | ✅ | Identical API |
+
+### Ignored Parameters
+
+Some fastf1 parameters are ignored in tif1 because they're handled automatically:
+
+- `Cache.enable_cache(ignore_version)`: tif1 handles versioning automatically
+- `Cache.enable_cache(force_renew)`: Use `Cache.clear_cache()` instead
+- `Cache.enable_cache(use_requests_cache)`: tif1 uses SQLite cache
+
+### Performance Improvements
+
+tif1 provides significant performance improvements while maintaining API compatibility:
+
+- **Async loading**: `session.laps_async()` for parallel data fetching
+- **Ultra-cold start**: Minimal latency for first-time loads
+- **HTTP/2 multiplexing**: Faster parallel requests
+- **Optimized caching**: SQLite-backed multi-layer cache
+
+---
+
+## Compatibility Checklist
+
+When migrating from fastf1 to tif1:
+
+- [ ] Replace `import fastf1` with `import tif1`
+- [ ] Update `Cache.enable_cache()` calls (API is identical)
+- [ ] Update `set_log_level()` calls (API is identical)
+- [ ] Test that `get_session()` works with your year/GP/session combinations
+- [ ] Verify DataFrame column names match (tif1 uses fastf1 naming conventions)
+- [ ] Consider using async methods (`laps_async()`, `get_fastest_laps_tels_async()`) for better performance
+- [ ] Update any custom caching logic (tif1 handles caching automatically)
+
+---
+
+## Known Limitations
+
+The following fastf1 features are not yet supported in tif1:
+
+- **Ergast API integration**: tif1 uses TracingInsights CDN exclusively
+- **Live timing**: tif1 focuses on historical data
+- **Custom data sources**: tif1 uses a fixed CDN structure
+
+If you need these features, continue using fastf1 or open an issue on the tif1 GitHub repository.
+
+---
+
+## Getting Help
+
+If you encounter issues migrating from fastf1:
+
+1. Check the [Migration Guide](/migration-from-fastf1) for detailed instructions
+2. Review the [FAQ](/reference/faq) for common questions
+3. Open an issue on [GitHub](https://github.com/TracingInsights/tif1/issues)

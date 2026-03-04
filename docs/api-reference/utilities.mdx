@@ -1,0 +1,531 @@
+---
+title: "Utilities"
+icon: "toolbox"
+description: "Helper functions for configuration, logging, cache management, and data manipulation"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+Beyond the core timing and telemetry API, `tif1` provides several utility functions to manage its internal state, performance, and reliability layers.
+
+## Logging
+
+### `setup_logging`
+
+Configure the logging level for `tif1`.
+
+```python
+def setup_logging(level: int = logging.WARNING) -> None
+```python
+
+**Parameters:**
+- `level`: Standard logging level from the `logging` module
+
+**Available Levels:**
+- `logging.DEBUG`: Detailed diagnostic information
+- `logging.INFO`: General informational messages
+- `logging.WARNING`: Warning messages (default)
+- `logging.ERROR`: Error messages only
+- `logging.CRITICAL`: Critical errors only
+
+**Example:**
+```python
+import tif1
+import logging
+
+# Enable debug logging
+tif1.setup_logging(logging.DEBUG)
+
+# Now all tif1 operations will log debug info
+session = tif1.get_session(2025, "Monaco", "Race")
+```yaml
+
+**Debug Output Example:**
+```yaml
+DEBUG:tif1.core:Loading session: 2025/Monaco_Grand_Prix/Race
+DEBUG:tif1.cache:Cache hit for drivers.json
+DEBUG:tif1.http:Fetching https://cdn.jsdelivr.net/...
+DEBUG:tif1.core:Loaded 20 drivers
+```python
+
+---
+
+## Configuration
+
+### `get_config`
+
+Returns the global configuration singleton instance.
+
+```python
+def get_config() -> Config
+```python
+
+The `Config` object allows you to programmatically get and set settings that are normally loaded from `.tif1rc` or environment variables.
+
+**Returns:**
+- `Config` singleton instance
+
+**Example:**
+```python
+config = tif1.get_config()
+
+# Get current settings
+print(f"Lib: {config.get('lib')}")
+print(f"Cache enabled: {config.get('enable_cache')}")
+print(f"Timeout: {config.get('timeout')}")
+
+# Update settings
+config.set("lib", "polars")
+config.set("timeout", 60)
+
+# Save to file
+config.save()  # Saves to ~/.tif1rc
+```sql
+
+### Config Methods
+
+#### `get(key, default=None)`
+
+Retrieve a configuration value.
+
+```python
+lib = config.get("lib", "pandas")
+timeout = config.get("timeout", 30)
+```sql
+
+#### `set(key, value)`
+
+Update a configuration value in memory.
+
+```python
+config.set("lib", "polars")
+config.set("enable_cache", True)
+config.set("ultra_cold_start", True)
+```python #### `save(path=None)`
+
+Save current configuration to a JSON file.
+
+```python
+# Save to default location (~/.tif1rc)
+config.save()
+
+# Save to custom location
+config.save("/path/to/custom/config.json")
+```python
+
+### Available configuration keys
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `lib` | `str` | `"pandas"` | DataFrame lib (`"pandas"` or `"polars"`) |
+| `enable_cache` | `bool` | `True` | Enable multi-layer caching system |
+| `cache_dir` | `str` | `~/.tif1/cache` | Cache database location |
+| `timeout` | `int` | `30` | Network request timeout (seconds) |
+| `max_retries` | `int` | `3` | Maximum retry attempts for failed requests |
+| `validate_data` | `bool` | `True` | Enable Pydantic validation of JSON data |
+| `ultra_cold_start` | `bool` | `False` | Enable ultra-low latency mode |
+| `circuit_breaker_threshold` | `int` | `5` | Failures before circuit breaker opens |
+| `circuit_breaker_timeout` | `int` | `60` | Circuit breaker reset timeout (seconds) |
+
+---
+
+## Cache Management
+
+### `get_cache`
+
+Returns the persistent SQLite cache singleton instance.
+
+```python
+def get_cache() -> Cache
+```python
+
+**Returns:**
+- `Cache` singleton instance
+
+**Example:**
+```python
+cache = tif1.get_cache()
+
+# Check cache location
+print(f"Cache dir: {cache.cache_dir}")
+
+# Check if session data exists
+has_data = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+print(f"Has cached data: {has_data}")
+
+# Clear all cache
+cache.clear()
+```python
+
+### Cache Methods
+
+#### `clear()`
+
+Remove all entries from both memory and SQLite cache.
+
+```python
+cache = tif1.get_cache()
+cache.clear()
+print("Cache cleared")
+```python
+
+#### `has_session_data(year, gp, session)`
+
+Check if cache contains data for a specific session.
+
+```python
+exists = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+if exists:
+    print("Session data is cached")
+```python
+
+#### `close()`
+
+Close the SQLite database connection.
+
+```python
+cache = tif1.get_cache()
+# ... operations ...
+cache.close()
+```yaml
+
+#### `get(key)`
+
+Get raw cached data by key.
+
+```python
+data = cache.get("2025/Monaco_Grand_Prix/Race/drivers.json")
+```yaml
+
+#### `set(key, data)`
+
+Store data in cache.
+
+```python
+cache.set("custom_key", {"data": "value"})
+```python #### `get_telemetry(year, gp, session, driver, lap)`
+
+Get cached telemetry data.
+
+```python
+tel_data = cache.get_telemetry(2025, "Monaco_Grand_Prix", "Race", "VER", 1)
+```python
+
+#### `set_telemetry(year, gp, session, driver, lap, data)`
+
+Store telemetry data in cache.
+
+```python
+cache.set_telemetry(2025, "Monaco_Grand_Prix", "Race", "VER", 1, telemetry_dict)
+```python
+
+---
+
+## Data Utilities
+
+### `to_timedelta`
+
+Convert various formats to pandas timedelta.
+
+```python
+def to_timedelta(x) -> pd.Timedelta
+```python
+
+**Parameters:**
+- `x`: String, float, int, or timedelta to convert
+
+**Example:**
+```python
+from tif1.utils import to_timedelta
+
+# From string
+td = to_timedelta("1:23.456")  # 1 minute 23.456 seconds
+td = to_timedelta("00:01:23.456")  # Full format
+
+# From seconds
+td = to_timedelta(83.456)
+
+# From timedelta (passthrough)
+td = to_timedelta(pd.Timedelta(seconds=83.456))
+```python
+
+### `to_datetime`
+
+Convert string to pandas datetime.
+
+```python
+def to_datetime(x) -> pd.Timestamp
+```python
+
+**Example:**
+```python
+from tif1.utils import to_datetime
+
+dt = to_datetime("2025-05-25 14:00:00")
+```python
+
+### `recursive_dict_get`
+
+Safely navigate nested dictionaries.
+
+```python
+def recursive_dict_get(d, *keys, default_none=False)
+```python
+
+**Parameters:**
+- `d`: Dictionary to navigate
+- `*keys`: Keys to traverse
+- `default_none`: Return None instead of {} on missing keys
+
+**Example:**
+```python
+from tif1.utils import recursive_dict_get
+
+data = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix"
+        }
+    }
+}
+
+name = recursive_dict_get(data, "session", "info", "name")
+# Returns: "monaco grand prix"
+
+missing = recursive_dict_get(data, "session", "missing", "key", default_none=True)
+# Returns: None
+```python ### `delta_time`
+
+Calculate delta time between two laps (compatibility function).
+
+```python
+def delta_time(reference_lap, compare_lap)
+```python
+
+**Parameters:**
+- `reference_lap`: Reference Lap object
+- `compare_lap`: Lap object to compare
+
+**Returns:**
+- Tuple of (delta_series, ref_telemetry, comp_telemetry)
+
+---
+
+## Reliability & Networking
+
+### `get_circuit_breaker`
+
+Returns the global circuit breaker instance used for network requests.
+
+```python
+def get_circuit_breaker() -> CircuitBreaker
+```python
+
+The circuit breaker prevents cascading failures by temporarily stopping requests after repeated failures.
+
+**States:**
+- `closed`: Normal operation, requests allowed
+- `open`: Too many failures, requests blocked
+- `half_open`: Testing if service recovered
+
+**Example:**
+```python
+from tif1.retry import get_circuit_breaker
+
+cb = get_circuit_breaker()
+print(f"State: {cb.state}")
+print(f"Failures: {cb.failure_count}")
+```python
+
+### `reset_circuit_breaker`
+
+Reset the circuit breaker to closed state.
+
+```python
+def reset_circuit_breaker() -> None
+```python
+
+**Example:**
+```python
+from tif1.retry import reset_circuit_breaker
+
+# Reset after network issues are resolved
+reset_circuit_breaker()
+```python
+
+### `get_cdn_manager`
+
+Returns the CDN manager responsible for fallback and source health.
+
+```python
+def get_cdn_manager() -> CDNManager
+```python
+
+**Example:**
+```python
+from tif1.cdn import get_cdn_manager
+
+cdn = get_cdn_manager()
+print(f"Primary CDN: {cdn.primary_url}")
+```python
+
+---
+
+## Lap Cache Management
+
+### `clear_lap_cache`
+
+Clear the in-memory LRU cache for lap DataFrames.
+
+```python
+def clear_lap_cache() -> None
+```python **Example:**
+```python
+from tif1.core import clear_lap_cache
+
+# Clear lap cache to free memory
+clear_lap_cache()
+```python
+
+---
+
+## Complete Examples
+
+### Configure and save settings
+
+```python
+import tif1
+
+# Get config
+config = tif1.get_config()
+
+# Update settings
+config.set("lib", "polars")
+config.set("timeout", 60)
+config.set("max_retries", 5)
+config.set("ultra_cold_start", True)
+
+# Save to file
+config.save()
+
+print("Configuration saved to ~/.tif1rc")
+```python
+
+### Debug session loading
+
+```python
+import tif1
+import logging
+
+# Enable debug logging
+tif1.setup_logging(logging.DEBUG)
+
+# Load session with debug output
+session = tif1.get_session(2025, "Monaco", "Race")
+laps = session.laps
+
+# Disable debug logging
+tif1.setup_logging(logging.WARNING)
+```python
+
+### Cache management workflow
+
+```python
+import tif1
+
+# Get cache instance
+cache = tif1.get_cache()
+
+# Check cache status
+print(f"Cache location: {cache.cache_dir}")
+
+# Check if specific session is cached
+has_monaco = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+print(f"Monaco cached: {has_monaco}")
+
+# Clear cache if needed
+if input("Clear cache? (y/n): ").lower() == 'y':
+    cache.clear()
+    print("Cache cleared")
+```python
+
+### Handle network issues
+
+```python
+import tif1
+from tif1.retry import get_circuit_breaker, reset_circuit_breaker
+
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = session.laps
+except tif1.NetworkError as e:
+    print(f"Network error: {e.message}")
+
+    # Check circuit breaker state
+    cb = get_circuit_breaker()
+    print(f"Circuit breaker state: {cb.state}")
+
+    if cb.state == "open":
+        print("Circuit breaker is open. Waiting before retry...")
+        import time
+        time.sleep(60)
+
+        # Reset and retry
+        reset_circuit_breaker()
+        session = tif1.get_session(2025, "Monaco", "Race")
+```python
+
+### Custom configuration file
+
+```python
+import tif1
+from pathlib import Path
+
+# Load custom config
+config = tif1.get_config()
+
+# Set custom cache directory
+custom_cache = Path.home() / "my_f1_cache"
+config.set("cache_dir", str(custom_cache))
+
+# Set performance options
+config.set("lib", "polars")
+config.set("ultra_cold_start", True)
+config.set("validate_data", False)  # Skip validation for speed
+
+# Save to custom location
+config.save(Path.home() / ".my_tif1_config")
+```python
+
+---
+
+## Best Practices
+
+1. **Enable debug logging during development**: Helps understand data flow and identify issues.
+
+2. **Use polars lib for large datasets**: Better memory efficiency and performance.
+
+3. **Clear cache periodically**: Prevents disk space issues.
+
+4. **Increase timeout for slow connections**: Default 30s may not be enough on slow networks.
+
+5. **Disable validation in production**: Saves ~10-15% processing time if data quality is trusted.
+
+6. **Use ultra-cold start for single lap queries**: Significantly faster when you only need one lap's telemetry.
+
+7. **Save configuration after tuning**: Persist your optimized settings.
+
+8. **Monitor circuit breaker state**: Helps diagnose network issues.
+
+9. **Close cache on exit**: Ensures data is flushed to disk.
+
+```python
+import atexit
+import tif1
+
+cache = tif1.get_cache()
+atexit.register(cache.close)
+```python

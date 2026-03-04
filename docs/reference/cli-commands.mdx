@@ -1,0 +1,473 @@
+---
+title: "CLI Commands"
+icon: "terminal"
+description: "Complete reference for the tif1 command-line interface"
+keywords:
+  - "CLI commands"
+  - "command line"
+  - "terminal commands"
+  - "tif1 CLI"
+---
+
+The `tif1` CLI provides quick access to F1 data without writing Python code.
+
+## Installation
+
+The CLI is included with tif1. Verify installation:
+
+```bash
+tif1 --version
+```python
+
+## Global Options
+
+These options work with all commands.
+
+```bash
+tif1 [OPTIONS] COMMAND [ARGS]
+```yaml
+
+| Option | Description |
+| :--- | :--- |
+| `--help` | Show help message and exit |
+| `--version` | Show version and exit |
+| `--lib [pandas\|polars]` | Choose DataFrame lib |
+| `--no-cache` | Disable caching for this command |
+| `--debug` | Enable debug logging |
+
+## Commands
+
+### events
+
+List all events (Grand Prix) for a given year.
+
+```bash
+tif1 events [YEAR]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 events 2025
+```yaml
+  </Tab>
+  <Tab title="Output">
+```python
+    2025 F1 Calendar
+    ================
+    1. Bahrain Grand Prix
+    2. Saudi Arabian Grand Prix
+    3. Australian Grand Prix
+    4. Japanese Grand Prix
+    ...
+```yaml
+  </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--json` | Output as JSON |
+| `--csv` | Output as CSV |
+
+### sessions
+
+List available sessions for a specific event.
+
+```bash
+tif1 sessions [YEAR] [EVENT]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 sessions 2025 "Monaco Grand Prix"
+    ```python </Tab>
+  <Tab title="Output">
+```yaml
+    Available Sessions:
+    - Practice 1
+    - Practice 2
+    - Practice 3
+    - Qualifying
+    - Race
+```python
+  </Tab>
+</Tabs>
+
+### laps
+
+Fetch and display lap data.
+
+```bash
+tif1 laps [YEAR] [EVENT] [SESSION]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 laps 2025 "Monaco Grand Prix" "Race"
+```bash
+  </Tab>
+  <Tab title="Output">
+```yaml
+    Loaded 1,247 laps for 20 drivers
+
+    Fastest Laps:
+    1. VER - 1:12.345
+    2. LEC - 1:12.567
+    3. HAM - 1:12.789
+    ...
+```bash
+  </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--driver TEXT` | Filter to specific driver (3-letter code) |
+| `--fastest` | Show only fastest laps |
+| `--export PATH` | Export to file (CSV, JSON, or Parquet) |
+| `--limit INT` | Limit number of rows displayed |
+
+**Examples:**
+
+```bash
+# Get all laps for Verstappen
+tif1 laps 2025 "Monaco" "Race" --driver VER
+
+# Export to CSV
+tif1 laps 2025 "Monaco" "Race" --export laps.csv
+
+# Show top 10 fastest laps
+tif1 laps 2025 "Monaco" "Race" --fastest --limit 10
+```python
+
+### telemetry
+
+Fetch telemetry data for a specific lap.
+
+```bash
+tif1 telemetry [YEAR] [EVENT] [SESSION] [DRIVER] [LAP_NUMBER]
+```python <Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 telemetry 2025 "Silverstone" "Race" VER 15
+```python
+  </Tab>
+  <Tab title="Output">
+```bash
+    Telemetry for VER Lap 15
+    ========================
+    Duration: 87.234s
+    Top Speed: 327 km/h
+    Avg Speed: 215 km/h
+
+    Samples: 349 data points
+```bash
+  </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--export PATH` | Export telemetry to file |
+| `--plot` | Generate and display a plot |
+| `--columns TEXT` | Comma-separated columns to display |
+
+**Examples:**
+
+```bash
+# Export telemetry
+tif1 telemetry 2025 "Silverstone" "Race" VER 15 --export tel.csv
+
+# Plot speed trace
+tif1 telemetry 2025 "Silverstone" "Race" VER 15 --plot
+
+# Show specific columns
+tif1 telemetry 2025 "Silverstone" "Race" VER 15 --columns "Speed,Throttle,Brake"
+```python
+
+### drivers
+
+List drivers in a session.
+
+```bash
+tif1 drivers [YEAR] [EVENT] [SESSION]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 drivers 2025 "Monaco" "Race"
+```python
+  </Tab>
+  <Tab title="Output">
+```python
+    Drivers in 2025 Monaco Grand Prix - Race
+    =========================================
+    VER - Max Verstappen (Red Bull Racing) #33
+    HAM - Lewis Hamilton (Mercedes) #44
+    LEC - Charles Leclerc (Ferrari) #16
+    ...
+    ```python </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--json` | Output as JSON |
+| `--team TEXT` | Filter by team name |
+
+### weather
+
+Display weather data for a session.
+
+```bash
+tif1 weather [YEAR] [EVENT] [SESSION]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 weather 2025 "Singapore" "Race"
+```yaml
+  </Tab>
+  <Tab title="Output">
+```yaml
+    Weather Data - 2025 Singapore GP Race
+    ======================================
+    Air Temp: 28-31°C
+    Track Temp: 35-42°C
+    Humidity: 75-82%
+    Rainfall: Yes (Lap 15-23)
+    Wind: 5-8 m/s from NE
+```bash
+  </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--export PATH` | Export weather data to file |
+| `--summary` | Show summary statistics only |
+
+### compare
+
+Compare lap times between drivers.
+
+```bash
+tif1 compare [YEAR] [EVENT] [SESSION] [DRIVER1] [DRIVER2]
+```python
+
+<Tabs>
+  <Tab title="Example">
+    ```bash
+    tif1 compare 2025 "Monaco" "Qualifying" VER LEC
+```yaml
+  </Tab>
+  <Tab title="Output">
+```yaml
+    Comparison: VER vs LEC
+    ======================
+    VER Fastest: 1:10.234
+    LEC Fastest: 1:10.456
+    Delta: +0.222s (LEC slower)
+
+    Sector Comparison:
+    S1: VER +0.045s
+    S2: LEC -0.012s
+    S3: VER +0.189s
+    ```python </Tab>
+</Tabs>
+
+**Options:**
+
+| Option | Description |
+| :--- | :--- |
+| `--lap-number INT` | Compare specific lap numbers |
+| `--fastest` | Compare fastest laps (default) |
+| `--plot` | Generate comparison plot |
+
+### cache
+
+Manage the local cache.
+
+```bash
+tif1 cache [COMMAND]
+```yaml
+
+**Subcommands:**
+
+| Command | Description |
+| :--- | :--- |
+| `info` | Show cache statistics |
+| `clear` | Clear all cached data |
+| `size` | Show cache size on disk |
+| `list` | List cached sessions |
+
+**Examples:**
+
+```bash
+# Show cache info
+tif1 cache info
+
+# Clear cache
+tif1 cache clear
+
+# Show cache size
+tif1 cache size
+```yaml
+
+### config
+
+Display or modify configuration.
+
+```bash
+tif1 config [COMMAND]
+```yaml
+
+**Subcommands:**
+
+| Command | Description |
+| :--- | :--- |
+| `show` | Display current configuration |
+| `set KEY VALUE` | Set a configuration value |
+| `get KEY` | Get a configuration value |
+| `reset` | Reset to default configuration |
+
+**Examples:**
+
+```bash
+# Show all config
+tif1 config show
+
+# Set lib
+tif1 config set lib polars
+
+# Get cache directory
+tif1 config get cache_dir
+
+# Reset to defaults
+tif1 config reset
+```bash
+
+## Output Formats
+
+Most commands support multiple output formats.
+
+### JSON
+
+```bash
+tif1 laps 2025 "Monaco" "Race" --driver VER --export laps.json
+```bash
+
+### CSV
+
+```bash
+tif1 laps 2025 "Monaco" "Race" --export laps.csv
+```bash
+
+### Parquet
+
+```bash
+tif1 laps 2025 "Monaco" "Race" --export laps.parquet
+```bash
+
+## Piping and Scripting
+
+The CLI is designed to work well in shell scripts.
+
+```bash
+# Get all 2025 events and process
+tif1 events 2025 --json | jq '.[] | .name'
+
+# Export laps for all drivers
+for driver in VER HAM LEC; do
+  tif1 laps 2025 "Monaco" "Race" --driver $driver --export "${driver}_laps.csv"
+done
+
+# Check if data exists before processing
+if tif1 sessions 2025 "Monaco" | grep -q "Race"; then
+  echo "Race data available"
+  tif1 laps 2025 "Monaco" "Race" --export race_data.csv
+fi
+```python ## Environment Variables
+
+The CLI respects all tif1 environment variables.
+
+```bash
+# Use polars lib
+export TIF1_LIB=polars
+tif1 laps 2025 "Monaco" "Race"
+
+# Disable cache
+export TIF1_CACHE_ENABLED=false
+tif1 laps 2025 "Monaco" "Race"
+
+# Enable debug logging
+export TIF1_LOG_LEVEL=DEBUG
+tif1 laps 2025 "Monaco" "Race"
+```python
+
+## Shell Completion
+
+Enable tab completion for your shell.
+
+<Tabs>
+  <Tab title="Bash">
+    ```bash
+    eval "$(_TIF1_COMPLETE=bash_source tif1)" >> ~/.bashrc
+```python
+  </Tab>
+  <Tab title="Zsh">
+    ```bash
+    eval "$(_TIF1_COMPLETE=zsh_source tif1)" >> ~/.zshrc
+```python
+  </Tab>
+  <Tab title="Fish">
+    ```bash
+    _TIF1_COMPLETE=fish_source tif1 > ~/.config/fish/completions/tif1.fish
+```bash
+  </Tab>
+</Tabs>
+
+## Error Handling
+
+The CLI provides clear error messages and exit codes.
+
+| Exit Code | Meaning |
+| :--- | :--- |
+| `0` | Success |
+| `1` | General error |
+| `2` | Data not found |
+| `3` | Network error |
+| `4` | Invalid arguments |
+
+```bash
+# Check exit code
+tif1 laps 2025 "InvalidGP" "Race"
+echo $?  # Will be 2 (data not found)
+```bash
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Quotes" icon="quote-left">
+    Always quote event names with spaces: `"Monaco Grand Prix"`
+  </Card>
+  <Card title="Export Large Data" icon="download">
+    Use `--export` instead of printing large datasets to terminal
+  </Card>
+  <Card title="Enable Caching" icon="bolt">
+    Keep cache enabled for repeated queries
+  </Card>
+  <Card title="Check Availability" icon="check">
+    Use `events` and `sessions` to verify data exists first
+  </Card>
+</CardGroup>

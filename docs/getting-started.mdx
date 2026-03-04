@@ -1,0 +1,402 @@
+---
+title: "Getting Started Guide"
+sidebarTitle: "Getting Started"
+icon: "play"
+description: "Complete guide to start analyzing F1 data with tif1"
+keywords:
+  - "tif1 tutorial"
+  - "F1 data analysis"
+  - "getting started"
+  - "quickstart"
+  - "Formula 1 telemetry"
+  - "lap times"
+  - "driver data"
+---
+
+This guide walks you through everything you need to know to start analyzing Formula 1 data with `tif1`.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- Python 3.10 or higher
+- pip or uv package manager
+- Basic knowledge of pandas or polars
+- Internet connection for data fetching
+
+## Installation
+
+<Steps>
+  <Step title="Install tif1">
+    Install using pip or uv:
+
+    <CodeGroup>
+    ```bash pip
+    pip install tif1
+```bash
+
+    ```bash uv
+    uv pip install tif1
+```python
+    </CodeGroup>
+  </Step>
+
+  <Step title="Verify Installation">
+    Check that tif1 is installed correctly:
+
+    ```bash
+    python -c "import tif1; print(tif1.__version__)"
+```bash
+  </Step>
+
+  <Step title="Optional: Install Polars">
+    For 2x faster performance, install polars:
+
+    ```bash
+    pip install "tif1[polars]"
+```python
+  </Step>
+</Steps>
+
+## Your first analysis
+
+Let's load and analyze data from a recent race.
+
+### Step 1: load a session
+
+```python
+import tif1
+
+# Load the 2025 monaco grand prix race
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+
+print(f"Loaded session: {session.event} {session.session_type}")
+```python
+
+<Note>
+  The first time you load a session, tif1 fetches data from the CDN. Subsequent loads are instant thanks to caching.
+</Note>
+
+### Step 2: explore drivers
+
+```python
+# Get list of drivers
+drivers = session.drivers_df
+
+print(drivers[["Driver", "Team", "DriverNumber"]])
+```yaml
+
+Output:
+```python
+  Driver                Team  DriverNumber
+0    VER  Red Bull Racing            33
+1    HAM         Mercedes            44
+2    LEC          Ferrari            16
+...
+```python ### Step 3: analyze lap times
+
+```python
+# Get all laps
+laps = session.laps
+
+# Show fastest laps
+fastest = laps.nsmallest(10, "LapTime")
+print(fastest[["Driver", "LapNumber", "LapTime", "Compound"]])
+```python
+
+### Step 4: compare drivers
+
+```python
+# Get specific drivers
+ver = session.get_driver("VER")
+lec = session.get_driver("LEC")
+
+# Compare fastest laps
+ver_fastest = ver.get_fastest_lap()
+lec_fastest = lec.get_fastest_lap()
+
+print(f"VER: {ver_fastest['LapTime'].iloc[0]:.3f}s")
+print(f"LEC: {lec_fastest['LapTime'].iloc[0]:.3f}s")
+```python
+
+### Step 5: analyze telemetry
+
+```python
+# Get telemetry for fastest lap
+ver_lap = ver.get_fastest_lap()
+lap_number = ver_lap["LapNumber"].iloc[0]
+
+lap = ver.get_lap(lap_number)
+telemetry = lap.telemetry
+
+# Analyze speed
+print(f"Top speed: {telemetry['Speed'].max()} km/h")
+print(f"Avg speed: {telemetry['Speed'].mean():.1f} km/h")
+```python
+
+## Common Patterns
+
+### Finding available data
+
+Before loading data, check what's available:
+
+```python
+import tif1
+
+# List all events in 2025
+events = tif1.get_events(2025)
+print(f"Found {len(events)} events")
+
+# List sessions for an event
+sessions = tif1.get_sessions(2025, "Monaco Grand Prix")
+print(f"Available sessions: {sessions}")
+```python
+
+### Filtering Laps
+
+Clean and filter lap data for analysis:
+
+```python
+laps = session.laps
+
+# Remove deleted laps
+clean = laps[~laps["Deleted"]]
+
+# Remove pit laps
+clean = clean[clean["PitInTime"].isna()]
+
+# Remove lap 1 (standing start)
+clean = clean[clean["LapNumber"] > 1]
+
+# Filter by compound
+soft_laps = clean[clean["Compound"] == "SOFT"]
+```python
+
+### Analyzing tire strategy
+
+```python
+# Group by driver and stint
+strategy = laps.groupby(["Driver", "Stint"]).agg({
+    "Compound": "first",
+    "LapNumber": ["min", "max", "count"]
+}).reset_index()
+
+print(strategy)
+```python
+
+### Weather Analysis
+
+```python
+# Get weather data
+weather = session.weather
+
+# Check for rain
+if weather["Rainfall"].any():
+    print("Rain detected during session")
+    rain_laps = weather[weather["Rainfall"]]["Time"]
+    print(f"Rain from {rain_laps.min():.0f}s to {rain_laps.max():.0f}s")
+```python
+
+## Performance Tips
+
+### Use async for cold cache
+
+When loading data for the first time, use async for 4-5x speedup:
+
+```python
+import asyncio
+import tif1
+
+async def load_data():
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = await session.laps_async()
+    return laps
+
+laps = asyncio.run(load_data())
+```python ### Batch telemetry fetching
+
+Never fetch telemetry in a loop:
+
+<CodeGroup>
+```python Good - Batch Fetching
+# Fetch all telemetry in parallel (28x faster)
+tels = session.get_fastest_laps_tels(by_driver=True)
+
+for driver, tel in tels.items():
+    print(f"{driver}: {tel['Speed'].max()} km/h")
+```yaml
+
+```python Bad - Sequential Loop
+# Slow - fetches one at a time
+for driver_code in session.drivers:
+    driver = session.get_driver(driver_code)
+    fastest = driver.get_fastest_lap()
+    # This is very slow!
+```python
+</CodeGroup>
+
+### Use Polars for large datasets
+
+```python
+# Use polars lib for 2x faster processing
+session = tif1.get_session(
+    2025,
+    "Monaco",
+    "Race",
+    lib="polars"
+)
+
+laps = session.laps  # Returns polars DataFrame
+```python
+
+## Visualization
+
+Create quick visualizations:
+
+```python
+import matplotlib.pyplot as plt
+
+# Plot lap times
+laps = session.laps
+ver_laps = laps[laps["Driver"] == "VER"]
+
+plt.figure(figsize=(12, 6))
+plt.plot(ver_laps["LapNumber"], ver_laps["LapTime"], marker="o")
+plt.xlabel("Lap Number")
+plt.ylabel("Lap Time (s)")
+plt.title("VER Lap Times - Monaco 2025")
+plt.grid(True, alpha=0.3)
+plt.show()
+```python
+
+## Error Handling
+
+Handle errors gracefully:
+
+```python
+import tif1
+
+try:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = session.laps
+except tif1.DataNotFoundError:
+    print("Session data not available")
+except tif1.NetworkError as e:
+    print(f"Network error: {e}")
+except tif1.TIF1Error as e:
+    print(f"Error: {e}")
+```python
+
+## Configuration
+
+Customize tif1 behavior:
+
+```python
+import tif1
+
+# Get configuration
+config = tif1.get_config()
+
+# Change cache directory
+config.cache_dir = "/custom/cache/path"
+
+# Use polars by default
+config.lib = "polars"
+
+# Enable debug logging
+config.log_level = "DEBUG"
+```python
+
+## Next Steps
+
+Now that you understand the basics, explore:
+
+<CardGroup cols={2}>
+  <Card title="Tutorials" icon="graduation-cap" href="/tutorials/race-pace-analysis">
+    Learn advanced analysis techniques
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/overview">
+    Explore the complete API
+  </Card>
+  <Card title="Best Practices" icon="star" href="/guides/best-practices">
+    Learn recommended patterns
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    See more code examples
+  </Card>
+</CardGroup>
+
+## Common Issues
+
+### Cache permission errors
+
+If you get permission errors:
+
+```bash
+# Check cache directory permissions
+ls -la ~/.tif1/cache/
+
+# Fix permissions
+chmod -R 755 ~/.tif1/cache/
+```python
+
+### Network Timeouts
+
+If requests timeout:
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.request_timeout = 30  # Increase timeout to 30s
+```python ### Memory Issues
+
+For large datasets:
+
+```python
+# Use polars (50% less memory)
+session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
+
+# Or process drivers one at a time
+for driver_code in session.drivers:
+    driver = session.get_driver(driver_code)
+    laps = driver.laps
+    # Process laps
+    del laps  # Free memory
+```yaml
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="FAQ" icon="question" href="/reference/faq">
+    Common questions and answers
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/reference/troubleshooting">
+    Solve common problems
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/TracingInsights/tif1/issues">
+    Report bugs or request features
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/reference/contributing">
+    Contribute to tif1
+  </Card>
+</CardGroup>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart">
+    Quick 30-second start
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    Recommended patterns
+  </Card>
+  <Card title="Examples" href="/examples">
+    Common use cases
+  </Card>
+  <Card title="Tutorials" href="/tutorials/race-analysis">
+    Step-by-step guides
+  </Card>
+</CardGroup>

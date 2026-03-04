@@ -1,0 +1,367 @@
+---
+title: "CLI Reference"
+icon: "terminal"
+description: "Command-line interface for tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `tif1` CLI provides a convenient way to explore F1 data from the terminal. Built with Typer and Rich for a beautiful terminal experience.
+
+## Installation
+
+The CLI is included with tif1:
+
+```bash
+pip install tif1
+```python
+
+## Usage
+
+```bash
+tif1 [COMMAND] [OPTIONS]
+```yaml
+
+---
+
+## Commands
+
+### `events`
+
+List all events for a specific year.
+
+```bash
+tif1 events YEAR
+```yaml
+
+**Arguments:**
+- `YEAR`: Season year (2018-current)
+
+**Example:**
+```bash
+tif1 events 2025
+```yaml
+
+**Output:**
+```yaml
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ Event                         ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1 │ Bahrain Grand Prix           │
+│ 2 │ Saudi Arabian Grand Prix     │
+│ 3 │ Australian Grand Prix        │
+│ 4 │ Japanese Grand Prix          │
+│ 5 │ Chinese Grand Prix           │
+│ 6 │ Miami Grand Prix             │
+...
+└───┴───────────────────────────────┘
+
+Total: 24 events
+```yaml
+
+---
+
+### `sessions`
+
+List all sessions for a specific event.
+
+```bash
+tif1 sessions YEAR EVENT
+```yaml
+
+**Arguments:**
+- `YEAR`: Season year
+- `EVENT`: Event name (use quotes if it contains spaces)
+
+**Example:**
+```bash
+tif1 sessions 2025 "Monaco Grand Prix"
+```text **Output:**
+```python
+┏━━━┳━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ Session           ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━┩
+│ 1 │ Practice 1        │
+│ 2 │ Practice 2        │
+│ 3 │ Practice 3        │
+│ 4 │ Qualifying        │
+│ 5 │ Race              │
+└───┴───────────────────┘
+```yaml
+
+---
+
+### `drivers`
+
+List all drivers in a session.
+
+```bash
+tif1 drivers YEAR EVENT SESSION
+```yaml
+
+**Arguments:**
+- `YEAR`: Season year
+- `EVENT`: Event name
+- `SESSION`: Session name
+
+**Example:**
+```bash
+tif1 drivers 2025 "Monaco Grand Prix" "Race"
+```yaml
+
+**Output:**
+```yaml
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Driver ┃ Team               ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ VER    │ Red Bull Racing    │
+│ PER    │ Red Bull Racing    │
+│ HAM    │ Mercedes           │
+│ RUS    │ Mercedes           │
+│ LEC    │ Ferrari            │
+│ SAI    │ Ferrari            │
+...
+└────────┴────────────────────┘
+
+Total: 20 drivers
+```yaml
+
+---
+
+### `fastest`
+
+Show fastest laps for a session.
+
+```bash
+tif1 fastest YEAR EVENT SESSION [OPTIONS]
+```yaml
+
+**Arguments:**
+- `YEAR`: Season year
+- `EVENT`: Event name
+- `SESSION`: Session name
+
+**Options:**
+- `--driver, -d TEXT`: Show fastest lap for a specific driver only
+
+**Example (all drivers):**
+```bash
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```text **Output:**
+```python
+┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
+┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ 1   │ VER    │ Red Bull Racing    │ 70.123s   │
+│ 2   │ LEC    │ Ferrari            │ 70.234s   │
+│ 3   │ HAM    │ Mercedes           │ 70.456s   │
+...
+└─────┴────────┴────────────────────┴───────────┘
+```yaml
+
+**Example (specific driver):**
+```bash
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+```yaml
+
+**Output:**
+```yaml
+VER fastest lap: 70.123s
+```python
+
+---
+
+### `cache-info`
+
+Show cache information and statistics.
+
+```bash
+tif1 cache-info
+```yaml
+
+**Output:**
+```yaml
+Cache location: /home/user/.tif1/cache
+Cache files: 3
+Total size: 245.67 MB
+```python ---
+
+### `cache-clear`
+
+Clear the cache database.
+
+```bash
+tif1 cache-clear [OPTIONS]
+```yaml
+
+**Options:**
+- `--yes, -y`: Skip confirmation prompt
+
+**Example:**
+```bash
+# With confirmation
+tif1 cache-clear
+
+# Skip confirmation
+tif1 cache-clear --yes
+```yaml
+
+**Output:**
+```yaml
+Are you sure you want to clear the cache? [y/N]: y
+Cache cleared successfully!
+```yaml
+
+---
+
+### `version`
+
+Show tif1 version.
+
+```bash
+tif1 version
+```yaml
+
+**Output:**
+```python
+tif1 version 0.1.0
+```python
+
+---
+
+### `debug`
+
+Load a session with debug logging enabled.
+
+```bash
+tif1 debug YEAR EVENT SESSION
+```python **Arguments:**
+- `YEAR`: Season year
+- `EVENT`: Event name
+- `SESSION`: Session name
+
+**Example:**
+```bash
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+```yaml
+
+**Output:**
+```yaml
+[DEBUG] Loading session...
+[DEBUG] Fetching drivers...
+[DEBUG] Fetching laps...
+Session loaded successfully!
+Drivers: 20
+Laps: 1560
+```python
+
+---
+
+## Common Workflows
+
+### Explore available data
+
+```bash
+# List all 2025 events
+tif1 events 2025
+
+# Check sessions for Monaco
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# See who raced
+tif1 drivers 2025 "Monaco Grand Prix" "Race"
+```python
+
+### Quick Analysis
+
+```bash
+# Get fastest laps from qualifying
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Check specific driver's fastest lap
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+```python
+
+### Cache Management
+
+```bash
+# Check cache size
+tif1 cache-info
+
+# Clear cache if it's too large
+tif1 cache-clear --yes
+```yaml
+
+### Debugging
+
+```bash
+# Enable debug logging to troubleshoot issues
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+```yaml
+
+---
+
+## Tips
+
+1. **Use quotes for multi-word names**: Event and session names with spaces need quotes.
+   ```bash
+   tif1 sessions 2025 "Monaco Grand Prix"  # Correct
+   tif1 sessions 2025 Monaco Grand Prix    # Wrong
+   ```bash 2. **Tab completion**: If your shell supports it, tab completion can help with command names.
+
+3. **Pipe output**: CLI output can be piped to other tools.
+   ```bash
+   tif1 events 2025 | grep "Grand Prix"
+```yaml
+
+4. **Check cache regularly**: The cache can grow large over time.
+   ```bash
+   tif1 cache-info
+```yaml
+
+5. **Use debug mode for troubleshooting**: If you encounter issues, run with debug mode.
+   ```bash
+   tif1 debug 2025 "Monaco" "Race"
+```yaml
+
+---
+
+## Exit Codes
+
+- `0`: Success
+- `1`: General error (network, data not found, etc.)
+- `2`: Invalid arguments
+
+---
+
+## Environment Variables
+
+The CLI respects the same environment variables as the Python API:
+
+- `TIF1_CACHE_DIR`: Override cache directory
+- `TIF1_LIB`: Set default lib (pandas/polars)
+- `TIF1_ENABLE_CACHE`: Enable/disable caching (true/false)
+- `TIF1_TIMEOUT`: Network timeout in seconds
+- `TIF1_MAX_RETRIES`: Maximum retry attempts
+
+**Example:**
+```bash
+TIF1_LIB=polars tif1 fastest 2025 "Monaco" "Race"
+```python
+
+---
+
+## Programmatic Usage
+
+You can also use the CLI programmatically:
+
+```python
+from tif1.cli import app
+import typer
+
+# Run CLI command
+typer.run(app)
+```python

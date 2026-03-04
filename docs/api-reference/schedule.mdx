@@ -1,0 +1,238 @@
+---
+title: "Schedule API"
+icon: "calendar-days"
+description: "Event schedule validation and schema management"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+The `schedule_schema` module provides validation for the packaged F1 schedule data. It ensures the schedule JSON follows the expected structure and contains valid data.
+
+<Note>
+  This module is primarily used internally by `get_events()` and `get_sessions()`. Most users don't need to interact with it directly.
+</Note>
+
+## Schema Validation
+
+### `validate_schedule_payload`
+
+```python
+def validate_schedule_payload(payload: Any) -> dict[str, Any]
+```python
+
+Validate that a schedule payload conforms to the expected schema.
+
+**Parameters:**
+- `payload`: Decoded JSON payload from schedule data
+
+**Returns:**
+- The validated payload (same as input if valid)
+
+**Raises:**
+- `InvalidDataError`: If the payload structure is invalid
+
+**Example:**
+```python
+from tif1.schedule_schema import validate_schedule_payload
+import json
+
+# Load schedule data
+with open("schedule.json") as f:
+    data = json.load(f)
+
+# Validate
+try:
+    validated = validate_schedule_payload(data)
+    print("Schedule is valid")
+except InvalidDataError as e:
+    print(f"Invalid schedule: {e}")
+```yaml
+
+---
+
+## Schedule Schema
+
+The schedule data follows this structure:
+
+```json
+{
+  "schema_version": 1,
+  "years": {
+    "2025": {
+      "events": [
+        "Bahrain_Grand_Prix",
+        "Saudi_Arabian_Grand_Prix",
+        "Monaco_Grand_Prix",
+        ...
+      ],
+      "sessions": {
+        "Bahrain_Grand_Prix": [
+          "Practice_1",
+          "Practice_2",
+          "Practice_3",
+          "Qualifying",
+          "Race"
+        ],
+        "Monaco_Grand_Prix": [
+          "Practice_1",
+          "Practice_2",
+          "Practice_3",
+          "Qualifying",
+          "Race"
+        ],
+        ...
+      }
+    },
+    "2024": {
+      ...
+    }
+  }
+}
+```yaml
+
+### Schema Version
+
+The `schema_version` field indicates the structure version. Currently, only version 1 is supported.
+
+**Future versions may:**
+- Add new fields
+- Change event/session naming conventions
+- Include additional metadata
+
+---
+
+## Validation Rules
+
+The validator checks:
+
+1. **Top-level structure**
+   - Payload must be a dictionary
+   - Must contain `schema_version` field
+   - Must contain `years` dictionary
+
+2. **Schema version**
+   - Must be exactly `1`
+   - Other versions raise `InvalidDataError`
+
+3. **Year structure**
+   - Each year key must be a string of digits (e.g., "2025")
+   - Each year value must be a dictionary
+   - Must contain `events` list and `sessions` dictionary
+
+4. **Events list**
+   - Must be a list of strings
+   - Each event name must be URL-encoded (e.g., "Monaco_Grand_Prix")
+
+5. **Sessions dictionary**
+   - Keys must match event names from `events` list
+   - Values must be lists of session names
+   - Session names must be URL-encoded (e.g., "Practice_1", "Qualifying")
+
+---
+
+## Error Messages
+
+The validator provides detailed error messages:
+
+```python
+# Missing schema version
+InvalidDataError: Unsupported schedule schema version: None
+
+# Invalid year key
+InvalidDataError: Invalid year key: 'twenty-twenty-five'
+
+# Missing events list
+InvalidDataError: Invalid events list for year=2025
+
+# Invalid session list
+InvalidDataError: Invalid session list for year=2025 event='Monaco_Grand_Prix'
+```python
+
+---
+
+## Usage in tif1
+
+The schedule validation is used internally by:
+
+### `get_events()`
+
+```python
+import tif1
+
+# Internally validates schedule before returning events
+events = tif1.get_events(2025)
+```python
+
+### `get_sessions()`
+
+```python
+import tif1
+
+# Internally validates schedule before returning sessions
+sessions = tif1.get_sessions(2025, "Monaco Grand Prix")
+```python
+
+---
+
+## Custom schedule data
+
+If you're working with custom schedule data, you can validate it manually:
+
+```python
+from tif1.schedule_schema import validate_schedule_payload
+from tif1.exceptions import InvalidDataError
+
+custom_schedule = {
+    "schema_version": 1,
+    "years": {
+        "2025": {
+            "events": ["Custom_Event"],
+            "sessions": {
+                "Custom_Event": ["Practice", "Qualifying", "Race"]
+            }
+        }
+    }
+}
+
+try:
+    validate_schedule_payload(custom_schedule)
+    print("Custom schedule is valid")
+except InvalidDataError as e:
+    print(f"Validation failed: {e}")
+```yaml
+
+---
+
+## Schema Evolution
+
+Future schema versions may include:
+
+- **Event metadata**: Circuit info, country, timezone
+- **Session metadata**: Start times, duration, session type
+- **Sprint weekend support**: Sprint Qualifying, Sprint Race
+- **Testing sessions**: Pre-season testing, in-season testing
+
+When new schema versions are introduced:
+1. The validator will be updated to support both old and new versions
+2. The `schema_version` field will be incremented
+3. Migration guides will be provided
+
+---
+
+## Performance
+
+Schedule validation is fast:
+- Typical validation time: &lt;1ms
+- Schedule data is cached after first load
+- Validation only runs once per session
+
+---
+
+## Related APIs
+
+- **[Events API](/api-reference/events)**: Uses schedule validation for `get_events()` and `get_sessions()`
+- **[Exceptions API](/api-reference/exceptions)**: Defines `InvalidDataError` raised by validation
+- **[Config API](/api-reference/config)**: Controls whether validation is enabled

@@ -1,0 +1,337 @@
+---
+title: "Data Export & Integration"
+icon: "file-export"
+description: "Export tif1 data to various formats for external analysis"
+keywords:
+  - "data export"
+  - "CSV export"
+  - "Parquet export"
+  - "data formats"
+---
+
+tif1 makes it easy to export F1 data to various formats for use in other tools, databases, or analysis platforms.
+
+## Export to CSV
+
+The simplest way to export data for use in Excel, Google Sheets, or other tools.
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps
+
+# Export all laps to CSV
+laps.to_csv("monaco_race_laps.csv", index=False)
+
+# Export specific driver's laps
+ver = session.get_driver("VER")
+ver.laps.to_csv("verstappen_laps.csv", index=False)
+
+# Export telemetry
+fastest_lap = ver.get_fastest_lap()
+telemetry = ver.get_lap(fastest_lap["LapNumber"].iloc[0]).telemetry
+telemetry.to_csv("verstappen_fastest_telemetry.csv", index=False)
+```
+
+## Export to Parquet
+
+Parquet is a columnar storage format that's much more efficient than CSV for large datasets.
+
+```python
+# Export to Parquet (works with both pandas and polars)
+laps.to_parquet("monaco_race_laps.parquet")
+
+# With compression
+laps.to_parquet("monaco_race_laps.parquet", compression="snappy")
+
+# Read back
+import pandas as pd
+laps_loaded = pd.read_parquet("monaco_race_laps.parquet")
+```
+
+## Export to JSON
+
+For web applications or APIs.
+
+```python
+# Export to JSON
+laps.to_json("monaco_race_laps.json", orient="records", indent=2)
+
+# Compact format
+laps.to_json("monaco_race_laps_compact.json", orient="records")
+
+# Split format (better for large datasets)
+laps.to_json("monaco_race_laps_split.json", orient="split")
+```
+
+## Export to Excel
+
+Create Excel files with multiple sheets.
+
+```python
+# Single sheet
+laps.to_excel("monaco_race.xlsx", sheet_name="Laps", index=False)
+
+# Multiple sheets
+with pd.ExcelWriter("monaco_race_full.xlsx") as writer:
+    session.laps.to_excel(writer, sheet_name="Laps", index=False)
+    session.weather.to_excel(writer, sheet_name="Weather", index=False)
+    session.drivers_df.to_excel(writer, sheet_name="Drivers", index=False)
+    session.race_control_messages.to_excel(writer, sheet_name="Messages", index=False)
+```
+
+## Export to SQL Database
+
+Store data in a relational database for complex queries.
+
+```python
+import sqlite3
+import pandas as pd
+
+# Create database connection
+conn = sqlite3.connect("f1_data.db")
+
+# Export laps
+laps.to_sql("laps", conn, if_exists="replace", index=False)
+
+# Export telemetry for multiple drivers
+for driver in ["VER", "HAM", "LEC"]:
+    driver_obj = session.get_driver(driver)
+    fastest = driver_obj.get_fastest_lap()
+    tel = driver_obj.get_lap(fastest["LapNumber"].iloc[0]).telemetry
+    tel.to_sql(f"telemetry_{driver}", conn, if_exists="replace", index=False)
+
+conn.close()
+
+# Query the data
+conn = sqlite3.connect("f1_data.db")
+query = """
+SELECT Driver, MIN(LapTime) as FastestLap, AVG(LapTime) as AvgLap
+FROM laps
+WHERE LapTime IS NOT NULL
+GROUP BY Driver
+ORDER BY FastestLap
+"""
+results = pd.read_sql_query(query, conn)
+print(results)
+conn.close()
+```
+
+## Export to PostgreSQL
+
+For production databases.
+
+```python
+from sqlalchemy import create_engine
+
+# Create engine
+engine = create_engine("postgresql://user:password@localhost:5432/f1_data")
+
+# Export data
+laps.to_sql("laps", engine, if_exists="replace", index=False)
+session.weather.to_sql("weather", engine, if_exists="replace", index=False)
+```
+
+## Export for machine learning
+
+Prepare data for ML frameworks.
+
+### NumPy Arrays
+
+```python
+import numpy as np
+
+# Convert to numpy for scikit-learn, tensorflow, pytorch
+lap_features = laps[["LapTime", "Sector1Time", "Sector2Time", "Sector3Time"]].to_numpy()
+
+# Save as .npy file
+np.save("lap_features.npy", lap_features)
+
+# Telemetry as numpy
+tel_array = telemetry[["Speed", "Throttle", "Brake", "RPM"]].to_numpy()
+np.save("telemetry_features.npy", tel_array)
+```
+
+### HDF5 Format
+
+Efficient for large numerical datasets.
+
+```python
+# Export to HDF5
+laps.to_hdf("monaco_race.h5", key="laps", mode="w")
+telemetry.to_hdf("monaco_race.h5", key="telemetry", mode="a")
+
+# Read back
+laps_loaded = pd.read_hdf("monaco_race.h5", key="laps")
+```python ## Export for data visualization tools
+
+### Tableau / Power BI
+
+Export to formats these tools can read.
+
+```
+# CSV with proper encoding
+laps.to_csv("monaco_for_tableau.csv", index=False, encoding="utf-8-sig")
+
+# Or use Hyper format for Tableau (requires tableauhyperapi)
+# From tableauhyperapi import hyperprocess, connection, tabledefinition
+# ... (see Tableau documentation)
+```python
+
+### Plotly dash / streamlit
+
+Export to JSON for web dashboards.
+
+```
+# Export for web apps
+data_for_web = {
+    "laps": laps.to_dict(orient="records"),
+    "drivers": session.drivers_df.to_dict(orient="records"),
+    "weather": session.weather.to_dict(orient="records"),
+}
+
+import json
+with open("monaco_data.json", "w") as f:
+    json.dump(data_for_web, f, indent=2, default=str)
+```python
+
+## Batch export multiple sessions
+
+Export an entire race weekend or season.
+
+```
+import tif1
+
+def export_weekend(year, gp, output_dir="data"):
+    """Export all sessions from a race weekend."""
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    sessions = tif1.get_sessions(year, gp)
+
+    for session_name in sessions:
+        try:
+            session = tif1.get_session(year, gp, session_name)
+
+            # Create safe filename
+            safe_name = session_name.replace(" ", "_").lower()
+            filename = f"{output_dir}/{year}_{gp.replace(' ', '_')}_{safe_name}.parquet"
+
+            # Export laps
+            session.laps.to_parquet(filename)
+            print(f"Exported: {filename}")
+
+        except Exception as e:
+            print(f"Failed to export {session_name}: {e}")
+
+# Export Monaco 2025 weekend
+export_weekend(2025, "Monaco Grand Prix", "monaco_2025")
+```python
+
+### Export entire season
+
+```
+def export_season(year, output_dir="season_data"):
+    """Export all races from a season."""
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    events = tif1.get_events(year)
+
+    for event in events:
+        print(f"Processing {event}...")
+        sessions = tif1.get_sessions(year, event)
+
+        for session_name in sessions:
+            if session_name == "Race":  # Only export races
+                try:
+                    session = tif1.get_session(year, event, session_name)
+                    safe_event = event.replace(" ", "_").replace("/", "_")
+                    filename = f"{output_dir}/{year}_{safe_event}_race.parquet"
+                    session.laps.to_parquet(filename)
+                    print(f"  ✓ {event} Race")
+                except Exception as e:
+                    print(f"  ✗ {event} Race: {e}")
+
+# Export 2024 season
+export_season(2024, "2024_season")
+```python
+
+## Working with Polars lib
+
+If using the polars lib, you get additional export options.
+
+```
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
+laps = session.laps
+
+# Polars-specific exports
+laps.write_parquet("monaco_polars.parquet")
+laps.write_csv("monaco_polars.csv")
+laps.write_json("monaco_polars.json")
+laps.write_ipc("monaco_polars.arrow")  # Apache Arrow format
+
+# Convert to pandas if needed
+laps_pandas = laps.to_pandas()
+```python
+
+## Export telemetry for all drivers
+
+Efficiently export telemetry for multiple drivers.
+
+```
+def export_all_telemetry(session, lap_type="fastest", output_dir="telemetry"):
+    """Export telemetry for all drivers."""
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    if lap_type == "fastest":
+        # Use parallel fetching for speed
+        tels = session.get_fastest_laps_tels(by_driver=True)
+
+        for driver, tel in tels.items():
+            filename = f"{output_dir}/{driver}_fastest.parquet"
+            tel.to_parquet(filename)
+            print(f"Exported: {driver}")
+
+    return len(tels)
+
+session = tif1.get_session(2025, "Silverstone Grand Prix", "Qualifying")
+count = export_all_telemetry(session)
+print(f"Exported telemetry for {count} drivers")
+```bash
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Parquet" icon="file">
+    Parquet is 5-10x smaller than CSV and much faster to read/write.
+  </Card>
+  <Card title="Batch Operations" icon="layer-group">
+    Use async loading and batch exports for multiple sessions.
+  </Card>
+  <Card title="Compression" icon="compress">
+    Enable compression for large datasets (snappy, gzip, zstd).
+  </Card>
+  <Card title="Type Preservation" icon="database">
+    Parquet and HDF5 preserve data types; CSV doesn't.
+  </Card>
+</CardGroup>
+
+<Tip>
+  For large-scale data pipelines, consider using the polars lib with Arrow/Parquet formats for maximum performance.
+</Tip>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Examples" href="/examples">
+    Export examples
+  </Card>
+  <Card title="Working with Large Datasets" href="/guides/working-with-large-datasets">
+    Handle big data
+  </Card>
+</CardGroup>
