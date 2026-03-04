@@ -1,6 +1,6 @@
 # tif1
 
-A fast, canonical Formula 1 timing-data library backed by TracingInsights data (2018-current).
+A fast, canonical Formula 1 data library fetched from TracingInsights data https://github.com/TracingInsights/2026 (2018-current).
 
 [![CI/CD](https://github.com/TracingInsights/tif1/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
 [![codecov](https://codecov.io/gh/TracingInsights/tif1/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
@@ -21,9 +21,6 @@ pip install tif1
 ### Optional Dependencies
 
 ```bash
-# For polars backend (2x faster)
-pip install tif1[polars]
-
 # For development
 pip install tif1[dev]
 
@@ -45,7 +42,7 @@ sessions = tif1.get_sessions(2025, "Chinese Grand Prix")
 print(sessions)  # ['Practice 1', 'Sprint Qualifying', 'Sprint', 'Qualifying', 'Race']
 
 # Get a session
-session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Get all drivers as DataFrame
 print(session.drivers_df)
@@ -67,13 +64,13 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 ## Features
 
 - **Fast**: Direct CDN access via jsDelivr with SQLite caching
+- No need to session.load() - only the required data is fetched when necessary. You can just get the telemetry data of any specific lap within seconds.
 - **Canonical**: Focused tif1 API surface
 - **Complete**: Lap times, sectors, telemetry, tire compounds, and more
 - **Historical**: Data from 2018-current
 - **Reliable**: Automatic retry logic with circuit breaker and CDN fallback
 - **Async**: Parallel data fetching for better performance
 - **Optimized**: SQLite cache with JSON storage
-- **HTTP/2**: Uses niquests for 20-30% faster network requests
 - **Flexible**: Supports both pandas and polars backends
 - **Validated**: Optional data validation with Pydantic models
 - **Configurable**: .tif1rc configuration file support
@@ -127,27 +124,13 @@ if cb.state == "open":
     tif1.reset_circuit_breaker()
 ```
 
-### Polars Backend (2x faster for large datasets)
-
-```python
-import tif1
-
-# Use polars instead of pandas
-session = tif1.get_session(
-    2025,
-    "Abu Dhabi Grand Prix",
-    "Practice 1",
-    backend="polars"
-)
-laps = session.laps  # Returns polars DataFrame
-```
 
 ### Fastest Laps & Telemetry (Optimized for Speed)
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Las Vegas Grand Prix", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Get fastest lap per driver
 fastest_by_driver = session.get_fastest_laps(by_driver=True)
@@ -174,19 +157,7 @@ top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM",
 ver_fastest_tel = ver.get_fastest_lap_tel()  # ~0.08s
 ```
 
-### Async Data Loading
 
-```python
-import asyncio
-import tif1
-
-async def load_data():
-    session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
-    laps = await session.laps_async()  # 4-5x faster parallel loading
-    return laps
-
-laps = asyncio.run(load_data())
-```
 
 ### Logging
 
@@ -197,7 +168,7 @@ import logging
 # Enable debug logging
 tif1.setup_logging(logging.DEBUG)
 
-session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 ```
 
 ### Cache Management
@@ -213,7 +184,7 @@ print(f"Cache location: {cache.cache_dir}")
 cache.clear()
 
 # Disable caching for a session
-session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1", enable_cache=False)
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=False)
 ```
 
 ### Error Handling
@@ -232,15 +203,6 @@ except tif1.InvalidDataError:
     print("Data is corrupted")
 ```
 
-## Performance
-
-- **Network**: 20-30% faster with niquests HTTP/2
-- **Loading**: 4-5x faster with async (cold cache)
-- **Telemetry**: 28x faster parallel fetching (11.2s → 0.4s for 19 drivers)
-- **Memory**: 50% reduction with categorical dtypes
-- **Cache**: SQLite with JSON storage
-- **Polars**: 2x faster for large datasets
-- **Jupyter**: Seamless async support with nest_asyncio
 
 ## Data Available
 
@@ -291,7 +253,7 @@ uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark
 
 ## Documentation
 
-Full documentation available at: [docs.tif1.dev](https://docs.tif1.dev) (coming soon)
+Full documentation available at: [docs.tracinginsights.com](docs.tracinginsights.com)
 
 ## Contributing
 
@@ -381,6 +343,6 @@ High-priority API gaps for parity with `docs.fastf1.dev`:
 
 - Ergast (`fastf1.ergast`)
 - LiveTiming (`fastf1.livetiming`)
-- MVAPI (`fastf1.mvapi`)
+
 
 Full detailed matrix: `docs/fastf1_compliance_matrix.md`
