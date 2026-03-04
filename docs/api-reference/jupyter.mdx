@@ -1,0 +1,461 @@
+---
+title: "Jupyter Integration"
+icon: "book"
+description: "Rich display and notebook utilities"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` provides enhanced Jupyter notebook integration with rich HTML displays for Session, Driver, and Lap objects.
+
+## Auto-Enabling
+
+Jupyter display is automatically enabled when running in a Jupyter environment. No manual setup required.
+
+```python
+import tif1
+
+# Rich display is automatically enabled
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+session  # Displays rich HTML representation
+```python
+
+---
+
+## Rich Displays
+
+### Session Display
+
+When you display a `Session` object in Jupyter, you get a formatted HTML table:
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session
+```yaml
+
+**Output:**
+```python
+🏎️ F1 Session
+┌─────────────┬──────────────────────────┐
+│ Year        │ 2025                     │
+│ Grand Prix  │ Monaco Grand Prix        │
+│ Session     │ Qualifying               │
+│ Lib     │ pandas                   │
+│ Drivers     │ 20                       │
+└─────────────┴──────────────────────────┘
+```text
+
+### Driver Display
+
+```python
+ver = session.get_driver("VER")
+ver
+```yaml
+
+**Output:**
+```yaml
+👤 Driver: VER
+┌─────────────┬──────────────────────────────────────┐
+│ Session     │ 2025 Monaco Grand Prix - Qualifying  │
+│ Laps loaded │ Yes                                  │
+└─────────────┴──────────────────────────────────────┘
+```python
+
+### Lap Display
+
+```python
+lap = ver.get_lap(19)
+lap
+```text **Output:**
+```python
+🏁 Lap 19
+┌──────────────────┬──────────────────────────────────────┐
+│ Driver           │ VER                                  │
+│ Session          │ 2025 Monaco Grand Prix - Qualifying  │
+│ Telemetry loaded │ No                                   │
+└──────────────────┴──────────────────────────────────────┘
+```python
+
+---
+
+## Manual Control
+
+### Enable jupyter display
+
+```python
+from tif1.jupyter import enable_jupyter_display
+
+enable_jupyter_display()
+```python
+
+### Check if running in jupyter
+
+```python
+from tif1.jupyter import _is_notebook
+
+if _is_notebook():
+    print("Running in Jupyter")
+else:
+    print("Not in Jupyter")
+```python
+
+---
+
+## DataFrame Summaries
+
+DataFrames automatically display with summary information:
+
+```python
+laps = session.laps
+laps
+```python
+
+**Output includes:**
+- Row count
+- Column count
+- Memory usage
+- Standard DataFrame display
+
+---
+
+## Custom display functions
+
+### `display_session_info()`
+
+Generate HTML display for a Session object.
+
+```python
+from tif1.jupyter import display_session_info
+
+html = display_session_info(session)
+# Returns HTML string
+```python
+
+### `display_driver_info()`
+
+Generate HTML display for a Driver object.
+
+```python
+from tif1.jupyter import display_driver_info
+
+html = display_driver_info(driver)
+# Returns HTML string
+```python
+
+### `display_lap_info()`
+
+Generate HTML display for a Lap object.
+
+```python
+from tif1.jupyter import display_lap_info
+
+html = display_lap_info(lap)
+# Returns HTML string
+```python ### `display_dataframe_summary()`
+
+Generate summary display for a DataFrame.
+
+```python
+from tif1.jupyter import display_dataframe_summary
+
+html = display_dataframe_summary(laps)
+# Returns HTML string with row/column/memory info
+```python
+
+---
+
+## Notebook best practices
+
+### 1. use async for faster loading
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Use async loading in notebooks
+laps = await session.laps_async()
+```python
+
+### 2. Display Progress
+
+```python
+from IPython.display import display, HTML
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+display(HTML("<p>Loading session data...</p>"))
+laps = session.laps
+display(HTML(f"<p>✓ Loaded {len(laps)} laps</p>"))
+```python
+
+### 3. Interactive Exploration
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Display session info
+session
+
+# Explore drivers
+for driver_code in session.drivers[:3]:
+    driver = session.get_driver(driver_code)
+    display(driver)
+```python
+
+### 4. Combine with Plotting
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from tif1.plotting import setup_mpl, get_driver_color_mapping
+
+# Setup F1 theme
+setup_mpl()
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+laps = session.laps
+colors = get_driver_color_mapping(session)
+
+# Plot fastest laps
+fig, ax = plt.subplots(figsize=(12, 6))
+
+for driver in ["VER", "LEC", "HAM"]:
+    driver_laps = laps[laps["Driver"] == driver]
+    ax.plot(
+        driver_laps["LapNumber"],
+        driver_laps["LapTime"],
+        color=colors.get(driver),
+        label=driver,
+        linewidth=2
+    )
+
+ax.set_xlabel("Lap Number")
+ax.set_ylabel("Lap Time (s)")
+ax.set_title("Qualifying Lap Times")
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+plt.show()
+```python
+
+### 5. Use Widgets for Interactivity
+
+```python
+import tif1
+import ipywidgets as widgets
+from IPython.display import display
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Create driver selector
+driver_dropdown = widgets.Dropdown(
+    options=session.drivers,
+    description='Driver:',
+)
+
+# Create output widget
+output = widgets.Output()
+
+def on_driver_change(change):
+    with output:
+        output.clear_output()
+        driver = session.get_driver(change['new'])
+        fastest = driver.get_fastest_lap()
+        print(f"Fastest lap: {fastest['LapTime'].iloc[0]:.3f}s")
+        print(f"Compound: {fastest['Compound'].iloc[0]}")
+
+driver_dropdown.observe(on_driver_change, names='value')
+
+display(driver_dropdown, output)
+```python
+
+---
+
+## Troubleshooting
+
+### Display Not Working
+
+If rich displays aren't showing:
+
+```python
+# Manually enable
+from tif1.jupyter import enable_jupyter_display
+enable_jupyter_display()
+
+# Check if in notebook
+from tif1.jupyter import _is_notebook
+print(_is_notebook())  # Should be True
+```python
+
+### HTML Display Issues
+
+If HTML displays are broken:
+
+```python
+# Fall back to repr
+session = tif1.get_session(2025, "Monaco", "Race")
+print(repr(session))
+```python ### Memory Issues
+
+For large datasets in notebooks:
+
+```python
+# Use polars lib for better memory efficiency
+import tif1
+
+config = tif1.get_config()
+config.set("lib", "polars")
+
+session = tif1.get_session(2025, "Monaco", "Race")
+```python
+
+---
+
+## Complete notebook example
+
+```python
+# Cell 1: Setup
+import tif1
+import matplotlib.pyplot as plt
+from tif1.plotting import setup_mpl, get_driver_color_mapping
+
+setup_mpl()
+
+# Cell 2: Load session
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session  # Rich display
+
+# Cell 3: Explore drivers
+print(f"Drivers: {len(session.drivers)}")
+for driver_code in session.drivers[:5]:
+    driver = session.get_driver(driver_code)
+    display(driver)
+
+# Cell 4: Get fastest laps
+fastest = session.get_fastest_laps(by_driver=True)
+fastest[["Driver", "Team", "LapTime", "Compound"]].head(10)
+
+# Cell 5: Analyze specific driver
+ver = session.get_driver("VER")
+ver_laps = ver.laps
+
+print(f"Total laps: {len(ver_laps)}")
+print(f"Fastest: {ver_laps['LapTime'].min():.3f}s")
+print(f"Average: {ver_laps['LapTime'].mean():.3f}s")
+
+# Cell 6: Get telemetry
+tel = ver.get_fastest_lap_tel()
+
+print(f"Telemetry samples: {len(tel)}")
+print(f"Max speed: {tel['Speed'].max():.1f} km/h")
+print(f"Max RPM: {tel['RPM'].max()}")
+
+# Cell 7: Plot telemetry
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
+
+# Speed trace
+ax1.plot(tel['Distance'], tel['Speed'], linewidth=2)
+ax1.set_ylabel('Speed (km/h)')
+ax1.set_title('VER Fastest Lap - Monaco Qualifying')
+ax1.grid(True, alpha=0.3)
+
+# Throttle and brake
+ax2.plot(tel['Distance'], tel['Throttle'], label='Throttle', linewidth=2)
+ax2.fill_between(tel['Distance'], 0, 100, where=tel['Brake'],
+                  alpha=0.3, color='red', label='Brake')
+ax2.set_xlabel('Distance (m)')
+ax2.set_ylabel('Throttle (%)')
+ax2.legend()
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Cell 8: Compare drivers
+drivers_to_compare = ["VER", "LEC", "HAM"]
+colors = get_driver_color_mapping(session)
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+for driver_code in drivers_to_compare:
+    driver_laps = session.laps[session.laps["Driver"] == driver_code]
+    ax.plot(
+        driver_laps["LapNumber"],
+        driver_laps["LapTime"],
+        color=colors.get(driver_code),
+        label=driver_code,
+        linewidth=2,
+        marker='o',
+        markersize=4
+    )
+
+ax.set_xlabel('Lap Number')
+ax.set_ylabel('Lap Time (s)')
+ax.set_title('Lap Time Comparison - Monaco Qualifying')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```yaml
+
+---
+
+## API Reference
+
+### Functions
+
+<ResponseField name="enable_jupyter_display" type="function">
+  Enable rich Jupyter display for tif1 objects. Called automatically when in a notebook.
+</ResponseField>
+
+<ResponseField name="_is_notebook" type="function">
+  Check if running in a Jupyter notebook environment.
+
+  **Returns:** `bool` - True if in Jupyter, False otherwise
+</ResponseField>
+
+<ResponseField name="display_session_info" type="function">
+  Generate HTML display for a Session object.
+
+  **Parameters:**
+  - `session`: Session object
+
+  **Returns:** `str` - HTML string
+</ResponseField>
+
+<ResponseField name="display_driver_info" type="function">
+  Generate HTML display for a Driver object.
+
+  **Parameters:**
+  - `driver`: Driver object
+
+  **Returns:** `str` - HTML string
+</ResponseField>
+
+<ResponseField name="display_lap_info" type="function">
+  Generate HTML display for a Lap object.
+
+  **Parameters:**
+  - `lap`: Lap object
+
+  **Returns:** `str` - HTML string
+</ResponseField>
+
+<ResponseField name="display_dataframe_summary" type="function">
+  Generate summary display for a DataFrame.
+
+  **Parameters:**
+  - `df`: pandas or polars DataFrame
+
+  **Returns:** `str` - HTML string with summary
+</ResponseField>

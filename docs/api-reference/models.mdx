@@ -1,0 +1,431 @@
+---
+title: "Models"
+icon: "box"
+description: "Laps, Lap, Driver, and Telemetry classes"
+keywords:
+  - "data models"
+  - "Laps model"
+  - "Telemetry model"
+  - "F1 data structures"
+---
+
+The models module provides object-oriented interfaces for working with F1 data. These classes wrap DataFrames and provide convenient methods for common operations.
+
+## Laps
+
+A collection of lap data, typically accessed via `session.laps` or `driver.laps`.
+
+### Properties
+
+<ResponseField name="data" type="DataFrame">
+  The underlying DataFrame containing all lap data.
+</ResponseField>
+
+### Methods
+
+#### `pick_driver(driver_code)`
+```python
+def pick_driver(driver_code: str) -> Laps
+```yaml
+Filter laps for a specific driver.
+
+**Example:**
+```python
+laps = session.laps
+ver_laps = laps.pick_driver("VER")
+```python
+
+#### `pick_fastest()`
+```python
+def pick_fastest() -> Lap
+```python
+Get the single fastest lap from the collection.
+
+**Example:**
+```python
+fastest = session.laps.pick_fastest()
+print(f"Fastest lap: {fastest['LapTime']:.3f}s by {fastest['Driver']}")
+```python
+
+#### `pick_compound(compound)`
+```python
+def pick_compound(compound: str) -> Laps
+```yaml
+Filter laps by tire compound.
+
+**Example:**
+```python
+soft_laps = session.laps.pick_compound("SOFT")
+```python
+
+---
+
+## Lap
+
+Represents a single lap with access to telemetry data.
+
+### Properties
+
+<ResponseField name="lap_number" type="int">
+  The lap number.
+</ResponseField>
+
+<ResponseField name="driver" type="str">
+  The 3-letter driver code.
+</ResponseField>
+
+<ResponseField name="lap_time" type="float">
+  The lap time in seconds.
+</ResponseField>
+
+<ResponseField name="telemetry" type="DataFrame">
+  High-frequency telemetry data for this lap. Loaded lazily on first access.
+</ResponseField>
+
+<ResponseField name="session" type="Session">
+  Reference to the parent session.
+</ResponseField>
+
+### Methods
+
+#### `get_telemetry()`
+```python
+def get_telemetry() -> DataFrame
+```python
+Explicitly load telemetry data. Same as accessing the `telemetry` property.
+
+**Example:**
+```python
+lap = driver.get_lap(19)
+tel = lap.get_telemetry()
+print(tel[["Time", "Speed", "Throttle"]].head())
+```python ---
+
+## Driver
+
+Represents a driver's performance within a session.
+
+### Properties
+
+<ResponseField name="driver" type="str">
+  The 3-letter driver code (e.g., "VER").
+</ResponseField>
+
+<ResponseField name="driver_number" type="str">
+  The car number (e.g., "33").
+</ResponseField>
+
+<ResponseField name="team" type="str">
+  Team name.
+</ResponseField>
+
+<ResponseField name="laps" type="DataFrame">
+  All laps completed by this driver. Loaded lazily.
+</ResponseField>
+
+<ResponseField name="session" type="Session">
+  Reference to the parent session.
+</ResponseField>
+
+### Methods
+
+#### `get_lap(lap_number)`
+```python
+def get_lap(lap_number: int) -> Lap
+```yaml
+Get a specific lap by number.
+
+**Parameters:**
+- `lap_number`: The lap number to retrieve.
+
+**Returns:**
+- `Lap` object for the specified lap.
+
+**Raises:**
+- `LapNotFoundError`: If the lap doesn't exist.
+
+**Example:**
+```python
+ver = session.get_driver("VER")
+lap_19 = ver.get_lap(19)
+```python
+
+#### `get_fastest_lap()`
+```python
+def get_fastest_lap() -> DataFrame
+```python
+Get this driver's fastest lap as a single-row DataFrame.
+
+**Example:**
+```python
+fastest = ver.get_fastest_lap()
+print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+```python
+
+#### `get_fastest_lap_tel(ultra_cold=None)`
+```python
+def get_fastest_lap_tel(ultra_cold: bool | None = None) -> DataFrame
+```python
+Get telemetry for this driver's fastest lap.
+
+**Parameters:**
+- `ultra_cold`: Enable ultra-low latency mode. If None, uses global config.
+
+**Returns:**
+- DataFrame with telemetry data.
+
+**Example:**
+```python
+fastest_tel = ver.get_fastest_lap_tel()
+print(fastest_tel[["Distance", "Speed", "Throttle"]].head())
+```python
+
+---
+
+## Telemetry
+
+High-frequency data recorded throughout a lap.
+
+### Properties
+
+<ResponseField name="data" type="DataFrame">
+  The underlying DataFrame with telemetry samples.
+</ResponseField>
+
+### Available Columns
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Time` | float | Seconds | Time from lap start |
+| `Distance` | float | Meters | Distance from lap start |
+| `Speed` | float | km/h | Current speed |
+| `RPM` | int | RPM | Engine revolutions per minute |
+| `nGear` | int | - | Current gear (1-8) |
+| `Throttle` | float | % | Throttle position (0-100) |
+| `Brake` | bool | - | Brake pedal pressed |
+| `DRS` | int | - | DRS status (0=Off, 10+=On) |
+| `X`, `Y`, `Z` | float | Meters | 3D position coordinates |
+
+### Methods
+
+Telemetry objects support standard DataFrame operations since they wrap a DataFrame.
+
+**Example:**
+```python
+lap = driver.get_lap(19)
+tel = lap.telemetry
+
+# Filter to high-speed sections
+high_speed = tel[tel["Speed"] > 300]
+
+# Find maximum speed
+max_speed = tel["Speed"].max()
+
+# Plot speed trace
+import matplotlib.pyplot as plt
+plt.plot(tel["Distance"], tel["Speed"])
+plt.show()
+```python
+
+---
+
+## SessionResults
+
+Contains race results and final positions.
+
+### Properties
+
+<ResponseField name="results" type="DataFrame">
+  Final classification with positions, points, and status.
+</ResponseField>
+
+### Available Columns
+
+| Column | Description |
+| :--- | :--- |
+| `Position` | Final position (1-20) |
+| `Driver` | 3-letter driver code |
+| `Team` | Team name |
+| `Points` | Championship points earned |
+| `Status` | Finish status (Finished, +1 Lap, Retired, etc.) |
+| `Time` | Total race time or gap to winner |
+
+---
+
+## CircuitInfo
+
+Information about the circuit.
+
+### Properties
+
+<ResponseField name="circuit_name" type="str">
+  Official circuit name.
+</ResponseField>
+
+<ResponseField name="location" type="str">
+  City/country location.
+</ResponseField>
+
+<ResponseField name="circuit_length" type="float">
+  Track length in meters.
+</ResponseField>
+
+---
+
+## DriverResult
+
+Individual driver's race result.
+
+### Properties
+
+<ResponseField name="position" type="int">
+  Final position.
+</ResponseField>
+
+<ResponseField name="driver" type="str">
+  Driver code.
+</ResponseField>
+
+<ResponseField name="points" type="int">
+  Points earned.
+</ResponseField>
+
+<ResponseField name="status" type="str">
+  Finish status.
+</ResponseField>
+
+---
+
+## Usage Examples
+
+### Working with laps collection
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps
+
+# Filter by driver
+ver_laps = laps[laps["Driver"] == "VER"]
+
+# Get fastest lap
+fastest = laps.nsmallest(1, "LapTime")
+
+# Filter by compound
+soft_laps = laps[laps["Compound"] == "SOFT"]
+
+# Get laps in a specific range
+mid_race = laps[(laps["LapNumber"] >= 20) & (laps["LapNumber"] <= 40)]
+```python ### Working with driver objects
+
+```python
+# Get driver
+ver = session.get_driver("VER")
+
+# Access driver info
+print(f"Driver: {ver.driver}")
+print(f"Team: {ver.team}")
+print(f"Number: {ver.driver_number}")
+
+# Get all laps
+all_laps = ver.laps
+
+# Get specific lap
+lap_19 = ver.get_lap(19)
+
+# Get fastest lap
+fastest = ver.get_fastest_lap()
+fastest_tel = ver.get_fastest_lap_tel()
+```python
+
+### Working with Lap Objects
+
+```python
+# Get a specific lap
+lap = ver.get_lap(19)
+
+# Access lap properties
+print(f"Lap {lap.lap_number}")
+print(f"Time: {lap.lap_time:.3f}s")
+print(f"Driver: {lap.driver}")
+
+# Get telemetry
+tel = lap.telemetry
+
+# Analyze telemetry
+max_speed = tel["Speed"].max()
+avg_throttle = tel["Throttle"].mean()
+```python
+
+### Working with Telemetry
+
+```python
+# Get telemetry
+tel = lap.telemetry
+
+# Basic analysis
+print(f"Samples: {len(tel)}")
+print(f"Max speed: {tel['Speed'].max()} km/h")
+print(f"Max RPM: {tel['RPM'].max()}")
+
+# Find braking zones
+braking = tel[tel["Brake"] == True]
+print(f"Braking points: {len(braking)}")
+
+# DRS usage
+drs_active = tel[tel["DRS"] >= 10]
+print(f"DRS active: {len(drs_active)} samples")
+```python
+
+---
+
+## Type Hints
+
+All models support type hints for better IDE integration.
+
+```python
+from tif1 import Session, Driver, Lap
+import tif1
+
+session: Session = tif1.get_session(2025, "Monaco", "Race")
+driver: Driver = session.get_driver("VER")
+lap: Lap = driver.get_lap(19)
+
+# DataFrame types
+from pandas import DataFrame
+laps: DataFrame = session.laps
+telemetry: DataFrame = lap.telemetry
+```bash
+
+---
+
+## Summary
+
+The models module provides:
+- Object-oriented interface for F1 data
+- Lazy loading for performance
+- Convenient methods for common operations
+- Type hints for IDE support
+- DataFrame-based data access
+
+Use these classes to write clean, maintainable F1 analysis code.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Core API" href="/api-reference/core">
+    Session and Driver
+  </Card>
+  <Card title="Types" href="/api-reference/types">
+    Type definitions
+  </Card>
+  <Card title="Data Schema" href="/reference/data-schema">
+    Data structure
+  </Card>
+  <Card title="Examples" href="/examples">
+    Usage examples
+  </Card>
+</CardGroup>

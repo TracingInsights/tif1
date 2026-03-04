@@ -1,0 +1,32 @@
+minimum_prek_version = "0.3.3"
+default_install_hook_types = ["pre-commit", "pre-push"]
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace" },
+    { id = "end-of-file-fixer" },
+    { id = "check-yaml" },
+    { id = "check-added-large-files" },
+    { id = "check-json" },
+    { id = "check-toml" },
+    { id = "check-merge-conflict" },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.15.4"
+hooks = [
+    { id = "ruff", args = ["--fix", "--exit-non-zero-on-fix"] },
+    { id = "ruff-format" },
+]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "ty"
+name = "ty check"
+entry = "ty check src/tif1"
+language = "system"
+pass_filenames = false

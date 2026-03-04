@@ -1,0 +1,339 @@
+---
+title: "Advanced Telemetry Analysis"
+icon: "chart-line"
+description: "Deep dive into acceleration, position data, and racing lines"
+keywords:
+  - "telemetry analysis"
+  - "speed trace"
+  - "throttle analysis"
+  - "brake points"
+  - "advanced telemetry"
+---
+
+tif1 provides rich telemetry data including position coordinates and acceleration vectors. This tutorial shows how to leverage this data for advanced analysis.
+
+## Acceleration Analysis
+
+tif1 automatically includes acceleration data in three axes (X, Y, Z) for every telemetry point.
+
+### Longitudinal Acceleration (Braking & Acceleration)
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import numpy as np
+
+session = tif1.get_session(2025, "Monza Grand Prix", "Qualifying")
+ver = session.get_driver("VER")
+fastest_lap = ver.get_fastest_lap()
+telemetry = ver.get_lap(fastest_lap["LapNumber"].iloc[0]).telemetry
+
+# Plot longitudinal acceleration
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+# Speed profile
+ax1.plot(telemetry["Distance"], telemetry["Speed"], color="blue", linewidth=2)
+ax1.set_ylabel("Speed (km/h)")
+ax1.set_title("VER Fastest Lap - Speed and Acceleration")
+ax1.grid(True, alpha=0.3)
+
+# Acceleration (positive = accelerating, negative = braking)
+ax2.plot(telemetry["Distance"], telemetry["AccelerationX"], color="red", linewidth=1.5)
+ax2.axhline(0, color="black", linestyle="--", alpha=0.5)
+ax2.fill_between(
+    telemetry["Distance"],
+    0,
+    telemetry["AccelerationX"],
+    where=(telemetry["AccelerationX"] > 0),
+    color="green",
+    alpha=0.3,
+    label="Acceleration"
+)
+ax2.fill_between(
+    telemetry["Distance"],
+    0,
+    telemetry["AccelerationX"],
+    where=(telemetry["AccelerationX"] < 0),
+    color="red",
+    alpha=0.3,
+    label="Braking"
+)
+ax2.set_xlabel("Distance (m)")
+ax2.set_ylabel("Acceleration (m/s²)")
+ax2.legend()
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Lateral Acceleration (Cornering G-Forces)
+
+Lateral acceleration shows how hard the car is cornering.
+
+```python
+# Find maximum lateral G-force
+max_lateral_g = telemetry["AccelerationY"].abs().max() / 9.81
+print(f"Maximum lateral G-force: {max_lateral_g:.2f}g")
+
+# Plot lateral acceleration through corners
+plt.figure(figsize=(14, 6))
+plt.plot(telemetry["Distance"], telemetry["AccelerationY"] / 9.81, color="purple")
+plt.axhline(0, color="black", linestyle="--", alpha=0.5)
+plt.xlabel("Distance (m)")
+plt.ylabel("Lateral Acceleration (g)")
+plt.title("Cornering Forces - VER Fastest Lap")
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+## Racing line visualization
+
+Use position data (X, Y, Z) to visualize the racing line.
+
+```python
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+session = tif1.get_session(2025, "Silverstone Grand Prix", "Qualifying")
+
+# Get telemetry for two drivers
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+
+ver_fastest = ver.get_fastest_lap()
+ham_fastest = ham.get_fastest_lap()
+
+ver_tel = ver.get_lap(ver_fastest["LapNumber"].iloc[0]).telemetry
+ham_tel = ham.get_lap(ham_fastest["LapNumber"].iloc[0]).telemetry
+
+# Create figure
+fig, ax = plt.subplots(figsize=(12, 12))
+
+# Plot VER racing line colored by speed
+points_ver = np.array([ver_tel["X"], ver_tel["Y"]]).T.reshape(-1, 1, 2)
+segments_ver = np.concatenate([points_ver[:-1], points_ver[1:]], axis=1)
+lc_ver = LineCollection(segments_ver, cmap="plasma", linewidth=3)
+lc_ver.set_array(ver_tel["Speed"])
+ax.add_collection(lc_ver)
+
+# Plot HAM racing line
+points_ham = np.array([ham_tel["X"], ham_tel["Y"]]).T.reshape(-1, 1, 2)
+segments_ham = np.concatenate([points_ham[:-1], points_ham[1:]], axis=1)
+lc_ham = LineCollection(segments_ham, cmap="viridis", linewidth=2, alpha=0.6)
+lc_ham.set_array(ham_tel["Speed"])
+ax.add_collection(lc_ham)
+
+# Colorbar
+cbar = plt.colorbar(lc_ver, ax=ax)
+cbar.set_label("Speed (km/h)")
+
+ax.set_xlabel("X Position (m)")
+ax.set_ylabel("Y Position (m)")
+ax.set_title("Racing Lines: VER (plasma) vs HAM (viridis)")
+ax.set_aspect("equal")
+plt.tight_layout()
+plt.show()
+```
+
+## Corner Analysis
+
+Identify and analyze specific corners using position and speed data.
+
+```python
+import numpy as np
+
+def find_corners(telemetry, speed_threshold=200):
+    """Find corners where speed drops below threshold."""
+    corners = []
+    in_corner = False
+    corner_start = None
+
+    for i, speed in enumerate(telemetry["Speed"]):
+        if speed < speed_threshold and not in_corner:
+            in_corner = True
+            corner_start = i
+        elif speed >= speed_threshold and in_corner:
+            in_corner = False
+            if corner_start is not None:
+                corners.append((corner_start, i))
+                corner_start = None
+
+    return corners
+
+# Find corners
+corners = find_corners(ver_tel, speed_threshold=200)
+print(f"Found {len(corners)} corners")
+
+# Analyze each corner
+for idx, (start, end) in enumerate(corners[:3]):  # First 3 corners
+    corner_tel = ver_tel.iloc[start:end]
+
+    min_speed = corner_tel["Speed"].min()
+    max_lateral_g = corner_tel["AccelerationY"].abs().max() / 9.81
+
+    print(f"\nCorner {idx + 1}:")
+    print(f"  Minimum speed: {min_speed:.1f} km/h")
+    print(f"  Maximum lateral G: {max_lateral_g:.2f}g")
+    print(f"  Distance: {corner_tel['Distance'].iloc[0]:.0f}m - {corner_tel['Distance'].iloc[-1]:.0f}m")
+```
+
+## Throttle and brake overlap
+
+Analyze driver technique by looking at throttle and brake overlap.
+
+```python
+# Find instances where both throttle and brake are applied
+overlap = (ver_tel["Throttle"] > 0) & (ver_tel["Brake"] > 0)
+overlap_percentage = (overlap.sum() / len(ver_tel)) * 100
+
+print(f"Throttle/Brake overlap: {overlap_percentage:.2f}% of lap")
+
+# Visualize
+fig, ax = plt.subplots(figsize=(14, 6))
+
+ax.fill_between(
+    ver_tel["Distance"],
+    0,
+    ver_tel["Throttle"],
+    color="green",
+    alpha=0.5,
+    label="Throttle"
+)
+ax.fill_between(
+    ver_tel["Distance"],
+    0,
+    ver_tel["Brake"] * 100,  # Scale brake to 0-100
+    color="red",
+    alpha=0.5,
+    label="Brake"
+)
+
+# Highlight overlap regions
+overlap_regions = ver_tel[overlap]
+ax.scatter(
+    overlap_regions["Distance"],
+    50,
+    color="orange",
+    s=10,
+    label="Overlap",
+    zorder=5
+)
+
+ax.set_xlabel("Distance (m)")
+ax.set_ylabel("Input (%)")
+ax.set_title("Throttle and Brake Application - VER Fastest Lap")
+ax.legend()
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## Gear usage analysis
+
+Analyze gear selection throughout the lap.
+
+```python
+# Count time in each gear
+gear_time = ver_tel.groupby("nGear").size()
+total_samples = len(ver_tel)
+
+print("Gear usage:")
+for gear, count in gear_time.items():
+    percentage = (count / total_samples) * 100
+    print(f"  Gear {gear}: {percentage:.1f}%")
+
+# Visualize gear usage on track
+fig, ax = plt.subplots(figsize=(12, 12))
+
+# Color map for gears
+gear_colors = {
+    1: "#ff0000",
+    2: "#ff8800",
+    3: "#ffff00",
+    4: "#88ff00",
+    5: "#00ff00",
+    6: "#00ff88",
+    7: "#00ffff",
+    8: "#0088ff",
+}
+
+for gear in sorted(ver_tel["nGear"].unique()):
+    gear_data = ver_tel[ver_tel["nGear"] == gear]
+    ax.scatter(
+        gear_data["X"],
+        gear_data["Y"],
+        c=gear_colors.get(gear, "#888888"),
+        s=5,
+        label=f"Gear {gear}"
+    )
+
+ax.set_xlabel("X Position (m)")
+ax.set_ylabel("Y Position (m)")
+ax.set_title("Gear Selection Around Track - VER Fastest Lap")
+ax.set_aspect("equal")
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+## DRS Usage
+
+Analyze DRS (Drag Reduction System) activation.
+
+```python
+# Find DRS zones
+drs_active = ver_tel["DRS"] >= 10
+drs_percentage = (drs_active.sum() / len(ver_tel)) * 100
+
+print(f"DRS active for {drs_percentage:.1f}% of lap")
+
+# Find DRS zones (continuous regions)
+drs_zones = []
+in_zone = False
+zone_start = None
+
+for i, active in enumerate(drs_active):
+    if active and not in_zone:
+        in_zone = True
+        zone_start = ver_tel["Distance"].iloc[i]
+    elif not active and in_zone:
+        in_zone = False
+        if zone_start is not None:
+            zone_end = ver_tel["Distance"].iloc[i-1]
+            drs_zones.append((zone_start, zone_end))
+
+print(f"\nFound {len(drs_zones)} DRS zones:")
+for idx, (start, end) in enumerate(drs_zones):
+    print(f"  Zone {idx + 1}: {start:.0f}m - {end:.0f}m ({end - start:.0f}m long)")
+```
+
+## Summary
+
+With tif1's rich telemetry data, you can:
+
+- Analyze acceleration patterns (longitudinal, lateral, vertical)
+- Visualize racing lines with position data
+- Identify and analyze specific corners
+- Study driver technique (throttle/brake overlap)
+- Examine gear selection strategies
+- Track DRS usage and zones
+
+All of this data is available at high frequency (~4Hz) for every lap, enabling deep performance analysis.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Telemetry Comparison" href="/tutorials/telemetry-comparison">
+    Compare telemetry
+  </Card>
+  <Card title="Data Visualization" href="/guides/data-visualization">
+    Visualization guide
+  </Card>
+  <Card title="Core API" href="/api-reference/core">
+    Telemetry API
+  </Card>
+</CardGroup>

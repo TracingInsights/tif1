@@ -1,0 +1,833 @@
+---
+title: "Configuration API"
+icon: "gear"
+description: "Programmatic control over tif1 settings via config files, environment variables, and runtime API"
+keywords:
+  - "configuration"
+  - "tif1 config"
+  - "environment variables"
+  - "settings"
+---
+
+`tif1` can be configured via a `.tif1rc` file, environment variables, or programmatically using the `Config` object. Configuration is loaded in this order (later sources override earlier ones):
+
+1. Default values
+2. `.tif1rc` file in home directory (`~/.tif1rc`)
+3. Environment variables (prefixed with `TIF1_`)
+4. Programmatic `config.set()` calls
+
+## `get_config`
+
+```python
+def get_config() -> Config
+```python
+
+Returns the global singleton configuration instance.
+
+**Returns:**
+- Global `Config` object
+
+**Example:**
+```python
+import tif1
+
+config = tif1.get_config()
+print(f"Lib: {config.get('lib')}")
+print(f"Cache enabled: {config.get('enable_cache')}")
+```python
+
+---
+
+## Config Methods
+
+### `get(key, default=None)`
+
+Get the value for a configuration key.
+
+```python
+def get(key: str, default: Any = None) -> Any
+```yaml
+
+**Parameters:**
+- `key`: Configuration key name
+- `default`: Default value if key doesn't exist
+
+**Returns:**
+- Configuration value or default
+
+**Example:**
+```python
+config = tif1.get_config()
+
+lib = config.get("lib")  # "pandas"
+timeout = config.get("timeout", 30)  # 30 if not set
+custom = config.get("custom_key", "default")  # "default"
+```python
+
+---
+
+### `set(key, value)`
+
+Update a configuration value in memory for the current session.
+
+```python
+def set(key: str, value: Any) -> None
+```yaml
+
+**Parameters:**
+- `key`: Configuration key name
+- `value`: New value to set
+
+**Example:**
+```python
+config = tif1.get_config()
+
+# Change lib
+config.set("lib", "polars")
+
+# Disable cache
+config.set("enable_cache", False)
+
+# Increase timeout
+config.set("timeout", 60)
+```python
+
+<Note>
+  Changes made with `set()` only affect the current Python session. Use `save()` to persist changes to disk.
+</Note>
+
+---
+
+### `save(path=None)`
+
+Save the current configuration to a JSON file.
+
+```python
+def save(path: Path | None = None) -> None
+```yaml
+
+**Parameters:**
+- `path`: Path to save config file. If `None`, saves to `~/.tif1rc`
+
+**Example:**
+```python
+config = tif1.get_config()
+
+# Modify settings
+config.set("lib", "polars")
+config.set("enable_cache", True)
+
+# Save to default location (~/.tif1rc)
+config.save()
+
+# Save to custom location
+config.save(Path("./my-config.json"))
+```python ---
+
+## Configuration Keys
+
+### Core Settings
+
+<ResponseField name="lib" type="str" default="pandas">
+  Default DataFrame lib (`"pandas"` or `"polars"`).
+
+  ```python
+  config.set("lib", "polars")
+```python
+</ResponseField>
+
+<ResponseField name="enable_cache" type="bool" default="True">
+  Enable or disable the multi-layer caching system (memory + SQLite).
+
+  ```python
+  config.set("enable_cache", False)  # Disable caching
+```sql
+</ResponseField>
+
+<ResponseField name="cache_dir" type="str" default="~/.tif1/cache">
+  Path where the SQLite cache database is stored.
+
+  ```python
+  config.set("cache_dir", "/tmp/tif1-cache")
+```python
+</ResponseField>
+
+<ResponseField name="validate_data" type="bool" default="False">
+  Enable Pydantic validation of incoming JSON data.
+
+  <Note>
+    Validation adds overhead. Disabled by default for performance.
+  </Note>
+
+  ```python
+  config.set("validate_data", True)  # Enable validation
+```python
+</ResponseField>
+
+<ResponseField name="ultra_cold_start" type="bool" default="True">
+  Enable ultra-low latency mode for first-time loads. Skips loading full session data when only specific data is needed.
+
+  ```python
+  config.set("ultra_cold_start", False)  # Disable for full data loading
+```python
+</ResponseField>
+
+---
+
+### Network Settings
+
+<ResponseField name="timeout" type="int" default="30">
+  Network request timeout in seconds.
+
+  ```python
+  config.set("timeout", 60)  # 60 second timeout
+```python
+</ResponseField>
+
+<ResponseField name="max_retries" type="int" default="3">
+  Number of times to retry a failed CDN request.
+
+  ```python
+  config.set("max_retries", 5)
+```python
+</ResponseField>
+
+<ResponseField name="max_workers" type="int" default="20">
+  Maximum number of concurrent workers for parallel requests.
+
+  ```python
+  config.set("max_workers", 50)
+  ```python </ResponseField>
+
+<ResponseField name="max_concurrent_requests" type="int" default="20">
+  Maximum number of concurrent HTTP requests.
+
+  ```python
+  config.set("max_concurrent_requests", 50)
+```python
+</ResponseField>
+
+---
+
+### HTTP Session Settings
+
+<ResponseField name="http_multiplexed" type="bool" default="True">
+  Enable HTTP/2 multiplexing for multiple requests over a single connection.
+
+  ```python
+  config.set("http_multiplexed", False)  # Disable multiplexing
+```python
+</ResponseField>
+
+<ResponseField name="http_disable_http3" type="bool" default="False">
+  Disable HTTP/3 support.
+
+  ```python
+  config.set("http_disable_http3", True)
+```python
+</ResponseField>
+
+<ResponseField name="pool_connections" type="int" default="dynamic">
+  Number of connection pools to maintain. If not set, automatically calculated as `max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)`.
+
+  <Note>
+    Most users should rely on automatic sizing. Only set explicitly for specific performance tuning.
+  </Note>
+
+  ```python
+  config.set("pool_connections", 512)  # Override automatic sizing
+```python
+</ResponseField>
+
+<ResponseField name="pool_maxsize" type="int" default="dynamic">
+  Maximum connections per pool. If not set, automatically calculated as `max(512, pool_connections * 4)` to handle burst traffic.
+
+  <Note>
+    Automatically sized to 4x pool_connections with a minimum of 512. Only override for specific use cases.
+  </Note>
+
+  ```python
+  config.set("pool_maxsize", 2048)  # Override automatic sizing
+```python
+</ResponseField>
+
+<ResponseField name="keepalive_timeout" type="int" default="120">
+  Keep-alive timeout in seconds.
+
+  ```python
+  config.set("keepalive_timeout", 300)
+```python
+</ResponseField>
+
+<ResponseField name="keepalive_max_requests" type="int" default="1000">
+  Maximum requests per keep-alive connection.
+
+  ```python
+  config.set("keepalive_max_requests", 5000)
+```python
+</ResponseField>
+
+<ResponseField name="user_agent" type="str" default="tif1/0.1.0">
+  User-Agent header for HTTP requests.
+
+  ```python
+  config.set("user_agent", "my-app/1.0.0")
+  ```python </ResponseField>
+
+<ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
+  DNS resolvers with DoH fallback.
+
+  ```python
+  config.set("http_resolvers", ["doh://cloudflare"])
+```python
+</ResponseField>
+
+---
+
+### Telemetry Settings
+
+<ResponseField name="telemetry_prefetch_max_concurrent_requests" type="int" default="32">
+  Maximum concurrent requests for telemetry prefetching.
+
+  ```python
+  config.set("telemetry_prefetch_max_concurrent_requests", 128)
+```yaml
+</ResponseField>
+
+---
+
+### Logging Settings
+
+<ResponseField name="connection_stats_log_interval" type="float" default="60.0">
+  Interval in seconds for logging connection pool statistics.
+
+  ```python
+  config.set("connection_stats_log_interval", 120.0)
+```yaml
+</ResponseField>
+
+---
+
+### Advanced Configuration
+
+<Note>
+  These settings are for advanced users and performance tuning. Most users should use the defaults.
+</Note>
+
+<Accordion title="Cache Internals">
+
+<ResponseField name="cache_commit_interval" type="int" default="25">
+  Number of cache operations before committing to SQLite.
+
+  ```python
+  config.set("cache_commit_interval", 50)
+  ```
+</ResponseField>
+
+<ResponseField name="memory_cache_max_items" type="int" default="1024">
+  Maximum items in the in-memory cache layer.
+
+  ```python
+  config.set("memory_cache_max_items", 2048)
+  ```
+</ResponseField>
+
+<ResponseField name="memory_telemetry_cache_max_items" type="int" default="2048">
+  Maximum telemetry items in the in-memory cache.
+
+  ```python
+  config.set("memory_telemetry_cache_max_items", 4096)
+  ```
+</ResponseField>
+
+<ResponseField name="sqlite_timeout" type="float" default="30.0">
+  SQLite connection timeout in seconds.
+
+  ```python
+  config.set("sqlite_timeout", 60.0)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="CDN Configuration">
+
+<ResponseField name="cdns" type="list[str]" default='["https://cdn.jsdelivr.net/gh/TracingInsights"]'>
+  List of CDN URLs to use for data fetching. Must be HTTPS URLs.
+
+  ```python
+  config.set("cdns", ["https://cdn.jsdelivr.net/gh/TracingInsights"])
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_use_minification" type="bool" default="False">
+  Use minified CDN resources (reserved for future use).
+
+  ```python
+  config.set("cdn_use_minification", False)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="Retry & Circuit Breaker">
+
+<ResponseField name="retry_backoff_factor" type="float" default="2.0">
+  Exponential backoff multiplier for retries. Must be >= 1.0.
+
+  ```python
+  config.set("retry_backoff_factor", 3.0)
+  ```
+</ResponseField>
+
+<ResponseField name="retry_jitter" type="bool" default="True">
+  Add random jitter to retry delays to prevent thundering herd.
+
+  ```python
+  config.set("retry_jitter", True)
+  ```
+</ResponseField>
+
+<ResponseField name="retry_jitter_max" type="float" default="0.0">
+  Maximum jitter amount in seconds. Must be > 0 to have effect.
+
+  ```python
+  config.set("retry_jitter_max", 1.0)
+  ```
+</ResponseField>
+
+<ResponseField name="max_retry_delay" type="float" default="60.0">
+  Maximum delay between retries in seconds.
+
+  ```python
+  config.set("max_retry_delay", 120.0)
+  ```
+</ResponseField>
+
+<ResponseField name="circuit_breaker_threshold" type="int" default="5">
+  Number of consecutive failures before circuit breaker opens.
+
+  ```python
+  config.set("circuit_breaker_threshold", 10)
+  ```
+</ResponseField>
+
+<ResponseField name="circuit_breaker_timeout" type="int" default="60">
+  Seconds to wait before attempting to close circuit breaker.
+
+  ```python
+  config.set("circuit_breaker_timeout", 120)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="HTTP/2 Configuration">
+
+<ResponseField name="http2_max_connections" type="int" default="10">
+  Maximum HTTP/2 connections per host.
+
+  ```python
+  config.set("http2_max_connections", 20)
+  ```
+</ResponseField>
+
+<ResponseField name="http2_max_pool_size" type="int" default="20">
+  HTTP/2 connection pool size.
+
+  ```python
+  config.set("http2_max_pool_size", 40)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="Connection Pool Exhaustion">
+
+<ResponseField name="pool_exhaustion_backoff_base" type="float" default="0.01">
+  Base backoff delay when connection pool is exhausted (seconds).
+
+  ```python
+  config.set("pool_exhaustion_backoff_base", 0.02)
+  ```
+</ResponseField>
+
+<ResponseField name="pool_exhaustion_backoff_max" type="float" default="0.5">
+  Maximum backoff delay for pool exhaustion (seconds).
+
+  ```python
+  config.set("pool_exhaustion_backoff_max", 1.0)
+  ```
+</ResponseField>
+
+<ResponseField name="pool_exhaustion_backoff_jitter" type="float" default="0.01">
+  Jitter amount for pool exhaustion backoff (seconds).
+
+  ```python
+  config.set("pool_exhaustion_backoff_jitter", 0.02)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="Data Validation">
+
+<ResponseField name="validate_lap_times" type="bool" default="False">
+  Enable validation of lap time data using Pydantic schemas.
+
+  ```python
+  config.set("validate_lap_times", True)
+  ```
+</ResponseField>
+
+<ResponseField name="validate_telemetry" type="bool" default="False">
+  Enable validation of telemetry data using Pydantic schemas.
+
+  ```python
+  config.set("validate_telemetry", True)
+  ```
+</ResponseField>
+
+<Warning>
+  Enabling validation adds overhead. Only enable for debugging or data quality checks.
+</Warning>
+
+</Accordion>
+
+<Accordion title="Prefetch Strategies">
+
+<ResponseField name="prefetch_driver_laps_on_get_driver" type="bool" default="True">
+  Automatically prefetch lap data when accessing a driver.
+
+  ```python
+  config.set("prefetch_driver_laps_on_get_driver", False)
+  ```
+</ResponseField>
+
+<ResponseField name="prefetch_all_telemetry_on_first_lap_request" type="bool" default="False">
+  Prefetch all telemetry data on first lap telemetry request.
+
+  ```python
+  config.set("prefetch_all_telemetry_on_first_lap_request", True)
+  ```
+</ResponseField>
+
+<ResponseField name="prefetch_all_telemetry_after_laps_load" type="bool" default="False">
+  Prefetch all telemetry data immediately after loading laps.
+
+  ```python
+  config.set("prefetch_all_telemetry_after_laps_load", True)
+  ```
+</ResponseField>
+
+<ResponseField name="ultra_cold_background_cache_fill" type="bool" default="False">
+  Fill cache in background during ultra cold start mode.
+
+  ```python
+  config.set("ultra_cold_background_cache_fill", True)
+  ```
+</ResponseField>
+
+<ResponseField name="ultra_cold_skip_retries" type="bool" default="True">
+  Skip retries in ultra cold start mode for faster initial load.
+
+  ```python
+  config.set("ultra_cold_skip_retries", False)
+  ```
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="Other Advanced Settings">
+
+<ResponseField name="log_level" type="str" default="WARNING">
+  Default logging level. Use `setup_logging()` to change at runtime.
+
+  ```python
+  config.set("log_level", "DEBUG")
+  ```
+</ResponseField>
+
+<ResponseField name="offline_mode" type="bool" default="False">
+  Enable offline mode (cache-only, no network requests).
+
+  ```python
+  config.set("offline_mode", True)
+  ```
+</ResponseField>
+
+<ResponseField name="ci_mode" type="bool" default="False">
+  Enable CI mode (optimized for continuous integration environments).
+
+  ```python
+  config.set("ci_mode", True)
+  ```
+</ResponseField>
+
+<ResponseField name="polars_lap_categorical" type="bool" default="False">
+  Use categorical types for string columns in polars DataFrames.
+
+  ```python
+  config.set("polars_lap_categorical", True)
+  ```
+</ResponseField>
+
+<ResponseField name="json_parse_workers" type="int" default="0">
+  Number of worker processes for parallel JSON parsing. 0 disables multiprocessing.
+
+  <Warning>
+    Process-pool JSON parsing can hurt performance due to IPC overhead for telemetry-heavy workloads. Keep disabled unless you have specific use cases.
+  </Warning>
+
+  ```python
+  config.set("json_parse_workers", 4)
+  ```
+</ResponseField>
+
+</Accordion>
+
+---
+
+## Configuration file format
+
+The `.tif1rc` file is a JSON file with key-value pairs:
+
+```json
+{
+  "lib": "pandas",
+  "enable_cache": true,
+  "cache_dir": "~/.tif1/cache",
+  "timeout": 60,
+  "max_retries": 5,
+  "validate_data": false,
+  "ultra_cold_start": true,
+  "max_workers": 50,
+  "pool_connections": 512,
+  "pool_maxsize": 1024,
+  "http_multiplexed": true,
+  "http_disable_http3": false,
+  "keepalive_timeout": 300,
+  "keepalive_max_requests": 5000,
+  "user_agent": "my-app/1.0.0",
+  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+}
+```
+
+**Location:**
+- Default: `~/.tif1rc`
+- Custom: Specify path with `TIF1_CONFIG_PATH` environment variable
+
+---
+
+## Environment Variables
+
+All configuration keys can be set via environment variables with the `TIF1_` prefix:
+
+```bash
+# Set lib
+export TIF1_LIB=polars
+
+# Disable cache
+export TIF1_ENABLE_CACHE=false
+
+# Set timeout
+export TIF1_TIMEOUT=60
+
+# Set cache directory
+export TIF1_CACHE_DIR=/tmp/tif1-cache
+
+# Set max workers
+export TIF1_MAX_WORKERS=50
+
+# Enable ultra cold start
+export TIF1_ULTRA_COLD_START=true
+
+# Configure HTTP
+export TIF1_HTTP_MULTIPLEXED=true
+export TIF1_POOL_CONNECTIONS=512
+export TIF1_POOL_MAXSIZE=1024
+
+# Configure DNS resolvers (comma-separated)
+export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
+```yaml
+
+---
+
+## Configuration Precedence
+
+Configuration is loaded in this order (later overrides earlier):
+
+1. **Default values** (hardcoded in library)
+2. **`.tif1rc` file** (`~/.tif1rc` or `TIF1_CONFIG_PATH`)
+3. **Environment variables** (`TIF1_*`)
+4. **Programmatic calls** (`config.set()`)
+
+**Example:**
+```python
+# Default: lib = "pandas"
+# .tif1rc: lib = "polars"
+# Environment: TIF1_LIB=pandas
+# Programmatic: config.set("lib", "polars")
+
+# Final value: "polars" (programmatic wins)
+```python
+
+---
+
+## Common configuration patterns
+
+### High-Performance Setup
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use polars lib
+config.set("lib", "polars")
+
+# Increase concurrency
+config.set("max_workers", 100)
+config.set("max_concurrent_requests", 100)
+config.set("telemetry_prefetch_max_concurrent_requests", 128)
+
+# Optimize connection pooling (override automatic sizing)
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+
+# Longer keep-alive
+config.set("keepalive_timeout", 300)
+config.set("keepalive_max_requests", 10000)
+```
+
+### Low-Latency Setup
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable ultra cold start
+config.set("ultra_cold_start", True)
+
+# Use DoH for faster DNS
+config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+
+# Aggressive connection pooling
+config.set("pool_connections", 256)
+config.set("pool_maxsize", 1024)
+
+# Shorter timeout
+config.set("timeout", 15)
+```python ### Development Setup
+
+```python
+import tif1
+import logging
+
+config = tif1.get_config()
+
+# Disable cache for fresh data
+config.set("enable_cache", False)
+
+# Enable validation
+config.set("validate_data", True)
+
+# Verbose logging
+tif1.setup_logging(logging.DEBUG)
+
+# Lower concurrency for debugging
+config.set("max_workers", 5)
+```python
+
+### Production Setup
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable cache
+config.set("enable_cache", True)
+config.set("cache_dir", "/var/cache/tif1")
+
+# Disable validation for performance
+config.set("validate_data", False)
+
+# High concurrency
+config.set("max_workers", 100)
+config.set("max_concurrent_requests", 100)
+
+# Robust retry settings
+config.set("max_retries", 5)
+config.set("timeout", 60)
+
+# Save configuration
+config.save()
+```python
+
+---
+
+## Setting Log Level
+
+While not part of the `Config` object, you can set the log level using `setup_logging`:
+
+```python
+import tif1
+import logging
+
+# Set log level
+tif1.setup_logging(logging.DEBUG)  # DEBUG, INFO, WARNING, ERROR
+```python
+
+Or use the fastf1-compatible function:
+
+```python
+import tif1
+
+# Set log level (fastf1 compatibility)
+tif1.set_log_level(logging.DEBUG)
+```yaml
+
+---
+
+## Best Practices
+
+1. **Use config files for persistent settings**: Store common settings in `~/.tif1rc`
+2. **Use environment variables for deployment**: Configure per-environment settings
+3. **Use programmatic API for runtime changes**: Adjust settings based on workload
+4. **Save after making changes**: Call `config.save()` to persist changes
+5. **Test configuration changes**: Verify performance impact before deploying
+6. **Monitor connection stats**: Track connection reuse rate to optimize pooling
+7. **Let pool sizing auto-calculate**: Only override `pool_connections` and `pool_maxsize` for specific tuning needs
+8. **Keep validation disabled in production**: Enable only for debugging or data quality checks
+
+---
+
+## Summary
+
+The configuration system provides:
+- Multiple configuration sources (file, env, API)
+- Clear precedence rules
+- Runtime configuration changes
+- Persistent configuration storage
+- Comprehensive settings for all aspects of the library
+- Performance tuning capabilities
+
+Use configuration to optimize `tif1` for your specific use case and environment.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" href="/reference/environment-variables">
+    Env var reference
+  </Card>
+  <Card title="Installation" href="/installation">
+    Setup guide
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    Configuration tips
+  </Card>
+</CardGroup>

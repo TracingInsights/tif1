@@ -1,0 +1,190 @@
+---
+title: "Cache API"
+icon: "database"
+description: "Interacting with the tif1 caching layer"
+keywords:
+  - "data caching"
+  - "SQLite cache"
+  - "cache management"
+  - "performance optimization"
+---
+
+`tif1` provides a programmatic interface to manage its two-tier caching system (Memory + SQLite).
+
+## `get_cache`
+
+```python
+def get_cache() -> Cache
+```
+
+Returns the global singleton cache instance.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+```
+
+---
+
+## Cache Management
+
+### `clear()`
+Removes all entries from both the in-memory LRU cache and the persistent SQLite database.
+
+```python
+cache.clear()
+```
+
+### `has_session_data(year, gp, session)`
+Checks if the cache contains any data for a specific session without loading it. Returns `True` if any JSON or telemetry data exists for the session.
+
+**Parameters:**
+- `year` (int): Season year
+- `gp` (str): Grand Prix identifier (e.g., `"Belgian_Grand_Prix"`)
+- `session` (str): Session type (e.g., `"Race"`, `"Qualifying"`)
+
+**Returns:** `bool`
+
+```python
+exists = cache.has_session_data(2021, "Belgian_Grand_Prix", "Race")
+```
+
+### `close()`
+Closes the SQLite database connection. This is called automatically on exit, but can be used manually if needed.
+
+```python
+cache.close()
+```
+
+---
+
+## General Cache Access
+
+### `get(key)`
+Returns the cached JSON-serializable data for a specific key. Returns `None` if not found.
+
+**Parameters:**
+- `key` (str): Cache key in format `"{year}/{gp}/{session}/{file}.json"`
+
+**Returns:** `Any | None`
+
+```python
+data = cache.get("2021/Belgian_Grand_Prix/Race/drivers.json")
+```
+
+### `set(key, data)`
+Stores data in the cache with the specified key. Updates both memory and SQLite caches.
+
+**Parameters:**
+- `key` (str): Cache key
+- `data` (Any): JSON-serializable data to cache
+
+```python
+cache.set("2021/Belgian_Grand_Prix/Race/drivers.json", drivers_data)
+```
+
+---
+
+## Telemetry Cache Access
+
+Telemetry data uses a dedicated SQLite table optimized for lap-by-lap queries.
+
+### `get_telemetry(year, gp, session, driver, lap)`
+Retrieves telemetry data for a specific lap. Returns `None` if not found.
+
+**Parameters:**
+- `year` (int): Season year
+- `gp` (str): Grand Prix identifier
+- `session` (str): Session type
+- `driver` (str): Driver code (e.g., `"VER"`, `"HAM"`)
+- `lap` (int): Lap number
+
+**Returns:** `Any | None`
+
+```python
+telemetry = cache.get_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1)
+```
+
+### `set_telemetry(year, gp, session, driver, lap, data)`
+Stores telemetry data for a specific lap.
+
+**Parameters:**
+- `year` (int): Season year
+- `gp` (str): Grand Prix identifier
+- `session` (str): Session type
+- `driver` (str): Driver code
+- `lap` (int): Lap number
+- `data` (Any): Telemetry data to cache
+
+```python
+cache.set_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1, telemetry_data)
+```
+
+### `get_telemetry_batch(year, gp, session, driver_laps)`
+Retrieves multiple telemetry entries in a single optimized batch query. More efficient than multiple individual `get_telemetry()` calls.
+
+**Parameters:**
+- `year` (int): Season year
+- `gp` (str): Grand Prix identifier
+- `session` (str): Session type
+- `driver_laps` (list[tuple[str, int]]): List of (driver_code, lap_number) tuples
+
+**Returns:** `dict[tuple[str, int], Any]` - Dictionary mapping (driver, lap) to telemetry data
+
+```python
+# Fetch telemetry for multiple driver-lap combinations
+driver_laps = [("VER", 1), ("VER", 2), ("HAM", 1)]
+batch = cache.get_telemetry_batch(2021, "Belgian_Grand_Prix", "Race", driver_laps)
+
+# Access individual entries
+ver_lap1 = batch.get(("VER", 1))
+```
+
+---
+
+## Async Methods
+
+All cache read/write operations have async variants for use in async contexts:
+
+- `get_async(key)` - Async version of `get()`
+- `set_async(key, data)` - Async version of `set()`
+- `get_telemetry_async(year, gp, session, driver, lap)` - Async version of `get_telemetry()`
+- `set_telemetry_async(year, gp, session, driver, lap, data)` - Async version of `set_telemetry()`
+- `get_telemetry_batch_async(year, gp, session, driver_laps)` - Async version of `get_telemetry_batch()`
+
+```python
+import asyncio
+
+async def fetch_cached_data():
+    cache = tif1.get_cache()
+    data = await cache.get_async("2021/Belgian_Grand_Prix/Race/drivers.json")
+    return data
+```
+
+---
+
+## Cache Attributes
+
+| Attribute | Type | Description |
+| :--- | :--- | :--- |
+| `cache_dir` | `Path` | The directory where the `cache.sqlite` file is stored. |
+| `db_path` | `Path` | Full path to the `cache.sqlite` database file. |
+| `read_only` | `bool` | If `True`, the cache will not save any new data to disk. |
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Caching Strategy" href="/concepts/caching-strategy">
+    Cache architecture
+  </Card>
+  <Card title="Config" href="/api-reference/config">
+    Cache configuration
+  </Card>
+  <Card title="Performance" href="/advanced/performance">
+    Optimization
+  </Card>
+</CardGroup>

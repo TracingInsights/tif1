@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          {
+            echo "## Changes"
+            echo
+            if [ -z "$PREV_TAG" ]; then
+              git log --pretty=format:"- %s (%h)" --no-merges
+            else
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+            fi
+            echo
+            echo
+            echo "## Installation"
+            echo
+            echo '```bash'
+            echo "pip install tif1==${VERSION}"
+            echo '```'
+          } > RELEASE_NOTES.md
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Release $GITHUB_REF_NAME" \
+              --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Release $GITHUB_REF_NAME" \
+              --notes-file RELEASE_NOTES.md
+          fi

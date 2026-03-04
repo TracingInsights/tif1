@@ -1,0 +1,455 @@
+---
+title: "Data Flow"
+icon: "diagram-project"
+description: "Understanding how data moves through tif1"
+keywords:
+  - "data flow"
+  - "architecture"
+  - "data pipeline"
+  - "CDN fetching"
+---
+
+Understanding tif1's data flow helps you optimize performance and troubleshoot issues. This guide explains how data moves from the CDN to your analysis.
+
+## High-Level Architecture
+
+```mermaid
+graph TD
+    A[User Code] --> B[Session Object]
+    B --> C{Memory Cache?}
+    C -->|Hit| D[Return Data]
+    C -->|Miss| E{SQLite Cache?}
+    E -->|Hit| F[Load to Memory]
+    E -->|Miss| G[CDN Manager]
+    G --> H[jsDelivr CDN]
+    H --> I[TracingInsights GitHub]
+    I --> J[JSON Data]
+    J --> K[Parse & Transform]
+    K --> L[Save to SQLite]
+    L --> F
+    F --> D
+```python
+
+## Data loading pipeline
+
+### 1. Request Initiation
+
+When you access data, tif1 starts the loading pipeline.
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps  # Triggers data loading
+```yaml
+
+### 2. Cache Lookup
+
+tif1 checks two cache tiers:
+
+**Tier 1: Memory LRU Cache**
+- Fastest (< 1ms)
+- Stores Python objects
+- Limited to 1024 items (configurable)
+- Cleared on process restart
+
+**Tier 2: SQLite Persistent Cache**
+- Fast (10-50ms)
+- Stores compressed JSON
+- Persists across restarts
+- Located in `~/.tif1/cache/`
+
+```python
+# Cache flow
+if key in memory_cache:
+    return memory_cache[key]
+elif key in sqlite_cache:
+    data = sqlite_cache[key]
+    memory_cache[key] = data
+    return data
+else:
+    # Fetch from CDN
+```yaml
+
+### 3. CDN Fetching
+
+If data isn't cached, tif1 fetches from the CDN.
+
+**CDN Strategy:**
+- Primary: jsDelivr CDN (fast, global)
+- Fallback: Direct GitHub (slower, rate limited)
+- Never uses raw.githubusercontent.com (rate limits)
+
+```python
+# URL construction
+base_url = "https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main"
+lap_url = f"{base_url}/laps/{gp}/{session}/driver_{driver}.json"
+```python
+
+### 4. async parallel fetching
+
+For multiple drivers, tif1 fetches in parallel using asyncio.
+
+```python
+# Sequential (slow)
+for driver in drivers:
+    data = fetch(driver)  # 500ms each = 10s total for 20 drivers
+
+# Parallel (fast)
+tasks = [fetch(driver) for driver in drivers]
+results = await asyncio.gather(*tasks)  # 500ms total
+```python
+
+### 5. JSON Parsing
+
+tif1 uses orjson for fast JSON parsing.
+
+```python
+import orjson
+
+# Parse JSON
+data = orjson.loads(json_bytes)
+
+# Extract lap data
+laps_data = data["laps"]
+```yaml
+
+### 6. DataFrame Construction
+
+Raw JSON is converted to DataFrames.
+
+```python
+# Create DataFrame
+df = pd.DataFrame(laps_data)
+
+# Rename columns (PascalCase)
+df = df.rename(columns=COLUMN_RENAME_MAP)
+
+# Set data types
+df["LapTime"] = df["LapTime"].astype(float)
+df["Driver"] = df["Driver"].astype("category")
+
+# Reorder columns
+df = df[COLUMN_ORDER]
+```yaml
+
+### 7. Data Enrichment
+
+tif1 automatically enriches data.
+
+**Lap Data Enrichment:**
+- Add weather data to each lap
+- Calculate LapTimeSeconds helper
+- Add stint information
+- Categorize string columns
+
+**Telemetry Enrichment:**
+- Calculate acceleration (X, Y, Z)
+- Add DriverAhead information
+- Normalize distance (0.0 to 1.0)
+
+### 8. Cache Storage
+
+Processed data is saved to both cache tiers.
+
+```python
+# Save to SQLite
+sqlite_cache.set(key, data)
+
+# Save to memory
+memory_cache[key] = data
+```python ## Data types through the pipeline
+
+### Stage 1: Raw JSON
+```json
+{
+  "laps": [
+    {
+      "lap_number": 1,
+      "lap_time": 95.234,
+      "driver": "VER",
+      "compound": "SOFT"
+    }
+  ]
+}
+```yaml
+
+### Stage 2: Python dict
+```python
+{
+    "lap_number": 1,
+    "lap_time": 95.234,
+    "driver": "VER",
+    "compound": "SOFT"
+}
+```yaml
+
+### Stage 3: DataFrame
+```python
+   LapNumber  LapTime Driver Compound
+0          1   95.234    VER     SOFT
+```yaml
+
+### Stage 4: enriched dataframe
+```python
+   LapNumber  LapTime Driver Compound  AirTemp  TrackTemp  Stint
+0          1   95.234    VER     SOFT     28.5       42.3      1
+```python
+
+## Performance Optimizations
+
+### HTTP/2 Multiplexing
+
+tif1 uses niquests for HTTP/2 support.
+
+**HTTP/1.1 (Old):**
+- One request per TCP connection
+- High overhead for multiple requests
+- Sequential processing
+
+**HTTP/2 (tif1):**
+- Multiple requests per connection
+- Reduced SSL/TLS overhead
+- Parallel processing
+
+### Lazy Loading
+
+Data is only loaded when accessed.
+
+```python
+session = tif1.get_session(2025, "Monaco", "Race")
+# No data loaded yet
+
+laps = session.laps  # Laps loaded now
+# Weather, telemetry still not loaded
+
+weather = session.weather  # Weather loaded now
+```python
+
+### Categorical Optimization
+
+String columns are converted to categoricals for memory efficiency.
+
+```python
+# Before (high memory)
+df["Driver"] = ["VER", "VER", "VER", ...]  # Each string stored
+
+# After (low memory)
+df["Driver"] = pd.Categorical(["VER", "VER", "VER", ...])
+# Strings stored once, integers used for values
+```python
+
+### Lib Selection
+
+Choose the right lib for your use case.
+
+**Pandas:**
+- Familiar API
+- Rich ecosystem
+- Good for small/medium data
+
+**Polars:**
+- 2x faster operations
+- 50% less memory
+- Better for large data
+
+## Error handling in the pipeline
+
+### Network Errors
+
+```python
+try:
+    laps = session.laps
+except tif1.NetworkError as e:
+    # All CDN sources failed
+    print(f"Network error: {e}")
+```python
+
+### Data validation errors
+
+```python
+try:
+    laps = session.laps
+except tif1.InvalidDataError as e:
+    # JSON parsing or validation failed
+    print(f"Invalid data: {e}")
+```text ### Cache Errors
+
+```python
+try:
+    cache = tif1.get_cache()
+    cache.clear()
+except tif1.CacheError as e:
+    # Cache operation failed
+    print(f"Cache error: {e}")
+```python
+
+## Monitoring data flow
+
+### Enable debug logging
+
+See detailed information about data flow.
+
+```python
+import tif1
+import logging
+
+tif1.setup_logging(logging.DEBUG)
+
+# Now you'll see:
+# - Cache hits/misses
+# - CDN requests
+# - Parsing times
+# - DataFrame construction
+```python
+
+### Check cache status
+
+```python
+cache = tif1.get_cache()
+print(f"Cache location: {cache.cache_dir}")
+
+# Check if data is cached
+# (No direct API, but you can check load times)
+import time
+
+start = time.time()
+laps = session.laps
+duration = time.time() - start
+
+if duration < 0.1:
+    print("Cache hit (fast)")
+else:
+    print("Cache miss (slow)")
+```python
+
+### Monitor circuit breaker
+
+```python
+cb = tif1.get_circuit_breaker()
+print(f"State: {cb.state}")
+print(f"Failures: {cb.failure_count}")
+```python
+
+## Data flow patterns
+
+### Cold Start (First Load)
+
+```python
+User Request
+    ↓
+Memory Cache Miss
+    ↓
+SQLite Cache Miss
+    ↓
+CDN Fetch (2-5s)
+    ↓
+JSON Parse (50-100ms)
+    ↓
+DataFrame Build (100-200ms)
+    ↓
+Cache Save (50ms)
+    ↓
+Return Data
+```yaml
+
+**Total: ~2.5-5s**
+
+### Warm Start (Cached)
+
+```sql
+User Request
+    ↓
+Memory Cache Miss
+    ↓
+SQLite Cache Hit
+    ↓
+Load from SQLite (10-50ms)
+    ↓
+Memory Cache Save
+    ↓
+Return Data
+```python **Total: ~10-50ms**
+
+### Hot Start (In Memory)
+
+```python
+User Request
+    ↓
+Memory Cache Hit
+    ↓
+Return Data
+```python
+
+**Total: < 1ms**
+
+## Optimization Strategies
+
+### 1. Pre-warm Cache
+
+```python
+def warm_cache(year):
+    """Pre-load all race data."""
+    for event in tif1.get_events(year):
+        session = tif1.get_session(year, event, "Race")
+        _ = session.laps  # Trigger load
+```python
+
+### 2. Use Async Loading
+
+```python
+import asyncio
+
+async def load_fast():
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps = await session.laps_async()  # 4-5x faster
+    return laps
+```bash
+
+### 3. Batch Telemetry
+
+```python
+# Bad - Sequential
+for driver in drivers:
+    tel = driver.get_fastest_lap_tel()
+
+# Good - Parallel
+tels = session.get_fastest_laps_tels(by_driver=True)
+```sql
+
+### 4. select lib wisely
+
+```python
+# Small analysis - use pandas
+session = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
+
+# Large analysis - use polars
+session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
+```yaml
+
+## Summary
+
+Understanding tif1's data flow helps you:
+- Optimize performance with caching
+- Choose the right loading strategy
+- Debug issues effectively
+- Monitor system health
+- Make informed architecture decisions
+
+The multi-tier caching, async fetching, and smart data transformations make tif1 4-5x faster than traditional approaches.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Architecture" href="/architecture">
+    System architecture
+  </Card>
+  <Card title="I/O Pipeline" href="/api-reference/io-pipeline">
+    Data pipeline
+  </Card>
+  <Card title="CDN" href="/api-reference/cdn">
+    CDN management
+  </Card>
+</CardGroup>

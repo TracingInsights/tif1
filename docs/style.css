@@ -1,0 +1,73 @@
+/* Tracing Insights design language for Mintlify docs. */
+:root {
+  --ti-primary: #00ff00;
+  --ti-secondary: #ff00ff;
+  --ti-accent: #f471b5;
+  --ti-navy: #002451;
+  --ti-card-bg: rgba(1, 22, 39, 0.9);
+  --ti-card-border: rgba(0, 255, 0, 0.4);
+  --ti-body-font: "Roboto", sans-serif;
+  --ti-heading-font: "Bebas Neue", sans-serif;
+  --ti-logo-font: "Great Vibes", cursive;
+}
+
+body {
+  font-family: var(--ti-body-font);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--ti-heading-font);
+  letter-spacing: 0.04em;
+}
+
+#navbar {
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(0, 255, 0, 0.18);
+}
+
+#navbar a {
+  transition:
+    color 0.2s ease-in-out,
+    text-shadow 0.2s ease-in-out;
+}
+
+#navbar a:hover {
+  text-shadow: 0 0 16px rgba(0, 255, 0, 0.45);
+}
+
+main :is(a, div, section, article)[class*="card"] {
+  background: var(--ti-card-bg);
+  border: 1px solid var(--ti-card-border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.26);
+  transition:
+    transform 0.3s ease-in-out,
+    border-color 0.3s ease-in-out,
+    box-shadow 0.3s ease-in-out;
+}
+
+main :is(a, div, section, article)[class*="card"]:hover {
+  transform: translateY(-6px);
+  border-color: rgba(0, 255, 0, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 0, 0.34),
+    0 18px 34px rgba(0, 255, 0, 0.18);
+}
+
+button,
+a[role="button"] {
+  transition:
+    transform 0.2s ease-in-out,
+    box-shadow 0.2s ease-in-out;
+}
+
+button:hover,
+a[role="button"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 255, 0, 0.25);
+}
+
+.ti-script {
+  font-family: var(--ti-logo-font);
+}

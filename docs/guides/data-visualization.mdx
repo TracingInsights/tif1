@@ -1,0 +1,350 @@
+---
+title: "Data Visualization"
+icon: "chart-line"
+description: "Create compelling visualizations from F1 data"
+keywords:
+  - "data visualization"
+  - "plotting"
+  - "charts"
+  - "matplotlib"
+  - "F1 visualizations"
+---
+
+`tif1` provides built-in plotting utilities and integrates with popular visualization libraries like matplotlib, plotly, and seaborn.
+
+## Built-in Plotting
+
+The `plotting` module provides quick visualization methods for common F1 analysis tasks.
+
+### Speed Comparison
+
+Compare speed traces between drivers on the same lap.
+
+```python
+import tif1
+from tif1.plotting import plot_speed_comparison
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+
+# Get fastest laps for two drivers
+ver_fastest = session.get_driver("VER").get_fastest_lap()
+lec_fastest = session.get_driver("LEC").get_fastest_lap()
+
+# Plot speed comparison
+plot_speed_comparison(
+    [ver_fastest, lec_fastest],
+    labels=["VER", "LEC"],
+    title="Monaco Q3 Speed Comparison"
+)
+```python
+
+### Lap Time Evolution
+
+Track how lap times evolve throughout a stint.
+
+```python
+from tif1.plotting import plot_lap_times
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+laps = session.laps
+
+# Filter to specific drivers
+drivers = ["VER", "HAM", "LEC"]
+filtered = laps[laps["Driver"].isin(drivers)]
+
+plot_lap_times(
+    filtered,
+    by_driver=True,
+    highlight_compounds=True
+)
+```python
+
+## Matplotlib Integration
+
+For custom visualizations, use matplotlib directly.
+
+### Telemetry Overlay
+
+```python
+import matplotlib.pyplot as plt
+import tif1
+
+session = tif1.get_session(2025, "Silverstone", "Race")
+ver = session.get_driver("VER")
+lap = ver.get_lap(15)
+tel = lap.telemetry
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+
+# Speed
+ax1.plot(tel["Distance"], tel["Speed"], color="#E10600", linewidth=2)
+ax1.set_ylabel("Speed (km/h)")
+ax1.grid(True, alpha=0.3)
+
+# Throttle
+ax2.plot(tel["Distance"], tel["Throttle"], color="#00D2BE", linewidth=2)
+ax2.set_ylabel("Throttle (%)")
+ax2.grid(True, alpha=0.3)
+
+# Brake
+ax3.plot(tel["Distance"], tel["Brake"].astype(int), color="#FF1E00", linewidth=2)
+ax3.set_ylabel("Brake")
+ax3.set_xlabel("Distance (m)")
+ax3.grid(True, alpha=0.3)
+
+plt.suptitle(f"VER Lap {lap['LapNumber']} Telemetry", fontsize=14, fontweight="bold")
+plt.tight_layout()
+plt.show()
+```python
+
+### Tire strategy visualization
+
+```python
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+session = tif1.get_session(2025, "Monza", "Race")
+laps = session.laps
+
+# Compound colors
+compound_colors = {
+    "SOFT": "#FF0000",
+    "MEDIUM": "#FFF200",
+    "HARD": "#FFFFFF",
+    "INTERMEDIATE": "#00FF00",
+    "WET": "#0000FF"
+}
+
+fig, ax = plt.subplots(figsize=(14, 8))
+
+drivers = laps["Driver"].unique()
+for i, driver in enumerate(drivers):
+    driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
+
+    for _, lap in driver_laps.iterrows():
+        color = compound_colors.get(lap["Compound"], "#CCCCCC")
+        ax.barh(i, 1, left=lap["LapNumber"], color=color, edgecolor="black", linewidth=0.5)
+
+ax.set_yticks(range(len(drivers)))
+ax.set_yticklabels(drivers)
+ax.set_xlabel("Lap Number")
+ax.set_title("Tire Strategy - 2025 Monza GP")
+
+# Legend
+patches = [mpatches.Patch(color=color, label=compound)
+           for compound, color in compound_colors.items()]
+ax.legend(handles=patches, loc="upper right")
+
+plt.tight_layout()
+plt.show()
+```python
+
+## Plotly for interactive plots
+
+Plotly enables interactive visualizations perfect for Jupyter notebooks.
+
+### Interactive speed trace
+
+```python
+import plotly.graph_objects as go
+import tif1
+
+session = tif1.get_session(2025, "Spa", "Qualifying")
+ver = session.get_driver("VER")
+fastest = ver.get_fastest_lap()
+tel = fastest.telemetry
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=tel["Distance"],
+    y=tel["Speed"],
+    mode="lines",
+    name="Speed",
+    line=dict(color="#E10600", width=2),
+    hovertemplate="Distance: %{x:.0f}m<br>Speed: %{y:.0f} km/h<extra></extra>"
+))
+
+fig.update_layout(
+    title="VER Fastest Lap - Speed Trace",
+    xaxis_title="Distance (m)",
+    yaxis_title="Speed (km/h)",
+    hovermode="x unified",
+    template="plotly_dark"
+)
+
+fig.show()
+```python
+
+### 3D Track Map
+
+```python
+import plotly.graph_objects as go
+
+session = tif1.get_session(2025, "Suzuka", "Race")
+ver = session.get_driver("VER")
+lap = ver.get_lap(1)
+tel = lap.telemetry
+
+fig = go.Figure(data=[go.Scatter3d(
+    x=tel["X"],
+    y=tel["Y"],
+    z=tel["Z"],
+    mode="lines",
+    line=dict(
+        color=tel["Speed"],
+        colorscale="Viridis",
+        width=4,
+        colorbar=dict(title="Speed (km/h)")
+    ),
+    hovertemplate="X: %{x:.0f}<br>Y: %{y:.0f}<br>Z: %{z:.0f}<br>Speed: %{marker.color:.0f} km/h<extra></extra>"
+)])
+
+fig.update_layout(
+    title="3D Track Map - Suzuka",
+    scene=dict(
+        xaxis_title="X (m)",
+        yaxis_title="Y (m)",
+        zaxis_title="Z (m)",
+        aspectmode="data"
+    ),
+    template="plotly_dark"
+)
+
+fig.show()
+```python
+
+## Seaborn for statistical plots
+
+Seaborn excels at statistical visualizations.
+
+### Lap Time Distribution
+
+```python
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2025, "Barcelona", "Race")
+laps = session.laps
+
+# Clean data
+clean = laps[~laps["Deleted"] & (laps["LapNumber"] > 1)]
+
+plt.figure(figsize=(12, 6))
+sns.violinplot(data=clean, x="Driver", y="LapTime", hue="Compound", split=False)
+plt.xticks(rotation=45)
+plt.title("Lap Time Distribution by Driver and Compound")
+plt.ylabel("Lap Time (s)")
+plt.tight_layout()
+plt.show()
+```python
+
+### Correlation Heatmap
+
+```python
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2025, "Singapore", "Race")
+laps = session.laps
+
+# Select numeric columns
+numeric_cols = ["LapTime", "Sector1Time", "Sector2Time", "Sector3Time",
+                "SpeedI1", "SpeedI2", "SpeedFL", "SpeedST",
+                "AirTemp", "TrackTemp", "TyreLife"]
+
+correlation = laps[numeric_cols].corr()
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation, annot=True, fmt=".2f", cmap="coolwarm", center=0)
+plt.title("Lap Data Correlation Matrix")
+plt.tight_layout()
+plt.show()
+```python ## Best Practices
+
+### Use Team Colors
+
+Make plots more recognizable by using official team colors.
+
+```python
+session = tif1.get_session(2025, "Monaco", "Race")
+drivers_df = session.drivers_df
+
+# Create color map
+color_map = dict(zip(drivers_df["Driver"], drivers_df["TeamColor"]))
+
+# Use in plots
+for driver in ["VER", "HAM", "LEC"]:
+    driver_laps = laps[laps["Driver"] == driver]
+    plt.plot(driver_laps["LapNumber"], driver_laps["LapTime"],
+             color=f"#{color_map[driver]}", label=driver)
+```python
+
+### Handle missing data
+
+Always filter out invalid laps before plotting.
+
+```python
+def clean_for_plotting(laps):
+    """Prepare laps for visualization."""
+    clean = laps.copy()
+
+    # Remove deleted laps
+    clean = clean[~clean["Deleted"]]
+
+    # Remove pit laps
+    clean = clean[clean["PitInTime"].isna()]
+
+    # Remove outliers
+    fastest = clean["LapTime"].min()
+    clean = clean[clean["LapTime"] < fastest * 1.10]
+
+    return clean
+
+laps = session.laps
+plot_data = clean_for_plotting(laps)
+```bash
+
+### Optimize for Performance
+
+For large datasets, downsample telemetry before plotting.
+
+```python
+# Downsample telemetry to every 10th point
+tel_downsampled = tel[::10]
+
+plt.plot(tel_downsampled["Distance"], tel_downsampled["Speed"])
+```bash
+
+## Export for external tools
+
+Save data for use in other visualization tools.
+
+```python
+# Export to CSV
+laps.to_csv("race_laps.csv", index=False)
+
+# Export to Parquet (smaller, faster)
+laps.to_parquet("race_laps.parquet")
+
+# Export to Excel
+with pd.ExcelWriter("race_analysis.xlsx") as writer:
+    laps.to_excel(writer, sheet_name="Laps", index=False)
+    session.weather.to_excel(writer, sheet_name="Weather", index=False)
+```python
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Plotting API" href="/api-reference/plotting">
+    Plotting reference
+  </Card>
+  <Card title="Examples" href="/examples">
+    Visualization examples
+  </Card>
+  <Card title="Telemetry Tutorial" href="/tutorials/advanced-telemetry">
+    Telemetry viz
+  </Card>
+</CardGroup>

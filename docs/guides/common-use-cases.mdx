@@ -1,0 +1,468 @@
+---
+title: "Common Use Cases"
+icon: "list-check"
+description: "Real-world scenarios and solutions with tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+Practical solutions for common F1 data analysis scenarios.
+
+## Race strategy analysis
+
+Analyze tire strategy and pit stop timing.
+
+```python
+import tif1
+import pandas as pd
+
+def analyze_race_strategy(year: int, event: str):
+    """Analyze tire strategy for all drivers."""
+    session = tif1.get_session(year, event, "Race")
+    laps = session.laps
+
+    # Group by driver and stint
+    strategy = laps.groupby(["Driver", "Stint"]).agg({
+        "LapNumber": ["min", "max", "count"],
+        "Compound": "first",
+        "LapTime": "mean"
+    }).reset_index()
+
+    strategy.columns = ["Driver", "Stint", "StartLap", "EndLap",
+                        "StintLength", "Compound", "AvgLapTime"]
+
+    return strategy
+
+# Analyze Monaco 2025
+strategy = analyze_race_strategy(2025, "Monaco")
+print(strategy)
+
+# Find optimal strategy
+best_strategy = strategy.groupby("Compound")["AvgLapTime"].mean()
+print(f"\nAverage pace by compound:\n{best_strategy}")
+```python
+
+## Qualifying Performance
+
+Compare qualifying performance across sessions.
+
+```python
+def analyze_qualifying(year: int, event: str):
+    """Analyze qualifying progression through Q1, Q2, Q3."""
+    quali = tif1.get_session(year, event, "Qualifying")
+    laps = quali.laps
+
+    results = {}
+
+    for driver in laps["Driver"].unique():
+        driver_laps = laps[laps["Driver"] == driver]
+
+        # Get best lap time
+        best_lap = driver_laps["LapTime"].min()
+
+        # Count laps per session
+        lap_count = len(driver_laps)
+
+        # Get compound used
+        compounds = driver_laps["Compound"].unique()
+
+        results[driver] = {
+            "best_time": best_lap,
+            "laps": lap_count,
+            "compounds": compounds.tolist()
+        }
+
+    # Sort by best time
+    sorted_results = sorted(results.items(), key=lambda x: x[1]["best_time"])
+
+    return sorted_results
+
+# Analyze qualifying
+quali_results = analyze_qualifying(2025, "Silverstone")
+
+print("Qualifying Results:")
+for i, (driver, data) in enumerate(quali_results, 1):
+    print(f"{i}. {driver}: {data['best_time']:.3f}s ({data['laps']} laps)")
+```python
+
+## Telemetry Comparison
+
+Compare telemetry between two drivers.
+
+```python
+import matplotlib.pyplot as plt
+
+def compare_telemetry(session, driver1: str, driver2: str):
+    """Compare telemetry for fastest laps."""
+    # Get fastest laps
+    d1 = session.get_driver(driver1)
+    d2 = session.get_driver(driver2)
+
+    lap1 = d1.get_fastest_lap()
+    lap2 = d2.get_fastest_lap()
+
+    # Get telemetry
+    tel1 = d1.get_lap(lap1["LapNumber"].iloc[0]).telemetry
+    tel2 = d2.get_lap(lap2["LapNumber"].iloc[0]).telemetry
+
+    # Plot comparison
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+
+    # Speed
+    ax1.plot(tel1["Distance"], tel1["Speed"], label=driver1, linewidth=2)
+    ax1.plot(tel2["Distance"], tel2["Speed"], label=driver2, linewidth=2)
+    ax1.set_ylabel("Speed (km/h)")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Throttle
+    ax2.plot(tel1["Distance"], tel1["Throttle"], label=driver1, linewidth=2)
+    ax2.plot(tel2["Distance"], tel2["Throttle"], label=driver2, linewidth=2)
+    ax2.set_ylabel("Throttle (%)")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # Brake
+    ax3.plot(tel1["Distance"], tel1["Brake"].astype(int), label=driver1, linewidth=2)
+    ax3.plot(tel2["Distance"], tel2["Brake"].astype(int), label=driver2, linewidth=2)
+    ax3.set_ylabel("Brake")
+    ax3.set_xlabel("Distance (m)")
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    plt.suptitle(f"{driver1} vs {driver2} - Fastest Lap Comparison",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.show()
+
+# Compare VER vs LEC
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+compare_telemetry(session, "VER", "LEC")
+```python
+
+## Tire degradation model
+
+Build a tire degradation model.
+
+```python
+import numpy as np
+from scipy import stats
+
+def model_tire_degradation(session, compound: str = "SOFT"):
+    """Model tire degradation for a specific compound."""
+    laps = session.laps
+
+    # Filter to compound and clean data
+    compound_laps = laps[
+        (laps["Compound"] == compound) &
+        (~laps["Deleted"]) &
+        (laps["PitInTime"].isna())
+    ]
+
+    results = {}
+
+    for driver in compound_laps["Driver"].unique():
+        driver_laps = compound_laps[compound_laps["Driver"] == driver]
+
+        if len(driver_laps) < 5:
+            continue
+
+        # Linear regression
+        slope, intercept, r_value, p_value, std_err = stats.linregress(
+            driver_laps["TyreLife"],
+            driver_laps["LapTime"]
+        )
+
+        results[driver] = {
+            "degradation_rate": slope,
+            "base_time": intercept,
+            "r_squared": r_value ** 2,
+            "samples": len(driver_laps)
+        }
+
+    return results
+
+# Model degradation
+session = tif1.get_session(2025, "Barcelona", "Race")
+degradation = model_tire_degradation(session, "SOFT")
+
+print("Tire Degradation Analysis (SOFT compound):")
+for driver, data in sorted(degradation.items(), key=lambda x: x[1]["degradation_rate"]):
+    print(f"{driver}: {data['degradation_rate']:.3f}s/lap "
+          f"(R²={data['r_squared']:.3f}, n={data['samples']})")
+```python
+
+## Weather impact analysis
+
+Analyze how weather affects lap times.
+
+```python
+def analyze_weather_impact(session):
+    """Analyze correlation between weather and lap times."""
+    laps = session.laps
+
+    # Clean data
+    clean = laps[~laps["Deleted"] & laps["PitInTime"].isna()]
+
+    # Calculate correlations
+    correlations = {
+        "AirTemp": clean[["AirTemp", "LapTime"]].corr().iloc[0, 1],
+        "TrackTemp": clean[["TrackTemp", "LapTime"]].corr().iloc[0, 1],
+        "Humidity": clean[["Humidity", "LapTime"]].corr().iloc[0, 1],
+        "Pressure": clean[["Pressure", "LapTime"]].corr().iloc[0, 1],
+    }
+
+    # Analyze rain impact
+    if "Rainfall" in clean.columns:
+        rain_laps = clean[clean["Rainfall"]]
+        dry_laps = clean[~clean["Rainfall"]]
+
+        if len(rain_laps) > 0 and len(dry_laps) > 0:
+            rain_avg = rain_laps["LapTime"].mean()
+            dry_avg = dry_laps["LapTime"].mean()
+            rain_impact = ((rain_avg - dry_avg) / dry_avg) * 100
+
+            correlations["Rain_Impact_%"] = rain_impact
+
+    return correlations
+
+# Analyze weather impact
+session = tif1.get_session(2025, "Singapore", "Race")
+weather_impact = analyze_weather_impact(session)
+
+print("Weather Impact on Lap Times:")
+for factor, correlation in weather_impact.items():
+    print(f"{factor}: {correlation:.3f}")
+```python
+
+## Season championship tracker
+
+Track championship standings throughout a season.
+
+```python
+def calculate_championship_standings(year: int, up_to_event: str = None):
+    """Calculate championship standings."""
+    events = tif1.get_events(year)
+
+    if up_to_event:
+        events = events[:events.index(up_to_event) + 1]
+
+    points_system = {
+        1: 25, 2: 18, 3: 15, 4: 12, 5: 10,
+        6: 8, 7: 6, 8: 4, 9: 2, 10: 1
+    }
+
+    driver_points = {}
+
+    for event in events:
+        try:
+            session = tif1.get_session(year, event, "Race")
+            laps = session.laps
+
+            # Get final positions
+            final_lap = laps["LapNumber"].max()
+            final_positions = laps[laps["LapNumber"] == final_lap]
+            final_positions = final_positions.sort_values("Position")
+
+            # Award points
+            for _, row in final_positions.iterrows():
+                driver = row["Driver"]
+                position = row["Position"]
+
+                if position in points_system:
+                    points = points_system[position]
+                    driver_points[driver] = driver_points.get(driver, 0) + points
+
+        except tif1.DataNotFoundError:
+            print(f"No data for {event}")
+            continue
+
+    # Sort by points
+    standings = sorted(driver_points.items(), key=lambda x: x[1], reverse=True)
+
+    return standings
+
+# Calculate standings
+standings = calculate_championship_standings(2025, up_to_event="Monaco")
+
+print("Championship Standings:")
+for i, (driver, points) in enumerate(standings, 1):
+    print(f"{i}. {driver}: {points} points")
+```python
+
+## Overtaking Analysis
+
+Analyze overtaking opportunities and execution.
+
+```python
+def analyze_overtakes(session):
+    """Identify and analyze overtakes."""
+    laps = session.laps
+
+    overtakes = []
+
+    # Sort by lap number
+    laps_sorted = laps.sort_values(["LapNumber", "Position"])
+
+    for lap_num in range(2, laps["LapNumber"].max() + 1):
+        prev_lap = laps_sorted[laps_sorted["LapNumber"] == lap_num - 1]
+        curr_lap = laps_sorted[laps_sorted["LapNumber"] == lap_num]
+
+        # Merge to compare positions
+        comparison = prev_lap[["Driver", "Position"]].merge(
+            curr_lap[["Driver", "Position"]],
+            on="Driver",
+            suffixes=("_prev", "_curr")
+        )
+
+        # Find position changes
+        comparison["change"] = comparison["Position_prev"] - comparison["Position_curr"]
+
+        # Overtakes are positive changes
+        for _, row in comparison[comparison["change"] > 0].iterrows():
+            overtakes.append({
+                "lap": lap_num,
+                "driver": row["Driver"],
+                "from_position": row["Position_prev"],
+                "to_position": row["Position_curr"],
+                "positions_gained": row["change"]
+            })
+
+    return pd.DataFrame(overtakes)
+
+# Analyze overtakes
+session = tif1.get_session(2025, "Monza", "Race")
+overtakes = analyze_overtakes(session)
+
+print(f"Total overtakes: {len(overtakes)}")
+print("\nTop overtakers:")
+print(overtakes.groupby("driver")["positions_gained"].sum().sort_values(ascending=False))
+```python
+
+## Consistency Analysis
+
+Measure driver consistency.
+
+```python
+def analyze_consistency(session, min_laps: int = 10):
+    """Analyze driver consistency."""
+    laps = session.laps
+
+    # Clean data
+    clean = laps[
+        (~laps["Deleted"]) &
+        (laps["PitInTime"].isna()) &
+        (laps["LapNumber"] > 1)
+    ]
+
+    consistency = {}
+
+    for driver in clean["Driver"].unique():
+        driver_laps = clean[clean["Driver"] == driver]
+
+        if len(driver_laps) < min_laps:
+            continue
+
+        # Calculate metrics
+        lap_times = driver_laps["LapTime"]
+
+        consistency[driver] = {
+            "mean": lap_times.mean(),
+            "std": lap_times.std(),
+            "cv": lap_times.std() / lap_times.mean(),  # Coefficient of variation
+            "range": lap_times.max() - lap_times.min(),
+            "laps": len(driver_laps)
+        }
+
+    # Sort by coefficient of variation (lower = more consistent)
+    sorted_consistency = sorted(consistency.items(), key=lambda x: x[1]["cv"])
+
+    return sorted_consistency
+
+# Analyze consistency
+session = tif1.get_session(2025, "Spa", "Race")
+consistency = analyze_consistency(session)
+
+print("Driver Consistency (lower CV = more consistent):")
+for driver, metrics in consistency:
+    print(f"{driver}: CV={metrics['cv']:.4f}, "
+          f"Std={metrics['std']:.3f}s, "
+          f"Range={metrics['range']:.3f}s "
+          f"({metrics['laps']} laps)")
+```python ## Fuel effect analysis
+
+Estimate fuel effect on lap times.
+
+```python
+def estimate_fuel_effect(session):
+    """Estimate fuel effect on lap times."""
+    laps = session.laps
+
+    # Clean data
+    clean = laps[
+        (~laps["Deleted"]) &
+        (laps["PitInTime"].isna()) &
+        (laps["LapNumber"] > 1)
+    ]
+
+    results = {}
+
+    for driver in clean["Driver"].unique():
+        driver_laps = clean[clean["Driver"] == driver]
+
+        # Group by stint
+        for stint in driver_laps["Stint"].unique():
+            stint_laps = driver_laps[driver_laps["Stint"] == stint]
+
+            if len(stint_laps) < 5:
+                continue
+
+            # Linear regression: lap number vs lap time
+            # Slope represents combined fuel + tire effect
+            slope, intercept, r_value, _, _ = stats.linregress(
+                stint_laps["LapNumber"],
+                stint_laps["LapTime"]
+            )
+
+            key = f"{driver}_S{stint}"
+            results[key] = {
+                "driver": driver,
+                "stint": stint,
+                "fuel_tire_effect": slope,
+                "base_time": intercept,
+                "r_squared": r_value ** 2,
+                "laps": len(stint_laps)
+            }
+
+    return results
+
+# Estimate fuel effect
+session = tif1.get_session(2025, "Bahrain", "Race")
+fuel_effect = estimate_fuel_effect(session)
+
+print("Fuel + Tire Effect Analysis:")
+for key, data in sorted(fuel_effect.items(), key=lambda x: x[1]["fuel_tire_effect"]):
+    print(f"{data['driver']} Stint {data['stint']}: "
+          f"{data['fuel_tire_effect']:.3f}s/lap "
+          f"(R²={data['r_squared']:.3f})")
+```python
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Clean Data First" icon="broom">
+    Always filter out deleted and pit laps before analysis.
+  </Card>
+  <Card title="Handle Missing Data" icon="triangle-exclamation">
+    Check for NaN values and handle appropriately.
+  </Card>
+  <Card title="Use Vectorization" icon="bolt">
+    Avoid loops when possible, use pandas/polars operations.
+  </Card>
+  <Card title="Cache Results" icon="database">
+    Store intermediate results to avoid recomputation.
+  </Card>
+</CardGroup>

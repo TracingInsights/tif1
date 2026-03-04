@@ -1,0 +1,153 @@
+---
+title: "Migration from fastf1"
+sidebarTitle: "Migration"
+icon: "arrow-right-arrow-left"
+description: "Step-by-step guide to switching to tif1"
+keywords:
+  - "fastf1 migration"
+  - "fastf1 to tif1"
+  - "fastf1 alternative"
+  - "migrate from fastf1"
+  - "F1 library comparison"
+---
+
+`tif1` is designed to be a drop-in replacement for `fastf1` for most common use cases. This guide highlights the similarities and the few key differences you need to know.
+
+## Comparison at a Glance
+
+| Feature | fastf1 | tif1 |
+| :--- | :--- | :--- |
+| **Data Source** | Ergast + F1 Live Timing | TracingInsights (CDN) |
+| **Loading Speed** | Baseline | **4-5x faster** (Async) |
+| **Lib** | Pandas only | **Pandas + Polars** |
+| **Caching** | File-based Pickle | **SQLite + Memory LRU** |
+| **HTTP Version** | HTTP/1.1 | **HTTP/2** |
+
+---
+
+## Migration Steps
+
+<Steps>
+  <Step title="Update Imports">
+    Change `import fastf1` to `import tif1`.
+    ```python
+    import tif1 as ff1 # Alias to keep existing code working
+```sql
+  </Step>
+  <Step title="Update get_session Calls">
+    Use full GP names and remove any `session.load()` calls. `tif1` loads data lazily.
+    <CodeGroup>
+    ```python tif1 (Lazy)
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = session.laps # Fetches automatically
+```yaml
+    ```python fastf1 (Explicit)
+    session = fastf1.get_session(2025, "Monaco", "R")
+    session.load()
+    laps = session.laps
+```yaml
+    </CodeGroup>
+  </Step>
+  <Step title="Check Filters">
+    If you used `pick_` methods, switch to standard DataFrame filtering or use the new `Session` methods.
+    | fastf1 | tif1 |
+    | :--- | :--- |
+    | `laps.pick_fastest()` | `session.get_fastest_laps(by_driver=False)` |
+    | `laps.pick_driver('VER')` | `session.get_driver('VER').laps` |
+  </Step>
+</Steps>
+
+---
+
+## Key API Differences
+
+### 1. Lazy Loading
+tif1 uses lazy loading by default. No need to call `session.load()`.
+
+```python
+# fastf1
+session = fastf1.get_session(2025, "Monaco", "R")
+session.load()
+laps = session.laps
+
+# tif1
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps  # Automatically fetches on first access
+```python
+
+### 2. Property Access
+In `fastf1`, telemetry is often a method. In `tif1`, it is a property for a more modern feel.
+
+```python
+# fastf1
+telemetry = lap.get_telemetry()
+
+# tif1
+telemetry = lap.telemetry
+```python
+
+### 3. Driver Information
+tif1 provides a convenient `drivers_df` DataFrame with comprehensive driver information.
+
+```python
+# tif1
+drivers_df = session.drivers_df
+print(drivers_df[["Driver", "Team", "DriverNumber", "TeamColor"]])
+```yaml
+
+### 4. Enriched Data
+tif1 automatically enriches data:
+
+- Weather data is included in every lap
+- Telemetry includes DriverAhead and DistanceToDriverAhead
+- LapTimeSeconds is provided as a numeric helper alongside LapTime
+
+### 5. Async Optimization
+For maximum performance, adopt the async pattern:
+
+```python
+# Massive speed gain for initial load
+laps = await session.laps_async()
+```python
+
+---
+
+## Feature Parity
+
+<CardGroup cols={2}>
+  <Card title="Archive Only" icon="box-archive">
+    `tif1` focuses on historical data (2018-current). It does not support Live Timing.
+  </Card>
+  <Card title="Track Maps" icon="map">
+    Track map generation is currently not supported but is planned for a future release.
+  </Card>
+  <Card title="Weather Data" icon="cloud">
+    We provide raw 1-minute weather samples. `fastf1` style interpolation is not yet implemented.
+  </Card>
+  <Card title="Categorical Optimization" icon="database">
+    `tif1` optimizes memory by default using categoricals, which may behave slightly differently in some Pandas operations.
+  </Card>
+</CardGroup>
+
+<Info>
+  Ready to start? Check out the [Quickstart](/quickstart) guide.
+</Info>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart">
+    Get started quickly
+  </Card>
+  <Card title="API Reference" href="/api-reference/core">
+    Core API details
+  </Card>
+  <Card title="FastF1 Compat" href="/api-reference/fastf1-compat">
+    Compatibility layer
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    tif1 patterns
+  </Card>
+</CardGroup>

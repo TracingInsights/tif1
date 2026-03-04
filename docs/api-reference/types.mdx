@@ -1,0 +1,555 @@
+---
+title: "Data Types & Type Hints"
+icon: "code"
+description: "Type definitions, schemas, and type hints for tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` uses Python's typing system extensively for better IDE support and type safety. All public APIs include type hints.
+
+## Type Aliases
+
+### `BackendType`
+
+Specifies which DataFrame lib to use.
+
+```python
+BackendType = Literal["pandas", "polars"]
+```python
+
+**Usage:**
+```python
+import tif1
+from tif1.types import BackendType
+
+lib: BackendType = "pandas"
+session = tif1.get_session(2025, "Monaco", "Race", lib=lib)
+```python
+
+---
+
+### `SessionType`
+
+Valid session names.
+
+```python
+SessionType = Literal[
+    "Practice 1",
+    "Practice 2",
+    "Practice 3",
+    "Qualifying",
+    "Sprint",
+    "Sprint Qualifying",
+    "Sprint Shootout",
+    "Race",
+    "Pre-Season Testing"
+]
+```python
+
+**Usage:**
+```python
+from tif1.types import SessionType
+
+session_name: SessionType = "Qualifying"
+session = tif1.get_session(2025, "Monaco", session_name)
+```python
+
+---
+
+### `CompoundType`
+
+Tire compound names.
+
+```python
+CompoundType = Literal[
+    "SOFT",
+    "MEDIUM",
+    "HARD",
+    "INTERMEDIATE",
+    "WET",
+    "UNKNOWN"
+]
+```python
+
+**Usage:**
+```python
+from tif1.types import CompoundType
+
+compound: CompoundType = "SOFT"
+soft_laps = laps[laps["Compound"] == compound]
+```python
+
+---
+
+### `TrackStatusType`
+
+Track status codes during a session.
+
+```python
+TrackStatusType = Literal[
+    "1",  # Green Flag
+    "2",  # Yellow Flag
+    "4",  # Safety Car
+    "5",  # Red Flag
+    "6",  # VSC (Virtual Safety Car)
+    "7"   # VSC Ending
+]
+```python
+
+**Usage:**
+```python
+from tif1.types import TrackStatusType
+
+# Filter laps under green flag
+green_flag: TrackStatusType = "1"
+clean_laps = laps[laps["TrackStatus"] == green_flag]
+```python ---
+
+## TypedDict Schemas
+
+These define the structure of JSON data before conversion to DataFrames.
+
+### `LapDataDict`
+
+Structure of lap timing data from the CDN.
+
+```python
+class LapDataDict(TypedDict):
+    LapNumber: list[int]
+    LapTime: list[float]
+    Sector1Time: list[float]
+    Sector2Time: list[float]
+    Sector3Time: list[float]
+    Sector1SessionTime: list[float]
+    Sector2SessionTime: list[float]
+    Sector3SessionTime: list[float]
+    SpeedI1: list[float]
+    SpeedI2: list[float]
+    SpeedFL: list[float]
+    SpeedST: list[float]
+    Compound: list[str]
+    TyreLife: list[int]
+    Stint: list[int]
+    FreshTyre: list[bool]
+    LapStartTime: list[float]
+    LapStartDate: list[str]
+    TrackStatus: list[str]
+    IsPersonalBest: list[bool]
+    Deleted: list[bool]
+    DeletedReason: list[str]
+    FastF1Generated: list[bool]
+    IsAccurate: list[bool]
+```python
+
+**Usage:**
+```python
+from tif1.types import LapDataDict
+
+def process_lap_data(data: LapDataDict) -> None:
+    print(f"Laps: {len(data['LapNumber'])}")
+    print(f"Fastest: {min(data['LapTime'])}s")
+```python
+
+---
+
+### `TelemetryDataDict`
+
+Structure of high-frequency telemetry data.
+
+```python
+class TelemetryDataDict(TypedDict):
+    Time: list[float]              # Time from lap start (seconds)
+    Distance: list[float]          # Distance from lap start (meters)
+    Speed: list[float]             # Speed (km/h)
+    RPM: list[int]                 # Engine RPM
+    nGear: list[int]               # Gear number (1-8)
+    Throttle: list[float]          # Throttle position (0-100%)
+    Brake: list[int]               # Brake status (0=off, 1=on)
+    DRS: list[int]                 # DRS status (0=off, 10+=on)
+    X: list[float]                 # X coordinate (meters)
+    Y: list[float]                 # Y coordinate (meters)
+    Z: list[float]                 # Z coordinate (meters)
+    Status: list[str]              # Car status
+    SessionTime: list[float]       # Session time (seconds)
+    Date: list[str]                # Timestamp
+```python
+
+**Usage:**
+```python
+from tif1.types import TelemetryDataDict
+
+def analyze_telemetry(tel: TelemetryDataDict) -> dict:
+    return {
+        "max_speed": max(tel["Speed"]),
+        "max_rpm": max(tel["RPM"]),
+        "avg_throttle": sum(tel["Throttle"]) / len(tel["Throttle"])
+    }
+```python
+
+---
+
+### `WeatherDataDict`
+
+Structure of weather data.
+
+```python
+class WeatherDataDict(TypedDict):
+    Time: list[float]
+    AirTemp: list[float]           # Air temperature (°C)
+    TrackTemp: list[float]         # Track temperature (°C)
+    Humidity: list[float]          # Relative humidity (%)
+    Pressure: list[float]          # Atmospheric pressure (mbar)
+    WindSpeed: list[float]         # Wind speed (km/h)
+    WindDirection: list[int]       # Wind direction (degrees)
+    Rainfall: list[bool]           # Rainfall indicator
+```python
+
+---
+
+### `RaceControlDataDict`
+
+Structure of race control messages.
+
+```python
+class RaceControlDataDict(TypedDict):
+    Time: list[str]
+    Category: list[str]            # Message category
+    Message: list[str]             # Message text
+    Status: list[str]              # Track status
+    Flag: list[str]                # Flag type
+    Scope: list[str]               # Message scope
+    Sector: list[int]              # Affected sector
+    RacingNumber: list[str]        # Affected driver number
+```python
+
+---
+
+### `DriverInfoDict`
+
+Structure of driver information.
+
+```python
+class DriverInfoDict(TypedDict):
+    driver: str                    # 3-letter code
+    team: str                      # Team name
+    driver_number: str             # Car number
+    first_name: str                # First name
+    last_name: str                 # Last name
+    team_color: str                # Hex color code
+    headshot_url: str              # Photo URL
+```python
+
+---
+
+## Dataframe type hints
+
+For better IDE support, use type hints with DataFrames:
+
+### Pandas DataFrames
+
+```python
+import pandas as pd
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Type hint for laps DataFrame
+laps: pd.DataFrame = session.laps
+
+# Type hint for telemetry
+tel: pd.DataFrame = session.get_fastest_lap_tel()
+
+# Type hint for weather
+weather: pd.DataFrame = session.weather
+```python ### Polars DataFrames
+
+```python
+import polars as pl
+import tif1
+
+config = tif1.get_config()
+config.set("lib", "polars")
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Type hint for laps DataFrame
+laps: pl.DataFrame = session.laps
+
+# Type hint for telemetry
+tel: pl.DataFrame = session.get_fastest_lap_tel()
+```python
+
+### Union types for lib-agnostic code
+
+```python
+from typing import Union
+import pandas as pd
+import polars as pl
+import tif1
+
+DataFrame = Union[pd.DataFrame, pl.DataFrame]
+
+def analyze_laps(laps: DataFrame) -> dict:
+    """Works with both pandas and polars."""
+    if isinstance(laps, pd.DataFrame):
+        return {"count": len(laps), "fastest": laps["LapTime"].min()}
+    else:
+        return {"count": len(laps), "fastest": laps["LapTime"].min()}
+```python
+
+---
+
+## Object type hints
+
+### Core Objects
+
+```python
+from tif1 import Session, Driver
+from tif1.core import Lap, Laps, Telemetry
+
+# Session
+session: Session = tif1.get_session(2025, "Monaco", "Race")
+
+# Driver
+driver: Driver = session.get_driver("VER")
+
+# Lap
+lap: Lap = driver.get_lap(19)
+
+# Laps collection
+laps: Laps = session.laps
+
+# Telemetry
+telemetry: Telemetry = lap.telemetry
+```python
+
+### Model Objects
+
+```python
+from tif1.core import SessionResults, DriverResult, CircuitInfo
+
+# Session results
+results: SessionResults = session.results
+
+# Circuit info
+circuit: CircuitInfo = session.get_circuit_info()
+```python
+
+---
+
+## Generic type hints
+
+### Async Functions
+
+```python
+from typing import Awaitable
+import pandas as pd
+import tif1
+
+async def load_session_async() -> pd.DataFrame:
+    session = tif1.get_session(2025, "Monaco", "Race")
+    laps: pd.DataFrame = await session.laps_async()
+    return laps
+
+# Type hint for async function
+load_func: Awaitable[pd.DataFrame] = load_session_async()
+```python
+
+### Dictionary Returns
+
+```python
+from typing import Dict
+import pandas as pd
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+
+# Type hint for telemetry dictionary
+tels: Dict[str, pd.DataFrame] = session.get_fastest_laps_tels(by_driver=True)
+
+for driver, tel in tels.items():
+    driver_code: str = driver
+    telemetry: pd.DataFrame = tel
+    print(f"{driver_code}: {len(telemetry)} samples")
+```python
+
+---
+
+## Complete type-annotated example
+
+```python
+from typing import Dict, List, Tuple, Optional
+import pandas as pd
+import tif1
+from tif1 import Session, Driver
+from tif1.core import Lap
+from tif1.types import BackendType, SessionType, CompoundType
+
+def analyze_qualifying(
+    year: int,
+    gp: str,
+    lib: BackendType = "pandas"
+) -> Dict[str, float]:
+    """
+    Analyze qualifying session and return fastest lap times.
+
+    Args:
+        year: Season year
+        gp: Grand Prix name
+        lib: DataFrame library to use
+
+    Returns:
+        Dictionary mapping driver codes to fastest lap times
+    """
+    session_name: SessionType = "Qualifying"
+    session: Session = tif1.get_session(year, gp, session_name, lib=lib)
+
+    fastest_laps: pd.DataFrame = session.get_fastest_laps(by_driver=True)
+
+    results: Dict[str, float] = {}
+    for _, row in fastest_laps.iterrows():
+        driver: str = row["Driver"]
+        lap_time: float = row["LapTime"]
+        results[driver] = lap_time
+
+    return results
+
+def get_compound_usage(
+    session: Session,
+    driver_code: str
+) -> Dict[CompoundType, int]:
+    """
+    Count laps per compound for a driver.
+
+    Args:
+        session: Session object
+        driver_code: 3-letter driver code
+
+    Returns:
+        Dictionary mapping compounds to lap counts
+    """
+    driver: Driver = session.get_driver(driver_code)
+    laps: pd.DataFrame = driver.laps
+
+    compound_counts: Dict[CompoundType, int] = {}
+    for compound in ["SOFT", "MEDIUM", "HARD"]:
+        count: int = len(laps[laps["Compound"] == compound])
+        if count > 0:
+            compound_counts[compound] = count  # type: ignore
+
+    return compound_counts
+
+def find_fastest_sector(
+    lap: Lap
+) -> Tuple[int, float]:
+    """
+    Find the fastest sector in a lap.
+
+    Args:
+        lap: Lap object
+
+    Returns:
+        Tuple of (sector_number, sector_time)
+    """
+    # Access lap data (Lap is a Series subclass)
+    s1: float = lap["Sector1Time"]
+    s2: float = lap["Sector2Time"]
+    s3: float = lap["Sector3Time"]
+
+    sectors: List[Tuple[int, float]] = [
+        (1, s1),
+        (2, s2),
+        (3, s3)
+    ]
+
+    fastest: Tuple[int, float] = min(sectors, key=lambda x: x[1])
+    return fastest
+
+# Usage with type checking
+if __name__ == "__main__":
+    results: Dict[str, float] = analyze_qualifying(2025, "Monaco Grand Prix")
+
+    for driver, time in results.items():
+        print(f"{driver}: {time:.3f}s")
+```bash
+
+---
+
+## Type Checking
+
+### Using mypy
+
+```bash
+# Install mypy
+pip install mypy
+
+# Check types
+mypy your_script.py
+```python ### Using pyright
+
+```bash
+# Install pyright
+npm install -g pyright
+
+# Check types
+pyright your_script.py
+```python
+
+### IDE Support
+
+Modern IDEs like VS Code, PyCharm, and others provide:
+- Autocomplete based on type hints
+- Inline type checking
+- Parameter hints
+- Return type hints
+
+**Example in VS Code:**
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+# Hovering over 'session' shows: session: Session
+
+laps = session.laps
+# Hovering over 'laps' shows: laps: DataFrame
+
+driver = session.get_driver("VER")
+# Hovering over 'driver' shows: driver: Driver
+```python
+
+---
+
+## Best Practices
+
+1. **Always use type hints in function signatures**: Helps catch errors early.
+
+2. **Use Union types for lib-agnostic code**: Supports both pandas and polars.
+
+3. **Import types from tif1.types**: Centralized type definitions.
+
+4. **Use TypedDict for JSON data**: Better than plain dicts.
+
+5. **Enable strict type checking**: Use mypy or pyright in CI/CD.
+
+6. **Document complex types**: Add docstrings explaining type parameters.
+
+7. **Use Optional for nullable values**: Makes None handling explicit.
+
+```python
+from typing import Optional
+import tif1
+
+def get_driver_safely(
+    session: tif1.Session,
+    driver_code: str
+) -> Optional[tif1.Driver]:
+    """Get driver or None if not found."""
+    try:
+        return session.get_driver(driver_code)
+    except tif1.DriverNotFoundError:
+        return None
+```python

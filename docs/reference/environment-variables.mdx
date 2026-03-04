@@ -1,0 +1,317 @@
+---
+title: "Environment Variables"
+icon: "sliders"
+description: "Configure tif1 behavior with environment variables"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+`tif1` can be configured using environment variables or a `.tif1rc` configuration file. Environment variables take precedence over file-based configuration.
+
+## Core Configuration
+
+### TIF1_CACHE_DIR
+
+Location for the SQLite cache database.
+
+```bash
+export TIF1_CACHE_DIR="/path/to/cache"
+```bash
+
+<Info>
+  Default: `~/.tif1/cache`
+</Info>
+
+### TIF1_CACHE_ENABLED
+
+Enable or disable caching globally.
+
+```bash
+export TIF1_CACHE_ENABLED=false
+```bash
+
+<Info>
+  Default: `true`
+</Info>
+
+### TIF1_LIB
+
+Default DataFrame lib to use.
+
+```bash
+export TIF1_LIB=polars
+```bash
+
+<Info>
+  Default: `pandas`
+  Options: `pandas`, `polars`
+</Info>
+
+## Network Configuration
+
+### TIF1_CDN_BASE_URL
+
+Base URL for the CDN serving F1 data.
+
+```bash
+export TIF1_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/TracingInsights"
+```bash
+
+<Warning>
+  Only change this if you're hosting your own data mirror. Never use `raw.githubusercontent.com` due to rate limits.
+</Warning>
+
+### TIF1_REQUEST_TIMEOUT
+
+Timeout for HTTP requests in seconds.
+
+```bash
+export TIF1_REQUEST_TIMEOUT=30
+```bash
+
+<Info>
+  Default: `10` seconds
+</Info>
+
+### TIF1_MAX_RETRIES
+
+Maximum number of retry attempts for failed requests.
+
+```bash
+export TIF1_MAX_RETRIES=5
+```bash
+
+<Info>
+  Default: `3`
+</Info>
+
+### TIF1_RETRY_BACKOFF
+
+Backoff multiplier for exponential retry delays.
+
+```bash
+export TIF1_RETRY_BACKOFF=2.0
+```bash
+
+<Info>
+  Default: `1.5`
+  Formula: `delay = base_delay * (backoff ^ attempt)`
+</Info>
+
+## Circuit Breaker
+
+### TIF1_CIRCUIT_BREAKER_THRESHOLD
+
+Number of consecutive failures before opening the circuit.
+
+```bash
+export TIF1_CIRCUIT_BREAKER_THRESHOLD=10
+```python <Info>
+  Default: `5`
+</Info>
+
+### TIF1_CIRCUIT_BREAKER_TIMEOUT
+
+Time in seconds before attempting to close an open circuit.
+
+```bash
+export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
+```bash
+
+<Info>
+  Default: `60` seconds
+</Info>
+
+## Logging
+
+### TIF1_LOG_LEVEL
+
+Set the logging verbosity.
+
+```bash
+export TIF1_LOG_LEVEL=DEBUG
+```bash
+
+<Info>
+  Default: `INFO`
+  Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+</Info>
+
+### TIF1_LOG_FILE
+
+Write logs to a file instead of stdout.
+
+```bash
+export TIF1_LOG_FILE="/var/log/tif1.log"
+```bash
+
+<Info>
+  Default: None (logs to stdout)
+</Info>
+
+## Performance Tuning
+
+### TIF1_ASYNC_WORKERS
+
+Number of concurrent workers for async operations.
+
+```bash
+export TIF1_ASYNC_WORKERS=20
+```bash
+
+<Info>
+  Default: `10`
+  Higher values = more parallelism but more memory usage
+</Info>
+
+### TIF1_MEMORY_CACHE_SIZE
+
+Size of the in-memory LRU cache (number of items).
+
+```bash
+export TIF1_MEMORY_CACHE_SIZE=200
+```bash
+
+<Info>
+  Default: `100`
+</Info>
+
+### TIF1_HTTP2_ENABLED
+
+Enable HTTP/2 for network requests.
+
+```bash
+export TIF1_HTTP2_ENABLED=true
+```bash
+
+<Info>
+  Default: `true`
+  Disable only if experiencing connection issues
+</Info>
+
+## Data Processing
+
+### TIF1_USE_CATEGORICAL
+
+Convert string columns to categorical types for memory savings.
+
+```bash
+export TIF1_USE_CATEGORICAL=true
+```bash
+
+<Info>
+  Default: `true`
+  Can reduce memory usage by 30-50%
+</Info>
+
+### TIF1_TELEMETRY_FREQUENCY
+
+Telemetry sampling frequency in Hz.
+
+```bash
+export TIF1_TELEMETRY_FREQUENCY=4
+```python <Info>
+  Default: `4` Hz
+  Higher values = more data points but larger files
+</Info>
+
+## Configuration File
+
+Instead of environment variables, create a `.tif1rc` file in your home directory or project root.
+
+### Example .tif1rc
+
+```ini
+[cache]
+enabled = true
+directory = ~/.tif1/cache
+memory_size = 100
+
+[network]
+cdn_base_url = https://cdn.jsdelivr.net/gh/TracingInsights
+request_timeout = 10
+max_retries = 3
+retry_backoff = 1.5
+http2_enabled = true
+
+[circuit_breaker]
+threshold = 5
+timeout = 60
+
+[lib]
+default = pandas
+use_categorical = true
+
+[logging]
+level = INFO
+file =
+
+[performance]
+async_workers = 10
+telemetry_frequency = 4
+```python
+
+## Programmatic Configuration
+
+You can also configure tif1 directly in your code.
+
+```python
+import tif1
+
+# Get the config singleton
+config = tif1.get_config()
+
+# Update settings
+config.cache_enabled = False
+config.lib = "polars"
+config.log_level = "DEBUG"
+
+# Or use the Config class directly
+from tif1 import Config
+
+Config.CACHE_DIR = "/custom/cache/path"
+Config.MAX_RETRIES = 5
+```python
+
+## Priority Order
+
+Configuration is resolved in this order (highest to lowest priority):
+
+1. Programmatic configuration in code
+2. Environment variables
+3. `.tif1rc` in current directory
+4. `.tif1rc` in home directory
+5. Default values
+
+## Validation
+
+Invalid configuration values will raise a `ConfigError` at startup.
+
+```python
+import tif1
+
+try:
+    config = tif1.get_config()
+except tif1.ConfigError as e:
+    print(f"Configuration error: {e}")
+```python
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use .tif1rc for Projects" icon="file">
+    Commit `.tif1rc` to version control for team consistency.
+  </Card>
+  <Card title="Use ENV for Deployment" icon="server">
+    Use environment variables in production for flexibility.
+  </Card>
+  <Card title="Keep Defaults" icon="check">
+    Only override what you need to change.
+  </Card>
+  <Card title="Document Changes" icon="book">
+    Comment why you changed defaults in your config.
+  </Card>
+</CardGroup>

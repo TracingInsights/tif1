@@ -1,0 +1,635 @@
+---
+title: "FAQ"
+icon: "circle-question"
+description: "Frequently asked questions about tif1"
+keywords:
+  - "FAQ"
+  - "frequently asked questions"
+  - "common questions"
+  - "help"
+---
+
+## General Questions
+
+### What is tif1?
+
+tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current, with 4-5x faster loading than alternatives.
+
+### How is tif1 different from fastf1?
+
+tif1 is designed as a faster alternative to fastf1 with API compatibility. Key differences:
+
+- **Speed**: 4-5x faster data loading with async/HTTP/2
+- **Backends**: Supports both pandas and polars
+- **Caching**: SQLite + memory LRU vs file-based pickle
+- **Data Source**: TracingInsights CDN vs Ergast + Live Timing
+- **Focus**: Historical data only (no live timing)
+
+### Is tif1 free to use?
+
+Yes, tif1 is open source under the MIT License. You can use it freely for personal, academic, or commercial projects.
+
+### What data is available?
+
+- Lap times and sectors (2018-current)
+- Telemetry (speed, throttle, brake, RPM, gear, DRS)
+- Position data (X, Y, Z coordinates)
+- Acceleration data (X, Y, Z axes)
+- Weather data
+- Tire compounds and strategy
+- Race control messages
+- Driver metadata
+
+---
+
+## Installation & Setup
+
+### How do I install tif1?
+
+```bash
+pip install tif1
+```bash
+
+For the polars lib (recommended for performance):
+
+```bash
+pip install tif1[polars]
+```yaml
+
+### What Python version do I need?
+
+Python 3.10 or higher is required.
+
+### Do I need an API key?
+
+No, tif1 doesn't require any API keys or authentication. All data is publicly available via the TracingInsights CDN.
+
+### Where is data cached?
+
+By default, data is cached in `~/.tif1/cache/`. You can change this in your `.tif1rc` configuration file or via the `TIF1_CACHE_DIR` environment variable.
+
+---
+
+## Data Access
+
+### Why is my first load slow?
+
+The first time you access a session, tif1 needs to download data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for 4-5x faster initial loads.
+
+### How do I load data faster?
+
+1. Use async loading: `await session.laps_async()`
+2. Enable the polars lib: `lib="polars"`
+3. Use batch telemetry fetching: `session.get_fastest_laps_tels()`
+4. Keep caching enabled (default)
+
+### Can I access live timing data?
+
+No, tif1 focuses on historical data (2018-current). For live timing, use fastf1.
+
+### How recent is the data?
+
+Data is typically available 30 minutes after a session ends. This is slightly longer than fastf1 (~20-25 minutes) because tif1 includes additional enriched data.
+
+### Why am I getting DataNotFoundError?
+
+Common causes:
+- Event name is misspelled (use `get_events()` to check)
+- Session name is misspelled (use `get_sessions()` to check)
+- Data hasn't been published yet (check if session ended recently)
+- Session didn't take place (cancelled/postponed)
+
+---
+
+## Performance
+
+### How can I reduce memory usage?
+
+1. Use the polars lib (50% less memory)
+2. Process drivers one at a time instead of loading all at once
+3. Delete DataFrames when done: `del laps`
+4. Use categorical dtypes (automatic in tif1)
+
+### Why is polars faster?
+
+Polars is written in Rust and uses:
+- Better parallelization across CPU cores
+- More efficient memory layout
+- Lazy evaluation for query optimization
+- Native Arrow format
+
+### Can I use multiple backends in one script?
+
+Yes, you can specify different backends for different sessions:
+
+```python
+session1 = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
+session2 = tif1.get_session(2025, "Monza", "Race", lib="polars")
+```yaml
+
+---
+
+## Errors & Troubleshooting
+
+### I'm getting NetworkError
+
+Possible causes:
+- Internet connection issues
+- CDN is temporarily down (rare)
+- Firewall blocking jsDelivr
+
+Try:
+1. Check your internet connection
+2. Reset the circuit breaker: `tif1.reset_circuit_breaker()`
+3. Enable debug logging: `tif1.setup_logging(logging.DEBUG)`
+
+### Cache is corrupted
+
+Clear the cache and re-download:
+
+```python
+tif1.get_cache().clear()
+```bash
+
+### Column names don't match fastf1
+
+tif1 uses PascalCase for all columns (e.g., `LapTime`, not `time`). This is intentional for consistency. Use the exact column names shown in the data schema reference.
+
+### Polars not available error
+
+Install the polars extra:
+
+```bash
+pip install tif1[polars]
+```yaml
+
+---
+
+## API & Usage
+
+### Do I need to call session.load()?
+
+No, tif1 uses lazy loading. Data is automatically fetched when you access it:
+
+```python
+session = tif1.get_session(2025, "Monaco", "Race")
+laps = session.laps  # Data fetched here
+```yaml
+
+However, you can use `session.load()` for explicit control over what data to fetch.
+
+### How do I get telemetry for all drivers?
+
+Use the optimized batch method:
+
+```python
+# 28x faster than sequential loading
+tels = session.get_fastest_laps_tels(by_driver=True)
+```yaml
+
+### Can I filter by lap number?
+
+Yes, use standard DataFrame filtering:
+
+```python
+# Pandas
+lap_10 = laps[laps["LapNumber"] == 10]
+
+# Polars
+lap_10 = laps.filter(pl.col("LapNumber") == 10)
+```python ### How do I get weather data?
+
+Weather is automatically included in the laps DataFrame:
+
+```python
+laps = session.laps
+print(laps[["LapNumber", "Driver", "AirTemp", "TrackTemp"]])
+```yaml
+
+Or access it directly:
+
+```python
+weather = session.weather
+```bash
+
+---
+
+## Data Quality
+
+### Are lap times accurate?
+
+Yes, lap times come from official timing data. Missing lap times are filled from Ergast/Jolpica where available.
+
+### Why are some lap times missing?
+
+Lap times can be missing due to:
+- Pit stops
+- Track limits violations (deleted laps)
+- Timing system issues
+- Very slow laps (> 2m30s in some sources)
+
+tif1 fills gaps where possible using alternative data sources.
+
+### Is telemetry data validated?
+
+Yes, tif1 includes optional Pydantic validation (enabled by default). Invalid data raises `InvalidDataError`.
+
+---
+
+## Advanced Usage
+
+### Can I use tif1 in production?
+
+Yes, tif1 is designed for production use with:
+- Robust error handling
+- Circuit breaker pattern
+- Automatic retries
+- SQLite caching for reliability
+
+### How do I export data?
+
+tif1 DataFrames support all standard export formats:
+
+```python
+laps.to_csv("data.csv")
+laps.to_parquet("data.parquet")
+laps.to_json("data.json")
+laps.to_sql("laps", connection)
+```yaml
+
+### Can I use tif1 with Jupyter?
+
+Yes, tif1 has built-in Jupyter support with rich HTML displays for Session, Driver, and Lap objects.
+
+### Does tif1 work with async frameworks?
+
+Yes, tif1 uses asyncio internally and provides async methods:
+
+```python
+laps = await session.laps_async()
+```yaml
+
+---
+
+
+
+### How do I analyze tire degradation?
+
+Tire degradation analysis requires tracking lap times over tire life:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from scipy import stats
+
+session = tif1.get_session(2025, "Bahrain", "Race")
+laps = session.laps
+
+# Filter for a specific driver and stint
+driver_laps = laps[
+    (laps["Driver"] == "VER") &
+    (laps["Stint"] == 2) &
+    (laps["PitInTime"].isna())
+]
+
+# Plot lap time vs tire life
+plt.scatter(driver_laps["TyreLife"], driver_laps["LapTime"])
+
+# Add trend line
+slope, intercept, r_value, _, _ = stats.linregress(
+    driver_laps["TyreLife"],
+    driver_laps["LapTime"]
+)
+print(f"Degradation: {slope:.3f} seconds per lap")
+print(f"R²: {r_value**2:.3f}")
+
+plt.xlabel("Tire Life (laps)")
+plt.ylabel("Lap Time (s)")
+plt.title(f"Tire Degradation - {driver_laps['Compound'].iloc[0]} Compound")
+plt.show()
+```
+
+### How do I compare two drivers' telemetry?
+
+Use the telemetry comparison utilities:
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+
+# Get fastest laps for both drivers
+ver_fastest = session.get_driver("VER").get_fastest_lap()
+lec_fastest = session.get_driver("LEC").get_fastest_lap()
+
+# Get telemetry
+ver_tel = session.get_driver("VER").get_lap(
+    ver_fastest["LapNumber"].iloc[0]
+).telemetry
+lec_tel = session.get_driver("LEC").get_lap(
+    lec_fastest["LapNumber"].iloc[0]
+).telemetry
+
+# Plot speed comparison
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(14, 6))
+plt.plot(ver_tel["Distance"], ver_tel["Speed"], label="VER", linewidth=2)
+plt.plot(lec_tel["Distance"], lec_tel["Speed"], label="LEC", linewidth=2)
+plt.xlabel("Distance (m)")
+plt.ylabel("Speed (km/h)")
+plt.title("Speed Comparison - Fastest Laps")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+### How do I find overtakes?
+
+Detect position changes between consecutive laps:
+
+```python
+import tif1
+import pandas as pd
+
+session = tif1.get_session(2025, "Monza", "Race")
+laps = session.laps
+
+# Sort by driver and lap number
+laps_sorted = laps.sort_values(["Driver", "LapNumber"])
+
+# Calculate position change
+laps_sorted["PositionChange"] = laps_sorted.groupby("Driver")["Position"].diff()
+
+# Find overtakes (position improved)
+overtakes = laps_sorted[laps_sorted["PositionChange"] < 0]
+
+# Display overtakes
+for _, overtake in overtakes.iterrows():
+    print(f"Lap {overtake['LapNumber']}: {overtake['Driver']} "
+          f"gained {abs(int(overtake['PositionChange']))} position(s)")
+```
+
+### How do I calculate race pace?
+
+Race pace excludes outliers and pit laps:
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Silverstone", "Race")
+laps = session.laps
+
+def calculate_race_pace(laps, driver):
+    driver_laps = laps[laps["Driver"] == driver].copy()
+
+    # Remove outliers
+    driver_laps = driver_laps[
+        (driver_laps["PitInTime"].isna()) &
+        (driver_laps["LapNumber"] > 1) &
+        (~driver_laps["Deleted"])
+    ]
+
+    # Remove laps > 107% of fastest
+    fastest = driver_laps["LapTime"].min()
+    driver_laps = driver_laps[driver_laps["LapTime"] < fastest * 1.07]
+
+    return driver_laps["LapTime"].mean()
+
+# Compare top 3
+for driver in ["VER", "HAM", "LEC"]:
+    pace = calculate_race_pace(laps, driver)
+    print(f"{driver}: {pace:.3f}s average race pace")
+```
+
+### How do I work with sprint races?
+
+Sprint races are accessed like regular sessions:
+
+```python
+import tif1
+
+# Load sprint race
+session = tif1.get_session(2025, "Austria", "Sprint")
+laps = session.laps
+
+# Sprint races are shorter
+print(f"Total laps: {laps['LapNumber'].max()}")
+print(f"Sprint winner: {laps[laps['Position'] == 1]['Driver'].iloc[0]}")
+
+# Sprint qualifying
+sprint_quali = tif1.get_session(2025, "Austria", "Sprint Qualifying")
+```
+
+### How do I handle missing data?
+
+tif1 provides utilities for handling missing data:
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Monaco", "Race")
+laps = session.laps
+
+# Check for missing lap times
+missing_times = laps[laps["LapTime"].isna()]
+print(f"Missing lap times: {len(missing_times)}")
+
+# Check for missing telemetry
+for driver in ["VER", "HAM"]:
+    try:
+        fastest = session.get_driver(driver).get_fastest_lap()
+        tel = session.get_driver(driver).get_lap(
+            fastest["LapNumber"].iloc[0]
+        ).telemetry
+        print(f"{driver}: Telemetry available ({len(tel)} samples)")
+    except tif1.DataNotFoundError:
+        print(f"{driver}: Telemetry not available")
+```
+
+### How do I analyze sector times?
+
+Sector analysis helps identify where time is gained or lost:
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Spa", "Qualifying")
+
+# Get fastest laps
+fastest_laps = session.get_fastest_laps(by_driver=True)
+
+# Find fastest sector times overall
+fastest_s1 = fastest_laps["Sector1Time"].min()
+fastest_s2 = fastest_laps["Sector2Time"].min()
+fastest_s3 = fastest_laps["Sector3Time"].min()
+
+# Calculate deltas for each driver
+fastest_laps["S1_Delta"] = fastest_laps["Sector1Time"] - fastest_s1
+fastest_laps["S2_Delta"] = fastest_laps["Sector2Time"] - fastest_s2
+fastest_laps["S3_Delta"] = fastest_laps["Sector3Time"] - fastest_s3
+
+# Display top 5
+print(fastest_laps[["Driver", "S1_Delta", "S2_Delta", "S3_Delta"]].head())
+
+# Find who was fastest in each sector
+print(f"Fastest S1: {fastest_laps.loc[fastest_laps['Sector1Time'].idxmin(), 'Driver']}")
+print(f"Fastest S2: {fastest_laps.loc[fastest_laps['Sector2Time'].idxmin(), 'Driver']}")
+print(f"Fastest S3: {fastest_laps.loc[fastest_laps['Sector3Time'].idxmin(), 'Driver']}")
+```
+
+### How do I use tif1 with Streamlit?
+
+tif1 works seamlessly with Streamlit for interactive dashboards:
+
+```python
+import streamlit as st
+import tif1
+import matplotlib.pyplot as plt
+
+st.title("F1 Data Explorer")
+
+# User inputs
+year = st.selectbox("Year", range(2018, 2026))
+events = tif1.get_events(year)
+event = st.selectbox("Event", events["EventName"].tolist())
+session_type = st.selectbox("Session", ["Race", "Qualifying", "Practice 1"])
+
+# Load data
+if st.button("Load Data"):
+    with st.spinner("Loading..."):
+        session = tif1.get_session(year, event, session_type)
+        laps = session.laps
+
+        st.success(f"Loaded {len(laps)} laps")
+
+        # Display fastest laps
+        fastest = session.get_fastest_laps(by_driver=True)
+        st.dataframe(fastest[["Driver", "Team", "LapTime"]].head(10))
+
+        # Plot lap time distribution
+        fig, ax = plt.subplots()
+        ax.hist(laps["LapTime"], bins=50)
+        ax.set_xlabel("Lap Time (s)")
+        ax.set_ylabel("Frequency")
+        st.pyplot(fig)
+```
+
+### How do I batch process multiple sessions?
+
+Process multiple sessions efficiently:
+
+```python
+import tif1
+import pandas as pd
+
+def analyze_season(year):
+    events = tif1.get_events(year)
+    results = []
+
+    for _, event in events.iterrows():
+        try:
+            session = tif1.get_session(year, event["EventName"], "Race")
+            laps = session.laps
+
+            # Get winner
+            final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
+            winner = final_lap.sort_values("Position").iloc[0]
+
+            results.append({
+                "Event": event["EventName"],
+                "Winner": winner["Driver"],
+                "Team": winner["Team"],
+                "FastestLap": laps["LapTime"].min()
+            })
+        except tif1.DataNotFoundError:
+            print(f"Skipping {event['EventName']} - data not available")
+
+    return pd.DataFrame(results)
+
+# Analyze 2024 season
+season_results = analyze_season(2024)
+print(season_results)
+```
+
+### How do I create custom visualizations?
+
+tif1 provides plotting utilities, but you can create custom visualizations:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+session = tif1.get_session(2025, "Monaco", "Qualifying")
+laps = session.laps
+
+# Custom heatmap of lap times by driver and session
+pivot = laps.pivot_table(
+    values="LapTime",
+    index="Driver",
+    columns="Session",
+    aggfunc="min"
+)
+
+plt.figure(figsize=(10, 12))
+sns.heatmap(pivot, annot=True, fmt=".2f", cmap="RdYlGn_r")
+plt.title("Qualifying Lap Times Heatmap")
+plt.tight_layout()
+plt.show()
+```
+
+
+## Contributing
+
+### How can I contribute?
+
+Contributions are welcome! See the [Contributing Guide](/reference/contributing) for details.
+
+### I found a bug, what should I do?
+
+1. Check if it's already reported in [GitHub Issues](https://github.com/TracingInsights/tif1/issues)
+2. If not, create a new issue with:
+   - Minimal reproducible example
+   - Error message and traceback
+   - tif1 version (`tif1.__version__`)
+   - Python version
+
+### Can I request features?
+
+Yes, feature requests are welcome! Open an issue on GitHub with:
+- Clear description of the feature
+- Use case / motivation
+- Example of how it would work
+
+---
+
+## Licensing & Legal
+
+### What license is tif1 under?
+
+MIT License - you can use it freely in any project.
+
+### Can I use tif1 commercially?
+
+Yes, the MIT License allows commercial use.
+
+### Who owns the F1 data?
+
+The underlying F1 data is owned by Formula 1. tif1 provides access to publicly available timing data through the TracingInsights project.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" href="/reference/troubleshooting">
+    Solve issues
+  </Card>
+  <Card title="Getting Started" href="/getting-started">
+    Usage guide
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    Recommended patterns
+  </Card>
+</CardGroup>

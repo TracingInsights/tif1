@@ -1,0 +1,97 @@
+---
+title: "Race Pace Analysis"
+icon: "gauge-high"
+description: "Learn how to compare driver performance and consistency"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+Race pace analysis is one of the most common tasks in F1 data science. It involves looking at lap times over a long stint to see which driver is faster and how well they manage their tires.
+
+## Loading the Data
+
+For this analysis, we'll look at the 2024 Abu Dhabi Grand Prix. We'll use the `polars` lib for faster filtering.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the session with polars lib
+session = tif1.get_session(2024, "Abu Dhabi Grand Prix", "Race", lib="polars")
+laps = session.laps
+```
+
+## Cleaning the Data
+
+In a race, lap times can be skewed by:
+- Safety Car periods (very slow laps)
+- Pit stops (very slow laps)
+- Lap 1 (standing start)
+
+We need to filter these out to get a "true" race pace.
+
+```python
+# Convert to pandas for easier plotting
+df = laps.to_pandas()
+
+# Filter out very slow laps and pit laps
+# Typically, race laps are within a certain range
+clean_laps = df[
+    (df["LapTime"] < df["LapTime"].min() * 1.07) & # Within 7% of fastest lap
+    (df["PitInTime"].isna()) &
+    (df["PitOutTime"].isna()) &
+    (df["LapNumber"] > 1)
+]
+```
+
+## Comparing Drivers
+
+Let's compare the pace of the top two finishers.
+
+```python
+# Filter for specific drivers
+drivers = ["VER", "LEC"]
+comparison_df = clean_laps[clean_laps["Driver"].isin(drivers)]
+
+# Create a boxplot to see distribution of lap times
+plt.figure(figsize=(10, 6))
+sns.boxplot(x="Driver", y="LapTime", data=comparison_df, palette="viridis")
+plt.title("Race Pace Comparison: VER vs LEC")
+plt.ylabel("Lap Time (s)")
+plt.show()
+```
+
+### Interpreting the Results
+- **Median (line in the box):** Represents the typical race pace.
+- **Box size (IQR):** Represents consistency. A smaller box means the driver was more consistent.
+- **Whiskers/Outliers:** Show variance caused by traffic or minor errors.
+
+## Visualizing pace over the race
+
+To see how the pace evolved (tire degradation), we can plot lap times against lap numbers.
+
+```python
+plt.figure(figsize=(12, 6))
+for driver in drivers:
+    driver_laps = comparison_df[comparison_df["Driver"] == driver]
+    plt.plot(driver_laps["LapNumber"], driver_laps["LapTime"], label=driver)
+
+plt.title("Lap Times Evolution")
+plt.xlabel("Lap Number")
+plt.ylabel("Lap Time (s)")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+## Conclusion
+
+By following this workflow, you can:
+1. Load high-quality timing data.
+2. Clean it to remove anomalies.
+3. Compare drivers using statistical distributions.
+4. Visualize performance trends across the entire race.

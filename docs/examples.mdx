@@ -1,0 +1,465 @@
+---
+title: "Examples"
+icon: "code"
+description: "Common use cases and code examples for tif1"
+keywords:
+  - "tif1 examples"
+  - "F1 code examples"
+  - "telemetry examples"
+  - "lap analysis examples"
+  - "F1 data patterns"
+---
+
+Quick reference for common tif1 patterns and use cases.
+
+## Basic session loading
+
+```python
+import tif1
+
+# Load a session
+session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
+
+# Access lap data
+laps = session.laps
+print(f"Total laps: {len(laps)}")
+```python
+
+## Working with Drivers
+
+```python
+# Get all drivers in the session
+drivers_df = session.drivers_df
+print(drivers_df[["Driver", "Team", "DriverNumber"]])
+
+# Get specific driver
+ver = session.get_driver("VER")
+ver_laps = ver.laps
+
+# Get driver's fastest lap
+fastest = ver.get_fastest_lap()
+print(f"Fastest lap: {fastest['LapTime'].iloc[0]}")
+```python
+
+## Telemetry Analysis
+
+```python
+# Get telemetry for a specific lap
+lap = ver.get_lap(19)
+telemetry = lap.telemetry
+
+# Analyze speed and throttle
+print(telemetry[["Time", "Speed", "Throttle", "Brake"]].head())
+
+# Find maximum speed
+max_speed = telemetry["Speed"].max()
+print(f"Max speed: {max_speed} km/h")
+```python
+
+## Fastest Laps
+
+```python
+# Get fastest lap per driver
+fastest_by_driver = session.get_fastest_laps(by_driver=True)
+print(fastest_by_driver[["Driver", "LapTime", "Compound"]])
+
+# Get overall fastest lap
+overall_fastest = session.get_fastest_laps(by_driver=False)
+
+# Get telemetry for fastest laps (parallel fetching)
+fastest_tels = session.get_fastest_laps_tels(by_driver=True)
+
+# Get telemetry for specific drivers
+top3_tels = session.get_fastest_laps_tels(
+    by_driver=True,
+    drivers=["VER", "HAM", "LEC"]
+)
+```python
+
+## Async loading for speed
+
+```python
+import asyncio
+import tif1
+
+async def load_session_data():
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    # 4-5x faster than synchronous loading
+    laps = await session.laps_async()
+    return laps
+
+laps = asyncio.run(load_session_data())
+```python
+
+## Using Polars lib
+
+```python
+# Use polars for 2x faster processing
+session = tif1.get_session(
+    2025,
+    "Las Vegas Grand Prix",
+    "Race",
+    lib="polars"
+)
+
+laps = session.laps  # Returns polars DataFrame
+```python
+
+## Configuration
+
+```python
+# Get current configuration
+config = tif1.get_config()
+print(f"Max retries: {config.get('max_retries')}")
+
+# Update configuration
+config.set("validate_data", True)
+config.set("lib", "polars")
+config.save()
+```python
+
+## Cache Management
+
+```python
+# Get cache instance
+cache = tif1.get_cache()
+print(f"Cache location: {cache.cache_dir}")
+
+# Clear cache
+cache.clear()
+
+# Disable caching for a session
+session = tif1.get_session(
+    2025,
+    "British Grand Prix",
+    "Qualifying",
+    enable_cache=False
+)
+```text ## Error Handling
+
+```python
+import tif1
+
+try:
+    session = tif1.get_session(2025, "Invalid GP", "Race")
+    laps = session.laps
+except tif1.DataNotFoundError as e:
+    print(f"Data not found: {e}")
+except tif1.NetworkError as e:
+    print(f"Network error: {e}")
+except tif1.InvalidDataError as e:
+    print(f"Invalid data: {e}")
+```python
+
+## Event and session discovery
+
+```python
+# Get all events for a year
+events = tif1.get_events(2025)
+print(f"Events in 2025: {events}")
+
+# Get sessions for an event
+sessions = tif1.get_sessions(2025, "Chinese Grand Prix")
+print(f"Sessions: {sessions}")
+```python
+
+## Tire strategy analysis
+
+```python
+# Analyze tire compounds used
+laps = session.laps
+
+# Group by driver and compound
+tire_usage = laps.groupby(["Driver", "Compound"]).size()
+print(tire_usage)
+
+# Get stint information
+stints = laps.groupby(["Driver", "Stint"]).agg({
+    "LapNumber": ["min", "max", "count"],
+    "Compound": "first"
+})
+print(stints)
+```python
+
+## Weather Data
+
+```python
+# Access weather data
+weather = session.weather
+print(weather[["Time", "AirTemp", "TrackTemp", "Rainfall"]].head())
+
+# Weather is automatically included in laps DataFrame
+print(laps[["LapNumber", "Driver", "AirTemp", "TrackTemp"]].head())
+```python
+
+## Logging
+
+```python
+import logging
+import tif1
+
+# Enable debug logging
+tif1.setup_logging(logging.DEBUG)
+
+# Now all operations will show detailed logs
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+```python
+
+## Circuit breaker status
+
+```python
+# Check circuit breaker status
+cb = tif1.get_circuit_breaker()
+print(f"Circuit breaker state: {cb.state}")
+
+# Reset if needed
+if cb.state == "open":
+    tif1.reset_circuit_breaker()
+```python
+
+## Lap Time Comparison
+
+```python
+# Compare lap times between drivers
+ver_laps = laps[laps["Driver"] == "VER"]
+ham_laps = laps[laps["Driver"] == "HAM"]
+
+# Calculate average lap time
+ver_avg = ver_laps["LapTime"].mean()
+ham_avg = ham_laps["LapTime"].mean()
+
+print(f"VER avg: {ver_avg:.3f}s")
+print(f"HAM avg: {ham_avg:.3f}s")
+print(f"Delta: {abs(ver_avg - ham_avg):.3f}s")
+```python
+
+## Sector Analysis
+
+```python
+# Analyze sector times
+sectors = laps[["Driver", "Sector1Time", "Sector2Time", "Sector3Time"]]
+
+# Find best sector times per driver
+best_sectors = sectors.groupby("Driver").min()
+print(best_sectors)
+
+# Calculate theoretical best lap
+theoretical_best = best_sectors.sum(axis=1)
+print(f"Theoretical best laps:\n{theoretical_best}")
+```python ## Speed trap analysis
+
+```python
+# Analyze speed traps
+speed_data = laps[["Driver", "SpeedI1", "SpeedI2", "SpeedFL", "SpeedST"]]
+
+# Find maximum speeds
+max_speeds = speed_data.groupby("Driver").max()
+print(f"Maximum speeds:\n{max_speeds}")
+
+# Top speed overall
+top_speed = laps["SpeedST"].max()
+fastest_driver = laps[laps["SpeedST"] == top_speed]["Driver"].iloc[0]
+print(f"Top speed: {top_speed} km/h by {fastest_driver}")
+```python
+
+## Pit Stop Analysis
+
+```python
+# Find pit stops
+pit_stops = laps[laps["PitInTime"].notna()]
+
+# Count pit stops per driver
+pit_counts = pit_stops.groupby("Driver").size()
+print(f"Pit stops per driver:\n{pit_counts}")
+
+# Analyze pit stop timing
+pit_laps = pit_stops.groupby("Driver")["LapNumber"].apply(list)
+print(f"Pit stop laps:\n{pit_laps}")
+```python
+
+## Race pace analysis
+
+```python
+# Clean data for race pace
+clean_laps = laps[
+    (~laps["Deleted"]) &
+    (laps["PitInTime"].isna()) &
+    (laps["LapNumber"] > 1)
+]
+
+# Calculate race pace by compound
+pace_by_compound = clean_laps.groupby(["Driver", "Compound"])["LapTime"].mean()
+print(f"Race pace by compound:\n{pace_by_compound}")
+```python
+
+## Tire Degradation
+
+```python
+# Analyze tire degradation
+from scipy import stats
+
+# Filter to one compound
+soft_laps = laps[laps["Compound"] == "SOFT"]
+
+# Linear regression on tyrelife vs laptime
+for driver in soft_laps["Driver"].unique():
+    driver_laps = soft_laps[soft_laps["Driver"] == driver]
+
+    if len(driver_laps) > 5:
+        slope, intercept, r_value, _, _ = stats.linregress(
+            driver_laps["TyreLife"],
+            driver_laps["LapTime"]
+        )
+        print(f"{driver}: {slope:.3f}s/lap degradation (R²={r_value**2:.3f})")
+```python
+
+## Position Changes
+
+```python
+# Track position changes throughout race
+position_data = laps[["LapNumber", "Driver", "Position"]].pivot(
+    index="LapNumber",
+    columns="Driver",
+    values="Position"
+)
+
+# Find drivers who gained most positions
+start_positions = position_data.iloc[0]
+end_positions = position_data.iloc[-1]
+position_changes = start_positions - end_positions
+
+print(f"Position changes:\n{position_changes.sort_values(ascending=False)}")
+```python
+
+## Track status analysis
+
+```python
+# Analyze track status (flags, safety car, etc.)
+track_status = laps[["LapNumber", "TrackStatus"]].drop_duplicates()
+
+# Count laps under different conditions
+status_counts = laps["TrackStatus"].value_counts()
+print(f"Track status distribution:\n{status_counts}")
+
+# Find safety car periods
+sc_laps = laps[laps["TrackStatus"].str.contains("4", na=False)]
+if len(sc_laps) > 0:
+    print(f"Safety car on laps: {sc_laps['LapNumber'].unique()}")
+```python
+
+## Qualifying Analysis
+
+```python
+# Load qualifying session
+quali = tif1.get_session(2025, "Monaco", "Qualifying")
+quali_laps = quali.laps
+
+# Get best lap per driver
+best_laps = quali_laps.loc[quali_laps.groupby("Driver")["LapTime"].idxmin()]
+best_laps = best_laps.sort_values("LapTime")
+
+print("Qualifying results:")
+for i, (_, lap) in enumerate(best_laps.iterrows(), 1):
+    print(f"{i}. {lap['Driver']}: {lap['LapTime']:.3f}s ({lap['Compound']})")
+```bash
+
+## Data Export
+
+```python
+# Export to CSV
+laps.to_csv("race_laps.csv", index=False)
+
+# Export to Parquet (smaller, faster)
+laps.to_parquet("race_laps.parquet")
+
+# Export to Excel
+with pd.ExcelWriter("race_analysis.xlsx") as writer:
+    laps.to_excel(writer, sheet_name="Laps", index=False)
+    session.weather.to_excel(writer, sheet_name="Weather", index=False)
+    session.drivers_df.to_excel(writer, sheet_name="Drivers", index=False)
+
+# Export to JSON
+laps.to_json("race_laps.json", orient="records", indent=2)
+```python ## Batch Processing
+
+```python
+# Process multiple sessions
+events = ["Monaco", "Silverstone", "Spa", "Monza"]
+
+results = []
+for event in events:
+    try:
+        session = tif1.get_session(2025, event, "Race")
+        laps = session.laps
+
+        # Calculate metrics
+        fastest = laps["LapTime"].min()
+        avg = laps["LapTime"].mean()
+
+        results.append({
+            "event": event,
+            "fastest_lap": fastest,
+            "avg_lap": avg,
+            "total_laps": len(laps)
+        })
+    except tif1.DataNotFoundError:
+        print(f"No data for {event}")
+
+# Create summary DataFrame
+import pandas as pd
+summary = pd.DataFrame(results)
+print(summary)
+```python
+
+## Custom analysis function
+
+```python
+def analyze_driver_performance(session, driver_code):
+    """Comprehensive driver performance analysis."""
+    driver = session.get_driver(driver_code)
+    laps = driver.laps
+
+    # Clean data
+    clean = laps[~laps["Deleted"] & laps["PitInTime"].isna()]
+
+    # Calculate metrics
+    metrics = {
+        "driver": driver_code,
+        "total_laps": len(laps),
+        "valid_laps": len(clean),
+        "fastest_lap": clean["LapTime"].min(),
+        "avg_lap": clean["LapTime"].mean(),
+        "consistency": clean["LapTime"].std(),
+        "compounds_used": laps["Compound"].unique().tolist(),
+        "pit_stops": laps["PitInTime"].notna().sum()
+    }
+
+    return metrics
+
+# Use the function
+ver_metrics = analyze_driver_performance(session, "VER")
+print(ver_metrics)
+```python
+
+<Card title="More Examples" icon="book" href="/tutorials/race-pace-analysis">
+  Check out the tutorials section for detailed analysis examples.
+</Card>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" href="/getting-started">
+    Comprehensive guide
+  </Card>
+  <Card title="Tutorials" href="/tutorials/race-analysis">
+    Detailed examples
+  </Card>
+  <Card title="API Reference" href="/api-reference/overview">
+    API documentation
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    Optimization tips
+  </Card>
+</CardGroup>

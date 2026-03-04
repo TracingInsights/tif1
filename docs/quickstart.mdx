@@ -1,0 +1,116 @@
+---
+title: "Quickstart"
+icon: "rocket"
+description: "Start analyzing F1 data in less than 30 seconds"
+keywords:
+  - "tif1 quickstart"
+  - "F1 data quick start"
+  - "load F1 session"
+  - "Formula 1 API"
+  - "telemetry data"
+---
+
+## 1. Load a Session
+
+A session is the entry point for all data in `tif1`. You specify the year, the Grand Prix, and the session type.
+
+```python
+import tif1
+
+# Get the 2025 abu dhabi grand prix race session
+session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
+```python
+
+## 2. Access Lap Data
+
+The first time you access `.laps`, `tif1` fetches the data in parallel. Subsequent calls are instant due to the caching layer.
+
+```python
+# Load all laps
+laps = session.laps
+
+# View driver information
+print(session.drivers_df[["Driver", "Team", "DriverNumber"]])
+
+# Get the top 5 fastest laps in the session
+fastest_5 = laps.nsmallest(5, "LapTime")
+print(fastest_5[["Driver", "LapTime", "Compound"]])
+```python
+
+## 3. analyze a specific driver
+
+You can easily drill down into data for a specific driver using their 3-letter code.
+
+```python
+# Get driver data for Max Verstappen
+ver = session.get_driver("VER")
+
+# Get his fastest lap
+fastest_lap = ver.get_fastest_lap()
+print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0]:.3f}s")
+```python
+
+## 4. deep dive into telemetry
+
+Telemetry provides high-frequency data (Speed, RPM, Throttle, etc.) for every moment of a lap.
+
+```python
+# Get telemetry for lap 19
+lap_19 = ver.get_lap(19)
+telemetry = lap_19.telemetry
+
+# Check his top speed on that lap
+top_speed = telemetry["Speed"].max()
+print(f"Top Speed on Lap 19: {top_speed} km/h")
+```python
+
+## 5. list available data
+
+Not sure what events or sessions are available? Use the helper functions.
+
+```python
+# List all GPs in 2025
+events = tif1.get_events(2025)
+
+# List all sessions for a GP
+sessions = tif1.get_sessions(2025, "British Grand Prix")
+# ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
+```python
+
+## Pro Tip: Speed it up!
+
+If you're loading data for the first time, use `laps_async()` to fetch all drivers' data simultaneously:
+
+```python
+import asyncio
+
+async def main():
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = await session.laps_async()
+    print(f"Loaded {len(laps)} laps")
+
+asyncio.run(main())
+```python
+
+<Card title="Learn More" icon="lightbulb" href="/tutorials/race-pace-analysis">
+  Check out our tutorials for more advanced analysis examples.
+</Card>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" href="/getting-started">
+    Comprehensive guide
+  </Card>
+  <Card title="Examples" href="/examples">
+    More code examples
+  </Card>
+  <Card title="API Reference" href="/api-reference/core">
+    Core API details
+  </Card>
+  <Card title="Tutorials" href="/tutorials/race-analysis">
+    Detailed tutorials
+  </Card>
+</CardGroup>

@@ -1,0 +1,118 @@
+---
+title: "Contributing"
+icon: "code-pull-request"
+description: "Guidelines for developing and contributing to tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+---
+
+Thank you for your interest in contributing to `tif1`! This guide will help you set up your environment and understand our development workflow.
+
+## Development Setup
+
+### Prerequisites
+- **Python 3.10+**
+- **[uv](https://github.com/astral-sh/uv)** (Recommended for dependency management)
+
+### Installation
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TracingInsights/tif1.git
+    cd tif1
+```bash
+  </Step>
+  <Step title="Install dependencies">
+    Use `uv` to create a virtual environment and install all development extras:
+    ```bash
+    uv sync --all-extras
+```bash
+  </Step>
+  <Step title="Install git hooks with prek">
+    Enable automated linting and formatting before every commit:
+    ```bash
+    uv run prek install
+```bash
+  </Step>
+</Steps>
+
+---
+
+## Testing Workflow
+
+We use `pytest` for our test suite, with `xdist` for parallel execution.
+
+### Running Tests
+<CodeGroup>
+```bash All Tests
+uv run pytest tests/ -v
+```bash
+
+```bash Unit Only
+uv run pytest tests/ -v -m "not integration"
+```bash
+
+```bash Integration
+uv run pytest -o addopts='' tests/ -v -n 0 -m integration
+```bash
+
+```bash Benchmarks
+uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark-only --no-cov -n 0
+```bash
+</CodeGroup>
+
+### Code Coverage
+To run tests with coverage reporting:
+```bash
+uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html
+```python ---
+
+## Code Quality
+
+Before submitting a PR, ensure your code passes all quality checks.
+
+- **Linting & Formatting:** We use `ruff`.
+  ```bash
+  uv run ruff check src/ tests/
+  uv run ruff format src/ tests/
+```bash
+- **Type Checking:** We use `pyright` (via `ty`).
+  ```bash
+  uv run ty check src/tif1
+```bash
+- **prek:** Run all checks at once.
+  ```bash
+  uv run prek run --all-files
+```bash
+
+---
+
+## Documentation
+
+Our documentation is built with **Mintlify**.
+
+### Local Development
+To preview the documentation locally:
+1. Install the Mintlify CLI: `npm i -g mintlify`
+2. Run the dev server in the `docs` directory: `mintlify dev`
+
+### Guidelines
+- Use **Google-style** docstrings for all public functions.
+- Update `mint.json` if you add new pages.
+- Use Mintlify components (`<Steps>`, `<Card>`, `<CodeGroup>`) to keep pages engaging.
+
+---
+
+## Pull request process
+
+1. **Create a branch:** `git checkout -b feat/your-awesome-feature`
+2. **Implement & Test:** Ensure coverage doesn't drop.
+3. **Commit:** Use [Conventional Commits](https://www.conventionalcommits.org/) (e.g., `feat:`, `fix:`, `docs:`, `perf:`).
+4. **Push & Open PR:** Provide a clear description of what changed and why.
+
+<Tip>
+  Check the **CHANGELOG.md** and add a summary of your changes there as well.
+</Tip>

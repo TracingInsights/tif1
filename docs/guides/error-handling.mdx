@@ -1,0 +1,428 @@
+---
+title: "Error Handling"
+icon: "triangle-exclamation"
+description: "Comprehensive guide to handling errors and exceptions in tif1"
+keywords:
+  - "error handling"
+  - "exception handling"
+  - "debugging"
+  - "troubleshooting"
+---
+
+tif1 uses a structured exception hierarchy to help you handle errors gracefully. All exceptions inherit from `TIF1Error`, making it easy to catch all library-specific errors.
+
+## Exception Hierarchy
+
+```mermaid
+graph TD
+    TIF1Error[TIF1Error<br/>Base Exception]
+
+    TIF1Error --> DataNotFoundError
+    TIF1Error --> NetworkError
+    TIF1Error --> InvalidDataError
+    TIF1Error --> CacheError
+    TIF1Error --> SessionNotLoadedError
+
+    DataNotFoundError --> DriverNotFoundError
+    DataNotFoundError --> LapNotFoundError
+
+    style TIF1Error fill:#339af0
+    style DataNotFoundError fill:#ff6b6b
+    style NetworkError fill:#ff6b6b
+    style DriverNotFoundError fill:#ffa94d
+    style LapNotFoundError fill:#ffa94d
+```python
+
+## Common Exceptions
+
+### DataNotFoundError
+
+Raised when requested data doesn't exist in the archive.
+
+```python
+import tif1
+from tif1 import DataNotFoundError
+
+try:
+    session = tif1.get_session(2025, "Invalid GP", "Race")
+except DataNotFoundError as e:
+    print(f"Data not found: {e}")
+    print(f"Context: {e.context}")  # Additional error details
+```python
+
+**Common causes:**
+- Misspelled event name
+- Session hasn't happened yet
+- Data not yet available in archive
+
+**Solution:**
+```python
+# Check available events first
+events = tif1.get_events(2025)
+if "Monaco Grand Prix" in events:
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+```python
+
+### DriverNotFoundError
+
+Raised when accessing a driver that doesn't exist in the session.
+
+```python
+from tif1 import DriverNotFoundError
+
+try:
+    driver = session.get_driver("XXX")
+except DriverNotFoundError as e:
+    print(f"Driver not found: {e}")
+```python
+
+**Solution:**
+```python
+# Check available drivers first
+available_drivers = [d["driver"] for d in session.drivers]
+if "VER" in available_drivers:
+    driver = session.get_driver("VER")
+```python
+
+### NetworkError
+
+Raised when all CDN sources fail or timeout.
+
+```python
+from tif1 import NetworkError
+
+try:
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = session.laps
+except NetworkError as e:
+    print(f"Network error: {e}")
+    # Check circuit breaker status
+    cb = tif1.get_circuit_breaker()
+    if cb.state == "open":
+        print("Circuit breaker is open, too many failures")
+```python
+
+**Solutions:**
+- Check internet connection
+- Verify jsDelivr CDN is accessible
+- Reset circuit breaker if needed
+- Enable debug logging to see which CDN failed
+
+### InvalidDataError
+
+Raised when fetched data is corrupted or malformed.
+
+```python
+from tif1 import InvalidDataError
+
+try:
+    laps = session.laps
+except InvalidDataError as e:
+    print(f"Invalid data: {e}")
+    # Clear cache and retry
+    tif1.get_cache().clear()
+```python
+
+### CacheError
+
+Raised when cache operations fail.
+
+```python
+from tif1 import CacheError
+
+try:
+    cache = tif1.get_cache()
+    cache.clear()
+except CacheError as e:
+    print(f"Cache error: {e}")
+    # Check permissions
+```text ## Error handling patterns
+
+### Graceful Degradation
+
+Handle errors without crashing your analysis.
+
+```python
+def safe_load_session(year, gp, session_type):
+    """Load session with fallback to None."""
+    try:
+        return tif1.get_session(year, gp, session_type)
+    except DataNotFoundError:
+        print(f"No data for {year} {gp} {session_type}")
+        return None
+    except NetworkError:
+        print(f"Network error loading {year} {gp} {session_type}")
+        return None
+
+# Use it
+session = safe_load_session(2025, "Monaco Grand Prix", "Race")
+if session:
+    laps = session.laps
+```python
+
+### Retry Logic
+
+Implement custom retry for transient failures.
+
+```python
+import time
+from tif1 import NetworkError
+
+def load_with_retry(year, gp, session_type, max_retries=3):
+    """Load session with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return tif1.get_session(year, gp, session_type)
+        except NetworkError as e:
+            if attempt == max_retries - 1:
+                raise
+            wait_time = 2 ** attempt
+            print(f"Retry {attempt + 1}/{max_retries} in {wait_time}s...")
+            time.sleep(wait_time)
+```python
+
+### Batch Processing
+
+Handle errors when processing multiple sessions.
+
+```python
+def process_season(year):
+    """Process all races with error handling."""
+    events = tif1.get_events(year)
+    results = []
+    errors = []
+
+    for event in events:
+        try:
+            session = tif1.get_session(year, event, "Race")
+            laps = session.laps
+
+            # Process data
+            result = {
+                "event": event,
+                "total_laps": len(laps),
+                "fastest_lap": laps["LapTime"].min()
+            }
+            results.append(result)
+
+        except Exception as e:
+            errors.append({"event": event, "error": str(e)})
+            continue
+
+    return results, errors
+
+# Use it
+results, errors = process_season(2024)
+print(f"Processed {len(results)} events, {len(errors)} errors")
+```python
+
+### Context Managers
+
+Use context managers for resource cleanup.
+
+```python
+class SessionContext:
+    """Context manager for session loading."""
+
+    def __init__(self, year, gp, session_type):
+        self.year = year
+        self.gp = gp
+        self.session_type = session_type
+        self.session = None
+
+    def __enter__(self):
+        try:
+            self.session = tif1.get_session(
+                self.year, self.gp, self.session_type
+            )
+            return self.session
+        except Exception as e:
+            print(f"Failed to load session: {e}")
+            return None
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Cleanup if needed
+        if exc_type is not None:
+            print(f"Error during processing: {exc_val}")
+        return False
+
+# Use it
+with SessionContext(2025, "Monaco Grand Prix", "Race") as session:
+    if session:
+        laps = session.laps
+```python
+
+## Debugging Errors
+
+### Enable debug logging
+
+See detailed information about what's happening.
+
+```python
+import tif1
+import logging
+
+# Enable debug logging
+tif1.setup_logging(logging.DEBUG)
+
+# Now all operations show detailed logs
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+```python
+
+### Inspect error context
+
+All tif1 exceptions include context information.
+
+```python
+try:
+    session = tif1.get_session(2025, "Invalid GP", "Race")
+except tif1.DataNotFoundError as e:
+    print(f"Error: {e}")
+    print(f"Context: {e.context}")
+    # Context might include: year, gp, session, attempted_urls, etc.
+```python
+
+### Check circuit breaker
+
+Monitor network health.
+
+```python
+cb = tif1.get_circuit_breaker()
+print(f"State: {cb.state}")
+print(f"Failures: {cb.failure_count}")
+print(f"Last failure: {cb.last_failure_time}")
+
+# Reset if needed
+if cb.state == "open":
+    tif1.reset_circuit_breaker()
+```yaml
+
+## Best Practices
+
+<Steps>
+  <Step title="Validate Input">
+    Check data availability before processing.
+    ```python
+    events = tif1.get_events(2025)
+    if "Monaco Grand Prix" in events:
+        session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    ```python </Step>
+  <Step title="Use Specific Exceptions">
+    Catch specific exceptions rather than broad `Exception`.
+    ```python
+    try:
+        session = tif1.get_session(2025, "Monaco", "Race")
+    except tif1.DataNotFoundError:
+        # Handle missing data
+        pass
+    except tif1.NetworkError:
+        # Handle network issues
+        pass
+```python
+  </Step>
+  <Step title="Log Errors">
+    Always log errors for debugging.
+    ```python
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        session = tif1.get_session(2025, "Monaco", "Race")
+    except Exception as e:
+        logger.error(f"Failed to load session: {e}", exc_info=True)
+```python
+  </Step>
+  <Step title="Fail Fast">
+    Don't continue processing if critical data is missing.
+    ```python
+    session = tif1.get_session(2025, "Monaco", "Race")
+    if session is None:
+        raise ValueError("Cannot proceed without session data")
+```python
+  </Step>
+</Steps>
+
+## Production Patterns
+
+### Health Checks
+
+Monitor tif1 health in production.
+
+```python
+def check_tif1_health():
+    """Check if tif1 is operational."""
+    try:
+        # Try to get events (lightweight operation)
+        events = tif1.get_events(2024)
+
+        # Check circuit breaker
+        cb = tif1.get_circuit_breaker()
+        if cb.state == "open":
+            return False, "Circuit breaker is open"
+
+        # Check cache
+        cache = tif1.get_cache()
+        if not cache.cache_dir.exists():
+            return False, "Cache directory missing"
+
+        return True, "Healthy"
+    except Exception as e:
+        return False, str(e)
+```python
+
+### Monitoring
+
+Track errors and performance.
+
+```python
+import time
+from collections import defaultdict
+
+class TIF1Monitor:
+    """Monitor tif1 operations."""
+
+    def __init__(self):
+        self.errors = defaultdict(int)
+        self.timings = []
+
+    def load_session(self, year, gp, session_type):
+        """Load session with monitoring."""
+        start = time.time()
+        try:
+            session = tif1.get_session(year, gp, session_type)
+            duration = time.time() - start
+            self.timings.append(duration)
+            return session
+        except Exception as e:
+            self.errors[type(e).__name__] += 1
+            raise
+
+    def report(self):
+        """Generate monitoring report."""
+        return {
+            "total_errors": sum(self.errors.values()),
+            "errors_by_type": dict(self.errors),
+            "avg_load_time": sum(self.timings) / len(self.timings) if self.timings else 0,
+            "max_load_time": max(self.timings) if self.timings else 0
+        }
+```python
+
+## Summary
+
+Proper error handling makes your tif1 applications robust and maintainable. Always use specific exceptions, validate input, and implement appropriate retry logic for production use.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Exceptions API" href="/api-reference/exceptions">
+    Exception reference
+  </Card>
+  <Card title="Troubleshooting" href="/reference/troubleshooting">
+    Common issues
+  </Card>
+  <Card title="Best Practices" href="/guides/best-practices">
+    Recommended patterns
+  </Card>
+</CardGroup>

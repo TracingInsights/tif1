@@ -1,0 +1,60 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  UV_VERSION: "0.10.2"
+  DEFAULT_PYTHON: "3.10"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python ${{ env.DEFAULT_PYTHON }}
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON }}
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Install dependencies
+        run: python -m uv sync --all-extras
+
+      - name: Run prek checks
+        run: python -m uv run prek run --all-files --show-diff-on-failure
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Install dependencies
+        run: python -m uv sync --all-extras
+
+      - name: Run unit tests
+        run: |
+          python -m uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=xml --cov-report=term --cov-fail-under=80 -m "not slow and not integration and not benchmark"
+
+      - name: Run integration tests
+        if: matrix.python-version == env.DEFAULT_PYTHON
+        run: |
+          python -m uv run pytest -o addopts='' tests/ -v -n 0 --cov=src/tif1 --cov-append --cov-report=xml --cov-report=term -m integration

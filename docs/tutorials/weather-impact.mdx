@@ -1,0 +1,368 @@
+---
+title: "Weather Impact Analysis"
+icon: "cloud-rain"
+description: "Analyzing how weather conditions affect lap times and performance"
+keywords:
+  - "weather analysis"
+  - "weather impact"
+  - "rain analysis"
+  - "track conditions"
+---
+
+Weather plays a crucial role in F1 performance. This tutorial shows you how to analyze the impact of temperature, humidity, and rainfall on lap times.
+
+## Loading weather data
+
+Weather data is automatically included in lap data and available separately.
+
+```python
+import tif1
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load session
+session = tif1.get_session(2024, "Singapore Grand Prix", "Race")
+laps = session.laps
+weather = session.weather
+```
+
+## Weather data structure
+
+Weather is recorded approximately once per minute.
+
+```python
+# View weather data
+print(weather[["Time", "AirTemp", "TrackTemp", "Humidity", "Rainfall"]].head())
+
+# Check for rain
+if weather["Rainfall"].any():
+    print("Rain detected during session")
+else:
+    print("Dry session")
+```
+
+## Temperature vs Lap Time
+
+Analyze how track temperature affects lap times.
+
+```python
+# Clean laps (remove outliers)
+clean_laps = laps[
+    (laps["LapTime"] < laps["LapTime"].min() * 1.07) &
+    (laps["PitInTime"].isna()) &
+    (laps["LapNumber"] > 1)
+]
+
+# Plot track temp vs lap time
+plt.figure(figsize=(12, 6))
+plt.scatter(clean_laps["TrackTemp"], clean_laps["LapTime"], alpha=0.3)
+plt.xlabel("Track Temperature (°C)")
+plt.ylabel("Lap Time (s)")
+plt.title("Track Temperature Impact on Lap Times")
+
+# Add trend line
+z = np.polyfit(clean_laps["TrackTemp"], clean_laps["LapTime"], 1)
+p = np.poly1d(z)
+plt.plot(clean_laps["TrackTemp"], p(clean_laps["TrackTemp"]),
+         "r--", linewidth=2, label=f"Trend: {z[0]:.3f}s/°C")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+## Temperature Evolution
+
+Track how temperature changes during the session.
+
+```python
+# Plot temperature evolution
+fig, ax1 = plt.subplots(figsize=(14, 6))
+
+# Air temp
+ax1.plot(weather["Time"] / 60, weather["AirTemp"],
+         color="blue", label="Air Temp", linewidth=2)
+ax1.set_xlabel("Time (minutes)")
+ax1.set_ylabel("Air Temperature (°C)", color="blue")
+ax1.tick_params(axis="y", labelcolor="blue")
+
+# Track temp
+ax2 = ax1.twinx()
+ax2.plot(weather["Time"] / 60, weather["TrackTemp"],
+         color="red", label="Track Temp", linewidth=2)
+ax2.set_ylabel("Track Temperature (°C)", color="red")
+ax2.tick_params(axis="y", labelcolor="red")
+
+plt.title("Temperature Evolution During Session")
+fig.tight_layout()
+plt.show()
+```
+
+## Humidity Impact
+
+Analyze how humidity affects performance.
+
+```python
+# Group by humidity ranges
+clean_laps["HumidityRange"] = pd.cut(
+    clean_laps["Humidity"],
+    bins=[0, 40, 60, 80, 100],
+    labels=["Low", "Medium", "High", "Very High"]
+)
+
+# Compare lap times by humidity
+plt.figure(figsize=(10, 6))
+sns.boxplot(x="HumidityRange", y="LapTime", data=clean_laps)
+plt.xlabel("Humidity Range (%)")
+plt.ylabel("Lap Time (s)")
+plt.title("Humidity Impact on Lap Times")
+plt.show()
+
+# Statistical summary
+humidity_stats = clean_laps.groupby("HumidityRange")["LapTime"].agg([
+    "mean", "median", "std", "count"
+])
+print(humidity_stats)
+```
+
+## Rain Analysis
+
+Analyze performance in wet conditions.
+
+```python
+# Check if it rained
+if weather["Rainfall"].any():
+    # Find when rain started
+    rain_start = weather[weather["Rainfall"] == True]["Time"].min()
+    print(f"Rain started at: {rain_start / 60:.1f} minutes")
+
+    # Mark laps as wet or dry
+    laps["Wet"] = laps["SessionTime"] >= rain_start
+
+    # Compare dry vs wet lap times
+    dry_laps = laps[laps["Wet"] == False]
+    wet_laps = laps[laps["Wet"] == True]
+
+    print(f"Dry avg: {dry_laps['LapTime'].mean():.3f}s")
+    print(f"Wet avg: {wet_laps['LapTime'].mean():.3f}s")
+    print(f"Difference: {wet_laps['LapTime'].mean() - dry_laps['LapTime'].mean():.3f}s")
+
+    # Visualize
+    plt.figure(figsize=(12, 6))
+    plt.scatter(dry_laps["LapNumber"], dry_laps["LapTime"],
+                label="Dry", alpha=0.5, color="orange")
+    plt.scatter(wet_laps["LapNumber"], wet_laps["LapTime"],
+                label="Wet", alpha=0.5, color="blue")
+    plt.axvline(x=rain_start / 60, color="red", linestyle="--",
+                label="Rain Start")
+    plt.xlabel("Lap Number")
+    plt.ylabel("Lap Time (s)")
+    plt.title("Lap Times: Dry vs Wet Conditions")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+```
+
+## Tire compound performance by temperature
+
+See how different compounds perform at different temperatures.
+
+```python
+# Filter for clean laps
+clean_laps = laps[
+    (laps["LapTime"] < laps["LapTime"].min() * 1.07) &
+    (laps["PitInTime"].isna())
+]
+
+# Group by compound and temperature range
+clean_laps["TempRange"] = pd.cut(
+    clean_laps["TrackTemp"],
+    bins=[0, 35, 40, 45, 100],
+    labels=["Cool", "Optimal", "Hot", "Very Hot"]
+)
+
+# Compare compounds
+compound_temp = clean_laps.groupby(["Compound", "TempRange"])["LapTime"].mean().reset_index()
+
+# Visualize
+plt.figure(figsize=(12, 6))
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    data = compound_temp[compound_temp["Compound"] == compound]
+    plt.plot(data["TempRange"], data["LapTime"],
+             marker="o", label=compound, linewidth=2)
+
+plt.xlabel("Track Temperature Range")
+plt.ylabel("Average Lap Time (s)")
+plt.title("Tire Compound Performance by Temperature")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+## Wind Impact
+
+Analyze how wind affects lap times.
+
+```python
+# Check wind data
+print(f"Wind speed range: {weather['WindSpeed'].min():.1f} - {weather['WindSpeed'].max():.1f} m/s")
+print(f"Wind direction range: {weather['WindDirection'].min()}° - {weather['WindDirection'].max()}°")
+
+# Categorize wind strength
+clean_laps["WindStrength"] = pd.cut(
+    clean_laps["WindSpeed"],
+    bins=[0, 2, 5, 10, 100],
+    labels=["Calm", "Light", "Moderate", "Strong"]
+)
+
+# Compare lap times by wind
+plt.figure(figsize=(10, 6))
+sns.violinplot(x="WindStrength", y="LapTime", data=clean_laps)
+plt.xlabel("Wind Strength")
+plt.ylabel("Lap Time (s)")
+plt.title("Wind Impact on Lap Times")
+plt.show()
+```python ## Pressure Analysis
+
+Atmospheric pressure can affect engine performance.
+
+```
+# Plot pressure over time
+plt.figure(figsize=(12, 6))
+plt.plot(weather["Time"] / 60, weather["Pressure"], linewidth=2)
+plt.xlabel("Time (minutes)")
+plt.ylabel("Atmospheric Pressure (mbar)")
+plt.title("Atmospheric Pressure During Session")
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# Correlate with lap times
+from scipy import stats
+
+correlation, p_value = stats.pearsonr(
+    clean_laps["Pressure"],
+    clean_laps["LapTime"]
+)
+print(f"Pressure-LapTime correlation: {correlation:.3f} (p={p_value:.3f})")
+```python
+
+## Multi-Factor Analysis
+
+Combine multiple weather factors.
+
+```
+# Create feature matrix
+features = clean_laps[["AirTemp", "TrackTemp", "Humidity", "Pressure", "WindSpeed"]]
+target = clean_laps["LapTime"]
+
+# Calculate correlations
+correlations = features.corrwith(target).sort_values(ascending=False)
+print("Weather factor correlations with lap time:")
+print(correlations)
+
+# Visualize correlations
+plt.figure(figsize=(10, 6))
+correlations.plot(kind="barh")
+plt.xlabel("Correlation with Lap Time")
+plt.title("Weather Factors Impact on Performance")
+plt.axvline(x=0, color="black", linestyle="--")
+plt.tight_layout()
+plt.show()
+```python
+
+## Weather-Adjusted Performance
+
+Normalize lap times for weather conditions.
+
+```
+from sklearn.linear_model import LinearRegression
+
+# Train model to predict lap time from weather
+X = clean_laps[["TrackTemp", "Humidity", "WindSpeed"]]
+y = clean_laps["LapTime"]
+
+model = LinearRegression()
+model.fit(X, y)
+
+# Predict expected lap time
+clean_laps["ExpectedLapTime"] = model.predict(X)
+
+# Calculate weather-adjusted performance
+clean_laps["WeatherAdjusted"] = clean_laps["LapTime"] - clean_laps["ExpectedLapTime"]
+
+# Find best performers (accounting for weather)
+adjusted_performance = clean_laps.groupby("Driver")["WeatherAdjusted"].mean().sort_values()
+print("Weather-Adjusted Performance (negative is better):")
+print(adjusted_performance.head(10))
+```python
+
+## Complete weather analysis function
+
+```
+def analyze_weather_impact(year, gp, session_type):
+    """Complete weather impact analysis."""
+    # Load data
+    session = tif1.get_session(year, gp, session_type)
+    laps = session.laps
+    weather = session.weather
+
+    # Clean laps
+    clean_laps = laps[
+        (laps["LapTime"] < laps["LapTime"].min() * 1.07) &
+        (laps["PitInTime"].isna()) &
+        (laps["LapNumber"] > 1)
+    ]
+
+    # Temperature analysis
+    temp_corr, _ = stats.pearsonr(clean_laps["TrackTemp"], clean_laps["LapTime"])
+
+    # Rain check
+    rain_detected = weather["Rainfall"].any()
+
+    # Wind analysis
+    avg_wind = weather["WindSpeed"].mean()
+
+    # Results
+    results = {
+        "event": gp,
+        "session": session_type,
+        "temp_correlation": temp_corr,
+        "rain_detected": rain_detected,
+        "avg_wind_speed": avg_wind,
+        "temp_range": (weather["TrackTemp"].min(), weather["TrackTemp"].max()),
+        "humidity_range": (weather["Humidity"].min(), weather["Humidity"].max())
+    }
+
+    return results
+
+# Use it
+results = analyze_weather_impact(2024, "Singapore Grand Prix", "Race")
+print(results)
+```yaml
+
+## Summary
+
+Weather analysis with tif1 allows you to:
+- Correlate temperature with lap times
+- Identify rain impact on performance
+- Analyze humidity and wind effects
+- Compare tire compound performance by temperature
+- Normalize performance for weather conditions
+
+Understanding weather impact is crucial for strategy decisions and performance analysis.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Race Analysis" href="/tutorials/race-analysis">
+    Race analysis
+  </Card>
+  <Card title="Core API" href="/api-reference/core">
+    Weather data API
+  </Card>
+  <Card title="Examples" href="/examples">
+    More examples
+  </Card>
+</CardGroup>

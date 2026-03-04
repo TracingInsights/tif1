@@ -1,0 +1,248 @@
+---
+title: "Sessions"
+icon: "flag-checkered"
+description: "Understanding F1 sessions in tif1"
+keywords:
+  - "F1 sessions"
+  - "session types"
+  - "practice qualifying race"
+  - "session data"
+---
+
+## What is a Session?
+
+A Session represents a single F1 track session (Practice, Qualifying, Sprint, or Race). It contains all data for that session including drivers, laps, telemetry, weather, and race control messages.
+
+## Session Hierarchy
+
+```mermaid
+graph TD
+    Session[Session Object] --> Drivers[Drivers List]
+    Session --> Laps[All Laps DataFrame]
+    Session --> Weather[Weather Data]
+    Session --> Messages[Race Control Messages]
+    Session --> Results[Session Results]
+
+    Drivers --> Driver1[Driver: VER]
+    Drivers --> Driver2[Driver: HAM]
+    Drivers --> Driver3[Driver: LEC]
+
+    Driver1 --> DrvLaps1[Driver Laps]
+    DrvLaps1 --> Lap1[Lap 1]
+    DrvLaps1 --> Lap2[Lap 2]
+
+    Lap1 --> Tel1[Telemetry]
+    Tel1 --> Speed[Speed, RPM, Throttle...]
+```python
+
+## Creating a Session
+
+```python
+import tif1
+
+# Create a session
+session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
+
+# With polars lib for 2x faster processing
+session = tif1.get_session(
+    2025,
+    "Abu Dhabi Grand Prix",
+    "Practice 1",
+    lib="polars"
+)
+
+# Disable caching for this session
+session = tif1.get_session(
+    2025,
+    "Monaco Grand Prix",
+    "Race",
+    enable_cache=False
+)
+```python
+
+## Session Properties
+
+### drivers
+
+List of driver metadata dictionaries.
+
+```python
+drivers = session.drivers
+# [{'driver': 'VER', 'team': 'Red Bull Racing', ...}, ...]
+```python
+
+### drivers_df
+
+DataFrame with comprehensive driver information.
+
+```python
+drivers_df = session.drivers_df
+# Columns: driver, team, drivernumber, firstname, lastname, teamcolor, headshoturl
+print(drivers_df[["Driver", "Team", "DriverNumber"]])
+```python
+
+### laps
+
+All laps for all drivers. Automatically includes weather data.
+
+```python
+laps = session.laps  # pandas or polars DataFrame
+print(laps[["Driver", "LapNumber", "LapTime", "Compound", "AirTemp"]].head())
+```python
+
+### weather
+
+Weather data recorded during the session.
+
+```python
+weather = session.weather
+print(weather[["Time", "AirTemp", "TrackTemp", "Rainfall"]].head())
+```python
+
+### race_control_messages
+
+Official messages from Race Control.
+
+```python
+messages = session.race_control_messages
+print(messages[["Time", "Category", "Message"]].head())
+```python
+
+## Session Methods
+
+### get_driver(driver_code)
+
+Get a Driver object for a specific driver.
+
+```python
+ver = session.get_driver("VER")
+ver_laps = ver.laps
+```python ### get_fastest_laps(by_driver=True)
+
+Get fastest lap(s) from the session.
+
+```python
+# Fastest lap per driver
+fastest_by_driver = session.get_fastest_laps(by_driver=True)
+
+# Overall fastest lap
+overall_fastest = session.get_fastest_laps(by_driver=False)
+
+# Fastest laps for specific drivers
+top3_fastest = session.get_fastest_laps(by_driver=True, drivers=["VER", "HAM", "LEC"])
+```python
+
+### get_fastest_lap_tel()
+
+Get telemetry for the overall fastest lap.
+
+```python
+fastest_tel = session.get_fastest_lap_tel()
+print(fastest_tel[["Time", "Speed", "Throttle"]].head())
+```python
+
+### get_fastest_laps_tels(by_driver=True)
+
+Parallel fetch telemetry for multiple drivers' fastest laps.
+
+```python
+# Get telemetry for all drivers' fastest laps (parallel fetching)
+fastest_tels = session.get_fastest_laps_tels(by_driver=True)
+
+# Access specific driver's telemetry
+ver_tel = fastest_tels["VER"]
+```python
+
+### laps_async()
+
+Asynchronously load all laps for maximum speed.
+
+```python
+import asyncio
+
+async def load_data():
+    laps = await session.laps_async()
+    return laps
+
+laps = asyncio.run(load_data())
+```python
+
+## Session Types
+
+### Session Loading Flow
+
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Session
+    participant Cache
+    participant CDN
+    participant DataFrame
+
+    User->>Session: get_session(2025, "Monaco", "Race")
+    Session->>Session: Create Session object
+    Session-->>User: Return Session (lazy)
+
+    User->>Session: session.laps
+    Session->>Cache: Check cache
+
+    alt Cache Hit
+        Cache-->>Session: Return cached data
+    else Cache Miss
+        Session->>CDN: Fetch lap data
+        CDN-->>Session: JSON payload
+        Session->>DataFrame: Parse & transform
+        DataFrame-->>Session: DataFrame
+        Session->>Cache: Store in cache
+    end
+
+    Session-->>User: Return laps DataFrame
+
+    Note over User,DataFrame: Subsequent access is instant from cache
+```
+
+
+tif1 supports all F1 session types:
+
+- Practice 1, Practice 2, Practice 3
+- Qualifying
+- Sprint, Sprint Qualifying, Sprint Shootout
+- Race
+
+## Lazy Loading
+
+Sessions use lazy loading for optimal performance. Data is only fetched when you access it:
+
+```python
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+# No data fetched yet
+
+laps = session.laps  # Data fetched now
+# Subsequent access is instant from cache
+```yaml
+
+## Data Enrichment
+
+tif1 automatically enriches data with additional information:
+
+- Weather data is included in every lap
+- Telemetry includes DriverAhead and DistanceToDriverAhead
+- LapTimeSeconds is provided as a numeric helper alongside LapTime
+- Position and acceleration data (X, Y, Z) in telemetry
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Core API" href="/api-reference/core">
+    Session class
+  </Card>
+  <Card title="Getting Started" href="/getting-started">
+    Usage guide
+  </Card>
+  <Card title="Race Analysis" href="/tutorials/race-analysis">
+    Tutorial
+  </Card>
+</CardGroup>
