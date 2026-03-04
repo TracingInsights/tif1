@@ -9,8 +9,8 @@
   },
   "favicon": "/favicon.svg",
   "colors": {
-    "primary": "#00FF00",
-    "light": "#39FF6A",
+    "primary": "#008700",
+    "light": "#008700",
     "dark": "#00C853"
   },
   "fonts": {
@@ -24,7 +24,7 @@
     }
   },
   "appearance": {
-    "default": "dark",
+    "default": "light",
     "strict": false
   },
   "background": {
@@ -218,6 +218,14 @@
     },
     "posthog": {
       "apiKey": "phc_XXXXXXXXXX"
+    }
+  },
+  "banner": {
+    "dismissible": false
+  },
+  "integrations": {
+    "telemetry": {
+      "enabled": true
     }
   }
 }
