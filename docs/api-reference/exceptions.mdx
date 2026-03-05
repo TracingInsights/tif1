@@ -13,7 +13,7 @@ keywords:
 
 ## Exception Hierarchy
 
-```python
+```
 TIF1Error (base)
 ├── DataNotFoundError
 │   ├── DriverNotFoundError
@@ -22,7 +22,7 @@ TIF1Error (base)
 ├── InvalidDataError
 ├── CacheError
 └── SessionNotLoadedError
-```python
+```
 
 ---
 
@@ -35,7 +35,7 @@ Base exception for all tif1 errors. All exceptions accept `**context` kwargs for
 ```python
 class TIF1Error(Exception):
     def __init__(self, message: str, **context: Any) -> None
-```python
+```
 
 **Attributes:**
 - `message`: Error message string
@@ -48,7 +48,7 @@ try:
 except tif1.TIF1Error as e:
     print(f"Error: {e.message}")
     print(f"Context: {e.context}")
-```python
+```
 
 ---
 
@@ -67,7 +67,7 @@ class DataNotFoundError(TIF1Error):
         session: str | None = None,
         **context: Any
     ) -> None
-```python
+```
 
 **Context:**
 - `year`: The requested year
@@ -81,7 +81,7 @@ try:
 except tif1.DataNotFoundError as e:
     print(f"Data not found: {e.context}")
     # {'year': 2030, 'event': 'Future GP', 'session': 'Race'}
-```python
+```
 
 ### `DriverNotFoundError`
 
@@ -90,7 +90,7 @@ Raised when a driver code is not found in the session.
 ```python
 class DriverNotFoundError(DataNotFoundError):
     def __init__(self, driver: str, **context: Any) -> None
-```python
+```
 
 **Context:**
 - `driver`: The requested driver code
@@ -102,7 +102,7 @@ try:
 except tif1.DriverNotFoundError as e:
     print(f"Driver '{e.context['driver']}' not found")
     print(f"Available: {session.drivers}")
-```text ### `LapNotFoundError`
+``` ### `LapNotFoundError`
 
 Raised when a lap number is not found for a driver.
 
@@ -114,7 +114,7 @@ class LapNotFoundError(DataNotFoundError):
         driver: str | None = None,
         **context: Any
     ) -> None
-```python
+```
 
 **Context:**
 - `lap_number`: The requested lap number
@@ -126,7 +126,7 @@ try:
     lap = driver.get_lap(999)
 except tif1.LapNotFoundError as e:
     print(f"Lap {e.context['lap_number']} not found for {e.context['driver']}")
-```python
+```
 
 ---
 
@@ -144,7 +144,7 @@ class NetworkError(TIF1Error):
         status_code: int | None = None,
         **context: Any
     ) -> None
-```python
+```
 
 **Context:**
 - `url`: The URL that failed
@@ -153,13 +153,13 @@ class NetworkError(TIF1Error):
 **Example:**
 ```python
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = session.laps
 except tif1.NetworkError as e:
     print(f"Network error: {e.message}")
     print(f"URL: {e.context.get('url')}")
     print(f"Status: {e.context.get('status_code')}")
-```python
+```
 
 ---
 
@@ -172,7 +172,7 @@ Raised when fetched data is invalid, corrupted, or fails validation.
 ```python
 class InvalidDataError(TIF1Error):
     def __init__(self, reason: str | None = None, **context: Any) -> None
-```python
+```
 
 **Context:**
 - `reason`: Description of why the data is invalid
@@ -180,11 +180,11 @@ class InvalidDataError(TIF1Error):
 **Example:**
 ```python
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = session.laps
 except tif1.InvalidDataError as e:
     print(f"Invalid data: {e.context.get('reason')}")
-```python
+```
 
 ---
 
@@ -196,7 +196,7 @@ Raised when cache operations fail (e.g., SQLite errors, disk full).
 
 ```python
 class CacheError(TIF1Error)
-```python
+```
 
 **Example:**
 ```python
@@ -205,7 +205,7 @@ try:
     cache.clear()
 except tif1.CacheError as e:
     print(f"Cache error: {e.message}")
-```python ---
+``` ---
 
 ## Session state errors
 
@@ -216,7 +216,7 @@ Raised when accessing session data before it has been loaded.
 ```python
 class SessionNotLoadedError(TIF1Error):
     def __init__(self, attribute: str | None = None) -> None
-```python
+```
 
 **Context:**
 - `attribute`: The attribute that was accessed
@@ -224,12 +224,12 @@ class SessionNotLoadedError(TIF1Error):
 **Example:**
 ```python
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     # Accessing data without loading first (if lazy loading is disabled)
     drivers = session._drivers  # Internal attribute
 except tif1.SessionNotLoadedError as e:
     print(f"Session not loaded. Call session.load() first.")
-```python
+```
 
 ---
 
@@ -241,7 +241,7 @@ except tif1.SessionNotLoadedError as e:
 import tif1
 
 try:
-    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = session.laps
     fastest = session.get_fastest_laps()
 except tif1.DataNotFoundError as e:
@@ -250,14 +250,14 @@ except tif1.NetworkError as e:
     print(f"Network error: {e.message}")
 except tif1.TIF1Error as e:
     print(f"General error: {e.message}")
-```python
+```
 
 ### Specific error handling
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Handle driver not found
 try:
@@ -272,7 +272,7 @@ try:
 except tif1.LapNotFoundError:
     print("Lap not found. Using fastest lap instead.")
     lap_df = driver.get_fastest_lap()
-```python
+```
 
 ### Retry with Fallback
 
@@ -297,8 +297,8 @@ def load_session_with_retry(year, gp, session_name, max_retries=3):
             print("Data not found, cannot retry")
             raise
 
-session = load_session_with_retry(2025, "Monaco", "Race")
-```python
+session = load_session_with_retry(2021, "Belgian Grand Prix", "Race")
+```
 
 ### Context-aware error handling
 
@@ -306,9 +306,9 @@ session = load_session_with_retry(2025, "Monaco", "Race")
 import tif1
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     driver = session.get_driver("VER")
-    lap = driver.get_lap(19)
+    lap = driver.get_lap(1)
     tel = lap.telemetry
 except tif1.TIF1Error as e:
     # Access structured context
@@ -323,14 +323,14 @@ except tif1.TIF1Error as e:
 
     # Log full context for debugging
     print(f"Full context: {e.context}")
-```python
+```
 
 ### Graceful Degradation
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Try to get telemetry, fall back to lap data only
 drivers_data = {}
@@ -351,7 +351,7 @@ for driver_code in session.drivers:
             'lap_data': fastest_lap
         }
         print(f"Warning: No telemetry for {driver_code}: {e.message}")
-```yaml
+```
 
 ---
 
@@ -376,13 +376,13 @@ try:
     pass
 finally:
     cache.close()
-```python 7. **Log context for debugging**: The `context` dict contains valuable debugging information.
+``` 7. **Log context for debugging**: The `context` dict contains valuable debugging information.
 
 ```python
 import logging
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 except tif1.TIF1Error as e:
     logging.error(f"Error: {e.message}", extra=e.context)
-```python
+```

@@ -19,7 +19,7 @@ Configure the logging level for `tif1`.
 
 ```python
 def setup_logging(level: int = logging.WARNING) -> None
-```python
+```
 
 **Parameters:**
 - `level`: Standard logging level from the `logging` module
@@ -40,16 +40,16 @@ import logging
 tif1.setup_logging(logging.DEBUG)
 
 # Now all tif1 operations will log debug info
-session = tif1.get_session(2025, "Monaco", "Race")
-```yaml
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+```
 
 **Debug Output Example:**
-```yaml
-DEBUG:tif1.core:Loading session: 2025/Monaco_Grand_Prix/Race
+```
+DEBUG:tif1.core:Loading session: 2021/Belgian_Grand_Prix/Race
 DEBUG:tif1.cache:Cache hit for drivers.json
 DEBUG:tif1.http:Fetching https://cdn.jsdelivr.net/...
 DEBUG:tif1.core:Loaded 20 drivers
-```python
+```
 
 ---
 
@@ -61,7 +61,7 @@ Returns the global configuration singleton instance.
 
 ```python
 def get_config() -> Config
-```python
+```
 
 The `Config` object allows you to programmatically get and set settings that are normally loaded from `.tif1rc` or environment variables.
 
@@ -83,7 +83,7 @@ config.set("timeout", 60)
 
 # Save to file
 config.save()  # Saves to ~/.tif1rc
-```sql
+```
 
 ### Config Methods
 
@@ -94,7 +94,7 @@ Retrieve a configuration value.
 ```python
 lib = config.get("lib", "pandas")
 timeout = config.get("timeout", 30)
-```sql
+```
 
 #### `set(key, value)`
 
@@ -104,7 +104,9 @@ Update a configuration value in memory.
 config.set("lib", "polars")
 config.set("enable_cache", True)
 config.set("ultra_cold_start", True)
-```python #### `save(path=None)`
+```
+
+#### `save(path=None)`
 
 Save current configuration to a JSON file.
 
@@ -114,7 +116,7 @@ config.save()
 
 # Save to custom location
 config.save("/path/to/custom/config.json")
-```python
+```
 
 ### Available configuration keys
 
@@ -140,7 +142,7 @@ Returns the persistent SQLite cache singleton instance.
 
 ```python
 def get_cache() -> Cache
-```python
+```
 
 **Returns:**
 - `Cache` singleton instance
@@ -158,7 +160,7 @@ print(f"Has cached data: {has_data}")
 
 # Clear all cache
 cache.clear()
-```python
+```
 
 ### Cache Methods
 
@@ -170,17 +172,17 @@ Remove all entries from both memory and SQLite cache.
 cache = tif1.get_cache()
 cache.clear()
 print("Cache cleared")
-```python
+```
 
 #### `has_session_data(year, gp, session)`
 
 Check if cache contains data for a specific session.
 
 ```python
-exists = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+exists = cache.has_session_data(2021, "Belgian_Grand_Prix", "Race")
 if exists:
     print("Session data is cached")
-```python
+```
 
 #### `close()`
 
@@ -190,7 +192,7 @@ Close the SQLite database connection.
 cache = tif1.get_cache()
 # ... operations ...
 cache.close()
-```yaml
+```
 
 #### `get(key)`
 
@@ -198,7 +200,7 @@ Get raw cached data by key.
 
 ```python
 data = cache.get("2025/Monaco_Grand_Prix/Race/drivers.json")
-```yaml
+```
 
 #### `set(key, data)`
 
@@ -206,21 +208,23 @@ Store data in cache.
 
 ```python
 cache.set("custom_key", {"data": "value"})
-```python #### `get_telemetry(year, gp, session, driver, lap)`
+```
+
+#### `get_telemetry(year, gp, session, driver, lap)`
 
 Get cached telemetry data.
 
 ```python
-tel_data = cache.get_telemetry(2025, "Monaco_Grand_Prix", "Race", "VER", 1)
-```python
+tel_data = cache.get_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1)
+```
 
 #### `set_telemetry(year, gp, session, driver, lap, data)`
 
 Store telemetry data in cache.
 
 ```python
-cache.set_telemetry(2025, "Monaco_Grand_Prix", "Race", "VER", 1, telemetry_dict)
-```python
+cache.set_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1, telemetry_dict)
+```
 
 ---
 
@@ -232,7 +236,7 @@ Convert various formats to pandas timedelta.
 
 ```python
 def to_timedelta(x) -> pd.Timedelta
-```python
+```
 
 **Parameters:**
 - `x`: String, float, int, or timedelta to convert
@@ -250,7 +254,7 @@ td = to_timedelta(83.456)
 
 # From timedelta (passthrough)
 td = to_timedelta(pd.Timedelta(seconds=83.456))
-```python
+```
 
 ### `to_datetime`
 
@@ -258,14 +262,14 @@ Convert string to pandas datetime.
 
 ```python
 def to_datetime(x) -> pd.Timestamp
-```python
+```
 
 **Example:**
 ```python
 from tif1.utils import to_datetime
 
-dt = to_datetime("2025-05-25 14:00:00")
-```python
+dt = to_datetime("2021-08-29 14:00:00")
+```
 
 ### `recursive_dict_get`
 
@@ -273,7 +277,7 @@ Safely navigate nested dictionaries.
 
 ```python
 def recursive_dict_get(d, *keys, default_none=False)
-```python
+```
 
 **Parameters:**
 - `d`: Dictionary to navigate
@@ -293,17 +297,19 @@ data = {
 }
 
 name = recursive_dict_get(data, "session", "info", "name")
-# Returns: "monaco grand prix"
+# Returns: "Monaco Grand Prix"
 
 missing = recursive_dict_get(data, "session", "missing", "key", default_none=True)
 # Returns: None
-```python ### `delta_time`
+```
+
+### `delta_time`
 
 Calculate delta time between two laps (compatibility function).
 
 ```python
 def delta_time(reference_lap, compare_lap)
-```python
+```
 
 **Parameters:**
 - `reference_lap`: Reference Lap object
@@ -322,7 +328,7 @@ Returns the global circuit breaker instance used for network requests.
 
 ```python
 def get_circuit_breaker() -> CircuitBreaker
-```python
+```
 
 The circuit breaker prevents cascading failures by temporarily stopping requests after repeated failures.
 
@@ -338,7 +344,7 @@ from tif1.retry import get_circuit_breaker
 cb = get_circuit_breaker()
 print(f"State: {cb.state}")
 print(f"Failures: {cb.failure_count}")
-```python
+```
 
 ### `reset_circuit_breaker`
 
@@ -346,7 +352,7 @@ Reset the circuit breaker to closed state.
 
 ```python
 def reset_circuit_breaker() -> None
-```python
+```
 
 **Example:**
 ```python
@@ -354,7 +360,7 @@ from tif1.retry import reset_circuit_breaker
 
 # Reset after network issues are resolved
 reset_circuit_breaker()
-```python
+```
 
 ### `get_cdn_manager`
 
@@ -362,7 +368,7 @@ Returns the CDN manager responsible for fallback and source health.
 
 ```python
 def get_cdn_manager() -> CDNManager
-```python
+```
 
 **Example:**
 ```python
@@ -370,7 +376,7 @@ from tif1.cdn import get_cdn_manager
 
 cdn = get_cdn_manager()
 print(f"Primary CDN: {cdn.primary_url}")
-```python
+```
 
 ---
 
@@ -382,13 +388,15 @@ Clear the in-memory LRU cache for lap DataFrames.
 
 ```python
 def clear_lap_cache() -> None
-```python **Example:**
+```
+
+**Example:**
 ```python
 from tif1.core import clear_lap_cache
 
 # Clear lap cache to free memory
 clear_lap_cache()
-```python
+```
 
 ---
 
@@ -412,7 +420,7 @@ config.set("ultra_cold_start", True)
 config.save()
 
 print("Configuration saved to ~/.tif1rc")
-```python
+```
 
 ### Debug session loading
 
@@ -424,12 +432,12 @@ import logging
 tif1.setup_logging(logging.DEBUG)
 
 # Load session with debug output
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 
 # Disable debug logging
 tif1.setup_logging(logging.WARNING)
-```python
+```
 
 ### Cache management workflow
 
@@ -443,14 +451,14 @@ cache = tif1.get_cache()
 print(f"Cache location: {cache.cache_dir}")
 
 # Check if specific session is cached
-has_monaco = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
-print(f"Monaco cached: {has_monaco}")
+has_spa = cache.has_session_data(2021, "Belgian_Grand_Prix", "Race")
+print(f"Belgian GP cached: {has_spa}")
 
 # Clear cache if needed
 if input("Clear cache? (y/n): ").lower() == 'y':
     cache.clear()
     print("Cache cleared")
-```python
+```
 
 ### Handle network issues
 
@@ -459,7 +467,7 @@ import tif1
 from tif1.retry import get_circuit_breaker, reset_circuit_breaker
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = session.laps
 except tif1.NetworkError as e:
     print(f"Network error: {e.message}")
@@ -475,8 +483,8 @@ except tif1.NetworkError as e:
 
         # Reset and retry
         reset_circuit_breaker()
-        session = tif1.get_session(2025, "Monaco", "Race")
-```python
+        session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+```
 
 ### Custom configuration file
 
@@ -498,7 +506,7 @@ config.set("validate_data", False)  # Skip validation for speed
 
 # Save to custom location
 config.save(Path.home() / ".my_tif1_config")
-```python
+```
 
 ---
 
@@ -528,4 +536,4 @@ import tif1
 
 cache = tif1.get_cache()
 atexit.register(cache.close)
-```python
+```

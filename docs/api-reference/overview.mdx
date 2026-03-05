@@ -18,7 +18,7 @@ The `tif1` API is designed to be simple, predictable, and compatible with `fastf
 import tif1
 
 # Load a session
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Get all laps
 laps = session.laps
@@ -28,7 +28,7 @@ driver = session.get_driver("VER")
 
 # Get fastest lap telemetry
 telemetry = driver.get_fastest_lap_tel()
-```yaml
+```
 
 ---
 
@@ -58,7 +58,7 @@ graph TD
     Driver --> DrvLaps[".laps"]
     Driver --> Lap["get_lap()"]
     Lap --> Telemetry[".telemetry"]
-```python
+```
 
 ### Primary Objects
 
@@ -141,7 +141,7 @@ Integration and error handling:
 import tif1
 
 # Load session
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Explore drivers
 print(f"Drivers: {session.drivers}")
@@ -153,14 +153,14 @@ print(f"Total laps: {len(laps)}")
 # Get fastest laps per driver
 fastest = session.get_fastest_laps(by_driver=True)
 print(fastest[["Driver", "LapTime", "Compound"]].head())
-```python
+```
 
 ### Analyze driver performance
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Get specific driver
 ver = session.get_driver("VER")
@@ -176,7 +176,7 @@ print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
 # Get telemetry
 tel = ver.get_fastest_lap_tel()
 print(f"Max speed: {tel['Speed'].max():.1f} km/h")
-```python
+```
 
 ### Parallel data loading
 
@@ -185,7 +185,7 @@ import asyncio
 import tif1
 
 async def load_session():
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
     # Load laps in parallel
     laps = await session.laps_async()
@@ -193,14 +193,14 @@ async def load_session():
     # Get telemetry for multiple drivers in parallel
     tels = await session.get_fastest_laps_tels_async(
         by_driver=True,
-        drivers=["VER", "HAM", "LEC"]
+        drivers=["VER", "HAM", "RUS"]
     )
 
     for driver, tel in tels.items():
         print(f"{driver}: {tel['Speed'].max():.1f} km/h")
 
 asyncio.run(load_session())
-```python
+```
 
 ### Configuration and Optimization
 
@@ -221,7 +221,7 @@ config.set("max_workers", 100)
 
 # Save configuration
 config.save()
-```yaml
+```
 
 ---
 
@@ -240,7 +240,9 @@ TIF1Error (base)
 ├── InvalidDataError
 ├── CacheError
 └── SessionNotLoadedError
-```python ### Common Exceptions
+```
+
+### Common Exceptions
 
 - **`DataNotFoundError`**: The requested GP, year, or session doesn't exist
 - **`NetworkError`**: All CDN sources failed or timed out
@@ -257,9 +259,9 @@ import tif1
 from tif1.exceptions import DataNotFoundError, NetworkError, DriverNotFoundError
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     driver = session.get_driver("VER")
-    lap = driver.get_lap(19)
+    lap = driver.get_lap(1)
 
 except DataNotFoundError as e:
     print(f"Data not found: {e.message}")
@@ -272,7 +274,7 @@ except NetworkError as e:
 except DriverNotFoundError as e:
     print(f"Driver not found: {e.message}")
     print(f"Available drivers: {session.drivers}")
-```yaml
+```
 
 See [Exceptions API](/api-reference/exceptions) for complete documentation.
 
@@ -283,27 +285,27 @@ See [Exceptions API](/api-reference/exceptions) for complete documentation.
 1. **Use async methods for parallel loading**: 5-10x faster than sequential
    ```python
    laps = await session.laps_async()
-```yaml
+   ```
 
 2. **Enable ultra-cold start for single queries**: Minimal latency
    ```python
    config.set("ultra_cold_start", True)
-```yaml
+   ```
 
 3. **Use polars lib for large datasets**: Better memory efficiency
    ```python
    config.set("lib", "polars")
-```python
+   ```
 
 4. **Disable validation in production**: 10-15% performance boost
    ```python
    config.set("validate_data", False)
-```yaml
+   ```
 
 5. **Increase concurrency for bulk operations**: Faster parallel fetching
    ```python
    config.set("max_workers", 100)
-```python
+   ```
 
 See [Best Practices](/guides/best-practices) for more optimization tips.
 
@@ -318,12 +320,12 @@ from tif1 import Session, Driver
 from tif1.core import Lap
 import pandas as pd
 
-session: Session = tif1.get_session(2025, "Monaco", "Race")
+session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 driver: Driver = session.get_driver("VER")
-lap: Lap = driver.get_lap(19)
+lap: Lap = driver.get_lap(1)
 laps: pd.DataFrame = session.laps
 telemetry: pd.DataFrame = lap.telemetry
-```python
+```
 
 See [Types API](/api-reference/types) for complete type definitions.
 

@@ -19,9 +19,9 @@ Jupyter display is automatically enabled when running in a Jupyter environment. 
 import tif1
 
 # Rich display is automatically enabled
-session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session  # Displays rich HTML representation
-```python
+```
 
 ---
 
@@ -34,21 +34,21 @@ When you display a `Session` object in Jupyter, you get a formatted HTML table:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session
-```yaml
+```
 
 **Output:**
-```python
+```text
 🏎️ F1 Session
 ┌─────────────┬──────────────────────────┐
-│ Year        │ 2025                     │
-│ Grand Prix  │ Monaco Grand Prix        │
-│ Session     │ Qualifying               │
-│ Lib     │ pandas                   │
+│ Year        │ 2021                     │
+│ Grand Prix  │ Belgian Grand Prix       │
+│ Session     │ Race                     │
+│ Library     │ pandas                   │
 │ Drivers     │ 20                       │
 └─────────────┴──────────────────────────┘
-```text
+```
 
 ### Driver Display
 
@@ -58,13 +58,13 @@ ver
 ```yaml
 
 **Output:**
-```yaml
+```text
 👤 Driver: VER
 ┌─────────────┬──────────────────────────────────────┐
-│ Session     │ 2025 Monaco Grand Prix - Qualifying  │
+│ Session     │ 2021 Belgian Grand Prix - Race       │
 │ Laps loaded │ Yes                                  │
 └─────────────┴──────────────────────────────────────┘
-```python
+```
 
 ### Lap Display
 
@@ -72,14 +72,14 @@ ver
 lap = ver.get_lap(19)
 lap
 ```text **Output:**
-```python
+```text
 🏁 Lap 19
 ┌──────────────────┬──────────────────────────────────────┐
 │ Driver           │ VER                                  │
-│ Session          │ 2025 Monaco Grand Prix - Qualifying  │
+│ Session          │ 2021 Belgian Grand Prix - Race       │
 │ Telemetry loaded │ No                                   │
 └──────────────────┴──────────────────────────────────────┘
-```python
+```
 
 ---
 
@@ -171,16 +171,17 @@ html = display_dataframe_summary(laps)
 
 ## Notebook best practices
 
-### 1. use async for faster loading
+### 1. Load data efficiently
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
-# Use async loading in notebooks
-laps = await session.laps_async()
-```python
+# Load session data
+session.load()
+laps = session.laps
+```
 
 ### 2. Display Progress
 
@@ -188,28 +189,29 @@ laps = await session.laps_async()
 from IPython.display import display, HTML
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 display(HTML("<p>Loading session data...</p>"))
 laps = session.laps
 display(HTML(f"<p>✓ Loaded {len(laps)} laps</p>"))
-```python
+```
 
 ### 3. Interactive Exploration
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Display session info
 session
 
-# Explore drivers
-for driver_code in session.drivers[:3]:
+# Get driver codes from drivers_df
+drivers_df = session.drivers_df
+for driver_code in drivers_df["Driver"][:3]:
     driver = session.get_driver(driver_code)
     display(driver)
-```python
+```
 
 ### 4. Combine with Plotting
 
@@ -221,18 +223,18 @@ from tif1.plotting import setup_mpl, get_driver_color_mapping
 # Setup F1 theme
 setup_mpl()
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 colors = get_driver_color_mapping(session)
 
-# Plot fastest laps
+# Plot lap times for top drivers
 fig, ax = plt.subplots(figsize=(12, 6))
 
-for driver in ["VER", "LEC", "HAM"]:
+for driver in ["VER", "HAM", "BOT"]:
     driver_laps = laps[laps["Driver"] == driver]
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         color=colors.get(driver),
         label=driver,
         linewidth=2
@@ -240,12 +242,12 @@ for driver in ["VER", "LEC", "HAM"]:
 
 ax.set_xlabel("Lap Number")
 ax.set_ylabel("Lap Time (s)")
-ax.set_title("Qualifying Lap Times")
+ax.set_title("Race Lap Times - 2021 Belgian Grand Prix")
 ax.legend()
 ax.grid(True, alpha=0.3)
 
 plt.show()
-```python
+```
 
 ### 5. Use Widgets for Interactivity
 
@@ -254,11 +256,15 @@ import tif1
 import ipywidgets as widgets
 from IPython.display import display
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+
+# Get driver codes from drivers_df
+drivers_df = session.drivers_df
+driver_codes = drivers_df["Driver"].tolist()
 
 # Create driver selector
 driver_dropdown = widgets.Dropdown(
-    options=session.drivers,
+    options=driver_codes,
     description='Driver:',
 )
 
@@ -270,13 +276,14 @@ def on_driver_change(change):
         output.clear_output()
         driver = session.get_driver(change['new'])
         fastest = driver.get_fastest_lap()
-        print(f"Fastest lap: {fastest['LapTime'].iloc[0]:.3f}s")
-        print(f"Compound: {fastest['Compound'].iloc[0]}")
+        if not fastest.empty:
+            print(f"Fastest lap: {fastest['LapTimeSeconds'].iloc[0]:.3f}s")
+            print(f"Compound: {fastest['Compound'].iloc[0]}")
 
 driver_dropdown.observe(on_driver_change, names='value')
 
 display(driver_dropdown, output)
-```python
+```
 
 ---
 
@@ -302,21 +309,21 @@ If HTML displays are broken:
 
 ```python
 # Fall back to repr
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 print(repr(session))
-```python ### Memory Issues
+``` ### Memory Issues
 
 For large datasets in notebooks:
 
 ```python
-# Use polars lib for better memory efficiency
+
 import tif1
 
 config = tif1.get_config()
 config.set("lib", "polars")
 
-session = tif1.get_session(2025, "Monaco", "Race")
-```python
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+```
 
 ---
 
@@ -331,57 +338,62 @@ from tif1.plotting import setup_mpl, get_driver_color_mapping
 setup_mpl()
 
 # Cell 2: Load session
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session  # Rich display
 
 # Cell 3: Explore drivers
-print(f"Drivers: {len(session.drivers)}")
-for driver_code in session.drivers[:5]:
+drivers_df = session.drivers_df
+print(f"Drivers: {len(drivers_df)}")
+for driver_code in drivers_df["Driver"][:5]:
     driver = session.get_driver(driver_code)
     display(driver)
 
 # Cell 4: Get fastest laps
 fastest = session.get_fastest_laps(by_driver=True)
-fastest[["Driver", "Team", "LapTime", "Compound"]].head(10)
+fastest[["Driver", "Team", "LapTimeSeconds", "Compound"]].head(10)
 
 # Cell 5: Analyze specific driver
 ver = session.get_driver("VER")
 ver_laps = ver.laps
 
 print(f"Total laps: {len(ver_laps)}")
-print(f"Fastest: {ver_laps['LapTime'].min():.3f}s")
-print(f"Average: {ver_laps['LapTime'].mean():.3f}s")
+print(f"Fastest: {ver_laps['LapTimeSeconds'].min():.3f}s")
+print(f"Average: {ver_laps['LapTimeSeconds'].mean():.3f}s")
 
 # Cell 6: Get telemetry
 tel = ver.get_fastest_lap_tel()
 
-print(f"Telemetry samples: {len(tel)}")
-print(f"Max speed: {tel['Speed'].max():.1f} km/h")
-print(f"Max RPM: {tel['RPM'].max()}")
+if not tel.empty:
+    print(f"Telemetry samples: {len(tel)}")
+    print(f"Max speed: {tel['Speed'].max():.1f} km/h")
+    if 'RPM' in tel.columns:
+        print(f"Max RPM: {tel['RPM'].max()}")
 
 # Cell 7: Plot telemetry
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
+if not tel.empty:
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
 
-# Speed trace
-ax1.plot(tel['Distance'], tel['Speed'], linewidth=2)
-ax1.set_ylabel('Speed (km/h)')
-ax1.set_title('VER Fastest Lap - Monaco Qualifying')
-ax1.grid(True, alpha=0.3)
+    # Speed trace
+    ax1.plot(tel['Distance'], tel['Speed'], linewidth=2)
+    ax1.set_ylabel('Speed (km/h)')
+    ax1.set_title('VER Fastest Lap - 2021 Belgian Grand Prix')
+    ax1.grid(True, alpha=0.3)
 
-# Throttle and brake
-ax2.plot(tel['Distance'], tel['Throttle'], label='Throttle', linewidth=2)
-ax2.fill_between(tel['Distance'], 0, 100, where=tel['Brake'],
-                  alpha=0.3, color='red', label='Brake')
-ax2.set_xlabel('Distance (m)')
-ax2.set_ylabel('Throttle (%)')
-ax2.legend()
-ax2.grid(True, alpha=0.3)
+    # Throttle and brake
+    ax2.plot(tel['Distance'], tel['Throttle'], label='Throttle', linewidth=2)
+    if 'Brake' in tel.columns:
+        ax2.fill_between(tel['Distance'], 0, 100, where=tel['Brake'] > 0,
+                          alpha=0.3, color='red', label='Brake')
+    ax2.set_xlabel('Distance (m)')
+    ax2.set_ylabel('Throttle (%)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
 
-plt.tight_layout()
-plt.show()
+    plt.tight_layout()
+    plt.show()
 
 # Cell 8: Compare drivers
-drivers_to_compare = ["VER", "LEC", "HAM"]
+drivers_to_compare = ["VER", "HAM", "BOT"]
 colors = get_driver_color_mapping(session)
 
 fig, ax = plt.subplots(figsize=(12, 6))
@@ -390,7 +402,7 @@ for driver_code in drivers_to_compare:
     driver_laps = session.laps[session.laps["Driver"] == driver_code]
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         color=colors.get(driver_code),
         label=driver_code,
         linewidth=2,
@@ -400,13 +412,13 @@ for driver_code in drivers_to_compare:
 
 ax.set_xlabel('Lap Number')
 ax.set_ylabel('Lap Time (s)')
-ax.set_title('Lap Time Comparison - Monaco Qualifying')
+ax.set_title('Lap Time Comparison - 2021 Belgian Grand Prix')
 ax.legend()
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.show()
-```yaml
+```
 
 ---
 

@@ -30,7 +30,7 @@ stateDiagram-v2
     Open --> HalfOpen: Timeout elapsed
     HalfOpen --> Closed: Request succeeds
     HalfOpen --> Open: Request fails
-```python
+```
 
 ---
 
@@ -45,7 +45,7 @@ class CircuitBreaker:
         threshold: int = 5,
         timeout: int = 60
     )
-```python
+```
 
 **Parameters:**
 - `threshold`: Number of failures before opening (default: 5)
@@ -71,7 +71,7 @@ try:
 except Exception as e:
     print(f"Circuit breaker: {cb.state}")
     print(f"Failures: {cb.failures}")
-```python
+```
 
 ---
 
@@ -81,7 +81,7 @@ Get the global circuit breaker instance used by `tif1`.
 
 ```python
 def get_circuit_breaker() -> CircuitBreaker
-```python
+```
 
 **Returns:**
 - Global `CircuitBreaker` instance
@@ -96,7 +96,7 @@ print(f"Failures: {cb.failures}")
 
 if cb.last_failure_time:
     print(f"Last failure: {cb.last_failure_time}")
-```python
+```
 
 ---
 
@@ -106,7 +106,7 @@ Reset the global circuit breaker to closed state with zero failures.
 
 ```python
 def reset_circuit_breaker() -> None
-```python
+```
 
 **Example:**
 ```python
@@ -115,7 +115,7 @@ from tif1.retry import reset_circuit_breaker
 # After fixing network issues
 reset_circuit_breaker()
 print("Circuit breaker reset")
-```python
+```
 
 ---
 
@@ -131,7 +131,9 @@ def call(
     *args,
     **kwargs
 ) -> T
-```python **Parameters:**
+```
+
+**Parameters:**
 - `func`: Function to execute
 - `*args`: Positional arguments for func
 - `**kwargs`: Keyword arguments for func
@@ -159,7 +161,7 @@ except Exception as e:
         print("Circuit breaker is open, service unavailable")
     else:
         print(f"Request failed: {e}")
-```python
+```
 
 ---
 
@@ -169,7 +171,7 @@ Manually record a successful operation.
 
 ```python
 def record_success() -> None
-```python
+```
 
 **Example:**
 ```python
@@ -181,7 +183,7 @@ try:
     cb.record_success()
 except Exception:
     cb.record_failure()
-```python
+```
 
 ---
 
@@ -191,7 +193,7 @@ Manually record a failed operation.
 
 ```python
 def record_failure() -> None
-```python
+```
 
 **Example:**
 ```python
@@ -203,7 +205,7 @@ try:
 except NetworkError:
     cb.record_failure()
     raise
-```python
+```
 
 ---
 
@@ -213,7 +215,7 @@ Check current state and update if timeout elapsed.
 
 ```python
 def check_and_update_state() -> tuple[bool, str]
-```python
+```
 
 **Returns:**
 - Tuple of (should_proceed, current_state)
@@ -228,7 +230,7 @@ if should_proceed:
     pass
 else:
     print(f"Circuit breaker is {state}, request blocked")
-```python
+```
 
 ---
 
@@ -245,7 +247,9 @@ def retry_with_backoff(
     jitter: bool = True,
     exceptions: tuple = (Exception,)
 )
-```python **Parameters:**
+```
+
+**Parameters:**
 - `max_retries`: Maximum retry attempts (default: 3)
 - `backoff_factor`: Exponential backoff multiplier (default: 2.0)
 - `jitter`: Add random jitter to backoff (default: True)
@@ -253,8 +257,8 @@ def retry_with_backoff(
 
 **Backoff Formula:**
 ```python
-wait_time = backoff_factor^attempt * (0.5 + random()) if jitter else backoff_factor^attempt
-```python
+wait_time = backoff_factor**attempt * (0.5 + random()) if jitter else backoff_factor**attempt
+```
 
 **Example:**
 ```python
@@ -270,7 +274,7 @@ def fetch_data(url):
 
 # Automatically retries up to 5 times with exponential backoff
 data = fetch_data("https://example.com/data.json")
-```python
+```
 
 ---
 
@@ -294,15 +298,15 @@ def fetch_data(url):
             raise DataNotFoundError(url=url) from e
         raise NetworkError(url=url, status_code=e.response.status_code) from e
 
-# Retries on networkerror, fails immediately on datanotfounderror
+# Retries on NetworkError, fails immediately on DataNotFoundError
 data = fetch_data("https://example.com/data.json")
-```python
+```
 
 ---
 
 ## Configuration
 
-Configure circuit breaker behavior via global config:
+Configure circuit breaker and retry behavior via global config:
 
 ```python
 import tif1
@@ -315,20 +319,25 @@ config.set("circuit_breaker_threshold", 10)
 # Set circuit breaker timeout
 config.set("circuit_breaker_timeout", 120)
 
-# Set max retries
-config.set("max_retries", 5)
+# Set retry backoff factor
+config.set("retry_backoff_factor", 1.5)
 
-# Save configuration
+# Enable/disable retry jitter
+config.set("retry_jitter", True)
+
+# Save configuration to file
 config.save()
-```python
+```
 
 **Configuration Keys:**
 
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `circuit_breaker_threshold` | `int` | `5` | Failures before opening |
+| `circuit_breaker_threshold` | `int` | `5` | Failures before opening circuit |
 | `circuit_breaker_timeout` | `int` | `60` | Seconds before testing recovery |
-| `max_retries` | `int` | `3` | Maximum retry attempts |
+| `retry_backoff_factor` | `float` | `2.0` | Exponential backoff multiplier |
+| `retry_jitter` | `bool` | `True` | Add random jitter to backoff |
+| `max_retry_delay` | `float` | `60.0` | Maximum retry delay in seconds |
 
 ---
 
@@ -349,7 +358,7 @@ def monitor_circuit_breaker():
     print(f"Failures: {cb.failures}")
 
     try:
-        session = tif1.get_session(2025, "Monaco", "Race")
+        session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
         laps = session.laps
         print(f"Success! State: {cb.state}")
     except Exception as e:
@@ -363,7 +372,7 @@ def monitor_circuit_breaker():
             print("Retrying...")
 
 monitor_circuit_breaker()
-```python
+```
 
 ---
 
@@ -400,7 +409,7 @@ def fetch_with_logging(url):
 
 # Usage
 data = fetch_with_logging("https://example.com/data.json")
-```python
+```
 
 ---
 
@@ -450,11 +459,13 @@ def load_from_cache_only(year, gp, session_name):
 
 # Usage
 try:
-    session = load_session_with_fallback(2025, "Monaco", "Race")
+    session = load_session_with_fallback(2021, "Belgian Grand Prix", "Race")
     print(f"Loaded session: {session.name}")
 except Exception as e:
     print(f"Failed to load session: {e}")
-```python ---
+```
+
+---
 
 ### Retry with Progress
 
@@ -497,7 +508,7 @@ def fetch_data(url):
     pass
 
 data = fetch_data("https://example.com/data.json")
-```yaml
+```
 
 ---
 
@@ -510,13 +521,13 @@ cb = get_circuit_breaker()
 if cb.state == "open":
     # Use fallback or wait
     pass
-```yaml
+```
 
 2. **Reset after fixing issues**: Don't wait for timeout if you know service is back.
 
 ```python
 reset_circuit_breaker()
-```yaml
+```
 
 3. **Use appropriate thresholds**: Higher for transient errors, lower for persistent failures.
 
@@ -564,7 +575,9 @@ def test_circuit_breaker():
 
     assert cb.state == "open"
     print("Circuit breaker test passed")
-```python ---
+```
+
+---
 
 ## Troubleshooting
 
@@ -580,28 +593,37 @@ print(f"Failures: {cb.failures}")
 if cb.state == "open":
     # Wait for timeout or reset manually
     reset_circuit_breaker()
-```python
+```
 
-### Too Many Retries
+### Too many retries
+
+Adjust the `max_retries` parameter when using the `@retry_with_backoff` decorator:
 
 ```python
-# Reduce max retries
+@retry_with_backoff(max_retries=2)  # Reduce from default of 3
+def fetch_data():
+    pass
+```
+
+### Slow retries
+
+Reduce the backoff factor globally or per-function:
+
+```python
+# Global configuration
 config = tif1.get_config()
-config.set("max_retries", 2)
-```python
+config.set("retry_backoff_factor", 1.5)
 
-### Slow Retries
-
-```python
-# Reduce backoff factor
+# Or per-function
 @retry_with_backoff(backoff_factor=1.5)  # Instead of 2.0
 def fetch_data():
     pass
-```python
+```
 
 ### Circuit breaker too sensitive
 
 ```python
 # Increase threshold
+config = tif1.get_config()
 config.set("circuit_breaker_threshold", 10)
-```text
+```

@@ -45,18 +45,18 @@ def get_session(
 import tif1
 
 # By name
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # By number
-session = tif1.get_session(2025, 6, 3)  # Round 6, Session 3
+session = tif1.get_session(2021, 12, 5)  # Round 12, Session 5 (Race)
 
 # With options
 session = tif1.get_session(
-    2025,
-    "Monaco Grand Prix",
+    2021,
+    "Belgian Grand Prix",
     "Race",
     enable_cache=True,
-    lib="polars"
+    lib="pandas"
 )
 ```
 
@@ -119,11 +119,12 @@ Session(
 
 <ResponseField name="drivers_df" type="DataFrame">
   DataFrame with driver information including:
-  - `Driver`: 3-letter code
-  - `Team`: Team name
-  - `DriverNumber`: Car number
+  - `Abbreviation`: 3-letter driver code (e.g., "VER", "HAM")
+  - `TeamName`: Team name
+  - `DriverNumber`: Car number as string
   - `FirstName`: Driver's first name
   - `LastName`: Driver's last name
+  - `FullName`: Full name (FirstName + LastName)
   - `TeamColor`: Hex color code
   - `HeadshotUrl`: URL to driver photo
 
@@ -259,11 +260,11 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 **Example:**
 ```python
 # Load only laps and weather
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session.load(laps=True, telemetry=False, weather=True, messages=False)
 
 # Or use lazy loading (recommended)
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps  # Loads automatically
 ```
 
@@ -284,7 +285,7 @@ import asyncio
 import tif1
 
 async def main():
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = await session.laps_async()
     print(f"Loaded {len(laps)} laps")
 
@@ -341,7 +342,7 @@ fastest = session.get_fastest_laps(by_driver=True)
 fastest = session.get_fastest_laps(by_driver=False)
 
 # Fastest laps for specific drivers
-fastest = session.get_fastest_laps(by_driver=True, drivers=["VER", "HAM", "LEC"])
+fastest = session.get_fastest_laps(by_driver=True, drivers=["VER", "HAM", "BOT"])
 ```
 
 #### `get_fastest_laps_async()`
@@ -417,7 +418,7 @@ for driver, tel in tels.items():
 # Get telemetry for specific drivers
 tels = session.get_fastest_laps_tels(
     by_driver=True,
-    drivers=["VER", "HAM", "LEC"]
+    drivers=["VER", "HAM", "BOT"]
 )
 ```
 
@@ -459,8 +460,8 @@ Fetch lap data for multiple drivers in parallel.
 import asyncio
 
 async def main():
-    session = tif1.get_session(2025, "Monaco", "Race")
-    laps_dict = await session.fetch_driver_laps_parallel(["VER", "HAM", "LEC"])
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    laps_dict = await session.fetch_driver_laps_parallel(["VER", "HAM", "BOT"])
 
     for driver, laps in laps_dict.items():
         print(f"{driver}: {len(laps)} laps")
@@ -477,7 +478,7 @@ def fetch_all_laps_telemetry(
 ) -> dict[tuple[str, int], DataFrame]
 ```
 
-Fetch telemetry for all laps of specified drivers.
+Fetch telemetry for all laps of specified drivers synchronously.
 
 **Parameters:**
 - `drivers`: Optional list of driver codes. If `None`, fetches for all drivers
@@ -487,7 +488,7 @@ Fetch telemetry for all laps of specified drivers.
 - Dictionary mapping (driver, lap_number) tuples to telemetry DataFrames
 
 **Warning:**
-This can be very slow and data-intensive. Use sparingly.
+This can be very slow and data-intensive. Use sparingly. Prefer the async version for better performance.
 
 #### `fetch_all_laps_telemetry_async()`
 
@@ -498,7 +499,25 @@ async def fetch_all_laps_telemetry_async(
 ) -> dict[tuple[str, int], DataFrame]
 ```
 
-Async version of `fetch_all_laps_telemetry()`.
+Async version of `fetch_all_laps_telemetry()`. Fetches telemetry for all laps in parallel, significantly faster than the sync version.
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def main():
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    # Fetch telemetry for all laps of specific drivers
+    all_tels = await session.fetch_all_laps_telemetry_async(
+        drivers=["VER", "HAM"]
+    )
+    
+    for (driver, lap_num), tel in all_tels.items():
+        print(f"{driver} Lap {lap_num}: {len(tel)} samples")
+
+asyncio.run(main())
+```
 
 #### `get_circuit_info()`
 
@@ -523,27 +542,18 @@ Represents a specific driver's performance within a session. Provides convenient
 Driver(
     session: Session,
     driver: str,
-    driver_number: str | None = None,
-    team: str | None = None
+    prefetched_lap_data: dict[str, Any] | None = None
 )
 ```
 
 <Note>
-  Use `session.get_driver()` instead of constructing `Driver` directly.
+  Use `session.get_driver()` instead of constructing `Driver` directly. The `Driver` class extends `pd.Series` and contains driver metadata as Series data.
 </Note>
 
 ### Properties
 
 <ResponseField name="driver" type="str">
   The 3-letter driver code (e.g., "VER", "HAM", "LEC").
-</ResponseField>
-
-<ResponseField name="driver_number" type="str">
-  The car number (e.g., "33", "44", "16").
-</ResponseField>
-
-<ResponseField name="team" type="str">
-  Team name (e.g., "Red Bull Racing", "Mercedes", "Ferrari").
 </ResponseField>
 
 <ResponseField name="laps" type="DataFrame">
@@ -554,6 +564,19 @@ Driver(
 <ResponseField name="session" type="Session">
   Reference to the parent session object.
 </ResponseField>
+
+### Series Data
+
+Since `Driver` extends `pd.Series`, driver metadata is accessed via dictionary-style indexing:
+
+- `driver["DriverNumber"]`: Car number as string (e.g., "33", "44", "16")
+- `driver["Abbreviation"]`: 3-letter driver code (same as `driver.driver`)
+- `driver["TeamName"]`: Team name (e.g., "Red Bull Racing", "Mercedes")
+- `driver["TeamColor"]`: Hex color code
+- `driver["FirstName"]`: Driver's first name
+- `driver["LastName"]`: Driver's last name
+- `driver["FullName"]`: Full name (FirstName + LastName)
+- `driver["HeadshotUrl"]`: URL to driver photo
 
 ### Methods
 
@@ -602,13 +625,10 @@ print(f"Compound: {fastest['Compound'].iloc[0]}")
 #### `get_fastest_lap_tel()`
 
 ```python
-def get_fastest_lap_tel(ultra_cold: bool | None = None) -> DataFrame
+def get_fastest_lap_tel() -> DataFrame
 ```
 
-Get telemetry for this driver's fastest lap.
-
-**Parameters:**
-- `ultra_cold`: Enable ultra-low latency mode. If `None`, uses global config
+Get telemetry for this driver's fastest lap. Uses the session's ultra-cold mode setting.
 
 **Returns:**
 - DataFrame with telemetry data (Time, Speed, RPM, Throttle, etc.)
@@ -643,21 +663,11 @@ Lap(
 ### Properties
 
 <ResponseField name="lap_number" type="int">
-  The lap number (1-indexed).
+  The lap number (1-indexed). Access via `lap.lap_number` property.
 </ResponseField>
 
 <ResponseField name="driver" type="str">
-  The 3-letter driver code.
-</ResponseField>
-
-<ResponseField name="lap_time" type="float">
-  The lap time in seconds. Access using Series methods:
-
-  ```python
-  lap_time = lap.get('LapTime')  # Returns timedelta
-  # or
-  lap_time_seconds = lap.get('LapTimeSeconds')  # Returns float
-  ```
+  The 3-letter driver code. Access via `lap.driver` property.
 </ResponseField>
 
 <ResponseField name="telemetry" type="DataFrame">
@@ -668,6 +678,19 @@ Lap(
 <ResponseField name="session" type="Session">
   Reference to the parent session object.
 </ResponseField>
+
+### Series Data
+
+Since `Lap` extends `pd.Series`, lap timing data is accessed via dictionary-style indexing or the `get()` method:
+
+- `lap.get('LapTime')`: Lap time as timedelta
+- `lap.get('LapTimeSeconds')`: Lap time in seconds as float
+- `lap.get('LapNumber')`: Lap number (same as `lap.lap_number`)
+- `lap.get('Driver')`: Driver code (same as `lap.driver`)
+- `lap.get('Sector1Time')`, `lap.get('Sector2Time')`, `lap.get('Sector3Time')`: Sector times
+- `lap.get('Compound')`: Tire compound
+- `lap.get('TyreLife')`: Tire age in laps
+- `lap.get('IsPersonalBest')`: Boolean indicating personal best lap
 
 ### Methods
 
@@ -736,7 +759,7 @@ Get weather data for this lap.
 import tif1
 
 # Load session
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Access drivers
 print(f"Drivers: {session.drivers}")
@@ -747,7 +770,7 @@ print(f"Total laps: {len(laps)}")
 
 # Get fastest laps
 fastest = session.get_fastest_laps(by_driver=True)
-print(fastest[["Driver", "LapTime", "Compound"]].head())
+print(fastest[["Driver", "LapTimeSeconds", "Compound"]].head())
 ```
 
 ### Working with Drivers
@@ -756,8 +779,8 @@ print(fastest[["Driver", "LapTime", "Compound"]].head())
 # Get specific driver
 ver = session.get_driver("VER")
 print(f"Driver: {ver.driver}")
-print(f"Team: {ver.team}")
-print(f"Number: {ver.driver_number}")
+print(f"Team: {ver['TeamName']}")  # Access Series data
+print(f"Number: {ver['DriverNumber']}")  # Access Series data
 
 # Get driver's laps
 ver_laps = ver.laps
@@ -765,7 +788,7 @@ print(f"Laps completed: {len(ver_laps)}")
 
 # Get fastest lap
 fastest = ver.get_fastest_lap()
-print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+print(f"Fastest: {fastest['LapTimeSeconds'].iloc[0]:.3f}s")
 ```
 
 ### Working with Telemetry
@@ -812,7 +835,7 @@ import asyncio
 import tif1
 
 async def load_session():
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
     # Load laps in parallel
     laps = await session.laps_async()
@@ -820,7 +843,7 @@ async def load_session():
     # Get telemetry for multiple drivers in parallel
     tels = await session.get_fastest_laps_tels_async(
         by_driver=True,
-        drivers=["VER", "HAM", "LEC"]
+        drivers=["VER", "HAM", "BOT"]
     )
 
     for driver, tel in tels.items():
@@ -838,7 +861,13 @@ asyncio.run(load_session())
 
 ```python
 # Enable ultra-cold start for minimal latency
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+import tif1
+
+# Configure ultra-cold mode globally
+config = tif1.get_config()
+config.ultra_cold = True
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
 
 # Get fastest lap telemetry with ultra-cold optimization
 tel = session.get_fastest_lap_tel(ultra_cold=True)
@@ -860,9 +889,11 @@ import tif1
 from tif1.exceptions import DriverNotFoundError, LapNotFoundError, DataNotFoundError
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     driver = session.get_driver("VER")
     lap = driver.get_lap(1)
+    tel = lap.telemetry
+    print(f"Lap 1 telemetry: {len(tel)} samples")
 except DriverNotFoundError as e:
     print(f"Driver not found: {e}")
 except LapNotFoundError as e:
@@ -880,14 +911,14 @@ import tif1
 
 # Sync approach (slower)
 start = time.time()
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps  # Sequential loading
 print(f"Sync: {time.time() - start:.2f}s")
 
 # Async approach (faster)
 async def load_async():
     start = time.time()
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps = await session.laps_async()  # Parallel loading
     print(f"Async: {time.time() - start:.2f}s")
 
@@ -917,8 +948,12 @@ driver = session.get_driver(drivers[0])  # May fail if "1" is not a valid code
 
 # ✅ Correct - use drivers_df to get codes
 drivers_df = session.drivers_df
-driver_code = drivers_df.iloc[0]["Driver"]  # Returns "VER"
+driver_code = drivers_df.iloc[0]["Abbreviation"]  # Returns "VER"
 driver = session.get_driver(driver_code)
+
+# ✅ Also correct - get_driver() accepts both codes and numbers
+driver = session.get_driver("VER")  # By code
+driver = session.get_driver(33)     # By number
 ```
 
 **Issue: `LapNotFoundError` when accessing laps**
@@ -946,14 +981,14 @@ else:
 
 ```python
 # ❌ Slow - sequential loading
-for driver_code in ["VER", "HAM", "LEC"]:
+for driver_code in ["VER", "HAM", "BOT"]:
     driver = session.get_driver(driver_code)
     tel = driver.get_fastest_lap_tel()
 
 # ✅ Fast - parallel loading
 tels = session.get_fastest_laps_tels(
     by_driver=True,
-    drivers=["VER", "HAM", "LEC"]
+    drivers=["VER", "HAM", "BOT"]
 )
 ```
 

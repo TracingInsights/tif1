@@ -14,26 +14,32 @@ The events module provides functions to discover what data is available in the T
 ## `get_events`
 
 ```python
-def get_events(year: int) -> list[str]
-```python
+def get_events(year: int) -> EventSchedule
+```
 
-Returns a list of all Grand Prix events that took place in the specified year.
+Returns an EventSchedule DataFrame containing all Grand Prix events for the specified year.
 
 **Parameters:**
 - `year`: The season year (2018-current)
 
 **Returns:**
-- List of event names (e.g., `["Australian Grand Prix", "Chinese Grand Prix", ...]`)
+- `EventSchedule` object (pandas DataFrame subclass) with event information
 
 **Example:**
 ```python
 import tif1
 
-events = tif1.get_events(2025)
-print(f"Found {len(events)} events in 2025")
-for event in events:
-    print(f"  - {event}")
-```python
+schedule = tif1.get_events(2021)
+print(f"Found {len(schedule)} events in 2021")
+
+# Access event names
+for event_name in schedule['EventName']:
+    print(f"  - {event_name}")
+
+# Get specific event by round
+belgian_gp = schedule.get_event_by_round(12)
+print(f"Round 12: {belgian_gp['EventName']}")
+```
 
 ---
 
@@ -41,13 +47,13 @@ for event in events:
 
 ```python
 def get_sessions(year: int, event: str) -> list[str]
-```python
+```
 
 Returns a list of all available sessions for a specific Grand Prix.
 
 **Parameters:**
 - `year`: The season year
-- `event`: The Grand Prix name (must match one returned by `get_events`)
+- `event`: The Grand Prix name (e.g., "Belgian Grand Prix")
 
 **Returns:**
 - List of session names (e.g., `["Practice 1", "Qualifying", "Race"]`)
@@ -56,12 +62,12 @@ Returns a list of all available sessions for a specific Grand Prix.
 ```python
 import tif1
 
-sessions = tif1.get_sessions(2025, "British Grand Prix")
+sessions = tif1.get_sessions(2021, "Belgian Grand Prix")
 # ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
 
 for session in sessions:
     print(f"  - {session}")
-```python
+```
 
 ---
 
@@ -72,8 +78,8 @@ def get_event(
     year: int,
     gp: int | str,
     exact_match: bool = False
-) -> Event
-```python
+) -> Event | None
+```
 
 Get an Event object for a specific Grand Prix by name or round number.
 
@@ -83,27 +89,27 @@ Get an Event object for a specific Grand Prix by name or round number.
 - `exact_match`: If `True`, requires exact name match. If `False`, uses fuzzy matching
 
 **Returns:**
-- `Event` object with event metadata
-
-**Raises:**
-- `DataNotFoundError`: If the event is not found
+- `Event` object (pandas Series subclass) with event metadata, or `None` if not found
 
 **Example:**
 ```python
 import tif1
 
 # By name (fuzzy matching)
-event = tif1.get_event(2025, "Monaco")
+event = tif1.get_event(2021, "Belgian")
 
 # By round number
-event = tif1.get_event(2025, 6)
+event = tif1.get_event(2021, 12)
 
 # Exact match
-event = tif1.get_event(2025, "Monaco Grand Prix", exact_match=True)
+event = tif1.get_event(2021, "Belgian Grand Prix", exact_match=True)
 
-print(f"Event: {event.name}")
+# Access event data
+print(f"Event: {event['EventName']}")
+print(f"Location: {event['Location']}")
+print(f"Round: {event['RoundNumber']}")
 print(f"Year: {event.year}")
-```python
+```
 
 ---
 
@@ -111,7 +117,7 @@ print(f"Year: {event.year}")
 
 ```python
 def get_event_by_round(year: int, round_number: int) -> Event
-```python
+```
 
 Get an Event object by round number.
 
@@ -122,14 +128,20 @@ Get an Event object by round number.
 **Returns:**
 - `Event` object
 
+**Raises:**
+- `ValueError`: If the round number is invalid
+
 **Example:**
 ```python
 import tif1
 
-# Get the 6th race of 2025
-event = tif1.get_event_by_round(2025, 6)
-print(f"Round 6: {event.name}")
-```python ---
+# Get the 12th race of 2021 (Belgian Grand Prix)
+event = tif1.get_event_by_round(2021, 12)
+print(f"Round 12: {event['EventName']}")
+print(f"Location: {event['Location']}")
+```
+
+---
 
 ## `get_event_by_name`
 
@@ -139,106 +151,376 @@ def get_event_by_name(
     name: str,
     exact_match: bool = False
 ) -> Event
-```python
+```
 
 Get an Event object by name with optional fuzzy matching.
 
 **Parameters:**
 - `year`: The season year
-- `name`: Event name (e.g., "Monaco Grand Prix" or "Monaco")
+- `name`: Event name (e.g., "Belgian Grand Prix" or "Belgian")
 - `exact_match`: If `True`, requires exact match. If `False`, uses fuzzy matching
 
 **Returns:**
 - `Event` object
+
+**Raises:**
+- `DataNotFoundError`: If the event is not found
 
 **Example:**
 ```python
 import tif1
 
 # Fuzzy match
-event = tif1.get_event_by_name(2025, "Monaco")
+event = tif1.get_event_by_name(2021, "Belgian")
 
 # Exact match
-event = tif1.get_event_by_name(2025, "Monaco Grand Prix", exact_match=True)
-```python
+event = tif1.get_event_by_name(2021, "Belgian Grand Prix", exact_match=True)
+
+print(f"Event: {event['EventName']}")
+print(f"Location: {event['Location']}")
+```
 
 ---
 
 ## `get_event_schedule`
 
 ```python
-def get_event_schedule(year: int) -> dict
-```python
+def get_event_schedule(
+    year: int,
+    include_testing: bool = True
+) -> EventSchedule
+```
 
 Get the complete event schedule for a year including all events and their sessions.
 
 **Parameters:**
 - `year`: The season year
+- `include_testing`: If `True`, includes testing events (default: `True`)
 
 **Returns:**
-- Dictionary with schedule data structure
+- `EventSchedule` object (pandas DataFrame subclass) with all events
 
 **Example:**
 ```python
 import tif1
 
-schedule = tif1.get_event_schedule(2025)
-print(f"Events: {schedule['events']}")
-print(f"Sessions: {schedule['sessions']}")
-```python
+schedule = tif1.get_event_schedule(2021)
+print(f"Total events: {len(schedule)}")
+
+# Access DataFrame columns
+print(f"Columns: {list(schedule.columns)}")
+
+# Iterate through events
+for idx, row in schedule.iterrows():
+    print(f"Round {row['RoundNumber']}: {row['EventName']}")
+
+# Get specific event
+belgian_gp = schedule.get_event_by_round(12)
+```
 
 ---
 
 ## Event
 
-The `Event` class represents a single Grand Prix event with metadata and session access.
+The `Event` class is a pandas Series subclass representing a single Grand Prix event with metadata and session access.
 
 ### Properties
 
 <ResponseField name="year" type="int">
-  The season year.
+  The season year (read-only property).
 </ResponseField>
 
-<ResponseField name="name" type="str">
-  The official event name (e.g., "Monaco Grand Prix").
+### Series Data Fields
+
+Access event data using dictionary-style indexing:
+
+<ResponseField name="EventName" type="str">
+  The official event name (e.g., "Belgian Grand Prix").
 </ResponseField>
 
-<ResponseField name="location" type="str">
-  The event location (derived from name).
+<ResponseField name="Location" type="str">
+  The event location (e.g., "Spa-Francorchamps").
 </ResponseField>
 
-<ResponseField name="metadata" type="dict | None">
-  Additional event metadata if available.
+<ResponseField name="OfficialEventName" type="str">
+  The full official event name (e.g., "FORMULA 1 ROLEX BELGIAN GRAND PRIX 2021").
 </ResponseField>
+
+<ResponseField name="RoundNumber" type="int">
+  The championship round number.
+</ResponseField>
+
+<ResponseField name="Country" type="str">
+  The country where the event takes place.
+</ResponseField>
+
+<ResponseField name="EventDate" type="pd.Timestamp">
+  The main event date.
+</ResponseField>
+
+<ResponseField name="EventFormat" type="str">
+  The event format (e.g., "conventional", "sprint").
+</ResponseField>
+
+<ResponseField name="Session1, Session2, ..." type="str">
+  Session names (e.g., "Practice 1", "Qualifying", "Race").
+</ResponseField>
+
+<ResponseField name="Session1Date, Session2Date, ..." type="datetime">
+  Local session date/time with timezone.
+</ResponseField>
+
+<ResponseField name="Session1DateUtc, Session2DateUtc, ..." type="pd.Timestamp">
+  UTC session timestamps.
+</ResponseField>
+
+**Example:**
+```python
+import tif1
+
+event = tif1.get_event(2021, "Belgian Grand Prix")
+
+# Access event data
+print(event['EventName'])        # "Belgian Grand Prix"
+print(event['Location'])         # "Spa-Francorchamps"
+print(event['RoundNumber'])      # 12
+print(event.year)                # 2021 (property)
+```
 
 ### Methods
 
 #### `get_session(session_name)`
 
 ```python
-def get_session(session_name: str) -> Session
-```python
+def get_session(session_name: int | str) -> Session
+```
 
 Get a Session object for a specific session within this event.
 
 **Parameters:**
-- `session_name`: Session name (e.g., "Qualifying", "Race")
+- `session_name`: Session identifier - can be:
+  - Session name (e.g., "Qualifying", "Race")
+  - Session abbreviation (e.g., "Q", "R", "FP1")
+  - Session number (e.g., 1, 2, 3)
 
 **Returns:**
 - `Session` object ready to load data
+
+**Raises:**
+- `ValueError`: If the session identifier is invalid or doesn't exist for this event
 
 **Example:**
 ```python
 import tif1
 
-event = tif1.get_event(2025, "Monaco")
+event = tif1.get_event(2021, "Belgian Grand Prix")
+
+# Get by name
 qualifying = event.get_session("Qualifying")
 race = event.get_session("Race")
 
+# Get by abbreviation
+fp1 = event.get_session("FP1")
+
+# Get by number
+practice_1 = event.get_session(1)
+
 # Load data
-qualifying.load()
-print(f"Drivers: {qualifying.drivers}")
+race.load()
+print(f"Drivers: {race.drivers}")
+```
+
+#### `get_session_name(identifier)`
+
 ```python
+def get_session_name(identifier: int | str) -> str
+```
+
+Return the canonical session name for a session identifier.
+
+**Parameters:**
+- `identifier`: Session number, abbreviation, or partial name
+
+**Returns:**
+- Canonical session name
+
+**Raises:**
+- `ValueError`: If the identifier is invalid
+
+**Example:**
+```python
+import tif1
+
+event = tif1.get_event(2021, "Belgian Grand Prix")
+print(event.get_session_name("FP1"))  # "Practice 1"
+print(event.get_session_name(1))      # "Practice 1"
+print(event.get_session_name("Q"))    # "Qualifying"
+```
+
+#### `get_session_date(identifier, utc=False)`
+
+```python
+def get_session_date(identifier: int | str, utc: bool = False) -> pd.Timestamp
+```
+
+Return the date and time of a specific session.
+
+**Parameters:**
+- `identifier`: Session name, abbreviation, or number
+- `utc`: If `True`, return UTC timestamp. If `False`, return local time with timezone
+
+**Returns:**
+- Timestamp for the session
+
+**Raises:**
+- `ValueError`: If session doesn't exist or local timestamp unavailable
+
+**Example:**
+```python
+import tif1
+
+event = tif1.get_event(2021, "Belgian Grand Prix")
+race_time = event.get_session_date("Race", utc=True)
+print(f"Race time (UTC): {race_time}")
+```
+
+#### `get_race()`
+
+```python
+def get_race() -> Session
+```
+
+Return the race session (convenience method).
+
+#### `get_qualifying()`
+
+```python
+def get_qualifying() -> Session
+```
+
+Return the qualifying session (convenience method).
+
+#### `get_sprint()`
+
+```python
+def get_sprint() -> Session
+```
+
+Return the sprint session (convenience method).
+
+#### `get_sprint_shootout()`
+
+```python
+def get_sprint_shootout() -> Session
+```
+
+Return the sprint shootout session (convenience method).
+
+#### `get_sprint_qualifying()`
+
+```python
+def get_sprint_qualifying() -> Session
+```
+
+Return the sprint qualifying session (convenience method).
+
+#### `get_practice(number)`
+
+```python
+def get_practice(number: int) -> Session
+```
+
+Return the specified practice session.
+
+**Parameters:**
+- `number`: Practice session number (1, 2, or 3)
+
+**Example:**
+```python
+import tif1
+
+event = tif1.get_event(2021, "Belgian Grand Prix")
+fp1 = event.get_practice(1)
+fp2 = event.get_practice(2)
+```
+
+---
+
+## EventSchedule
+
+The `EventSchedule` class is a pandas DataFrame subclass containing all events for a season.
+
+### Properties
+
+<ResponseField name="year" type="int | None">
+  The season year.
+</ResponseField>
+
+### Methods
+
+#### `get_event_by_round(round_number)`
+
+```python
+def get_event_by_round(round_number: int) -> Event
+```
+
+Return an Event for a specific championship round.
+
+**Parameters:**
+- `round_number`: The round number (1-indexed)
+
+**Returns:**
+- `Event` object
+
+**Raises:**
+- `ValueError`: If the round number is invalid
+
+#### `get_event_by_name(name, strict_search=False)`
+
+```python
+def get_event_by_name(name: str, strict_search: bool = False) -> Event | None
+```
+
+Return an Event by name with optional fuzzy matching.
+
+**Parameters:**
+- `name`: Event name
+- `strict_search`: If `True`, requires exact match
+
+**Returns:**
+- `Event` object or `None` if not found
+
+#### `get_event(identifier, strict_search=False)`
+
+```python
+def get_event(identifier: int | str, strict_search: bool = False) -> Event | None
+```
+
+Return an Event by round number or name.
+
+**Parameters:**
+- `identifier`: Round number (int) or event name (str)
+- `strict_search`: If `True`, requires exact name match
+
+**Returns:**
+- `Event` object or `None` if not found
+
+**Example:**
+```python
+import tif1
+
+schedule = tif1.get_event_schedule(2021)
+
+# Get by round
+belgian_gp = schedule.get_event_by_round(12)
+
+# Get by name
+belgian_gp = schedule.get_event_by_name("Belgian Grand Prix")
+
+# Get by either
+belgian_gp = schedule.get_event(12)
+belgian_gp = schedule.get_event("Belgian")
+```
 
 ---
 
@@ -268,69 +550,74 @@ While `tif1` is flexible with session names, use these standard formats for cons
 ```python
 import tif1
 
-year = 2025
+year = 2021
 
-# Get all events
-events = tif1.get_events(year)
-print(f"Season {year} has {len(events)} events\n")
+# Get all events (returns EventSchedule DataFrame)
+schedule = tif1.get_events(year)
+print(f"Season {year} has {len(schedule)} events\n")
 
 # Get sessions for each event
-for event_name in events:
+for event_name in schedule['EventName']:
     sessions = tif1.get_sessions(year, event_name)
     print(f"{event_name}:")
     for session in sessions:
         print(f"  - {session}")
     print()
-```python
+```
 
 ### Work with event objects
 
 ```python
 import tif1
 
-# Get event by round
-event = tif1.get_event_by_round(2025, 6)
-print(f"Round 6: {event.name}")
-print(f"Location: {event.location}")
+# Get event by round (Belgian GP was round 12 in 2021)
+event = tif1.get_event_by_round(2021, 12)
+print(f"Round 12: {event['EventName']}")
+print(f"Location: {event['Location']}")
 
 # Get all sessions for this event
-sessions = tif1.get_sessions(event.year, event.name)
+sessions = tif1.get_sessions(event.year, event['EventName'])
 print(f"Sessions: {sessions}")
 
 # Load a specific session
 race = event.get_session("Race")
 race.load()
 print(f"Drivers: {race.drivers}")
-```python ### Fuzzy event matching
+``` ### Fuzzy event matching
 
 ```python
 import tif1
 
 # All of these work with fuzzy matching
-event1 = tif1.get_event(2025, "Monaco")
-event2 = tif1.get_event(2025, "monaco grand prix")
-event3 = tif1.get_event(2025, "MONACO GP")
+event1 = tif1.get_event(2021, "Belgian")
+event2 = tif1.get_event(2021, "belgian grand prix")
+event3 = tif1.get_event(2021, "BELGIAN GP")
 
 # All resolve to the same event
-assert event1.name == event2.name == event3.name
-```python
+assert event1['EventName'] == event2['EventName'] == event3['EventName']
+print(event1['EventName'])  # "Belgian Grand Prix"
+```
 
 ### Iterate through season
 
 ```python
 import tif1
 
-year = 2025
-events = tif1.get_events(year)
+year = 2021
+schedule = tif1.get_events(year)
 
-for i, event_name in enumerate(events, 1):
-    event = tif1.get_event_by_round(year, i)
+# Iterate through DataFrame rows
+for idx, row in schedule.iterrows():
+    round_num = row['RoundNumber']
+    event_name = row['EventName']
+    location = row['Location']
+    
     sessions = tif1.get_sessions(year, event_name)
-
-    print(f"Round {i}: {event.name}")
-    print(f"  Location: {event.location}")
+    
+    print(f"Round {round_num}: {event_name}")
+    print(f"  Location: {location}")
     print(f"  Sessions: {', '.join(sessions)}")
-```python
+```
 
 ---
 

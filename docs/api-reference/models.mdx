@@ -13,73 +13,202 @@ The models module provides object-oriented interfaces for working with F1 data. 
 
 ## Laps
 
-A collection of lap data, typically accessed via `session.laps` or `driver.laps`.
+A collection of lap data, typically accessed via `session.laps` or `driver.laps`. Inherits from pandas DataFrame with additional filtering methods.
 
 ### Properties
 
-<ResponseField name="data" type="DataFrame">
-  The underlying DataFrame containing all lap data.
+<ResponseField name="session" type="Session">
+  Reference to the parent session object.
 </ResponseField>
 
 ### Methods
 
-#### `pick_driver(driver_code)`
+#### `pick_driver(identifier)`
 ```python
-def pick_driver(driver_code: str) -> Laps
-```yaml
-Filter laps for a specific driver.
+def pick_driver(identifier: str | int | dict) -> Laps
+```
+Filter laps for a specific driver. Accepts driver code, number, or dict with driver info.
 
 **Example:**
 ```python
 laps = session.laps
 ver_laps = laps.pick_driver("VER")
-```python
+# Also works with driver number
+ver_laps = laps.pick_driver(1)
+```
 
-#### `pick_fastest()`
+#### `pick_drivers(identifiers)`
 ```python
-def pick_fastest() -> Lap
+def pick_drivers(identifiers: list) -> Laps
+```
+Filter laps for multiple drivers.
+
+**Example:**
 ```python
-Get the single fastest lap from the collection.
+top_three = laps.pick_drivers(["VER", "HAM", "LEC"])
+```
+
+#### `pick_fastest(only_by_time=False)`
+```python
+def pick_fastest(only_by_time: bool = False) -> Lap | None
+```
+Get the single fastest lap from the collection. Returns None if no valid laps found.
 
 **Example:**
 ```python
 fastest = session.laps.pick_fastest()
-print(f"Fastest lap: {fastest['LapTime']:.3f}s by {fastest['Driver']}")
-```python
+if fastest is not None:
+    print(f"Fastest lap: {fastest['LapTime']:.3f}s by {fastest['Driver']}")
+```
 
-#### `pick_compound(compound)`
+#### `pick_quicklaps(threshold=1.07)`
 ```python
-def pick_compound(compound: str) -> Laps
-```yaml
+def pick_quicklaps(threshold: float = 1.07) -> Laps
+```
+Filter laps within a percentage of the fastest lap time (default 107%).
+
+**Example:**
+```python
+# Get all laps within 107% of fastest
+quick_laps = laps.pick_quicklaps(threshold=1.07)
+```
+
+#### `pick_tyre(compound)` / `pick_compounds(compounds)`
+```python
+def pick_tyre(compound: str) -> Laps
+def pick_compounds(compounds: list[str]) -> Laps
+```
 Filter laps by tire compound.
 
 **Example:**
 ```python
-soft_laps = session.laps.pick_compound("SOFT")
+soft_laps = laps.pick_tyre("SOFT")
+# Multiple compounds
+slick_laps = laps.pick_compounds(["SOFT", "MEDIUM", "HARD"])
+```
+
+#### `pick_lap(lap_number)` / `pick_laps(laps)`
 ```python
+def pick_lap(lap_number: int) -> Laps
+def pick_laps(laps: int | list | slice) -> Laps
+```
+Filter by lap number(s). Supports integers, lists, and slices.
+
+**Example:**
+```python
+lap_10 = laps.pick_lap(10)
+# Multiple laps
+laps_10_to_20 = laps.pick_laps(slice(10, 20))
+# Or specific laps
+laps_list = laps.pick_laps([1, 5, 10, 15])
+```
+
+#### `pick_team(name)` / `pick_teams(names)`
+```python
+def pick_team(name: str) -> Laps
+def pick_teams(names: list[str]) -> Laps
+```
+Filter laps by team name.
+
+**Example:**
+```python
+rbr_laps = laps.pick_team("Red Bull Racing")
+```
+
+#### `pick_track_status(status, how="equals")`
+```python
+def pick_track_status(status: str, how: str = "equals") -> Laps
+```
+Filter by track status. Use `how="contains"` for partial matching.
+
+**Example:**
+```python
+# Yellow flag laps
+yellow_laps = laps.pick_track_status("4", how="contains")
+```
+
+#### `pick_wo_box()` / `pick_box_laps(which="both")`
+```python
+def pick_wo_box() -> Laps
+def pick_box_laps(which: str = "both") -> Laps
+```
+Filter laps by pit stop activity. `which` can be "in", "out", or "both".
+
+**Example:**
+```python
+# Laps without pit stops
+no_pit = laps.pick_wo_box()
+# Pit in laps only
+pit_in = laps.pick_box_laps(which="in")
+```
+
+#### `pick_not_deleted()` / `pick_accurate()`
+```python
+def pick_not_deleted() -> Laps
+def pick_accurate() -> Laps
+```
+Filter for valid laps (not deleted) or accurate laps only.
+
+**Example:**
+```python
+valid_laps = laps.pick_not_deleted().pick_accurate()
+```
+
+#### `get_telemetry()` / `telemetry`
+```python
+def get_telemetry() -> Telemetry
+@property
+def telemetry(self) -> Telemetry
+```
+Get telemetry data for all laps. Only works for single-driver laps. `get_telemetry()` includes driver-ahead channels.
+
+**Example:**
+```python
+ver_laps = laps.pick_driver("VER")
+tel = ver_laps.telemetry
+```
+
+#### `iterlaps(require=None)`
+```python
+def iterlaps(require: list[str] | None = None) -> Generator
+```
+Iterate over laps with optional required columns. Skips laps with null values in required columns.
+
+**Example:**
+```python
+for lap_result in laps.iterlaps(require=["LapTime", "Driver"]):
+    print(f"Lap {lap_result.lap['LapNumber']}: {lap_result.lap['LapTime']}")
+```
+
+#### `split_qualifying_sessions()`
+```python
+def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
+```
+Returns tuple of (Q1, Q2, Q3) laps. Note: tif1 doesn't split by session, returns copies for compatibility.
+
+**Example:**
+```python
+q1, q2, q3 = laps.split_qualifying_sessions()
+```
 
 ---
 
 ## Lap
 
-Represents a single lap with access to telemetry data.
+Represents a single lap with access to telemetry data. Inherits from pandas Series.
 
 ### Properties
 
 <ResponseField name="lap_number" type="int">
-  The lap number.
+  The lap number (from LapNumber column).
 </ResponseField>
 
 <ResponseField name="driver" type="str">
-  The 3-letter driver code.
+  The 3-letter driver code (from Driver column).
 </ResponseField>
 
-<ResponseField name="lap_time" type="float">
-  The lap time in seconds.
-</ResponseField>
-
-<ResponseField name="telemetry" type="DataFrame">
-  High-frequency telemetry data for this lap. Loaded lazily on first access.
+<ResponseField name="telemetry" type="Telemetry">
+  High-frequency telemetry data for this lap. Loaded lazily on first access. Returns empty Telemetry if not found.
 </ResponseField>
 
 <ResponseField name="session" type="Session">
@@ -90,37 +219,81 @@ Represents a single lap with access to telemetry data.
 
 #### `get_telemetry()`
 ```python
-def get_telemetry() -> DataFrame
-```python
-Explicitly load telemetry data. Same as accessing the `telemetry` property.
+def get_telemetry() -> Telemetry
+```
+Explicitly load telemetry data with driver-ahead channels. Same as accessing the `telemetry` property but includes additional channels.
 
 **Example:**
 ```python
 lap = driver.get_lap(19)
 tel = lap.get_telemetry()
-print(tel[["Time", "Speed", "Throttle"]].head())
-```python ---
+print(tel[["Time", "Speed", "Throttle", "DriverAhead"]].head())
+```
+
+#### `get_car_data()` / `get_pos_data()`
+```python
+def get_car_data(**kwargs) -> Telemetry
+def get_pos_data(**kwargs) -> Telemetry
+```
+Aliases for getting telemetry data (FastF1 compatibility).
+
+**Example:**
+```python
+car_data = lap.get_car_data()
+```
+
+#### `get_weather_data()`
+```python
+def get_weather_data() -> Series
+```
+Get weather data for this lap (returns empty Series).
+
+---
 
 ## Driver
 
-Represents a driver's performance within a session.
+Represents a driver's performance within a session. Inherits from pandas Series with driver metadata.
 
 ### Properties
 
 <ResponseField name="driver" type="str">
-  The 3-letter driver code (e.g., "VER").
+  The 3-letter driver code (e.g., "VER"). Set as attribute, not in Series data.
 </ResponseField>
 
-<ResponseField name="driver_number" type="str">
-  The car number (e.g., "33").
+<ResponseField name="DriverNumber" type="str">
+  The car number (e.g., "1", "33"). Available in Series data.
 </ResponseField>
 
-<ResponseField name="team" type="str">
-  Team name.
+<ResponseField name="Abbreviation" type="str">
+  Driver abbreviation (same as driver code). Available in Series data.
 </ResponseField>
 
-<ResponseField name="laps" type="DataFrame">
-  All laps completed by this driver. Loaded lazily.
+<ResponseField name="TeamName" type="str">
+  Full team name. Available in Series data.
+</ResponseField>
+
+<ResponseField name="TeamColor" type="str">
+  Team color hex code. Available in Series data.
+</ResponseField>
+
+<ResponseField name="FirstName" type="str">
+  Driver's first name. Available in Series data.
+</ResponseField>
+
+<ResponseField name="LastName" type="str">
+  Driver's last name. Available in Series data.
+</ResponseField>
+
+<ResponseField name="FullName" type="str">
+  Driver's full name. Available in Series data.
+</ResponseField>
+
+<ResponseField name="HeadshotUrl" type="str">
+  URL to driver headshot image. Available in Series data.
+</ResponseField>
+
+<ResponseField name="laps" type="Laps | DataFrame">
+  All laps completed by this driver. Loaded lazily. Returns Laps object (pandas) or DataFrame (polars).
 </ResponseField>
 
 <ResponseField name="session" type="Session">
@@ -132,71 +305,76 @@ Represents a driver's performance within a session.
 #### `get_lap(lap_number)`
 ```python
 def get_lap(lap_number: int) -> Lap
-```yaml
+```
 Get a specific lap by number.
 
 **Parameters:**
-- `lap_number`: The lap number to retrieve.
+- `lap_number`: The lap number to retrieve (must be positive integer).
 
 **Returns:**
 - `Lap` object for the specified lap.
 
 **Raises:**
-- `LapNotFoundError`: If the lap doesn't exist.
+- `LapNotFoundError`: If the lap doesn't exist for this driver.
+- `ValueError`: If lap_number is invalid.
 
 **Example:**
 ```python
 ver = session.get_driver("VER")
 lap_19 = ver.get_lap(19)
-```python
+print(f"Lap {lap_19.lap_number}: {lap_19['LapTime']}")
+```
 
 #### `get_fastest_lap()`
 ```python
 def get_fastest_lap() -> DataFrame
-```python
-Get this driver's fastest lap as a single-row DataFrame.
+```
+Get this driver's fastest lap as a single-row DataFrame. Returns empty DataFrame if no valid laps found.
 
 **Example:**
 ```python
 fastest = ver.get_fastest_lap()
-print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
-```python
+if not fastest.empty:
+    print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+```
 
-#### `get_fastest_lap_tel(ultra_cold=None)`
+#### `get_fastest_lap_tel()`
 ```python
-def get_fastest_lap_tel(ultra_cold: bool | None = None) -> DataFrame
-```python
-Get telemetry for this driver's fastest lap.
-
-**Parameters:**
-- `ultra_cold`: Enable ultra-low latency mode. If None, uses global config.
+def get_fastest_lap_tel() -> DataFrame
+```
+Get telemetry for this driver's fastest lap. Returns empty DataFrame if not found.
 
 **Returns:**
-- DataFrame with telemetry data.
+- Telemetry DataFrame with columns: Time, Distance, Speed, RPM, nGear, Throttle, Brake, DRS, X, Y, Z, Driver, LapNumber.
 
 **Example:**
 ```python
 fastest_tel = ver.get_fastest_lap_tel()
-print(fastest_tel[["Distance", "Speed", "Throttle"]].head())
-```python
+if not fastest_tel.empty:
+    print(f"Max speed: {fastest_tel['Speed'].max()} km/h")
+```
 
 ---
 
 ## Telemetry
 
-High-frequency data recorded throughout a lap.
+High-frequency data recorded throughout a lap. Inherits from pandas DataFrame with additional slicing and analysis methods.
 
 ### Properties
 
-<ResponseField name="data" type="DataFrame">
-  The underlying DataFrame with telemetry samples.
+<ResponseField name="session" type="Session">
+  Reference to the parent session.
+</ResponseField>
+
+<ResponseField name="driver" type="str">
+  Driver code for this telemetry data.
 </ResponseField>
 
 ### Available Columns
 
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
-| `Time` | float | Seconds | Time from lap start |
+| `Time` | timedelta | Seconds | Time from lap start (timedelta64[ns]) |
 | `Distance` | float | Meters | Distance from lap start |
 | `Speed` | float | km/h | Current speed |
 | `RPM` | int | RPM | Engine revolutions per minute |
@@ -205,12 +383,134 @@ High-frequency data recorded throughout a lap.
 | `Brake` | bool | - | Brake pedal pressed |
 | `DRS` | int | - | DRS status (0=Off, 10+=On) |
 | `X`, `Y`, `Z` | float | Meters | 3D position coordinates |
+| `Driver` | str | - | Driver code |
+| `LapNumber` | int | - | Lap number |
 
 ### Methods
 
-Telemetry objects support standard DataFrame operations since they wrap a DataFrame.
+#### `slice_by_time(start_time, end_time, pad=0, pad_side="both", interpolate_edges=False)`
+```python
+def slice_by_time(start_time, end_time, pad: int = 0, 
+                  pad_side: str = "both", 
+                  interpolate_edges: bool = False) -> Telemetry
+```
+Slice telemetry by time window.
 
 **Example:**
+```python
+# Get first 10 seconds
+first_10s = tel.slice_by_time(0, 10)
+```
+
+#### `slice_by_lap(ref_laps, pad=0, pad_side="both", interpolate_edges=False)`
+```python
+def slice_by_lap(ref_laps, pad: int = 0, 
+                 pad_side: str = "both", 
+                 interpolate_edges: bool = False) -> Telemetry
+```
+Slice telemetry by lap reference (Lap or Laps object).
+
+**Example:**
+```python
+lap = driver.get_lap(19)
+tel = session_telemetry.slice_by_lap(lap)
+```
+
+#### `slice_by_mask(mask, pad=0, pad_side="both")`
+```python
+def slice_by_mask(mask, pad: int = 0, pad_side: str = "both") -> Telemetry
+```
+Slice telemetry using a boolean mask.
+
+**Example:**
+```python
+# Get high-speed sections
+high_speed_mask = tel["Speed"] > 300
+high_speed_tel = tel.slice_by_mask(high_speed_mask)
+```
+
+#### `add_distance()` / `integrate_distance()`
+```python
+def add_distance() -> Telemetry
+def integrate_distance() -> Series
+```
+Calculate distance from speed and time. `add_distance()` adds Distance column, `integrate_distance()` returns Series.
+
+**Example:**
+```python
+tel_with_dist = tel.add_distance()
+```
+
+#### `add_relative_distance()`
+```python
+def add_relative_distance() -> Telemetry
+```
+Add RelativeDistance column (0-1 normalized distance).
+
+**Example:**
+```python
+tel_rel = tel.add_relative_distance()
+```
+
+#### `add_driver_ahead()` / `calculate_driver_ahead()`
+```python
+def add_driver_ahead() -> Telemetry
+def calculate_driver_ahead() -> tuple[Series, Series]
+```
+Add DriverAhead and DistanceToDriverAhead columns.
+
+**Example:**
+```python
+tel_with_ahead = tel.add_driver_ahead()
+```
+
+#### `add_track_status()`
+```python
+def add_track_status() -> Telemetry
+```
+Add TrackStatus column (defaults to "1" if not present).
+
+**Example:**
+```python
+tel_with_status = tel.add_track_status()
+```
+
+#### `fill_missing()`
+```python
+def fill_missing() -> Telemetry
+```
+Interpolate missing values in numeric columns.
+
+**Example:**
+```python
+tel_filled = tel.fill_missing()
+```
+
+#### `merge_channels(other, **kwargs)`
+```python
+def merge_channels(other, **kwargs) -> Telemetry
+```
+Merge telemetry from another source using time-based alignment.
+
+**Example:**
+```python
+merged = tel1.merge_channels(tel2)
+```
+
+#### `resample_channels(rule="1S", **kwargs)`
+```python
+def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
+```
+Resample telemetry to a different frequency.
+
+**Example:**
+```python
+# Resample to 1 second intervals
+resampled = tel.resample_channels(rule="1S")
+```
+
+### Basic Usage
+
 ```python
 lap = driver.get_lap(19)
 tel = lap.telemetry
@@ -225,18 +525,18 @@ max_speed = tel["Speed"].max()
 import matplotlib.pyplot as plt
 plt.plot(tel["Distance"], tel["Speed"])
 plt.show()
-```python
+```
 
 ---
 
 ## SessionResults
 
-Contains race results and final positions.
+Contains race results and final positions. Inherits from pandas DataFrame.
 
 ### Properties
 
-<ResponseField name="results" type="DataFrame">
-  Final classification with positions, points, and status.
+<ResponseField name="session" type="Session">
+  Reference to the parent session.
 </ResponseField>
 
 ### Available Columns
@@ -250,11 +550,17 @@ Contains race results and final positions.
 | `Status` | Finish status (Finished, +1 Lap, Retired, etc.) |
 | `Time` | Total race time or gap to winner |
 
+**Example:**
+```python
+results = session.results
+print(results[["Position", "Driver", "Team", "Points"]])
+```
+
 ---
 
 ## CircuitInfo
 
-Information about the circuit.
+Information about the circuit. Simple dataclass-like object.
 
 ### Properties
 
@@ -270,113 +576,191 @@ Information about the circuit.
   Track length in meters.
 </ResponseField>
 
+### Methods
+
+#### `add_marker_distance(reference_lap)`
+```python
+def add_marker_distance(reference_lap: Lap) -> None
+```
+Add distance markers from a reference lap.
+
+**Example:**
+```python
+circuit = session.get_circuit_info()
+fastest_lap = session.laps.pick_fastest()
+circuit.add_marker_distance(fastest_lap)
+```
+
 ---
 
 ## DriverResult
 
-Individual driver's race result.
+Individual driver's race result. Inherits from pandas Series.
 
 ### Properties
 
-<ResponseField name="position" type="int">
-  Final position.
+<ResponseField name="session" type="Session">
+  Reference to the parent session.
 </ResponseField>
 
-<ResponseField name="driver" type="str">
-  Driver code.
+<ResponseField name="Position" type="int">
+  Final position (available in Series data).
 </ResponseField>
 
-<ResponseField name="points" type="int">
-  Points earned.
+<ResponseField name="Driver" type="str">
+  Driver code (available in Series data).
 </ResponseField>
 
-<ResponseField name="status" type="str">
-  Finish status.
+<ResponseField name="Points" type="int">
+  Points earned (available in Series data).
 </ResponseField>
+
+<ResponseField name="Status" type="str">
+  Finish status (available in Series data).
+</ResponseField>
+
+<ResponseField name="dnf" type="bool">
+  Whether the driver did not finish (computed property).
+</ResponseField>
+
+**Example:**
+```python
+result = session.results.iloc[0]  # Winner
+if isinstance(result, DriverResult):
+    print(f"Winner: {result['Driver']}")
+    print(f"DNF: {result.dnf}")
+```
 
 ---
 
 ## Usage Examples
 
-### Working with laps collection
+All examples use the 2021 Belgian Grand Prix Race session.
+
+### Working with Laps collection
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 
-# Filter by driver
-ver_laps = laps[laps["Driver"] == "VER"]
+# Filter by driver using pick_driver
+ver_laps = laps.pick_driver("VER")
+
+# Or use DataFrame filtering
+ham_laps = laps[laps["Driver"] == "HAM"]
 
 # Get fastest lap
-fastest = laps.nsmallest(1, "LapTime")
+fastest = laps.pick_fastest()
+if fastest is not None:
+    print(f"Fastest: {fastest['LapTime']} by {fastest['Driver']}")
 
 # Filter by compound
-soft_laps = laps[laps["Compound"] == "SOFT"]
+soft_laps = laps.pick_tyre("SOFT")
 
-# Get laps in a specific range
-mid_race = laps[(laps["LapNumber"] >= 20) & (laps["LapNumber"] <= 40)]
-```python ### Working with driver objects
+# Get laps in a specific range using pick_laps
+lap_1 = laps.pick_lap(1)
+laps_1_to_3 = laps.pick_laps(slice(1, 3))
+
+# Get quick laps (within 107% of fastest)
+quick_laps = laps.pick_quicklaps(threshold=1.07)
+
+# Filter by team
+rbr_laps = laps.pick_team("Red Bull Racing")
+
+# Iterate over laps
+for lap_result in laps.pick_driver("VER").iterlaps():
+    print(f"Lap {lap_result.lap['LapNumber']}: {lap_result.lap['LapTime']}")
+```
+
+### Working with Driver objects
 
 ```python
 # Get driver
 ver = session.get_driver("VER")
 
-# Access driver info
-print(f"Driver: {ver.driver}")
-print(f"Team: {ver.team}")
-print(f"Number: {ver.driver_number}")
+# Access driver info (from Series data)
+print(f"Driver: {ver.driver}")  # Attribute
+print(f"Full Name: {ver['FullName']}")  # Series data
+print(f"Team: {ver['TeamName']}")  # Series data
+print(f"Number: {ver['DriverNumber']}")  # Series data
 
 # Get all laps
 all_laps = ver.laps
 
 # Get specific lap
-lap_19 = ver.get_lap(19)
+lap_1 = ver.get_lap(1)
 
 # Get fastest lap
 fastest = ver.get_fastest_lap()
-fastest_tel = ver.get_fastest_lap_tel()
-```python
+if not fastest.empty:
+    print(f"Fastest: {fastest['LapTime'].iloc[0]}")
 
-### Working with Lap Objects
+# Get fastest lap telemetry
+fastest_tel = ver.get_fastest_lap_tel()
+if not fastest_tel.empty:
+    print(f"Max speed: {fastest_tel['Speed'].max()} km/h")
+```
+
+### Working with Lap objects
 
 ```python
 # Get a specific lap
-lap = ver.get_lap(19)
+lap = ver.get_lap(1)
 
 # Access lap properties
 print(f"Lap {lap.lap_number}")
-print(f"Time: {lap.lap_time:.3f}s")
 print(f"Driver: {lap.driver}")
+print(f"Lap time: {lap['LapTime']}")  # Access Series data
 
-# Get telemetry
+# Get telemetry (lazy loaded)
 tel = lap.telemetry
 
+# Get telemetry with driver-ahead channels
+tel_with_ahead = lap.get_telemetry()
+
 # Analyze telemetry
-max_speed = tel["Speed"].max()
-avg_throttle = tel["Throttle"].mean()
-```python
+if not tel.empty:
+    max_speed = tel["Speed"].max()
+    avg_throttle = tel["Throttle"].mean()
+    print(f"Max speed: {max_speed} km/h")
+    print(f"Avg throttle: {avg_throttle}%")
+```
 
 ### Working with Telemetry
 
 ```python
 # Get telemetry
+lap = ver.get_lap(1)
 tel = lap.telemetry
 
 # Basic analysis
-print(f"Samples: {len(tel)}")
-print(f"Max speed: {tel['Speed'].max()} km/h")
-print(f"Max RPM: {tel['RPM'].max()}")
+if not tel.empty:
+    print(f"Samples: {len(tel)}")
+    print(f"Max speed: {tel['Speed'].max()} km/h")
+    print(f"Max RPM: {tel['RPM'].max()}")
 
-# Find braking zones
-braking = tel[tel["Brake"] == True]
-print(f"Braking points: {len(braking)}")
+    # Find braking zones
+    braking = tel[tel["Brake"] == True]
+    print(f"Braking points: {len(braking)}")
 
-# DRS usage
-drs_active = tel[tel["DRS"] >= 10]
-print(f"DRS active: {len(drs_active)} samples")
-```python
+    # DRS usage
+    drs_active = tel[tel["DRS"] >= 10]
+    print(f"DRS active: {len(drs_active)} samples")
+
+    # Slice by time
+    first_10s = tel.slice_by_time(0, 10)
+
+    # Add distance if not present
+    tel_with_dist = tel.add_distance()
+
+    # Add driver ahead info
+    tel_with_ahead = tel.add_driver_ahead()
+
+    # Resample to 1 second intervals
+    resampled = tel.resample_channels(rule="1S")
+```
 
 ---
 
@@ -385,18 +769,22 @@ print(f"DRS active: {len(drs_active)} samples")
 All models support type hints for better IDE integration.
 
 ```python
-from tif1 import Session, Driver, Lap
+from tif1 import Session, Driver, Lap, Laps, Telemetry
 import tif1
 
-session: Session = tif1.get_session(2025, "Monaco", "Race")
+session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 driver: Driver = session.get_driver("VER")
-lap: Lap = driver.get_lap(19)
+lap: Lap = driver.get_lap(1)
 
-# DataFrame types
+# Model types
+laps: Laps = session.laps  # Laps inherits from DataFrame
+telemetry: Telemetry = lap.telemetry  # Telemetry inherits from DataFrame
+
+# DataFrame types (for polars)
 from pandas import DataFrame
-laps: DataFrame = session.laps
-telemetry: DataFrame = lap.telemetry
-```bash
+laps_df: DataFrame = session.laps
+telemetry_df: DataFrame = lap.telemetry
+```
 
 ---
 

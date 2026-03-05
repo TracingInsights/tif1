@@ -22,7 +22,7 @@ The lap operations module provides helper functions for working with lap data, i
 Lap operations include:
 - Coercing lap numbers and times to standard formats
 - Extracting lap numbers from DataFrames
-- Getting lap columns with fallback logic
+- Getting lap column names with fallback logic
 - Filtering and transforming lap data
 
 ---
@@ -34,17 +34,17 @@ Lap operations include:
 Convert various lap number formats to integer.
 
 ```python
-def _coerce_lap_number(lap: int | str | float) -> int
-```python
+def _coerce_lap_number(lap_value: Any) -> int
+```
 
 **Parameters:**
-- `lap`: Lap number in various formats (int, str, float)
+- `lap_value`: Lap number in various formats (int, str, float)
 
 **Returns:**
 - Integer lap number
 
 **Raises:**
-- `ValueError`: If lap cannot be converted to integer
+- `ValueError`: If lap cannot be converted to integer or is None
 
 **Example:**
 ```python
@@ -64,7 +64,8 @@ try:
     lap = _coerce_lap_number("invalid")
 except ValueError as e:
     print(f"Error: {e}")
-```python
+    # Error: Invalid lap number: invalid
+```
 
 ---
 
@@ -73,33 +74,34 @@ except ValueError as e:
 Extract all lap numbers from a DataFrame.
 
 ```python
-def _extract_lap_numbers(laps_df: DataFrame) -> list[int]
-```python
+def _extract_lap_numbers(laps, lib: str) -> set[int]
+```
 
 **Parameters:**
-- `laps_df`: DataFrame with lap data containing `LapNumber` column
+- `laps`: DataFrame with lap data containing `LapNumber` or `lap` column
+- `lib`: library ("pandas" or "polars")
 
 **Returns:**
-- Sorted list of unique lap numbers
+- Set of unique lap numbers (for fast membership checks)
 
 **Example:**
 ```python
 from tif1.lap_ops import _extract_lap_numbers
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
-driver = session.get_driver("VER")
-laps = driver.laps
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+laps = session.laps
 
 # Get all lap numbers
-lap_numbers = _extract_lap_numbers(laps)
-print(f"Laps: {lap_numbers}")
-# [1, 2, 3, 4, ..., 78]
+lap_numbers = _extract_lap_numbers(laps, session.lib)
+print(f"Total laps: {len(lap_numbers)}")
+# Total laps: 44
 
 # Check if specific lap exists
 if 19 in lap_numbers:
     print("Lap 19 exists")
-```python
+```
 
 ---
 
@@ -107,42 +109,39 @@ if 19 in lap_numbers:
 
 ### `_coerce_lap_time`
 
-Convert various lap time formats to timedelta.
+Convert lap time to float seconds and reject NaN values.
 
 ```python
-def _coerce_lap_time(time: str | float | timedelta) -> timedelta
-```python
+def _coerce_lap_time(lap_time_value: Any) -> float
+```
 
 **Parameters:**
-- `time`: Lap time in various formats (string, float seconds, timedelta)
+- `lap_time_value`: Lap time in various formats (float seconds, string, etc.)
 
 **Returns:**
-- `timedelta` object representing the lap time
+- Float representing lap time in seconds
+
+**Raises:**
+- `ValueError`: If lap time cannot be converted or is None/NaN
 
 **Example:**
 ```python
 from tif1.lap_ops import _coerce_lap_time
-from datetime import timedelta
 
 # From seconds (float)
-lap_time = _coerce_lap_time(83.456)
-# timedelta(seconds=83.456)
+lap_time = _coerce_lap_time(83.456)  # 83.456
 
-# From string (MM:SS.mmm)
-lap_time = _coerce_lap_time("1:23.456")
-# timedelta(minutes=1, seconds=23.456)
+# From string representation
+lap_time = _coerce_lap_time("83.456")  # 83.456
 
-# From string (HH:MM:SS.mmm)
-lap_time = _coerce_lap_time("00:01:23.456")
-# timedelta(minutes=1, seconds=23.456)
-
-# From timedelta (passthrough)
-lap_time = _coerce_lap_time(timedelta(seconds=83.456))
-# timedelta(seconds=83.456)
-
-# Convert to seconds
-seconds = lap_time.total_seconds()  # 83.456
-```python
+# Invalid (NaN)
+import math
+try:
+    lap_time = _coerce_lap_time(math.nan)
+except ValueError as e:
+    print(f"Error: {e}")
+    # Error: Invalid lap time: nan
+```
 
 ---
 
@@ -150,48 +149,36 @@ seconds = lap_time.total_seconds()  # 83.456
 
 ### `_get_lap_column`
 
-Get a column from lap DataFrame with fallback logic.
+Get lap number column name with fallback logic.
 
 ```python
-def _get_lap_column(
-    laps_df: DataFrame,
-    column: str,
-    fallback: str | None = None
-) -> Series
-```python
+def _get_lap_column(df, lib: str) -> str
+```
 
 **Parameters:**
-- `laps_df`: DataFrame with lap data
-- `column`: Primary column name to retrieve
-- `fallback`: Optional fallback column name if primary doesn't exist
+- `df`: DataFrame with lap data
+- `lib`: library ("pandas" or "polars")
 
 **Returns:**
-- Series with column data
-
-**Raises:**
-- `KeyError`: If neither primary nor fallback column exists
+- Column name string ("LapNumber" or "lap")
 
 **Example:**
 ```python
 from tif1.lap_ops import _get_lap_column
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 laps = session.laps
 
-# Get lap times
-lap_times = _get_lap_column(laps, "LapTime")
+# Get the lap number column name
+lap_col = _get_lap_column(laps, session.lib)
+print(f"Lap column: {lap_col}")
+# Lap column: LapNumber
 
-# Get with fallback
-# Try "Sector1Time", fall back to "S1Time" if not found
-sector1 = _get_lap_column(laps, "Sector1Time", fallback="S1Time")
-
-# Handle missing column
-try:
-    invalid = _get_lap_column(laps, "NonExistentColumn")
-except KeyError as e:
-    print(f"Column not found: {e}")
-```python ---
+# Use it to access lap numbers
+lap_numbers = laps[lap_col]
+```---
 
 ## Filtering Laps
 
@@ -200,23 +187,26 @@ except KeyError as e:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
-driver = session.get_driver("VER")
-laps = driver.laps
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+# Get a specific driver
+laps = session.laps
+ver_laps = laps[laps["Driver"] == "VER"]
 
 # Single lap
-lap_19 = laps[laps["LapNumber"] == 19]
+lap_19 = ver_laps[ver_laps["LapNumber"] == 19]
 
 # Range of laps
-mid_race = laps[(laps["LapNumber"] >= 20) & (laps["LapNumber"] <= 40)]
+mid_race = ver_laps[(ver_laps["LapNumber"] >= 20) & (ver_laps["LapNumber"] <= 40)]
 
 # First 10 laps
-first_10 = laps[laps["LapNumber"] <= 10]
+first_10 = ver_laps[ver_laps["LapNumber"] <= 10]
 
 # Last 10 laps
-max_lap = laps["LapNumber"].max()
-last_10 = laps[laps["LapNumber"] > max_lap - 10]
-```python
+max_lap = ver_laps["LapNumber"].max()
+last_10 = ver_laps[ver_laps["LapNumber"] > max_lap - 10]
+```
 
 ---
 
@@ -225,11 +215,12 @@ last_10 = laps[laps["LapNumber"] > max_lap - 10]
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session.load()
 laps = session.laps
 
-# Fastest laps (under 1:12)
-fast_laps = laps[laps["LapTime"] < 72.0]
+# Fastest laps (under 1:45)
+fast_laps = laps[laps["LapTime"] < 105.0]
 
 # Laps within 107% of fastest
 fastest_time = laps["LapTime"].min()
@@ -237,7 +228,7 @@ within_107 = laps[laps["LapTime"] <= fastest_time * 1.07]
 
 # Personal best laps
 pb_laps = laps[laps["IsPersonalBest"] == True]
-```python
+```
 
 ---
 
@@ -246,7 +237,8 @@ pb_laps = laps[laps["IsPersonalBest"] == True]
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 laps = session.laps
 
 # Soft tire laps
@@ -257,7 +249,7 @@ race_laps = laps[laps["Compound"].isin(["MEDIUM", "HARD"])]
 
 # Fresh tire laps
 fresh_laps = laps[laps["FreshTyre"] == True]
-```python
+```
 
 ---
 
@@ -266,7 +258,8 @@ fresh_laps = laps[laps["FreshTyre"] == True]
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 laps = session.laps
 
 # Green flag laps only
@@ -277,7 +270,7 @@ clean_laps = laps[laps["TrackStatus"] != "2"]
 
 # Safety car laps
 sc_laps = laps[laps["TrackStatus"] == "4"]
-```python
+```
 
 ---
 
@@ -286,21 +279,24 @@ sc_laps = laps[laps["TrackStatus"] == "4"]
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
-driver = session.get_driver("VER")
-laps = driver.laps
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+laps = session.laps
+
+# Filter for a specific driver
+ver_laps = laps[laps["Driver"] == "VER"]
 
 # First stint
-stint_1 = laps[laps["Stint"] == 1]
+stint_1 = ver_laps[ver_laps["Stint"] == 1]
 
 # Laps 5-10 of each stint
-for stint_num in laps["Stint"].unique():
-    stint_laps = laps[laps["Stint"] == stint_num]
+for stint_num in ver_laps["Stint"].unique():
+    stint_laps = ver_laps[ver_laps["Stint"] == stint_num]
     stint_laps_5_10 = stint_laps[
         (stint_laps["TyreLife"] >= 5) & (stint_laps["TyreLife"] <= 10)
     ]
     print(f"Stint {stint_num}: {len(stint_laps_5_10)} laps")
-```python
+```
 
 ---
 
@@ -312,7 +308,8 @@ for stint_num in laps["Stint"].unique():
 import tif1
 import pandas as pd
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session.load()
 laps = session.laps
 
 # Convert to timedelta
@@ -324,7 +321,7 @@ laps["LapTimeStr"] = laps["LapTime"].apply(
 )
 
 # Example: 83.456 → "1:23.456"
-```python
+```
 
 ---
 
@@ -333,20 +330,23 @@ laps["LapTimeStr"] = laps["LapTime"].apply(
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
-driver = session.get_driver("VER")
-laps = driver.laps
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session.load()
+laps = session.laps
+
+# Filter for a specific driver
+ver_laps = laps[laps["Driver"] == "VER"].copy()
 
 # Delta to fastest lap
-fastest = laps["LapTime"].min()
-laps["DeltaToFastest"] = laps["LapTime"] - fastest
+fastest = ver_laps["LapTime"].min()
+ver_laps["DeltaToFastest"] = ver_laps["LapTime"] - fastest
 
 # Delta to previous lap
-laps["DeltaToPrevious"] = laps["LapTime"].diff()
+ver_laps["DeltaToPrevious"] = ver_laps["LapTime"].diff()
 
 # Cumulative time
-laps["CumulativeTime"] = laps["LapTime"].cumsum()
-```python
+ver_laps["CumulativeTime"] = ver_laps["LapTime"].cumsum()
+```
 
 ---
 
@@ -355,22 +355,25 @@ laps["CumulativeTime"] = laps["LapTime"].cumsum()
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
-driver = session.get_driver("VER")
-laps = driver.laps
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+laps = session.laps
+
+# Filter for a specific driver
+ver_laps = laps[laps["Driver"] == "VER"]
 
 # Average lap time per stint
-stint_avg = laps.groupby("Stint")["LapTime"].mean()
+stint_avg = ver_laps.groupby("Stint")["LapTime"].mean()
 
 # Fastest lap per stint
-stint_fastest = laps.groupby("Stint")["LapTime"].min()
+stint_fastest = ver_laps.groupby("Stint")["LapTime"].min()
 
 # Stint length
-stint_length = laps.groupby("Stint").size()
+stint_length = ver_laps.groupby("Stint").size()
 
 # Compound used per stint
-stint_compound = laps.groupby("Stint")["Compound"].first()
-```python ---
+stint_compound = ver_laps.groupby("Stint")["Compound"].first()
+``` ---
 
 ## Complete Examples
 
@@ -381,14 +384,14 @@ import tif1
 
 def find_optimal_lap(session, driver_code):
     """Find the optimal lap (fastest on fresh tires under green flag)."""
-    driver = session.get_driver(driver_code)
-    laps = driver.laps
+    laps = session.laps
+    driver_laps = laps[laps["Driver"] == driver_code]
 
     # Filter for optimal conditions
-    optimal_laps = laps[
-        (laps["TrackStatus"] == "1") &  # Green flag
-        (laps["FreshTyre"] == True) &   # Fresh tires
-        (laps["Deleted"] == False)      # Not deleted
+    optimal_laps = driver_laps[
+        (driver_laps["TrackStatus"] == "1") &  # Green flag
+        (driver_laps["FreshTyre"] == True) &   # Fresh tires
+        (driver_laps["Deleted"] == False)      # Not deleted
     ]
 
     if len(optimal_laps) == 0:
@@ -398,33 +401,35 @@ def find_optimal_lap(session, driver_code):
     fastest_idx = optimal_laps["LapTime"].idxmin()
     return optimal_laps.loc[fastest_idx]
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session.load()
 optimal = find_optimal_lap(session, "VER")
 
 if optimal is not None:
     print(f"Optimal lap: {optimal['LapNumber']}")
     print(f"Time: {optimal['LapTime']:.3f}s")
     print(f"Compound: {optimal['Compound']}")
-```python
+```
 
 ---
 
-### Analyze tire degradation
+### Analyze Tire Degradation
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
+import numpy as np
 
 def analyze_tire_deg(session, driver_code, stint_num):
     """Analyze tire degradation for a specific stint."""
-    driver = session.get_driver(driver_code)
-    laps = driver.laps
+    laps = session.laps
+    driver_laps = laps[laps["Driver"] == driver_code]
 
     # Filter for stint
-    stint_laps = laps[
-        (laps["Stint"] == stint_num) &
-        (laps["TrackStatus"] == "1") &  # Green flag only
-        (laps["Deleted"] == False)
+    stint_laps = driver_laps[
+        (driver_laps["Stint"] == stint_num) &
+        (driver_laps["TrackStatus"] == "1") &  # Green flag only
+        (driver_laps["Deleted"] == False)
     ]
 
     if len(stint_laps) == 0:
@@ -435,8 +440,7 @@ def analyze_tire_deg(session, driver_code, stint_num):
     lap_times = stint_laps["LapTime"].values
 
     # Linear fit
-    from numpy import polyfit
-    slope, intercept = polyfit(tire_life, lap_times, 1)
+    slope, intercept = np.polyfit(tire_life, lap_times, 1)
 
     print(f"Degradation: {slope:.4f}s per lap")
     print(f"Compound: {stint_laps['Compound'].iloc[0]}")
@@ -454,9 +458,10 @@ def analyze_tire_deg(session, driver_code, stint_num):
 
     return slope
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 deg = analyze_tire_deg(session, "VER", 1)
-```python
+```
 
 ---
 
@@ -467,11 +472,10 @@ import tif1
 
 def compare_drivers(session, driver1, driver2):
     """Compare lap times between two drivers."""
-    d1 = session.get_driver(driver1)
-    d2 = session.get_driver(driver2)
-
-    laps1 = d1.laps
-    laps2 = d2.laps
+    laps = session.laps
+    
+    laps1 = laps[laps["Driver"] == driver1]
+    laps2 = laps[laps["Driver"] == driver2]
 
     # Get common lap numbers
     common_laps = set(laps1["LapNumber"]) & set(laps2["LapNumber"])
@@ -493,9 +497,10 @@ def compare_drivers(session, driver1, driver2):
 
     return deltas
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 deltas = compare_drivers(session, "VER", "HAM")
-```yaml
+```
 
 ---
 
@@ -510,7 +515,7 @@ fastest = clean_laps["LapTime"].min()
 
 # Less efficient: Operate on full dataset
 fastest = laps[laps["Deleted"] == False]["LapTime"].min()
-```python
+```
 
 2. **Use vectorized operations**: Avoid loops when possible.
 
@@ -521,7 +526,7 @@ laps["Delta"] = laps["LapTime"] - laps["LapTime"].min()
 # Bad: Loop
 for idx in laps.index:
     laps.loc[idx, "Delta"] = laps.loc[idx, "LapTime"] - laps["LapTime"].min()
-```python
+```
 
 3. **Check for empty results**: Always validate filtered data.
 
@@ -531,7 +536,7 @@ if len(filtered) == 0:
     print("No soft tire laps found")
 else:
     fastest = filtered["LapTime"].min()
-```python
+```
 
 4. **Use appropriate data types**: Convert lap times to timedelta for time operations.
 
@@ -540,7 +545,7 @@ import pandas as pd
 
 laps["LapTimeDelta"] = pd.to_timedelta(laps["LapTime"], unit="s")
 total_time = laps["LapTimeDelta"].sum()
-```yaml
+```
 
 5. **Handle missing data**: Check for NaN values.
 
@@ -550,7 +555,7 @@ valid_laps = laps[laps["LapTime"].notna()]
 
 # Or fill with default
 laps["LapTime"].fillna(999.999, inplace=True)
-```python ---
+``` ---
 
 ## Summary
 
@@ -561,4 +566,4 @@ Lap operations provide:
 - Transformation helpers for analysis
 - Best practices for efficient lap data processing
 
-Use these utilities for advanced lap data manipulation and analysis beyond the high-level Session/Driver APIs.
+Use these utilities for advanced lap data manipulation and analysis beyond the high-level Session APIs.
