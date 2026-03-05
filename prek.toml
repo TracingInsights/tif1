@@ -30,3 +30,11 @@ name = "ty check"
 entry = "ty check src/tif1"
 language = "system"
 pass_filenames = false
+
+[[repos.hooks]]
+id = "mintlify-validate"
+name = "mintlify validate docs"
+entry = "bash -c 'cd docs && npx -y mintlify@latest validate'"
+language = "system"
+pass_filenames = false
+files = "^docs/.*\\.mdx$|^docs/docs\\.json$"

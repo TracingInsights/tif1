@@ -33,11 +33,11 @@ Before you begin, ensure you have:
     <CodeGroup>
     ```bash pip
     pip install tif1
-```bash
+    ```
 
     ```bash uv
     uv pip install tif1
-```python
+    ```
     </CodeGroup>
   </Step>
 
@@ -46,7 +46,7 @@ Before you begin, ensure you have:
 
     ```bash
     python -c "import tif1; print(tif1.__version__)"
-```bash
+    ```
   </Step>
 
   <Step title="Optional: Install Polars">
@@ -54,7 +54,7 @@ Before you begin, ensure you have:
 
     ```bash
     pip install "tif1[polars]"
-```python
+    ```
   </Step>
 </Steps>
 
@@ -71,7 +71,7 @@ import tif1
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 
 print(f"Loaded session: {session.event} {session.session_type}")
-```python
+```
 
 <Note>
   The first time you load a session, tif1 fetches data from the CDN. Subsequent loads are instant thanks to caching.
@@ -84,16 +84,18 @@ print(f"Loaded session: {session.event} {session.session_type}")
 drivers = session.drivers_df
 
 print(drivers[["Driver", "Team", "DriverNumber"]])
-```yaml
+```
 
 Output:
-```python
+```
   Driver                Team  DriverNumber
 0    VER  Red Bull Racing            33
 1    HAM         Mercedes            44
 2    LEC          Ferrari            16
 ...
-```python ### Step 3: analyze lap times
+```
+
+### Step 3: analyze lap times
 
 ```python
 # Get all laps
@@ -102,7 +104,7 @@ laps = session.laps
 # Show fastest laps
 fastest = laps.nsmallest(10, "LapTime")
 print(fastest[["Driver", "LapNumber", "LapTime", "Compound"]])
-```python
+```
 
 ### Step 4: compare drivers
 
@@ -117,7 +119,7 @@ lec_fastest = lec.get_fastest_lap()
 
 print(f"VER: {ver_fastest['LapTime'].iloc[0]:.3f}s")
 print(f"LEC: {lec_fastest['LapTime'].iloc[0]:.3f}s")
-```python
+```
 
 ### Step 5: analyze telemetry
 
@@ -132,7 +134,7 @@ telemetry = lap.telemetry
 # Analyze speed
 print(f"Top speed: {telemetry['Speed'].max()} km/h")
 print(f"Avg speed: {telemetry['Speed'].mean():.1f} km/h")
-```python
+```
 
 ## Common Patterns
 
@@ -150,7 +152,7 @@ print(f"Found {len(events)} events")
 # List sessions for an event
 sessions = tif1.get_sessions(2025, "Monaco Grand Prix")
 print(f"Available sessions: {sessions}")
-```python
+```
 
 ### Filtering Laps
 
@@ -170,7 +172,7 @@ clean = clean[clean["LapNumber"] > 1]
 
 # Filter by compound
 soft_laps = clean[clean["Compound"] == "SOFT"]
-```python
+```
 
 ### Analyzing tire strategy
 
@@ -182,7 +184,7 @@ strategy = laps.groupby(["Driver", "Stint"]).agg({
 }).reset_index()
 
 print(strategy)
-```python
+```
 
 ### Weather Analysis
 
@@ -195,7 +197,7 @@ if weather["Rainfall"].any():
     print("Rain detected during session")
     rain_laps = weather[weather["Rainfall"]]["Time"]
     print(f"Rain from {rain_laps.min():.0f}s to {rain_laps.max():.0f}s")
-```python
+```
 
 ## Performance Tips
 
@@ -213,7 +215,9 @@ async def load_data():
     return laps
 
 laps = asyncio.run(load_data())
-```python ### Batch telemetry fetching
+```
+
+### Batch telemetry fetching
 
 Never fetch telemetry in a loop:
 
@@ -224,7 +228,7 @@ tels = session.get_fastest_laps_tels(by_driver=True)
 
 for driver, tel in tels.items():
     print(f"{driver}: {tel['Speed'].max()} km/h")
-```yaml
+```
 
 ```python Bad - Sequential Loop
 # Slow - fetches one at a time
@@ -232,7 +236,7 @@ for driver_code in session.drivers:
     driver = session.get_driver(driver_code)
     fastest = driver.get_fastest_lap()
     # This is very slow!
-```python
+```
 </CodeGroup>
 
 ### Use Polars for large datasets
@@ -247,7 +251,7 @@ session = tif1.get_session(
 )
 
 laps = session.laps  # Returns polars DataFrame
-```python
+```
 
 ## Visualization
 
@@ -267,7 +271,7 @@ plt.ylabel("Lap Time (s)")
 plt.title("VER Lap Times - Monaco 2025")
 plt.grid(True, alpha=0.3)
 plt.show()
-```python
+```
 
 ## Error Handling
 
@@ -285,7 +289,7 @@ except tif1.NetworkError as e:
     print(f"Network error: {e}")
 except tif1.TIF1Error as e:
     print(f"Error: {e}")
-```python
+```
 
 ## Configuration
 
@@ -305,7 +309,7 @@ config.lib = "polars"
 
 # Enable debug logging
 config.log_level = "DEBUG"
-```python
+```
 
 ## Next Steps
 
@@ -338,7 +342,7 @@ ls -la ~/.tif1/cache/
 
 # Fix permissions
 chmod -R 755 ~/.tif1/cache/
-```python
+```
 
 ### Network Timeouts
 
@@ -349,7 +353,9 @@ import tif1
 
 config = tif1.get_config()
 config.request_timeout = 30  # Increase timeout to 30s
-```python ### Memory Issues
+```
+
+### Memory Issues
 
 For large datasets:
 
@@ -363,7 +369,7 @@ for driver_code in session.drivers:
     laps = driver.laps
     # Process laps
     del laps  # Free memory
-```yaml
+```
 
 ## Getting Help
 

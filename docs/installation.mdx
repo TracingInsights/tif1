@@ -25,13 +25,13 @@ keywords:
     <CodeGroup>
       ```bash pip
       pip install tif1
-```bash
+      ```
       ```bash uv
       uv add tif1
-```bash
+      ```
       ```bash poetry
       poetry add tif1
-```bash
+      ```
     </CodeGroup>
   </Step>
   <Step title="Install Optional Extras">
@@ -39,7 +39,7 @@ keywords:
     ```bash
     # Highly recommended for speed
     pip install "tif1[polars]"
-```python
+    ```
   </Step>
   <Step title="Verify Installation">
     Run a quick check to ensure everything is working:
@@ -47,7 +47,7 @@ keywords:
     import tif1
     print(f"tif1 version: {tif1.__version__}")
     print(f"2025 Events: {len(tif1.get_events(2025))}")
-```yaml
+    ```
   </Step>
 </Steps>
 
@@ -74,7 +74,7 @@ For permanent settings, create a `.tif1rc` (JSON) file in your home directory:
   "max_retries": 5,
   "enable_cache": true
 }
-```python
+```
 
 ---
 
