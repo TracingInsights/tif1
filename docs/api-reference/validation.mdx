@@ -13,15 +13,15 @@ The validation module uses Pydantic to ensure data integrity and catch malformed
 
 ## Overview
 
-All JSON data from the CDN is validated using Pydantic models before conversion to DataFrames. This catches:
+JSON data from the CDN can be validated using Pydantic models before conversion to DataFrames. This catches:
 - Missing required fields
 - Incorrect data types
 - Inconsistent array lengths
 - Invalid enum values
-- Malformed timestamps
+- Null-like string values ("", "none", "null", "nan")
 
 <Note>
-  Validation can be disabled for a 10-15% performance boost if data quality is trusted.
+  Validation is disabled by default for optimal performance. Enable it during development or when data quality is uncertain.
 </Note>
 
 ---
@@ -50,15 +50,22 @@ def validate_laps(data: dict) -> LapData
 from tif1.validation import validate_laps
 
 raw_data = {
-    "LapNumber": [1, 2, 3],
-    "LapTime": [90.123, 89.456, 88.789],
-    "Sector1Time": [30.1, 29.8, 29.5],
-    # ... more fields
+    "time": [90.123, 89.456, 88.789],
+    "lap": [1.0, 2.0, 3.0],
+    "s1": [30.1, 29.8, 29.5],
+    "s2": [30.0, 29.7, 29.4],
+    "s3": [30.0, 29.9, 29.9],
+    "compound": ["SOFT", "SOFT", "SOFT"],
+    "stint": [1, 1, 1],
+    "life": [1, 2, 3],
+    "pos": [1, 1, 1],
+    "status": ["1", "1", "1"],
+    "pb": [False, True, True],
 }
 
 validated = validate_laps(raw_data)
-print(f"Validated {len(validated.LapNumber)} laps")
-```python
+print(f"Validated {len(validated.lap)} laps")
+```
 
 ---
 
@@ -84,15 +91,18 @@ def validate_telemetry(data: dict) -> TelemetryData
 from tif1.validation import validate_telemetry
 
 raw_data = {
-    "Time": [0.0, 0.1, 0.2],
-    "Speed": [250.5, 251.2, 252.0],
-    "RPM": [12000, 12100, 12200],
-    # ... more fields
+    "time": [0.0, 0.1, 0.2],
+    "speed": [250.5, 251.2, 252.0],
+    "rpm": [12000, 12100, 12200],
+    "gear": [7, 7, 7],
+    "throttle": [100.0, 100.0, 99.5],
+    "brake": [False, False, False],
+    "drs": [True, True, True],
 }
 
 validated = validate_telemetry(raw_data)
-print(f"Validated {len(validated.Time)} samples")
-```python
+print(f"Validated {len(validated.time)} samples")
+```
 
 ---
 
@@ -119,15 +129,18 @@ raw_data = {
         {
             "driver": "VER",
             "team": "Red Bull Racing",
-            "driver_number": "33",
-            # ... more fields
+            "dn": "33",
+            "fn": "Max",
+            "ln": "Verstappen",
+            "tc": "3671C6",
+            "url": "https://example.com/verstappen.png"
         }
     ]
 }
 
 validated = validate_drivers(raw_data)
 print(f"Validated {len(validated.drivers)} drivers")
-```python
+```
 
 ---
 
@@ -150,15 +163,19 @@ def validate_weather(data: dict) -> WeatherData
 from tif1.validation import validate_weather
 
 raw_data = {
-    "Time": [0.0, 60.0, 120.0],
-    "AirTemp": [25.5, 25.7, 25.9],
-    "TrackTemp": [35.2, 35.5, 35.8],
-    # ... more fields
+    "wT": [0.0, 60.0, 120.0],
+    "wAT": [25.5, 25.7, 25.9],
+    "wTT": [35.2, 35.5, 35.8],
+    "wH": [60.0, 61.0, 62.0],
+    "wP": [1013.0, 1013.2, 1013.5],
+    "wR": [False, False, False],
+    "wWD": [180.0, 185.0, 190.0],
+    "wWS": [5.0, 5.5, 6.0],
 }
 
 validated = validate_weather(raw_data)
-print(f"Validated {len(validated.Time)} weather samples")
-```python ---
+print(f"Validated {len(validated.time)} weather samples")
+``` ---
 
 ### `validate_race_control`
 
@@ -179,15 +196,17 @@ def validate_race_control(data: dict) -> RaceControlData
 from tif1.validation import validate_race_control
 
 raw_data = {
-    "Time": ["14:00:00", "14:05:30"],
-    "Category": ["Flag", "SafetyCar"],
-    "Message": ["GREEN FLAG", "SAFETY CAR DEPLOYED"],
-    # ... more fields
+    "time": [0.0, 300.0],
+    "cat": ["Flag", "SafetyCar"],
+    "msg": ["GREEN FLAG", "SAFETY CAR DEPLOYED"],
+    "status": ["1", "4"],
+    "flag": ["GREEN", "YELLOW"],
+    "scope": ["Track", "Track"],
 }
 
 validated = validate_race_control(raw_data)
-print(f"Validated {len(validated.Time)} messages")
-```python
+print(f"Validated {len(validated.time)} messages")
+```
 
 ---
 
@@ -197,40 +216,60 @@ print(f"Validated {len(validated.Time)} messages")
 
 Model for lap timing data with consistent length validation.
 
-**Fields:**
-- `LapNumber`: List of lap numbers (int)
-- `LapTime`: List of lap times in seconds (float)
-- `Sector1Time`, `Sector2Time`, `Sector3Time`: Sector times (float)
-- `SpeedI1`, `SpeedI2`, `SpeedFL`, `SpeedST`: Speed trap values (float)
-- `Compound`: Tire compound names (str)
-- `TyreLife`: Tire age in laps (int)
-- `Stint`: Stint number (int)
-- `FreshTyre`: Fresh tire indicator (bool)
-- `TrackStatus`: Track status code (str)
-- `IsPersonalBest`: Personal best indicator (bool)
-- `Deleted`: Deleted lap indicator (bool)
+**Required Fields:**
+- `time`: Lap time in seconds (float | None)
+- `lap`: Lap number (float | None)
+- `s1`, `s2`, `s3`: Sector times in seconds (float | None)
+- `compound`: Tire compound (str | None)
+- `stint`: Stint number (int | None)
+- `life`: Tire age in laps (int | None)
+- `pos`: Position (int | None)
+- `status`: Track status code (str | None)
+- `pb`: Personal best indicator (bool | None)
+
+**Optional Fields (with aliases):**
+- `session_time` (alias: `sesT`): Session time (float | None)
+- `source_driver` (alias: `drv`): Driver code (str | None)
+- `driver_number` (alias: `dNum`): Driver number (str | None)
+- `pit_out_time` (alias: `pout`): Pit out time (float | None)
+- `pit_in_time` (alias: `pin`): Pit in time (float | None)
+- `sector1_session_time` (alias: `s1T`): Sector 1 session time (float | None)
+- `sector2_session_time` (alias: `s2T`): Sector 2 session time (float | None)
+- `sector3_session_time` (alias: `s3T`): Sector 3 session time (float | None)
+- `speed_i1` (alias: `vi1`): Speed trap I1 (float | None)
+- `speed_i2` (alias: `vi2`): Speed trap I2 (float | None)
+- `speed_fl` (alias: `vfl`): Speed trap finish line (float | None)
+- `speed_st` (alias: `vst`): Speed trap straight (float | None)
+- `fresh_tyre` (alias: `fresh`): Fresh tire indicator (bool | None)
+- `deleted` (alias: `del`): Deleted lap indicator (bool | None)
+- Weather fields: `air_temp`, `track_temp`, `humidity`, `pressure`, `rainfall`, `wind_direction`, `wind_speed`
 
 **Validation:**
-- All lists must have same length
-- Lap numbers must be positive
-- Times must be non-negative
-- Compounds must be valid enum values
+- All non-empty lists must have same length
+- Stint numbers must be >= 1
+- Tire life must be >= 0
+- Null-like strings ("", "none", "null", "nan") converted to None
 
 **Example:**
 ```python
 from tif1.validation import LapData
 
 lap_data = LapData(
-    LapNumber=[1, 2, 3],
-    LapTime=[90.1, 89.5, 88.9],
-    Sector1Time=[30.0, 29.8, 29.5],
-    Sector2Time=[30.1, 29.9, 29.6],
-    Sector3Time=[30.0, 29.8, 29.8],
-    # ... more fields
+    time=[90.1, 89.5, 88.9],
+    lap=[1.0, 2.0, 3.0],
+    s1=[30.0, 29.8, 29.5],
+    s2=[30.1, 29.9, 29.6],
+    s3=[30.0, 29.8, 29.8],
+    compound=["SOFT", "SOFT", "SOFT"],
+    stint=[1, 1, 1],
+    life=[1, 2, 3],
+    pos=[1, 1, 1],
+    status=["1", "1", "1"],
+    pb=[False, True, True],
 )
 
-print(f"Valid lap data with {len(lap_data.LapNumber)} laps")
-```python
+print(f"Valid lap data with {len(lap_data.lap)} laps")
+```
 
 ---
 
@@ -238,44 +277,53 @@ print(f"Valid lap data with {len(lap_data.LapNumber)} laps")
 
 Model for high-frequency telemetry data.
 
-**Fields:**
-- `Time`: Time from lap start (float)
-- `Distance`: Distance from lap start (float)
-- `Speed`: Speed in km/h (float)
-- `RPM`: Engine RPM (int)
-- `nGear`: Gear number 1-8 (int)
-- `Throttle`: Throttle position 0-100% (float)
-- `Brake`: Brake status (int)
-- `DRS`: DRS status (int)
-- `X`, `Y`, `Z`: 3D coordinates (float)
+**Required Fields:**
+- `time`: Time from lap start in seconds (float | None)
+- `speed`: Speed in km/h (float | None)
+
+**Optional Fields:**
+- `rpm`: Engine RPM (float | None)
+- `gear`: Gear number 0-8 (int | None)
+- `throttle`: Throttle position 0-100% (float | None)
+- `brake`: Brake status (bool | None)
+- `drs`: DRS status (bool | None)
+- `distance`: Distance from lap start in meters (float | None)
+- `rel_distance`: Relative distance 0-1 (float | None)
+- `driver_ahead` (alias: `DriverAhead`): Driver ahead code (str | None)
+- `distance_to_driver_ahead` (alias: `DistanceToDriverAhead`): Gap in meters (float | None)
+- `x`, `y`, `z`: 3D coordinates (float | None)
+- `acc_x`, `acc_y`, `acc_z`: Acceleration components (float | None)
+- `data_key` (alias: `dataKey`): Data source key (str | None)
+
+**Special Handling:**
+- Supports nested `tel` object that gets unwrapped during validation
+- Boolean coercion for `brake` and `drs` fields
+- Null-like strings converted to None
 
 **Validation:**
-- All lists must have same length
-- Speed must be non-negative
-- RPM must be non-negative
-- Gear must be 0-8
-- Throttle must be 0-100
+- All non-empty lists must have same length
+- Empty lists are allowed for optional fields
 
 **Example:**
 ```python
 from tif1.validation import TelemetryData
 
 tel_data = TelemetryData(
-    Time=[0.0, 0.1, 0.2],
-    Distance=[0.0, 25.0, 50.0],
-    Speed=[250.0, 251.0, 252.0],
-    RPM=[12000, 12100, 12200],
-    nGear=[7, 7, 7],
-    Throttle=[100.0, 100.0, 100.0],
-    Brake=[0, 0, 0],
-    DRS=[10, 10, 10],
-    X=[0.0, 1.0, 2.0],
-    Y=[0.0, 0.0, 0.0],
-    Z=[0.0, 0.0, 0.0],
+    time=[0.0, 0.1, 0.2],
+    speed=[250.0, 251.0, 252.0],
+    rpm=[12000, 12100, 12200],
+    gear=[7, 7, 7],
+    throttle=[100.0, 100.0, 99.5],
+    brake=[False, False, True],
+    drs=[True, True, False],
+    distance=[0.0, 25.0, 50.0],
+    x=[0.0, 1.0, 2.0],
+    y=[0.0, 0.0, 0.0],
+    z=[0.0, 0.0, 0.0],
 )
 
-print(f"Valid telemetry with {len(tel_data.Time)} samples")
-```python
+print(f"Valid telemetry with {len(tel_data.time)} samples")
+```
 
 ---
 
@@ -283,21 +331,25 @@ print(f"Valid telemetry with {len(tel_data.Time)} samples")
 
 Model for weather information.
 
-**Fields:**
-- `Time`: Timestamp (float)
-- `AirTemp`: Air temperature in °C (float)
-- `TrackTemp`: Track temperature in °C (float)
-- `Humidity`: Relative humidity % (float)
-- `Pressure`: Atmospheric pressure in mbar (float)
-- `WindSpeed`: Wind speed in km/h (float)
-- `WindDirection`: Wind direction in degrees (int)
-- `Rainfall`: Rainfall indicator (bool)
+**Required Field:**
+- `time` (alias: `wT`): Timestamp in seconds (float | None)
+
+**Optional Fields (all with aliases):**
+- `air_temp` (alias: `wAT`): Air temperature in °C (float | None)
+- `track_temp` (alias: `wTT`): Track temperature in °C (float | None)
+- `humidity` (alias: `wH`): Relative humidity % (float | None)
+- `pressure` (alias: `wP`): Atmospheric pressure in mbar (float | None)
+- `rainfall` (alias: `wR`): Rainfall indicator (bool | None)
+- `wind_direction` (alias: `wWD`): Wind direction in degrees (float | None)
+- `wind_speed` (alias: `wWS`): Wind speed in km/h (float | None)
+
+**Special Handling:**
+- Accepts both PascalCase (Time, AirTemp) and aliased keys (wT, wAT)
+- PascalCase keys automatically normalized to snake_case
 
 **Validation:**
-- All lists must have same length
-- Temperatures must be reasonable (-50 to 100°C)
-- Humidity must be 0-100%
-- Wind direction must be 0-360°
+- All non-empty lists must have same length
+- Null-like strings converted to None
 
 ---
 
@@ -305,15 +357,22 @@ Model for weather information.
 
 Model for race control messages.
 
-**Fields:**
-- `Time`: Message timestamp (str)
-- `Category`: Message category (str)
-- `Message`: Message text (str)
-- `Status`: Track status (str)
-- `Flag`: Flag type (str)
-- `Scope`: Message scope (str)
-- `Sector`: Affected sector (int)
-- `RacingNumber`: Affected driver number (str)
+**Required Field:**
+- `time`: Message timestamp in seconds (float | None)
+
+**Optional Fields:**
+- `category` (alias: `cat`): Message category (str | None)
+- `message` (alias: `msg`): Message text (str | None)
+- `status`: Track status code (str | None)
+- `flag`: Flag type (str | None)
+- `scope`: Message scope (str | None)
+- `sector`: Affected sector (int | str | None)
+- `racing_number` (alias: `dNum`): Affected driver number (str | None)
+- `lap`: Lap number (int | None)
+
+**Validation:**
+- All non-empty lists must have same length
+- Null-like strings converted to None
 
 ---
 
@@ -331,13 +390,17 @@ Model for driver information.
 Model for individual driver information.
 
 **Fields:**
-- `driver`: 3-letter code (str)
-- `team`: Team name (str)
-- `driver_number`: Car number (str)
-- `first_name`: First name (str)
-- `last_name`: Last name (str)
-- `team_color`: Hex color code (str)
-- `headshot_url`: Photo URL (str)
+- `driver`: 3-letter code, must match pattern `^[A-Z]{3}$` (str)
+- `team`: Team name, 1-100 characters (str)
+- `dn`: Driver number (str)
+- `fn`: First name (str)
+- `ln`: Last name (str)
+- `tc`: Team color hex code (str)
+- `url`: Headshot photo URL (str)
+
+**Validation:**
+- Driver code must be exactly 3 uppercase letters
+- Team name must be 1-100 characters
 
 ---
 
@@ -355,7 +418,8 @@ class TireCompound(str, Enum):
     INTERMEDIATE = "INTERMEDIATE"
     WET = "WET"
     UNKNOWN = "UNKNOWN"
-```python
+    TEST_UNKNOWN = "TEST-UNKNOWN"
+```
 
 ---
 
@@ -373,8 +437,7 @@ class SessionType(str, Enum):
     SPRINT_QUALIFYING = "Sprint Qualifying"
     SPRINT_SHOOTOUT = "Sprint Shootout"
     RACE = "Race"
-    PRE_SEASON_TESTING = "Pre-Season Testing"
-```python
+```
 
 ---
 
@@ -384,10 +447,11 @@ Valid lap status values.
 
 ```python
 class LapStatus(str, Enum):
-    VALID = "Valid"
-    INVALID = "Invalid"
-    DELETED = "Deleted"
-```python
+    VALID = "VALID"
+    INVALID = "INVALID"
+    OUTLAP = "OUTLAP"
+    INLAP = "INLAP"
+```
 
 ---
 
@@ -410,15 +474,17 @@ def detect_lap_anomalies(laps: list[dict]) -> list[Anomaly]
 from tif1.validation import detect_lap_anomalies
 
 laps = [
-    {"LapNumber": 1, "LapTime": 90.0},
-    {"LapNumber": 2, "LapTime": 89.5},
-    {"LapNumber": 3, "LapTime": 150.0},  # Outlier
+    {"lap": 1, "time": 90.0},
+    {"lap": 2, "time": 89.5},
+    {"lap": 4, "time": 89.2},  # Missing lap 3
+    {"lap": 5, "time": 270.0},  # Outlier (3x average)
 ]
 
 anomalies = detect_lap_anomalies(laps)
 for anomaly in anomalies:
-    print(f"{anomaly.type}: {anomaly.message}")
-```python
+    print(f"[{anomaly.severity}] {anomaly.type}: {anomaly.description}")
+    print(f"  Details: {anomaly.details}")
+```
 
 ---
 
@@ -428,10 +494,9 @@ Model for detected anomalies.
 
 **Fields:**
 - `type`: Anomaly type (AnomalyType enum)
-- `message`: Description of the anomaly
-- `lap_number`: Affected lap number (optional)
-- `field`: Affected field name (optional)
-- `value`: Anomalous value (optional)
+- `severity`: Severity level - "low", "medium", or "high" (str)
+- `description`: Human-readable description (str)
+- `details`: Additional context dictionary (dict[str, Any])
 
 ---
 
@@ -441,11 +506,10 @@ Types of anomalies that can be detected.
 
 ```python
 class AnomalyType(str, Enum):
-    OUTLIER = "outlier"
-    MISSING_DATA = "missing_data"
-    INVALID_VALUE = "invalid_value"
-    INCONSISTENT_LENGTH = "inconsistent_length"
-```python
+    MISSING_LAPS = "missing_laps"
+    DUPLICATE_LAPS = "duplicate_laps"
+    OUTLIER_TIMES = "outlier_times"
+```
 
 ---
 
@@ -480,21 +544,58 @@ validated = validate_lap_data(raw_data, strict=True)
 
 ---
 
+## Configuration
+
+Validation in tif1 is controlled through the `validate_data` configuration option, which is disabled by default for optimal performance.
+
+### Enable Validation
+
+```python
+import tif1
+
+config = tif1.get_config()
+config.set("validate_data", True)
+
+# Now validation will be applied to drivers, weather, and race control data
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+```
+
+### Validation Behavior
+
+- `validate_data=True`: Validates drivers.json, weather.json, and rcm.json payloads
+- `validate_data=False` (default): Skips validation for maximum performance
+- Validation is automatically disabled in ultra-cold start mode regardless of config
+
+### Strict Mode
+
+Individual validation functions support strict mode:
+
+```python
+from tif1.validation import validate_lap_data
+
+# Strict mode raises on validation errors
+validated = validate_lap_data(raw_data, strict=True)
+
+# Non-strict mode returns original data on validation failure
+validated = validate_lap_data(raw_data, strict=False)
+```
+
+---
+
 ## Complete Examples
 
 ### Custom Validation
 
 ```python
 from tif1.validation import validate_laps, LapData
-from tif1.exceptions import InvalidDataError
 
 def validate_and_clean_laps(raw_data: dict) -> LapData:
     """Validate laps and clean invalid data."""
     try:
         validated = validate_laps(raw_data)
         return validated
-    except InvalidDataError as e:
-        print(f"Validation error: {e.message}")
+    except Exception as e:
+        print(f"Validation error: {e}")
 
         # Clean data
         cleaned = clean_lap_data(raw_data)
@@ -506,25 +607,28 @@ def clean_lap_data(data: dict) -> dict:
     """Remove invalid entries from lap data."""
     # Remove laps with missing times
     valid_indices = [
-        i for i, time in enumerate(data["LapTime"])
+        i for i, time in enumerate(data.get("time", []))
         if time is not None and time > 0
     ]
 
     # Filter all fields
     cleaned = {}
     for key, values in data.items():
-        cleaned[key] = [values[i] for i in valid_indices]
+        if isinstance(values, list):
+            cleaned[key] = [values[i] for i in valid_indices]
+        else:
+            cleaned[key] = values
 
     return cleaned
 
 # Usage
 raw_data = load_raw_lap_data()
 validated = validate_and_clean_laps(raw_data)
-```python
+```
 
 ---
 
-### Anomaly detection workflow
+### Anomaly Detection Workflow
 
 ```python
 from tif1.validation import detect_lap_anomalies, AnomalyType
@@ -544,33 +648,34 @@ def analyze_session_quality(year, gp, session_name):
     anomalies = detect_lap_anomalies(lap_dicts)
 
     # Categorize anomalies
-    outliers = [a for a in anomalies if a.type == AnomalyType.OUTLIER]
-    missing = [a for a in anomalies if a.type == AnomalyType.MISSING_DATA]
-    invalid = [a for a in anomalies if a.type == AnomalyType.INVALID_VALUE]
+    missing = [a for a in anomalies if a.type == AnomalyType.MISSING_LAPS]
+    duplicates = [a for a in anomalies if a.type == AnomalyType.DUPLICATE_LAPS]
+    outliers = [a for a in anomalies if a.type == AnomalyType.OUTLIER_TIMES]
 
     print(f"Data Quality Report:")
     print(f"  Total laps: {len(lap_dicts)}")
-    print(f"  Outliers: {len(outliers)}")
-    print(f"  Missing data: {len(missing)}")
-    print(f"  Invalid values: {len(invalid)}")
+    print(f"  Missing laps: {len(missing)}")
+    print(f"  Duplicate laps: {len(duplicates)}")
+    print(f"  Outlier times: {len(outliers)}")
 
     # Show details
-    for anomaly in anomalies[:5]:  # First 5
-        print(f"  - {anomaly.message}")
+    for anomaly in anomalies:
+        print(f"  [{anomaly.severity}] {anomaly.description}")
+        if anomaly.details:
+            print(f"    {anomaly.details}")
 
     return anomalies
 
-# Usage
-anomalies = analyze_session_quality(2025, "Monaco", "Race")
-```python
+# Usage with 2021 Belgian Grand Prix Race
+anomalies = analyze_session_quality(2021, "Belgian Grand Prix", "Race")
+```
 
 ---
 
 ### Validation with Logging
 
 ```python
-from tif1.validation import validate_laps
-from tif1.exceptions import InvalidDataError
+from tif1.validation import validate_laps, validate_telemetry
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -584,7 +689,6 @@ def validate_with_logging(data: dict, data_type: str):
         if data_type == "laps":
             validated = validate_laps(data)
         elif data_type == "telemetry":
-            from tif1.validation import validate_telemetry
             validated = validate_telemetry(data)
         else:
             raise ValueError(f"Unknown data type: {data_type}")
@@ -592,46 +696,42 @@ def validate_with_logging(data: dict, data_type: str):
         logger.info(f"Validation successful")
         return validated
 
-    except InvalidDataError as e:
-        logger.error(f"Validation failed: {e.message}")
-        logger.error(f"Context: {e.context}")
+    except Exception as e:
+        logger.error(f"Validation failed: {e}")
         raise
 
 # Usage
 validated = validate_with_logging(raw_data, "laps")
-```yaml
+```
 
 ---
 
 ## Best Practices
 
-1. **Enable validation during development**: Catches data issues early.
-
-2. **Disable validation in production**: Improves performance when data quality is trusted.
-
-```python
-config.set("validate_data", False)
-```text 3. **Use strict mode for testing**: Catches warnings as errors.
+1. **Use strict mode during development**: Catches data issues early.
 
 ```python
 validated = validate_lap_data(data, strict=True)
-```yaml
+```
 
-4. **Handle validation errors gracefully**: Don't crash on bad data.
+2. **Handle validation errors gracefully**: Don't crash on bad data.
 
 ```python
+from tif1.exceptions import InvalidDataError
+
 try:
     validated = validate_laps(data)
-except InvalidDataError:
-    # Use fallback or skip
+except Exception as e:
+    # Log and use fallback
+    logger.warning(f"Validation failed: {e}")
     pass
-```python
+```
 
-5. **Run anomaly detection periodically**: Monitor data quality over time.
+3. **Run anomaly detection periodically**: Monitor data quality over time.
 
-6. **Log validation failures**: Helps identify CDN issues.
+4. **Clean data before validation**: Remove obvious errors first using normalization functions.
 
-7. **Clean data before validation**: Remove obvious errors first.
+5. **Leverage null-like string conversion**: The validation module automatically converts "", "none", "null", "nan" to None.
 
 ---
 
@@ -644,34 +744,36 @@ from tif1.exceptions import InvalidDataError
 
 try:
     validated = validate_laps(data)
-except InvalidDataError as e:
-    print(f"Error: {e.message}")
-    print(f"Context: {e.context}")
+except Exception as e:
+    print(f"Error: {e}")
 
-    # Check specific fields
-    if "LapTime" in str(e):
-        print("Issue with lap times")
-```python
+    # Check specific fields by inspecting the error message
+    if "stint" in str(e).lower():
+        print("Issue with stint numbers")
+    elif "life" in str(e).lower():
+        print("Issue with tire life values")
+```
 
 ### Inconsistent Lengths
 
 ```python
 # Check array lengths before validation
-lengths = {key: len(val) for key, val in data.items()}
+lengths = {key: len(val) for key, val in data.items() if isinstance(val, list)}
 print(f"Array lengths: {lengths}")
 
-# All should be equal
-if len(set(lengths.values())) > 1:
+# All non-empty arrays should be equal
+non_empty_lengths = [l for l in lengths.values() if l > 0]
+if len(set(non_empty_lengths)) > 1:
     print("Inconsistent array lengths detected")
-```python
+```
 
 ### Performance Issues
 
 ```python
-# Disable validation for speed
-config.set("validate_data", False)
+# Validation is already optimized and disabled by default
+# For manual validation, use non-strict mode
+validated = validate_laps(data, strict=False)
 
-# Or validate once and cache
-validated = validate_laps(data)
-cache.set("validated_laps", validated)
-```python
+# Or skip validation entirely by not calling validation functions
+# The library handles this automatically based on performance settings
+```

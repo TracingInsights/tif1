@@ -27,8 +27,8 @@ import tif1
 from tif1.types import BackendType
 
 lib: BackendType = "pandas"
-session = tif1.get_session(2025, "Monaco", "Race", lib=lib)
-```python
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib=lib)
+```
 
 ---
 
@@ -45,18 +45,17 @@ SessionType = Literal[
     "Sprint",
     "Sprint Qualifying",
     "Sprint Shootout",
-    "Race",
-    "Pre-Season Testing"
+    "Race"
 ]
-```python
+```
 
 **Usage:**
 ```python
 from tif1.types import SessionType
 
 session_name: SessionType = "Qualifying"
-session = tif1.get_session(2025, "Monaco", session_name)
-```python
+session = tif1.get_session(2021, "Belgian Grand Prix", session_name)
+```
 
 ---
 
@@ -71,9 +70,10 @@ CompoundType = Literal[
     "HARD",
     "INTERMEDIATE",
     "WET",
-    "UNKNOWN"
+    "UNKNOWN",
+    "TEST_UNKNOWN"
 ]
-```python
+```
 
 **Usage:**
 ```python
@@ -81,7 +81,7 @@ from tif1.types import CompoundType
 
 compound: CompoundType = "SOFT"
 soft_laps = laps[laps["Compound"] == compound]
-```python
+```
 
 ---
 
@@ -107,106 +107,166 @@ from tif1.types import TrackStatusType
 # Filter laps under green flag
 green_flag: TrackStatusType = "1"
 clean_laps = laps[laps["TrackStatus"] == green_flag]
-```python ---
+```
+
+---
 
 ## TypedDict Schemas
 
-These define the structure of JSON data before conversion to DataFrames.
+These define the structure of DataFrame row data. All fields except core identity fields (Driver, DriverNumber, Team, Time) are optional and may be None.
 
 ### `LapDataDict`
 
-Structure of lap timing data from the CDN.
+Structure of lap timing data in DataFrames. Uses `NotRequired` for optional fields.
 
 ```python
 class LapDataDict(TypedDict):
-    LapNumber: list[int]
-    LapTime: list[float]
-    Sector1Time: list[float]
-    Sector2Time: list[float]
-    Sector3Time: list[float]
-    Sector1SessionTime: list[float]
-    Sector2SessionTime: list[float]
-    Sector3SessionTime: list[float]
-    SpeedI1: list[float]
-    SpeedI2: list[float]
-    SpeedFL: list[float]
-    SpeedST: list[float]
-    Compound: list[str]
-    TyreLife: list[int]
-    Stint: list[int]
-    FreshTyre: list[bool]
-    LapStartTime: list[float]
-    LapStartDate: list[str]
-    TrackStatus: list[str]
-    IsPersonalBest: list[bool]
-    Deleted: list[bool]
-    DeletedReason: list[str]
-    FastF1Generated: list[bool]
-    IsAccurate: list[bool]
-```python
+    # Core identity (required)
+    Driver: str
+    DriverNumber: str
+    Team: str
+    Time: datetime.timedelta  # Session time from start
+
+    # Lap timing (all timedelta, optional)
+    LapTime: NotRequired[datetime.timedelta | None]
+    LapNumber: NotRequired[float | None]
+    Stint: NotRequired[float | None]
+    PitOutTime: NotRequired[datetime.timedelta | None]
+    PitInTime: NotRequired[datetime.timedelta | None]
+    Sector1Time: NotRequired[datetime.timedelta | None]
+    Sector2Time: NotRequired[datetime.timedelta | None]
+    Sector3Time: NotRequired[datetime.timedelta | None]
+    Sector1SessionTime: NotRequired[datetime.timedelta | None]
+    Sector2SessionTime: NotRequired[datetime.timedelta | None]
+    Sector3SessionTime: NotRequired[datetime.timedelta | None]
+    LapStartTime: NotRequired[datetime.timedelta | None]
+    LapStartDate: NotRequired[datetime.datetime | None]
+
+    # Speed traps (km/h, optional)
+    SpeedI1: NotRequired[float | None]
+    SpeedI2: NotRequired[float | None]
+    SpeedFL: NotRequired[float | None]
+    SpeedST: NotRequired[float | None]
+
+    # Tire info (optional)
+    Compound: NotRequired[str | None]
+    TyreLife: NotRequired[float | None]
+    FreshTyre: NotRequired[bool]
+
+    # Session/lap metadata (optional)
+    TrackStatus: NotRequired[str | None]
+    Position: NotRequired[float | None]
+    IsPersonalBest: NotRequired[bool]
+    Deleted: NotRequired[bool | None]
+    DeletedReason: NotRequired[str | None]
+    FastF1Generated: NotRequired[bool]
+    IsAccurate: NotRequired[bool]
+
+    # Derived fields (optional)
+    LapTimeSeconds: NotRequired[float | None]
+
+    # Per-lap weather data (optional)
+    WeatherTime: NotRequired[datetime.timedelta | None]
+    AirTemp: NotRequired[float | None]
+    Humidity: NotRequired[float | None]
+    Pressure: NotRequired[float | None]
+    Rainfall: NotRequired[bool]
+    TrackTemp: NotRequired[float | None]
+    WindDirection: NotRequired[int | None]
+    WindSpeed: NotRequired[float | None]
+```
 
 **Usage:**
 ```python
-from tif1.types import LapDataDict
+import tif1
 
-def process_lap_data(data: LapDataDict) -> None:
-    print(f"Laps: {len(data['LapNumber'])}")
-    print(f"Fastest: {min(data['LapTime'])}s")
-```python
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+laps = session.laps
+
+# Access lap data
+for _, lap in laps.iterrows():
+    driver: str = lap["Driver"]
+    lap_time = lap.get("LapTime")  # May be None
+    if lap_time:
+        print(f"{driver}: {lap_time}")
+```
 
 ---
 
 ### `TelemetryDataDict`
 
-Structure of high-frequency telemetry data.
+Structure of high-frequency telemetry data. All fields except Time are optional.
 
 ```python
 class TelemetryDataDict(TypedDict):
-    Time: list[float]              # Time from lap start (seconds)
-    Distance: list[float]          # Distance from lap start (meters)
-    Speed: list[float]             # Speed (km/h)
-    RPM: list[int]                 # Engine RPM
-    nGear: list[int]               # Gear number (1-8)
-    Throttle: list[float]          # Throttle position (0-100%)
-    Brake: list[int]               # Brake status (0=off, 1=on)
-    DRS: list[int]                 # DRS status (0=off, 10+=on)
-    X: list[float]                 # X coordinate (meters)
-    Y: list[float]                 # Y coordinate (meters)
-    Z: list[float]                 # Z coordinate (meters)
-    Status: list[str]              # Car status
-    SessionTime: list[float]       # Session time (seconds)
-    Date: list[str]                # Timestamp
-```python
+    Time: float                                    # Time from lap start (seconds)
+    RPM: NotRequired[int | None]                   # Engine RPM
+    Speed: NotRequired[float | None]               # Speed (km/h)
+    nGear: NotRequired[int | None]                 # Gear number (1-8)
+    Throttle: NotRequired[float | None]            # Throttle position (0-100%)
+    Brake: NotRequired[int | None]                 # Brake status (0=off, 1=on)
+    DRS: NotRequired[int | None]                   # DRS status (0=off, 10+=on)
+    Distance: NotRequired[float | None]            # Distance from lap start (meters)
+    RelativeDistance: NotRequired[float | None]    # Relative distance
+    DriverAhead: NotRequired[str | None]           # Driver code ahead
+    DistanceToDriverAhead: NotRequired[float | None]  # Gap to driver ahead
+    X: NotRequired[float | None]                   # X coordinate (meters)
+    Y: NotRequired[float | None]                   # Y coordinate (meters)
+    Z: NotRequired[float | None]                   # Z coordinate (meters)
+    AccelerationX: NotRequired[float | None]       # X acceleration
+    AccelerationY: NotRequired[float | None]       # Y acceleration
+    AccelerationZ: NotRequired[float | None]       # Z acceleration
+    DataKey: NotRequired[str | None]               # Data key identifier
+```
 
 **Usage:**
 ```python
-from tif1.types import TelemetryDataDict
+import tif1
 
-def analyze_telemetry(tel: TelemetryDataDict) -> dict:
-    return {
-        "max_speed": max(tel["Speed"]),
-        "max_rpm": max(tel["RPM"]),
-        "avg_throttle": sum(tel["Throttle"]) / len(tel["Throttle"])
-    }
-```python
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+lap = session.laps.iloc[0]
+tel = lap.telemetry
+
+# Access telemetry data
+for _, sample in tel.iterrows():
+    time: float = sample["Time"]
+    speed = sample.get("Speed")  # May be None
+    if speed:
+        print(f"Time: {time:.2f}s, Speed: {speed:.1f} km/h")
+```
 
 ---
 
 ### `WeatherDataDict`
 
-Structure of weather data.
+Structure of weather data returned by `session.weather`.
 
 ```python
 class WeatherDataDict(TypedDict):
-    Time: list[float]
-    AirTemp: list[float]           # Air temperature (°C)
-    TrackTemp: list[float]         # Track temperature (°C)
-    Humidity: list[float]          # Relative humidity (%)
-    Pressure: list[float]          # Atmospheric pressure (mbar)
-    WindSpeed: list[float]         # Wind speed (km/h)
-    WindDirection: list[int]       # Wind direction (degrees)
-    Rainfall: list[bool]           # Rainfall indicator
+    Time: datetime.timedelta                       # Session time from start
+    AirTemp: NotRequired[float | None]             # Air temperature (°C)
+    Humidity: NotRequired[float | None]            # Relative humidity (%)
+    Pressure: NotRequired[float | None]            # Atmospheric pressure (mbar)
+    Rainfall: NotRequired[bool | None]             # Rainfall indicator
+    TrackTemp: NotRequired[float | None]           # Track temperature (°C)
+    WindDirection: NotRequired[int | None]         # Wind direction (degrees)
+    WindSpeed: NotRequired[float | None]           # Wind speed (km/h)
+```
+
+**Usage:**
 ```python
+import tif1
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+weather = session.weather
+
+# Access weather data
+for _, sample in weather.iterrows():
+    time = sample["Time"]
+    air_temp = sample.get("AirTemp")
+    rainfall = sample.get("Rainfall", False)
+    print(f"Time: {time}, Temp: {air_temp}°C, Rain: {rainfall}")
+```
 
 ---
 
@@ -216,15 +276,31 @@ Structure of race control messages.
 
 ```python
 class RaceControlDataDict(TypedDict):
-    Time: list[str]
-    Category: list[str]            # Message category
-    Message: list[str]             # Message text
-    Status: list[str]              # Track status
-    Flag: list[str]                # Flag type
-    Scope: list[str]               # Message scope
-    Sector: list[int]              # Affected sector
-    RacingNumber: list[str]        # Affected driver number
+    Time: float                                    # Session time (seconds)
+    Category: NotRequired[str | None]              # Message category
+    Message: NotRequired[str | None]               # Message text
+    Status: NotRequired[str | None]                # Track status
+    Flag: NotRequired[str | None]                  # Flag type
+    Scope: NotRequired[str | None]                 # Message scope
+    Sector: NotRequired[int | str | None]          # Affected sector
+    RacingNumber: NotRequired[str | None]          # Affected driver number
+    Lap: NotRequired[int | None]                   # Lap number
+```
+
+**Usage:**
 ```python
+import tif1
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+messages = session.race_control_messages
+
+# Access race control messages
+for _, msg in messages.iterrows():
+    time = msg["Time"]
+    category = msg.get("Category", "")
+    message = msg.get("Message", "")
+    print(f"{time}: [{category}] {message}")
+```
 
 ---
 
@@ -234,18 +310,33 @@ Structure of driver information.
 
 ```python
 class DriverInfoDict(TypedDict):
-    driver: str                    # 3-letter code
+    driver: str                    # 3-letter code (e.g., "VER")
     team: str                      # Team name
-    driver_number: str             # Car number
-    first_name: str                # First name
-    last_name: str                 # Last name
-    team_color: str                # Hex color code
-    headshot_url: str              # Photo URL
+    dn: str                        # Driver number (car number)
+    fn: str                        # First name
+    ln: str                        # Last name
+    tc: str                        # Team color (hex code)
+    url: str                       # Headshot URL
+```
+
+**Usage:**
 ```python
+import tif1
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+drivers_df = session.drivers_df
+
+# Access driver information
+for _, driver in drivers_df.iterrows():
+    code = driver["Driver"]
+    name = f"{driver['FirstName']} {driver['LastName']}"
+    team = driver["Team"]
+    print(f"{code}: {name} ({team})")
+```
 
 ---
 
-## Dataframe type hints
+## DataFrame type hints
 
 For better IDE support, use type hints with DataFrames:
 
@@ -255,7 +346,7 @@ For better IDE support, use type hints with DataFrames:
 import pandas as pd
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Type hint for laps DataFrame
 laps: pd.DataFrame = session.laps
@@ -265,7 +356,9 @@ tel: pd.DataFrame = session.get_fastest_lap_tel()
 
 # Type hint for weather
 weather: pd.DataFrame = session.weather
-```python ### Polars DataFrames
+```
+
+### Polars DataFrames
 
 ```python
 import polars as pl
@@ -274,14 +367,14 @@ import tif1
 config = tif1.get_config()
 config.set("lib", "polars")
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Type hint for laps DataFrame
 laps: pl.DataFrame = session.laps
 
 # Type hint for telemetry
 tel: pl.DataFrame = session.get_fastest_lap_tel()
-```python
+```
 
 ### Union types for lib-agnostic code
 
@@ -299,7 +392,7 @@ def analyze_laps(laps: DataFrame) -> dict:
         return {"count": len(laps), "fastest": laps["LapTime"].min()}
     else:
         return {"count": len(laps), "fastest": laps["LapTime"].min()}
-```python
+```
 
 ---
 
@@ -312,7 +405,7 @@ from tif1 import Session, Driver
 from tif1.core import Lap, Laps, Telemetry
 
 # Session
-session: Session = tif1.get_session(2025, "Monaco", "Race")
+session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Driver
 driver: Driver = session.get_driver("VER")
@@ -325,7 +418,7 @@ laps: Laps = session.laps
 
 # Telemetry
 telemetry: Telemetry = lap.telemetry
-```python
+```
 
 ### Model Objects
 
@@ -337,7 +430,7 @@ results: SessionResults = session.results
 
 # Circuit info
 circuit: CircuitInfo = session.get_circuit_info()
-```python
+```
 
 ---
 
@@ -351,13 +444,13 @@ import pandas as pd
 import tif1
 
 async def load_session_async() -> pd.DataFrame:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
     laps: pd.DataFrame = await session.laps_async()
     return laps
 
 # Type hint for async function
 load_func: Awaitable[pd.DataFrame] = load_session_async()
-```python
+```
 
 ### Dictionary Returns
 
@@ -366,7 +459,7 @@ from typing import Dict
 import pandas as pd
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Type hint for telemetry dictionary
 tels: Dict[str, pd.DataFrame] = session.get_fastest_laps_tels(by_driver=True)
@@ -375,7 +468,7 @@ for driver, tel in tels.items():
     driver_code: str = driver
     telemetry: pd.DataFrame = tel
     print(f"{driver_code}: {len(telemetry)} samples")
-```python
+```
 
 ---
 
@@ -471,11 +564,11 @@ def find_fastest_sector(
 
 # Usage with type checking
 if __name__ == "__main__":
-    results: Dict[str, float] = analyze_qualifying(2025, "Monaco Grand Prix")
+    results: Dict[str, float] = analyze_qualifying(2021, "Belgian Grand Prix")
 
     for driver, time in results.items():
         print(f"{driver}: {time:.3f}s")
-```bash
+```
 
 ---
 
@@ -489,7 +582,9 @@ pip install mypy
 
 # Check types
 mypy your_script.py
-```python ### Using pyright
+```
+
+### Using pyright
 
 ```bash
 # Install pyright
@@ -497,7 +592,7 @@ npm install -g pyright
 
 # Check types
 pyright your_script.py
-```python
+```
 
 ### IDE Support
 
@@ -511,7 +606,7 @@ Modern IDEs like VS Code, PyCharm, and others provide:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 # Hovering over 'session' shows: session: Session
 
 laps = session.laps
@@ -519,7 +614,7 @@ laps = session.laps
 
 driver = session.get_driver("VER")
 # Hovering over 'driver' shows: driver: Driver
-```python
+```
 
 ---
 
@@ -552,4 +647,4 @@ def get_driver_safely(
         return session.get_driver(driver_code)
     except tif1.DriverNotFoundError:
         return None
-```python
+```

@@ -1,13 +1,13 @@
 ---
 title: "Core Utilities"
 icon: "wrench"
-description: "Internal utilities for DataFrame operations, JSON parsing, and lib conversion"
+description: "Internal utilities for DataFrame operations, JSON parsing, and backend conversion"
 keywords:
-  - "Session class"
-  - "Driver class"
-  - "Lap class"
-  - "F1 session data"
-  - "core API"
+  - "core utilities"
+  - "backend conversion"
+  - "JSON parsing"
+  - "DataFrame helpers"
+  - "validation"
 ---
 
 The core_utils package provides internal utilities used throughout `tif1`. While these are primarily internal APIs, they can be useful for advanced use cases.
@@ -24,7 +24,7 @@ def pandas_to_polars(
     *,
     rechunk: bool = False
 ) -> pl.DataFrame
-```python
+```
 
 Convert a pandas DataFrame to polars DataFrame.
 
@@ -42,7 +42,7 @@ import pandas as pd
 
 df_pandas = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
 df_polars = pandas_to_polars(df_pandas)
-```python
+```
 
 ---
 
@@ -54,7 +54,7 @@ def polars_to_pandas(
     *,
     use_pyarrow: bool = True
 ) -> pd.DataFrame
-```python
+```
 
 Convert a polars DataFrame to pandas DataFrame.
 
@@ -72,7 +72,7 @@ import polars as pl
 
 df_polars = pl.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
 df_pandas = polars_to_pandas(df_polars)
-```python
+```
 
 ---
 
@@ -83,7 +83,7 @@ def convert_backend(
     df: DataFrame,
     target_backend: str
 ) -> DataFrame
-```python
+```
 
 Convert a DataFrame to the target lib (pandas or polars).
 
@@ -92,7 +92,7 @@ Convert a DataFrame to the target lib (pandas or polars).
 - `target_backend`: Target lib ("pandas" or "polars")
 
 **Returns:**
-- DataFrame in the target lib
+- DataFrame in the target library
 
 **Example:**
 ```python
@@ -106,7 +106,7 @@ df_polars = convert_backend(df, "polars")
 
 # Convert back to pandas
 df_pandas = convert_backend(df_polars, "pandas")
-```python
+```
 
 ---
 
@@ -118,7 +118,7 @@ High-performance JSON parsing using orjson.
 
 ```python
 def json_loads(payload: str | bytes | bytearray | memoryview) -> Any
-```python
+```
 
 Parse JSON string/bytes to Python object using orjson.
 
@@ -135,7 +135,9 @@ from tif1.core_utils.json_utils import json_loads
 json_str = '{"driver": "VER", "team": "Red Bull Racing"}'
 data = json_loads(json_str)
 print(data["driver"])  # "VER"
-```python <Note>
+```
+
+<Note>
   `json_loads` uses orjson for 2-3x faster parsing than stdlib json. It automatically handles both strings and bytes.
 </Note>
 
@@ -145,7 +147,7 @@ print(data["driver"])  # "VER"
 
 ```python
 def json_dumps(data: Any) -> str
-```python
+```
 
 Serialize Python object to JSON string using orjson.
 
@@ -161,7 +163,7 @@ from tif1.core_utils.json_utils import json_dumps
 
 data = {"driver": "VER", "team": "Red Bull Racing"}
 json_str = json_dumps(data)
-```python
+```
 
 ---
 
@@ -173,7 +175,7 @@ Internal validation functions for data integrity.
 
 ```python
 def _validate_year(year: int, min_year: int, max_year: int) -> None
-```python
+```
 
 Validate that a year is within the supported range.
 
@@ -191,7 +193,7 @@ Validate that a year is within the supported range.
 
 ```python
 def _validate_drivers_list(drivers: list[str] | None) -> None
-```python
+```
 
 Validate that a drivers list contains valid 3-letter codes.
 
@@ -207,7 +209,7 @@ Validate that a drivers list contains valid 3-letter codes.
 
 ```python
 def _validate_lap_number(lap_number: int) -> None
-```python
+```
 
 Validate that a lap number is positive.
 
@@ -223,7 +225,7 @@ Validate that a lap number is positive.
 
 ```python
 def _validate_string_param(param: str, param_name: str) -> None
-```python
+```
 
 Validate that a string parameter is non-empty.
 
@@ -240,7 +242,7 @@ Validate that a string parameter is non-empty.
 
 ```python
 def _encode_url_component(component: str) -> str
-```python
+```
 
 URL-encode a component for use in CDN URLs.
 
@@ -254,9 +256,11 @@ URL-encode a component for use in CDN URLs.
 ```python
 from tif1.core_utils.helpers import _encode_url_component
 
-encoded = _encode_url_component("Monaco Grand Prix")
-# "Monaco_Grand_Prix"
-```python ---
+encoded = _encode_url_component("Belgian Grand Prix")
+# "Belgian%20Grand%20Prix"
+```
+
+---
 
 ## Constants
 
@@ -268,53 +272,70 @@ The constants module defines mappings for renaming columns from CDN format to us
 
 ```python
 # Lap data column renames
-LAP_COLUMN_RENAMES = {
-    "lap_number": "LapNumber",
-    "lap_time": "LapTime",
-    "sector_1_time": "Sector1Time",
+LAP_RENAME_MAP = {
+    "time": "LapTime",
+    "lap": "LapNumber",
+    "s1": "Sector1Time",
+    "s2": "Sector2Time",
+    "s3": "Sector3Time",
+    "compound": "Compound",
+    "stint": "Stint",
+    "life": "TyreLife",
     # ... more mappings
 }
 
 # Telemetry column renames
-TELEMETRY_COLUMN_RENAMES = {
+TELEMETRY_RENAME_MAP = {
     "time": "Time",
     "speed": "Speed",
     "rpm": "RPM",
+    "gear": "nGear",
+    "throttle": "Throttle",
+    "brake": "Brake",
+    "drs": "DRS",
     # ... more mappings
 }
-```python
+```
 
-### Standard column names
+### Standard column order
 
 ```python
-# Standard lap columns
-LAP_COLUMNS = [
-    "LapNumber",
+# FastF1-compatible column order for Laps DataFrame
+FASTF1_LAPS_COLUMN_ORDER = [
+    "index",
+    "Time",
+    "Driver",
+    "DriverNumber",
     "LapTime",
+    "LapNumber",
+    "Stint",
+    "PitOutTime",
+    "PitInTime",
     "Sector1Time",
     "Sector2Time",
     "Sector3Time",
+    "Sector1SessionTime",
+    "Sector2SessionTime",
+    "Sector3SessionTime",
+    "SpeedI1",
+    "SpeedI2",
+    "SpeedFL",
+    "SpeedST",
+    "IsPersonalBest",
     "Compound",
     "TyreLife",
-    "Stint",
-    "Driver",
+    "FreshTyre",
     "Team",
+    "LapStartTime",
+    "LapStartDate",
+    "TrackStatus",
+    "Position",
     # ... more columns
 ]
 
-# Standard telemetry columns
-TELEMETRY_COLUMNS = [
-    "Time",
-    "Distance",
-    "Speed",
-    "RPM",
-    "nGear",
-    "Throttle",
-    "Brake",
-    "DRS",
-    # ... more columns
-]
-```python
+# Categorical columns for optimization
+CATEGORICAL_COLS = ["Driver", "Team", "Compound", "TrackStatus"]
+```
 
 ---
 
@@ -331,7 +352,7 @@ class ResourceManager:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         ...
-```python
+```
 
 Manages resources like HTTP sessions, cache connections, and file handles with automatic cleanup.
 
@@ -342,7 +363,7 @@ from tif1.core_utils.resource_manager import ResourceManager
 with ResourceManager() as manager:
     # Resources are automatically cleaned up on exit
     pass
-```python
+```
 
 <Note>
   ResourceManager is used internally by the library. Most users don't need to interact with it directly.
@@ -374,7 +395,7 @@ When converting between backends:
 
 # polars → pandas conversion
 # 1M rows: ~100ms (with PyArrow)
-```python
+```
 
 ---
 
@@ -386,19 +407,20 @@ When converting between backends:
 from tif1.core_utils.backend_conversion import convert_backend
 import tif1
 
-# Load with pandas
-session = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
+# Load 2021 Belgian Grand Prix Race with pandas
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="pandas")
 laps_pandas = session.laps
 
 # Convert to polars for analysis
 laps_polars = convert_backend(laps_pandas, "polars")
 
 # Perform polars operations
-fast_laps = laps_polars.filter(pl.col("LapTime") < 80.0)
+import polars as pl
+fast_laps = laps_polars.filter(pl.col("LapTimeSeconds") < 120.0)
 
 # Convert back to pandas if needed
 fast_laps_pandas = convert_backend(fast_laps, "pandas")
-```python
+```
 
 ### Custom JSON Processing
 
@@ -414,7 +436,7 @@ data["laps"][0]["time"] = 89.5
 
 # Serialize back
 modified_json = json_dumps(data)
-```yaml
+```
 
 ---
 

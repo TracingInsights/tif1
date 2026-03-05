@@ -24,7 +24,7 @@ def setup_mpl(
     mpl_timedelta_support=False,
     **kwargs
 ) -> None
-```python
+```
 
 **Parameters:**
 - `color_scheme`: Color scheme to use (currently only "fastf1" is supported)
@@ -40,11 +40,12 @@ import matplotlib.pyplot as plt
 tif1.plotting.setup_mpl(color_scheme="fastf1")
 
 # Now all plots will use the dark F1 theme
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 laps = session.laps
 plt.plot(laps["LapNumber"], laps["LapTime"])
 plt.show()
-```python
+```
 
 ---
 
@@ -56,7 +57,7 @@ Get the official color for a team.
 
 ```python
 def get_team_color(team: str, session=None) -> str
-```python
+```
 
 **Parameters:**
 - `team`: Team name (e.g., "Red Bull Racing", "Ferrari")
@@ -71,7 +72,7 @@ from tif1.plotting import get_team_color
 
 ferrari_color = get_team_color("Ferrari")
 # Returns: "#dc0000"
-```python
+```
 
 ### `get_driver_color`
 
@@ -79,7 +80,7 @@ Get the color for a specific driver.
 
 ```python
 def get_driver_color(driver: str, session=None) -> str
-```python
+```
 
 **Parameters:**
 - `driver`: 3-letter driver code (e.g., "VER", "HAM")
@@ -94,7 +95,7 @@ from tif1.plotting import get_driver_color
 
 ver_color = get_driver_color("VER")
 # Returns: "#0600ef" (Red Bull blue)
-```python
+```
 
 ### `get_driver_color_mapping`
 
@@ -102,7 +103,7 @@ Get a complete mapping of driver codes to colors.
 
 ```python
 def get_driver_color_mapping(session=None) -> dict[str, str]
-```python
+```
 
 **Parameters:**
 - `session`: Optional session object to extract team colors for all drivers
@@ -114,7 +115,8 @@ def get_driver_color_mapping(session=None) -> dict[str, str]
 ```python
 from tif1.plotting import get_driver_color_mapping
 
-session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 colors = get_driver_color_mapping(session)
 
 # Plot each driver with their team color
@@ -126,13 +128,13 @@ for driver in session.drivers:
         color=colors.get(driver, "#ffffff"),
         label=driver
     )
-```python ### `get_compound_color`
+``` ### `get_compound_color`
 
 Get the color for a tire compound.
 
 ```python
 def get_compound_color(compound: str, session=None) -> str
-```python
+```
 
 **Parameters:**
 - `compound`: Compound name (e.g., "SOFT", "MEDIUM", "HARD")
@@ -147,7 +149,7 @@ from tif1.plotting import get_compound_color
 
 soft_color = get_compound_color("SOFT")
 # Returns: "#da291c" (red)
-```python
+```
 
 ### `get_compound_mapping`
 
@@ -155,7 +157,7 @@ Get a complete mapping of compounds to colors.
 
 ```python
 def get_compound_mapping(session=None) -> dict[str, str]
-```python
+```
 
 **Returns:**
 - Dictionary mapping compound names to hex colors
@@ -174,7 +176,7 @@ def get_driver_style(
     style=None,
     session=None
 ) -> dict[str, Any]
-```python
+```
 
 **Parameters:**
 - `identifier`: Driver code
@@ -192,7 +194,7 @@ style = get_driver_style("VER")
 # Returns: {"color": "#0600ef", "linestyle": "-"}
 
 plt.plot(data, **style)
-```python
+```
 
 ### `add_sorted_driver_legend`
 
@@ -200,7 +202,7 @@ Add a legend with driver labels sorted alphabetically.
 
 ```python
 def add_sorted_driver_legend(ax, session=None)
-```python
+```
 
 **Parameters:**
 - `ax`: Matplotlib axes object
@@ -218,7 +220,7 @@ fig, ax = plt.subplots()
 # ... plot driver data ...
 add_sorted_driver_legend(ax)
 plt.show()
-```yaml
+```
 
 ---
 
@@ -230,6 +232,7 @@ plt.show()
 TEAM_COLORS = {
     "Mercedes": "#00d2be",
     "Red Bull Racing": "#0600ef",
+    "Red Bull": "#0600ef",
     "Ferrari": "#dc0000",
     "McLaren": "#ff8700",
     "Alpine": "#0090ff",
@@ -239,7 +242,19 @@ TEAM_COLORS = {
     "Sauber": "#52e252",
     "Williams": "#005aff",
 }
-```python ### Compound Colors
+``` ### Driver Colors
+
+```python
+DRIVER_COLORS = {
+    "VER": "#0600ef",
+    "HAM": "#00d2be",
+    "LEC": "#dc0000",
+    "NOR": "#ff8700",
+    "ALO": "#006f62",
+}
+```
+
+### Compound Colors
 
 ```python
 COMPOUND_COLORS = {
@@ -250,7 +265,7 @@ COMPOUND_COLORS = {
     "WET": "#0067ad",
     "UNKNOWN": "#8a8a8a",
 }
-```python
+```
 
 ---
 
@@ -265,7 +280,8 @@ from tif1.plotting import setup_mpl, get_driver_color_mapping
 setup_mpl(color_scheme="fastf1")
 
 # Load session
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 laps = session.laps
 
 # Get driver colors
@@ -274,7 +290,7 @@ colors = get_driver_color_mapping(session)
 # Plot fastest laps for top 3 drivers
 fig, ax = plt.subplots(figsize=(12, 6))
 
-for driver in ["VER", "LEC", "HAM"]:
+for driver in ["VER", "HAM", "BOT"]:
     driver_laps = laps[laps["Driver"] == driver]
     ax.plot(
         driver_laps["LapNumber"],
@@ -286,10 +302,10 @@ for driver in ["VER", "LEC", "HAM"]:
 
 ax.set_xlabel("Lap Number")
 ax.set_ylabel("Lap Time (s)")
-ax.set_title("Qualifying Lap Times - Top 3")
+ax.set_title("2021 Belgian Grand Prix - Lap Times")
 ax.legend()
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.show()
-```python
+```

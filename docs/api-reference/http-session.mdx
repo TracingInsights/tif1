@@ -15,7 +15,7 @@ The http_session module manages a shared HTTP session with optimized connection 
 
 ```python
 def get_session() -> niquests.Session
-```python
+```
 
 Get or create the shared HTTP session (thread-safe singleton).
 
@@ -28,7 +28,7 @@ from tif1.http_session import get_session
 
 session = get_session()
 response = session.get("https://example.com")
-```python
+```
 
 <Note>
   This is an internal API. Most users don't need to interact with the HTTP session directly. The library handles all HTTP requests automatically.
@@ -40,7 +40,7 @@ response = session.get("https://example.com")
 
 ```python
 def close_session() -> None
-```python
+```
 
 Close the shared HTTP session and cleanup resources. Called automatically on exit.
 
@@ -50,7 +50,7 @@ from tif1.http_session import close_session
 
 # Manually close session (rarely needed)
 close_session()
-```python
+```
 
 ---
 
@@ -60,7 +60,7 @@ close_session()
 
 ```python
 def get_connection_stats() -> dict[str, Any]
-```python
+```
 
 Get current connection pool statistics for monitoring and debugging.
 
@@ -78,13 +78,13 @@ from tif1.http_session import get_connection_stats
 stats = get_connection_stats()
 print(f"Total requests: {stats['total_requests']}")
 print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
-```python
+```
 
 ### `reset_connection_stats`
 
 ```python
 def reset_connection_stats() -> None
-```python
+```
 
 Reset connection statistics. Useful for testing or benchmarking.
 
@@ -93,7 +93,9 @@ Reset connection statistics. Useful for testing or benchmarking.
 from tif1.http_session import reset_connection_stats
 
 reset_connection_stats()
-```python ---
+```
+
+---
 
 ## Configuration
 
@@ -101,13 +103,13 @@ The HTTP session is configured via the global config object. Key settings:
 
 | Config Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `http_multiplexed` | `bool` | `False` | Enable HTTP/2 multiplexing |
+| `http_multiplexed` | `bool` | `True` | Enable HTTP/2 multiplexing |
 | `http_disable_http3` | `bool` | `False` | Disable HTTP/3 support |
-| `pool_connections` | `int` | `256` | Number of connection pools |
-| `pool_maxsize` | `int` | `512` | Maximum connections per pool |
+| `pool_connections` | `int` | Dynamic (min 256) | Number of connection pools (auto-sized based on concurrency) |
+| `pool_maxsize` | `int` | Dynamic (min 512) | Maximum connections per pool (auto-sized, typically 4x pool_connections) |
 | `keepalive_timeout` | `int` | `120` | Keep-alive timeout in seconds |
 | `keepalive_max_requests` | `int` | `1000` | Max requests per connection |
-| `user_agent` | `str` | `"tif1/0.1.0"` | User-Agent header |
+| `user_agent` | `str` | `"tif1/0.1.0 (https://github.com/TracingInsights/tif1)"` | User-Agent header |
 | `http_resolvers` | `list[str]` | `["standard", "doh://cloudflare", "doh://google"]` | DNS resolvers with DoH fallback |
 
 **Example:**
@@ -116,16 +118,16 @@ import tif1
 
 config = tif1.get_config()
 
-# Enable HTTP/2 multiplexing
-config.set("http_multiplexed", True)
+# Disable HTTP/2 multiplexing (enabled by default)
+config.set("http_multiplexed", False)
 
-# Increase connection pool size
+# Override automatic pool sizing
 config.set("pool_connections", 512)
 config.set("pool_maxsize", 2048)
 
 # Configure DNS resolvers
 config.set("http_resolvers", ["standard", "doh://cloudflare"])
-```python
+```
 
 ---
 
@@ -152,7 +154,7 @@ config.set("http_resolvers", ["standard"])
 
 # Custom DoH provider
 config.set("http_resolvers", ["standard", "doh://custom-provider"])
-```python
+```
 
 ---
 
@@ -176,16 +178,16 @@ The HTTP session uses aggressive connection pooling for maximum performance:
 import tif1
 from tif1.http_session import get_connection_stats
 
-# Load session data
-session = tif1.get_session(2025, "Monaco", "Race")
-laps = session.laps
+# Load session data (2021 Belgian Grand Prix Race)
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 
 # Check connection reuse
 stats = get_connection_stats()
 print(f"Requests: {stats['total_requests']}")
 print(f"Reused: {stats['connections_reused']}")
 print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
-```python
+```
 
 ---
 
@@ -193,22 +195,22 @@ print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
 
 ### HTTP/2 Multiplexing
 
-Enable HTTP/2 multiplexing to send multiple requests over a single connection:
+HTTP/2 multiplexing is enabled by default to send multiple requests over a single connection. You can disable it if needed:
 
 ```python
 import tif1
 
 config = tif1.get_config()
-config.set("http_multiplexed", True)
-```python
+config.set("http_multiplexed", False)
+```
 
-<Warning>
-  HTTP/2 multiplexing can improve performance but may cause issues with some CDN configurations. Test thoroughly before enabling in production.
-</Warning>
+<Note>
+  HTTP/2 multiplexing is enabled by default for optimal performance. Only disable if you experience issues with specific CDN configurations.
+</Note>
 
 ### Custom pool sizing
 
-Adjust pool size based on your concurrency needs:
+Pool sizes are automatically calculated based on concurrency settings. Override only if you have specific requirements:
 
 ```python
 import tif1
@@ -222,7 +224,11 @@ config.set("pool_maxsize", 2048)
 # For low concurrency (e.g., single session analysis)
 config.set("pool_connections", 64)
 config.set("pool_maxsize", 256)
-```python
+```
+
+<Note>
+  The library automatically sizes connection pools based on `max_workers`, `max_concurrent_requests`, and `telemetry_prefetch_max_concurrent_requests` settings. Manual override is rarely needed.
+</Note>
 
 ### Keep-Alive Tuning
 
@@ -240,7 +246,7 @@ config.set("keepalive_max_requests", 5000)
 # Shorter keep-alive for unstable connections
 config.set("keepalive_timeout", 30)
 config.set("keepalive_max_requests", 100)
-```python
+```
 
 ---
 
@@ -255,7 +261,7 @@ import tif1
 
 config = tif1.get_config()
 config.set("pool_maxsize", 1024)
-```python
+```
 
 ### DNS Resolution Failures
 
@@ -266,7 +272,9 @@ import tif1
 
 config = tif1.get_config()
 config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
-```python ### Connection reuse issues
+```
+
+### Connection reuse issues
 
 Monitor connection reuse rate to identify issues:
 
@@ -277,7 +285,7 @@ stats = get_connection_stats()
 if stats['reuse_rate'] < 50:
     print("Warning: Low connection reuse rate")
     print("Consider increasing keepalive_timeout")
-```yaml
+```
 
 ---
 
