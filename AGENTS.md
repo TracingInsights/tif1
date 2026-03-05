@@ -45,3 +45,7 @@ Constraints:
 - orjson for JSON parsing (not stdlib json).
 - pandas >=2.3 as primary backend; polars >=1.36 optional.
 - Always optimize for performance. Entire existence of this library is to focus on optimization, speed and performance. Performance is critical
+
+Documentation (Mintlify):
+- For all documentation work, use the mintlify skill: `.kiro/skills/mintlify/SKILL.md`
+- All docs in `docs/` directory; configuration in `docs/docs.json`

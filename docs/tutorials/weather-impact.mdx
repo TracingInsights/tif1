@@ -222,7 +222,9 @@ plt.xlabel("Wind Strength")
 plt.ylabel("Lap Time (s)")
 plt.title("Wind Impact on Lap Times")
 plt.show()
-```python ## Pressure Analysis
+```
+
+## Pressure Analysis
 
 Atmospheric pressure can affect engine performance.
 
@@ -244,7 +246,7 @@ correlation, p_value = stats.pearsonr(
     clean_laps["LapTime"]
 )
 print(f"Pressure-LapTime correlation: {correlation:.3f} (p={p_value:.3f})")
-```python
+```
 
 ## Multi-Factor Analysis
 
@@ -268,7 +270,7 @@ plt.title("Weather Factors Impact on Performance")
 plt.axvline(x=0, color="black", linestyle="--")
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ## Weather-Adjusted Performance
 
@@ -294,7 +296,7 @@ clean_laps["WeatherAdjusted"] = clean_laps["LapTime"] - clean_laps["ExpectedLapT
 adjusted_performance = clean_laps.groupby("Driver")["WeatherAdjusted"].mean().sort_values()
 print("Weather-Adjusted Performance (negative is better):")
 print(adjusted_performance.head(10))
-```python
+```
 
 ## Complete weather analysis function
 
@@ -338,7 +340,7 @@ def analyze_weather_impact(year, gp, session_type):
 # Use it
 results = analyze_weather_impact(2024, "Singapore Grand Prix", "Race")
 print(results)
-```yaml
+```
 
 ## Summary
 

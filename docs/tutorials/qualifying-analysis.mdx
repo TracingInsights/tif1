@@ -170,7 +170,9 @@ plt.title(f"Gap to Pole Position ({pole_driver})")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()
-```python ## Sector Analysis
+```
+
+## Sector Analysis
 
 Identify which sectors drivers are strongest in.
 
@@ -191,7 +193,7 @@ sector_analysis["S2_Delta"] = sector_analysis["Sector2Time"] - fastest_s2
 sector_analysis["S3_Delta"] = sector_analysis["Sector3Time"] - fastest_s3
 
 print(sector_analysis.head(10))
-```python
+```
 
 ## Telemetry Comparison
 
@@ -225,7 +227,7 @@ plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ## Identifying deleted laps
 
@@ -250,7 +252,7 @@ plt.title("Track Limits Violations")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ## Consistency Analysis
 
@@ -274,7 +276,7 @@ plt.title("Driver Consistency (Lower is Better)")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ## Complete analysis function
 
@@ -308,7 +310,7 @@ def analyze_qualifying(year, gp):
 results = analyze_qualifying(2025, "Monaco Grand Prix")
 print(f"Pole: {results['pole_position']} - {results['pole_time']:.3f}s")
 print(f"Total laps: {results['total_laps']}, Deleted: {results['deleted_laps']}")
-```yaml
+```
 
 ## Summary
 

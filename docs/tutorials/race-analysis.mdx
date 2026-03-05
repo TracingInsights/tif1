@@ -365,7 +365,9 @@ if len(pit_stops_df) > 0:
     ax.grid(True, alpha=0.3, axis="x")
     plt.tight_layout()
     plt.show()
-```python ## 8. race pace comparison
+```
+
+## 8. race pace comparison
 
 Compare race pace between drivers on same compound.
 
@@ -415,7 +417,7 @@ def compare_race_pace(laps, drivers, compound="MEDIUM"):
     plt.show()
 
 compare_race_pace(laps, top_5_drivers[:3], compound="MEDIUM")
-```python
+```
 
 ## 9. generate race report
 
@@ -455,7 +457,7 @@ def generate_race_report(session, laps):
     print("\n" + "=" * 60)
 
 generate_race_report(session, laps)
-```yaml
+```
 
 ## Summary
 
