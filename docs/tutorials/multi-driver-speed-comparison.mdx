@@ -1,0 +1,185 @@
+---
+title: "Multi-Driver Speed Comparison"
+icon: "users"
+description: "Compare speed profiles of multiple drivers on the track"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "driver comparison"
+  - "speed analysis"
+  - "telemetry"
+---
+
+Comparing speed profiles of multiple drivers on the same track layout helps identify where each driver gains or loses time. This visualization overlays speed traces from different drivers, color-coded by team.
+
+<img
+  src="/assets/multi_driver_speed_comparison.png"
+  alt="Multi-driver speed comparison showing speed variations around the circuit"
+/>
+
+## Loading the session
+
+We'll compare the fastest laps from multiple drivers in a qualifying session.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+import pandas as pd
+
+# Load qualifying session
+session = tif1.get_session(2023, 'Bahrain', 'Q')
+
+# Select drivers to compare
+drivers = ['VER', 'PER', 'LEC']
+```
+
+## Collecting telemetry data
+
+We'll gather telemetry from each driver's fastest lap.
+
+```python
+telemetry_data = []
+
+for driver in drivers:
+    # Get fastest lap for this driver
+    lap = session.laps.pick_driver(driver).pick_fastest()
+    
+    # Get telemetry
+    telemetry = lap.get_car_data()
+    telemetry['Driver'] = driver
+    
+    # Get team color
+    driver_info = session.get_driver(driver)
+    telemetry['Color'] = driver_info['TeamColor']
+    
+    telemetry_data.append(telemetry)
+
+# Combine all telemetry
+all_telemetry = pd.concat(telemetry_data)
+```
+
+## Creating the visualization
+
+We'll plot each driver's track with speed-based coloring.
+
+```python
+fig, ax = plt.subplots(figsize=(14, 10))
+
+for driver in drivers:
+    # Filter telemetry for this driver
+    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
+    
+    # Extract coordinates and speed
+    x = driver_tel['X'].values
+    y = driver_tel['Y'].values
+    speed = driver_tel['Speed'].values
+    
+    # Create line segments
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    # Color by speed
+    norm = plt.Normalize(speed.min(), speed.max())
+    lc = LineCollection(segments, cmap='plasma', norm=norm, 
+                       linewidth=3, alpha=0.7, label=driver)
+    lc.set_array(speed)
+    ax.add_collection(lc)
+
+# Format plot
+ax.set_aspect('equal')
+ax.axis('off')
+ax.legend(loc='upper right')
+
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Comparison")
+plt.tight_layout()
+plt.show()
+```
+
+## Simplified version with team colors
+
+For a cleaner look, use solid team colors instead of speed gradients.
+
+```python
+fig, ax = plt.subplots(figsize=(14, 10))
+
+for driver in drivers:
+    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
+    
+    # Plot with team color
+    ax.plot(driver_tel['X'], driver_tel['Y'], 
+            color=f"#{driver_tel['Color'].iloc[0]}", 
+            linewidth=3, label=driver, alpha=0.8)
+
+ax.set_aspect('equal')
+ax.axis('off')
+ax.legend(loc='upper right', fontsize=12)
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Driver Comparison")
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+import pandas as pd
+
+# Load session
+session = tif1.get_session(2023, 'Bahrain', 'Q')
+drivers = ['VER', 'PER', 'LEC']
+
+# Collect telemetry
+telemetry_data = []
+for driver in drivers:
+    lap = session.laps.pick_driver(driver).pick_fastest()
+    telemetry = lap.get_car_data()
+    telemetry['Driver'] = driver
+    driver_info = session.get_driver(driver)
+    telemetry['Color'] = driver_info['TeamColor']
+    telemetry_data.append(telemetry)
+
+all_telemetry = pd.concat(telemetry_data)
+
+# Create visualization
+fig, ax = plt.subplots(figsize=(14, 10))
+
+for driver in drivers:
+    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
+    x = driver_tel['X'].values
+    y = driver_tel['Y'].values
+    speed = driver_tel['Speed'].values
+    
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    norm = plt.Normalize(speed.min(), speed.max())
+    lc = LineCollection(segments, cmap='plasma', norm=norm, 
+                       linewidth=3, alpha=0.7, label=driver)
+    lc.set_array(speed)
+    ax.add_collection(lc)
+
+ax.set_aspect('equal')
+ax.axis('off')
+ax.legend(loc='upper right')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Comparison")
+plt.tight_layout()
+plt.show()
+```
+
+## Interpreting the visualization
+
+- **Overlapping lines:** Drivers taking similar racing lines
+- **Speed differences:** Visible through color intensity at same track positions
+- **Line separation:** Different racing lines or corner entry/exit points
+- **Team colors:** Quick identification of teammates vs competitors
+
+## Next steps
+
+- Analyze [lap time deltas](/tutorials/lap-delta-comparison) for detailed time differences
+- Compare [telemetry channels](/tutorials/telemetry-comparison) side by side
+- Visualize [gear shifts](/tutorials/gear-shifts-on-track) to see transmission strategies

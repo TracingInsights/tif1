@@ -1,0 +1,135 @@
+---
+title: "Track Temperature Analysis"
+icon: "temperature-high"
+description: "Visualizing track temperature changes throughout a session"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "weather"
+  - "track temperature"
+---
+
+Track temperature is a critical factor in F1 performance, affecting tire grip, degradation, and overall lap times. By visualizing how track temperature evolves during a session, you can understand the conditions drivers faced and how they might have influenced strategy.
+
+<img
+  src="/assets/track_temperature.png"
+  alt="Track temperature evolution during a race session"
+/>
+
+## Loading the session
+
+We'll analyze track temperature changes during the 2023 Monaco Grand Prix race.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Load race session
+session = tif1.get_session(2023, 'Monaco', 'R')
+```
+
+## Getting weather data
+
+Weather data is automatically included in the laps DataFrame. Each lap has associated weather information like track temperature, air temperature, humidity, and more.
+
+```python
+# Get laps from the driver who completed the most laps
+laps = session.laps
+driver_counts = laps.groupby('Driver')['LapNumber'].count()
+most_laps_driver = driver_counts.idxmax()
+
+# Filter to that driver's laps
+driver_laps = laps.pick_drivers(most_laps_driver)
+```
+
+## Creating the visualization
+
+Plot track temperature against lap number to see how conditions evolved.
+
+```python
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Plot track temperature
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+        color='#ff4444', linewidth=2.5, label='Track Temperature')
+
+ax.set_xlabel('Lap Number', fontsize=12)
+ax.set_ylabel('Track Temperature (°C)', fontsize=12)
+ax.legend(fontsize=11)
+ax.grid(alpha=0.3)
+
+plt.suptitle(f"Track Temperature - {session.event['EventName']} {session.event.year}",
+             fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+## Understanding the data
+
+Track temperature patterns reveal important insights:
+
+- **Rising temperature:** Often seen in afternoon sessions as the sun heats the track surface
+- **Cooling trends:** Can occur with cloud cover or as the sun sets
+- **Stable conditions:** Consistent temperature suggests predictable grip levels
+- **Temperature spikes:** May indicate changing weather or track conditions
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Load session
+session = tif1.get_session(2023, 'Monaco', 'R')
+
+# Get laps from driver with most laps
+laps = session.laps
+driver_counts = laps.groupby('Driver')['LapNumber'].count()
+most_laps_driver = driver_counts.idxmax()
+driver_laps = laps.pick_drivers(most_laps_driver)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+        color='#ff4444', linewidth=2.5, label='Track Temperature')
+
+ax.set_xlabel('Lap Number', fontsize=12)
+ax.set_ylabel('Track Temperature (°C)', fontsize=12)
+ax.legend(fontsize=11)
+ax.grid(alpha=0.3)
+
+plt.suptitle(f"Track Temperature - {session.event['EventName']} {session.event.year}",
+             fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+## Adding air temperature
+
+Compare track and air temperature to see the relationship between ambient conditions and track surface.
+
+```python
+fig, ax = plt.subplots(figsize=(12, 6))
+
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+        color='#ff4444', linewidth=2.5, label='Track Temperature')
+ax.plot(driver_laps['LapNumber'], driver_laps['AirTemp'], 
+        color='#4444ff', linewidth=2.5, label='Air Temperature')
+
+ax.set_xlabel('Lap Number', fontsize=12)
+ax.set_ylabel('Temperature (°C)', fontsize=12)
+ax.legend(fontsize=11)
+ax.grid(alpha=0.3)
+
+plt.suptitle(f"Temperature Evolution - {session.event['EventName']} {session.event.year}",
+             fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+## Next steps
+
+- Explore other weather data like humidity and wind speed
+- Correlate temperature changes with lap time variations
+- Analyze how different compounds perform at various track temperatures

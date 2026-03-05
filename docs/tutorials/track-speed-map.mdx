@@ -1,0 +1,151 @@
+---
+title: "Track Speed Map"
+icon: "map"
+description: "Visualize speed variations around the circuit"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "track map"
+  - "speed visualization"
+  - "circuit analysis"
+---
+
+Track speed maps provide an intuitive way to visualize how speed varies around a circuit. By color-coding the track based on speed, you can instantly identify fast straights, slow corners, and braking zones.
+
+<img
+  src="/assets/track_speed_map.png"
+  alt="Track speed map showing speed variations around the circuit"
+/>
+
+## Loading the session
+
+We'll visualize the fastest lap from the 2023 Monaco Grand Prix qualifying session.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load qualifying session
+session = tif1.get_session(2023, 'Monaco', 'Q')
+
+# Get the fastest lap
+fastest_lap = session.laps.pick_fastest()
+```
+
+## Getting track position and telemetry
+
+The telemetry includes X, Y coordinates for the car's position and speed data.
+
+```python
+# Get telemetry data
+telemetry = fastest_lap.get_car_data()
+
+# Extract position coordinates
+x = telemetry['X']
+y = telemetry['Y']
+speed = telemetry['Speed']
+```
+
+## Creating the visualization
+
+We'll use matplotlib's `LineCollection` to create a color-coded track map.
+
+```python
+# Prepare the track segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create the plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Create line collection with speed-based colors
+norm = plt.Normalize(speed.min(), speed.max())
+lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=4)
+lc.set_array(speed)
+
+# Add to plot
+line = ax.add_collection(lc)
+
+# Add colorbar
+cbar = plt.colorbar(line, ax=ax, label='Speed (km/h)')
+
+# Format plot
+ax.set_aspect('equal')
+ax.axis('off')
+
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Fastest Lap Speed Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Adding corner markers
+
+You can enhance the visualization by adding corner numbers from the circuit info.
+
+```python
+# Get circuit information
+circuit_info = session.get_circuit_info()
+
+# Add corner markers
+for _, corner in circuit_info.corners.iterrows():
+    ax.scatter(corner['X'], corner['Y'], color='white', s=100, 
+               edgecolors='black', linewidth=2, zorder=10)
+    ax.text(corner['X'], corner['Y'], f"{corner['Number']}", 
+            ha='center', va='center', fontsize=8, fontweight='bold')
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Monaco', 'Q')
+fastest_lap = session.laps.pick_fastest()
+
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+x = telemetry['X']
+y = telemetry['Y']
+speed = telemetry['Speed']
+
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded track
+norm = plt.Normalize(speed.min(), speed.max())
+lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=4)
+lc.set_array(speed)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Speed (km/h)')
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Interpreting the visualization
+
+- **Hot colors (red/yellow):** High-speed sections like straights
+- **Cool colors (blue/purple):** Low-speed corners and braking zones
+- **Gradients:** Show acceleration and deceleration patterns
+
+## Next steps
+
+- Create [throttle maps](/tutorials/track-throttle-map) to see driver inputs
+- Visualize [brake zones](/tutorials/track-brake-zones) to analyze braking points
+- Compare [acceleration patterns](/tutorials/track-acceleration-map) around the circuit
