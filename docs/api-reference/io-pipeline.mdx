@@ -415,7 +415,7 @@ The I/O pipeline is heavily optimized for speed:
   - Boolean fields: False (fillna applied)
   - Deleted field: null (nullable boolean)
   - Timedelta fields: NaT (not-a-time)
-  
+
   The pipeline never raises errors for missing optional fields. Only validation (when enabled) can raise `InvalidDataError` for missing required fields.
 </Accordion>
 
@@ -424,6 +424,6 @@ The I/O pipeline is heavily optimized for speed:
   - Calculates max length across all arrays
   - Pads short arrays with None values
   - Replicates scalar values to match max length
-  
+
   This ensures both pandas and polars can construct DataFrames without errors.
 </Accordion>

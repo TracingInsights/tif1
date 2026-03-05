@@ -390,8 +390,8 @@ High-frequency data recorded throughout a lap. Inherits from pandas DataFrame wi
 
 #### `slice_by_time(start_time, end_time, pad=0, pad_side="both", interpolate_edges=False)`
 ```python
-def slice_by_time(start_time, end_time, pad: int = 0, 
-                  pad_side: str = "both", 
+def slice_by_time(start_time, end_time, pad: int = 0,
+                  pad_side: str = "both",
                   interpolate_edges: bool = False) -> Telemetry
 ```
 Slice telemetry by time window.
@@ -404,8 +404,8 @@ first_10s = tel.slice_by_time(0, 10)
 
 #### `slice_by_lap(ref_laps, pad=0, pad_side="both", interpolate_edges=False)`
 ```python
-def slice_by_lap(ref_laps, pad: int = 0, 
-                 pad_side: str = "both", 
+def slice_by_lap(ref_laps, pad: int = 0,
+                 pad_side: str = "both",
                  interpolate_edges: bool = False) -> Telemetry
 ```
 Slice telemetry by lap reference (Lap or Laps object).
