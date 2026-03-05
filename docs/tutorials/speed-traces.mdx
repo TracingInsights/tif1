@@ -1,0 +1,127 @@
+---
+title: "Speed Traces Comparison"
+icon: "gauge-high"
+description: "Overlaying speed traces to compare fastest laps"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "telemetry"
+  - "speed comparison"
+---
+
+Speed traces are one of the most intuitive ways to compare lap performance between drivers. By overlaying the speed profiles of two laps, you can instantly see where one driver is faster and identify braking points, acceleration zones, and top speeds.
+
+<img
+  src="/assets/speed_traces.png"
+  alt="Speed traces comparison between two drivers"
+/>
+
+## Loading the session
+
+We'll compare the fastest qualifying laps from the 2023 Spanish Grand Prix between Verstappen and Hamilton.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Enable plotting support
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+
+# Load qualifying session
+session = tif1.get_session(2023, 'Spanish Grand Prix', 'Q')
+```
+
+## Selecting the laps
+
+Use the `pick_drivers()` and `pick_fastest()` methods to get each driver's fastest lap.
+
+```python
+ver_lap = session.laps.pick_drivers('VER').pick_fastest()
+ham_lap = session.laps.pick_drivers('HAM').pick_fastest()
+```
+
+## Getting telemetry with distance
+
+Telemetry data includes speed, throttle, brake, and more. The `add_distance()` method adds a cumulative distance column, making it easy to align laps for comparison.
+
+```python
+ver_tel = ver_lap.get_car_data().add_distance()
+ham_tel = ham_lap.get_car_data().add_distance()
+```
+
+## Plotting with team colors
+
+Use `tif1.plotting.get_team_color()` to automatically fetch the correct team colors for visual consistency.
+
+```python
+# Get team colors
+rbr_color = tif1.plotting.get_team_color(ver_lap['Team'], session=session)
+mer_color = tif1.plotting.get_team_color(ham_lap['Team'], session=session)
+
+# Create the plot
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(ver_tel['Distance'], ver_tel['Speed'], color=rbr_color, label='VER', linewidth=2)
+ax.plot(ham_tel['Distance'], ham_tel['Speed'], color=mer_color, label='HAM', linewidth=2)
+
+ax.set_xlabel('Distance (m)')
+ax.set_ylabel('Speed (km/h)')
+ax.legend()
+
+plt.suptitle(f"Fastest Lap Speed Comparison\n"
+             f"{session.event['EventName']} {session.event.year} Qualifying")
+plt.show()
+```
+
+## Analyzing the traces
+
+When examining speed traces, look for:
+
+- **Braking zones:** Sharp drops in speed indicate braking points. Earlier or later braking can reveal different driving styles or car characteristics.
+- **Minimum corner speeds:** The lowest point in each dip shows how much speed is carried through corners.
+- **Acceleration:** The steepness of the speed increase after corners indicates traction and power delivery.
+- **Top speeds:** Peak values on straights reveal engine power and drag levels.
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Setup
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+
+# Load session
+session = tif1.get_session(2023, 'Spanish Grand Prix', 'Q')
+
+# Get fastest laps
+ver_lap = session.laps.pick_drivers('VER').pick_fastest()
+ham_lap = session.laps.pick_drivers('HAM').pick_fastest()
+
+# Get telemetry with distance
+ver_tel = ver_lap.get_car_data().add_distance()
+ham_tel = ham_lap.get_car_data().add_distance()
+
+# Get team colors
+rbr_color = tif1.plotting.get_team_color(ver_lap['Team'], session=session)
+mer_color = tif1.plotting.get_team_color(ham_lap['Team'], session=session)
+
+# Plot
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(ver_tel['Distance'], ver_tel['Speed'], color=rbr_color, label='VER', linewidth=2)
+ax.plot(ham_tel['Distance'], ham_tel['Speed'], color=mer_color, label='HAM', linewidth=2)
+
+ax.set_xlabel('Distance (m)')
+ax.set_ylabel('Speed (km/h)')
+ax.legend()
+
+plt.suptitle(f"Fastest Lap Speed Comparison\n"
+             f"{session.event['EventName']} {session.event.year} Qualifying")
+plt.show()
+```
+
+## Next steps
+
+- Explore other telemetry channels like throttle and brake in the [Telemetry Deep Dive](/tutorials/telemetry-comparison)
+- Learn about calculating time deltas between laps
+- Analyze gear shifts and RPM data for transmission insights
