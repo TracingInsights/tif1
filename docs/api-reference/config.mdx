@@ -20,7 +20,7 @@ keywords:
 
 ```python
 def get_config() -> Config
-```python
+```
 
 Returns the global singleton configuration instance.
 
@@ -34,7 +34,7 @@ import tif1
 config = tif1.get_config()
 print(f"Lib: {config.get('lib')}")
 print(f"Cache enabled: {config.get('enable_cache')}")
-```python
+```
 
 ---
 
@@ -46,7 +46,7 @@ Get the value for a configuration key.
 
 ```python
 def get(key: str, default: Any = None) -> Any
-```yaml
+```
 
 **Parameters:**
 - `key`: Configuration key name
@@ -62,7 +62,7 @@ config = tif1.get_config()
 lib = config.get("lib")  # "pandas"
 timeout = config.get("timeout", 30)  # 30 if not set
 custom = config.get("custom_key", "default")  # "default"
-```python
+```
 
 ---
 
@@ -72,7 +72,7 @@ Update a configuration value in memory for the current session.
 
 ```python
 def set(key: str, value: Any) -> None
-```yaml
+```
 
 **Parameters:**
 - `key`: Configuration key name
@@ -90,7 +90,7 @@ config.set("enable_cache", False)
 
 # Increase timeout
 config.set("timeout", 60)
-```python
+```
 
 <Note>
   Changes made with `set()` only affect the current Python session. Use `save()` to persist changes to disk.
@@ -104,7 +104,7 @@ Save the current configuration to a JSON file.
 
 ```python
 def save(path: Path | None = None) -> None
-```yaml
+```
 
 **Parameters:**
 - `path`: Path to save config file. If `None`, saves to `~/.tif1rc`
@@ -122,7 +122,9 @@ config.save()
 
 # Save to custom location
 config.save(Path("./my-config.json"))
-```python ---
+```
+
+---
 
 ## Configuration Keys
 
@@ -133,7 +135,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("lib", "polars")
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="enable_cache" type="bool" default="True">
@@ -141,7 +143,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("enable_cache", False)  # Disable caching
-```sql
+  ```
 </ResponseField>
 
 <ResponseField name="cache_dir" type="str" default="~/.tif1/cache">
@@ -149,7 +151,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("cache_dir", "/tmp/tif1-cache")
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="validate_data" type="bool" default="False">
@@ -161,7 +163,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("validate_data", True)  # Enable validation
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="ultra_cold_start" type="bool" default="True">
@@ -169,7 +171,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("ultra_cold_start", False)  # Disable for full data loading
-```python
+  ```
 </ResponseField>
 
 ---
@@ -181,7 +183,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("timeout", 60)  # 60 second timeout
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="max_retries" type="int" default="3">
@@ -189,7 +191,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("max_retries", 5)
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="max_workers" type="int" default="20">
@@ -197,14 +199,15 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("max_workers", 50)
-  ```python </ResponseField>
+  ```
+</ResponseField>
 
 <ResponseField name="max_concurrent_requests" type="int" default="20">
   Maximum number of concurrent HTTP requests.
 
   ```python
   config.set("max_concurrent_requests", 50)
-```python
+  ```
 </ResponseField>
 
 ---
@@ -216,7 +219,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("http_multiplexed", False)  # Disable multiplexing
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="http_disable_http3" type="bool" default="False">
@@ -224,7 +227,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("http_disable_http3", True)
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="pool_connections" type="int" default="dynamic">
@@ -236,7 +239,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("pool_connections", 512)  # Override automatic sizing
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="pool_maxsize" type="int" default="dynamic">
@@ -248,7 +251,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("pool_maxsize", 2048)  # Override automatic sizing
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="keepalive_timeout" type="int" default="120">
@@ -256,7 +259,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("keepalive_timeout", 300)
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="keepalive_max_requests" type="int" default="1000">
@@ -264,7 +267,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("keepalive_max_requests", 5000)
-```python
+  ```
 </ResponseField>
 
 <ResponseField name="user_agent" type="str" default="tif1/0.1.0">
@@ -272,14 +275,15 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("user_agent", "my-app/1.0.0")
-  ```python </ResponseField>
+  ```
+</ResponseField>
 
 <ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
   DNS resolvers with DoH fallback.
 
   ```python
   config.set("http_resolvers", ["doh://cloudflare"])
-```python
+  ```
 </ResponseField>
 
 ---
@@ -291,7 +295,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("telemetry_prefetch_max_concurrent_requests", 128)
-```yaml
+  ```
 </ResponseField>
 
 ---
@@ -303,7 +307,7 @@ config.save(Path("./my-config.json"))
 
   ```python
   config.set("connection_stats_log_interval", 120.0)
-```yaml
+  ```
 </ResponseField>
 
 ---
@@ -649,7 +653,7 @@ export TIF1_POOL_MAXSIZE=1024
 
 # Configure DNS resolvers (comma-separated)
 export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
-```yaml
+```
 
 ---
 
@@ -670,7 +674,7 @@ Configuration is loaded in this order (later overrides earlier):
 # Programmatic: config.set("lib", "polars")
 
 # Final value: "polars" (programmatic wins)
-```python
+```
 
 ---
 
@@ -719,7 +723,9 @@ config.set("pool_maxsize", 1024)
 
 # Shorter timeout
 config.set("timeout", 15)
-```python ### Development Setup
+```
+
+### Development Setup
 
 ```python
 import tif1
@@ -738,7 +744,7 @@ tif1.setup_logging(logging.DEBUG)
 
 # Lower concurrency for debugging
 config.set("max_workers", 5)
-```python
+```
 
 ### Production Setup
 
@@ -764,7 +770,7 @@ config.set("timeout", 60)
 
 # Save configuration
 config.save()
-```python
+```
 
 ---
 
@@ -778,7 +784,7 @@ import logging
 
 # Set log level
 tif1.setup_logging(logging.DEBUG)  # DEBUG, INFO, WARNING, ERROR
-```python
+```
 
 Or use the fastf1-compatible function:
 
@@ -787,7 +793,7 @@ import tif1
 
 # Set log level (fastf1 compatibility)
 tif1.set_log_level(logging.DEBUG)
-```yaml
+```
 
 ---
 

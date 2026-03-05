@@ -40,16 +40,17 @@ keywords:
     ```python tif1 (Lazy)
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     laps = session.laps # Fetches automatically
-```yaml
+    ```
     ```python fastf1 (Explicit)
     session = fastf1.get_session(2025, "Monaco", "R")
     session.load()
     laps = session.laps
-```yaml
+    ```
     </CodeGroup>
   </Step>
   <Step title="Check Filters">
     If you used `pick_` methods, switch to standard DataFrame filtering or use the new `Session` methods.
+
     | fastf1 | tif1 |
     | :--- | :--- |
     | `laps.pick_fastest()` | `session.get_fastest_laps(by_driver=False)` |
@@ -73,7 +74,7 @@ laps = session.laps
 # tif1
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Automatically fetches on first access
-```python
+```
 
 ### 2. Property Access
 In `fastf1`, telemetry is often a method. In `tif1`, it is a property for a more modern feel.
@@ -84,7 +85,7 @@ telemetry = lap.get_telemetry()
 
 # tif1
 telemetry = lap.telemetry
-```python
+```
 
 ### 3. Driver Information
 tif1 provides a convenient `drivers_df` DataFrame with comprehensive driver information.
@@ -93,7 +94,7 @@ tif1 provides a convenient `drivers_df` DataFrame with comprehensive driver info
 # tif1
 drivers_df = session.drivers_df
 print(drivers_df[["Driver", "Team", "DriverNumber", "TeamColor"]])
-```yaml
+```
 
 ### 4. Enriched Data
 tif1 automatically enriches data:
@@ -108,7 +109,7 @@ For maximum performance, adopt the async pattern:
 ```python
 # Massive speed gain for initial load
 laps = await session.laps_async()
-```python
+```
 
 ---
 
