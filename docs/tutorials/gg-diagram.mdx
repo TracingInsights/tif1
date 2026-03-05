@@ -1,0 +1,177 @@
+---
+title: "G-G Diagram (Acceleration Envelope)"
+icon: "chart-scatter"
+description: "Visualize car performance limits with lateral and longitudinal acceleration"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "g-forces"
+  - "acceleration"
+  - "performance envelope"
+---
+
+A G-G diagram plots lateral vs longitudinal acceleration, showing the performance envelope of a car. The outer boundary represents the maximum grip available - it's one of the most insightful ways to compare car performance and driver technique.
+
+<img
+  src="/assets/gg_diagram.png"
+  alt="G-G diagram showing acceleration envelope"
+/>
+
+## What is a G-G diagram?
+
+The G-G diagram shows:
+- X-axis: Lateral acceleration (cornering forces)
+- Y-axis: Longitudinal acceleration (braking/accelerating forces)
+- Each point represents a moment in time during the lap
+- The outer boundary shows the car's performance limit
+
+## Load session and get telemetry
+
+We'll compare multiple drivers at Monaco Qualifying.
+
+```python
+import tif1
+from tif1.plotting import get_team_color, setup_mpl
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Setup plotting
+setup_mpl(color_scheme="fastf1")
+
+# Load session
+session = tif1.get_session(2024, "Monaco", "Q")
+laps = session.laps
+
+# Select drivers to compare
+drivers = ["VER", "LEC", "NOR"]
+```
+
+## Compute accelerations
+
+Calculate g-forces from telemetry data using speed and position changes.
+
+```python
+def compute_accelerations(telemetry):
+    """Calculate longitudinal and lateral accelerations in g."""
+    # Convert speed to m/s
+    v = np.array(telemetry["Speed"]) / 3.6
+    
+    # Longitudinal acceleration from speed change over time
+    time_seconds = telemetry["Time"].dt.total_seconds()
+    lon_acc = np.gradient(v, time_seconds) / 9.81
+    
+    # Lateral acceleration from position change (curvature)
+    dx = np.gradient(telemetry["X"], telemetry["Distance"])
+    dy = np.gradient(telemetry["Y"], telemetry["Distance"])
+    
+    # Calculate track curvature
+    curvature = (dx * np.gradient(dy) - dy * np.gradient(dx)) / (dx**2 + dy**2)**1.5
+    lat_acc = v * v * curvature / 9.81
+    
+    # Remove unrealistic values (> 7.5g)
+    lon_acc = np.clip(lon_acc, -7.5, 7.5)
+    lat_acc = np.clip(lat_acc, -7.5, 7.5)
+    
+    return lon_acc, lat_acc
+```
+
+## Create G-G diagram
+
+Plot acceleration data with performance envelope.
+
+```python
+fig, ax = plt.subplots(figsize=(12, 12))
+
+for driver in drivers:
+    # Get fastest lap telemetry
+    driver_lap = laps.pick_driver(driver).pick_fastest()
+    telemetry = driver_lap.get_telemetry().add_distance()
+    
+    # Compute accelerations
+    lon_acc, lat_acc = compute_accelerations(telemetry)
+    
+    # Get team color
+    team = driver_lap["Team"]
+    color = get_team_color(team)
+    
+    # Plot scatter points
+    ax.scatter(
+        lat_acc,
+        lon_acc,
+        s=20,
+        alpha=0.4,
+        color=color,
+        label=driver,
+    )
+    
+    # Draw performance envelope
+    points = np.column_stack([lat_acc, lon_acc])
+    points = points[~np.isnan(points).any(axis=1)]
+    
+    if len(points) > 10:
+        # Find boundary by sampling angles
+        angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+        boundary_points = []
+        
+        center = np.mean(points, axis=0)
+        centered = points - center
+        
+        for angle in angles:
+            direction = np.array([np.cos(angle), np.sin(angle)])
+            projections = np.dot(centered, direction)
+            max_idx = np.argmax(projections)
+            boundary_points.append(points[max_idx])
+        
+        boundary = np.array(boundary_points)
+        boundary = np.vstack([boundary, boundary[0]])
+        
+        ax.plot(
+            boundary[:, 0],
+            boundary[:, 1],
+            color=color,
+            linewidth=2.5,
+            alpha=0.9,
+        )
+
+# Styling
+ax.set_xlabel("Lateral Acceleration (g)")
+ax.set_ylabel("Longitudinal Acceleration (g)")
+ax.set_title(f"G-G Diagram - {session.event['EventName']}")
+ax.grid(True, alpha=0.3)
+ax.axhline(0, color="white", linestyle="-", alpha=0.5)
+ax.axvline(0, color="white", linestyle="-", alpha=0.5)
+ax.set_aspect("equal")
+ax.legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+## Reading the diagram
+
+Key insights from a G-G diagram:
+
+- **Top of envelope (positive Y):** Maximum acceleration
+- **Bottom of envelope (negative Y):** Maximum braking
+- **Left/right edges (X):** Maximum cornering forces
+- **Corners of envelope:** Combined braking/acceleration + cornering
+- **Wider envelope:** More grip available
+- **Rounder envelope:** Better balanced car
+
+## Comparing drivers
+
+Look for:
+- **Envelope size:** Larger = more grip being used
+- **Envelope shape:** Asymmetry shows car balance issues
+- **Point density:** Where drivers spend most time
+- **Peak values:** Maximum g-forces achieved
+
+## Track characteristics
+
+Different tracks produce different shapes:
+- **Monaco:** Smaller envelope, lower speeds, less extreme forces
+- **Monza:** Larger longitudinal values (high-speed braking)
+- **Silverstone:** Large lateral values (high-speed corners)
+
+The G-G diagram is a powerful tool for understanding car performance limits and how drivers extract maximum grip from the car.

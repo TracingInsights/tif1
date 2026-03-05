@@ -1,0 +1,254 @@
+---
+title: "Full Throttle Distance Analysis"
+icon: "gauge-simple-high"
+description: "Analyze how much of the lap drivers spend at full throttle"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "throttle"
+  - "telemetry"
+  - "power"
+---
+
+Understanding how much of a lap drivers spend at full throttle reveals track characteristics and driving styles. Power-limited tracks like Monza show high percentages, while technical circuits like Monaco show much lower values.
+
+<img
+  src="/assets/throttle_distance.png"
+  alt="Full throttle distance comparison across drivers"
+/>
+
+## The concept
+
+The full throttle metric calculates what percentage of the lap distance is covered with the throttle at or above 98%:
+
+```
+Full Throttle % = (Distance at ≥98% throttle / Total lap distance) × 100
+```
+
+- **Higher values** indicate power-limited tracks with long straights
+- **Lower values** indicate technical tracks with many corners
+- Differences between drivers can reveal confidence, car balance, or setup choices
+
+## Loading the session
+
+We'll analyze qualifying from the 2023 Bahrain Grand Prix, a track with a good mix of straights and technical sections.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Setup plotting
+tif1.plotting.setup_mpl(color_scheme='fastf1')
+
+# Load qualifying session
+session = tif1.get_session(2023, 'Bahrain Grand Prix', 'Q')
+```
+
+## Calculating throttle distance
+
+For each driver, we analyze their fastest lap telemetry to find where throttle is at or above 98%.
+
+```python
+drivers = session.laps['Driver'].unique()
+throttle_data = []
+
+for driver in drivers:
+    try:
+        # Get fastest lap
+        fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
+        telemetry = fastest_lap.get_car_data().add_distance()
+        
+        # Calculate distance between each telemetry point
+        telemetry['Distance_delta'] = telemetry['Distance'].diff()
+        
+        # Get total circuit length
+        circuit_length = telemetry['Distance'].max()
+        
+        # Filter for full throttle (≥98%)
+        full_throttle = telemetry[telemetry['Throttle'] >= 98]
+        
+        # Sum up distance at full throttle
+        throttle_distance = full_throttle['Distance_delta'].sum()
+        throttle_percentage = (throttle_distance / circuit_length) * 100
+        
+        throttle_data.append({
+            'Driver': driver,
+            'Team': fastest_lap['Team'],
+            'ThrottlePercentage': round(throttle_percentage, 2)
+        })
+    except Exception:
+        continue
+
+# Sort by throttle percentage
+throttle_data.sort(key=lambda x: x['ThrottlePercentage'], reverse=True)
+```
+
+## Visualizing the results
+
+Create a horizontal bar chart showing relative differences between drivers.
+
+```python
+# Map to minimum value to show relative differences
+min_percentage = min(d['ThrottlePercentage'] for d in throttle_data)
+for d in throttle_data:
+    d['PercentageDiff'] = d['ThrottlePercentage'] - min_percentage
+
+fig, ax = plt.subplots(figsize=(12, 8))
+
+drivers_list = [d['Driver'] for d in throttle_data]
+percentages_diff = [d['PercentageDiff'] for d in throttle_data]
+percentages_actual = [d['ThrottlePercentage'] for d in throttle_data]
+colors = [tif1.plotting.get_team_color(d['Team'], session) for d in throttle_data]
+
+# Create bars with relative differences
+bars = ax.barh(drivers_list, percentages_diff, color=colors, alpha=0.8, 
+               edgecolor='white', linewidth=1)
+
+# Add actual percentage labels
+for i, (driver, percentage) in enumerate(zip(drivers_list, percentages_actual)):
+    ax.text(percentages_diff[i] + 0.1, i, f'{percentage:.1f}%', 
+            va='center', fontsize=10, fontweight='bold')
+
+# Styling
+ax.set_xlabel('Distance at Full Throttle (relative difference)', 
+              fontsize=12, fontweight='bold')
+ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
+ax.set_title('Bahrain GP Qualifying - Full Throttle Distance', 
+             fontsize=14, fontweight='bold')
+ax.invert_yaxis()
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+ax.set_xlim(left=0)
+
+plt.tight_layout()
+plt.show()
+```
+
+The chart displays relative differences (bar lengths) while showing actual percentages (labels), making it easy to compare drivers.
+
+## Interpreting the results
+
+When analyzing full throttle distance, consider:
+
+- **Track layout:** Monza (~70%) vs Monaco (~30%) shows dramatic differences
+- **Driver confidence:** Higher percentages can indicate confidence in car balance
+- **Setup choices:** Aggressive setups may allow earlier throttle application
+- **Tire management:** Drivers managing tires may be more conservative with throttle
+
+## Comparing across tracks
+
+You can compare the same driver across different tracks to understand track characteristics:
+
+```python
+tracks = ['Bahrain Grand Prix', 'Monaco Grand Prix', 'Italian Grand Prix']
+driver = 'VER'
+track_comparison = []
+
+for track in tracks:
+    try:
+        session = tif1.get_session(2023, track, 'Q')
+        fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
+        telemetry = fastest_lap.get_car_data().add_distance()
+        
+        telemetry['Distance_delta'] = telemetry['Distance'].diff()
+        circuit_length = telemetry['Distance'].max()
+        full_throttle = telemetry[telemetry['Throttle'] >= 98]
+        throttle_distance = full_throttle['Distance_delta'].sum()
+        throttle_percentage = (throttle_distance / circuit_length) * 100
+        
+        track_comparison.append({
+            'Track': track,
+            'ThrottlePercentage': round(throttle_percentage, 2)
+        })
+    except Exception:
+        continue
+
+# Plot comparison
+fig, ax = plt.subplots(figsize=(10, 6))
+tracks_list = [t['Track'] for t in track_comparison]
+percentages = [t['ThrottlePercentage'] for t in track_comparison]
+
+ax.bar(tracks_list, percentages, color='#1E88E5', alpha=0.8, edgecolor='white', linewidth=2)
+
+for i, percentage in enumerate(percentages):
+    ax.text(i, percentage + 1, f'{percentage:.1f}%', ha='center', fontsize=11, fontweight='bold')
+
+ax.set_ylabel('Full Throttle Distance (%)', fontsize=12, fontweight='bold')
+ax.set_title(f'{driver} - Full Throttle Distance Across Tracks', fontsize=14, fontweight='bold')
+ax.grid(axis='y', alpha=0.3)
+ax.set_ylim(bottom=0)
+
+plt.xticks(rotation=15, ha='right')
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Setup
+tif1.plotting.setup_mpl(color_scheme='fastf1')
+session = tif1.get_session(2023, 'Bahrain Grand Prix', 'Q')
+
+# Calculate throttle distance
+drivers = session.laps['Driver'].unique()
+throttle_data = []
+
+for driver in drivers:
+    try:
+        fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
+        telemetry = fastest_lap.get_car_data().add_distance()
+        telemetry['Distance_delta'] = telemetry['Distance'].diff()
+        
+        circuit_length = telemetry['Distance'].max()
+        full_throttle = telemetry[telemetry['Throttle'] >= 98]
+        throttle_distance = full_throttle['Distance_delta'].sum()
+        throttle_percentage = (throttle_distance / circuit_length) * 100
+        
+        throttle_data.append({
+            'Driver': driver,
+            'Team': fastest_lap['Team'],
+            'ThrottlePercentage': round(throttle_percentage, 2)
+        })
+    except Exception:
+        continue
+
+throttle_data.sort(key=lambda x: x['ThrottlePercentage'], reverse=True)
+
+# Map to minimum for visualization
+min_percentage = min(d['ThrottlePercentage'] for d in throttle_data)
+for d in throttle_data:
+    d['PercentageDiff'] = d['ThrottlePercentage'] - min_percentage
+
+# Plot
+fig, ax = plt.subplots(figsize=(12, 8))
+drivers_list = [d['Driver'] for d in throttle_data]
+percentages_diff = [d['PercentageDiff'] for d in throttle_data]
+percentages_actual = [d['ThrottlePercentage'] for d in throttle_data]
+colors = [tif1.plotting.get_team_color(d['Team'], session) for d in throttle_data]
+
+ax.barh(drivers_list, percentages_diff, color=colors, alpha=0.8, edgecolor='white', linewidth=1)
+
+for i, (driver, percentage) in enumerate(zip(drivers_list, percentages_actual)):
+    ax.text(percentages_diff[i] + 0.1, i, f'{percentage:.1f}%', va='center', fontsize=10, fontweight='bold')
+
+ax.set_xlabel('Distance at Full Throttle (relative difference)', fontsize=12, fontweight='bold')
+ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
+ax.set_title('Bahrain GP Qualifying - Full Throttle Distance', fontsize=14, fontweight='bold')
+ax.invert_yaxis()
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+ax.set_xlim(left=0)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Next steps
+
+- Analyze throttle application patterns through specific corners
+- Compare throttle traces between drivers to identify different driving styles
+- Correlate throttle usage with tire degradation in race stints
+- Explore the relationship between throttle distance and lap times

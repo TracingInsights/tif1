@@ -1,0 +1,146 @@
+---
+title: "Track Brake Zones"
+icon: "circle-stop"
+description: "Identify braking zones around the circuit"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "braking"
+  - "track map"
+  - "brake zones"
+---
+
+Brake zone visualization highlights where drivers apply the brakes around the circuit. This is crucial for understanding corner entry, comparing braking points, and analyzing overtaking opportunities.
+
+<img
+  src="/assets/track_brake_zones.png"
+  alt="Track brake zones showing where drivers brake"
+/>
+
+## Loading the session
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Monza', 'Q')
+fastest_lap = session.laps.pick_fastest()
+```
+
+## Getting brake data
+
+Brake data is binary: 0 (not braking) or 1 (braking).
+
+```python
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+
+# Extract position and brake
+x = telemetry['X']
+y = telemetry['Y']
+brake = telemetry['Brake']
+```
+
+## Creating the brake zone map
+
+```python
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded by brake (binary)
+norm = plt.Normalize(0, 1)
+lc = LineCollection(segments, cmap='RdYlGn_r', norm=norm, linewidth=4)
+lc.set_array(brake)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Brake', ticks=[0, 1])
+cbar.ax.set_yticklabels(['Off', 'On'])
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Brake Zones")
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Monza', 'Q')
+fastest_lap = session.laps.pick_fastest()
+
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+x = telemetry['X']
+y = telemetry['Y']
+brake = telemetry['Brake']
+
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded track
+norm = plt.Normalize(0, 1)
+lc = LineCollection(segments, cmap='RdYlGn_r', norm=norm, linewidth=4)
+lc.set_array(brake)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Brake', ticks=[0, 1])
+cbar.ax.set_yticklabels(['Off', 'On'])
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Brake Zones")
+plt.tight_layout()
+plt.show()
+```
+
+## Analyzing brake zones
+
+- **Red sections:** Active braking zones before corners
+- **Green sections:** No braking (straights and corners)
+- **Length of red zones:** Indicates braking duration and intensity
+
+Circuits like Monza have fewer but more intense braking zones, while Monaco has frequent braking throughout the lap.
+
+## Comparing drivers
+
+To compare braking points between drivers:
+
+```python
+# Get two laps
+lap1 = session.laps.pick_drivers('VER').pick_fastest()
+lap2 = session.laps.pick_drivers('HAM').pick_fastest()
+
+# Plot both on same figure
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+
+# Plot lap 1 on ax1, lap 2 on ax2
+# (use same code as above for each)
+```
+
+## Next steps
+
+- Combine with [speed maps](/tutorials/track-speed-map) to see braking effectiveness
+- Analyze [throttle application](/tutorials/track-throttle-map) after braking
+- Study [longitudinal acceleration](/tutorials/track-acceleration-map) during braking

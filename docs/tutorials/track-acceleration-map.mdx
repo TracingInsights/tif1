@@ -1,0 +1,168 @@
+---
+title: "Track Acceleration Map"
+icon: "arrow-trend-up"
+description: "Visualize acceleration forces around the circuit"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "acceleration"
+  - "g-forces"
+  - "track map"
+---
+
+Acceleration maps show the g-forces experienced by the car around the circuit. This includes longitudinal acceleration (braking and acceleration) and lateral acceleration (cornering forces).
+
+<img
+  src="/assets/track_acceleration_map.png"
+  alt="Track acceleration map showing g-forces"
+/>
+
+## Understanding acceleration data
+
+- **Longitudinal acceleration:** Forward/backward forces during acceleration and braking
+- **Lateral acceleration:** Sideways forces during cornering
+- Measured in g-forces (1g = 9.81 m/s²)
+
+## Loading the session
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Suzuka', 'Q')
+fastest_lap = session.laps.pick_fastest()
+```
+
+## Calculating longitudinal acceleration
+
+Longitudinal acceleration is derived from speed changes over time.
+
+```python
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+
+# Calculate acceleration from speed
+speed_ms = telemetry['Speed'] / 3.6  # Convert km/h to m/s
+time_s = telemetry['Time'].dt.total_seconds()
+
+# Compute derivative (acceleration)
+lon_acc = np.gradient(speed_ms, time_s) / 9.81  # Convert to g-forces
+
+# Extract position
+x = telemetry['X']
+y = telemetry['Y']
+```
+
+## Creating the acceleration map
+
+```python
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded by acceleration
+norm = plt.Normalize(lon_acc.min(), lon_acc.max())
+lc = LineCollection(segments, cmap='RdBu_r', norm=norm, linewidth=4)
+lc.set_array(lon_acc)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Longitudinal Acceleration (g)')
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Acceleration Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Suzuka', 'Q')
+fastest_lap = session.laps.pick_fastest()
+
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+
+# Calculate acceleration
+speed_ms = telemetry['Speed'] / 3.6
+time_s = telemetry['Time'].dt.total_seconds()
+lon_acc = np.gradient(speed_ms, time_s) / 9.81
+
+# Extract position
+x = telemetry['X']
+y = telemetry['Y']
+
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded track
+norm = plt.Normalize(lon_acc.min(), lon_acc.max())
+lc = LineCollection(segments, cmap='RdBu_r', norm=norm, linewidth=4)
+lc.set_array(lon_acc)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Longitudinal Acceleration (g)')
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Acceleration Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Interpreting the colors
+
+- **Red:** Positive acceleration (accelerating)
+- **Blue:** Negative acceleration (braking)
+- **White/neutral:** Constant speed
+- **Intensity:** Magnitude of g-forces
+
+Modern F1 cars can achieve:
+- Up to 5g under braking
+- Up to 2g during acceleration
+- Up to 6g in high-speed corners (lateral)
+
+## Lateral acceleration
+
+For cornering forces, calculate lateral acceleration from speed and track curvature:
+
+```python
+# Calculate track curvature from X, Y coordinates
+dx = np.gradient(telemetry['X'])
+dy = np.gradient(telemetry['Y'])
+ddx = np.gradient(dx)
+ddy = np.gradient(dy)
+
+# Curvature formula
+curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2)**1.5
+
+# Lateral acceleration
+lat_acc = (speed_ms**2 * curvature) / 9.81
+```
+
+## Next steps
+
+- Compare [speed patterns](/tutorials/track-speed-map) with acceleration zones
+- Analyze [brake zones](/tutorials/track-brake-zones) for peak deceleration
+- Study [throttle application](/tutorials/track-throttle-map) during acceleration

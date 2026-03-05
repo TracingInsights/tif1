@@ -1,0 +1,292 @@
+---
+title: "Lap Time Heatmap"
+icon: "table-cells"
+description: "Visualize race pace patterns across all drivers and laps"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "heatmap"
+  - "lap times"
+  - "race pace"
+---
+
+A lap time heatmap provides a comprehensive view of race pace across all drivers and laps. By color-coding lap times, you can quickly identify consistent performers, tire degradation patterns, pit stop strategies, and incidents.
+
+<img
+  src="/assets/laptime_heatmap.png"
+  alt="Lap time heatmap showing race pace patterns"
+/>
+
+## Understanding the visualization
+
+In a lap time heatmap:
+
+- **Rows** represent drivers (sorted by average pace)
+- **Columns** represent lap numbers
+- **Colors** indicate lap time performance:
+  - Green/cooler colors = faster laps
+  - Red/warmer colors = slower laps
+  - White/missing = pit stops or deleted laps
+
+This makes it easy to spot patterns like tire degradation (gradual color shift), pit stop windows (gaps), and incidents (sudden color changes).
+
+## Loading the session
+
+We'll analyze the 2023 Monaco Grand Prix race to see how drivers performed throughout the event.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Setup plotting
+tif1.plotting.setup_mpl(color_scheme='fastf1')
+
+# Load race session
+session = tif1.get_session(2023, 'Monaco Grand Prix', 'R')
+laps = session.laps
+```
+
+## Preparing the data
+
+Convert lap times to seconds and filter out invalid laps for cleaner visualization.
+
+```python
+# Convert lap times to seconds
+laps_clean = laps.copy()
+laps_clean['LapTimeSeconds'] = laps_clean['LapTime'].dt.total_seconds()
+
+# Filter out invalid laps
+laps_clean = laps_clean[~laps_clean['Deleted']]
+laps_clean = laps_clean[laps_clean['PitInTime'].isna()]
+laps_clean = laps_clean[laps_clean['PitOutTime'].isna()]
+
+# Remove outliers (laps slower than 107% of fastest)
+fastest_lap = laps_clean['LapTimeSeconds'].min()
+laps_clean = laps_clean[laps_clean['LapTimeSeconds'] < fastest_lap * 1.07]
+```
+
+## Creating the pivot table
+
+Reshape the data so drivers are rows and lap numbers are columns.
+
+```python
+# Create pivot table
+heatmap_data = laps_clean.pivot_table(
+    index='Driver',
+    columns='LapNumber',
+    values='LapTimeSeconds',
+    aggfunc='first'
+)
+
+# Sort drivers by average lap time (fastest at top)
+driver_avg = heatmap_data.mean(axis=1).sort_values()
+heatmap_data = heatmap_data.loc[driver_avg.index]
+```
+
+## Visualizing with seaborn
+
+Use seaborn's heatmap function for a clean, professional visualization.
+
+```python
+fig, ax = plt.subplots(figsize=(16, 10))
+
+sns.heatmap(
+    heatmap_data,
+    cmap='RdYlGn_r',  # Red (slow) to Green (fast)
+    vmin=fastest_lap,
+    vmax=fastest_lap * 1.07,
+    cbar_kws={'label': 'Lap Time (seconds)', 'aspect': 40},
+    linewidths=0.5,
+    linecolor='#1a1a1a',
+    xticklabels=5,  # Show every 5th lap number
+    ax=ax
+)
+
+# Styling
+ax.set_xlabel('Lap Number', fontsize=12, fontweight='bold')
+ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
+ax.set_title('Monaco Grand Prix - Lap Time Heatmap',
+             fontsize=14, fontweight='bold', pad=20)
+
+plt.yticks(rotation=0, fontsize=10)
+plt.xticks(fontsize=10)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Interpreting the heatmap
+
+When analyzing a lap time heatmap, look for:
+
+- **Vertical patterns:** Consistent colors down a column indicate similar pace across all drivers (e.g., safety car periods)
+- **Horizontal patterns:** Gradual color shifts across a row show tire degradation or fuel load effects
+- **Gaps:** White spaces indicate pit stops
+- **Sudden changes:** Abrupt color shifts may indicate incidents, traffic, or mistakes
+- **Consistent greens:** Drivers with predominantly green rows had strong, consistent pace
+
+## Adding fuel correction
+
+To better compare true pace, you can apply fuel correction to account for decreasing fuel load:
+
+```python
+# Simple fuel correction formula
+# Assumes ~0.03s per lap improvement per 1kg of fuel burned
+max_laps = laps_clean['LapNumber'].max()
+laps_clean['FuelCorrected'] = (
+    laps_clean['LapTimeSeconds'] - 
+    (0.03 * (max_laps - laps_clean['LapNumber']))
+)
+
+# Create heatmap with fuel-corrected times
+heatmap_fuel = laps_clean.pivot_table(
+    index='Driver',
+    columns='LapNumber',
+    values='FuelCorrected',
+    aggfunc='first'
+)
+
+# Sort and plot
+driver_avg_fuel = heatmap_fuel.mean(axis=1).sort_values()
+heatmap_fuel = heatmap_fuel.loc[driver_avg_fuel.index]
+
+fig, ax = plt.subplots(figsize=(16, 10))
+sns.heatmap(
+    heatmap_fuel,
+    cmap='RdYlGn_r',
+    vmin=heatmap_fuel.min().min(),
+    vmax=heatmap_fuel.min().min() * 1.07,
+    cbar_kws={'label': 'Fuel-Corrected Lap Time (s)', 'aspect': 40},
+    linewidths=0.5,
+    linecolor='#1a1a1a',
+    xticklabels=5,
+    ax=ax
+)
+
+ax.set_xlabel('Lap Number', fontsize=12, fontweight='bold')
+ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
+ax.set_title('Monaco GP - Fuel-Corrected Lap Times',
+             fontsize=14, fontweight='bold', pad=20)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Setup
+tif1.plotting.setup_mpl(color_scheme='fastf1')
+session = tif1.get_session(2023, 'Monaco Grand Prix', 'R')
+laps = session.laps
+
+# Prepare data
+laps_clean = laps.copy()
+laps_clean['LapTimeSeconds'] = laps_clean['LapTime'].dt.total_seconds()
+laps_clean = laps_clean[~laps_clean['Deleted']]
+laps_clean = laps_clean[laps_clean['PitInTime'].isna()]
+laps_clean = laps_clean[laps_clean['PitOutTime'].isna()]
+
+fastest_lap = laps_clean['LapTimeSeconds'].min()
+laps_clean = laps_clean[laps_clean['LapTimeSeconds'] < fastest_lap * 1.07]
+
+# Create pivot table
+heatmap_data = laps_clean.pivot_table(
+    index='Driver',
+    columns='LapNumber',
+    values='LapTimeSeconds',
+    aggfunc='first'
+)
+
+driver_avg = heatmap_data.mean(axis=1).sort_values()
+heatmap_data = heatmap_data.loc[driver_avg.index]
+
+# Plot
+fig, ax = plt.subplots(figsize=(16, 10))
+
+sns.heatmap(
+    heatmap_data,
+    cmap='RdYlGn_r',
+    vmin=fastest_lap,
+    vmax=fastest_lap * 1.07,
+    cbar_kws={'label': 'Lap Time (seconds)', 'aspect': 40},
+    linewidths=0.5,
+    linecolor='#1a1a1a',
+    xticklabels=5,
+    ax=ax
+)
+
+ax.set_xlabel('Lap Number', fontsize=12, fontweight='bold')
+ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
+ax.set_title('Monaco Grand Prix - Lap Time Heatmap',
+             fontsize=14, fontweight='bold', pad=20)
+
+plt.yticks(rotation=0, fontsize=10)
+plt.xticks(fontsize=10)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Advanced variations
+
+### Compare specific drivers
+
+Focus on a subset of drivers for detailed comparison:
+
+```python
+# Select top 5 finishers
+top_drivers = session.drivers[:5]
+laps_top = laps_clean[laps_clean['Driver'].isin(top_drivers)]
+
+heatmap_top = laps_top.pivot_table(
+    index='Driver',
+    columns='LapNumber',
+    values='LapTimeSeconds',
+    aggfunc='first'
+)
+
+# Plot with larger cells for better visibility
+fig, ax = plt.subplots(figsize=(16, 6))
+sns.heatmap(heatmap_top, cmap='RdYlGn_r', linewidths=1, ax=ax)
+ax.set_title('Top 5 Finishers - Lap Time Comparison')
+plt.tight_layout()
+plt.show()
+```
+
+### Annotate with lap times
+
+Add actual lap time values to cells for precise analysis:
+
+```python
+fig, ax = plt.subplots(figsize=(20, 10))
+
+sns.heatmap(
+    heatmap_data,
+    cmap='RdYlGn_r',
+    vmin=fastest_lap,
+    vmax=fastest_lap * 1.07,
+    annot=True,  # Show values
+    fmt='.1f',   # Format to 1 decimal place
+    cbar_kws={'label': 'Lap Time (seconds)'},
+    linewidths=0.5,
+    ax=ax
+)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Next steps
+
+- Combine with tire strategy visualization to correlate pace with compounds
+- Analyze specific stint performance by filtering lap ranges
+- Compare heatmaps across different races to identify track-specific patterns
+- Use clustering algorithms to group drivers with similar pace profiles
+

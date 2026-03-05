@@ -1,0 +1,182 @@
+---
+title: "Tire Degradation Analysis"
+icon: "chart-line"
+description: "Visualizing tire performance degradation over race distance"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "tire degradation"
+  - "documentation"
+---
+
+Understanding tire degradation is crucial in F1 strategy. This tutorial shows how to visualize how different tire compounds lose performance as they age during a race.
+
+<img
+  src="/assets/tire_degradation.png"
+  alt="Tire degradation chart showing compound performance over tire life"
+/>
+
+## What is Tire Degradation?
+
+Tire degradation is the gradual loss of grip and increase in lap times as tires wear out. Different compounds (Soft, Medium, Hard) have different degradation profiles:
+
+- **Soft**: Fastest initially but degrades quickly
+- **Medium**: Balanced performance and durability
+- **Hard**: Slower but lasts longer with minimal degradation
+
+## Loading Race Data
+
+We'll analyze the 2024 Hungarian Grand Prix to see how tires performed:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load race session
+session = tif1.get_session(2024, "Hungarian Grand Prix", "Race")
+laps = session.laps
+
+# Convert LapTime to seconds for calculations
+laps["LapTimeSeconds"] = laps["LapTime"].dt.total_seconds()
+
+# Clean data: remove outliers and first lap
+clean_laps = laps[
+    (laps["LapNumber"] > 1) &
+    (laps["LapTimeSeconds"] < laps["LapTimeSeconds"].min() * 1.07)
+].copy()
+```
+
+## Fuel-Corrected Lap Times
+
+Cars get lighter as they burn fuel, making them faster. To see true tire degradation, we need to correct for this:
+
+```python
+# Estimate fuel effect: ~0.03s per lap improvement
+max_lap = clean_laps["LapNumber"].max()
+clean_laps["FuelCorrectedTime"] = (
+    clean_laps["LapTimeSeconds"] - 
+    (0.03 * (max_lap - clean_laps["LapNumber"]))
+)
+```
+
+## Visualizing Degradation by Compound
+
+Let's plot how each compound performs over its lifetime:
+
+```python
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# Compound colors
+colors = {"SOFT": "red", "MEDIUM": "gold", "HARD": "lightgray"}
+
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = clean_laps[clean_laps["Compound"] == compound]
+    
+    if len(compound_laps) > 10:
+        # Scatter plot of raw data
+        ax.scatter(compound_laps["TyreLife"], 
+                  compound_laps["FuelCorrectedTime"],
+                  color=colors[compound], alpha=0.3, s=30)
+        
+        # Group by tire life and get median for trend line
+        trend = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
+        ax.plot(trend.index, trend.values, 
+               color=colors[compound], linewidth=3, 
+               label=compound)
+
+ax.set_xlabel("Tire Life (Laps)", fontsize=14)
+ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=14)
+ax.set_title("Tire Degradation by Compound", fontsize=16, fontweight="bold")
+ax.legend(fontsize=12)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## Analyzing Specific Driver Performance
+
+Compare how different drivers manage the same compound:
+
+```python
+import numpy as np
+
+# Compare two drivers on Medium tires
+drivers = ["VER", "HAM"]
+fig, ax = plt.subplots(figsize=(12, 8))
+
+for driver in drivers:
+    driver_laps = clean_laps[
+        (clean_laps["Driver"] == driver) & 
+        (clean_laps["Compound"] == "MEDIUM")
+    ]
+    
+    if len(driver_laps) > 5:
+        # Calculate degradation rate using numpy polyfit
+        coeffs = np.polyfit(driver_laps["TyreLife"], 
+                           driver_laps["FuelCorrectedTime"], 1)
+        slope = coeffs[0]
+        
+        ax.scatter(driver_laps["TyreLife"], 
+                  driver_laps["FuelCorrectedTime"],
+                  label=f"{driver} ({slope:.3f}s/lap)", 
+                  alpha=0.6, s=50)
+        
+        # Add trend line
+        x_trend = np.linspace(driver_laps["TyreLife"].min(), 
+                             driver_laps["TyreLife"].max(), 100)
+        y_trend = np.polyval(coeffs, x_trend)
+        ax.plot(x_trend, y_trend, linestyle="--", alpha=0.5)
+
+ax.set_xlabel("Tire Life (Laps)", fontsize=14)
+ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=14)
+ax.set_title("Driver Tire Management Comparison - Medium Compound", 
+            fontsize=16, fontweight="bold")
+ax.legend(fontsize=12)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## Understanding Degradation Rates
+
+The slope of the trend line tells you the degradation rate:
+
+- **0.00 - 0.05 s/lap**: Excellent tire management
+- **0.05 - 0.10 s/lap**: Normal degradation
+- **> 0.10 s/lap**: High degradation (aggressive driving or setup issues)
+
+## Finding the "Cliff"
+
+The "cliff" is when tires suddenly lose significant performance:
+
+```python
+# Detect sudden performance drops
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = clean_laps[clean_laps["Compound"] == compound]
+    
+    if len(compound_laps) > 15:
+        degradation = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
+        
+        # Calculate lap-to-lap delta
+        deltas = degradation.diff()
+        
+        # Find where degradation exceeds threshold
+        cliff_point = deltas[deltas > 0.15].index.min() if any(deltas > 0.15) else None
+        
+        if cliff_point:
+            print(f"{compound}: Cliff at lap {cliff_point}")
+        else:
+            print(f"{compound}: No cliff detected")
+```
+
+## Summary
+
+With `tif1`, you can:
+- Analyze tire degradation patterns across compounds
+- Compare driver tire management skills
+- Identify optimal stint lengths before the "cliff"
+- Make data-driven strategy decisions
+
+This analysis is fundamental to understanding race strategy and predicting optimal pit stop windows.

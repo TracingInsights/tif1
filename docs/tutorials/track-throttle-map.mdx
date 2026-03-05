@@ -1,0 +1,129 @@
+---
+title: "Track Throttle Map"
+icon: "gauge"
+description: "Visualize throttle application around the circuit"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "throttle"
+  - "track map"
+  - "driver inputs"
+---
+
+Throttle maps show where and how much throttle drivers apply around the circuit. This visualization reveals driving style, traction zones, and areas where drivers can push the car to its limits.
+
+<img
+  src="/assets/track_throttle_map.png"
+  alt="Track throttle map showing throttle application percentage"
+/>
+
+## Loading the session
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Silverstone', 'Q')
+fastest_lap = session.laps.pick_fastest()
+```
+
+## Getting throttle data
+
+Throttle values range from 0 (no throttle) to 100 (full throttle).
+
+```python
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+
+# Extract position and throttle
+x = telemetry['X']
+y = telemetry['Y']
+throttle = telemetry['Throttle']
+```
+
+## Creating the throttle map
+
+```python
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded by throttle
+norm = plt.Normalize(0, 100)
+lc = LineCollection(segments, cmap='RdYlGn', norm=norm, linewidth=4)
+lc.set_array(throttle)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Throttle (%)')
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Throttle Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+import numpy as np
+
+# Load session
+session = tif1.get_session(2023, 'Silverstone', 'Q')
+fastest_lap = session.laps.pick_fastest()
+
+# Get telemetry
+telemetry = fastest_lap.get_car_data()
+x = telemetry['X']
+y = telemetry['Y']
+throttle = telemetry['Throttle']
+
+# Prepare segments
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Create plot
+fig, ax = plt.subplots(figsize=(12, 10))
+
+# Color-coded track
+norm = plt.Normalize(0, 100)
+lc = LineCollection(segments, cmap='RdYlGn', norm=norm, linewidth=4)
+lc.set_array(throttle)
+line = ax.add_collection(lc)
+
+# Colorbar
+cbar = plt.colorbar(line, ax=ax, label='Throttle (%)')
+
+# Format
+ax.set_aspect('equal')
+ax.axis('off')
+plt.suptitle(f"{session.event['EventName']} {session.event.year} - Throttle Map")
+plt.tight_layout()
+plt.show()
+```
+
+## Analyzing throttle patterns
+
+- **Green sections:** Full throttle on straights
+- **Yellow/orange:** Partial throttle through fast corners
+- **Red sections:** Minimal or no throttle in slow corners
+- **Gradients:** Show how smoothly drivers apply throttle
+
+High-speed corners with partial throttle indicate where drivers balance speed with traction limits.
+
+## Next steps
+
+- Compare with [brake zone maps](/tutorials/track-brake-zones)
+- Analyze [speed variations](/tutorials/track-speed-map)
+- Study [gear shift patterns](/tutorials/gear-shifts-on-track)
