@@ -392,7 +392,7 @@ from tif1.async_fetch import fetch_multiple_async
 async def load_session_parallel():
     """Load all driver lap data in parallel."""
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
-    
+
     # Build requests for all drivers
     requests = [
         (2021, "Belgian Grand Prix", "Race", f"laps_{driver}.json")
@@ -443,7 +443,7 @@ async def batch_fetch_telemetry():
     """Fetch telemetry for multiple driver/lap combinations."""
     drivers = ["VER", "HAM", "LEC"]
     laps = [1, 2, 3, 4, 5]
-    
+
     # Build requests for all combinations
     requests = [
         (2021, "Belgian Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
@@ -498,7 +498,7 @@ async def ultra_fast_fetch():
     """Disable retries for fastest possible cold start."""
     config = get_config()
     config.set("max_retries", 0)  # Try each CDN once, no delays
-    
+
     data = await fetch_json_async(
         2021, "Belgian Grand Prix", "Race", "drivers.json"
     )
@@ -647,5 +647,3 @@ print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
 config.set("pool_connections", 512)
 config.set("pool_maxsize", 2048)
 ```
-
-

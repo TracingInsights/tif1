@@ -512,7 +512,7 @@ async def main():
     all_tels = await session.fetch_all_laps_telemetry_async(
         drivers=["VER", "HAM"]
     )
-    
+
     for (driver, lap_num), tel in all_tels.items():
         print(f"{driver} Lap {lap_num}: {len(tel)} samples")
 

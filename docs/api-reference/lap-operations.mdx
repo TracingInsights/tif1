@@ -473,7 +473,7 @@ import tif1
 def compare_drivers(session, driver1, driver2):
     """Compare lap times between two drivers."""
     laps = session.laps
-    
+
     laps1 = laps[laps["Driver"] == driver1]
     laps2 = laps[laps["Driver"] == driver2]
 

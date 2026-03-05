@@ -611,9 +611,9 @@ for idx, row in schedule.iterrows():
     round_num = row['RoundNumber']
     event_name = row['EventName']
     location = row['Location']
-    
+
     sessions = tif1.get_sessions(year, event_name)
-    
+
     print(f"Round {round_num}: {event_name}")
     print(f"  Location: {location}")
     print(f"  Sessions: {', '.join(sessions)}")
