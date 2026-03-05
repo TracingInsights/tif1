@@ -29,13 +29,13 @@ Thank you for your interest in contributing to `tif1`! This guide will help you 
     Use `uv` to create a virtual environment and install all development extras:
     ```bash
     uv sync --all-extras
-```bash
+    ```
   </Step>
   <Step title="Install git hooks with prek">
     Enable automated linting and formatting before every commit:
     ```bash
     uv run prek install
-```bash
+    ```
   </Step>
 </Steps>
 
@@ -49,26 +49,28 @@ We use `pytest` for our test suite, with `xdist` for parallel execution.
 <CodeGroup>
 ```bash All Tests
 uv run pytest tests/ -v
-```bash
+```
 
 ```bash Unit Only
 uv run pytest tests/ -v -m "not integration"
-```bash
+```
 
 ```bash Integration
 uv run pytest -o addopts='' tests/ -v -n 0 -m integration
-```bash
+```
 
 ```bash Benchmarks
 uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark-only --no-cov -n 0
-```bash
+```
 </CodeGroup>
 
 ### Code Coverage
 To run tests with coverage reporting:
 ```bash
 uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html
-```python ---
+```
+
+---
 
 ## Code Quality
 
@@ -78,15 +80,15 @@ Before submitting a PR, ensure your code passes all quality checks.
   ```bash
   uv run ruff check src/ tests/
   uv run ruff format src/ tests/
-```bash
+  ```
 - **Type Checking:** We use `pyright` (via `ty`).
   ```bash
   uv run ty check src/tif1
-```bash
+  ```
 - **prek:** Run all checks at once.
   ```bash
   uv run prek run --all-files
-```bash
+  ```
 
 ---
 
