@@ -1,0 +1,351 @@
+---
+title: "Lap Times Distribution Visualization"
+icon: "chart-violin"
+description: "Visualize lap time distributions across multiple drivers using violin and swarm plots"
+keywords:
+  - "lap times"
+  - "distribution"
+  - "violin plot"
+  - "swarm plot"
+  - "driver comparison"
+  - "race analysis"
+---
+
+This tutorial demonstrates how to visualize lap time distributions for multiple drivers using violin plots combined with swarm plots. This visualization helps compare driver consistency, pace, and tire strategy across the field.
+
+<img
+  src="/assets/laptimes_distribution.png"
+  alt="Lap time distributions for top 10 finishers in the 2023 Azerbaijan Grand Prix"
+/>
+
+## Setup
+
+```python
+import tif1
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Enable Matplotlib patches for plotting timedelta values and load
+# tif1's dark color scheme
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+```
+
+## Load the Race Session
+
+```python
+# Load the race session
+race = tif1.get_session(2023, "Azerbaijan", 'R')
+laps = race.laps
+```
+
+## Filter Point Finishers
+
+Get laps for the top 10 finishers (point-scoring positions) and filter out slow laps that would distort the visualization.
+
+```python
+# Get all the laps for the point finishers only
+point_finishers = race.drivers[:10]
+print(f"Point finishers: {point_finishers}")
+
+# Pick quick laps only (filter out slow laps)
+driver_laps = laps[laps["Driver"].isin(point_finishers)].copy()
+
+# Filter out slow laps - remove deleted laps and pit laps
+driver_laps = driver_laps[~driver_laps["Deleted"]]
+driver_laps = driver_laps[~driver_laps["PitOutTime"].notna()]
+driver_laps = driver_laps[~driver_laps["PitInTime"].notna()]
+
+# Remove outliers (laps > 110% of fastest lap per driver)
+def filter_quick_laps(group):
+    fastest = group["LapTime"].min()
+    return group[group["LapTime"] < fastest * 1.10]
+
+driver_laps = driver_laps.groupby("Driver", group_keys=False).apply(filter_quick_laps)
+driver_laps = driver_laps.reset_index(drop=True)
+```
+
+## Get Finishing Order
+
+To plot drivers by finishing order, extract their abbreviations in the correct sequence.
+
+```python
+# Get three-letter abbreviations in finishing order
+finishing_order = [race.get_driver(i)["Abbreviation"] for i in point_finishers]
+print(f"Finishing order: {finishing_order}")
+```
+
+## Create the Visualization
+
+Combine violin plots (showing distributions) with swarm plots (showing individual lap times).
+
+```python
+# Create the figure
+fig, ax = plt.subplots(figsize=(10, 5))
+
+# Seaborn doesn't have proper timedelta support,
+# so we convert timedelta to float (in seconds)
+driver_laps["LapTime(s)"] = driver_laps["LapTime"].dt.total_seconds()
+
+# First create the violin plots to show the distributions
+sns.violinplot(data=driver_laps,
+               x="Driver",
+               y="LapTime(s)",
+               hue="Driver",
+               inner=None,
+               density_norm="area",
+               order=finishing_order,
+               palette=tif1.plotting.get_driver_color_mapping(session=race),
+               legend=False
+               )
+
+# Then use the swarm plot to show the actual laptimes
+sns.swarmplot(data=driver_laps,
+              x="Driver",
+              y="LapTime(s)",
+              order=finishing_order,
+              hue="Compound",
+              palette=tif1.plotting.get_compound_mapping(session=race),
+              hue_order=["SOFT", "MEDIUM", "HARD"],
+              linewidth=0,
+              size=4,
+              )
+```
+
+## Enhance the Plot
+
+Make the visualization more aesthetic and easier to read.
+
+```python
+# Set axis labels
+ax.set_xlabel("Driver")
+ax.set_ylabel("Lap Time (s)")
+
+# Add title
+plt.suptitle("2023 Azerbaijan Grand Prix Lap Time Distributions")
+
+# Remove spines for cleaner look
+sns.despine(left=True, bottom=True)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Complete Example
+
+Here's the full code in one block:
+
+```python
+import tif1
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Setup plotting
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+
+# Load race session
+race = tif1.get_session(2023, "Azerbaijan", 'R')
+laps = race.laps
+
+# Get point finishers and filter laps
+point_finishers = race.drivers[:10]
+driver_laps = laps[laps["Driver"].isin(point_finishers)].copy()
+
+# Filter out slow laps
+driver_laps = driver_laps[~driver_laps["Deleted"]]
+driver_laps = driver_laps[~driver_laps["PitOutTime"].notna()]
+driver_laps = driver_laps[~driver_laps["PitInTime"].notna()]
+
+def filter_quick_laps(group):
+    fastest = group["LapTime"].min()
+    return group[group["LapTime"] < fastest * 1.10]
+
+driver_laps = driver_laps.groupby("Driver", group_keys=False).apply(filter_quick_laps)
+driver_laps = driver_laps.reset_index(drop=True)
+
+# Get finishing order
+finishing_order = [race.get_driver(i)["Abbreviation"] for i in point_finishers]
+
+# Create visualization
+fig, ax = plt.subplots(figsize=(10, 5))
+
+driver_laps["LapTime(s)"] = driver_laps["LapTime"].dt.total_seconds()
+
+sns.violinplot(data=driver_laps,
+               x="Driver",
+               y="LapTime(s)",
+               hue="Driver",
+               inner=None,
+               density_norm="area",
+               order=finishing_order,
+               palette=tif1.plotting.get_driver_color_mapping(session=race),
+               legend=False
+               )
+
+sns.swarmplot(data=driver_laps,
+              x="Driver",
+              y="LapTime(s)",
+              order=finishing_order,
+              hue="Compound",
+              palette=tif1.plotting.get_compound_mapping(session=race),
+              hue_order=["SOFT", "MEDIUM", "HARD"],
+              linewidth=0,
+              size=4,
+              )
+
+ax.set_xlabel("Driver")
+ax.set_ylabel("Lap Time (s)")
+plt.suptitle("2023 Azerbaijan Grand Prix Lap Time Distributions")
+sns.despine(left=True, bottom=True)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Understanding the Visualization
+
+This dual-layer plot provides rich insights:
+
+### Violin Plot Layer
+- Shows the probability density of lap times for each driver
+- Wider sections indicate more laps at that pace
+- Shape reveals consistency and performance patterns
+- Symmetric shapes suggest consistent pace throughout the race
+
+### Swarm Plot Layer
+- Each dot represents an individual lap
+- Color indicates tire compound used
+- Horizontal spread shows the distribution of lap times
+- Vertical position shows the actual lap time
+
+## Insights from the Visualization
+
+This visualization reveals several key aspects of race performance:
+
+1. **Driver Consistency**: Narrow distributions indicate consistent lap times
+2. **Pace Comparison**: Vertical position shows relative speed between drivers
+3. **Tire Strategy**: Compound colors reveal strategic choices
+4. **Compound Performance**: Compare lap times across different tire types
+5. **Outliers**: Individual slow laps are immediately visible
+
+## Analyzing Specific Patterns
+
+### Identifying the Fastest Driver
+The driver with the lowest violin plot center typically had the best pace.
+
+### Spotting Tire Degradation
+If a driver's dots spread vertically within one compound, it suggests tire degradation.
+
+### Comparing Strategies
+Drivers with more compound variety show different strategic approaches.
+
+## Customization Options
+
+### Adjust Plot Size and Style
+
+```python
+# Larger figure for more drivers
+fig, ax = plt.subplots(figsize=(14, 6))
+
+# Adjust swarm plot marker size
+sns.swarmplot(
+    data=driver_laps,
+    x="Driver",
+    y="LapTime(s)",
+    order=finishing_order,
+    hue="Compound",
+    palette=tif1.plotting.get_compound_mapping(session=race),
+    size=6,  # Larger markers
+    alpha=0.8,  # Add transparency
+    edgecolor='gray',  # Add marker outline
+    linewidth=0.5
+)
+```
+
+### Filter by Specific Compounds
+
+```python
+# Show only soft tire laps
+soft_laps = driver_laps[driver_laps["Compound"] == "SOFT"]
+
+sns.violinplot(data=soft_laps,
+               x="Driver",
+               y="LapTime(s)",
+               hue="Driver",
+               order=finishing_order,
+               palette=tif1.plotting.get_driver_color_mapping(session=race),
+               legend=False
+               )
+```
+
+### Compare Different Sessions
+
+```python
+# Compare qualifying vs race pace
+quali = tif1.get_session(2023, "Azerbaijan", 'Q')
+quali_laps = quali.laps
+
+# Create side-by-side comparison
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+# Qualifying distribution
+sns.violinplot(data=quali_laps, x="Driver", y="LapTime(s)", ax=ax1)
+ax1.set_title("Qualifying")
+
+# Race distribution
+sns.violinplot(data=driver_laps, x="Driver", y="LapTime(s)", ax=ax2)
+ax2.set_title("Race")
+
+plt.tight_layout()
+plt.show()
+```
+
+## Advanced Analysis
+
+### Statistical Summary
+
+Extract statistical insights from the distributions:
+
+```python
+# Calculate statistics per driver
+stats = driver_laps.groupby("Driver")["LapTime(s)"].agg([
+    ('mean', 'mean'),
+    ('median', 'median'),
+    ('std', 'std'),
+    ('min', 'min'),
+    ('max', 'max')
+])
+
+print(stats.sort_values('median'))
+```
+
+### Identify Consistency Leaders
+
+```python
+# Find most consistent drivers (lowest standard deviation)
+consistency = driver_laps.groupby("Driver")["LapTime(s)"].std().sort_values()
+print(f"Most consistent driver: {consistency.index[0]}")
+print(f"Standard deviation: {consistency.iloc[0]:.3f}s")
+```
+
+## Summary
+
+This tutorial demonstrated how to create a comprehensive lap time distribution visualization that combines violin plots for density estimation with swarm plots for individual data points. This dual-layer approach provides both statistical overview and granular detail, making it ideal for comparing driver performance and tire strategies across the field.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Driver Lap Times" href="/tutorials/driver-laptimes">
+    Single driver lap time analysis
+  </Card>
+  <Card title="Race Pace Analysis" href="/tutorials/race-pace-analysis">
+    Detailed pace comparison
+  </Card>
+  <Card title="Tire Strategy" href="/tutorials/tire-strategy">
+    Tire compound analysis
+  </Card>
+  <Card title="Plotting API" href="/api-reference/plotting">
+    Plotting reference
+  </Card>
+</CardGroup>

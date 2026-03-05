@@ -1,0 +1,169 @@
+---
+title: "Gear Shifts on Track"
+icon: "gears"
+description: "Visualizing which gear is used at each point on the circuit"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "telemetry"
+  - "gear shifts"
+  - "track visualization"
+---
+
+Visualizing gear usage across a lap provides insight into corner characteristics, acceleration zones, and the technical demands of a circuit. This tutorial shows how to create a color-coded track map where each segment is colored by the gear being used.
+
+<img
+  src="/assets/gear_shifts_on_track.png"
+  alt="Gear shifts visualization on track layout"
+/>
+
+## Loading the session
+
+We'll analyze the fastest qualifying lap from the 2021 Austrian Grand Prix.
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import colormaps
+from matplotlib.collections import LineCollection
+
+# Enable plotting support
+tif1.plotting.setup_mpl(mpl_timedelta_support=False, color_scheme='fastf1')
+
+# Load qualifying session
+session = tif1.get_session(2021, 'Austrian Grand Prix', 'Q')
+```
+
+## Getting telemetry data
+
+Extract the fastest lap and its telemetry, which includes X/Y coordinates and gear data.
+
+```python
+lap = session.laps.pick_fastest()
+tel = lap.get_telemetry()
+```
+
+## Preparing the data
+
+Convert telemetry to numpy arrays and create line segments for plotting.
+
+```python
+# Extract X and Y coordinates
+x = np.array(tel['X'].values)
+y = np.array(tel['Y'].values)
+
+# Create line segments from consecutive points
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+# Get gear data as float array
+gear = tel['nGear'].to_numpy().astype(float)
+```
+
+## Creating the visualization
+
+Use matplotlib's `LineCollection` to color each segment by gear.
+
+```python
+# Create a segmented colormap
+cmap = colormaps['Paired']
+lc_comp = LineCollection(segments, norm=plt.Normalize(1, cmap.N + 1), cmap=cmap)
+lc_comp.set_array(gear)
+lc_comp.set_linewidth(4)
+
+# Create the plot
+fig, ax = plt.subplots(figsize=(10, 8))
+ax.add_collection(lc_comp)
+ax.axis('equal')
+ax.tick_params(labelleft=False, left=False, labelbottom=False, bottom=False)
+
+plt.suptitle(
+    f"Fastest Lap Gear Shift Visualization\n"
+    f"{lap['Driver']} - {session.event['EventName']} {session.event.year}"
+)
+```
+
+## Adding a colorbar
+
+Add a colorbar to show which color corresponds to each gear.
+
+```python
+# Add colorbar with centered ticks for each gear
+cbar = plt.colorbar(mappable=lc_comp, label="Gear", boundaries=np.arange(1, 10))
+cbar.set_ticks(np.arange(1.5, 9.5))
+cbar.set_ticklabels(np.arange(1, 9))
+
+plt.show()
+```
+
+## Analyzing gear usage
+
+When examining gear shift patterns, look for:
+
+- **Low-speed corners:** Gears 1-3 indicate tight corners requiring heavy braking
+- **Medium-speed corners:** Gears 4-5 show flowing sections where momentum is maintained
+- **High-speed sections:** Gears 6-8 reveal straights and fast corners
+- **Shift points:** Transitions between colors show where drivers change gears
+
+Different circuits have distinct gear usage profiles. Street circuits like Monaco use lower gears extensively, while high-speed tracks like Monza spend more time in top gears.
+
+## Complete example
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import colormaps
+from matplotlib.collections import LineCollection
+
+# Setup
+tif1.plotting.setup_mpl(mpl_timedelta_support=False, color_scheme='fastf1')
+
+# Load session
+session = tif1.get_session(2021, 'Austrian Grand Prix', 'Q')
+
+# Get fastest lap and telemetry
+lap = session.laps.pick_fastest()
+tel = lap.get_telemetry()
+
+# Prepare data
+x = np.array(tel['X'].values)
+y = np.array(tel['Y'].values)
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+gear = tel['nGear'].to_numpy().astype(float)
+
+# Create line collection
+cmap = colormaps['Paired']
+lc_comp = LineCollection(segments, norm=plt.Normalize(1, cmap.N + 1), cmap=cmap)
+lc_comp.set_array(gear)
+lc_comp.set_linewidth(4)
+
+# Plot
+fig, ax = plt.subplots(figsize=(10, 8))
+ax.add_collection(lc_comp)
+ax.axis('equal')
+ax.tick_params(labelleft=False, left=False, labelbottom=False, bottom=False)
+
+plt.suptitle(
+    f"Fastest Lap Gear Shift Visualization\n"
+    f"{lap['Driver']} - {session.event['EventName']} {session.event.year}"
+)
+
+# Add colorbar
+cbar = plt.colorbar(mappable=lc_comp, label="Gear", boundaries=np.arange(1, 10))
+cbar.set_ticks(np.arange(1.5, 9.5))
+cbar.set_ticklabels(np.arange(1, 9))
+
+plt.show()
+```
+
+## Next steps
+
+- Combine gear data with throttle/brake to analyze driving technique
+- Compare gear usage between different drivers on the same circuit
+- Analyze how gear usage changes between qualifying and race conditions
+- Explore other track visualizations like speed or throttle maps
+

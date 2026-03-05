@@ -12,6 +12,11 @@ keywords:
 
 This tutorial walks through a complete race analysis workflow, from loading data to generating insights about race pace, strategy, and performance.
 
+<img
+  src="/assets/race_position_changes.png"
+  alt="Race position changes throughout the Abu Dhabi Grand Prix"
+/>
+
 ## Setup
 
 ```python
@@ -91,6 +96,11 @@ plot_position_changes(laps)
 
 Analyze lap time distributions and consistency.
 
+<img
+  src="/assets/race_pace_boxplot.png"
+  alt="Box plot showing race pace distribution for top 5 finishers"
+/>
+
 ```python
 def clean_race_laps(laps):
     """Remove invalid laps for race pace analysis."""
@@ -145,6 +155,11 @@ plt.show()
 ## 4. Tire Strategy
 
 Analyze tire strategy and stint lengths.
+
+<img
+  src="/assets/race_tire_strategy.png"
+  alt="Tire strategy visualization showing compound usage throughout the race"
+/>
 
 ```python
 def plot_tire_strategy(laps):
