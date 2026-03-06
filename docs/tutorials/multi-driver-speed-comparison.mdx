@@ -76,7 +76,7 @@ Create the plot with a background track line and color-coded speed overlay.
 ```python
 # Create visualization with FastF1 styling
 fig, ax = plt.subplots(sharex=True, sharey=True, figsize=(12, 6.75))
-fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed', 
+fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed',
              size=24, y=0.97, color='white')
 
 # Adjust margins and turn off axis
@@ -89,7 +89,7 @@ ax.plot(x, y, color='black', linestyle='-', linewidth=16, zorder=0)
 
 # Create a continuous norm to map from data points to colors
 norm = plt.Normalize(color.min(), color.max())
-lc = LineCollection(segments, cmap=colormap, norm=norm, 
+lc = LineCollection(segments, cmap=colormap, norm=norm,
                    linestyle='-', linewidth=5)
 
 # Set the values used for colormapping
@@ -107,7 +107,7 @@ Add a horizontal color bar to show the speed scale.
 # Create color bar as legend
 cbaxes = fig.add_axes([0.25, 0.05, 0.5, 0.05])
 normlegend = mpl.colors.Normalize(vmin=color.min(), vmax=color.max())
-legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend, 
+legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend,
                                    cmap=colormap, orientation="horizontal")
 legend.set_label('Speed (km/h)', color='white', fontsize=12)
 legend.ax.xaxis.set_tick_params(color='white')
@@ -154,7 +154,7 @@ segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
 # Create visualization with FastF1 styling
 fig, ax = plt.subplots(sharex=True, sharey=True, figsize=(12, 6.75))
-fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed', 
+fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed',
              size=24, y=0.97, color='white')
 
 # Adjust margins and turn off axis
@@ -167,7 +167,7 @@ ax.plot(x, y, color='black', linestyle='-', linewidth=16, zorder=0)
 
 # Create a continuous norm to map from data points to colors
 norm = plt.Normalize(color.min(), color.max())
-lc = LineCollection(segments, cmap=colormap, norm=norm, 
+lc = LineCollection(segments, cmap=colormap, norm=norm,
                    linestyle='-', linewidth=5)
 
 # Set the values used for colormapping
@@ -179,7 +179,7 @@ line = ax.add_collection(lc)
 # Create color bar as legend
 cbaxes = fig.add_axes([0.25, 0.05, 0.5, 0.05])
 normlegend = mpl.colors.Normalize(vmin=color.min(), vmax=color.max())
-legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend, 
+legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend,
                                    cmap=colormap, orientation="horizontal")
 legend.set_label('Speed (km/h)', color='white', fontsize=12)
 legend.ax.xaxis.set_tick_params(color='white')
@@ -206,21 +206,21 @@ fig, axes = plt.subplots(1, len(drivers), figsize=(18, 6))
 for idx, driver in enumerate(drivers):
     lap = session.laps.pick_driver(driver).pick_fastest()
     telemetry = lap.get_car_data()
-    
+
     x = telemetry['X'].values
     y = telemetry['Y'].values
     speed = telemetry['Speed'].values
-    
+
     points = np.array([x, y]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    
+
     axes[idx].plot(x, y, color='black', linewidth=16, zorder=0)
-    
+
     norm = plt.Normalize(speed.min(), speed.max())
     lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=5)
     lc.set_array(speed)
     axes[idx].add_collection(lc)
-    
+
     axes[idx].set_aspect('equal')
     axes[idx].axis('off')
     axes[idx].set_title(driver, color='white', fontsize=16)

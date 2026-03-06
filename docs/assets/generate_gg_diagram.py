@@ -21,7 +21,7 @@ def smooth_derivative(t_in, v_in):
 
     # Transform time to seconds
     try:
-        for i in range(0, t.size):
+        for i in range(t.size):
             t.iloc[i] = t.iloc[i].total_seconds()
     except Exception:
         pass
@@ -69,7 +69,8 @@ def transform_to_pipi(input_angle):
     p2 = (
         np.sign(
             np.sign(input_angle)
-            + 2 * (np.sign(math.fabs((truncated_remainder(input_angle + pi, 2 * pi)) / (2 * pi))) - 1)
+            + 2
+            * (np.sign(math.fabs((truncated_remainder(input_angle + pi, 2 * pi)) / (2 * pi))) - 1)
         )
         * pi
     )
@@ -100,7 +101,7 @@ def compute_accelerations(telemetry):
 
     theta = np.zeros(dx.size)
     theta[0] = math.atan2(dy[0], dx[0])
-    for i in range(0, dx.size):
+    for i in range(dx.size):
         theta[i] = theta[i - 1] + transform_to_pipi(math.atan2(dy[i], dx[i]) - theta[i - 1])[0]
 
     kappa = smooth_derivative(telemetry["Distance"], theta)

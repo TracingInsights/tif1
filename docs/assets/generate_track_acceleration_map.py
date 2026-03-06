@@ -1,4 +1,5 @@
 """Generate track acceleration map visualization."""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection

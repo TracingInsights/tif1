@@ -4,8 +4,9 @@ import sys
 
 sys.path.insert(0, "../../src")
 
-import tif1
 import matplotlib.pyplot as plt
+
+import tif1
 
 # Setup plotting
 tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme="fastf1")

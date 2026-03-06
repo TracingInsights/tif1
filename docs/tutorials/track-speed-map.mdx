@@ -90,9 +90,9 @@ circuit_info = session.get_circuit_info()
 
 # Add corner markers
 for _, corner in circuit_info.corners.iterrows():
-    ax.scatter(corner['X'], corner['Y'], color='white', s=100, 
+    ax.scatter(corner['X'], corner['Y'], color='white', s=100,
                edgecolors='black', linewidth=2, zorder=10)
-    ax.text(corner['X'], corner['Y'], f"{corner['Number']}", 
+    ax.text(corner['X'], corner['Y'], f"{corner['Number']}",
             ha='center', va='center', fontsize=8, fontweight='bold')
 ```
 

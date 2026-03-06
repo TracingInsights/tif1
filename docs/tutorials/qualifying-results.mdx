@@ -97,7 +97,7 @@ Build a horizontal bar chart with proper formatting.
 ```python
 # Create the plot
 fig, ax = plt.subplots(figsize=(10, 8))
-ax.barh(fastest_laps.index, fastest_laps['LapTimeDelta'], 
+ax.barh(fastest_laps.index, fastest_laps['LapTimeDelta'],
         color=team_colors, edgecolor='grey', linewidth=0.5)
 
 # Set driver labels
@@ -109,7 +109,7 @@ ax.invert_yaxis()
 
 # Add grid lines
 ax.set_axisbelow(True)
-ax.xaxis.grid(True, which='major', linestyle='--', 
+ax.xaxis.grid(True, which='major', linestyle='--',
               color='white', alpha=0.3, zorder=-1000)
 
 # Labels
@@ -172,7 +172,7 @@ for _, lap in fastest_laps.iterrows():
 
 # Create the plot
 fig, ax = plt.subplots(figsize=(10, 8))
-ax.barh(fastest_laps.index, fastest_laps['LapTimeDelta'], 
+ax.barh(fastest_laps.index, fastest_laps['LapTimeDelta'],
         color=team_colors, edgecolor='grey', linewidth=0.5)
 
 ax.set_yticks(fastest_laps.index)
@@ -180,7 +180,7 @@ ax.set_yticklabels(fastest_laps['Driver'])
 ax.invert_yaxis()
 
 ax.set_axisbelow(True)
-ax.xaxis.grid(True, which='major', linestyle='--', 
+ax.xaxis.grid(True, which='major', linestyle='--',
               color='white', alpha=0.3, zorder=-1000)
 
 ax.set_xlabel('Gap to Pole (seconds)', fontsize=11)
@@ -208,7 +208,7 @@ fastest_laps_top10 = fastest_laps.head(10)
 # Add value labels on bars
 for idx, (i, row) in enumerate(fastest_laps.iterrows()):
     if row['LapTimeDelta'].total_seconds() > 0:
-        ax.text(row['LapTimeDelta'].total_seconds(), idx, 
+        ax.text(row['LapTimeDelta'].total_seconds(), idx,
                 f"+{row['LapTimeDelta'].total_seconds():.3f}s",
                 va='center', ha='left', fontsize=9, color='white')
 
@@ -244,7 +244,7 @@ Save the visualization for reports or presentations:
 
 ```python
 # Save as high-resolution PNG
-plt.savefig('qualifying_results.png', dpi=300, bbox_inches='tight', 
+plt.savefig('qualifying_results.png', dpi=300, bbox_inches='tight',
             facecolor='#1a1a1a')
 
 # Save as vector format for publications

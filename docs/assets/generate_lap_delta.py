@@ -1,6 +1,8 @@
 """Generate lap time delta comparison chart."""
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+
 import tif1
 from tif1.plotting import get_team_color, setup_mpl
 
@@ -24,9 +26,7 @@ driver1_laps["LapTime"] = driver1_laps["LapTime"].dt.total_seconds()
 driver2_laps["LapTime"] = driver2_laps["LapTime"].dt.total_seconds()
 
 # Merge on lap number to compare
-merged = driver1_laps.merge(
-    driver2_laps, on="LapNumber", suffixes=("_d1", "_d2")
-)
+merged = driver1_laps.merge(driver2_laps, on="LapNumber", suffixes=("_d1", "_d2"))
 
 # Calculate delta (positive = driver2 faster, negative = driver1 faster)
 merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
@@ -56,16 +56,13 @@ ax.axhline(0, color="white", linestyle="--", linewidth=1, alpha=0.7)
 ax.set_xlabel("Lap Number", fontsize=14)
 ax.set_ylabel("Time Delta (seconds)", fontsize=14)
 ax.set_title(
-    f"{session.event.year} {session.event['EventName']} - Lap Time Delta\n"
-    f"{driver1} vs {driver2}",
+    f"{session.event.year} {session.event['EventName']} - Lap Time Delta\n{driver1} vs {driver2}",
     fontsize=16,
     fontweight="bold",
     pad=20,
 )
 
 # Add legend
-from matplotlib.patches import Patch
-
 legend_elements = [
     Patch(facecolor=get_team_color("Red Bull Racing"), label=f"{driver1} faster"),
     Patch(facecolor=get_team_color("Ferrari"), label=f"{driver2} faster"),

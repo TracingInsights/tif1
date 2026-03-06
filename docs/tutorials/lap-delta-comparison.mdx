@@ -55,8 +55,8 @@ driver2_laps["LapTime"] = driver2_laps["LapTime"].dt.total_seconds()
 
 # Merge on lap number to compare
 merged = driver1_laps.merge(
-    driver2_laps, 
-    on="LapNumber", 
+    driver2_laps,
+    on="LapNumber",
     suffixes=("_d1", "_d2")
 )
 
@@ -71,7 +71,7 @@ Assign colors based on which driver was faster on each lap.
 ```python
 # Color based on who was faster
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing") if x < 0 
+    lambda x: get_team_color("Red Bull Racing") if x < 0
               else get_team_color("Ferrari")
 )
 ```
@@ -162,7 +162,7 @@ driver2_laps["LapTime"] = driver2_laps["LapTime"].dt.total_seconds()
 merged = driver1_laps.merge(driver2_laps, on="LapNumber", suffixes=("_d1", "_d2"))
 merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing") if x < 0 
+    lambda x: get_team_color("Red Bull Racing") if x < 0
               else get_team_color("Ferrari")
 )
 
@@ -247,27 +247,27 @@ You can create a function to easily compare different driver pairs:
 def plot_lap_delta(session, driver1, driver2):
     """Plot lap time delta comparison between two drivers."""
     laps = session.laps
-    
+
     # Get lap data
     d1_laps = laps[laps["Driver"] == driver1][["LapNumber", "LapTime"]].copy()
     d2_laps = laps[laps["Driver"] == driver2][["LapNumber", "LapTime"]].copy()
-    
+
     # Convert to seconds
     d1_laps["LapTime"] = d1_laps["LapTime"].dt.total_seconds()
     d2_laps["LapTime"] = d2_laps["LapTime"].dt.total_seconds()
-    
+
     # Merge and calculate delta
     merged = d1_laps.merge(d2_laps, on="LapNumber", suffixes=("_d1", "_d2"))
     merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
-    
+
     # Get team colors
     d1_team = laps[laps["Driver"] == driver1].iloc[0]["Team"]
     d2_team = laps[laps["Driver"] == driver2].iloc[0]["Team"]
-    
+
     merged["Color"] = merged["Delta"].apply(
         lambda x: get_team_color(d1_team) if x < 0 else get_team_color(d2_team)
     )
-    
+
     # Plot
     fig, ax = plt.subplots(figsize=(14, 8))
     ax.bar(merged["LapNumber"], merged["Delta"], color=merged["Color"], width=0.8)
@@ -276,7 +276,7 @@ def plot_lap_delta(session, driver1, driver2):
     ax.set_ylabel("Time Delta (seconds)")
     ax.set_title(f"{driver1} vs {driver2} - Lap Time Delta")
     ax.grid(True, alpha=0.3, axis="y")
-    
+
     plt.tight_layout()
     plt.show()
 

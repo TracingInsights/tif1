@@ -4,13 +4,14 @@ import sys
 
 sys.path.insert(0, "../../src")
 
-import tif1
-import seaborn as sns
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
-from matplotlib.patches import Patch
+import pandas as pd
+import seaborn as sns
 from matplotlib.collections import LineCollection
+from matplotlib.patches import Patch
+
+import tif1
 
 # Setup plotting with dark theme
 tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme="fastf1")
@@ -717,7 +718,7 @@ try:
         linewidth=1,
     )
 
-    for i, (driver, metric) in enumerate(zip(drivers_list, metrics_actual)):
+    for i, (_driver, metric) in enumerate(zip(drivers_list, metrics_actual)):
         ax.text(
             metrics_diff[i] + 0.02,
             i,
@@ -819,7 +820,7 @@ try:
         linewidth=1,
     )
 
-    for i, (driver, percentage) in enumerate(zip(drivers_list_throttle, percentages_actual)):
+    for i, (_driver, percentage) in enumerate(zip(drivers_list_throttle, percentages_actual)):
         ax.text(
             percentages_diff[i] + 0.1,
             i,
@@ -1090,45 +1091,51 @@ except Exception as e:
 print("\n21. Generating top speeds by team chart...")
 try:
     session_top_speeds = tif1.get_session(2023, "Italian Grand Prix", "Q")
-    
+
     # Find which speed trap recorded the highest speeds
     speed_columns = ["SpeedI1", "SpeedI2", "SpeedST", "SpeedFL"]
     speed_data = session_top_speeds.laps[speed_columns]
     fastest_trap = speed_data.idxmax(axis=1).value_counts().index[0]
-    
+
     # Calculate maximum speeds by team
     team_speeds = session_top_speeds.laps[[fastest_trap, "Team"]].copy()
     max_speeds = team_speeds.groupby("Team")[fastest_trap].max().reset_index()
     max_speeds.columns = ["Team", "MaxSpeed"]
-    
+
     # Sort by speed (descending)
     max_speeds = max_speeds.sort_values("MaxSpeed", ascending=False)
-    
+
     # Calculate difference from slowest team
     max_speeds["Diff"] = max_speeds["MaxSpeed"] - max_speeds["MaxSpeed"].min()
-    
+
     # Get team colors
     team_colors = {}
     for team in max_speeds["Team"]:
         team_colors[team] = tif1.plotting.get_team_color(team, session=session_top_speeds)
-    
+
     max_speeds["Color"] = max_speeds["Team"].map(team_colors)
-    
+
     # Create the plot
     fig, ax = plt.subplots(figsize=(10, 8), facecolor="#1a1a1a")
     ax.set_facecolor("#1a1a1a")
-    
+
     # Create horizontal bars
     bars = ax.barh(
         y=max_speeds["Team"], width=max_speeds["Diff"], color=max_speeds["Color"], height=0.7
     )
-    
+
     # Add speed value labels
     for i, (speed, diff) in enumerate(zip(max_speeds["MaxSpeed"], max_speeds["Diff"])):
         ax.text(
-            diff + 0.2, i, f"{int(speed)} km/h", va="center", fontsize=10, fontweight="bold", color="white"
+            diff + 0.2,
+            i,
+            f"{int(speed)} km/h",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            color="white",
         )
-    
+
     # Styling
     ax.set_xlabel("Speed Difference (km/h)", fontsize=11, color="white")
     ax.set_title(
@@ -1136,14 +1143,14 @@ try:
         fontsize=13,
         fontweight="bold",
         pad=20,
-        color="white"
+        color="white",
     )
     ax.invert_yaxis()
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", alpha=0.3, linestyle="--", color="white")
     ax.tick_params(colors="white")
-    
+
     plt.tight_layout()
     plt.savefig("top_speeds.png", dpi=150, bbox_inches="tight", facecolor="#1a1a1a")
     plt.close()

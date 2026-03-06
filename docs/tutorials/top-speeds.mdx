@@ -153,7 +153,7 @@ max_speeds = max_speeds.sort_values('MaxSpeed', ascending=False)
 max_speeds['Diff'] = max_speeds['MaxSpeed'] - max_speeds['MaxSpeed'].min()
 
 # Get team colors
-team_colors = {team: tif1.plotting.get_team_color(team, session=session) 
+team_colors = {team: tif1.plotting.get_team_color(team, session=session)
                for team in max_speeds['Team']}
 max_speeds['Color'] = max_speeds['Team'].map(team_colors)
 
@@ -168,7 +168,7 @@ ax.barh(
 
 # Add labels
 for i, (speed, diff) in enumerate(zip(max_speeds['MaxSpeed'], max_speeds['Diff'])):
-    ax.text(diff + 0.2, i, f"{int(speed)} km/h", va='center', 
+    ax.text(diff + 0.2, i, f"{int(speed)} km/h", va='center',
             fontsize=10, fontweight='bold')
 
 ax.set_xlabel('Speed Difference (km/h)', fontsize=11)

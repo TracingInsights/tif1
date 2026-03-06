@@ -4,7 +4,6 @@ import math
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 import tif1
 from tif1.plotting import get_team_color, setup_mpl
@@ -196,7 +195,7 @@ ax[2].grid(True, alpha=0.3)
 # Driver actions
 action_colors = {"Full Throttle": "lime", "Lift": "grey", "Brake": "red"}
 
-for driver, actions, y_pos in [(driver_1, actions_d1, 0), (driver_2, actions_d2, 1)]:
+for _driver, actions, y_pos in [(driver_1, actions_d1, 0), (driver_2, actions_d2, 1)]:
     previous_end = 0
     for _, action in actions.iterrows():
         ax[3].barh(
