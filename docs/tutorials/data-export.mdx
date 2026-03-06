@@ -133,7 +133,7 @@ laps.to_sql("laps", engine, if_exists="replace", index=False)
 session.weather.to_sql("weather", engine, if_exists="replace", index=False)
 ```
 
-## Export for machine learning
+## Export for Machine Learning
 
 Prepare data for ML frameworks.
 
@@ -166,13 +166,13 @@ telemetry.to_hdf("monaco_race.h5", key="telemetry", mode="a")
 laps_loaded = pd.read_hdf("monaco_race.h5", key="laps")
 ```
 
-## Export for data visualization tools
+## Export for Data Visualization Tools
 
 ### Tableau / Power BI
 
 Export to formats these tools can read.
 
-```
+```python
 # CSV with proper encoding
 laps.to_csv("monaco_for_tableau.csv", index=False, encoding="utf-8-sig")
 
@@ -181,11 +181,11 @@ laps.to_csv("monaco_for_tableau.csv", index=False, encoding="utf-8-sig")
 # ... (see Tableau documentation)
 ```
 
-### Plotly dash / streamlit
+### Plotly Dash / Streamlit
 
 Export to JSON for web dashboards.
 
-```
+```python
 # Export for web apps
 data_for_web = {
     "laps": laps.to_dict(orient="records"),
@@ -198,11 +198,11 @@ with open("monaco_data.json", "w") as f:
     json.dump(data_for_web, f, indent=2, default=str)
 ```
 
-## Batch export multiple sessions
+## Batch Export Multiple Sessions
 
 Export an entire race weekend or season.
 
-```
+```python
 import tif1
 
 def export_weekend(year, gp, output_dir="data"):
@@ -231,9 +231,9 @@ def export_weekend(year, gp, output_dir="data"):
 export_weekend(2025, "Monaco Grand Prix", "monaco_2025")
 ```
 
-### Export entire season
+### Export Entire Season
 
-```
+```python
 def export_season(year, output_dir="season_data"):
     """Export all races from a season."""
     import os
@@ -260,9 +260,9 @@ def export_season(year, output_dir="season_data"):
 export_season(2024, "2024_season")
 ```
 
-## Working with Polars lib
+## Working with Polars Backend
 
-If using the polars lib, you get additional export options.
+If using the polars backend, you get additional export options.
 
 ```
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
@@ -278,11 +278,11 @@ laps.write_ipc("monaco_polars.arrow")  # Apache Arrow format
 laps_pandas = laps.to_pandas()
 ```
 
-## Export telemetry for all drivers
+## Export Telemetry for All Drivers
 
 Efficiently export telemetry for multiple drivers.
 
-```
+```python
 def export_all_telemetry(session, lap_type="fastest", output_dir="telemetry"):
     """Export telemetry for all drivers."""
     import os

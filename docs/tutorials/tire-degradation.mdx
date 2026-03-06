@@ -33,6 +33,10 @@ We'll analyze the 2024 Hungarian Grand Prix to see how tires performed:
 import tif1
 import matplotlib.pyplot as plt
 import numpy as np
+from tif1.plotting import setup_mpl
+
+# Setup plotting style with FastF1 dark background
+setup_mpl(color_scheme="fastf1")
 
 # Load race session
 session = tif1.get_session(2024, "Hungarian Grand Prix", "Race")
@@ -61,39 +65,109 @@ clean_laps["FuelCorrectedTime"] = (
 )
 ```
 
-## Visualizing Degradation by Compound
+## Smoothing Data with Rolling Median
 
-Let's plot how each compound performs over its lifetime:
+To reduce noise in the degradation curves, we'll use a rolling median:
 
 ```python
-fig, ax = plt.subplots(figsize=(12, 8))
+def rolling_median(data, window=5):
+    """Simple rolling median for smoothing."""
+    result = []
+    for i in range(len(data)):
+        start = max(0, i - window // 2)
+        end = min(len(data), i + window // 2 + 1)
+        result.append(np.median(data[start:end]))
+    return np.array(result)
+```
 
-# Compound colors
-colors = {"SOFT": "red", "MEDIUM": "gold", "HARD": "lightgray"}
+## Visualizing Degradation by Compound
 
-for compound in ["SOFT", "MEDIUM", "HARD"]:
+Let's plot how each compound performs over its lifetime with both raw data and smoothed trends:
+
+```python
+fig, ax = plt.subplots(figsize=(14, 8))
+
+# Compound colors and styling
+compounds = {
+    "SOFT": {"color": "red", "alpha": 0.3},
+    "MEDIUM": {"color": "gold", "alpha": 0.3},
+    "HARD": {"color": "lightgray", "alpha": 0.3},
+}
+
+for compound, style in compounds.items():
     compound_laps = clean_laps[clean_laps["Compound"] == compound]
     
     if len(compound_laps) > 10:
         # Scatter plot of raw data
-        ax.scatter(compound_laps["TyreLife"], 
-                  compound_laps["FuelCorrectedTime"],
-                  color=colors[compound], alpha=0.3, s=30)
+        ax.scatter(
+            compound_laps["TyreLife"], 
+            compound_laps["FuelCorrectedTime"],
+            color=style["color"], 
+            alpha=style["alpha"], 
+            s=30,
+            zorder=1
+        )
         
-        # Group by tire life and get median for trend line
-        trend = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
-        ax.plot(trend.index, trend.values, 
-               color=colors[compound], linewidth=3, 
-               label=compound)
+        # Group by tire life and get median
+        grouped = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
+        tire_life = grouped.index.values
+        lap_times = grouped.values
+        
+        # Apply rolling median for smoothing
+        if len(lap_times) > 5:
+            smoothed_times = rolling_median(lap_times, window=5)
+        else:
+            smoothed_times = lap_times
+        
+        # Plot smoothed line
+        ax.plot(
+            tire_life,
+            smoothed_times,
+            color=style["color"],
+            linewidth=4,
+            label=compound,
+            zorder=2
+        )
+        
+        # Add annotation at end of line
+        ax.annotate(
+            compound,
+            xy=(tire_life[-1], smoothed_times[-1]),
+            xytext=(tire_life[-1] + 2, smoothed_times[-1]),
+            fontsize=14,
+            fontweight="bold",
+            color=style["color"],
+            va="center"
+        )
 
-ax.set_xlabel("Tire Life (Laps)", fontsize=14)
-ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=14)
-ax.set_title("Tire Degradation by Compound", fontsize=16, fontweight="bold")
-ax.legend(fontsize=12)
-ax.grid(True, alpha=0.3)
+# Styling
+ax.set_xlabel("Tire Life (Laps)", fontsize=16, fontweight="bold")
+ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=16, fontweight="bold")
+ax.set_title(
+    f"Tire Degradation Analysis - {session.event['EventName']} {session.event['EventDate'].year}",
+    fontsize=18,
+    fontweight="bold",
+    pad=20
+)
+
+# Grid and legend
+ax.grid(True, alpha=0.3, linestyle="--")
+ax.legend(fontsize=14, loc="upper left", framealpha=0.9)
+
+# Set reasonable y-axis limits using quantiles
+y_min = clean_laps["FuelCorrectedTime"].quantile(0.01)
+y_max = clean_laps["FuelCorrectedTime"].quantile(0.99)
+ax.set_ylim(y_min - 0.5, y_max + 0.5)
+
 plt.tight_layout()
 plt.show()
 ```
+
+The visualization now shows:
+- Raw data points as semi-transparent scatter plots
+- Smoothed trend lines using rolling median to reduce noise
+- Compound labels annotated at the end of each line
+- Dynamic y-axis limits that exclude extreme outliers
 
 ## Analyzing Specific Driver Performance
 

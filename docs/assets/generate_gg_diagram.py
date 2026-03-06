@@ -1,7 +1,10 @@
 """Generate G-G diagram (acceleration envelope) chart."""
 
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.spatial import ConvexHull
 
 import tif1
 from tif1.plotting import get_team_color, setup_mpl
@@ -10,26 +13,102 @@ from tif1.plotting import get_team_color, setup_mpl
 setup_mpl(color_scheme="fastf1")
 
 
+def smooth_derivative(t_in, v_in):
+    """Compute a smooth estimation of a derivative using low-noise differentiators."""
+    method = "smooth"
+    t = t_in.copy()
+    v = v_in.copy()
+
+    # Transform time to seconds
+    try:
+        for i in range(0, t.size):
+            t.iloc[i] = t.iloc[i].total_seconds()
+    except Exception:
+        pass
+
+    t = np.array(t)
+    v = np.array(v)
+
+    assert t.size == v.size
+
+    dvdt = np.zeros(t.size)
+
+    # Manually compute boundary points
+    dvdt[0] = (v[1] - v[0]) / (t[1] - t[0])
+    dvdt[1] = (v[2] - v[0]) / (t[2] - t[0])
+    dvdt[2] = (v[3] - v[1]) / (t[3] - t[1])
+
+    n = t.size
+    dvdt[n - 1] = (v[n - 1] - v[n - 2]) / (t[n - 1] - t[n - 2])
+    dvdt[n - 2] = (v[n - 1] - v[n - 3]) / (t[n - 1] - t[n - 3])
+    dvdt[n - 3] = (v[n - 2] - v[n - 4]) / (t[n - 2] - t[n - 4])
+
+    # Compute interior points with smooth method
+    if method == "smooth":
+        c = [5.0 / 32.0, 4.0 / 32.0, 1.0 / 32.0]
+        for i in range(3, t.size - 3):
+            for j in range(1, 4):
+                dvdt[i] += 2 * j * c[j - 1] * (v[i + j] - v[i - j]) / (t[i + j] - t[i - j])
+
+    return dvdt
+
+
+def truncated_remainder(dividend, divisor):
+    """Calculate truncated remainder."""
+    divided_number = dividend / divisor
+    divided_number = -int(-divided_number) if divided_number < 0 else int(divided_number)
+    remainder = dividend - divisor * divided_number
+    return remainder
+
+
+def transform_to_pipi(input_angle):
+    """Transform angle to [-pi, pi] range."""
+    pi = math.pi
+    revolutions = int((input_angle + np.sign(input_angle) * pi) / (2 * pi))
+    p1 = truncated_remainder(input_angle + np.sign(input_angle) * pi, 2 * pi)
+    p2 = (
+        np.sign(
+            np.sign(input_angle)
+            + 2 * (np.sign(math.fabs((truncated_remainder(input_angle + pi, 2 * pi)) / (2 * pi))) - 1)
+        )
+        * pi
+    )
+    output_angle = p1 - p2
+    return output_angle, revolutions
+
+
+def remove_acceleration_outliers(acc):
+    """Remove unrealistic acceleration values (> 7.5g)."""
+    acc_threshold_g = 7.5
+    if math.fabs(acc[0]) > acc_threshold_g:
+        acc[0] = 0.0
+    for i in range(1, acc.size - 1):
+        if math.fabs(acc[i]) > acc_threshold_g:
+            acc[i] = acc[i - 1]
+    if math.fabs(acc[-1]) > acc_threshold_g:
+        acc[-1] = acc[-2]
+    return acc
+
+
 def compute_accelerations(telemetry):
-    """Calculate longitudinal and lateral accelerations in g."""
-    # Convert speed to m/s
+    """Calculate longitudinal and lateral accelerations in g using smooth derivatives."""
     v = np.array(telemetry["Speed"]) / 3.6
+    lon_acc = smooth_derivative(telemetry["Time"], v) / 9.81
 
-    # Longitudinal acceleration from speed change over time
-    time_seconds = telemetry["Time"].dt.total_seconds()
-    lon_acc = np.gradient(v, time_seconds) / 9.81
+    dx = smooth_derivative(telemetry["Distance"], telemetry["X"])
+    dy = smooth_derivative(telemetry["Distance"], telemetry["Y"])
 
-    # Lateral acceleration from position change (curvature)
-    dx = np.gradient(telemetry["X"], telemetry["Distance"])
-    dy = np.gradient(telemetry["Y"], telemetry["Distance"])
+    theta = np.zeros(dx.size)
+    theta[0] = math.atan2(dy[0], dx[0])
+    for i in range(0, dx.size):
+        theta[i] = theta[i - 1] + transform_to_pipi(math.atan2(dy[i], dx[i]) - theta[i - 1])[0]
 
-    # Calculate track curvature
-    curvature = (dx * np.gradient(dy) - dy * np.gradient(dx)) / (dx**2 + dy**2) ** 1.5
-    lat_acc = v * v * curvature / 9.81
+    kappa = smooth_derivative(telemetry["Distance"], theta)
+    lat_acc = v * v * kappa / 9.81
 
-    # Remove unrealistic values (> 7.5g)
-    lon_acc = np.clip(lon_acc, -7.5, 7.5)
-    lat_acc = np.clip(lat_acc, -7.5, 7.5)
+    # Remove outliers
+    lon_acc = remove_acceleration_outliers(lon_acc)
+    lat_acc = remove_acceleration_outliers(lat_acc)
 
     return lon_acc, lat_acc
 
@@ -76,34 +155,25 @@ for driver in drivers:
             label=driver,
         )
 
-        # Draw performance envelope
+        # Draw performance envelope using ConvexHull
         points = np.column_stack([lat_acc, lon_acc])
         points = points[~np.isnan(points).any(axis=1)]
 
-        if len(points) > 10:
-            # Find boundary by sampling angles
-            angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
-            boundary_points = []
-
-            center = np.mean(points, axis=0)
-            centered = points - center
-
-            for angle in angles:
-                direction = np.array([np.cos(angle), np.sin(angle)])
-                projections = np.dot(centered, direction)
-                max_idx = np.argmax(projections)
-                boundary_points.append(points[max_idx])
-
-            boundary = np.array(boundary_points)
-            boundary = np.vstack([boundary, boundary[0]])
-
-            ax.plot(
-                boundary[:, 0],
-                boundary[:, 1],
-                color=color,
-                linewidth=2.5,
-                alpha=0.9,
-            )
+        if len(points) > 3:
+            try:
+                hull = ConvexHull(points)
+                # Plot the convex hull edges (simplices)
+                for simplex in hull.simplices:
+                    ax.plot(
+                        points[simplex, 0],
+                        points[simplex, 1],
+                        color=color,
+                        linewidth=2.5,
+                        alpha=0.9,
+                    )
+            except Exception as hull_error:
+                print(f"Warning: Could not compute convex hull for {driver}: {hull_error}")
+                continue
 
     except Exception as e:
         print(f"Warning: Could not process {driver}: {e}")

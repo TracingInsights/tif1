@@ -1,182 +1,233 @@
 ---
 title: "Multi-Driver Speed Comparison"
 icon: "users"
-description: "Compare speed profiles of multiple drivers on the track"
+description: "Visualize driver speed variations around the circuit with color-coded track maps"
 keywords:
   - "tif1"
   - "Formula 1"
   - "driver comparison"
   - "speed analysis"
   - "telemetry"
+  - "track visualization"
 ---
 
-Comparing speed profiles of multiple drivers on the same track layout helps identify where each driver gains or loses time. This visualization overlays speed traces from different drivers, color-coded by team.
+Visualizing speed variations around a circuit helps identify braking zones, acceleration areas, and flat-out sections. This tutorial shows how to create a color-coded track map where speed is represented by color intensity along the racing line.
 
 <img
   src="/assets/multi_driver_speed_comparison.png"
   alt="Multi-driver speed comparison showing speed variations around the circuit"
 />
 
-## Loading the session
+## Setup and configuration
 
-We'll compare the fastest laps from multiple drivers in a qualifying session.
+First, set up the plotting environment with FastF1 color scheme and configure the session details.
 
 ```python
-import tif1
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
 import numpy as np
-import pandas as pd
+from matplotlib.collections import LineCollection
+import tif1
 
-# Load qualifying session
-session = tif1.get_session(2023, 'Bahrain', 'Q')
+# Setup plotting with FastF1 colors
+tif1.plotting.setup_mpl(color_scheme='fastf1')
 
-# Select drivers to compare
-drivers = ['VER', 'PER', 'LEC']
+# Configuration
+year = 2023
+event = "Bahrain"
+session_type = "Q"
+driver = "VER"
+colormap = mpl.cm.plasma
 ```
 
-## Collecting telemetry data
+## Loading session and telemetry
 
-We'll gather telemetry from each driver's fastest lap.
+Load the session and extract telemetry data from the driver's fastest lap.
 
 ```python
-telemetry_data = []
+# Load session
+session = tif1.get_session(year, event, session_type)
+weekend = session.event
 
-for driver in drivers:
-    # Get fastest lap for this driver
-    lap = session.laps.pick_driver(driver).pick_fastest()
-    
-    # Get telemetry
-    telemetry = lap.get_car_data()
-    telemetry['Driver'] = driver
-    
-    # Get team color
-    driver_info = session.get_driver(driver)
-    telemetry['Color'] = driver_info['TeamColor']
-    
-    telemetry_data.append(telemetry)
+# Get fastest lap telemetry
+lap = session.laps.pick_driver(driver).pick_fastest()
+telemetry = lap.get_car_data()
 
-# Combine all telemetry
-all_telemetry = pd.concat(telemetry_data)
+# Extract data for plotting
+x = telemetry['X'].values
+y = telemetry['Y'].values
+color = telemetry['Speed'].values
 ```
 
-## Creating the visualization
+## Creating line segments
 
-We'll plot each driver's track with speed-based coloring.
+Convert the track coordinates into line segments for color mapping.
 
 ```python
-fig, ax = plt.subplots(figsize=(14, 10))
+# Create line segments for coloring
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
+```
 
-for driver in drivers:
-    # Filter telemetry for this driver
-    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
-    
-    # Extract coordinates and speed
-    x = driver_tel['X'].values
-    y = driver_tel['Y'].values
-    speed = driver_tel['Speed'].values
-    
-    # Create line segments
-    points = np.array([x, y]).T.reshape(-1, 1, 2)
-    segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    
-    # Color by speed
-    norm = plt.Normalize(speed.min(), speed.max())
-    lc = LineCollection(segments, cmap='plasma', norm=norm, 
-                       linewidth=3, alpha=0.7, label=driver)
-    lc.set_array(speed)
-    ax.add_collection(lc)
+## Building the visualization
 
-# Format plot
-ax.set_aspect('equal')
+Create the plot with a background track line and color-coded speed overlay.
+
+```python
+# Create visualization with FastF1 styling
+fig, ax = plt.subplots(sharex=True, sharey=True, figsize=(12, 6.75))
+fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed', 
+             size=24, y=0.97, color='white')
+
+# Adjust margins and turn off axis
+plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.12)
 ax.axis('off')
-ax.legend(loc='upper right')
+ax.set_aspect('equal', adjustable='datalim')
 
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Comparison")
-plt.tight_layout()
-plt.show()
+# Create background track line
+ax.plot(x, y, color='black', linestyle='-', linewidth=16, zorder=0)
+
+# Create a continuous norm to map from data points to colors
+norm = plt.Normalize(color.min(), color.max())
+lc = LineCollection(segments, cmap=colormap, norm=norm, 
+                   linestyle='-', linewidth=5)
+
+# Set the values used for colormapping
+lc.set_array(color)
+
+# Add line segments to plot
+line = ax.add_collection(lc)
 ```
 
-## Simplified version with team colors
+## Adding the color bar
 
-For a cleaner look, use solid team colors instead of speed gradients.
+Add a horizontal color bar to show the speed scale.
 
 ```python
-fig, ax = plt.subplots(figsize=(14, 10))
+# Create color bar as legend
+cbaxes = fig.add_axes([0.25, 0.05, 0.5, 0.05])
+normlegend = mpl.colors.Normalize(vmin=color.min(), vmax=color.max())
+legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend, 
+                                   cmap=colormap, orientation="horizontal")
+legend.set_label('Speed (km/h)', color='white', fontsize=12)
+legend.ax.xaxis.set_tick_params(color='white')
+plt.setp(plt.getp(legend.ax.axes, 'xticklabels'), color='white')
 
-for driver in drivers:
-    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
-    
-    # Plot with team color
-    ax.plot(driver_tel['X'], driver_tel['Y'], 
-            color=f"#{driver_tel['Color'].iloc[0]}", 
-            linewidth=3, label=driver, alpha=0.8)
-
-ax.set_aspect('equal')
-ax.axis('off')
-ax.legend(loc='upper right', fontsize=12)
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Driver Comparison")
-plt.tight_layout()
 plt.show()
 ```
 
 ## Complete example
 
 ```python
-import tif1
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
 import numpy as np
-import pandas as pd
+from matplotlib.collections import LineCollection
+import tif1
+
+# Setup plotting with FastF1 colors
+tif1.plotting.setup_mpl(color_scheme='fastf1')
+
+# Configuration
+year = 2023
+event = "Bahrain"
+session_type = "Q"
+driver = "VER"
+colormap = mpl.cm.plasma
 
 # Load session
-session = tif1.get_session(2023, 'Bahrain', 'Q')
-drivers = ['VER', 'PER', 'LEC']
+session = tif1.get_session(year, event, session_type)
+weekend = session.event
 
-# Collect telemetry
-telemetry_data = []
-for driver in drivers:
-    lap = session.laps.pick_driver(driver).pick_fastest()
-    telemetry = lap.get_car_data()
-    telemetry['Driver'] = driver
-    driver_info = session.get_driver(driver)
-    telemetry['Color'] = driver_info['TeamColor']
-    telemetry_data.append(telemetry)
+# Get fastest lap telemetry
+lap = session.laps.pick_driver(driver).pick_fastest()
+telemetry = lap.get_car_data()
 
-all_telemetry = pd.concat(telemetry_data)
+# Extract data for plotting
+x = telemetry['X'].values
+y = telemetry['Y'].values
+color = telemetry['Speed'].values
 
-# Create visualization
-fig, ax = plt.subplots(figsize=(14, 10))
+# Create line segments for coloring
+points = np.array([x, y]).T.reshape(-1, 1, 2)
+segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-for driver in drivers:
-    driver_tel = all_telemetry[all_telemetry['Driver'] == driver]
-    x = driver_tel['X'].values
-    y = driver_tel['Y'].values
-    speed = driver_tel['Speed'].values
-    
-    points = np.array([x, y]).T.reshape(-1, 1, 2)
-    segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    
-    norm = plt.Normalize(speed.min(), speed.max())
-    lc = LineCollection(segments, cmap='plasma', norm=norm, 
-                       linewidth=3, alpha=0.7, label=driver)
-    lc.set_array(speed)
-    ax.add_collection(lc)
+# Create visualization with FastF1 styling
+fig, ax = plt.subplots(sharex=True, sharey=True, figsize=(12, 6.75))
+fig.suptitle(f'{weekend["EventName"]} {year} - {driver} - Speed', 
+             size=24, y=0.97, color='white')
 
-ax.set_aspect('equal')
+# Adjust margins and turn off axis
+plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.12)
 ax.axis('off')
-ax.legend(loc='upper right')
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Comparison")
-plt.tight_layout()
+ax.set_aspect('equal', adjustable='datalim')
+
+# Create background track line
+ax.plot(x, y, color='black', linestyle='-', linewidth=16, zorder=0)
+
+# Create a continuous norm to map from data points to colors
+norm = plt.Normalize(color.min(), color.max())
+lc = LineCollection(segments, cmap=colormap, norm=norm, 
+                   linestyle='-', linewidth=5)
+
+# Set the values used for colormapping
+lc.set_array(color)
+
+# Add line segments to plot
+line = ax.add_collection(lc)
+
+# Create color bar as legend
+cbaxes = fig.add_axes([0.25, 0.05, 0.5, 0.05])
+normlegend = mpl.colors.Normalize(vmin=color.min(), vmax=color.max())
+legend = mpl.colorbar.ColorbarBase(cbaxes, norm=normlegend, 
+                                   cmap=colormap, orientation="horizontal")
+legend.set_label('Speed (km/h)', color='white', fontsize=12)
+legend.ax.xaxis.set_tick_params(color='white')
+plt.setp(plt.getp(legend.ax.axes, 'xticklabels'), color='white')
+
 plt.show()
 ```
 
 ## Interpreting the visualization
 
-- **Overlapping lines:** Drivers taking similar racing lines
-- **Speed differences:** Visible through color intensity at same track positions
-- **Line separation:** Different racing lines or corner entry/exit points
-- **Team colors:** Quick identification of teammates vs competitors
+- **Red/yellow sections:** High-speed areas like straights and fast corners
+- **Blue/purple sections:** Low-speed areas indicating braking zones and slow corners
+- **Color transitions:** Show acceleration and deceleration patterns
+- **Track layout:** Black background line provides context for the circuit shape
+
+## Comparing multiple drivers
+
+To compare multiple drivers, create separate plots or overlay them with different colormaps:
+
+```python
+drivers = ['VER', 'PER', 'LEC']
+fig, axes = plt.subplots(1, len(drivers), figsize=(18, 6))
+
+for idx, driver in enumerate(drivers):
+    lap = session.laps.pick_driver(driver).pick_fastest()
+    telemetry = lap.get_car_data()
+    
+    x = telemetry['X'].values
+    y = telemetry['Y'].values
+    speed = telemetry['Speed'].values
+    
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    axes[idx].plot(x, y, color='black', linewidth=16, zorder=0)
+    
+    norm = plt.Normalize(speed.min(), speed.max())
+    lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=5)
+    lc.set_array(speed)
+    axes[idx].add_collection(lc)
+    
+    axes[idx].set_aspect('equal')
+    axes[idx].axis('off')
+    axes[idx].set_title(driver, color='white', fontsize=16)
+
+plt.tight_layout()
+plt.show()
+```
 
 ## Next steps
 

@@ -382,11 +382,11 @@ if len(pit_stops_df) > 0:
     plt.show()
 ```
 
-## 8. race pace comparison
+## 8. Race Pace Comparison
 
 Compare race pace between drivers on same compound.
 
-```
+```python
 def compare_race_pace(laps, drivers, compound="MEDIUM"):
     """Compare race pace for specific drivers on same compound."""
     fig, ax = plt.subplots(figsize=(14, 6))
@@ -434,11 +434,11 @@ def compare_race_pace(laps, drivers, compound="MEDIUM"):
 compare_race_pace(laps, top_5_drivers[:3], compound="MEDIUM")
 ```
 
-## 9. generate race report
+## 9. Generate Race Report
 
 Create a comprehensive race summary.
 
-```
+```python
 def generate_race_report(session, laps):
     """Generate a comprehensive race report."""
     print("=" * 60)
