@@ -4,8 +4,9 @@ import sys
 
 sys.path.insert(0, "../../src")
 
-import tif1
 import matplotlib.pyplot as plt
+
+import tif1
 
 # Setup plotting
 tif1.plotting.setup_mpl(color_scheme="fastf1")
@@ -48,9 +49,7 @@ bars = ax.barh(
 
 # Add speed value labels
 for i, (speed, diff) in enumerate(zip(max_speeds["MaxSpeed"], max_speeds["Diff"])):
-    ax.text(
-        diff + 0.2, i, f"{int(speed)} km/h", va="center", fontsize=10, fontweight="bold"
-    )
+    ax.text(diff + 0.2, i, f"{int(speed)} km/h", va="center", fontsize=10, fontweight="bold")
 
 # Styling
 ax.set_xlabel("Speed Difference (km/h)", fontsize=11)

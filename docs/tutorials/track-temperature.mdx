@@ -51,7 +51,7 @@ Plot track temperature against lap number to see how conditions evolved.
 fig, ax = plt.subplots(figsize=(12, 6))
 
 # Plot track temperature
-ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'],
         color='#ff4444', linewidth=2.5, label='Track Temperature')
 
 ax.set_xlabel('Lap Number', fontsize=12)
@@ -91,7 +91,7 @@ driver_laps = laps.pick_drivers(most_laps_driver)
 
 # Create plot
 fig, ax = plt.subplots(figsize=(12, 6))
-ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'],
         color='#ff4444', linewidth=2.5, label='Track Temperature')
 
 ax.set_xlabel('Lap Number', fontsize=12)
@@ -112,9 +112,9 @@ Compare track and air temperature to see the relationship between ambient condit
 ```python
 fig, ax = plt.subplots(figsize=(12, 6))
 
-ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'], 
+ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'],
         color='#ff4444', linewidth=2.5, label='Track Temperature')
-ax.plot(driver_laps['LapNumber'], driver_laps['AirTemp'], 
+ax.plot(driver_laps['LapNumber'], driver_laps['AirTemp'],
         color='#4444ff', linewidth=2.5, label='Air Temperature')
 
 ax.set_xlabel('Lap Number', fontsize=12)

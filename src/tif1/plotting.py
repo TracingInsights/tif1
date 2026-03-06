@@ -106,16 +106,7 @@ def setup_mpl(
         plt.rcParams["xtick.color"] = text_color
         plt.rcParams["ytick.color"] = text_color
         plt.rcParams["text.color"] = text_color
-    elif color_scheme == "custom":
-        background = kwargs.get("background", DEFAULT_PLOT_CONFIG["colors"]["background"])
-        text_color = kwargs.get("text_color", DEFAULT_PLOT_CONFIG["colors"]["text"])
-        plt.rcParams["axes.facecolor"] = background
-        plt.rcParams["figure.facecolor"] = background
-        plt.rcParams["axes.edgecolor"] = text_color
-        plt.rcParams["axes.labelcolor"] = text_color
-        plt.rcParams["xtick.color"] = text_color
-        plt.rcParams["ytick.color"] = text_color
-        plt.rcParams["text.color"] = text_color
+    # For 'custom' or any other scheme, do nothing (user manages their own settings)
 
 
 def apply_plot_style(
@@ -131,9 +122,9 @@ def apply_plot_style(
         transparent: Make background transparent
     """
     if background is None:
-        background = DEFAULT_PLOT_CONFIG["colors"]["background"]
+        background = str(DEFAULT_PLOT_CONFIG["colors"]["background"])
     if text_color is None:
-        text_color = DEFAULT_PLOT_CONFIG["colors"]["text"]
+        text_color = str(DEFAULT_PLOT_CONFIG["colors"]["text"])
 
     if transparent:
         plt.rcParams["figure.facecolor"] = "none"
@@ -177,7 +168,7 @@ def load_custom_font(font_path_or_url: str):
 
         font_manager.fontManager.addfont(font_path_or_url)
         return font_manager.FontProperties(fname=font_path_or_url)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 

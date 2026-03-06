@@ -1,16 +1,19 @@
 """Generate driver lap times scatter plot for documentation."""
+
 import sys
-sys.path.insert(0, '../../src')
+
+sys.path.insert(0, "../../src")
+
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 import tif1
-import seaborn as sns
-import matplotlib.pyplot as plt
 
 # Setup plotting
-tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme="fastf1")
 
 # Load race session
-race = tif1.get_session(2023, "Azerbaijan", 'R')
+race = tif1.get_session(2023, "Azerbaijan", "R")
 laps = race.laps
 
 # Get driver laps and filter
@@ -31,22 +34,21 @@ sns.scatterplot(
     palette=tif1.plotting.get_compound_mapping(session=race),
     s=80,
     linewidth=0,
-    legend='auto'
+    legend="auto",
 )
 
 # Enhance plot
 ax.set_xlabel("Lap Number", fontsize=12)
 ax.set_ylabel("Lap Time", fontsize=12)
 ax.invert_yaxis()
-plt.suptitle("Alonso Lap Times in the 2023 Azerbaijan Grand Prix", 
-             fontsize=14, fontweight='bold')
-plt.grid(color='w', which='major', axis='both', alpha=0.3)
+plt.suptitle("Alonso Lap Times in the 2023 Azerbaijan Grand Prix", fontsize=14, fontweight="bold")
+plt.grid(color="w", which="major", axis="both", alpha=0.3)
 sns.despine(left=True, bottom=True)
 
 plt.tight_layout()
 
 # Save the figure
-output_path = 'driver_laptimes_example.png'
-plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
+output_path = "driver_laptimes_example.png"
+plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#1a1a1a")
 print(f"Chart saved to {output_path}")
 plt.close()

@@ -63,35 +63,35 @@ def smooth_derivative(t_in, v_in):
     """Compute smooth derivative using low-noise differentiators."""
     t = t_in.copy()
     v = v_in.copy()
-    
+
     # Transform time to seconds
     try:
         for i in range(0, t.size):
             t.iloc[i] = t.iloc[i].total_seconds()
     except Exception:
         pass
-    
+
     t = np.array(t)
     v = np.array(v)
-    
+
     dvdt = np.zeros(t.size)
-    
+
     # Manually compute boundary points
     dvdt[0] = (v[1] - v[0]) / (t[1] - t[0])
     dvdt[1] = (v[2] - v[0]) / (t[2] - t[0])
     dvdt[2] = (v[3] - v[1]) / (t[3] - t[1])
-    
+
     n = t.size
     dvdt[n - 1] = (v[n - 1] - v[n - 2]) / (t[n - 1] - t[n - 2])
     dvdt[n - 2] = (v[n - 1] - v[n - 3]) / (t[n - 1] - t[n - 3])
     dvdt[n - 3] = (v[n - 2] - v[n - 4]) / (t[n - 2] - t[n - 4])
-    
+
     # Compute interior points with smooth method
     c = [5.0 / 32.0, 4.0 / 32.0, 1.0 / 32.0]
     for i in range(3, t.size - 3):
         for j in range(1, 4):
             dvdt[i] += 2 * j * c[j - 1] * (v[i + j] - v[i - j]) / (t[i + j] - t[i - j])
-    
+
     return dvdt
 
 
@@ -137,25 +137,25 @@ def compute_accelerations(telemetry):
     # Longitudinal acceleration from speed change
     v = np.array(telemetry["Speed"]) / 3.6
     lon_acc = smooth_derivative(telemetry["Time"], v) / 9.81
-    
+
     # Lateral acceleration from track curvature
     dx = smooth_derivative(telemetry["Distance"], telemetry["X"])
     dy = smooth_derivative(telemetry["Distance"], telemetry["Y"])
-    
+
     # Calculate heading angle
     theta = np.zeros(dx.size)
     theta[0] = math.atan2(dy[0], dx[0])
     for i in range(0, dx.size):
         theta[i] = theta[i - 1] + transform_to_pipi(math.atan2(dy[i], dx[i]) - theta[i - 1])[0]
-    
+
     # Curvature is rate of change of heading
     kappa = smooth_derivative(telemetry["Distance"], theta)
     lat_acc = v * v * kappa / 9.81
-    
+
     # Remove outliers
     lon_acc = remove_acceleration_outliers(lon_acc)
     lat_acc = remove_acceleration_outliers(lat_acc)
-    
+
     return lon_acc, lat_acc
 ```
 
@@ -175,22 +175,22 @@ for driver in drivers:
         # Get fastest lap telemetry
         driver_lap = laps.pick_driver(driver).pick_fastest()
         telemetry = driver_lap.get_telemetry().add_distance()
-        
+
         # Compute accelerations
         lon_acc, lat_acc = compute_accelerations(telemetry)
-        
+
         # Get team color
         try:
             team = driver_lap["Team"] if "Team" in driver_lap.index else None
             color = get_team_color(team) if team else None
         except Exception:
             color = None
-        
+
         if color is None:
             # Fallback colors
             color_map = {"VER": "#0600ef", "LEC": "#dc0000", "NOR": "#ff8700"}
             color = color_map.get(driver, "#ffffff")
-        
+
         # Plot scatter points
         ax.scatter(
             lat_acc,
@@ -200,11 +200,11 @@ for driver in drivers:
             color=color,
             label=driver,
         )
-        
+
         # Draw performance envelope using ConvexHull
         points = np.column_stack([lat_acc, lon_acc])
         points = points[~np.isnan(points).any(axis=1)]
-        
+
         if len(points) > 3:
             try:
                 hull = ConvexHull(points)
@@ -220,7 +220,7 @@ for driver in drivers:
             except Exception as hull_error:
                 print(f"Warning: Could not compute convex hull for {driver}: {hull_error}")
                 continue
-    
+
     except Exception as e:
         print(f"Warning: Could not process {driver}: {e}")
         continue

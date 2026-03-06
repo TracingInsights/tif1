@@ -60,7 +60,7 @@ Cars get lighter as they burn fuel, making them faster. To see true tire degrada
 # Estimate fuel effect: ~0.03s per lap improvement
 max_lap = clean_laps["LapNumber"].max()
 clean_laps["FuelCorrectedTime"] = (
-    clean_laps["LapTimeSeconds"] - 
+    clean_laps["LapTimeSeconds"] -
     (0.03 * (max_lap - clean_laps["LapNumber"]))
 )
 ```
@@ -96,29 +96,29 @@ compounds = {
 
 for compound, style in compounds.items():
     compound_laps = clean_laps[clean_laps["Compound"] == compound]
-    
+
     if len(compound_laps) > 10:
         # Scatter plot of raw data
         ax.scatter(
-            compound_laps["TyreLife"], 
+            compound_laps["TyreLife"],
             compound_laps["FuelCorrectedTime"],
-            color=style["color"], 
-            alpha=style["alpha"], 
+            color=style["color"],
+            alpha=style["alpha"],
             s=30,
             zorder=1
         )
-        
+
         # Group by tire life and get median
         grouped = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
         tire_life = grouped.index.values
         lap_times = grouped.values
-        
+
         # Apply rolling median for smoothing
         if len(lap_times) > 5:
             smoothed_times = rolling_median(lap_times, window=5)
         else:
             smoothed_times = lap_times
-        
+
         # Plot smoothed line
         ax.plot(
             tire_life,
@@ -128,7 +128,7 @@ for compound, style in compounds.items():
             label=compound,
             zorder=2
         )
-        
+
         # Add annotation at end of line
         ax.annotate(
             compound,
@@ -182,30 +182,30 @@ fig, ax = plt.subplots(figsize=(12, 8))
 
 for driver in drivers:
     driver_laps = clean_laps[
-        (clean_laps["Driver"] == driver) & 
+        (clean_laps["Driver"] == driver) &
         (clean_laps["Compound"] == "MEDIUM")
     ]
-    
+
     if len(driver_laps) > 5:
         # Calculate degradation rate using numpy polyfit
-        coeffs = np.polyfit(driver_laps["TyreLife"], 
+        coeffs = np.polyfit(driver_laps["TyreLife"],
                            driver_laps["FuelCorrectedTime"], 1)
         slope = coeffs[0]
-        
-        ax.scatter(driver_laps["TyreLife"], 
+
+        ax.scatter(driver_laps["TyreLife"],
                   driver_laps["FuelCorrectedTime"],
-                  label=f"{driver} ({slope:.3f}s/lap)", 
+                  label=f"{driver} ({slope:.3f}s/lap)",
                   alpha=0.6, s=50)
-        
+
         # Add trend line
-        x_trend = np.linspace(driver_laps["TyreLife"].min(), 
+        x_trend = np.linspace(driver_laps["TyreLife"].min(),
                              driver_laps["TyreLife"].max(), 100)
         y_trend = np.polyval(coeffs, x_trend)
         ax.plot(x_trend, y_trend, linestyle="--", alpha=0.5)
 
 ax.set_xlabel("Tire Life (Laps)", fontsize=14)
 ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=14)
-ax.set_title("Driver Tire Management Comparison - Medium Compound", 
+ax.set_title("Driver Tire Management Comparison - Medium Compound",
             fontsize=16, fontweight="bold")
 ax.legend(fontsize=12)
 ax.grid(True, alpha=0.3)
@@ -229,16 +229,16 @@ The "cliff" is when tires suddenly lose significant performance:
 # Detect sudden performance drops
 for compound in ["SOFT", "MEDIUM", "HARD"]:
     compound_laps = clean_laps[clean_laps["Compound"] == compound]
-    
+
     if len(compound_laps) > 15:
         degradation = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
-        
+
         # Calculate lap-to-lap delta
         deltas = degradation.diff()
-        
+
         # Find where degradation exceeds threshold
         cliff_point = deltas[deltas > 0.15].index.min() if any(deltas > 0.15) else None
-        
+
         if cliff_point:
             print(f"{compound}: Cliff at lap {cliff_point}")
         else:

@@ -59,16 +59,16 @@ for driver in drivers:
         # Get fastest lap
         fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
         telemetry = fastest_lap.get_car_data().add_distance()
-        
+
         # Calculate speeds
         max_speed = telemetry['Speed'].max()
         lap_time = fastest_lap['LapTime'].total_seconds()
         circuit_length = telemetry['Distance'].max()
         avg_speed = (circuit_length / lap_time) * 3.6  # Convert to km/h
-        
+
         # Downforce metric
         downforce_metric = (avg_speed / max_speed) * 100
-        
+
         downforce_data.append({
             'Driver': driver,
             'Team': fastest_lap['Team'],
@@ -102,18 +102,18 @@ metrics_actual = [d['Metric'] for d in downforce_data]
 colors = [tif1.plotting.get_team_color(d['Team'], session) for d in downforce_data]
 
 # Create bars with relative differences
-bars = ax.barh(drivers_list, metrics_diff, color=colors, alpha=0.8, 
+bars = ax.barh(drivers_list, metrics_diff, color=colors, alpha=0.8,
                edgecolor='white', linewidth=1)
 
 # Add actual value labels
 for i, (driver, metric) in enumerate(zip(drivers_list, metrics_actual)):
-    ax.text(metrics_diff[i] + 0.02, i, f'{metric:.2f}', 
+    ax.text(metrics_diff[i] + 0.02, i, f'{metric:.2f}',
             va='center', fontsize=10, fontweight='bold')
 
 # Styling
 ax.set_xlabel('Downforce Level (relative difference)', fontsize=12, fontweight='bold')
 ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
-ax.set_title('Monaco GP Qualifying - Downforce Levels', 
+ax.set_title('Monaco GP Qualifying - Downforce Levels',
              fontsize=14, fontweight='bold')
 ax.invert_yaxis()
 ax.grid(axis='x', alpha=0.3, linestyle='--')
@@ -195,14 +195,14 @@ for driver in drivers:
     try:
         fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
         telemetry = fastest_lap.get_car_data().add_distance()
-        
+
         max_speed = telemetry['Speed'].max()
         lap_time = fastest_lap['LapTime'].total_seconds()
         circuit_length = telemetry['Distance'].max()
         avg_speed = (circuit_length / lap_time) * 3.6
-        
+
         downforce_metric = (avg_speed / max_speed) * 100
-        
+
         downforce_data.append({
             'Driver': driver,
             'Team': fastest_lap['Team'],
@@ -247,4 +247,3 @@ plt.show()
 - Analyze how downforce affects tire degradation in race stints
 - Correlate downforce levels with sector times to identify setup trade-offs
 - Explore the relationship between downforce and weather conditions
-

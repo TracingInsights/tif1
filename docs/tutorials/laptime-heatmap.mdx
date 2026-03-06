@@ -136,7 +136,7 @@ To better compare true pace, you can apply fuel correction to account for decrea
 # Assumes ~0.03s per lap improvement per 1kg of fuel burned
 max_laps = laps_clean['LapNumber'].max()
 laps_clean['FuelCorrected'] = (
-    laps_clean['LapTimeSeconds'] - 
+    laps_clean['LapTimeSeconds'] -
     (0.03 * (max_laps - laps_clean['LapNumber']))
 )
 
@@ -289,4 +289,3 @@ plt.show()
 - Analyze specific stint performance by filtering lap ranges
 - Compare heatmaps across different races to identify track-specific patterns
 - Use clustering algorithms to group drivers with similar pace profiles
-

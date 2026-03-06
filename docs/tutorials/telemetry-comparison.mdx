@@ -56,24 +56,24 @@ def compute_accelerations(telemetry):
     """Calculate longitudinal and lateral accelerations in g."""
     # Convert speed to m/s
     v = np.array(telemetry["Speed"]) / 3.6
-    
+
     # Longitudinal acceleration from speed change
     dt = np.diff(telemetry["Time"].dt.total_seconds())
     dv = np.diff(v)
     lon_acc = np.append(dv / dt, 0) / 9.81  # Convert to g
-    
+
     # Lateral acceleration from position change
     dx = np.gradient(telemetry["X"], telemetry["Distance"])
     dy = np.gradient(telemetry["Y"], telemetry["Distance"])
-    
+
     # Calculate curvature
     curvature = (dx * np.gradient(dy) - dy * np.gradient(dx)) / (dx**2 + dy**2)**1.5
     lat_acc = v * v * curvature / 9.81
-    
+
     # Clip outliers
     lon_acc = np.clip(lon_acc, -7.5, 7.5)
     lat_acc = np.clip(lat_acc, -7.5, 7.5)
-    
+
     return lon_acc, lat_acc
 
 # Add accelerations to telemetry
