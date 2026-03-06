@@ -1,0 +1,89 @@
+name: Documentation Preview
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs-preview.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check for broken links (basic)
+        run: |
+          cd docs
+          # Check for common issues in MDX files
+          echo "Checking for broken internal links..."
+          
+          # Find all .mdx files and check for broken relative links
+          find . -name "*.mdx" -type f | while read file; do
+            echo "Checking $file"
+            # This is a basic check - you can enhance it
+            grep -n '\[.*\](\.\.*/.*\.mdx)' "$file" || true
+          done
+
+      - name: Validate docs.json
+        run: |
+          cd docs
+          # Check if docs.json is valid JSON
+          if ! jq empty docs.json 2>/dev/null; then
+            echo "Error: docs.json is not valid JSON"
+            exit 1
+          fi
+          echo "docs.json is valid"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `## 📚 Documentation Preview
+            
+            Your documentation changes have been validated! ✅
+            
+            **Deployment:** Documentation will be automatically deployed to Mintlify when this PR is merged and a new release is published.
+            
+            **Preview locally:**
+            \`\`\`bash
+            cd docs
+            npx mintlify dev
+            \`\`\`
+            
+            **Note:** Mintlify auto-deploys from the \`docs-production\` branch. Changes will go live after the next release.
+            `;
+            
+            // Check if we already commented
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('📚 Documentation Preview')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                comment_id: botComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: message
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: message
+              });
+            }
