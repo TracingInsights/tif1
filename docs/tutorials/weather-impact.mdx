@@ -163,7 +163,7 @@ if weather["Rainfall"].any():
     plt.show()
 ```
 
-## Tire compound performance by temperature
+## Tire Compound Performance by Temperature
 
 See how different compounds perform at different temperatures.
 
@@ -228,7 +228,7 @@ plt.show()
 
 Atmospheric pressure can affect engine performance.
 
-```
+```python
 # Plot pressure over time
 plt.figure(figsize=(12, 6))
 plt.plot(weather["Time"] / 60, weather["Pressure"], linewidth=2)
@@ -252,7 +252,7 @@ print(f"Pressure-LapTime correlation: {correlation:.3f} (p={p_value:.3f})")
 
 Combine multiple weather factors.
 
-```
+```python
 # Create feature matrix
 features = clean_laps[["AirTemp", "TrackTemp", "Humidity", "Pressure", "WindSpeed"]]
 target = clean_laps["LapTime"]
@@ -276,7 +276,7 @@ plt.show()
 
 Normalize lap times for weather conditions.
 
-```
+```python
 from sklearn.linear_model import LinearRegression
 
 # Train model to predict lap time from weather
@@ -298,9 +298,9 @@ print("Weather-Adjusted Performance (negative is better):")
 print(adjusted_performance.head(10))
 ```
 
-## Complete weather analysis function
+## Complete Weather Analysis Function
 
-```
+```python
 def analyze_weather_impact(year, gp, session_type):
     """Complete weather impact analysis."""
     # Load data

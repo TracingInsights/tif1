@@ -181,7 +181,7 @@ plt.show()
 
 Identify which sectors drivers are strongest in.
 
-```
+```python
 # Get fastest sectors per driver
 sector_analysis = fastest_laps_sorted[[
     "Driver", "Sector1Time", "Sector2Time", "Sector3Time"
@@ -204,7 +204,7 @@ print(sector_analysis.head(10))
 
 Compare telemetry between pole sitter and second place.
 
-```
+```python
 # Get top 2 drivers
 p1_driver = fastest_laps_sorted["Driver"].iloc[0]
 p2_driver = fastest_laps_sorted["Driver"].iloc[1]
@@ -234,11 +234,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Identifying deleted laps
+## Identifying Deleted Laps
 
 See which laps were deleted (track limits violations).
 
-```
+```python
 # Filter deleted laps
 deleted_laps = laps[laps["Deleted"] == True]
 
@@ -283,11 +283,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Complete analysis function
+## Complete Analysis Function
 
 Put it all together in a reusable function.
 
-```
+```python
 def analyze_qualifying(year, gp):
     """Complete qualifying analysis."""
     # Load session

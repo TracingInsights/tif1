@@ -17,8 +17,8 @@ def rolling_median(data, window=5):
     return np.array(result)
 
 
-# Setup plotting style
-setup_mpl(color_scheme="light")
+# Setup plotting style (use FastF1 dark background)
+setup_mpl(color_scheme="fastf1")
 
 # Load session data
 session = tif1.get_session(2024, "Hungarian Grand Prix", "Race")
