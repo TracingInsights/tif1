@@ -14,7 +14,7 @@ jobs:
   preview:
     name: Validate Documentation
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v6
 
@@ -23,7 +23,7 @@ jobs:
           cd docs
           # Check for common issues in MDX files
           echo "Checking for broken internal links..."
-          
+
           # Find all .mdx files and check for broken relative links
           find . -name "*.mdx" -type f | while read file; do
             echo "Checking $file"
@@ -46,32 +46,32 @@ jobs:
         with:
           script: |
             const message = `## 📚 Documentation Preview
-            
+
             Your documentation changes have been validated! ✅
-            
+
             **Deployment:** Documentation will be automatically deployed to Mintlify when this PR is merged and a new release is published.
-            
+
             **Preview locally:**
             \`\`\`bash
             cd docs
             npx mintlify dev
             \`\`\`
-            
+
             **Note:** Mintlify auto-deploys from the \`docs-production\` branch. Changes will go live after the next release.
             `;
-            
+
             // Check if we already commented
             const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
               comment.body.includes('📚 Documentation Preview')
             );
-            
+
             if (botComment) {
               await github.rest.issues.updateComment({
                 comment_id: botComment.id,
