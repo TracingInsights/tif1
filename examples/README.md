@@ -53,13 +53,10 @@ Each example includes:
 
 Most examples work with the base installation:
 ```bash
-pip install tif1
+pip install tifone
 ```
 
-For Polars examples:
-```bash
-pip install tif1[polars]
-```
+
 
 ## Learning Path
 

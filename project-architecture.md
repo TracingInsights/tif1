@@ -350,8 +350,7 @@ tif1/
 - **Dev**: pytest, ruff, mypy, prek
 
 ### Distribution
-- PyPI package: `pip install tif1`
-- Optional extras: `pip install tif1[polars]`
+- PyPI package: `pip install tifone`
 - Version scheme: Semantic versioning (MAJOR.MINOR.PATCH)
 
 ## Future Enhancements
