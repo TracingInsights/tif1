@@ -2,30 +2,29 @@
 
 A fast, canonical Formula 1 data library fetched from TracingInsights data https://github.com/TracingInsights/2026 (2018-current).
 
-[![CI/CD](https://github.com/TracingInsights/tif1/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
-[![codecov](https://codecov.io/gh/TracingInsights/tif1/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
-[![PyPI version](https://badge.fury.io/py/tif1.svg)](https://badge.fury.io/py/tif1)
+[![CI/CD](https://github.com/TracingInsights/tifone/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
+[![codecov](https://codecov.io/gh/TracingInsights/tifone/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
+[![PyPI version](https://badge.fury.io/py/tifone.svg)](https://badge.fury.io/py/tifone)
 
 
 
 
-Data is available ~30 minutes after the session ends. Data in fastf1 is available ~20-25 minutes after the session ends. So there is a slightly longer delay for data availability in tif1 compared to fastf1, but this is because tif1 has more data and does more processing to enrich the data before making it available.
+Data is available ~30 minutes after the session ends. Data in fastf1 is available ~20-25 minutes after the session ends. So there is a slightly longer delay of 2~5 minutes for data availability in tif1 compared to fastf1, but this is because tif1 has more data and does more processing to enrich the data before making it available.
 
 
 ## Installation
 
 ```bash
-pip install tif1
+pip install tifone
 ```
 
 ### Optional Dependencies
 
 ```bash
 # For development
-pip install tif1[dev]
+pip install tifone[dev]
 
-# Install all extras
-pip install tif1[polars,dev]
+
 ```
 
 ## Quick Start
