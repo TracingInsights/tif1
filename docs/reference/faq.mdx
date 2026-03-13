@@ -1,4 +1,4 @@
----
+﻿---
 title: "FAQ"
 icon: "circle-question"
 description: "Frequently asked questions about tif1"
@@ -47,14 +47,10 @@ Yes, tif1 is open source under the MIT License. You can use it freely for person
 ### How do I install tif1?
 
 ```bash
-pip install tif1
-```bash
+pip install tifone
+```
 
-For the polars lib (recommended for performance):
 
-```bash
-pip install tif1[polars]
-```yaml
 
 ### What Python version do I need?
 
@@ -149,19 +145,13 @@ Clear the cache and re-download:
 
 ```python
 tif1.get_cache().clear()
-```bash
+```
 
 ### Column names don't match fastf1
 
 tif1 uses PascalCase for all columns (e.g., `LapTime`, not `time`). This is intentional for consistency. Use the exact column names shown in the data schema reference.
 
-### Polars not available error
 
-Install the polars extra:
-
-```bash
-pip install tif1[polars]
-```yaml
 
 ---
 
