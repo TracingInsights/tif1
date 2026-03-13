@@ -72,7 +72,7 @@ Use this checklist before creating a new release.
 ## Post-Release
 
 ### Verification
-- [ ] Install from PyPI works: `pip install tif1`
+- [ ] Install from PyPI works: `pip install tifone`
 - [ ] Import works: `python -c "import tif1"`
 - [ ] Version correct: `python -c "import tif1; print(tif1.__version__)"`
 - [ ] Basic functionality works

@@ -16,7 +16,7 @@ jobs:
   deploy-docs:
     name: Push to docs-production branch
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v6
         with:
@@ -42,11 +42,11 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           cd docs
-          
+
           # Update docs.json with version information
           jq --arg version "$VERSION" '.version = $version' docs.json > docs.json.tmp
           mv docs.json.tmp docs.json
-          
+
           # Add version to versions array if not already present
           if ! jq -e --arg version "$VERSION" '.versions | index($version)' docs.json > /dev/null; then
             jq --arg version "$VERSION" '.versions += [$version]' docs.json > docs.json.tmp
@@ -61,23 +61,23 @@ jobs:
       - name: Create or update docs-production branch
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          
+
           # Fetch all branches
           git fetch origin
-          
+
           # Check if docs-production branch exists
           if git ls-remote --heads origin docs-production | grep -q docs-production; then
             echo "Branch docs-production exists, checking out"
             git checkout docs-production
             git pull origin docs-production
-            
+
             # Copy updated docs from main
             git checkout ${{ github.sha }} -- docs/
           else
             echo "Creating new docs-production branch"
             git checkout -b docs-production
           fi
-          
+
           # Commit and push changes
           git add docs/
           git commit -m "Deploy documentation for version ${VERSION}" || echo "No changes to commit"
