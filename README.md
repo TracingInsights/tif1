@@ -256,7 +256,16 @@ Full documentation available at: [docs.tracinginsights.com](docs.tracinginsights
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+
+Contributions are welcome! A few ideas what you can contribute:
+
+    Improve documentation.
+    Add more tests.
+    Improve performance.
+    Found a bug? Fix it!
+    Made an article about tif1? Great! Let's add it into the README.md.
+    Don't have time to code? No worries! Just tell your friends and subscribers about the project. More users -> more contributors -> more cool features.
+
 
 ## License
 
