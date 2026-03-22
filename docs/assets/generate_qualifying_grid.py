@@ -43,7 +43,7 @@ print(fastest_laps[["Driver", "LapTime", "LapTimeDelta"]].head(10))
 # Get team colors for each driver
 team_colors = []
 for _, lap in fastest_laps.iterrows():
-    color = tif1.plotting.get_team_color(team=lap["Team"], session=session)
+    color = tif1.plotting.get_team_color(lap["Team"], session=session)
     team_colors.append(color)
 
 # Create the plot

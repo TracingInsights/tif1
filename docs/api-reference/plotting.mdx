@@ -1,311 +1,259 @@
 ---
 title: "Plotting API"
 icon: "chart-simple"
-description: "Visualization utilities and color schemes for F1 data"
+description: "FastF1-compatible plotting helpers with session-aware team and driver lookups, season-aware compound colors, and optional timedelta plotting support."
 keywords:
   - "tif1"
+  - "plotting"
+  - "fastf1 compatibility"
+  - "team colors"
+  - "compound colors"
   - "Formula 1"
   - "F1 data"
   - "documentation"
 ---
 
-The `tif1.plotting` module provides utilities for creating F1-themed visualizations with team and driver colors, compound colors, and matplotlib styling.
+The `tif1.plotting` module mirrors the core FastF1 plotting data helpers using fastf1 season-aware constants for team and compound colors from 2018 through now. There are few color improvements and extra utilities
 
-## Setup
+Team and driver metadata lookups are session-backed. Exact-match failures raise `KeyError`, invalid colormap values raise `ValueError`, and fuzzy lookup corrections emit warnings instead of silently degrading to legacy fallback tables.
+
+## compatibility
+
+`tif1.plotting` exposes the same plotting-data helper surface documented by FastF1:
+
+- `setup_mpl`
+- `get_compound_color`
+- `get_driver_abbreviation`
+- `get_driver_abbreviations_by_team`
+- `get_driver_color`
+- `get_driver_name`
+- `get_driver_names_by_team`
+- `get_driver_style`
+- `get_team_color`
+- `get_team_name`
+- `get_team_name_by_driver`
+- `get_compound_mapping`
+- `get_driver_color_mapping`
+- `list_compounds`
+- `list_driver_abbreviations`
+- `list_driver_names`
+- `list_team_names`
+- `add_sorted_driver_legend`
+- `set_default_colormap`
+- `override_team_constants`
+
+## setup
 
 ### `setup_mpl`
 
-Configure matplotlib with F1-themed styling.
-
 ```python
 def setup_mpl(
-    color_scheme="fastf1",
-    misc_mpl_mods=True,
-    mpl_timedelta_support=False,
+    mpl_timedelta_support: bool = True,
+    color_scheme: str | None = None,
+    *,
+    misc_mpl_mods: bool = True,
     **kwargs
 ) -> None
 ```
 
-**Parameters:**
-- `color_scheme`: Color scheme to use (currently only "fastf1" is supported)
-- `misc_mpl_mods`: Apply miscellaneous matplotlib modifications
-- `mpl_timedelta_support`: Enable timedelta support (compatibility parameter)
+This accepts the FastF1-style call pattern `setup_mpl(False, "fastf1")` and the existing tif1 convenience call `setup_mpl(color_scheme="fastf1")`.
 
-**Example:**
-```python
-import tif1
-import matplotlib.pyplot as plt
+For full timedelta plotting support, install the optional plotting extra:
 
-# Apply F1 dark theme
-tif1.plotting.setup_mpl(color_scheme="fastf1")
-
-# Now all plots will use the dark F1 theme
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-session.load()
-laps = session.laps
-plt.plot(laps["LapNumber"], laps["LapTime"])
-plt.show()
+```bash
+uv sync --extra plotting
 ```
 
----
+If `timple` is unavailable, tif1 will emit a runtime warning and continue with style-only setup.
 
-## Color Functions
+```python
+import tif1
+
+tif1.plotting.setup_mpl(False, "fastf1")
+```
+
+## season-aware colors
+
+Color lookups use the session year when one is available. That means `2018` returns the full hypersoft-to-superhard palette, while `2019+` returns the modern `SOFT`/`MEDIUM`/`HARD` palette.
+
+Team and driver color helpers require `session`. Compound helpers can still be used without a session, but you only get the default modern palette in that mode.
 
 ### `get_team_color`
 
-Get the official color for a team.
-
 ```python
-def get_team_color(team: str, session=None) -> str
+def get_team_color(
+    identifier: str,
+    session=None,
+    *,
+    colormap: str = "default",
+    exact_match: bool = False
+) -> str
 ```
 
-**Parameters:**
-- `team`: Team name (e.g., "Red Bull Racing", "Ferrari")
-- `session`: Optional session object (for future compatibility)
+`colormap` supports `"default"`, `"fastf1"`, and `"official"`. Invalid values raise `ValueError`.
 
-**Returns:**
-- Hex color code (e.g., "#dc0000" for Ferrari)
+Calling `get_team_color(..., session=None)` raises `ValueError`.
 
-**Example:**
 ```python
 from tif1.plotting import get_team_color
 
-ferrari_color = get_team_color("Ferrari")
-# Returns: "#dc0000"
-```
-
-### `get_driver_color`
-
-Get the color for a specific driver.
-
-```python
-def get_driver_color(driver: str, session=None) -> str
-```
-
-**Parameters:**
-- `driver`: 3-letter driver code (e.g., "VER", "HAM")
-- `session`: Optional session object
-
-**Returns:**
-- Hex color code
-
-**Example:**
-```python
-from tif1.plotting import get_driver_color
-
-ver_color = get_driver_color("VER")
-# Returns: "#0600ef" (Red Bull blue)
-```
-
-### `get_driver_color_mapping`
-
-Get a complete mapping of driver codes to colors.
-
-```python
-def get_driver_color_mapping(session=None) -> dict[str, str]
-```
-
-**Parameters:**
-- `session`: Optional session object to extract team colors for all drivers
-
-**Returns:**
-- Dictionary mapping driver codes to hex colors
-
-**Example:**
-```python
-from tif1.plotting import get_driver_color_mapping
-
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 session.load()
-colors = get_driver_color_mapping(session)
 
-# Plot each driver with their team color
-for driver in session.drivers:
-    driver_laps = session.get_driver(driver).laps
-    plt.plot(
-        driver_laps["LapNumber"],
-        driver_laps["LapTime"],
-        color=colors.get(driver, "#ffffff"),
-        label=driver
-    )
-``` ### `get_compound_color`
+ferrari_fastf1 = get_team_color("Ferrari", session, colormap="fastf1")
+ferrari_official = get_team_color("Ferrari", session, colormap="official")
+```
 
-Get the color for a tire compound.
+### `get_compound_color`
 
 ```python
 def get_compound_color(compound: str, session=None) -> str
 ```
 
-**Parameters:**
-- `compound`: Compound name (e.g., "SOFT", "MEDIUM", "HARD")
-- `session`: Optional session object
-
-**Returns:**
-- Hex color code
-
-**Example:**
 ```python
 from tif1.plotting import get_compound_color
 
-soft_color = get_compound_color("SOFT")
-# Returns: "#da291c" (red)
+session_2018 = tif1.get_session(2018, "Monaco Grand Prix", "Race")
+
+
+hypersoft = get_compound_color("HYPERSOFT", session_2018)
 ```
 
 ### `get_compound_mapping`
-
-Get a complete mapping of compounds to colors.
 
 ```python
 def get_compound_mapping(session=None) -> dict[str, str]
 ```
 
-**Returns:**
-- Dictionary mapping compound names to hex colors
+```python
+compound_colors = tif1.plotting.get_compound_mapping(session)
+```
 
----
+## drivers and teams
 
-## Styling Functions
+### `get_driver_color`
+
+```python
+def get_driver_color(
+    identifier: str,
+    session=None,
+    *,
+    colormap: str = "default",
+    exact_match: bool = False
+) -> str
+```
+
+Driver colors follow FastF1's current model: both drivers from the same team share the same team color.
+Calling `get_driver_color(..., session=None)` raises `ValueError`.
 
 ### `get_driver_style`
-
-Build a driver style dictionary for plotting.
 
 ```python
 def get_driver_style(
     identifier: str,
-    style=None,
-    session=None
+    style,
+    session,
+    *,
+    colormap: str = "default",
+    additional_color_kws=(),
+    exact_match: bool = False
 ) -> dict[str, Any]
 ```
 
-**Parameters:**
-- `identifier`: Driver code
-- `style`: Optional style specification (list of keys or dict)
-- `session`: Optional session object
+Built-in style generation follows FastF1's team-order rotation for markers and linestyles.
 
-**Returns:**
-- Dictionary with color and linestyle
-
-**Example:**
 ```python
-from tif1.plotting import get_driver_style
-
-style = get_driver_style("VER")
-# Returns: {"color": "#0600ef", "linestyle": "-"}
-
-plt.plot(data, **style)
+style = tif1.plotting.get_driver_style("VER", ["color", "linestyle", "marker"], session)
 ```
+
+### name and abbreviation helpers
+
+```python
+def get_driver_abbreviation(identifier: str, session, *, exact_match: bool = False) -> str
+def get_driver_name(identifier: str, session, *, exact_match: bool = False) -> str
+def get_team_name(identifier: str, session, *, short: bool = False, exact_match: bool = False) -> str
+def get_team_name_by_driver(identifier: str, session, *, short: bool = False, exact_match: bool = False) -> str
+def get_driver_abbreviations_by_team(identifier: str, session, *, exact_match: bool = False) -> list[str]
+def get_driver_names_by_team(identifier: str, session, *, exact_match: bool = False) -> list[str]
+```
+
+### mapping and listing helpers
+
+```python
+def get_driver_color_mapping(session, *, colormap: str = "default") -> dict[str, str]
+def list_compounds(session) -> list[str]
+def list_driver_abbreviations(session) -> list[str]
+def list_driver_names(session) -> list[str]
+def list_team_names(session, *, short: bool = False) -> list[str]
+```
+
+## legend and overrides
 
 ### `add_sorted_driver_legend`
 
-Add a legend with driver labels sorted alphabetically.
-
 ```python
-def add_sorted_driver_legend(ax, session=None)
+def add_sorted_driver_legend(ax, session, *args, **kwargs)
 ```
 
-**Parameters:**
-- `ax`: Matplotlib axes object
-- `session`: Optional session object
+This groups drivers by team and keeps teammates in the same order used for style selection.
 
-**Returns:**
-- Legend object
+Unresolved legend labels are preserved and appended after all resolved driver labels.
 
-**Example:**
+### `set_default_colormap`
+
+```python
+def set_default_colormap(colormap: Literal["fastf1", "official"]) -> None
+```
+
+### `override_team_constants`
+
+```python
+def override_team_constants(
+    identifier: str,
+    session,
+    *,
+    short_name: str | None = None,
+    official_color: str | None = None,
+    fastf1_color: str | None = None
+) -> None
+```
+
+Overrides are session-scoped and use exact-match semantics.
+
+```python
+tif1.plotting.override_team_constants(
+    "Ferrari",
+    session,
+    short_name="Scuderia",
+    fastf1_color="#ff0000",
+)
+```
+
+## examples
+
 ```python
 import matplotlib.pyplot as plt
-from tif1.plotting import add_sorted_driver_legend
-
-fig, ax = plt.subplots()
-# ... plot driver data ...
-add_sorted_driver_legend(ax)
-plt.show()
-```
-
----
-
-## Color Constants
-
-### Team Colors
-
-```python
-TEAM_COLORS = {
-    "Mercedes": "#00d2be",
-    "Red Bull Racing": "#0600ef",
-    "Red Bull": "#0600ef",
-    "Ferrari": "#dc0000",
-    "McLaren": "#ff8700",
-    "Alpine": "#0090ff",
-    "Aston Martin": "#006f62",
-    "RB": "#6692ff",
-    "Haas": "#ffffff",
-    "Sauber": "#52e252",
-    "Williams": "#005aff",
-}
-``` ### Driver Colors
-
-```python
-DRIVER_COLORS = {
-    "VER": "#0600ef",
-    "HAM": "#00d2be",
-    "LEC": "#dc0000",
-    "NOR": "#ff8700",
-    "ALO": "#006f62",
-}
-```
-
-### Compound Colors
-
-```python
-COMPOUND_COLORS = {
-    "SOFT": "#da291c",
-    "MEDIUM": "#ffd12e",
-    "HARD": "#f0f0ec",
-    "INTERMEDIATE": "#43b02a",
-    "WET": "#0067ad",
-    "UNKNOWN": "#8a8a8a",
-}
-```
-
----
-
-## Complete Example
-
-```python
 import tif1
-import matplotlib.pyplot as plt
-from tif1.plotting import setup_mpl, get_driver_color_mapping
 
-# Setup F1 theme
-setup_mpl(color_scheme="fastf1")
+tif1.plotting.setup_mpl(False, "fastf1")
 
-# Load session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monza", "R")
 session.load()
-laps = session.laps
+laps = session.laps.pick_drivers(["VER", "LEC"])
+colors = tif1.plotting.get_driver_color_mapping(session)
 
-# Get driver colors
-colors = get_driver_color_mapping(session)
-
-# Plot fastest laps for top 3 drivers
 fig, ax = plt.subplots(figsize=(12, 6))
-
-for driver in ["VER", "HAM", "BOT"]:
+for driver in ["VER", "LEC"]:
     driver_laps = laps[laps["Driver"] == driver]
     ax.plot(
         driver_laps["LapNumber"],
         driver_laps["LapTime"],
-        color=colors.get(driver, "#ffffff"),
+        color=colors[driver],
         label=driver,
-        linewidth=2
     )
 
-ax.set_xlabel("Lap Number")
-ax.set_ylabel("Lap Time (s)")
-ax.set_title("2021 Belgian Grand Prix - Lap Times")
-ax.legend()
-ax.grid(True, alpha=0.3)
-
-plt.tight_layout()
+tif1.plotting.add_sorted_driver_legend(ax, session)
+ax.set_xlabel("Lap number")
+ax.set_ylabel("Lap time")
 plt.show()
 ```

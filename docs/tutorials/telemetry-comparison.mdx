@@ -109,8 +109,8 @@ Visualize speed, accelerations, and driver inputs.
 # Get team colors
 team_d1 = laps_d1.reset_index().loc[0, "Team"]
 team_d2 = laps_d2.reset_index().loc[0, "Team"]
-color_d1 = get_team_color(team_d1)
-color_d2 = get_team_color(team_d2)
+color_d1 = get_team_color(team_d1, session)
+color_d2 = get_team_color(team_d2, session)
 
 # Create figure
 fig, ax = plt.subplots(4, figsize=(16, 12), sharex=True)

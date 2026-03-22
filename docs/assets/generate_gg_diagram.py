@@ -135,16 +135,8 @@ for driver in drivers:
         lon_acc, lat_acc = compute_accelerations(telemetry)
 
         # Get team color
-        try:
-            team = driver_lap["Team"] if "Team" in driver_lap.index else None
-            color = get_team_color(team) if team else None
-        except Exception:
-            color = None
-
-        if color is None:
-            # Fallback colors
-            color_map = {"VER": "#0600ef", "LEC": "#dc0000", "NOR": "#ff8700"}
-            color = color_map.get(driver, "#ffffff")
+        team = driver_lap["Team"] if "Team" in driver_lap.index else None
+        color = get_team_color(team, session) if team else "#ffffff"
 
         # Plot scatter points
         ax.scatter(

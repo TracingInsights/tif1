@@ -71,8 +71,8 @@ Assign colors based on which driver was faster on each lap.
 ```python
 # Color based on who was faster
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing") if x < 0
-              else get_team_color("Ferrari")
+    lambda x: get_team_color("Red Bull Racing", session) if x < 0
+              else get_team_color("Ferrari", session)
 )
 ```
 
@@ -115,8 +115,8 @@ from matplotlib.patches import Patch
 
 # Create legend
 legend_elements = [
-    Patch(facecolor=get_team_color("Red Bull Racing"), label=f"{driver1} faster"),
-    Patch(facecolor=get_team_color("Ferrari"), label=f"{driver2} faster"),
+    Patch(facecolor=get_team_color("Red Bull Racing", session), label=f"{driver1} faster"),
+    Patch(facecolor=get_team_color("Ferrari", session), label=f"{driver2} faster"),
 ]
 ax.legend(handles=legend_elements, loc="upper right", fontsize=12)
 
@@ -162,8 +162,8 @@ driver2_laps["LapTime"] = driver2_laps["LapTime"].dt.total_seconds()
 merged = driver1_laps.merge(driver2_laps, on="LapNumber", suffixes=("_d1", "_d2"))
 merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing") if x < 0
-              else get_team_color("Ferrari")
+    lambda x: get_team_color("Red Bull Racing", session) if x < 0
+              else get_team_color("Ferrari", session)
 )
 
 # Create plot
@@ -190,8 +190,8 @@ ax.set_title(
 )
 
 legend_elements = [
-    Patch(facecolor=get_team_color("Red Bull Racing"), label=f"{driver1} faster"),
-    Patch(facecolor=get_team_color("Ferrari"), label=f"{driver2} faster"),
+    Patch(facecolor=get_team_color("Red Bull Racing", session), label=f"{driver1} faster"),
+    Patch(facecolor=get_team_color("Ferrari", session), label=f"{driver2} faster"),
 ]
 ax.legend(handles=legend_elements, loc="upper right", fontsize=12)
 
@@ -265,7 +265,7 @@ def plot_lap_delta(session, driver1, driver2):
     d2_team = laps[laps["Driver"] == driver2].iloc[0]["Team"]
 
     merged["Color"] = merged["Delta"].apply(
-        lambda x: get_team_color(d1_team) if x < 0 else get_team_color(d2_team)
+        lambda x: get_team_color(d1_team, session) if x < 0 else get_team_color(d2_team, session)
     )
 
     # Plot

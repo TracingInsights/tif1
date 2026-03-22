@@ -26,7 +26,7 @@ for drv in laps["Driver"].unique():
 
     # Get driver abbreviation and styling
     abb = drv_laps["Driver"].iloc[0]
-    color = tif1.plotting.get_driver_color(driver=abb, session=session)
+    color = tif1.plotting.get_driver_color(identifier=abb, session=session)
 
     # Plot position vs lap number
     ax.plot(drv_laps["LapNumber"], drv_laps["Position"], label=abb, color=color)

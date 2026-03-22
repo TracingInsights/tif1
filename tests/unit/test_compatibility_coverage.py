@@ -12,10 +12,10 @@ from tif1.utils import delta_time, recursive_dict_get, to_datetime, to_timedelta
 
 def test_plotting_coverage():
     setup_mpl()
-    assert get_team_color("Ferrari") == "#dc0000"
-    assert get_team_color("Unknown") == "#ffffff"
-    assert get_driver_color("VER") == "#0600ef"
-    assert get_driver_color("XYZ") == "#ffffff"
+    with pytest.raises(ValueError, match="get_team_color requires a session"):
+        get_team_color("Ferrari")
+    with pytest.raises(ValueError, match="get_driver_color requires a session"):
+        get_driver_color("VER")
 
 
 def test_utils_coverage():

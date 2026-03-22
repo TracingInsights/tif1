@@ -116,8 +116,8 @@ except Exception:
     team_d1 = None
     team_d2 = None
 
-color_d1 = get_team_color(team_d1) if team_d1 else "#0600ef"
-color_d2 = get_team_color(team_d2) if team_d2 else "#dc0000"
+color_d1 = get_team_color(team_d1, session) if team_d1 else "#0600ef"
+color_d2 = get_team_color(team_d2, session) if team_d2 else "#dc0000"
 
 # Label driver actions
 tel_d1.loc[tel_d1["Brake"] > 0, "Action"] = "Brake"

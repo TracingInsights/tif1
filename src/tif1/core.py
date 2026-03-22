@@ -590,6 +590,39 @@ class Telemetry(pd.DataFrame):
         wrapped.driver = self.driver
         return wrapped
 
+    def _resolve_driver_code(self) -> str | None:
+        """Best-effort resolve the telemetry's driver code."""
+        if isinstance(self.driver, str) and self.driver:
+            return self.driver
+        if "Driver" not in self.columns:
+            return None
+        drivers = cast(pd.Series, self["Driver"]).dropna().unique()
+        if len(drivers) != 1:
+            return None
+        driver = drivers[0]
+        return str(driver) if driver else None
+
+    def _get_lap_numbers(self) -> list[int]:
+        """Return sorted lap numbers referenced by this telemetry slice."""
+        if "LapNumber" not in self.columns:
+            return []
+        lap_numbers = (
+            pd.to_numeric(cast(pd.Series, self["LapNumber"]), errors="coerce")
+            .dropna()
+            .astype(int)
+            .unique()
+            .tolist()
+        )
+        return sorted(lap_numbers)
+
+    def _time_reference_column(self, other: pd.DataFrame | None = None) -> str | None:
+        """Return the preferred shared time reference column."""
+        candidates = ("SessionTime", "Time")
+        for col in candidates:
+            if col in self.columns and (other is None or col in other.columns):
+                return col
+        return None
+
     @staticmethod
     def _coerce_timedelta(value: Any) -> pd.Timedelta:
         """Coerce scalar time-like values to Timedelta.
@@ -657,45 +690,62 @@ class Telemetry(pd.DataFrame):
         tel["DifferentialDistance"] = self.calculate_differential_distance()
         return self._wrap(tel)
 
-    def add_distance(self):
-        tel = self.copy()
-        tel["Distance"] = self.integrate_distance()
-        return self._wrap(tel)
+    def add_distance(self, drop_existing: bool = True):  # noqa: ARG002
+        if "Distance" in self.columns:
+            return self
 
-    def add_relative_distance(self):
-        tel = self.add_distance().copy()
-        if "Distance" not in tel.columns or tel["Distance"].empty:
-            tel["RelativeDistance"] = pd.Series(dtype=float)
-            return self._wrap(tel)
-        max_dist = pd.to_numeric(tel["Distance"], errors="coerce").max()
+        distance = self.integrate_distance()
+        new_dist = pd.DataFrame({"Distance": distance}, index=self.index)
+        return self.join(new_dist, how="outer")
+
+    def add_relative_distance(self, drop_existing: bool = True):
+        if "RelativeDistance" in self.columns:
+            return self
+
+        tel = self.add_distance(drop_existing=drop_existing).copy()
+        distance = pd.to_numeric(cast(pd.Series, tel["Distance"]), errors="coerce")
+        max_dist = distance.max()
         if pd.isna(max_dist) or max_dist == 0:
-            tel["RelativeDistance"] = 0.0
+            relative_distance = pd.Series(0.0, index=self.index, dtype=float)
         else:
-            tel["RelativeDistance"] = pd.to_numeric(tel["Distance"], errors="coerce") / max_dist
+            relative_distance = distance / float(max_dist)
+        tel["RelativeDistance"] = relative_distance.to_numpy(copy=False)
         return self._wrap(tel)
 
-    def calculate_driver_ahead(self):
-        idx = self.index
-        if "DriverAhead" in self.columns:
-            driver_ahead = self["DriverAhead"].copy()
-        else:
-            driver_ahead = pd.Series([""] * len(idx), index=idx)
-
-        if "DistanceToDriverAhead" in self.columns:
+    def calculate_driver_ahead(self, return_reference: bool = False):
+        if "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns:
+            driver_ahead = cast(pd.Series, self["DriverAhead"]).to_numpy(copy=True)
             distance_to_driver_ahead = pd.to_numeric(
-                self["DistanceToDriverAhead"], errors="coerce"
-            ).copy()
-        else:
-            distance_to_driver_ahead = pd.Series([math.nan] * len(idx), index=idx)
+                cast(pd.Series, self["DistanceToDriverAhead"]), errors="coerce"
+            ).to_numpy(copy=True)
+            if return_reference:
+                return driver_ahead, distance_to_driver_ahead, self
+            return driver_ahead, distance_to_driver_ahead
 
+        driver_ahead = np.full(len(self), None, dtype=object)
+        distance_to_driver_ahead = np.full(len(self), math.nan, dtype=float)
+        if return_reference:
+            return driver_ahead, distance_to_driver_ahead, self
         return driver_ahead, distance_to_driver_ahead
 
-    def add_driver_ahead(self):
-        tel = self.copy()
-        driver_ahead, distance_to_driver_ahead = self.calculate_driver_ahead()
-        tel["DriverAhead"] = driver_ahead
-        tel["DistanceToDriverAhead"] = distance_to_driver_ahead
-        return self._wrap(tel)
+    def add_driver_ahead(self, drop_existing: bool = True):  # noqa: ARG002
+        has_existing = "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns
+        if has_existing:
+            return self
+
+        driver_ahead, distance_to_driver_ahead = self.calculate_driver_ahead(
+            return_reference=False
+        )
+
+        new_cols = pd.DataFrame(
+            {
+                "DriverAhead": pd.Series(driver_ahead, index=self.index),
+                "DistanceToDriverAhead": pd.Series(
+                    distance_to_driver_ahead, index=self.index, dtype=float
+                ),
+            }
+        )
+        return self._wrap(pd.DataFrame(self).join(new_cols, how="outer"))
 
     def add_track_status(self):
         tel = self.copy()

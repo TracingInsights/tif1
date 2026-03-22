@@ -107,7 +107,7 @@ try:
     ax.set_facecolor("#1a1a1a")
     final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
     drivers_sorted = final_lap.sort_values("Position")["Driver"].tolist()[:15]  # Top 15
-    compound_colors = tif1.plotting.get_compound_mapping()
+    compound_colors = tif1.plotting.get_compound_mapping(session=session)
 
     for idx, driver in enumerate(drivers_sorted):
         driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
@@ -172,7 +172,7 @@ try:
 
     fig, ax = plt.subplots(figsize=(12, 6), facecolor="#1a1a1a")
     ax.set_facecolor("#1a1a1a")
-    colors_list = [tif1.plotting.get_driver_color(d) for d in top_5_drivers]
+    colors_list = [tif1.plotting.get_driver_color(d, session=session) for d in top_5_drivers]
     bp = ax.boxplot(
         [top_5_laps[top_5_laps["Driver"] == d]["LapTime"].values for d in top_5_drivers],
         tick_labels=top_5_drivers,
@@ -209,7 +209,9 @@ try:
 
     fig, ax = plt.subplots(figsize=(12, 6), facecolor="#1a1a1a")
     ax.set_facecolor("#1a1a1a")
-    colors_quali = [tif1.plotting.get_driver_color(d) for d in fastest_laps.index]
+    colors_quali = [
+        tif1.plotting.get_driver_color(d, session="Qualifying") for d in fastest_laps.index
+    ]
     ax.barh(fastest_laps.index, fastest_laps.values, color=colors_quali)
     ax.set_xlabel("Lap Time (s)", color="white")
     ax.set_ylabel("Driver", color="white")
@@ -248,7 +250,7 @@ try:
                 d1_laps["LapTime"].head(len(x_pos)).values,
                 width,
                 label=d1,
-                color=tif1.plotting.get_driver_color(d1),
+                color=tif1.plotting.get_driver_color(d1, session="Qualifying"),
                 alpha=0.8,
             )
             ax.bar(
@@ -256,7 +258,7 @@ try:
                 d2_laps["LapTime"].head(len(x_pos)).values,
                 width,
                 label=d2,
-                color=tif1.plotting.get_driver_color(d2),
+                color=tif1.plotting.get_driver_color(d2, session="Qualifying"),
                 alpha=0.8,
             )
 

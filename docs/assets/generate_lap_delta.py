@@ -33,7 +33,7 @@ merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
 
 # Color based on who was faster
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing") if x < 0 else get_team_color("Ferrari")
+    lambda x: get_team_color("Red Bull Racing", session) if x < 0 else get_team_color("Ferrari", session)
 )
 
 # Create the plot
@@ -64,8 +64,8 @@ ax.set_title(
 
 # Add legend
 legend_elements = [
-    Patch(facecolor=get_team_color("Red Bull Racing"), label=f"{driver1} faster"),
-    Patch(facecolor=get_team_color("Ferrari"), label=f"{driver2} faster"),
+    Patch(facecolor=get_team_color("Red Bull Racing", session), label=f"{driver1} faster"),
+    Patch(facecolor=get_team_color("Ferrari", session), label=f"{driver2} faster"),
 ]
 ax.legend(handles=legend_elements, loc="upper right", fontsize=12)
 

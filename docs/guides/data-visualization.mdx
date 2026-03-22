@@ -106,14 +106,8 @@ import matplotlib.patches as mpatches
 session = tif1.get_session(2025, "Monza", "Race")
 laps = session.laps
 
-# Compound colors
-compound_colors = {
-    "SOFT": "#FF0000",
-    "MEDIUM": "#FFF200",
-    "HARD": "#FFFFFF",
-    "INTERMEDIATE": "#00FF00",
-    "WET": "#0000FF"
-}
+# Season-aware compound colors
+compound_colors = tif1.plotting.get_compound_mapping(session)
 
 fig, ax = plt.subplots(figsize=(14, 8))
 
@@ -122,7 +116,7 @@ for i, driver in enumerate(drivers):
     driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
 
     for _, lap in driver_laps.iterrows():
-        color = compound_colors.get(lap["Compound"], "#CCCCCC")
+        color = compound_colors.get(lap["Compound"], compound_colors["UNKNOWN"])
         ax.barh(i, 1, left=lap["LapNumber"], color=color, edgecolor="black", linewidth=0.5)
 
 ax.set_yticks(range(len(drivers)))

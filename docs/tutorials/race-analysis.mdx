@@ -131,7 +131,7 @@ top_5_drivers = final_positions.head(5)["Driver"].tolist()
 fig, ax = plt.subplots(figsize=(12, 6))
 top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)]
 
-colors_list = [tif1.plotting.get_driver_color(d) for d in top_5_drivers]
+colors_list = [tif1.plotting.get_driver_color(d, session=session) for d in top_5_drivers]
 
 bp = ax.boxplot(
     [top_5_laps[top_5_laps["Driver"] == d]["LapTime"] for d in top_5_drivers],
@@ -170,7 +170,7 @@ def plot_tire_strategy(laps):
     final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
     drivers_sorted = final_lap.sort_values("Position")["Driver"].tolist()
 
-    compound_colors = tif1.plotting.get_compound_mapping()
+    compound_colors = tif1.plotting.get_compound_mapping(session=session)
 
     for idx, driver in enumerate(drivers_sorted):
         driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")

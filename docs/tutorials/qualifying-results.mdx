@@ -86,7 +86,7 @@ Use tif1's built-in color mapping to get official team colors.
 # Get team colors for each driver
 team_colors = []
 for _, lap in fastest_laps.iterrows():
-    color = tif1.plotting.get_team_color(team=lap['Team'], session=session)
+    color = tif1.plotting.get_team_color(lap['Team'], session=session)
     team_colors.append(color)
 ```
 
@@ -167,7 +167,7 @@ fastest_laps['LapTimeDelta'] = fastest_laps['LapTime'] - pole_lap_time
 # Get team colors
 team_colors = []
 for _, lap in fastest_laps.iterrows():
-    color = tif1.plotting.get_team_color(team=lap['Team'], session=session)
+    color = tif1.plotting.get_team_color(lap['Team'], session=session)
     team_colors.append(color)
 
 # Create the plot
