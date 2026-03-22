@@ -299,9 +299,15 @@ def test_invalid_colormap_raises_consistently():
 
 def test_year_specific_team_colors():
     """Test year-specific team colors."""
-    assert plotting.get_team_color("Ferrari", MockSession(year=2024), colormap="fastf1") == "#e8002d"
-    assert plotting.get_team_color("Ferrari", MockSession(year=2021), colormap="fastf1") == "#dc0004"
-    assert plotting.get_team_color("Ferrari", MockSession(year=2018), colormap="fastf1") == "#dc0000"
+    assert (
+        plotting.get_team_color("Ferrari", MockSession(year=2024), colormap="fastf1") == "#e8002d"
+    )
+    assert (
+        plotting.get_team_color("Ferrari", MockSession(year=2021), colormap="fastf1") == "#dc0004"
+    )
+    assert (
+        plotting.get_team_color("Ferrari", MockSession(year=2018), colormap="fastf1") == "#dc0000"
+    )
 
 
 def test_year_specific_compound_colors():
@@ -445,6 +451,7 @@ def test_add_sorted_driver_legend_groups_by_team():
 
 def test_add_sorted_driver_legend_keeps_unresolved_labels_last():
     """Test unresolved legend labels are appended after resolved drivers."""
+    plt.switch_backend("Agg")  # Use non-interactive backend
     session = MockSession(year=2024)
     _, ax = plt.subplots()
     ax.plot([0, 1], [0, 1], label="HAM")

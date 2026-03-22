@@ -33,7 +33,9 @@ merged["Delta"] = merged["LapTime_d1"] - merged["LapTime_d2"]
 
 # Color based on who was faster
 merged["Color"] = merged["Delta"].apply(
-    lambda x: get_team_color("Red Bull Racing", session) if x < 0 else get_team_color("Ferrari", session)
+    lambda x: (
+        get_team_color("Red Bull Racing", session) if x < 0 else get_team_color("Ferrari", session)
+    )
 )
 
 # Create the plot

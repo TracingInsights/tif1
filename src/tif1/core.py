@@ -733,9 +733,7 @@ class Telemetry(pd.DataFrame):
         if has_existing:
             return self
 
-        driver_ahead, distance_to_driver_ahead = self.calculate_driver_ahead(
-            return_reference=False
-        )
+        driver_ahead, distance_to_driver_ahead = self.calculate_driver_ahead(return_reference=False)
 
         new_cols = pd.DataFrame(
             {

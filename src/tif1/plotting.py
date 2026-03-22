@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib import cycler
+from matplotlib import cycler  # type: ignore[attr-defined]
 
 from tif1.fuzzy import fuzzy_matcher
 from tif1.plotting_constants import DEFAULT_COMPOUND_COLORS, YEAR_CONSTANTS
@@ -286,7 +286,9 @@ def _enable_timple() -> None:
 
 def _normalize_identifier(identifier: str) -> str:
     """Normalize identifier for matching (lowercase, ASCII, compact spacing)."""
-    normalized = unicodedata.normalize("NFKD", str(identifier)).encode("ascii", "ignore").decode("ascii")
+    normalized = (
+        unicodedata.normalize("NFKD", str(identifier)).encode("ascii", "ignore").decode("ascii")
+    )
     return " ".join(normalized.casefold().split())
 
 
@@ -463,7 +465,9 @@ def _iter_session_rows(session: Any) -> list[dict[str, str]]:
                     continue
                 first_name = str(row.get("FirstName", "")).strip()
                 last_name = str(row.get("LastName", "")).strip()
-                full_name = str(row.get("FullName", "")).strip() or f"{first_name} {last_name}".strip()
+                full_name = (
+                    str(row.get("FullName", "")).strip() or f"{first_name} {last_name}".strip()
+                )
                 rows.append(
                     {
                         "abbreviation": abbreviation,
@@ -514,8 +518,8 @@ def _build_driver_team_mapping(session: Any) -> _DriverTeamMapping:
     drivers: list[_DriverInfo] = []
 
     for order, row in enumerate(rows):
-        team_key, team_name, short_name, official_color, fastf1_color, aliases = _resolve_team_profile(
-            row["team_name"], year
+        team_key, team_name, short_name, official_color, fastf1_color, aliases = (
+            _resolve_team_profile(row["team_name"], year)
         )
         override = _get_session_overrides(session).get(team_key, {})
         team_name = str(override.get("name", team_name))
@@ -826,7 +830,9 @@ def list_team_names(session: Any, *, short: bool = False) -> list[str]:
 
     mapping = _get_driver_team_mapping(session)
     if short:
-        return [_get_override_short_name(team.key, session) or team.short_name for team in mapping.teams]
+        return [
+            _get_override_short_name(team.key, session) or team.short_name for team in mapping.teams
+        ]
     return [team.name for team in mapping.teams]
 
 
@@ -855,7 +861,10 @@ def get_driver_names_by_team(
 
     mapping = _get_driver_team_mapping(session)
     team = _match_team(identifier, session, exact_match=exact_match)
-    return [mapping.drivers_by_abbreviation[abbr].full_name for abbr in mapping.teams_by_key[team.key].driver_abbreviations]
+    return [
+        mapping.drivers_by_abbreviation[abbr].full_name
+        for abbr in mapping.teams_by_key[team.key].driver_abbreviations
+    ]
 
 
 def get_driver_style(
@@ -916,7 +925,7 @@ def get_driver_style(
     if isinstance(style, (list, tuple)) and style and all(isinstance(item, dict) for item in style):
         driver_index = _get_driver_index_in_team(driver_abbr, session)
         if driver_index < len(style):
-            custom_style = dict(style[driver_index])
+            custom_style = dict(style[driver_index])  # type: ignore[arg-type]
             _replace_auto_colors(custom_style, driver_color, additional_color_kws)
             return custom_style
         raise ValueError(
@@ -985,7 +994,7 @@ def _replace_auto_colors(
 def add_sorted_driver_legend(ax: Axes, session: Any, *args: Any, **kwargs: Any) -> Legend:
     """Add legend with drivers grouped by team and sorted."""
     try:
-        ret = mpl.legend._parse_legend_args([ax], *args, **kwargs)
+        ret = mpl.legend._parse_legend_args([ax], *args, **kwargs)  # type: ignore[attr-defined]
         if len(ret) == 3:
             handles, labels, kwargs = ret
             extra_args: list[Any] = []
@@ -1016,7 +1025,9 @@ def add_sorted_driver_legend(ax: Axes, session: Any, *args: Any, **kwargs: Any) 
         except KeyError:
             unresolved.append((handle, label))
             continue
-        resolved.append((team_order.get(driver.team_key, len(team_order)), driver.order, handle, label))
+        resolved.append(
+            (team_order.get(driver.team_key, len(team_order)), driver.order, handle, label)
+        )
 
     resolved.sort(key=lambda item: item[:2])
     sorted_handles = [item[2] for item in resolved] + [item[0] for item in unresolved]
