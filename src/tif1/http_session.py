@@ -121,12 +121,10 @@ def _create_session() -> Any:
             # Enable connection keep-alive with timeout and max requests
             keepalive_timeout = config.get("keepalive_timeout", 120)
             keepalive_max_requests = config.get("keepalive_max_requests", 1000)
-            user_agent = config.get("user_agent", "tif1/0.1.0")
             session.headers.update(
                 {
                     "Connection": "keep-alive",
                     "Keep-Alive": f"timeout={keepalive_timeout}, max={keepalive_max_requests}",
-                    "User-Agent": user_agent,
                 }
             )
             return session

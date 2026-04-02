@@ -1,0 +1,180 @@
+{
+  "config": {
+    "year": 2022,
+    "event": "Mexico City Grand Prix",
+    "session": "Race",
+    "backend": "pandas",
+    "cache": false,
+    "max_concurrent": 32,
+    "max_workers": 32,
+    "num_runs": 3
+  },
+  "summary": {
+    "async": {
+      "mean": 3.9688964629992065,
+      "median": 5.355433160999382,
+      "stdev": 3.1683321242199436,
+      "min": 0.3436551539962238,
+      "max": 6.207601074002014,
+      "runs": [
+        6.207601074002014,
+        5.355433160999382,
+        0.3436551539962238
+      ]
+    },
+    "sync": {
+      "mean": 37.78319364500567,
+      "median": 0.32889255200279877,
+      "stdev": 64.8977376793733,
+      "min": 0.30004395101059345,
+      "max": 112.72064443200361,
+      "runs": [
+        0.30004395101059345,
+        0.32889255200279877,
+        112.72064443200361
+      ]
+    },
+    "async_step_averages": {
+      "session = tif1.get_session(...)": 0.000599363000219455,
+      "drivers = session.drivers": 0.057444480332681756,
+      "fastest_tels = await session.get_fastest_laps_tels_async(by_driver=True)": 3.8466432329987583,
+      "session_fastest_laps = await session.get_fastest_laps_async(by_driver=True)": 0.016786545666642876,
+      "ver = session.get_driver(\"VER\")": 0.00015953900219756179,
+      "ver_fastest_lap = ver.get_fastest_lap()": 0.01497026433450325,
+      "lap = ver.get_lap(12)": 0.0005753143329153924,
+      "telemetry = lap.telemetry": 0.028653486999246525,
+      "overall_fastest_ref": 0.0004653610000483847,
+      "ver_fastest_ref": 0.00022900266534027955,
+      "fastest_tel = filter by overall ref": 0.0012423079994429524,
+      "ver_fastest_tel = filter by driver ref": 0.0011275646672099053
+    },
+    "sync_step_averages": {
+      "session = tif1.get_session(...)": 0.0005555796657669513,
+      "drivers = session.drivers": 0.05920327900215246,
+      "fastest_tels = session.get_fastest_laps_tels(by_driver=True)": 37.66825866766764,
+      "session_fastest_laps = session.get_fastest_laps(by_driver=True)": 0.014235039332561428,
+      "ver = session.get_driver(\"VER\")": 0.00012702633345422024,
+      "ver_fastest_lap = ver.get_fastest_lap()": 0.014293683668559728,
+      "lap = ver.get_lap(12)": 0.0004405846666486468,
+      "telemetry = lap.telemetry": 0.02329851200071668,
+      "overall_fastest_ref": 0.0004377116674731951,
+      "ver_fastest_ref": 0.00020156466780463234,
+      "fastest_tel = filter by overall ref": 0.0011936276666043948,
+      "ver_fastest_tel = filter by driver ref": 0.0009483686662861146
+    }
+  },
+  "raw_runs": {
+    "async": [
+      {
+        "run": 1,
+        "total": 6.207601074002014,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0007355640009336639,
+          "drivers = session.drivers": 0.06324858199877781,
+          "fastest_tels = await session.get_fastest_laps_tels_async(by_driver=True)": 6.087721512001735,
+          "session_fastest_laps = await session.get_fastest_laps_async(by_driver=True)": 0.014869312002701918,
+          "ver = session.get_driver(\"VER\")": 0.0001291350017709192,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.013335761999769602,
+          "lap = ver.get_lap(12)": 0.00042232499981764704,
+          "telemetry = lap.telemetry": 0.024456244998873444,
+          "overall_fastest_ref": 0.00043191299846512266,
+          "ver_fastest_ref": 0.00022416999854613096,
+          "fastest_tel = filter by overall ref": 0.0011120529998152051,
+          "ver_fastest_tel = filter by driver ref": 0.0009145010008069221
+        }
+      },
+      {
+        "run": 2,
+        "total": 5.355433160999382,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0005408639990491793,
+          "drivers = session.drivers": 0.05450813800052856,
+          "fastest_tels = await session.get_fastest_laps_tels_async(by_driver=True)": 5.2367564819978725,
+          "session_fastest_laps = await session.get_fastest_laps_async(by_driver=True)": 0.015729179998743348,
+          "ver = session.get_driver(\"VER\")": 0.00016729400158510543,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.01465988200288848,
+          "lap = ver.get_lap(12)": 0.0004471140018722508,
+          "telemetry = lap.telemetry": 0.029258137998112943,
+          "overall_fastest_ref": 0.0004907040020043496,
+          "ver_fastest_ref": 0.0002331039977434557,
+          "fastest_tel = filter by overall ref": 0.0013400169991655275,
+          "ver_fastest_tel = filter by driver ref": 0.0013022439998167101
+        }
+      },
+      {
+        "run": 3,
+        "total": 0.3436551539962238,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0005216610006755218,
+          "drivers = session.drivers": 0.05457672099873889,
+          "fastest_tels = await session.get_fastest_laps_tels_async(by_driver=True)": 0.2154517049966671,
+          "session_fastest_laps = await session.get_fastest_laps_async(by_driver=True)": 0.01976114499848336,
+          "ver = session.get_driver(\"VER\")": 0.00018218800323666073,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.01691514900085167,
+          "lap = ver.get_lap(12)": 0.0008565039970562793,
+          "telemetry = lap.telemetry": 0.03224607800075319,
+          "overall_fastest_ref": 0.0004734659996756818,
+          "ver_fastest_ref": 0.00022973399973125197,
+          "fastest_tel = filter by overall ref": 0.0012748539993481245,
+          "ver_fastest_tel = filter by driver ref": 0.0011659490010060836
+        }
+      }
+    ],
+    "sync": [
+      {
+        "run": 1,
+        "total": 0.30004395101059345,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0004735289985546842,
+          "drivers = session.drivers": 0.06573167300302885,
+          "fastest_tels = session.get_fastest_laps_tels(by_driver=True)": 0.18365767000068445,
+          "session_fastest_laps = session.get_fastest_laps(by_driver=True)": 0.01340196800083504,
+          "ver = session.get_driver(\"VER\")": 0.0001165389985544607,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.013571195002441527,
+          "lap = ver.get_lap(12)": 0.00041144699935102835,
+          "telemetry = lap.telemetry": 0.019875564001267776,
+          "overall_fastest_ref": 0.0004845420007768553,
+          "ver_fastest_ref": 0.00021166400256333873,
+          "fastest_tel = filter by overall ref": 0.001105799001379637,
+          "ver_fastest_tel = filter by driver ref": 0.0010023610011558048
+        }
+      },
+      {
+        "run": 2,
+        "total": 0.32889255200279877,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0006309999989753123,
+          "drivers = session.drivers": 0.05827619600313483,
+          "fastest_tels = session.get_fastest_laps_tels(by_driver=True)": 0.2120434300013585,
+          "session_fastest_laps = session.get_fastest_laps(by_driver=True)": 0.013802464000036707,
+          "ver = session.get_driver(\"VER\")": 0.0001263880003534723,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.014746198001375888,
+          "lap = ver.get_lap(12)": 0.0004362840008980129,
+          "telemetry = lap.telemetry": 0.02610989199820324,
+          "overall_fastest_ref": 0.0004145700004301034,
+          "ver_fastest_ref": 0.00020257800133549608,
+          "fastest_tel = filter by overall ref": 0.001139242998760892,
+          "ver_fastest_tel = filter by driver ref": 0.000964308997936314
+        }
+      },
+      {
+        "run": 3,
+        "total": 112.72064443200361,
+        "steps": {
+          "session = tif1.get_session(...)": 0.0005622099997708574,
+          "drivers = session.drivers": 0.05360196800029371,
+          "fastest_tels = session.get_fastest_laps_tels(by_driver=True)": 112.60907490300087,
+          "session_fastest_laps = session.get_fastest_laps(by_driver=True)": 0.015500685996812535,
+          "ver = session.get_driver(\"VER\")": 0.00013815200145472772,
+          "ver_fastest_lap = ver.get_fastest_lap()": 0.014563658001861768,
+          "lap = ver.get_lap(12)": 0.0004740229996968992,
+          "telemetry = lap.telemetry": 0.023910080002679024,
+          "overall_fastest_ref": 0.0004140230012126267,
+          "ver_fastest_ref": 0.0001904519995150622,
+          "fastest_tel = filter by overall ref": 0.001335840999672655,
+          "ver_fastest_tel = filter by driver ref": 0.000878435999766225
+        }
+      }
+    ]
+  }
+}

@@ -765,7 +765,6 @@ class TestHttpCreateSession:
                 "telemetry_prefetch_max_concurrent_requests": 128,
                 "keepalive_timeout": 120,
                 "keepalive_max_requests": 1000,
-                "user_agent": "tif1/0.1.0",
             },
         )
 
@@ -792,7 +791,6 @@ class TestHttpCreateSession:
                 "telemetry_prefetch_max_concurrent_requests": 128,
                 "keepalive_timeout": 120,
                 "keepalive_max_requests": 1000,
-                "user_agent": "tif1/0.1.0",
             },
         )
 
@@ -843,7 +841,6 @@ class TestHttpCreateSession:
                 "telemetry_prefetch_max_concurrent_requests": 128,
                 "keepalive_timeout": 120,
                 "keepalive_max_requests": 1000,
-                "user_agent": "tif1/0.1.0",
             },
         )
 
