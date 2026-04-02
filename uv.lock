@@ -2182,7 +2182,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.2.0,<15" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10,<0.16.0" },
     { name = "seaborn", specifier = ">=0.13.2,<1" },
-    { name = "timple", specifier = "==0.1.6" },
+    { name = "timple", specifier = "==0.1.8" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.18,<0.1.0" },
     { name = "typer", specifier = ">=0.21.0,<0.25.0" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
@@ -2194,16 +2194,16 @@ dev = [{ name = "pip-audit", specifier = ">=2.10.0,<3" }]
 
 [[package]]
 name = "timple"
-version = "0.1.6"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b0/e4/ccb5dbf396bff26f9b7f3f383af407be5c5737b0e5b8faaff96149f97a09/timple-0.1.6.tar.gz", hash = "sha256:5dd9240c7e6629c85f3d646da9a3d312edf3cbbe5a91befc5d83cfd757192496", size = 16998, upload-time = "2023-05-15T20:23:46.553Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/69/728b57ee09a36a228f9f5e399eff5e8e8f4e32e3e366b57f56649a3eff28/timple-0.1.8.tar.gz", hash = "sha256:bbc120300f0103a3a93e54a0d00491c4b70872fe69b11204701a4889c6a05f0f", size = 17277, upload-time = "2023-12-27T11:38:20.477Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/0f/2f6b380899b627f778adeaef2d51cb51d84884bf344dbb0d74302255b721/timple-0.1.6-py3-none-any.whl", hash = "sha256:ef1e645c37c81a76cf072242aea0e98669be2a9188eddf81b61fbfb77b44c897", size = 17520, upload-time = "2023-05-15T20:23:45.554Z" },
+    { url = "https://files.pythonhosted.org/packages/75/45/c73f9af9a9d50b0ae972d185ef2255c62524d1aa20a76531dd2fcda48819/timple-0.1.8-py3-none-any.whl", hash = "sha256:195a49e76f8a435e0bc079340b6c57272cc3aff9041f61f8858790d607a4e49d", size = 17824, upload-time = "2023-12-27T11:38:18.835Z" },
 ]
 
 [[package]]

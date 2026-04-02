@@ -73,7 +73,6 @@ class Config:
             "pool_exhaustion_backoff_jitter": 0.01,
             "http_multiplexed": True,
             "http_disable_http3": False,
-            "user_agent": "tif1/0.1.0 (https://github.com/TracingInsights/tif1)",
             "cdns": [
                 "https://cdn.jsdelivr.net/gh/TracingInsights",
             ],
