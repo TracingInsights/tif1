@@ -1019,32 +1019,32 @@ def _get_backend_lap_cache(lib: Literal["pandas", "polars"]) -> LRUCache:
 
 
 # Applied on-demand only when a blocking sync API is called from an async loop.
-_NEST_ASYNCIO_APPLIED = False
+_NEST_ASYNCIO2_APPLIED = False
 
 
 # Helper functions
 def _ensure_nested_loop_support(operation: str) -> None:
-    """Apply nest_asyncio on demand for sync APIs invoked inside an async loop."""
-    global _NEST_ASYNCIO_APPLIED
+    """Apply nest_asyncio2 on demand for sync APIs invoked inside an async loop."""
+    global _NEST_ASYNCIO2_APPLIED
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return
 
-    if _NEST_ASYNCIO_APPLIED:
+    if _NEST_ASYNCIO2_APPLIED:
         return
 
     try:
-        import nest_asyncio
+        import nest_asyncio2
 
-        nest_asyncio.apply()
-        _NEST_ASYNCIO_APPLIED = True
-        logger.info(f"Applied nest_asyncio dynamically for {operation}")
+        nest_asyncio2.apply()
+        _NEST_ASYNCIO2_APPLIED = True
+        logger.info(f"Applied nest_asyncio2 dynamically for {operation}")
     except ImportError as e:
         raise RuntimeError(
-            f"{operation} cannot run inside an active event loop without nest_asyncio. "
-            "Use async APIs (e.g. laps_async) or install nest-asyncio."
+            f"{operation} cannot run inside an active event loop without nest_asyncio2. "
+            "Use async APIs (e.g. laps_async) or install nest-asyncio2."
         ) from e
 
 

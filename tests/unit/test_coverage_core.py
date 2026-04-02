@@ -753,37 +753,72 @@ class TestEnsureNestedLoopSupport:
         # Should not raise when no loop is running
         _ensure_nested_loop_support("test")
 
-    def test_with_running_loop_nest_asyncio_available(self):
+    def test_with_running_loop_nest_asyncio2_available(self):
         import asyncio
 
-        from tif1.core import _ensure_nested_loop_support
+        from tif1 import core as core_module
 
         async def _inner():
-            _ensure_nested_loop_support("test")
+            original_flag = core_module._NEST_ASYNCIO2_APPLIED
+            core_module._NEST_ASYNCIO2_APPLIED = False
+            try:
+                core_module._ensure_nested_loop_support("test")
+                assert core_module._NEST_ASYNCIO2_APPLIED is True
+            finally:
+                core_module._NEST_ASYNCIO2_APPLIED = original_flag
 
         asyncio.run(_inner())
 
-    def test_with_running_loop_nest_asyncio_missing(self, monkeypatch):
+    def test_with_running_loop_nest_asyncio2_missing(self, monkeypatch):
         import asyncio
         import sys
 
         from tif1 import core as core_module
 
         # Reset the global flag
-        original_flag = core_module._NEST_ASYNCIO_APPLIED
-        core_module._NEST_ASYNCIO_APPLIED = False
+        original_flag = core_module._NEST_ASYNCIO2_APPLIED
+        core_module._NEST_ASYNCIO2_APPLIED = False
 
         try:
-            # Hide nest_asyncio
-            monkeypatch.setitem(sys.modules, "nest_asyncio", None)
+            # Hide nest_asyncio2
+            monkeypatch.setitem(sys.modules, "nest_asyncio2", None)
 
             async def _inner():
-                with pytest.raises(RuntimeError, match="cannot run inside an active event loop"):
+                with pytest.raises(
+                    RuntimeError,
+                    match="cannot run inside an active event loop without nest_asyncio2",
+                ):
                     core_module._ensure_nested_loop_support("test")
 
             asyncio.run(_inner())
         finally:
-            core_module._NEST_ASYNCIO_APPLIED = original_flag
+            core_module._NEST_ASYNCIO2_APPLIED = original_flag
+
+    def test_with_running_loop_nest_asyncio2_apply_once(self, monkeypatch):
+        import sys
+
+        from tif1 import core as core_module
+
+        apply_calls = 0
+
+        class _FakeNestAsyncio2:
+            @staticmethod
+            def apply():
+                nonlocal apply_calls
+                apply_calls += 1
+
+        original_flag = core_module._NEST_ASYNCIO2_APPLIED
+        core_module._NEST_ASYNCIO2_APPLIED = False
+        monkeypatch.setattr(core_module.asyncio, "get_running_loop", lambda: object())
+        monkeypatch.setitem(sys.modules, "nest_asyncio2", _FakeNestAsyncio2())
+
+        try:
+            core_module._ensure_nested_loop_support("test")
+            core_module._ensure_nested_loop_support("test")
+            assert apply_calls == 1
+            assert core_module._NEST_ASYNCIO2_APPLIED is True
+        finally:
+            core_module._NEST_ASYNCIO2_APPLIED = original_flag
 
 
 class TestSessionCacheProbe:
