@@ -94,6 +94,7 @@ def _ensure_polars_available() -> bool:
 
 # Get configuration
 config = get_config()
+SESSION_LAPTIMES_PATH = "session_laptimes.json"
 
 
 def _validate_json_payload(path: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1585,6 +1586,7 @@ class Session:
             "position.json",
             "car_data.json",
             "session_info.json",
+            SESSION_LAPTIMES_PATH,
         }
         # Also allow driver-specific paths like "VER/laptimes.json"
         if path in known_paths or "/" in path:
@@ -2580,7 +2582,7 @@ class Session:
 
         requests = [
             (self.year, self.gp, self.session, "drivers.json"),
-            (self.year, self.gp, self.session, f"{driver}/laptimes.json"),
+            (self.year, self.gp, self.session, SESSION_LAPTIMES_PATH),
         ]
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
         use_cache = self.enable_cache and not ultra_cold_enabled and self._session_cache_available()
@@ -2627,9 +2629,28 @@ class Session:
                 self._refresh_driver_indices()
 
         if len(results) > 1 and isinstance(results[1], dict):
-            self._remember_local_payload(f"{driver}/laptimes.json", results[1])
-            return results[1]
-        return None
+            source_drivers = results[1].get("source_driver")
+            if not isinstance(source_drivers, list | tuple):
+                source_drivers = results[1].get("drv")
+
+            if isinstance(source_drivers, list | tuple):
+                self._remember_local_payload(SESSION_LAPTIMES_PATH, results[1])
+                self._derive_driver_laptime_payloads_from_session(results[1], drivers_filter=[driver])
+            else:
+                # Compatibility path for tests or older mocks that still return a
+                # single-driver laptime payload in the second slot.
+                self._remember_local_payload(f"{driver}/laptimes.json", results[1])
+
+        prefetched_payload = self._get_or_derive_driver_laptime_payload(driver)
+        if prefetched_payload is not None:
+            return prefetched_payload
+
+        fallback_payloads, _ = self._fetch_laptime_payloads(
+            [(self._get_driver_info(driver), f"{driver}/laptimes.json")],
+            operation="get_driver",
+            ultra_cold=ultra_cold_enabled,
+        )
+        return fallback_payloads[0] if fallback_payloads else None
 
     def _has_driver_code(self, driver: str) -> bool:
         """Check whether a driver code exists for this session."""
@@ -2644,6 +2665,69 @@ class Session:
         if self._driver_info_by_code is None:
             return {"driver": driver, "team": ""}
         return self._driver_info_by_code.get(driver, {"driver": driver, "team": ""})
+
+    def _derive_driver_laptime_payloads_from_session(
+        self,
+        session_payload: dict[str, Any],
+        *,
+        drivers_filter: list[str] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Derive per-driver laptime payloads from a session-wide laptime table."""
+        if not isinstance(session_payload, dict):
+            return []
+
+        source_drivers = session_payload.get("source_driver")
+        if not isinstance(source_drivers, list | tuple):
+            source_drivers = session_payload.get("drv")
+        if not isinstance(source_drivers, list | tuple):
+            return []
+
+        allowed_drivers = set(drivers_filter) if drivers_filter else None
+        positions_by_driver: dict[str, list[int]] = {}
+        for pos, driver_code in enumerate(source_drivers):
+            if not isinstance(driver_code, str) or not driver_code:
+                continue
+            if allowed_drivers is not None and driver_code not in allowed_drivers:
+                continue
+            positions_by_driver.setdefault(driver_code, []).append(pos)
+
+        derived_payloads: list[tuple[str, dict[str, Any]]] = []
+        for driver_code, positions in positions_by_driver.items():
+            payload: dict[str, Any] = {}
+            for key, value in session_payload.items():
+                if isinstance(value, list | tuple):
+                    payload[key] = [value[idx] if idx < len(value) else None for idx in positions]
+                    continue
+                if hasattr(value, "__len__") and not isinstance(value, str | bytes | dict):
+                    value_list = list(value)
+                    payload[key] = [
+                        value_list[idx] if idx < len(value_list) else None for idx in positions
+                    ]
+                    continue
+                payload[key] = value
+
+            path = f"{driver_code}/laptimes.json"
+            self._remember_local_payload(path, payload)
+            derived_payloads.append((path, payload))
+
+        return derived_payloads
+
+    def _get_or_derive_driver_laptime_payload(self, driver: str) -> dict[str, Any] | None:
+        """Return a memoized per-driver laptime payload, deriving it from session data if needed."""
+        path = f"{driver}/laptimes.json"
+        local_payload = self._get_local_payload(path)
+        if local_payload is not None:
+            return local_payload
+
+        session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
+        if session_payload is None:
+            return None
+
+        self._derive_driver_laptime_payloads_from_session(
+            session_payload,
+            drivers_filter=[driver],
+        )
+        return self._get_local_payload(path)
 
     def _build_driver_laptime_requests(
         self,
@@ -2731,7 +2815,7 @@ class Session:
         operation: str,
         ultra_cold: bool = False,
     ) -> tuple[list[dict[str, Any] | None], list[tuple[str, dict[str, Any]]]]:
-        """Fetch laptime payloads in parallel with sequential fallback."""
+        """Fetch laptime payloads using session-wide data first, with per-driver fallback."""
         if not driver_requests:
             return [], []
 
@@ -2741,11 +2825,74 @@ class Session:
         max_retries = 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
 
         normalized_results: list[dict[str, Any] | None] = [None] * len(driver_requests)
+        cacheable_payloads: list[tuple[str, dict[str, Any]]] = []
+        fetched_any_payload = False
+
+        missing_drivers: list[str] = []
+        for idx, (_driver_info, path) in enumerate(driver_requests):
+            driver_code = path.split("/", 1)[0]
+            local_payload = self._get_or_derive_driver_laptime_payload(driver_code)
+            if local_payload is not None:
+                normalized_results[idx] = local_payload
+                continue
+            missing_drivers.append(driver_code)
+
+        session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
+        if session_payload is None and missing_drivers:
+            session_result: dict[str, Any] | None = None
+            try:
+                _ensure_nested_loop_support(operation)
+                try:
+                    session_results = asyncio.run(
+                        fetch_multiple_async(
+                            [(self.year, self.gp, self.session, SESSION_LAPTIMES_PATH)],
+                            use_cache=use_cache,
+                            write_cache=write_cache,
+                            validate_payload=validate_payload,
+                            max_retries=max_retries,
+                        )
+                    )
+                except TypeError as e:
+                    if "unexpected keyword argument" not in str(e):
+                        raise
+                    session_results = asyncio.run(
+                        fetch_multiple_async(
+                            [(self.year, self.gp, self.session, SESSION_LAPTIMES_PATH)]
+                        )
+                    )
+                if session_results and isinstance(session_results[0], dict):
+                    session_result = session_results[0]
+                    fetched_any_payload = True
+            except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+                logger.debug("Session laptime fetch failed during %s, falling back: %s", operation, e)
+
+            processed_session_payload, session_cacheable = self._process_laptime_payload(
+                session_result,
+                SESSION_LAPTIMES_PATH,
+                ultra_cold=ultra_cold,
+            )
+            session_payload = processed_session_payload
+            if session_cacheable is not None:
+                cacheable_payloads.append(session_cacheable)
+
+        if isinstance(session_payload, dict):
+            cacheable_payloads.extend(
+                self._derive_driver_laptime_payloads_from_session(
+                    session_payload,
+                    drivers_filter=missing_drivers or None,
+                )
+            )
+            for idx, (_driver_info, path) in enumerate(driver_requests):
+                if normalized_results[idx] is not None:
+                    continue
+                driver_code = path.split("/", 1)[0]
+                normalized_results[idx] = self._get_or_derive_driver_laptime_payload(driver_code)
+
         pending_requests: list[tuple[int, str, str, str]] = []
         pending_indexes: list[int] = []
 
         for idx, (_driver_info, path) in enumerate(driver_requests):
-            local_payload = self._get_local_payload(path)
+            local_payload = normalized_results[idx]
             if local_payload is not None:
                 normalized_results[idx] = local_payload
                 continue
@@ -2784,8 +2931,8 @@ class Session:
 
             for idx, payload in zip(pending_indexes, pending_results):
                 normalized_results[idx] = payload
-
-        cacheable_payloads: list[tuple[str, dict[str, Any]]] = []
+            if any(isinstance(item, dict) for item in pending_results):
+                fetched_any_payload = True
 
         for idx, (_driver_info, path) in enumerate(driver_requests):
             data = normalized_results[idx]
@@ -2796,7 +2943,7 @@ class Session:
             if cacheable_entry is not None:
                 cacheable_payloads.append(cacheable_entry)
 
-        if write_cache and any(isinstance(item, dict) for item in pending_results):
+        if write_cache and fetched_any_payload:
             self._mark_session_cache_populated()
 
         return normalized_results, cacheable_payloads
@@ -2851,7 +2998,7 @@ class Session:
         operation: str,
         ultra_cold: bool = False,
     ) -> tuple[list[dict[str, Any] | None], list[tuple[str, dict[str, Any]]]]:
-        """Async variant of laptime fetch with memoization-first behavior."""
+        """Async laptime fetch using session-wide data first, with per-driver fallback."""
         if not driver_requests:
             return [], []
 
@@ -2861,11 +3008,69 @@ class Session:
         max_retries = 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
 
         normalized_results: list[dict[str, Any] | None] = [None] * len(driver_requests)
+        cacheable_payloads: list[tuple[str, dict[str, Any]]] = []
+        fetched_any_payload = False
+
+        missing_drivers: list[str] = []
+        for idx, (_driver_info, path) in enumerate(driver_requests):
+            driver_code = path.split("/", 1)[0]
+            local_payload = self._get_or_derive_driver_laptime_payload(driver_code)
+            if local_payload is not None:
+                normalized_results[idx] = local_payload
+                continue
+            missing_drivers.append(driver_code)
+
+        session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
+        if session_payload is None and missing_drivers:
+            session_result: dict[str, Any] | None = None
+            try:
+                try:
+                    session_results = await fetch_multiple_async(
+                        [(self.year, self.gp, self.session, SESSION_LAPTIMES_PATH)],
+                        use_cache=use_cache,
+                        write_cache=write_cache,
+                        validate_payload=validate_payload,
+                        max_retries=max_retries,
+                    )
+                except TypeError as e:
+                    if "unexpected keyword argument" not in str(e):
+                        raise
+                    session_results = await fetch_multiple_async(
+                        [(self.year, self.gp, self.session, SESSION_LAPTIMES_PATH)]
+                    )
+                if session_results and isinstance(session_results[0], dict):
+                    session_result = session_results[0]
+                    fetched_any_payload = True
+            except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+                logger.debug("Async session laptime fetch failed during %s, falling back: %s", operation, e)
+
+            processed_session_payload, session_cacheable = self._process_laptime_payload(
+                session_result,
+                SESSION_LAPTIMES_PATH,
+                ultra_cold=ultra_cold,
+            )
+            session_payload = processed_session_payload
+            if session_cacheable is not None:
+                cacheable_payloads.append(session_cacheable)
+
+        if isinstance(session_payload, dict):
+            cacheable_payloads.extend(
+                self._derive_driver_laptime_payloads_from_session(
+                    session_payload,
+                    drivers_filter=missing_drivers or None,
+                )
+            )
+            for idx, (_driver_info, path) in enumerate(driver_requests):
+                if normalized_results[idx] is not None:
+                    continue
+                driver_code = path.split("/", 1)[0]
+                normalized_results[idx] = self._get_or_derive_driver_laptime_payload(driver_code)
+
         pending_requests: list[tuple[int, str, str, str]] = []
         pending_indexes: list[int] = []
 
         for idx, (_driver_info, path) in enumerate(driver_requests):
-            local_payload = self._get_local_payload(path)
+            local_payload = normalized_results[idx]
             if local_payload is not None:
                 normalized_results[idx] = local_payload
                 continue
@@ -2901,8 +3106,8 @@ class Session:
 
             for idx, payload in zip(pending_indexes, pending_results):
                 normalized_results[idx] = payload
-
-        cacheable_payloads: list[tuple[str, dict[str, Any]]] = []
+            if any(isinstance(item, dict) for item in pending_results):
+                fetched_any_payload = True
 
         for idx, (_driver_info, path) in enumerate(driver_requests):
             data = normalized_results[idx]
@@ -2913,7 +3118,7 @@ class Session:
             if cacheable_entry is not None:
                 cacheable_payloads.append(cacheable_entry)
 
-        if write_cache and any(isinstance(item, dict) for item in pending_results):
+        if write_cache and fetched_any_payload:
             self._mark_session_cache_populated()
 
         return normalized_results, cacheable_payloads
@@ -5205,15 +5410,27 @@ class Driver(pd.Series):
             self.session._remember_local_payload(path, prefetched)
             return prefetched
 
-        if self.session._resolve_ultra_cold_mode(None):
-            lap_data = self.session._fetch_json_unvalidated(path)
-            if isinstance(lap_data, dict) and self.session._should_backfill_ultra_cold_cache(True):
-                self.session._schedule_background_cache_fill(json_payloads=[(path, lap_data)])
-            if isinstance(lap_data, dict):
-                self.session._remember_local_payload(path, lap_data)
+        ultra_cold_enabled = self.session._resolve_ultra_cold_mode(None)
+        payloads, cacheable_payloads = self.session._fetch_laptime_payloads(
+            [(self.session._get_driver_info(self.driver), path)],
+            operation="driver_laps",
+            ultra_cold=ultra_cold_enabled,
+        )
+        lap_data = payloads[0] if payloads else None
+        if (
+            cacheable_payloads
+            and self.session._should_backfill_ultra_cold_cache(ultra_cold_enabled)
+        ):
+            self.session._schedule_background_cache_fill(json_payloads=cacheable_payloads)
+        if isinstance(lap_data, dict):
             return lap_data
 
-        return self.session._fetch_json(path)
+        raise DataNotFoundError(
+            driver=self.driver,
+            year=self.session.year,
+            event=self.session.gp,
+            session=self.session.session,
+        )
 
     def get_lap(self, lap_number: int) -> "Lap":
         """Get specific lap (raises LapNotFoundError if not found)."""
@@ -5278,12 +5495,11 @@ class Driver(pd.Series):
         """Get telemetry from driver's fastest lap (returns empty DataFrame if not found)."""
         ultra_cold_enabled = self.session._resolve_ultra_cold_mode(None)
         lap_num: int | None = None
-        lap_payload_path = f"{self.driver}/laptimes.json"
 
         raw_lap_payload = (
             self._prefetched_lap_data
             if isinstance(self._prefetched_lap_data, dict)
-            else self.session._get_local_payload(lap_payload_path)
+            else self.session._get_or_derive_driver_laptime_payload(self.driver)
         )
         candidate = self.session._extract_fastest_lap_candidate(self.driver, raw_lap_payload)
         if candidate is not None:
