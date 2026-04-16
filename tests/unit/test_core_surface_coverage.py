@@ -376,6 +376,7 @@ def test_driver_and_lapinternal_paths(monkeypatch):
         _lap_time_sort_column=lambda _df: "LapTime",
         _resolve_ultra_cold_mode=lambda _x: False,
         _get_local_payload=lambda _path: None,
+        _get_or_derive_driver_laptime_payload=lambda _d: None,
         _extract_fastest_lap_candidate=lambda _d, _payload: None,
         get_fastest_laps_tels=lambda **_kwargs: pd.DataFrame({"Time": [0.1]}),
         _get_telemetry_df_for_ref=lambda d, lap_num, ultra_cold=False: pd.DataFrame(  # noqa: ARG005
