@@ -2635,7 +2635,9 @@ class Session:
 
             if isinstance(source_drivers, list | tuple):
                 self._remember_local_payload(SESSION_LAPTIMES_PATH, results[1])
-                self._derive_driver_laptime_payloads_from_session(results[1], drivers_filter=[driver])
+                self._derive_driver_laptime_payloads_from_session(
+                    results[1], drivers_filter=[driver]
+                )
             else:
                 # Compatibility path for tests or older mocks that still return a
                 # single-driver laptime payload in the second slot.
@@ -2864,7 +2866,9 @@ class Session:
                     session_result = session_results[0]
                     fetched_any_payload = True
             except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
-                logger.debug("Session laptime fetch failed during %s, falling back: %s", operation, e)
+                logger.debug(
+                    "Session laptime fetch failed during %s, falling back: %s", operation, e
+                )
 
             processed_session_payload, session_cacheable = self._process_laptime_payload(
                 session_result,
@@ -3042,7 +3046,9 @@ class Session:
                     session_result = session_results[0]
                     fetched_any_payload = True
             except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
-                logger.debug("Async session laptime fetch failed during %s, falling back: %s", operation, e)
+                logger.debug(
+                    "Async session laptime fetch failed during %s, falling back: %s", operation, e
+                )
 
             processed_session_payload, session_cacheable = self._process_laptime_payload(
                 session_result,
@@ -5417,9 +5423,8 @@ class Driver(pd.Series):
             ultra_cold=ultra_cold_enabled,
         )
         lap_data = payloads[0] if payloads else None
-        if (
-            cacheable_payloads
-            and self.session._should_backfill_ultra_cold_cache(ultra_cold_enabled)
+        if cacheable_payloads and self.session._should_backfill_ultra_cold_cache(
+            ultra_cold_enabled
         ):
             self.session._schedule_background_cache_fill(json_payloads=cacheable_payloads)
         if isinstance(lap_data, dict):

@@ -15,9 +15,9 @@ from pathlib import Path
 
 import nest_asyncio2
 
-nest_asyncio2.apply()
-
 import tif1
+
+nest_asyncio2.apply()
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 YEAR = 2025
