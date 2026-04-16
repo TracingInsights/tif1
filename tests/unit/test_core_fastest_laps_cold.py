@@ -167,4 +167,5 @@ def test_get_fastest_laps_ultra_cold_disables_cache_io(monkeypatch):
     assert fetch_kwargs.get("validate_payload") is False
     backfill_mock.assert_called_once()
     payloads = backfill_mock.call_args.kwargs.get("json_payloads", [])
-    assert len(payloads) == len(_DRIVER_CODES)
+    # Expect 21 payloads: session_laptimes.json + 20 driver laptimes
+    assert len(payloads) == len(_DRIVER_CODES) + 1

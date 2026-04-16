@@ -103,7 +103,8 @@ def test_find_fastest_lap_reference_ultra_cold_schedules_backfill(monkeypatch):
     assert fastest_ref == ("VER", 7)
     backfill_mock.assert_called_once()
     payloads = backfill_mock.call_args.kwargs.get("json_payloads", [])
-    assert len(payloads) == 2
+    # Expect 3 payloads: session_laptimes.json + 2 driver laptimes
+    assert len(payloads) == 3
 
 
 def test_get_fastest_lap_tel_auto_cold_start_uses_unvalidated_path(monkeypatch):
@@ -223,6 +224,9 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
                     {"driver": "HAM", "team": "Mercedes"},
                 ]
             }
+        if path == "session_laptimes.json":
+            # Return empty to force per-driver fetch
+            return {}
         raise AssertionError(f"Unexpected path: {path}")
 
     monkeypatch.setattr("tif1.core.get_cache", lambda: cache)
@@ -282,6 +286,9 @@ def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypat
                     {"driver": "HAM", "team": "Mercedes"},
                 ]
             }
+        if path == "session_laptimes.json":
+            # Return empty to force per-driver fetch
+            return {}
         raise AssertionError(f"Unexpected path: {path}")
 
     monkeypatch.setattr("tif1.core.fetch_multiple_async", _fake_fetch_multiple_async)
