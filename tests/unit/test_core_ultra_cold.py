@@ -224,9 +224,6 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
                     {"driver": "HAM", "team": "Mercedes"},
                 ]
             }
-        if path == "session_laptimes.json":
-            # Return empty to force per-driver fetch
-            return {}
         raise AssertionError(f"Unexpected path: {path}")
 
     monkeypatch.setattr("tif1.core.get_cache", lambda: cache)
