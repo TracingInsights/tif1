@@ -2790,10 +2790,13 @@ class Session:
         """
         cacheable_entry = None
 
-        # If no data, try to fetch it
+        # In ultra-cold mode, stay on the async bulk critical path and avoid
+        # a second synchronous refetch when a payload comes back empty.
         if data is None:
+            if ultra_cold:
+                return None, None
             try:
-                data = self._fetch_json_unvalidated(path) if ultra_cold else self._fetch_json(path)
+                data = self._fetch_json(path)
             except (DataNotFoundError, InvalidDataError, NetworkError, TypeError, ValueError):
                 data = None
 
@@ -2816,6 +2819,7 @@ class Session:
         *,
         operation: str,
         ultra_cold: bool = False,
+        prefer_session_payload: bool = True,
     ) -> tuple[list[dict[str, Any] | None], list[tuple[str, dict[str, Any]]]]:
         """Fetch laptime payloads using session-wide data first, with per-driver fallback."""
         if not driver_requests:
@@ -2840,7 +2844,7 @@ class Session:
             missing_drivers.append(driver_code)
 
         session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
-        if session_payload is None and missing_drivers:
+        if prefer_session_payload and session_payload is None and missing_drivers:
             session_result: dict[str, Any] | None = None
             try:
                 _ensure_nested_loop_support(operation)
@@ -2975,10 +2979,13 @@ class Session:
         """
         cacheable_entry = None
 
-        # If no data, try to fetch it
+        # In ultra-cold mode, stay on the async bulk critical path and avoid
+        # a second synchronous refetch when a payload comes back empty.
         if data is None:
+            if ultra_cold:
+                return None, None
             try:
-                data = self._fetch_json_unvalidated(path) if ultra_cold else self._fetch_json(path)
+                data = self._fetch_json(path)
             except (DataNotFoundError, InvalidDataError, NetworkError, TypeError, ValueError):
                 data = None
 
@@ -3001,6 +3008,7 @@ class Session:
         *,
         operation: str,
         ultra_cold: bool = False,
+        prefer_session_payload: bool = True,
     ) -> tuple[list[dict[str, Any] | None], list[tuple[str, dict[str, Any]]]]:
         """Async laptime fetch using session-wide data first, with per-driver fallback."""
         if not driver_requests:
@@ -3025,7 +3033,7 @@ class Session:
             missing_drivers.append(driver_code)
 
         session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
-        if session_payload is None and missing_drivers:
+        if prefer_session_payload and session_payload is None and missing_drivers:
             session_result: dict[str, Any] | None = None
             try:
                 try:
@@ -3486,6 +3494,7 @@ class Session:
             driver_requests,
             operation="get_fastest_laps_tels",
             ultra_cold=ultra_cold,
+            prefer_session_payload=not ultra_cold,
         )
 
         return self._process_fastest_lap_refs_from_payloads(
@@ -3564,6 +3573,7 @@ class Session:
             driver_requests,
             operation="get_fastest_laps_tels_async",
             ultra_cold=ultra_cold,
+            prefer_session_payload=not ultra_cold,
         )
 
         return self._process_fastest_lap_refs_from_payloads(
