@@ -276,8 +276,17 @@ class TestSessionAdvanced:
 
         async def fake_fetch_multiple_async(requests, **_kwargs):
             assert len(requests) == 1
-            assert requests[0][3] == "HAM/laptimes.json"
-            return [{"time": [91.0], "lap": [1], "compound": ["MEDIUM"], "status": ["Valid"]}]
+            assert requests[0][3] == "session_laptimes.json"
+            return [
+                {
+                    "drv": ["HAM"],
+                    "team": ["Mercedes"],
+                    "time": [91.0],
+                    "lap": [1],
+                    "compound": ["MEDIUM"],
+                    "status": ["Valid"],
+                }
+            ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
         session = Session(2025, "Test GP", "Race", enable_cache=False)
@@ -377,10 +386,17 @@ class TestSessionAdvanced:
 
         async def fake_fetch_multiple_async(requests, **_kwargs):
             assert requests[0][3] == "drivers.json"
-            assert requests[1][3] == "VER/laptimes.json"
+            assert requests[1][3] == "session_laptimes.json"
             return [
                 {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]},
-                {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]},
+                {
+                    "drv": ["VER"],
+                    "team": ["Red Bull"],
+                    "time": [90.5],
+                    "lap": [1],
+                    "compound": ["SOFT"],
+                    "status": ["Valid"],
+                },
             ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
@@ -401,12 +417,19 @@ class TestSessionAdvanced:
 
         async def fake_fetch_multiple_async(requests, **kwargs):
             assert requests[0][3] == "drivers.json"
-            assert requests[1][3] == "VER/laptimes.json"
+            assert requests[1][3] == "session_laptimes.json"
             assert kwargs.get("use_cache") is False
             assert kwargs.get("write_cache") is False
             return [
                 {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]},
-                {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]},
+                {
+                    "drv": ["VER"],
+                    "team": ["Red Bull"],
+                    "time": [90.5],
+                    "lap": [1],
+                    "compound": ["SOFT"],
+                    "status": ["Valid"],
+                },
             ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async

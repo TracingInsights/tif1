@@ -62,7 +62,9 @@ def _validate_json_payload(path: str, data: dict[str, Any], config) -> dict[str,
 
             return validate_weather_data(data, strict=False)
 
-        if path.endswith("/laptimes.json") and config.get("validate_lap_times", True):
+        if (
+            path == "session_laptimes.json" or path.endswith("/laptimes.json")
+        ) and config.get("validate_lap_times", True):
             from .validation import validate_lap_data
 
             return validate_lap_data(data, strict=False)

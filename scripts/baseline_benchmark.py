@@ -20,7 +20,7 @@ nest_asyncio2.apply()
 import tif1
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-YEAR = 2022
+YEAR = 2025
 EVENT = "Mexico City Grand Prix"
 SESSION_NAME = "Race"
 BACKEND = "pandas"
@@ -29,7 +29,7 @@ MAX_CONCURRENT = 32
 MAX_WORKERS = 32
 DRIVER_CODE = "VER"
 LAP_NUMBER = 12
-NUM_RUNS = 3
+NUM_RUNS = 1
 
 RESULTS_DIR = Path(__file__).parent / "baseline_results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -126,9 +126,7 @@ async def run_async_workflow():
 
     session = timed_sync(
         "session = tif1.get_session(...)",
-        lambda: tif1.get_session(
-            YEAR, EVENT, SESSION_NAME, enable_cache=ENABLE_CACHE, lib=BACKEND
-        ),
+        lambda: tif1.get_session(YEAR, EVENT, SESSION_NAME, enable_cache=ENABLE_CACHE, lib=BACKEND),
         timings,
     )
     drivers = timed_sync("drivers = session.drivers", lambda: session.drivers, timings)
@@ -150,9 +148,7 @@ async def run_async_workflow():
     ver_fastest_lap = timed_sync(
         "ver_fastest_lap = ver.get_fastest_lap()", lambda: ver.get_fastest_lap(), timings
     )
-    lap = timed_sync(
-        f"lap = ver.get_lap({LAP_NUMBER})", lambda: ver.get_lap(LAP_NUMBER), timings
-    )
+    lap = timed_sync(f"lap = ver.get_lap({LAP_NUMBER})", lambda: ver.get_lap(LAP_NUMBER), timings)
     telemetry = timed_sync("telemetry = lap.telemetry", lambda: lap.telemetry, timings)
 
     overall_fastest_ref = timed_sync(
@@ -196,9 +192,7 @@ def run_sync_workflow():
 
     session = timed_sync(
         "session = tif1.get_session(...)",
-        lambda: tif1.get_session(
-            YEAR, EVENT, SESSION_NAME, enable_cache=ENABLE_CACHE, lib=BACKEND
-        ),
+        lambda: tif1.get_session(YEAR, EVENT, SESSION_NAME, enable_cache=ENABLE_CACHE, lib=BACKEND),
         timings,
     )
     drivers = timed_sync("drivers = session.drivers", lambda: session.drivers, timings)
@@ -220,9 +214,7 @@ def run_sync_workflow():
     ver_fastest_lap = timed_sync(
         "ver_fastest_lap = ver.get_fastest_lap()", lambda: ver.get_fastest_lap(), timings
     )
-    lap = timed_sync(
-        f"lap = ver.get_lap({LAP_NUMBER})", lambda: ver.get_lap(LAP_NUMBER), timings
-    )
+    lap = timed_sync(f"lap = ver.get_lap({LAP_NUMBER})", lambda: ver.get_lap(LAP_NUMBER), timings)
     telemetry = timed_sync("telemetry = lap.telemetry", lambda: lap.telemetry, timings)
 
     overall_fastest_ref = timed_sync(
@@ -263,8 +255,15 @@ def run_sync_workflow():
 # ── Assertions ─────────────────────────────────────────────────────────────────
 def assert_run(run_name, artifacts):
     required = (
-        "drivers", "fastest_tels", "session_fastest_laps", "ver_fastest_lap",
-        "fastest_tel", "ver_fastest_tel", "telemetry", "overall_fastest_ref", "ver_fastest_ref",
+        "drivers",
+        "fastest_tels",
+        "session_fastest_laps",
+        "ver_fastest_lap",
+        "fastest_tel",
+        "ver_fastest_tel",
+        "telemetry",
+        "overall_fastest_ref",
+        "ver_fastest_ref",
     )
     for key in required:
         assert key in artifacts, f"{run_name}: missing artifact {key}"
@@ -377,8 +376,10 @@ def main():
         }
         summary[mode] = s
         print(f"\n{mode.upper()} ({NUM_RUNS} runs):")
-        print(f"  mean={s['mean']:.4f}s  median={s['median']:.4f}s  "
-              f"stdev={s['stdev']:.4f}s  min={s['min']:.4f}s  max={s['max']:.4f}s")
+        print(
+            f"  mean={s['mean']:.4f}s  median={s['median']:.4f}s  "
+            f"stdev={s['stdev']:.4f}s  min={s['min']:.4f}s  max={s['max']:.4f}s"
+        )
 
     # Aggregate per-step averages
     for mode in ("async", "sync"):
@@ -404,9 +405,13 @@ def main():
         json.dump(
             {
                 "config": {
-                    "year": YEAR, "event": EVENT, "session": SESSION_NAME,
-                    "backend": BACKEND, "cache": ENABLE_CACHE,
-                    "max_concurrent": MAX_CONCURRENT, "max_workers": MAX_WORKERS,
+                    "year": YEAR,
+                    "event": EVENT,
+                    "session": SESSION_NAME,
+                    "backend": BACKEND,
+                    "cache": ENABLE_CACHE,
+                    "max_concurrent": MAX_CONCURRENT,
+                    "max_workers": MAX_WORKERS,
                     "num_runs": NUM_RUNS,
                 },
                 "summary": summary,

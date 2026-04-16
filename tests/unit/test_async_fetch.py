@@ -405,6 +405,85 @@ class TestAsyncFetch:
             assert "team" not in result
             assert "wAT" not in result
 
+    async def test_fetch_json_async_session_laptimes_preserves_extended_fields(self):
+        """Session lap-time validation should use the same schema normalization as per-driver files."""
+        mock_response = StubResponse(
+            status_code=200,
+            payload={
+                "time": [90.5],
+                "lap": [1],
+                "compound": ["SOFT"],
+                "stint": [1],
+                "s1": [30.0],
+                "s2": [30.0],
+                "s3": [30.5],
+                "life": [1],
+                "pos": [1],
+                "status": ["Valid"],
+                "pb": [True],
+                "sesT": [100.0],
+                "drv": ["VER"],
+                "dNum": ["1"],
+                "vi1": [280.0],
+                "vi2": [290.0],
+                "vfl": [300.0],
+                "vst": [305.0],
+                "fresh": [True],
+                "team": ["Red Bull"],
+                "lST": [0.0],
+                "lSD": ["2025-03-01T10:00:00"],
+                "del": [False],
+                "delR": [None],
+                "ff1G": [False],
+                "iacc": [True],
+                "wT": [100.0],
+                "wAT": [25.1],
+                "wH": [40.0],
+                "wP": [1012.0],
+                "wR": [False],
+                "wTT": [32.5],
+                "wWD": [180.0],
+                "wWS": [2.2],
+            },
+        )
+        mock_cache = StubCache()
+        mock_session = StubSession(response=mock_response)
+
+        with (
+            patch("tif1.async_fetch.get_cache", return_value=mock_cache),
+            patch("tif1.async_fetch.get_http_session", return_value=mock_session),
+            patch("tif1.async_fetch._import_niquests") as mock_niquests_module,
+            patch("tif1.config.get_config") as mock_config,
+        ):
+            mock_niquests = SimpleNamespace(
+                RequestException=Exception,
+                exceptions=SimpleNamespace(HTTPError=Exception),
+            )
+            mock_niquests_module.return_value = mock_niquests
+            mock_config.return_value.get.side_effect = lambda key, default=None: {
+                "validate_lap_times": True,
+                "max_retries": 3,
+                "timeout": 30,
+            }.get(key, default)
+
+            result = await fetch_json_async(2025, "Test%20GP", "Race", "session_laptimes.json")
+
+            assert result["session_time"] == [100.0]
+            assert result["source_driver"] == ["VER"]
+            assert result["driver_number"] == ["1"]
+            assert result["speed_i1"] == [280.0]
+            assert result["speed_i2"] == [290.0]
+            assert result["source_team"] == ["Red Bull"]
+            assert result["weather_time"] == [100.0]
+            assert result["air_temp"] == [25.1]
+            assert result["track_temp"] == [32.5]
+            assert result["wind_direction"] == [180.0]
+            assert result["wind_speed"] == [2.2]
+            assert "sesT" not in result
+            assert "drv" not in result
+            assert "team" not in result
+            assert "wAT" not in result
+
     async def test_fetch_json_async_404(self):
         """Test 404 error handling."""
         mock_response = StubResponse(status_code=404)
