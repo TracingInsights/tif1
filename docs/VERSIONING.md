@@ -58,7 +58,7 @@ To deploy docs without creating a release:
 1. Go to GitHub Actions
 2. Select "Deploy Documentation" workflow
 3. Click "Run workflow"
-4. Enter the version (e.g., `v0.1.0`)
+4. Enter the version (e.g., `v0.2.0`)
 5. Click "Run workflow"
 
 This is useful for:
@@ -98,7 +98,7 @@ If you need to manually manage versions:
 
 2. **Keep versions in sync**: The workflow handles this, but verify after deployment
 
-3. **Use semantic versioning**: Match your package versions (e.g., `0.1.0`, `0.2.0`)
+3. **Use semantic versioning**: Match your package versions (e.g., `0.2.0`, `0.2.1`)
 
 4. **Don't push to docs-production directly**: Always use the GitHub Actions workflow
 

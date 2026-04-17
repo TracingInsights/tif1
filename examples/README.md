@@ -53,7 +53,7 @@ Each example includes:
 
 Most examples work with the base installation:
 ```bash
-pip install tifone
+pip install tif1
 ```
 
 
