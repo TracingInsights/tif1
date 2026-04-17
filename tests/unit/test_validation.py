@@ -233,6 +233,7 @@ class TestValidation:
             "pos": [1, 1],
             "status": ["OK", "OK"],
             "pb": [True, True],
+            "qs": ["Q1", "Q2"],
             "sesT": [100.0, 190.0],
             "drv": ["VER", "VER"],
             "dNum": ["1", "1"],
@@ -265,6 +266,7 @@ class TestValidation:
 
         validated = validate_lap_data(data, strict=True)
 
+        assert validated["qualifying_session"] == ["Q1", "Q2"]
         assert validated["session_time"] == [100.0, 190.0]
         assert validated["source_driver"] == ["VER", "VER"]
         assert validated["driver_number"] == ["1", "1"]
@@ -293,6 +295,7 @@ class TestValidation:
             "pos": [1],
             "status": ["OK"],
             "pb": [True],
+            "qualifying_session": ["SQ1"],
             "session_time": [100.0],
             "source_driver": ["VER"],
             "driver_number": ["1"],
@@ -325,6 +328,7 @@ class TestValidation:
 
         validated = validate_lap_data(data, strict=True)
 
+        assert validated["qualifying_session"] == ["SQ1"]
         assert validated["session_time"] == [100.0]
         assert validated["source_driver"] == ["VER"]
         assert validated["driver_number"] == ["1"]

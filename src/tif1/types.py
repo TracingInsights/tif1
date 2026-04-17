@@ -56,6 +56,7 @@ class LapDataDict(TypedDict):
     TrackStatus: NotRequired[str | None]
     Position: NotRequired[float | None]
     IsPersonalBest: NotRequired[bool]
+    QualifyingSession: NotRequired[str | None]
     Deleted: NotRequired[bool | None]
     DeletedReason: NotRequired[str | None]
     FastF1Generated: NotRequired[bool]

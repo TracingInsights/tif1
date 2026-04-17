@@ -342,6 +342,7 @@ class TestAsyncFetch:
                 "pos": [1],
                 "status": ["Valid"],
                 "pb": [True],
+                "qs": ["Q1"],
                 "sesT": [100.0],
                 "drv": ["VER"],
                 "dNum": ["1"],
@@ -421,6 +422,7 @@ class TestAsyncFetch:
                 "pos": [1],
                 "status": ["Valid"],
                 "pb": [True],
+                "qs": ["Q1"],
                 "sesT": [100.0],
                 "drv": ["VER"],
                 "dNum": ["1"],
@@ -468,6 +470,7 @@ class TestAsyncFetch:
 
             result = await fetch_json_async(2025, "Test%20GP", "Race", "session_laptimes.json")
 
+            assert result["qualifying_session"] == ["Q1"]
             assert result["session_time"] == [100.0]
             assert result["source_driver"] == ["VER"]
             assert result["driver_number"] == ["1"]

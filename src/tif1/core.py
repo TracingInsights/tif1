@@ -436,9 +436,24 @@ class Laps(pd.DataFrame):
         return pd.DataFrame()
 
     def split_qualifying_sessions(self):
-        # Tracing Insights data does not provide explicit Q1/Q2/Q3 splits.
-        # Keep a stable shape that matches FastF1's tuple contract.
-        return self.copy(), self.copy(), self.copy()
+        qualifying_sessions = self.get("QualifyingSession")
+        if qualifying_sessions is None:
+            # Keep a stable shape that matches FastF1's tuple contract when
+            # explicit qualifying session markers are unavailable.
+            return self.copy(), self.copy(), self.copy()
+
+        normalized = cast(pd.Series, qualifying_sessions).astype("string").str.upper().str.strip()
+        session_suffix = normalized.str.extract(r"([123])$", expand=False)
+        if not bool(session_suffix.notna().any()):
+            return self.copy(), self.copy(), self.copy()
+
+        def _slice_for_suffix(target_suffix: str) -> "Laps":
+            subset = self.loc[session_suffix == target_suffix].copy()
+            if isinstance(subset, Laps):
+                subset.session = self.session
+            return subset
+
+        return _slice_for_suffix("1"), _slice_for_suffix("2"), _slice_for_suffix("3")
 
     def join(self, *args, **kwargs):
         return cast(Any, super()).join(*args, **kwargs)
@@ -1304,7 +1319,15 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 
     # String columns — ensure object/str dtype (fillna with empty string for
     # non-nullable ones to preserve FastF1 compatibility)
-    _STR_COLS = ("Driver", "DriverNumber", "Compound", "Team", "TrackStatus", "DeletedReason")
+    _STR_COLS = (
+        "Driver",
+        "DriverNumber",
+        "Compound",
+        "Team",
+        "TrackStatus",
+        "DeletedReason",
+        "QualifyingSession",
+    )
     for col in _STR_COLS:
         if col in df.columns:
             col_series = df[col]

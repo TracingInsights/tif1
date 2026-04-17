@@ -21,6 +21,7 @@ LAP_RENAME_MAP = {
     "status": "TrackStatus",
     "pb": "IsPersonalBest",
     "qs": "QualifyingSession",
+    "qualifying_session": "QualifyingSession",
     "session_time": "Time",
     "source_driver": "Driver",
     "drv": "Driver",  # Alias from validation

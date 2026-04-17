@@ -132,6 +132,7 @@ class LapData(ConsistentLengthsMixin, BaseModel):
     pos: list[int | None] = Field(..., min_length=1)
     status: list[str | None] = Field(..., min_length=1)
     pb: list[bool | None] = Field(..., min_length=1)
+    qualifying_session: list[str | None] = Field(default_factory=list, alias="qs")
     session_time: list[float | None] = Field(default_factory=list, alias="sesT")
     source_driver: list[str | None] = Field(default_factory=list, alias="drv")
     driver_number: list[str | None] = Field(default_factory=list, alias="dNum")
@@ -176,6 +177,7 @@ class LapData(ConsistentLengthsMixin, BaseModel):
             "pos",
             "status",
             "pb",
+            "qualifying_session",
             "session_time",
             "source_driver",
             "driver_number",
