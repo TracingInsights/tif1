@@ -63,6 +63,59 @@ def test_laps_selection_and_compat_methods():
     assert first_lap["Driver"] == "VER"
 
 
+@pytest.mark.parametrize(
+    ("session_labels", "expected_groups"),
+    [
+        (["Q1", "Q2", "Q3", "Q1"], (["Q1", "Q1"], ["Q2"], ["Q3"])),
+        (["SQ1", "SQ2", "SQ3", "SQ1"], (["SQ1", "SQ1"], ["SQ2"], ["SQ3"])),
+    ],
+)
+def test_split_qualifying_sessions_uses_qualifying_session_markers(session_labels, expected_groups):
+    laps = core.Laps(
+        pd.DataFrame(
+            {
+                "Driver": ["VER", "VER", "HAM", "NOR"],
+                "LapNumber": [1, 2, 1, 1],
+                "QualifyingSession": session_labels,
+            }
+        ),
+        session=SimpleNamespace(name="Qualifying"),
+    )
+
+    q1, q2, q3 = laps.split_qualifying_sessions()
+
+    assert q1["QualifyingSession"].tolist() == expected_groups[0]
+    assert q2["QualifyingSession"].tolist() == expected_groups[1]
+    assert q3["QualifyingSession"].tolist() == expected_groups[2]
+
+
+def test_process_lap_df_preserves_validated_qualifying_session_field():
+    lap_df = core._create_lap_df(
+        {
+            "time": [90.1],
+            "lap": [1],
+            "compound": ["SOFT"],
+            "stint": [1],
+            "s1": [30.0],
+            "s2": [30.0],
+            "s3": [30.1],
+            "life": [1],
+            "pos": [1],
+            "status": ["VALID"],
+            "pb": [True],
+            "qualifying_session": ["SQ2"],
+            "session_time": [100.0],
+        },
+        "VER",
+        "Red Bull",
+        "pandas",
+    )
+
+    processed = core._process_lap_df(lap_df, "pandas")
+
+    assert processed["QualifyingSession"].tolist() == ["SQ2"]
+
+
 def test_laps_telemetry_and_reset_index_branches():
     laps = _make_laps_df().pick_driver("VER")
     laps["Level"] = [1, 2]
