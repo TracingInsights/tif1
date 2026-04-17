@@ -59,7 +59,7 @@ Use this checklist before creating a new release.
 
 ### Git
 - [ ] Changes committed
-- [ ] Version tag created: `v0.1.0`
+- [ ] Version tag created: `v0.2.0`
 - [ ] Tag pushed to GitHub
 - [ ] Branch is clean
 
@@ -72,7 +72,7 @@ Use this checklist before creating a new release.
 ## Post-Release
 
 ### Verification
-- [ ] Install from PyPI works: `pip install tifone`
+- [ ] Install from PyPI works: `pip install tif1`
 - [ ] Import works: `python -c "import tif1"`
 - [ ] Version correct: `python -c "import tif1; print(tif1.__version__)"`
 - [ ] Basic functionality works
@@ -107,7 +107,7 @@ If critical issues are found:
 
 2. **Create hotfix release**
    - Fix the issue
-   - Bump patch version (e.g., 0.1.0 → 0.1.1)
+   - Bump patch version (e.g., 0.2.0 → 0.2.1)
    - Follow release process
 
 3. **Communicate**
@@ -117,12 +117,12 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
-### v0.1.0 (Initial Release)
-- [ ] Verify all core features work
-- [ ] Double-check API surface is stable
-- [ ] Ensure backward compatibility plan
+### v0.2.0 (Package Rename Release)
+- [ ] Verify PyPI/TestPyPI package name is `tif1`
+- [ ] Confirm install docs no longer reference `tifone`
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.2.0"`
+- [ ] Check release notes mention the package rename
 - [ ] Performance benchmarks documented
-- [ ] Known issues documented
 
 ---
 

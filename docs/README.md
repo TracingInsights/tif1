@@ -45,7 +45,7 @@ If you need to deploy docs without a release:
 
 1. Go to Actions → "Deploy Documentation"
 2. Click "Run workflow"
-3. Enter the version (e.g., `v0.1.0`)
+3. Enter the version (e.g., `v0.2.0`)
 4. Click "Run workflow"
 
 ## Mintlify Configuration

@@ -2,9 +2,9 @@
 
 A fast, canonical Formula 1 data library fetched from TracingInsights data https://github.com/TracingInsights/2026 (2018-current).
 
-[![CI/CD](https://github.com/TracingInsights/tifone/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
-[![codecov](https://codecov.io/gh/TracingInsights/tifone/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
-[![PyPI version](https://badge.fury.io/py/tifone.svg)](https://badge.fury.io/py/tifone)
+[![CI/CD](https://github.com/TracingInsights/tif1/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
+[![codecov](https://codecov.io/gh/TracingInsights/tif1/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
+[![PyPI version](https://badge.fury.io/py/tif1.svg)](https://badge.fury.io/py/tif1)
 
 
 
@@ -15,14 +15,14 @@ Data is available ~30 minutes after the session ends. Data in fastf1 is availabl
 ## Installation
 
 ```bash
-pip install tifone
+pip install tif1
 ```
 
 ### Optional Dependencies
 
 ```bash
 # For development
-pip install tifone[dev]
+pip install tif1[dev]
 
 
 ```
