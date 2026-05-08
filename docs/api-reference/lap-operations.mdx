@@ -83,15 +83,15 @@ Before diving into operations, it's essential to understand the comprehensive st
 These columns form the foundation of lap timing data and are present in virtually all sessions:
 
 - **LapNumber** (`int`): Integer lap number, 1-indexed. This is the primary identifier for laps within a session. In qualifying sessions, lap numbers continue incrementing across Q1, Q2, and Q3.
-  
+
 - **LapTime** (`float`): Lap time in seconds with millisecond precision (e.g., `83.456` represents 1:23.456). This is the primary timing metric used for all comparisons and analysis. NaN values indicate incomplete or invalidated laps.
-  
+
 - **LapTimeSeconds** (`float`): Alternative representation of lap time in seconds. In most cases, this is identical to `LapTime`. Some data sources use this column name instead of `LapTime`.
-  
+
 - **Time** (`timedelta` or `float`): Session time when the lap was completed, measured from the start of the session. This can be either a pandas Timedelta object or a float representing seconds. Used for temporal analysis and synchronization with other session data.
-  
+
 - **LapStartTime** (`timedelta` or `float`): Session time when the lap started. Calculated as `Time - LapTime`. Essential for analyzing lap-by-lap progression and identifying when specific laps occurred during the session.
-  
+
 - **LapStartDate** (`datetime`): Absolute date and time when the lap started, in the session's local timezone. Useful for correlating lap data with external events, weather changes, or broadcast footage.
 
 <Tip>
@@ -103,25 +103,25 @@ These columns form the foundation of lap timing data and are present in virtuall
 Sector times and speed trap measurements provide detailed performance insights:
 
 - **Sector1Time** (`float`): Time in seconds to complete sector 1. Sector 1 typically covers the start/finish straight and the first sequence of corners.
-  
+
 - **Sector2Time** (`float`): Time in seconds to complete sector 2. Sector 2 usually includes the middle portion of the circuit.
-  
+
 - **Sector3Time** (`float`): Time in seconds to complete sector 3. Sector 3 covers the final section leading back to the start/finish line.
-  
+
 - **Sector1SessionTime** (`timedelta` or `float`): Session time when sector 1 was completed. Used for synchronizing sector performance with session events.
-  
+
 - **Sector2SessionTime** (`timedelta` or `float`): Session time when sector 2 was completed.
-  
+
 - **Sector3SessionTime** (`timedelta` or `float`): Session time when sector 3 was completed.
 
 **Speed Measurements:**
 
 - **SpeedI1** (`float`): Speed trap measurement at intermediate point 1, in km/h. Location varies by circuit but typically measures speed at a key straight or corner exit.
-  
+
 - **SpeedI2** (`float`): Speed trap measurement at intermediate point 2, in km/h. Provides additional speed data for performance analysis.
-  
+
 - **SpeedFL** (`float`): Speed at the finish line, in km/h. Measured as the car crosses the timing line to complete the lap.
-  
+
 - **SpeedST** (`float`): Speed at the designated speed trap location, in km/h. This is typically the fastest point on the circuit, usually on the main straight.
 
 <Note>
@@ -133,9 +133,9 @@ Sector times and speed trap measurements provide detailed performance insights:
 Identification columns for drivers and teams:
 
 - **Driver** (`str`): Three-letter driver code following FIA conventions (e.g., "VER" for Max Verstappen, "HAM" for Lewis Hamilton, "LEC" for Charles Leclerc). This is the primary identifier for driver-based filtering and analysis.
-  
+
 - **DriverNumber** (`int`): Racing number assigned to the driver (e.g., 1, 44, 16). Racing numbers are permanent and follow drivers across teams. Useful for identifying drivers across different seasons.
-  
+
 - **Team** (`str`): Full team name as registered with the FIA (e.g., "Red Bull Racing", "Mercedes", "Ferrari"). Team names may change between seasons due to rebranding or ownership changes.
 
 <Tip>
@@ -153,11 +153,11 @@ Comprehensive tire and strategy information:
   - `"INTERMEDIATE"`: Intermediate wet weather tire (green sidewall)
   - `"WET"`: Full wet weather tire (blue sidewall)
   - `"UNKNOWN"`: Compound information not available
-  
+
 - **TyreLife** (`int`): Number of laps completed on the current tire set, including the current lap. Starts at 1 for the first lap on a new set. Essential for tire degradation analysis.
-  
+
 - **FreshTyre** (`bool`): Boolean flag indicating whether the tires were fresh (unused) at the start of this lap. `True` for the first lap on a new set, `False` for subsequent laps. Used to identify qualifying runs and optimal performance laps.
-  
+
 - **Stint** (`int`): Stint number, 1-indexed. Increments each time the driver makes a pit stop for new tires. Stint 1 is the opening stint from the race start or session beginning.
 
 <Note>
@@ -175,16 +175,16 @@ Track conditions and session context:
   - `"5"`: Red flag - session stopped, cars must return to pits
   - `"6"`: Virtual safety car (VSC) - electronic speed limiting, no physical safety car
   - `"7"`: VSC ending - transition period as track returns to green flag
-  
+
   Multiple flags can be combined (e.g., `"2"` and `"4"` together). Always check for the presence of specific codes rather than exact equality.
-  
+
 - **Position** (`int`): Driver's position at the completion of this lap. In qualifying, this represents the current standing based on best lap times. In races, this is the running order position.
-  
+
 - **QualifyingSession** (`str`): Qualifying session identifier, present only in qualifying sessions:
   - `"Q1"`: First qualifying session (all 20 drivers)
   - `"Q2"`: Second qualifying session (top 15 drivers)
   - `"Q3"`: Third qualifying session (top 10 drivers)
-  
+
   This column is `None` or missing for practice and race sessions.
 
 <Tip>
@@ -196,7 +196,7 @@ Track conditions and session context:
 Pit stop timing and activity:
 
 - **PitOutTime** (`timedelta` or `float`): Session time when the driver exited the pit lane after a pit stop. `NaN` or `None` if the lap did not include a pit exit. Used to identify out-laps and calculate pit stop duration.
-  
+
 - **PitInTime** (`timedelta` or `float`): Session time when the driver entered the pit lane for a pit stop. `NaN` or `None` if the lap did not include a pit entry. Used to identify in-laps and analyze pit stop timing.
 
 **Pit Stop Analysis:**
@@ -214,18 +214,18 @@ Pit stop timing and activity:
 Flags indicating data quality and validity:
 
 - **Deleted** (`bool`): Boolean flag indicating whether the lap was deleted or invalidated by race control. `True` means the lap time does not count (e.g., due to track limits violation, red flag, or other infringement). `False` or `None` means the lap is valid.
-  
+
 - **DeletedReason** (`str`): Human-readable reason for lap deletion, if available. Common reasons include:
   - Track limits violation (exceeding track boundaries)
   - Red flag (session stopped)
   - Pit lane infringement
   - Impeding another driver
   - Missing transponder data
-  
+
 - **IsPersonalBest** (`bool`): Boolean flag indicating whether this lap is the driver's personal best (fastest lap) in the session. Only one lap per driver should have this flag set to `True`.
-  
+
 - **IsAccurate** (`bool`): Boolean flag indicating data accuracy and reliability. `True` means the lap data is complete and accurate. `False` may indicate missing sector times, interpolated data, or other quality issues.
-  
+
 - **FastF1Generated** (`bool`): Boolean flag indicating whether the lap was synthetically generated to fill gaps in the data. `True` means the lap is not from actual timing data but was created for continuity. Always `False` in tif1 data sources.
 
 <Warning>
@@ -237,19 +237,19 @@ Flags indicating data quality and validity:
 Weather conditions at the time of each lap:
 
 - **WeatherTime** (`datetime`): Timestamp of the weather measurement, typically synchronized with lap completion time.
-  
+
 - **AirTemp** (`float`): Air temperature in degrees Celsius (°C). Affects engine performance and tire behavior.
-  
+
 - **TrackTemp** (`float`): Track surface temperature in degrees Celsius (°C). Critical for tire performance and degradation rates. Track temperature can vary significantly from air temperature, especially in sunny conditions.
-  
+
 - **Humidity** (`float`): Relative humidity as a percentage (0-100%). Affects air density and engine performance.
-  
+
 - **Pressure** (`float`): Atmospheric pressure in millibars (mbar). Standard atmospheric pressure is approximately 1013 mbar. Lower pressure at high-altitude circuits affects engine performance.
-  
+
 - **Rainfall** (`bool`): Boolean flag indicating whether rain was detected. `True` means rain is falling, `False` means dry conditions.
-  
+
 - **WindSpeed** (`float`): Wind speed in kilometers per hour (km/h). Affects car balance and straight-line speed.
-  
+
 - **WindDirection** (`int`): Wind direction in degrees (0-360), where 0° is north, 90° is east, 180° is south, and 270° is west. Combined with circuit layout, this determines headwind/tailwind effects.
 
 <Tip>
@@ -435,7 +435,7 @@ try:
     lap = _coerce_lap_number("")
 except ValueError as e:
     print(f"Error: {e}")
-    # Error: Invalid lap number: 
+    # Error: Invalid lap number:
 
 # None value (raises ValueError with specific message)
 try:
@@ -509,7 +509,7 @@ The function is backend-agnostic, supporting both pandas and polars DataFrames w
   - Can be a pandas DataFrame or polars DataFrame/LazyFrame
   - Must contain at least one lap number column
   - Can contain invalid or missing lap numbers (they will be skipped)
-  
+
 - `lib` (`str`): Backend library identifier
   - `"pandas"`: Use pandas-optimized extraction
   - `"polars"`: Use polars-optimized extraction
@@ -851,7 +851,7 @@ try:
     lap_time = _coerce_lap_time("")
 except ValueError as e:
     print(f"Error: {e}")
-    # Error: Invalid lap time: 
+    # Error: Invalid lap time:
 
 # Edge case: Zero (valid but unusual)
 lap_time = _coerce_lap_time(0.0)
@@ -955,7 +955,7 @@ The function implements a priority-based fallback system: it first checks for th
   - Can be pandas DataFrame or polars DataFrame/LazyFrame
   - Must contain at least one lap number column
   - Column names are case-sensitive
-  
+
 - `lib` (`str`): Backend library identifier
   - `"pandas"`: Pandas DataFrame
   - `"polars"`: Polars DataFrame/LazyFrame
@@ -989,7 +989,7 @@ This design prioritizes the standard tif1 column name while providing compatibil
   - Used in all tif1-generated DataFrames
   - PascalCase following tif1 naming conventions
   - Preferred for new code and data sources
-  
+
 - **`lap`**: Alternative column name
   - Used by some legacy data sources
   - Lowercase following different naming conventions
@@ -1653,10 +1653,10 @@ def find_optimal_lap(laps, driver_code):
         .pick_not_deleted()
         .pick_track_status("1")  # Green flag
         .pick_wo_box())  # No pit stops
-    
+
     if "FreshTyre" in optimal.columns:
         optimal = optimal[optimal["FreshTyre"] == True]
-    
+
     return optimal.pick_fastest()
 ```
 
@@ -1668,17 +1668,17 @@ def analyze_degradation(laps, driver_code, stint_num):
         .pick_driver(driver_code)
         .pick_not_deleted()
         .pick_track_status("1"))
-    
+
     stint_laps = stint_laps[stint_laps["Stint"] == stint_num]
-    
+
     if len(stint_laps) < 3:
         return None
-    
+
     # Linear regression
     x = stint_laps["TyreLife"].values
     y = stint_laps["LapTime"].values
     slope = np.polyfit(x, y, 1)[0]
-    
+
     return slope  # Seconds per lap degradation
 ```
 
@@ -1688,19 +1688,19 @@ def compare_drivers(laps, driver1, driver2):
     """Compare lap times between two drivers."""
     laps1 = laps.pick_driver(driver1).pick_not_deleted()
     laps2 = laps.pick_driver(driver2).pick_not_deleted()
-    
+
     # Get common lap numbers
     lap_nums1 = set(laps1["LapNumber"])
     lap_nums2 = set(laps2["LapNumber"])
     common = lap_nums1 & lap_nums2
-    
+
     # Calculate deltas
     deltas = []
     for lap_num in sorted(common):
         time1 = laps1[laps1["LapNumber"] == lap_num]["LapTime"].iloc[0]
         time2 = laps2[laps2["LapNumber"] == lap_num]["LapTime"].iloc[0]
         deltas.append(time1 - time2)
-    
+
     return {
         "avg_delta": np.mean(deltas),
         "driver1_faster": sum(1 for d in deltas if d < 0),

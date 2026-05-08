@@ -789,10 +789,10 @@ import tif1
 
 async def analyze_session():
     session = tif1.get_session(2025, "Monaco", "Race")
-    
+
     # Load laps asynchronously
     laps = await session.laps_async()
-    
+
     # Analyze data
     fastest = laps.loc[laps.groupby("Driver")["LapTime"].idxmin()]
     return fastest
@@ -1047,13 +1047,13 @@ sequenceDiagram
 
     User->>Session: session.laps
     Session->>MemCache: Check memory cache
-    
+
     alt Memory Cache Hit
         MemCache-->>Session: Return cached DataFrame
         Session-->>User: Return laps (instant)
     else Memory Cache Miss
         Session->>DiskCache: Check persistent cache
-        
+
         alt Disk Cache Hit
             DiskCache-->>Session: Return cached JSON
             Session->>DataFrame: Parse & transform
@@ -1482,9 +1482,9 @@ ver_laps = ver.laps
 for stint in ver_laps["Stint"].unique():
     stint_laps = ver_laps[ver_laps["Stint"] == stint]
     compound = stint_laps["Compound"].iloc[0]
-    
+
     # Plot lap time vs tire age
-    plt.plot(stint_laps["TyreLife"], stint_laps["LapTimeSeconds"], 
+    plt.plot(stint_laps["TyreLife"], stint_laps["LapTimeSeconds"],
              marker='o', label=f"Stint {stint} ({compound})")
 
 plt.xlabel("Tire Age (laps)")
@@ -1548,7 +1548,7 @@ laps = session.laps
 # Track position changes
 for driver in ["VER", "HAM", "LEC"]:
     driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
-    plt.plot(driver_laps["LapNumber"], driver_laps["Position"], 
+    plt.plot(driver_laps["LapNumber"], driver_laps["Position"],
              marker='o', label=driver)
 
 plt.xlabel("Lap Number")
@@ -1572,13 +1572,13 @@ fastest_tel = session.get_fastest_lap_tel()
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
 # Throttle
-ax1.fill_between(fastest_tel["Distance"], 0, fastest_tel["Throttle"], 
+ax1.fill_between(fastest_tel["Distance"], 0, fastest_tel["Throttle"],
                   color='green', alpha=0.6)
 ax1.set_ylabel("Throttle (%)")
 ax1.set_ylim(0, 100)
 
 # Brake
-ax2.fill_between(fastest_tel["Distance"], 0, fastest_tel["Brake"], 
+ax2.fill_between(fastest_tel["Distance"], 0, fastest_tel["Brake"],
                   color='red', alpha=0.6)
 ax2.set_ylabel("Brake")
 ax2.set_xlabel("Distance (m)")

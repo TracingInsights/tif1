@@ -123,7 +123,7 @@ query = "monaco"
 features = ["monacograndprix", "monaco", "montecarlo"]
 
 # Check if query is substring of any feature
-matches = [i for i, feature_list in enumerate(reference) 
+matches = [i for i, feature_list in enumerate(reference)
            if any(query in feature for feature in feature_list)]
 
 # If exactly ONE element contains the substring, return immediately
@@ -230,12 +230,12 @@ def resolve_session_name(identifier: str) -> str:
     canonical = _SESSION_TYPES_BY_CASEFOLD.get(identifier.casefold())
     if canonical:
         return canonical
-    
+
     # Step 2: Try abbreviation match (case-sensitive uppercase)
     canonical = _SESSION_TYPE_ABBREVIATIONS.get(identifier.upper())
     if canonical:
         return canonical
-    
+
     # Step 3: No match - raise error
     raise ValueError(f"Invalid session type '{identifier}'")
 ```
@@ -297,10 +297,10 @@ A list of lists where each inner list represents one matchable element (e.g., on
 reference = [
     # Element 0: Monaco Grand Prix
     ["Monaco Grand Prix", "Monaco", "Monte Carlo", "Monaco"],
-    
+
     # Element 1: British Grand Prix
     ["British Grand Prix", "Silverstone", "Britain", "United Kingdom"],
-    
+
     # Element 2: Italian Grand Prix
     ["Italian Grand Prix", "Monza", "Italy", "Autodromo Nazionale di Monza"]
 ]
@@ -331,7 +331,7 @@ index, exact = fuzzy_matcher("Silverstone", reference)
 A boolean flag indicating the match quality:
 
 - `True`: The query was an exact substring of exactly one feature string in exactly one element. This indicates high confidence—the user's input unambiguously identifies a single event.
-  
+
 - `False`: Fuzzy ratio matching was used because either:
   - Zero substring matches were found (typo or very partial name)
   - Multiple substring matches were found (ambiguous query)
@@ -466,7 +466,7 @@ if np.sum(max_row_ratios == max_ratio) > 1:
     # Count how many times each feature appears across all elements
     unique, counts = np.unique(reference_arr, return_counts=True)
     count_dict = dict(zip(unique, counts))
-    
+
     # Zero out scores for features that appear in multiple elements
     mask = (np.vectorize(count_dict.get)(reference_arr) > 1) & (ratios == max_ratio)
     ratios[mask] = 0
@@ -622,7 +622,7 @@ for query in test_queries:
 
 - **Best case (exact substring, single match):** O(n×m) where n=elements, m=features per element
   - Typical: 0.1-0.3ms for 24 events with 4 features each
-  
+
 - **Worst case (fuzzy matching all elements):** O(n×m×k) where k=average string length
   - Typical: 0.5-0.8ms for 24 events with 4 features each
   - RapidFuzz's C++ implementation provides 10-100x speedup over pure Python
@@ -675,7 +675,7 @@ def _find_event_by_name(year: int, event_names: list[str], name: str, exact_matc
             if event_name.lower() == query:
                 return create_event(year, event_name)
         return None
-    
+
     # Build reference with multiple features per event
     reference = []
     for event_name in event_names:
@@ -687,14 +687,14 @@ def _find_event_by_name(year: int, event_names: list[str], name: str, exact_matc
             remove_common_words(metadata.get("OfficialEventName", ""))
         ]
         reference.append(features)
-    
+
     # Use fuzzy matcher
     index, exact = fuzzy_matcher(name, reference)
     matched_event_name = event_names[index]
-    
+
     if not exact:
         logger.warning(f"Fuzzy match: '{name}' → '{matched_event_name}'")
-    
+
     return create_event(year, matched_event_name)
 ```
 
@@ -1150,7 +1150,7 @@ if np.sum(max_row_ratios == max_ratio) > 1:
     # Count how many times each feature appears across all elements
     unique, counts = np.unique(reference_arr, return_counts=True)
     count_dict = dict(zip(unique, counts))
-    
+
     # Zero out scores for features that appear in multiple elements
     # AND have the max ratio
     mask = (np.vectorize(count_dict.get)(reference_arr) > 1) & (ratios == max_ratio)
@@ -1496,7 +1496,7 @@ session = tif1.get_session(2024, "Monaco", "sprintshootout")
    ```python
    # Correct
    session = tif1.get_session(2024, "Monaco", "FP1")
-   
+
    # Incorrect - will raise ValueError
    session = tif1.get_session(2024, "Monaco", "P1")
    ```
@@ -1506,11 +1506,11 @@ session = tif1.get_session(2024, "Monaco", "sprintshootout")
    # 2021-2022: Sprint Qualifying
    session = tif1.get_session(2021, "British", "Sprint Qualifying")
    session = tif1.get_session(2021, "British", "SQ")
-   
+
    # 2023+: Sprint Shootout
    session = tif1.get_session(2023, "Azerbaijan", "Sprint Shootout")
    session = tif1.get_session(2023, "Azerbaijan", "SS")
-   
+
    # Backward compatibility: "Sprint" works for both
    session = tif1.get_session(2021, "British", "Sprint")  # → Sprint Qualifying
    session = tif1.get_session(2023, "Azerbaijan", "Sprint")  # → Sprint
@@ -1521,7 +1521,7 @@ session = tif1.get_session(2024, "Monaco", "sprintshootout")
    # Not all events have all sessions
    # Sprint weekends: FP1, Qualifying, Sprint Shootout, Sprint, Race
    # Regular weekends: FP1, FP2, FP3, Qualifying, Race
-   
+
    # Check available sessions
    from tif1.events import get_sessions
    sessions = get_sessions(2024, "Monaco")
@@ -1712,12 +1712,12 @@ def load_user_session(year, event_name, session_name):
         return session
     except (DataNotFoundError, ValueError) as e:
         print(f"Error: {e}")
-        
+
         # Show available events
         from tif1.events import get_events
         events = get_events(year)
         print(f"Available events: {list(events)[:5]}...")  # Show first 5
-        
+
         return None
 
 # Usage
@@ -1758,15 +1758,15 @@ def main():
     if len(sys.argv) < 4:
         print("Usage: python script.py <year> <event> <session>")
         sys.exit(1)
-    
+
     year = int(sys.argv[1])
     event = sys.argv[2]
     session_name = sys.argv[3]
-    
+
     # Fuzzy matching makes CLI user-friendly
     session = tif1.get_session(year, event, session_name)
     session.load()
-    
+
     print(f"Loaded: {session.event} - {session.session_name}")
     print(f"Laps: {len(session.laps)}")
 
@@ -1844,7 +1844,7 @@ from tif1.events import get_event_by_name
 def validate_event_name(year: int, user_input: str) -> tuple[str, bool]:
     """
     Validate user input against official event names.
-    
+
     Returns:
         Tuple of (resolved_name, is_exact) where:
         - resolved_name: Official event name
@@ -1986,12 +1986,12 @@ def validate_config_file(config_path: str) -> list[str]:
     """
     with open(config_path) as f:
         config = json.load(f)
-    
+
     errors = []
     for item in config.get('events', []):
         year = item['year']
         event_name = item['event']
-        
+
         try:
             # Require exact names in config
             get_event_by_name(year, event_name, exact_match=True)
@@ -2005,7 +2005,7 @@ def validate_config_file(config_path: str) -> list[str]:
                 )
             except ValueError:
                 errors.append(f"Event '{event_name}' not found in {year}")
-    
+
     return errors
 
 # Example config.json:
@@ -2124,12 +2124,12 @@ except ValueError:
 def load_race_data(year: int, event_name: str):
     """
     Load race data for a specific event.
-    
+
     Args:
         year: Championship year
         event_name: Official event name (exact match required)
                    Use get_events(year) to see valid names
-    
+
     Raises:
         ValueError: If event_name is not an exact match
     """
@@ -2251,7 +2251,7 @@ import time
 def benchmark_session_lookup(query, iterations=10000):
     from tif1.events import Event
     event = Event(2024, "Monaco Grand Prix")
-    
+
     start = time.perf_counter()
     for _ in range(iterations):
         try:
@@ -2467,7 +2467,7 @@ def benchmark_scaling(num_events):
         [f"Event {i}", f"Location {i}", f"Country {i}"]
         for i in range(num_events)
     ]
-    
+
     start = time.perf_counter()
     for _ in range(100):
         fuzzy_matcher("Location 5", reference)
@@ -2496,7 +2496,7 @@ def benchmark_features(num_features):
         [f"Feature {j} for Event {i}" for j in range(num_features)]
         for i in range(24)
     ]
-    
+
     start = time.perf_counter()
     for _ in range(100):
         fuzzy_matcher("Feature 2 for Event 5", reference)
@@ -3085,7 +3085,7 @@ import tif1
 def analyze_circuit_across_years(circuit_name: str, years: list[int]):
     """Analyze a circuit across multiple years using fuzzy matching."""
     results = {}
-    
+
     for year in years:
         try:
             session = tif1.get_session(year, circuit_name, "Race")
@@ -3098,7 +3098,7 @@ def analyze_circuit_across_years(circuit_name: str, years: list[int]):
         except Exception as e:
             print(f"Error loading {year}: {e}")
             results[year] = None
-    
+
     return results
 
 # Usage - circuit name is fuzzy matched for each year
@@ -3119,35 +3119,35 @@ def interactive_session_loader():
     """Interactive CLI with fuzzy matching for user convenience."""
     # Get year
     year = int(input("Enter year (e.g., 2024): "))
-    
+
     # Show available events
     events = list(get_events(year))
     print(f"\nAvailable events: {', '.join(events[:5])}...")
-    
+
     # Get event (fuzzy matching handles variations)
     event_input = input("\nEnter event name (e.g., Monaco, Spa, Silverstone): ")
-    
+
     try:
         # Fuzzy match event
         session_obj = tif1.get_session(year, event_input, "Race")
         print(f"✓ Matched to: {session_obj.event}")
-        
+
         # Show available sessions
         sessions = get_sessions(year, session_obj.event)
         print(f"\nAvailable sessions: {', '.join(sessions)}")
-        
+
         # Get session
         session_input = input("\nEnter session (e.g., Q, FP1, Race): ")
-        
+
         # Load session
         session = tif1.get_session(year, event_input, session_input)
         print(f"✓ Matched to: {session.session_name}")
-        
+
         session.load()
         print(f"\n✓ Loaded {len(session.laps)} laps")
-        
+
         return session
-        
+
     except Exception as e:
         print(f"\n✗ Error: {e}")
         return None
@@ -3166,16 +3166,16 @@ from tif1.exceptions import DataNotFoundError
 def batch_load_sessions(year: int, event_session_pairs: list[tuple[str, str]]):
     """
     Load multiple sessions with fuzzy matching and error handling.
-    
+
     Args:
         year: Championship year
         event_session_pairs: List of (event_name, session_name) tuples
-    
+
     Returns:
         Dictionary mapping (event, session) to Session object or error
     """
     results = {}
-    
+
     for event_name, session_name in event_session_pairs:
         try:
             session = tif1.get_session(year, event_name, session_name)
@@ -3185,7 +3185,7 @@ def batch_load_sessions(year: int, event_session_pairs: list[tuple[str, str]]):
         except (DataNotFoundError, ValueError) as e:
             results[(event_name, session_name)] = e
             print(f"✗ Failed: {event_name} - {session_name}: {e}")
-    
+
     return results
 
 # Usage - fuzzy matching handles variations
@@ -3214,19 +3214,19 @@ def load_from_config(config_path: str):
     """Load sessions from configuration file with fuzzy matching."""
     with open(config_path) as f:
         config = json.load(f)
-    
+
     sessions = []
     for item in config['sessions']:
         year = item['year']
         event = item['event']  # Can use fuzzy names
         session_name = item['session']  # Can use abbreviations
-        
+
         session = tif1.get_session(year, event, session_name)
         session.load()
         sessions.append(session)
-        
+
         print(f"Loaded: {session.event} - {session.session_name}")
-    
+
     return sessions
 
 # config.json (uses fuzzy names for convenience):
@@ -3292,7 +3292,7 @@ def get_session_api(year: int, event: str, session: str):
         # Use fuzzy matching for better UX
         session_obj = tif1.get_session(year, event, session)
         session_obj.load()
-        
+
         return jsonify({
             'success': True,
             'resolved_event': session_obj.event,
@@ -3369,7 +3369,7 @@ try:
     session = tif1.get_session(2024, "InvalidEventName", "Race")
 except (DataNotFoundError, ValueError) as e:
     print(f"Error: {e}")
-    
+
     # Show available events for the year
     from tif1.events import get_events
     events = get_events(2024)
@@ -3393,7 +3393,7 @@ try:
     session = tif1.get_session(2024, "Azerbaijan", "Practice 3")
 except ValueError as e:
     print(f"Error: {e}")
-    
+
     # Show available sessions for this event
     from tif1.events import get_sessions
     sessions = get_sessions(2024, "Azerbaijan")
@@ -3573,7 +3573,7 @@ def load_session_with_retry(year: int, event: str, session: str, max_attempts: i
             return s
         except ValueError as e:
             print(f"Attempt {attempt + 1} failed: {e}")
-            
+
             if attempt < max_attempts - 1:
                 # Prompt for corrected input
                 event = input("Enter event name: ")
@@ -3600,7 +3600,7 @@ logging.basicConfig(
 def load_session_with_logging(year: int, event: str, session: str):
     """Load session and log fuzzy matches for monitoring."""
     from tif1.events import get_event_by_name
-    
+
     # Check if event was fuzzy matched
     try:
         exact_event = get_event_by_name(year, event, exact_match=True)
@@ -3609,14 +3609,14 @@ def load_session_with_logging(year: int, event: str, session: str):
         fuzzy_event = get_event_by_name(year, event, exact_match=False)
         event_match_type = "fuzzy"
         logging.info(f"Fuzzy event match: '{event}' → '{fuzzy_event.EventName}'")
-    
+
     # Load session
     s = tif1.get_session(year, event, session)
-    
+
     # Log if session name was abbreviated
     if session != s.session_name:
         logging.info(f"Session abbreviation: '{session}' → '{s.session_name}'")
-    
+
     s.load()
     return s
 ```
@@ -3631,7 +3631,7 @@ def load_sessions_with_fallback(year: int, events: list[str], session: str):
     """Load sessions with fallback to alternative events."""
     loaded_sessions = []
     failed_events = []
-    
+
     for event in events:
         try:
             s = tif1.get_session(year, event, session)
@@ -3641,12 +3641,12 @@ def load_sessions_with_fallback(year: int, events: list[str], session: str):
         except (DataNotFoundError, ValueError) as e:
             failed_events.append((event, str(e)))
             print(f"✗ Failed: {event}")
-    
+
     if failed_events:
         print(f"\nFailed to load {len(failed_events)} events:")
         for event, error in failed_events:
             print(f"  - {event}: {error}")
-    
+
     return loaded_sessions, failed_events
 
 # Usage
@@ -3681,21 +3681,21 @@ RapidFuzz implements the Wagner-Fischer algorithm for computing Levenshtein dist
 def levenshtein_distance(s1: str, s2: str) -> int:
     """
     Compute Levenshtein distance using dynamic programming.
-    
+
     Time complexity: O(m×n) where m, n are string lengths
     Space complexity: O(m×n) for full matrix, O(min(m,n)) optimized
     """
     m, n = len(s1), len(s2)
-    
+
     # Create distance matrix
     dp = [[0] * (n + 1) for _ in range(m + 1)]
-    
+
     # Initialize base cases
     for i in range(m + 1):
         dp[i][0] = i  # Deletions
     for j in range(n + 1):
         dp[0][j] = j  # Insertions
-    
+
     # Fill matrix
     for i in range(1, m + 1):
         for j in range(1, n + 1):
@@ -3707,7 +3707,7 @@ def levenshtein_distance(s1: str, s2: str) -> int:
                     dp[i][j-1],      # Insertion
                     dp[i-1][j-1]     # Substitution
                 )
-    
+
     return dp[m][n]
 
 # Example
@@ -3884,12 +3884,12 @@ def fuzzy_matcher_custom(
 ) -> tuple[int, bool]:
     """Fuzzy matcher with custom similarity function."""
     # ... normalization code ...
-    
+
     # Use custom similarity function
     for i in candidate_indices:
         feature_strings = reference_arr[i]
         ratios[i] = [similarity_func(val, query) for val in feature_strings]
-    
+
     # ... rest of algorithm ...
 
 # Usage with different similarity metrics
@@ -3919,7 +3919,7 @@ def fuzzy_matcher_custom_norm(
     for i in range(len(reference)):
         for j in range(len(reference[i])):
             reference[i][j] = normalize_func(reference[i][j])
-    
+
     # ... rest of algorithm ...
 
 # Usage with custom normalization

@@ -184,7 +184,7 @@ If the command is not found, troubleshoot using these steps:
    ```bash
    # Verify Python version (3.10+ required)
    python --version
-   
+
    # Check if tif1 is installed
    pip show tif1
    ```
@@ -193,7 +193,7 @@ If the command is not found, troubleshoot using these steps:
    ```bash
    # Linux/macOS - check if Python scripts directory is in PATH
    echo $PATH | grep -o "[^:]*python[^:]*"
-   
+
    # Windows - check PATH
    echo %PATH%
    ```
@@ -202,7 +202,7 @@ If the command is not found, troubleshoot using these steps:
    ```bash
    # Linux/macOS
    which tif1
-   
+
    # Windows
    where tif1
    ```
@@ -865,7 +865,7 @@ The CLI uses Rich library for beautiful, colorful terminal output with professio
 **Table Example:**
 
 ```
-         Monaco Grand Prix 2025 - Qualifying         
+         Monaco Grand Prix 2025 - Qualifying
 ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
 ┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
@@ -971,7 +971,7 @@ Error: Network timeout after 30 seconds
 ```
 
 **Cause**: Slow network connection or CDN unavailable
-**Solution**: 
+**Solution**:
 - Check internet connection
 - Increase timeout: `TIF1_TIMEOUT=60 tif1 fastest ...`
 - Try again later
@@ -1417,7 +1417,7 @@ tif1 sessions 2025 "Monaco Grand Prix"
 
 **Sample Output:**
 ```
-         Monaco Grand Prix 2025         
+         Monaco Grand Prix 2025
 ┏━━━┳━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session           ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━┩
@@ -1436,7 +1436,7 @@ tif1 sessions 2025 "São Paulo Grand Prix"
 
 **Sample Output (Sprint Weekend):**
 ```
-      São Paulo Grand Prix 2025      
+      São Paulo Grand Prix 2025
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session             ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━━┩
@@ -1524,7 +1524,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race"
 ```
 [Loading session...]
 
-    Monaco Grand Prix 2025 - Race    
+    Monaco Grand Prix 2025 - Race
 ┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Driver ┃ Team                   ┃
 ┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -1648,7 +1648,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 ```
 [Loading session...]
 
-  Fastest Laps - Monaco Grand Prix 2025 - Qualifying  
+  Fastest Laps - Monaco Grand Prix 2025 - Qualifying
 ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
 ┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
@@ -2065,10 +2065,10 @@ Where:
    ```bash
    # Before upgrade
    tif1 version  # Shows 0.1.0
-   
+
    # Upgrade
    pip install --upgrade tif1
-   
+
    # After upgrade
    tif1 version  # Shows 0.2.0
    ```
@@ -2205,7 +2205,7 @@ Laps: 456
    # If normal command fails
    tif1 drivers 2025 "Monaco Grand Prix" "Race"
    # Error: Failed to load session
-   
+
    # Use debug to see why
    tif1 debug 2025 "Monaco Grand Prix" "Race"
    # Shows detailed error: Network timeout, invalid JSON, etc.
@@ -2222,11 +2222,11 @@ Laps: 456
    ```bash
    # Clear cache
    tif1 cache-clear -y
-   
+
    # First load (cache miss)
    tif1 debug 2025 "Monaco Grand Prix" "Race"
    # Shows: Cache miss - fetching from CDN
-   
+
    # Second load (cache hit)
    tif1 debug 2025 "Monaco Grand Prix" "Race"
    # Shows: Cache hit! Loading from local cache
@@ -2681,7 +2681,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # ✅ Correct
    tif1 sessions 2025 "Monaco Grand Prix"
-   
+
    # ❌ Wrong
    tif1 sessions 2025 Monaco Grand Prix
    ```
@@ -2718,7 +2718,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # First run is slow (network fetch)
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
-   
+
    # Second run is fast (cached)
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
    ```
@@ -2727,7 +2727,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # Check periodically
    tif1 cache-info
-   
+
    # Clear if >500 MB
    tif1 cache-clear -y
    ```
@@ -2736,7 +2736,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # Faster - only processes one driver
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
-   
+
    # Slower - processes all drivers
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
    ```
@@ -2745,7 +2745,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # Use debug only when troubleshooting
    tif1 debug 2025 "Monaco Grand Prix" "Race"  # Slower
-   
+
    # Normal commands are faster
    tif1 drivers 2025 "Monaco Grand Prix" "Race"  # Faster
    ```
@@ -2765,7 +2765,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    YEAR=2025
    EVENT="Monaco Grand Prix"
    SESSION="Qualifying"
-   
+
    tif1 fastest $YEAR "$EVENT" "$SESSION"
    ```
 
@@ -2773,7 +2773,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # Suppress all output
    tif1 cache-clear -y > /dev/null 2>&1
-   
+
    # Suppress only errors
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" 2>/dev/null
    ```
@@ -2794,7 +2794,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    ```bash
    # If command fails
    tif1 drivers 2025 "Monaco Grand Prix" "Race"
-   
+
    # Use debug to see why
    tif1 debug 2025 "Monaco Grand Prix" "Race"
    ```
@@ -3151,16 +3151,16 @@ jobs:
     steps:
       - name: Install tif1
         run: pip install tif1
-      
+
       - name: Get latest race data
         run: |
           YEAR=$(date +%Y)
           tif1 events $YEAR > events.txt
-          
+
       - name: Analyze qualifying
         run: |
           tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt
-          
+
       - name: Upload results
         uses: actions/upload-artifact@v3
         with:
@@ -3411,7 +3411,7 @@ echo "No regressions found"
    ```bash
    # ✅ Correct
    tif1 sessions 2025 "Monaco Grand Prix"
-   
+
    # ❌ Wrong
    tif1 sessions 2025 Monaco Grand Prix
    ```
@@ -3421,7 +3421,7 @@ echo "No regressions found"
    # Get exact names first
    tif1 events 2025
    tif1 sessions 2025 "Monaco Grand Prix"
-   
+
    # Then use them in subsequent commands
    tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
    ```
@@ -3452,7 +3452,7 @@ echo "No regressions found"
    ```bash
    # First run is slow (network fetch)
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
-   
+
    # Second run is fast (cached)
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
    ```
@@ -3461,7 +3461,7 @@ echo "No regressions found"
    ```bash
    # Check periodically
    tif1 cache-info
-   
+
    # Clear if >500 MB
    tif1 cache-clear -y
    ```
@@ -3470,7 +3470,7 @@ echo "No regressions found"
    ```bash
    # Faster - only processes one driver
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
-   
+
    # Slower - processes all drivers
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
    ```
@@ -3479,7 +3479,7 @@ echo "No regressions found"
    ```bash
    # Use debug only when troubleshooting
    tif1 debug 2025 "Monaco Grand Prix" "Race"  # Slower
-   
+
    # Normal commands are faster
    tif1 drivers 2025 "Monaco Grand Prix" "Race"  # Faster
    ```
@@ -3499,7 +3499,7 @@ echo "No regressions found"
    YEAR=2025
    EVENT="Monaco Grand Prix"
    SESSION="Qualifying"
-   
+
    tif1 fastest $YEAR "$EVENT" "$SESSION"
    ```
 
@@ -3507,7 +3507,7 @@ echo "No regressions found"
    ```bash
    # Suppress all output
    tif1 cache-clear -y > /dev/null 2>&1
-   
+
    # Suppress only errors
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" 2>/dev/null
    ```
@@ -3528,11 +3528,11 @@ echo "No regressions found"
        local year=$1
        local event=$2
        local session=$3
-       
+
        echo "Analyzing: $event - $session"
        tif1 fastest $year "$event" "$session"
    }
-   
+
    analyze_session 2025 "Monaco Grand Prix" "Qualifying"
    ```
 

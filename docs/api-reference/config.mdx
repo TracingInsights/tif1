@@ -723,11 +723,11 @@ try:
     # Temporarily adjust for specific workload
     config.set("enable_cache", False)  # Fresh data
     config.set("max_workers", 50)  # High concurrency
-    
+
     # Perform operations with adjusted settings
     session = tif1.get_session(2024, 1, "R")
     session.load()
-    
+
 finally:
     # Restore original settings
     config.set("enable_cache", original_cache)
@@ -2584,12 +2584,12 @@ from pathlib import Path
 def validate_config(config_path: Path):
     """Validate a tif1 configuration file."""
     print(f"Validating {config_path}...")
-    
+
     # Check file exists
     if not config_path.exists():
         print(f"❌ File not found: {config_path}")
         return False
-    
+
     # Check valid JSON
     try:
         with open(config_path) as f:
@@ -2597,26 +2597,26 @@ def validate_config(config_path: Path):
     except json.JSONDecodeError as e:
         print(f"❌ Invalid JSON: {e}")
         return False
-    
+
     # Check is object
     if not isinstance(config_data, dict):
         print("❌ Config must be a JSON object")
         return False
-    
+
     # Load config and check values
     config = tif1.get_config()
     issues = []
-    
+
     for key, value in config_data.items():
         # Try to get value (triggers validation)
         result = config.get(key)
         if result is None and value is not None:
             issues.append(f"⚠️  {key}={value} may be invalid")
-    
+
     if issues:
         print("\n".join(issues))
         return False
-    
+
     print("✅ Configuration is valid")
     return True
 
@@ -2636,10 +2636,10 @@ from pathlib import Path
 def migrate_config():
     """Migrate configuration to latest format."""
     config = tif1.get_config()
-    
+
     # Add any new settings with defaults
     # (This is just an example - adjust for actual migrations)
-    
+
     # Save updated config
     config.save()
     print("✅ Configuration migrated successfully")
@@ -2659,21 +2659,21 @@ def generate_env_vars(config_path: Path):
     """Generate environment variables from config file."""
     with open(config_path) as f:
         config = json.load(f)
-    
+
     print("# tif1 Environment Variables")
     print("# Generated from", config_path)
     print()
-    
+
     for key, value in config.items():
         env_var = f"TIF1_{key.upper()}"
-        
+
         if isinstance(value, bool):
             value_str = "true" if value else "false"
         elif isinstance(value, list):
             value_str = ",".join(str(v) for v in value)
         else:
             value_str = str(value)
-        
+
         print(f'export {env_var}="{value_str}"')
 
 # Generate from default config

@@ -1227,16 +1227,16 @@ result = laps.with_columns([
       .then(pl.col("LapTime") * 0.98)
       .otherwise(pl.col("LapTime"))
       .alias("adjusted_time"),
-    
+
     # String operations
     pl.col("Driver").str.to_lowercase().alias("driver_lower"),
-    
+
     # Mathematical operations
     (pl.col("Speed") * 1.60934).alias("speed_kph"),
-    
+
     # Aggregations over windows
     pl.col("LapTime").mean().over("Driver").alias("driver_avg"),
-    
+
     # Rank within groups
     pl.col("LapTime").rank().over("Driver").alias("lap_rank")
 ])
@@ -1481,7 +1481,7 @@ def process_race_data(race_file: str, output_file: str):
 def aggregate_season(year: int):
     """Aggregate data across all races in a season."""
     race_files = [f"data/{year}/race_{i:02d}.parquet" for i in range(1, 25)]
-    
+
     # Process each file lazily
     lazy_frames = [
         pl.scan_parquet(f)
@@ -1493,7 +1493,7 @@ def aggregate_season(year: int):
         ])
         for f in race_files
     ]
-    
+
     # Concatenate and aggregate (still lazy)
     season_stats = (
         pl.concat(lazy_frames)
@@ -1504,7 +1504,7 @@ def aggregate_season(year: int):
         ])
         .collect()
     )
-    
+
     return season_stats
 ```
 
@@ -1552,25 +1552,25 @@ graph TD
     A[Start] --> B{Dataset size?}
     B -->|< 100k rows| C{Need ecosystem compatibility?}
     B -->|> 100k rows| D{Memory constrained?}
-    
+
     C -->|Yes| E[Use Pandas]
     C -->|No| F{Performance critical?}
-    
+
     F -->|Yes| G[Use Polars]
     F -->|No| E
-    
+
     D -->|Yes| G
     D -->|No| H{Complex aggregations?}
-    
+
     H -->|Yes| G
     H -->|No| I{Building pipeline?}
-    
+
     I -->|Yes| G
     I -->|No| J{Familiar with pandas?}
-    
+
     J -->|Yes| E
     J -->|No| G
-    
+
     style E fill:#51cf66
     style G fill:#339af0
 ```
@@ -1701,7 +1701,7 @@ import pandas as pd
 results = []
 for event in tif1.get_events(2024):
     session = tif1.get_session(2024, event, "Race", backend="pandas")
-    
+
     # Get fastest lap per driver
     fastest = (
         session.laps
@@ -1725,7 +1725,7 @@ import polars as pl
 results = []
 for event in tif1.get_events(2024):
     session = tif1.get_session(2024, event, "Race", backend="polars")
-    
+
     # Get fastest lap per driver
     fastest = (
         session.laps
@@ -1755,14 +1755,14 @@ import polars as pl
 
 def analyze_telemetry_efficiently(year: int, event: str, driver: str):
     """Analyze telemetry without loading everything into memory."""
-    
+
     # Use polars for memory efficiency
     session = tif1.get_session(year, event, "Race", backend="polars")
     driver_obj = session.get_driver(driver)
-    
+
     # Get telemetry (polars uses ~50% less memory)
     telemetry = driver_obj.telemetry
-    
+
     # Process in chunks using lazy evaluation
     corner_analysis = (
         telemetry
@@ -1787,7 +1787,7 @@ def analyze_telemetry_efficiently(year: int, event: str, driver: str):
         ])
         .collect()  # Execute optimized query
     )
-    
+
     return corner_analysis
 
 # Memory usage: ~220MB with polars vs ~450MB with pandas
@@ -1805,15 +1805,15 @@ from pathlib import Path
 
 def process_season_incrementally(year: int, output_dir: Path):
     """Process each race and save results incrementally."""
-    
+
     output_dir.mkdir(exist_ok=True)
-    
+
     for event in tif1.get_events(year):
         print(f"Processing {event}...")
-        
+
         # Load session with polars
         session = tif1.get_session(year, event, "Race", backend="polars")
-        
+
         # Process and compute statistics
         stats = (
             session.laps
@@ -1826,13 +1826,13 @@ def process_season_incrementally(year: int, output_dir: Path):
             ])
             .with_columns(pl.lit(event).alias("event"))
         )
-        
+
         # Save to parquet (efficient format)
         output_file = output_dir / f"{event.replace(' ', '_')}.parquet"
         stats.write_parquet(output_file)
-        
+
         # Memory is freed after each iteration
-    
+
     # Later: combine all results lazily
     all_stats = pl.scan_parquet(output_dir / "*.parquet").collect()
     return all_stats
@@ -1916,7 +1916,7 @@ def get_driver_statistics(year: int, event: str, driver: str):
     """Get driver statistics with caching."""
     session = tif1.get_session(year, event, "Race", backend="polars")
     driver_obj = session.get_driver(driver)
-    
+
     stats = (
         driver_obj.laps
         .select([
@@ -1926,7 +1926,7 @@ def get_driver_statistics(year: int, event: str, driver: str):
             pl.col("LapTime").count().alias("lap_count")
         ])
     )
-    
+
     return stats
 
 # First call: computes and caches

@@ -47,17 +47,17 @@ from tif1.types import (
     SessionType,
     CompoundType,
     TrackStatusType,
-    
+
     # TypedDict schemas
     LapDataDict,
     TelemetryDataDict,
     WeatherDataDict,
     RaceControlDataDict,
     DriverInfoDict,
-    
+
     # DataFrame union type
     DataFrame,
-    
+
     # Protocol types
     DataFrameProtocol,
 )
@@ -174,12 +174,12 @@ def load_race_data(
 ) -> tif1.Session:
     """
     Load race data with specified backend.
-    
+
     Args:
         year: Season year (e.g., 2021)
         gp: Grand Prix name (e.g., "Monaco Grand Prix")
         backend: DataFrame backend to use
-        
+
     Returns:
         Session object with specified backend
     """
@@ -238,14 +238,14 @@ def optimize_for_backend(
                 if df[col].nunique() / len(df) < 0.5:
                     df[col] = df[col].astype('category')
         return df
-    
+
     elif backend == "polars":
         # Polars-specific optimizations
         if isinstance(df, pl.DataFrame):
             # Use lazy evaluation for complex operations
             return df.lazy().collect()
         return df
-    
+
     return df
 
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="pandas")
@@ -265,7 +265,7 @@ import tif1
 def validate_backend(backend: str) -> BackendType:
     """
     Validate and return a backend type.
-    
+
     Raises:
         ValueError: If backend is not valid
     """
@@ -389,17 +389,17 @@ def load_weekend_sessions(
 ) -> dict[SessionType, tif1.Session]:
     """
     Load multiple sessions for a weekend.
-    
+
     Args:
         year: Season year
         gp: Grand Prix name
         session_types: List of session types to load
-        
+
     Returns:
         Dictionary mapping session types to Session objects
     """
     sessions: dict[SessionType, tif1.Session] = {}
-    
+
     for session_type in session_types:
         try:
             session = tif1.get_session(year, gp, session_type)
@@ -407,7 +407,7 @@ def load_weekend_sessions(
             print(f"✓ Loaded {session_type}: {len(session.laps)} laps")
         except tif1.DataNotFoundError:
             print(f"✗ {session_type} not available")
-    
+
     return sessions
 
 # Load standard race weekend
@@ -439,16 +439,16 @@ from typing import Optional
 def get_qualifying_session(year: int, gp: str) -> Optional[tif1.Session]:
     """
     Get the qualifying session, handling all weekend formats.
-    
+
     Tries multiple qualifying session types in order of preference:
     1. Standard Qualifying (determines race grid)
     2. Sprint Qualifying (determines sprint grid, 2023+ format)
     3. Sprint Shootout (alternative name for sprint qualifying)
-    
+
     Args:
         year: Season year
         gp: Grand Prix name
-        
+
     Returns:
         Session object if found, None otherwise
     """
@@ -458,7 +458,7 @@ def get_qualifying_session(year: int, gp: str) -> Optional[tif1.Session]:
         "Sprint Qualifying",
         "Sprint Shootout"
     ]
-    
+
     for session_type in quali_types:
         try:
             session = tif1.get_session(year, gp, session_type)
@@ -466,7 +466,7 @@ def get_qualifying_session(year: int, gp: str) -> Optional[tif1.Session]:
             return session
         except tif1.DataNotFoundError:
             continue
-    
+
     print(f"No qualifying session found for {year} {gp}")
     return None
 
@@ -490,11 +490,11 @@ WeekendFormat = Literal["standard", "sprint_2021", "sprint_2023", "unknown"]
 def detect_weekend_format(year: int, gp: str) -> WeekendFormat:
     """
     Detect which weekend format is being used.
-    
+
     Args:
         year: Season year
         gp: Grand Prix name
-        
+
     Returns:
         Weekend format type
     """
@@ -502,13 +502,13 @@ def detect_weekend_format(year: int, gp: str) -> WeekendFormat:
     has_sprint = False
     has_sprint_quali = False
     has_fp3 = False
-    
+
     try:
         tif1.get_session(year, gp, "Sprint")
         has_sprint = True
     except tif1.DataNotFoundError:
         pass
-    
+
     try:
         tif1.get_session(year, gp, "Sprint Qualifying")
         has_sprint_quali = True
@@ -518,13 +518,13 @@ def detect_weekend_format(year: int, gp: str) -> WeekendFormat:
             has_sprint_quali = True
         except tif1.DataNotFoundError:
             pass
-    
+
     try:
         tif1.get_session(year, gp, "Practice 3")
         has_fp3 = True
     except tif1.DataNotFoundError:
         pass
-    
+
     # Determine format
     if has_sprint and has_sprint_quali:
         return "sprint_2023"
@@ -556,10 +556,10 @@ from tif1.types import SessionType
 def is_valid_session(name: str) -> bool:
     """
     Check if a session name is valid.
-    
+
     Args:
         name: Session name to validate
-        
+
     Returns:
         True if valid, False otherwise
     """
@@ -569,13 +569,13 @@ def is_valid_session(name: str) -> bool:
 def validate_session(name: str) -> SessionType:
     """
     Validate and return a session type.
-    
+
     Args:
         name: Session name to validate
-        
+
     Returns:
         Validated SessionType
-        
+
     Raises:
         ValueError: If session name is invalid
     """
@@ -615,23 +615,23 @@ def compare_driver_pace(
 ) -> pd.DataFrame:
     """
     Compare a driver's pace across multiple sessions.
-    
+
     Args:
         year: Season year
         gp: Grand Prix name
         driver: Driver code (e.g., "VER")
         sessions: List of sessions to compare
-        
+
     Returns:
         DataFrame with fastest lap times per session
     """
     results = []
-    
+
     for session_type in sessions:
         try:
             session = tif1.get_session(year, gp, session_type)
             driver_laps = session.laps[session.laps["Driver"] == driver]
-            
+
             if len(driver_laps) > 0:
                 fastest = driver_laps["LapTime"].min()
                 results.append({
@@ -641,7 +641,7 @@ def compare_driver_pace(
                 })
         except tif1.DataNotFoundError:
             continue
-    
+
     return pd.DataFrame(results)
 
 # Compare Verstappen's pace across the weekend
@@ -755,23 +755,23 @@ def analyze_tire_strategy(
 ) -> pd.DataFrame:
     """
     Analyze tire strategy for a driver.
-    
+
     Args:
         session: Race session
         driver: Driver code
-        
+
     Returns:
         DataFrame with stint information
     """
     driver_laps = session.laps[session.laps["Driver"] == driver].copy()
-    
+
     # Group by stint
     stints = []
     for stint_num in driver_laps["Stint"].unique():
         stint_laps = driver_laps[driver_laps["Stint"] == stint_num]
-        
+
         compound: CompoundType = stint_laps["Compound"].iloc[0]  # type: ignore
-        
+
         stints.append({
             "Stint": int(stint_num),
             "Compound": compound,
@@ -781,7 +781,7 @@ def analyze_tire_strategy(
             "AvgLapTime": stint_laps["LapTime"].mean(),
             "FastestLap": stint_laps["LapTime"].min()
         })
-    
+
     return pd.DataFrame(stints)
 
 # Usage
@@ -805,26 +805,26 @@ def compare_compound_performance(
 ) -> pd.DataFrame:
     """
     Compare performance across tire compounds.
-    
+
     Args:
         session: Session object
         compounds: List of compounds to compare
-        
+
     Returns:
         DataFrame with compound statistics
     """
     results = []
-    
+
     for compound in compounds:
         compound_laps = session.laps[session.laps["Compound"] == compound]
-        
+
         if len(compound_laps) > 0:
             # Filter out outliers (pit laps, slow laps)
             clean_laps = compound_laps[
                 (compound_laps["LapTime"].notna()) &
                 (~compound_laps.get("Deleted", False))
             ]
-            
+
             if len(clean_laps) > 0:
                 results.append({
                     "Compound": compound,
@@ -834,7 +834,7 @@ def compare_compound_performance(
                     "StdDev": clean_laps["LapTime"].std(),
                     "UniqueDrivers": compound_laps["Driver"].nunique()
                 })
-    
+
     return pd.DataFrame(results).sort_values("AvgLapTime")
 
 # Usage
@@ -860,12 +860,12 @@ def analyze_tire_degradation(
 ) -> pd.DataFrame:
     """
     Analyze tire degradation for a specific compound.
-    
+
     Args:
         session: Session object
         driver: Driver code
         compound: Tire compound to analyze
-        
+
     Returns:
         DataFrame showing lap time vs tire age
     """
@@ -873,18 +873,18 @@ def analyze_tire_degradation(
         (session.laps["Driver"] == driver) &
         (session.laps["Compound"] == compound)
     ].copy()
-    
+
     # Calculate degradation
     if len(driver_laps) > 0:
         driver_laps["TireAge"] = driver_laps["TyreLife"]
         driver_laps["LapTimeSeconds"] = driver_laps["LapTime"].dt.total_seconds()
-        
+
         # Calculate delta to first lap
         first_lap_time = driver_laps["LapTimeSeconds"].iloc[0]
         driver_laps["DeltaToFirst"] = driver_laps["LapTimeSeconds"] - first_lap_time
-        
+
         return driver_laps[["LapNumber", "TireAge", "LapTimeSeconds", "DeltaToFirst"]]
-    
+
     return pd.DataFrame()
 
 # Usage
@@ -905,20 +905,20 @@ import tif1
 def get_compound_statistics(session: tif1.Session) -> dict[CompoundType, dict]:
     """
     Get comprehensive compound usage statistics.
-    
+
     Args:
         session: Session object
-        
+
     Returns:
         Dictionary with statistics per compound
     """
     stats: dict[CompoundType, dict] = {}
-    
+
     all_compounds = get_args(CompoundType)
-    
+
     for compound in all_compounds:
         compound_laps = session.laps[session.laps["Compound"] == compound]
-        
+
         if len(compound_laps) > 0:
             stats[compound] = {
                 "total_laps": len(compound_laps),
@@ -929,7 +929,7 @@ def get_compound_statistics(session: tif1.Session) -> dict[CompoundType, dict]:
                 "fastest_lap": compound_laps["LapTime"].min(),
                 "slowest_lap": compound_laps["LapTime"].max()
             }
-    
+
     return stats
 
 # Usage
@@ -1034,37 +1034,37 @@ import pandas as pd
 def get_representative_laps(session: tif1.Session) -> pd.DataFrame:
     """
     Filter laps to only include representative pace.
-    
+
     Excludes:
     - Yellow flags, safety cars, VSC
     - Deleted laps
     - In/out laps
     - Laps with missing data
-    
+
     Args:
         session: Session object
-        
+
     Returns:
         DataFrame with only clean, representative laps
     """
     laps = session.laps.copy()
-    
+
     # Green flag only
     green_flag: TrackStatusType = "1"
     laps = laps[laps["TrackStatus"] == green_flag]
-    
+
     # Not deleted
     laps = laps[~laps.get("Deleted", False)]
-    
+
     # Has lap time
     laps = laps[laps["LapTime"].notna()]
-    
+
     # Not pit in/out laps (if PitInTime/PitOutTime exist)
     if "PitInTime" in laps.columns:
         laps = laps[laps["PitInTime"].isna()]
     if "PitOutTime" in laps.columns:
         laps = laps[laps["PitOutTime"].isna()]
-    
+
     return laps
 
 # Usage
@@ -1085,24 +1085,24 @@ import pandas as pd
 def analyze_track_status_timeline(session: tif1.Session) -> pd.DataFrame:
     """
     Create timeline of track status changes.
-    
+
     Args:
         session: Session object
-        
+
     Returns:
         DataFrame with track status periods
     """
     laps = session.laps.sort_values("Time")
-    
+
     # Find status changes
     status_changes = []
     prev_status = None
     start_time = None
     start_lap = None
-    
+
     for _, lap in laps.iterrows():
         current_status = lap.get("TrackStatus")
-        
+
         if current_status != prev_status:
             # Status changed
             if prev_status is not None:
@@ -1114,11 +1114,11 @@ def analyze_track_status_timeline(session: tif1.Session) -> pd.DataFrame:
                     "StartLap": start_lap,
                     "EndLap": lap["LapNumber"]
                 })
-            
+
             prev_status = current_status
             start_time = lap["Time"]
             start_lap = lap["LapNumber"]
-    
+
     # Add final period
     if prev_status is not None:
         last_lap = laps.iloc[-1]
@@ -1130,7 +1130,7 @@ def analyze_track_status_timeline(session: tif1.Session) -> pd.DataFrame:
             "StartLap": start_lap,
             "EndLap": last_lap["LapNumber"]
         })
-    
+
     return pd.DataFrame(status_changes)
 
 # Usage
@@ -1151,30 +1151,30 @@ import pandas as pd
 def analyze_safety_car_impact(session: tif1.Session) -> dict:
     """
     Analyze safety car deployment and impact.
-    
+
     Args:
         session: Race session
-        
+
     Returns:
         Dictionary with SC statistics
     """
     laps = session.laps
-    
+
     # Count laps by status
     green_flag: TrackStatusType = "1"
     safety_car: TrackStatusType = "4"
     vsc: TrackStatusType = "6"
-    
+
     green_laps = len(laps[laps["TrackStatus"] == green_flag])
     sc_laps = len(laps[laps["TrackStatus"] == safety_car])
     vsc_laps = len(laps[laps["TrackStatus"] == vsc])
-    
+
     total_laps = len(laps)
-    
+
     # Calculate average lap times
     green_avg = laps[laps["TrackStatus"] == green_flag]["LapTime"].mean()
     sc_avg = laps[laps["TrackStatus"] == safety_car]["LapTime"].mean()
-    
+
     return {
         "total_laps": total_laps,
         "green_flag_laps": green_laps,
@@ -1221,7 +1221,7 @@ The `LapDataDict` TypedDict defines the complete structure of lap timing data in
 ```python
 class LapDataDict(TypedDict):
     """Type definition for lap data dictionary (matches DataFrame schema)."""
-    
+
     # ===== CORE IDENTITY (Required) =====
     # These fields are always present and never None
     Driver: str                      # 3-letter driver code (e.g., "VER", "HAM")
@@ -1299,7 +1299,7 @@ for _, lap in laps.head().iterrows():
     number: str = lap["DriverNumber"]              # Always present
     team: str = lap["Team"]                        # Always present
     time: datetime.timedelta = lap["Time"]         # Always present
-    
+
     print(f"{driver} ({number}) - {team} at {time}")
 ```
 
@@ -1320,14 +1320,14 @@ for _, lap in laps.head().iterrows():
     s1_time = lap.get("Sector1Time")  # timedelta | None
     s2_time = lap.get("Sector2Time")  # timedelta | None
     s3_time = lap.get("Sector3Time")  # timedelta | None
-    
+
     if all([lap_time, s1_time, s2_time, s3_time]):
         # Calculate sector percentages
         total_seconds = lap_time.total_seconds()
         s1_pct = (s1_time.total_seconds() / total_seconds) * 100
         s2_pct = (s2_time.total_seconds() / total_seconds) * 100
         s3_pct = (s3_time.total_seconds() / total_seconds) * 100
-        
+
         print(f"Sector split: S1={s1_pct:.1f}% S2={s2_pct:.1f}% S3={s3_pct:.1f}%")
 ```
 
@@ -1378,16 +1378,16 @@ laps = session.laps
 # Analyze tire strategy
 for driver in laps["Driver"].unique():
     driver_laps = laps[laps["Driver"] == driver]
-    
+
     # Group by stint
     for stint in driver_laps["Stint"].unique():
         stint_laps = driver_laps[driver_laps["Stint"] == stint]
-        
+
         compound: CompoundType = stint_laps["Compound"].iloc[0]  # type: ignore
         tire_life_start = stint_laps["TyreLife"].min()
         tire_life_end = stint_laps["TyreLife"].max()
         fresh = stint_laps["FreshTyre"].iloc[0]
-        
+
         print(f"{driver} Stint {stint}: {compound} "
               f"(Life: {tire_life_start}-{tire_life_end}, "
               f"Fresh: {fresh})")
@@ -1442,11 +1442,11 @@ if len(weather_laps) > 0:
     min_temp = weather_laps["AirTemp"].min()
     max_temp = weather_laps["AirTemp"].max()
     print(f"Temperature range: {min_temp:.1f}°C - {max_temp:.1f}°C")
-    
+
     # Rainfall laps
     rain_laps = weather_laps[weather_laps.get("Rainfall", False)]
     print(f"Laps with rain: {len(rain_laps)} / {len(weather_laps)}")
-    
+
     # Track temperature evolution
     weather_laps["LapNum"] = weather_laps["LapNumber"]
     track_temp_evolution = weather_laps.groupby("LapNum")["TrackTemp"].mean()
@@ -1467,31 +1467,31 @@ import datetime
 def analyze_lap_comprehensive(lap: pd.Series) -> dict:
     """
     Comprehensive analysis of a single lap using all available fields.
-    
+
     Args:
         lap: Lap data as pandas Series
-        
+
     Returns:
         Dictionary with analyzed lap data
     """
     analysis = {}
-    
+
     # Core identity
     analysis["driver"] = lap["Driver"]
     analysis["team"] = lap["Team"]
     analysis["number"] = lap["DriverNumber"]
-    
+
     # Timing
     lap_time = lap.get("LapTime")
     if lap_time:
         analysis["lap_time"] = lap_time
         analysis["lap_time_seconds"] = lap_time.total_seconds()
-        
+
         # Sector analysis
         s1 = lap.get("Sector1Time")
         s2 = lap.get("Sector2Time")
         s3 = lap.get("Sector3Time")
-        
+
         if all([s1, s2, s3]):
             total = lap_time.total_seconds()
             analysis["sector_split"] = {
@@ -1499,7 +1499,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
                 "S2": f"{(s2.total_seconds() / total) * 100:.1f}%",
                 "S3": f"{(s3.total_seconds() / total) * 100:.1f}%"
             }
-    
+
     # Speed
     speeds = {}
     for trap in ["SpeedI1", "SpeedI2", "SpeedFL", "SpeedST"]:
@@ -1508,7 +1508,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
             speeds[trap] = f"{speed:.1f} km/h"
     if speeds:
         analysis["speeds"] = speeds
-    
+
     # Tire
     compound = lap.get("Compound")
     if compound:
@@ -1517,7 +1517,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
             "life": lap.get("TyreLife"),
             "fresh": lap.get("FreshTyre", False)
         }
-    
+
     # Metadata
     analysis["metadata"] = {
         "lap_number": lap.get("LapNumber"),
@@ -1528,7 +1528,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
         "deleted": lap.get("Deleted", False),
         "accurate": lap.get("IsAccurate", True)
     }
-    
+
     # Weather
     weather = {}
     for field in ["AirTemp", "TrackTemp", "Humidity", "Pressure", "WindSpeed"]:
@@ -1539,7 +1539,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
         weather["rainfall"] = True
     if weather:
         analysis["weather"] = weather
-    
+
     return analysis
 
 # Usage
@@ -2147,27 +2147,27 @@ def analyze_tire_strategy(
 ) -> Dict[str, List[Tuple[CompoundType, int]]]:
     """
     Analyze tire strategy for multiple drivers.
-    
+
     Args:
         session: Session object containing lap data
         drivers: List of 3-letter driver codes to analyze
-        
+
     Returns:
         Dictionary mapping driver codes to list of (compound, lap_count) tuples.
         Example: {"VER": [("SOFT", 15), ("MEDIUM", 25)], ...}
     """
     results: Dict[str, List[Tuple[CompoundType, int]]] = {}
-    
+
     for driver in drivers:
         driver_laps = session.laps[session.laps["Driver"] == driver]
         strategy: List[Tuple[CompoundType, int]] = []
-        
+
         for compound in driver_laps["Compound"].unique():
             count = len(driver_laps[driver_laps["Compound"] == compound])
             strategy.append((compound, count))  # type: ignore
-        
+
         results[driver] = strategy
-    
+
     return results
 ```
 
@@ -2271,42 +2271,42 @@ def comprehensive_analysis(
 ) -> Dict[SessionType, Dict[str, Tuple[float, CompoundType]]]:
     """
     Comprehensive multi-session analysis.
-    
+
     Args:
         year: Season year
         gp: Grand Prix name
         sessions: List of sessions to analyze
         drivers: Optional list of drivers to filter (None = all drivers)
         backend: DataFrame backend to use
-        
+
     Returns:
         Nested dictionary: {session_type: {driver: (fastest_time, compound)}}
     """
     results: Dict[SessionType, Dict[str, Tuple[float, CompoundType]]] = {}
-    
+
     for session_type in sessions:
         try:
             session = tif1.get_session(year, gp, session_type, lib=backend)
             session_results: Dict[str, Tuple[float, CompoundType]] = {}
-            
+
             laps = session.laps
             if drivers:
                 laps = laps[laps["Driver"].isin(drivers)]
-            
+
             for driver in laps["Driver"].unique():
                 driver_laps = laps[laps["Driver"] == driver]
                 fastest_lap = driver_laps.loc[driver_laps["LapTime"].idxmin()]
-                
+
                 lap_time: float = fastest_lap["LapTime"].total_seconds()
                 compound: CompoundType = fastest_lap["Compound"]  # type: ignore
-                
+
                 session_results[driver] = (lap_time, compound)
-            
+
             results[session_type] = session_results
-            
+
         except tif1.DataNotFoundError:
             continue
-    
+
     return results
 
 # Usage with full type safety

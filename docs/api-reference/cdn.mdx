@@ -305,13 +305,13 @@ Most users never need to interact with the CDN API directly—it works transpare
 
 <Warning>
   **Never use `raw.githubusercontent.com` as a CDN source.** GitHub's raw content URLs have strict rate limits (60 requests/hour for unauthenticated requests) and are explicitly blocked by tif1 during initialization. Use jsDelivr or another proper CDN service instead.
-  
+
   **Why it's blocked:**
   - Rate limits: 60 requests/hour (unauthenticated) or 5,000/hour (authenticated)
   - No caching: Every request hits GitHub's servers directly
   - No global CDN: Slower performance for international users
   - Terms of service: Not intended for CDN usage
-  
+
   **Recommended alternatives:**
   - jsDelivr (default): Unlimited bandwidth, global CDN, automatic caching
   - Cloudflare CDN: Fast global network, generous free tier
@@ -320,14 +320,14 @@ Most users never need to interact with the CDN API directly—it works transpare
 
 <Info>
   The default CDN source is **jsDelivr** (`https://cdn.jsdelivr.net/gh/TracingInsights`), which provides:
-  
+
   - **Excellent global performance**: 800+ CDN locations worldwide
   - **Unlimited bandwidth**: No rate limits or bandwidth caps
   - **Automatic caching**: Intelligent cache invalidation and purging
   - **HTTP/2 and HTTP/3 support**: Modern protocols for faster transfers
   - **Minification support**: Automatic `.min.json` serving
   - **99.9% uptime SLA**: Enterprise-grade reliability
-  
+
   For most users, the default configuration is optimal and requires no changes.
 </Info>
 
@@ -439,9 +439,9 @@ def check_cdn_health():
     available = len(cdn.get_sources())
     total = len(cdn.sources)
     health_pct = (available / total * 100) if total > 0 else 0
-    
+
     print(f"CDN Health: {health_pct:.1f}% ({available}/{total} sources available)")
-    
+
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
         status = "🟢 Healthy" if failures == 0 else f"🟡 {failures} failures"
@@ -555,29 +555,29 @@ from tif1.cdn import get_cdn_manager
 def create_cdn_dashboard():
     """Create a comprehensive CDN health dashboard."""
     cdn = get_cdn_manager()
-    
+
     print("=" * 70)
     print("CDN HEALTH DASHBOARD")
     print("=" * 70)
-    
+
     # Overall statistics
     total_sources = len(cdn.sources)
     available_sources = len(cdn.get_sources())
     disabled_sources = total_sources - available_sources
-    
+
     print(f"\nOverall Status:")
     print(f"  Total Sources: {total_sources}")
     print(f"  Available: {available_sources} ({available_sources/total_sources*100:.1f}%)")
     print(f"  Disabled: {disabled_sources}")
-    
+
     # Per-source details
     print(f"\nSource Details:")
     print(f"{'Name':<20} {'Priority':<10} {'Failures':<10} {'Status':<15} {'Minification':<15}")
     print("-" * 70)
-    
+
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
-        
+
         # Determine status
         if not source.enabled:
             status = "🔴 Disabled"
@@ -589,11 +589,11 @@ def create_cdn_dashboard():
             status = "🟡 Degraded"
         else:
             status = "🟠 Critical"
-        
+
         minification = "✓ Enabled" if source.use_minification else "✗ Disabled"
-        
+
         print(f"{source.name:<20} {source.priority:<10} {failures}/{cdn._max_failures:<7} {status:<15} {minification:<15}")
-    
+
     print("=" * 70)
 
 # Run dashboard
@@ -772,7 +772,7 @@ for i, source in enumerate(cdn.sources, 1):
     status = "enabled" if source.enabled else "disabled"
     failures = cdn._failure_counts[source.name]
     circuit_status = "open (disabled)" if failures >= cdn._max_failures else "closed (active)"
-    
+
     print(f"{i}. {source.name} ({status})")
     print(f"   URL: {source.base_url}")
     print(f"   Priority: {source.priority}")
@@ -847,17 +847,17 @@ def monitor_failures():
     print("CDN Failure Monitoring:")
     print(f"{'Source':<20} {'Failures':<10} {'Status':<15}")
     print("-" * 45)
-    
+
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
-        
+
         if failures == 0:
             status = "🟢 Healthy"
         elif failures < cdn._max_failures:
             status = f"🟡 {failures} failures"
         else:
             status = "🔴 Disabled"
-        
+
         print(f"{source.name:<20} {failures}/{cdn._max_failures:<7} {status:<15}")
 
 # Initial state
@@ -956,11 +956,11 @@ for i in range(1, 5):
     cdn.mark_failure("jsDelivr")
     failures = cdn._failure_counts["jsDelivr"]
     available = any(s.name == "jsDelivr" for s in cdn.get_sources())
-    
+
     print(f"Failure {i}:")
     print(f"  Count: {failures}/{cdn._max_failures}")
     print(f"  Available: {available}")
-    
+
     if failures >= cdn._max_failures:
         print(f"  ⚠️  Circuit breaker OPEN - source disabled")
     print()
@@ -983,7 +983,7 @@ for i in range(6):
     cdn.mark_failure("jsDelivr")
     failures = cdn._failure_counts["jsDelivr"]
     available = any(s.name == "jsDelivr" for s in cdn.get_sources())
-    
+
     if i == 4:
         print(f"After {i+1} failures: still available = {available}")  # True
     elif i == 5:
@@ -1036,10 +1036,10 @@ if not sources:
     print("All sources are either disabled or have exceeded failure threshold.")
 else:
     print(f"✓ Available CDN sources: {len(sources)}/{len(cdn.sources)}")
-    
+
     for i, source in enumerate(sources, 1):
         failures = cdn._failure_counts.get(source.name, 0)
-        
+
         print(f"\n{i}. {source.name}")
         print(f"   Base URL: {source.base_url}")
         print(f"   Priority: {source.priority}")
@@ -1058,7 +1058,7 @@ sources = cdn.get_sources()
 if sources:
     # First source is highest priority
     primary = sources[0]
-    
+
     # Format URL for Belgian GP 2021 Race drivers
     url = primary.format_url(
         year=2021,
@@ -1066,10 +1066,10 @@ if sources:
         session="Race",
         path="drivers.json"
     )
-    
+
     print(f"Primary CDN: {primary.name}")
     print(f"URL: {url}")
-    
+
     # If minification is enabled, URL will be:
     # https://cdn.jsdelivr.net/gh/TracingInsights/2021@main/Belgian%20Grand%20Prix/Race/drivers.min.json
 else:
@@ -1085,18 +1085,18 @@ from datetime import datetime
 def monitor_cdn_health():
     """Monitor CDN source health with detailed reporting."""
     cdn = get_cdn_manager()
-    
+
     total_sources = len(cdn.sources)
     available_sources = cdn.get_sources()
     available_count = len(available_sources)
-    
+
     print("=" * 70)
     print(f"CDN HEALTH REPORT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
-    
+
     # Overall health
     health_pct = (available_count / total_sources * 100) if total_sources > 0 else 0
-    
+
     if health_pct == 100:
         health_status = "🟢 EXCELLENT"
     elif health_pct >= 75:
@@ -1105,18 +1105,18 @@ def monitor_cdn_health():
         health_status = "🟠 DEGRADED"
     else:
         health_status = "🔴 CRITICAL"
-    
+
     print(f"\nOverall Health: {health_status} ({health_pct:.1f}%)")
     print(f"Available Sources: {available_count}/{total_sources}")
-    
+
     # Detailed source status
     print(f"\n{'Source':<20} {'Priority':<10} {'Failures':<12} {'Status':<15}")
     print("-" * 70)
-    
+
     for source in cdn.sources:
         failures = cdn._failure_counts.get(source.name, 0)
         is_available = source in available_sources
-        
+
         # Determine status
         if not source.enabled:
             status = "🔴 Disabled"
@@ -1128,13 +1128,13 @@ def monitor_cdn_health():
             status = "🟡 Degraded"
         else:
             status = "🟠 Critical"
-        
+
         failure_str = f"{failures}/{cdn._max_failures}"
-        
+
         print(f"{source.name:<20} {source.priority:<10} {failure_str:<12} {status:<15}")
-    
+
     print("=" * 70)
-    
+
     # Recommendations
     if health_pct < 100:
         print("\n⚠️  RECOMMENDATIONS:")
@@ -1192,15 +1192,15 @@ def safe_fetch_data(year, gp, session, path):
     """Safely fetch data with CDN availability check."""
     cdn = get_cdn_manager()
     sources = cdn.get_sources()
-    
+
     if not sources:
         # No sources available - try recovery
         print("⚠️  No CDN sources available. Attempting recovery...")
-        
+
         # Reset all sources to give them another chance
         cdn.reset()
         sources = cdn.get_sources()
-        
+
         if not sources:
             # Still no sources - this is a configuration problem
             raise NetworkError(
@@ -1208,7 +1208,7 @@ def safe_fetch_data(year, gp, session, path):
                 status_code=None,
                 message="No CDN sources configured or all sources are disabled"
             )
-    
+
     # Proceed with fetch using available sources
     print(f"✓ {len(sources)} CDN source(s) available")
     # ... fetch logic here ...
@@ -1285,10 +1285,10 @@ import socket
 def add_regional_cdn():
     """Add region-specific CDN based on location."""
     cdn = get_cdn_manager()
-    
+
     # Detect region (simplified example)
     hostname = socket.gethostname()
-    
+
     if "eu" in hostname or "europe" in hostname:
         regional_cdn = CDNSource(
             name="Europe CDN",
@@ -1299,7 +1299,7 @@ def add_regional_cdn():
         )
         cdn.add_source(regional_cdn)
         print("Added European CDN with priority 1")
-    
+
     elif "us" in hostname or "america" in hostname:
         regional_cdn = CDNSource(
             name="US CDN",
@@ -1355,7 +1355,7 @@ for i in range(1, 4):
     cdn.mark_failure("jsDelivr")
     failures = cdn._failure_counts["jsDelivr"]
     print(f"Failure {i}: jsDelivr has {failures} failures")
-    
+
     # Check if still available
     available = any(s.name == "jsDelivr" for s in cdn.get_sources())
     print(f"  Still available: {available}")
@@ -1452,22 +1452,22 @@ cdn = get_cdn_manager()
 def monitor_source_recovery(source_name: str):
     """Monitor a CDN source's recovery over time."""
     print(f"Monitoring {source_name} recovery...")
-    
+
     # Initial state
     initial_failures = cdn._failure_counts.get(source_name, 0)
     print(f"Initial failures: {initial_failures}")
-    
+
     # Simulate some failures
     for i in range(2):
         cdn.mark_failure(source_name)
         time.sleep(0.1)
-    
+
     print(f"After failures: {cdn._failure_counts[source_name]}")
-    
+
     # Simulate successful recovery
     cdn.mark_success(source_name)
     print(f"After recovery: {cdn._failure_counts[source_name]}")
-    
+
     # Verify source is available
     available = any(s.name == source_name for s in cdn.get_sources())
     print(f"Source available: {available}")
@@ -1530,33 +1530,33 @@ from datetime import datetime, timedelta
 
 class CDNHealthManager:
     """Manages CDN health with automatic recovery."""
-    
+
     def __init__(self):
         self.cdn = get_cdn_manager()
         self.last_reset = datetime.now()
         self.reset_interval = timedelta(hours=1)
-    
+
     def check_and_reset_if_needed(self):
         """Reset CDN sources if enough time has passed."""
         now = datetime.now()
-        
+
         if now - self.last_reset >= self.reset_interval:
             available = len(self.cdn.get_sources())
             total = len(self.cdn.sources)
-            
+
             if available < total:
                 print(f"Auto-resetting CDN sources ({available}/{total} available)")
                 self.cdn.reset()
                 self.last_reset = now
                 return True
-        
+
         return False
-    
+
     def get_health_status(self) -> dict:
         """Get detailed health status of all CDN sources."""
         total = len(self.cdn.sources)
         available = len(self.cdn.get_sources())
-        
+
         return {
             "total_sources": total,
             "available_sources": available,
@@ -1699,14 +1699,14 @@ def fetch_with_error_handling(url: str) -> dict:
     """Fetch JSON with proper error classification."""
     try:
         response = requests.get(url, timeout=30)
-        
+
         if response.status_code == 404:
             # Data doesn't exist - raise DataNotFoundError
             raise DataNotFoundError(message=f"Resource not found: {url}")
-        
+
         response.raise_for_status()
         return response.json()
-        
+
     except requests.exceptions.Timeout:
         # Timeout - let CDN manager try next source
         raise NetworkError(url=url, message="Request timeout")
@@ -1723,18 +1723,18 @@ try:
         path="laps.json",
         fetch_func=fetch_with_error_handling
     )
-    
+
     print(f"✓ Fetched {len(data.get('laps', []))} laps")
     print(f"✓ Used CDN: {cdn.get_sources()[0].name}")
-    
+
 except DataNotFoundError as e:
     print(f"✗ Data not found: {e}")
     print("  This session may not have lap data available")
-    
+
 except NetworkError as e:
     print(f"✗ Network error: {e}")
     print("  All CDN sources failed - check network connectivity")
-    
+
     # Show which sources failed
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
@@ -1764,16 +1764,16 @@ def create_fetch_func_with_retries():
     )
     adapter = HTTPAdapter(max_retries=retries)
     session.mount("https://", adapter)
-    
+
     def fetch(url: str) -> dict:
         response = session.get(url, timeout=30)
-        
+
         if response.status_code == 404:
             raise DataNotFoundError(message=f"Not found: {url}")
-        
+
         response.raise_for_status()
         return response.json()
-    
+
     return fetch
 
 # Use custom fetch function
@@ -1831,9 +1831,9 @@ try:
         path="drivers.json",
         fetch_func=fetch_json
     )
-    
+
     print(f"\n✓ Success! Fetched {len(data.get('drivers', []))} drivers")
-    
+
     # Show which source succeeded
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
@@ -1841,10 +1841,10 @@ try:
             print(f"✓ {source.name}: Healthy (used for fetch)")
         else:
             print(f"✗ {source.name}: {failures} failures")
-            
+
 except NetworkError as e:
     print(f"\n✗ All sources failed: {e}")
-    
+
     # Detailed failure report
     print("\nFailure details:")
     for source in cdn.sources:
@@ -1868,7 +1868,7 @@ async def async_fetch(url: str) -> dict:
             if response.status == 404:
                 from tif1.exceptions import DataNotFoundError
                 raise DataNotFoundError(message="Not found")
-            
+
             response.raise_for_status()
             return await response.json()
 
@@ -1901,10 +1901,10 @@ cdn = get_cdn_manager()
 
 class FetchProgress:
     """Track fetch progress across CDN sources."""
-    
+
     def __init__(self):
         self.attempts = []
-    
+
     def create_fetch_func(self):
         """Create fetch function that tracks progress."""
         def fetch(url: str) -> dict:
@@ -1914,27 +1914,27 @@ class FetchProgress:
                 "success": False,
                 "error": None
             }
-            
+
             try:
                 response = requests.get(url, timeout=30)
-                
+
                 if response.status_code == 404:
                     attempt["error"] = "Not found (404)"
                     self.attempts.append(attempt)
                     raise DataNotFoundError(message="Not found")
-                
+
                 response.raise_for_status()
                 attempt["success"] = True
                 self.attempts.append(attempt)
                 return response.json()
-                
+
             except Exception as e:
                 attempt["error"] = str(e)
                 self.attempts.append(attempt)
                 raise
-        
+
         return fetch
-    
+
     def _extract_source_name(self, url: str) -> str:
         """Extract CDN source name from URL."""
         if "jsdelivr" in url:
@@ -1942,12 +1942,12 @@ class FetchProgress:
         elif "backup" in url:
             return "Backup CDN"
         return "Unknown"
-    
+
     def print_report(self):
         """Print fetch attempt report."""
         print("\nFetch Attempt Report:")
         print("=" * 60)
-        
+
         for i, attempt in enumerate(self.attempts, 1):
             status = "✓ SUCCESS" if attempt["success"] else f"✗ FAILED: {attempt['error']}"
             print(f"\nAttempt {i}: {attempt['source']}")

@@ -18,7 +18,7 @@ keywords:
 
 <Note>
   The `core_utils` package provides the foundational utilities that power `tif1`'s high-performance data processing pipeline. While these are primarily internal APIs, they expose powerful capabilities for advanced users who need fine-grained control over data transformations, backend conversions, and performance optimization.
-  
+
   This module is the performance engine of `tif1`, implementing zero-copy operations, optimized JSON parsing, and intelligent DataFrame transformations that enable the library to process millions of rows of telemetry data with minimal overhead.
 </Note>
 
@@ -428,7 +428,7 @@ Deserialize JSON payload to Python object using accelerated orjson codec with au
 **Performance Characteristics:**
 - **Time complexity**: O(n) where n is the payload size
 - **Memory overhead**: Minimal (orjson uses efficient allocation)
-- **Typical performance**: 
+- **Typical performance**:
   - Small payloads (<1KB): ~10μs
   - Medium payloads (100KB): ~2ms
   - Large payloads (10MB): ~180ms
@@ -817,7 +817,7 @@ def load_session(year: int, gp: str, session_type: str):
     """Load session with year validation."""
     # Validate year before expensive network operations
     _validate_year(year, MIN_YEAR, MAX_YEAR)
-    
+
     # Proceed with data loading...
     # (validation ensures we don't waste time on invalid requests)
 ```
@@ -867,7 +867,7 @@ _validate_drivers_list(["VER"])  # OK
 _validate_drivers_list(["VER", "HAM", "LEC"])  # OK
 
 # Valid: All drivers in a race
-all_drivers = ["VER", "PER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA", 
+all_drivers = ["VER", "PER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA",
                "ALO", "STR", "OCO", "GAS", "ALB", "SAR", "TSU", "RIC",
                "BOT", "ZHO", "MAG", "HUL"]
 _validate_drivers_list(all_drivers)  # OK
@@ -910,10 +910,10 @@ def get_driver_laps(laps_df, drivers: list[str] | None):
     """Filter laps DataFrame by drivers with validation."""
     # Validate input before filtering
     _validate_drivers_list(drivers)
-    
+
     if drivers is None:
         return laps_df  # No filtering
-    
+
     # Safe to filter now
     return laps_df[laps_df["Driver"].isin(drivers)]
 ```
@@ -998,7 +998,7 @@ def get_lap_telemetry(driver: str, lap_number: int):
     """Load telemetry for a specific lap with validation."""
     # Validate lap number before expensive operations
     _validate_lap_number(lap_number)
-    
+
     # Proceed with telemetry loading...
     # (validation ensures we don't request invalid lap data)
 ```
@@ -1089,7 +1089,7 @@ def get_session(year: int, gp: str, session_type: str):
     # Validate string parameters
     _validate_string_param(gp, "gp")
     _validate_string_param(session_type, "session_type")
-    
+
     # Proceed with session loading...
     # (validation ensures we have valid input before processing)
 ```
@@ -1124,7 +1124,7 @@ URL-encode a string component for safe use in CDN URLs. This function properly e
 
 **Performance:**
 - **Time complexity**: O(n) for first call, O(1) for cached calls
-- **Typical execution**: 
+- **Typical execution**:
   - First call: ~10μs
   - Cached call: <1μs (cache lookup)
 
@@ -1152,11 +1152,11 @@ from tif1.core_utils.helpers import _encode_url_component
 def build_cdn_url(year: int, gp: str, session_type: str, data_type: str) -> str:
     """Build CDN URL with proper encoding."""
     base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main"
-    
+
     # Encode components for URL safety
     gp_encoded = _encode_url_component(gp)
     session_encoded = _encode_url_component(session_type)
-    
+
     return f"{base_url}/{gp_encoded}/{session_encoded}/{data_type}.json"
 
 # Example usage
@@ -1274,12 +1274,12 @@ def load_laps_with_fallback(year: int, gp: str, session: str, lib: str):
     """Load laps with empty DataFrame fallback."""
     try:
         laps = fetch_laps_from_cdn(year, gp, session, lib)
-        
+
         # Check if we got data
         if _is_empty_df(laps, lib):
             logger.warning(f"No lap data found for {year} {gp} {session}")
             return _create_empty_df(lib)
-        
+
         return laps
     except Exception as e:
         logger.error(f"Failed to load laps: {e}")
@@ -1296,7 +1296,7 @@ def process_telemetry(telemetry_df, lib: str):
     if _is_empty_df(telemetry_df, lib):
         print("No telemetry data to process")
         return None
-    
+
     # Proceed with processing
     print(f"Processing {len(telemetry_df)} telemetry samples")
     # ... processing logic ...
@@ -1351,18 +1351,18 @@ def get_driver_laps(session, driver: str, lib: str):
     """Get laps for a driver with empty DataFrame fallback."""
     try:
         laps = session.laps
-        
+
         # Filter by driver
         if lib == "polars":
             import polars as pl
             driver_laps = laps.filter(pl.col("Driver") == driver)
         else:
             driver_laps = laps[laps["Driver"] == driver]
-        
+
         # Return empty DataFrame if no laps found
         if _is_empty_df(driver_laps, lib):
             return _create_empty_df(lib)
-        
+
         return driver_laps
     except Exception as e:
         logger.error(f"Error getting driver laps: {e}")
@@ -1375,7 +1375,7 @@ from tif1.core_utils.helpers import _create_empty_df
 
 class SessionData:
     """Container for session data."""
-    
+
     def __init__(self, lib: str = "pandas"):
         self.lib = lib
         # Initialize with empty DataFrames
@@ -1383,7 +1383,7 @@ class SessionData:
         self.telemetry = _create_empty_df(lib)
         self.weather = _create_empty_df(lib)
         self.messages = _create_empty_df(lib)
-    
+
     def is_loaded(self) -> bool:
         """Check if any data has been loaded."""
         from tif1.core_utils.helpers import _is_empty_df
@@ -1679,13 +1679,13 @@ def process_cdn_laps(raw_laps_df, lib: str):
     """Process raw CDN laps data to user-facing format."""
     # Rename columns from CDN format to FastF1 format
     laps = _rename_columns(raw_laps_df, LAP_RENAME_MAP, lib)
-    
+
     # Now columns have user-friendly names
     # "drv" → "Driver"
     # "lap" → "LapNumber"
     # "time" → "LapTime"
     # etc.
-    
+
     return laps
 ```
 
@@ -1760,8 +1760,8 @@ drivers = ["VER", "PER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA",
 
 laps = pd.DataFrame({
     "Driver": drivers * 58,
-    "Team": ["Red Bull Racing"] * 116 + ["Mercedes"] * 116 + 
-            ["Ferrari"] * 116 + ["McLaren"] * 116 + 
+    "Team": ["Red Bull Racing"] * 116 + ["Mercedes"] * 116 +
+            ["Ferrari"] * 116 + ["McLaren"] * 116 +
             ["Aston Martin"] * 116 + ["Alpine"] * 116 +
             ["Williams"] * 116 + ["Sauber"] * 116 + ["Haas"] * 116,
     "Compound": (["SOFT"] * 20 + ["MEDIUM"] * 30 + ["HARD"] * 8) * 20,
@@ -1975,22 +1975,22 @@ LAP_RENAME_MAP = {
     "lap": "LapNumber",
     "compound": "Compound",
     "stint": "Stint",
-    
+
     # Sector times
     "s1": "Sector1Time",
     "s2": "Sector2Time",
     "s3": "Sector3Time",
-    
+
     # Tyre data
     "life": "TyreLife",
     "fresh": "FreshTyre",
     "fresh_tyre": "FreshTyre",
-    
+
     # Position and status
     "pos": "Position",
     "status": "TrackStatus",
     "pb": "IsPersonalBest",
-    
+
     # Driver and team
     "drv": "Driver",
     "source_driver": "Driver",
@@ -1998,7 +1998,7 @@ LAP_RENAME_MAP = {
     "dNum": "DriverNumber",
     "source_team": "Team",
     "team": "Team",
-    
+
     # Session times
     "session_time": "Time",
     "sesT": "Time",
@@ -2006,7 +2006,7 @@ LAP_RENAME_MAP = {
     "pout": "PitOutTime",
     "pit_in_time": "PitInTime",
     "pin": "PitInTime",
-    
+
     # Sector session times
     "sector1_session_time": "Sector1SessionTime",
     "s1T": "Sector1SessionTime",
@@ -2014,7 +2014,7 @@ LAP_RENAME_MAP = {
     "s2T": "Sector2SessionTime",
     "sector3_session_time": "Sector3SessionTime",
     "s3T": "Sector3SessionTime",
-    
+
     # Speed traps
     "speed_i1": "SpeedI1",
     "vi1": "SpeedI1",
@@ -2024,7 +2024,7 @@ LAP_RENAME_MAP = {
     "vfl": "SpeedFL",
     "speed_st": "SpeedST",
     "vst": "SpeedST",
-    
+
     # Lap metadata
     "lap_start_time": "LapStartTime",
     "lST": "LapStartTime",
@@ -2038,11 +2038,11 @@ LAP_RENAME_MAP = {
     "ff1G": "FastF1Generated",
     "is_accurate": "IsAccurate",
     "iacc": "IsAccurate",
-    
+
     # Qualifying
     "qs": "QualifyingSession",
     "qualifying_session": "QualifyingSession",
-    
+
     # Weather (per-lap)
     "weather_time": "WeatherTime",
     "wT": "WeatherTime",
@@ -2099,25 +2099,25 @@ TELEMETRY_RENAME_MAP = {
     "throttle": "Throttle",
     "brake": "Brake",
     "drs": "DRS",
-    
+
     # Distance
     "distance": "Distance",
     "rel_distance": "RelativeDistance",
-    
+
     # Relative positioning
     "driver_ahead": "DriverAhead",
     "distance_to_driver_ahead": "DistanceToDriverAhead",
-    
+
     # Acceleration (G-forces)
     "acc_x": "AccelerationX",
     "acc_y": "AccelerationY",
     "acc_z": "AccelerationZ",
-    
+
     # Position coordinates
     "x": "X",
     "y": "Y",
     "z": "Z",
-    
+
     # Metadata
     "data_key": "DataKey",
     "dataKey": "DataKey",
@@ -2233,14 +2233,14 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "Time",
     "Driver",
     "DriverNumber",
-    
+
     # Lap timing
     "LapTime",
     "LapNumber",
     "Stint",
     "PitOutTime",
     "PitInTime",
-    
+
     # Sector times
     "Sector1Time",
     "Sector2Time",
@@ -2248,13 +2248,13 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "Sector1SessionTime",
     "Sector2SessionTime",
     "Sector3SessionTime",
-    
+
     # Speed traps
     "SpeedI1",
     "SpeedI2",
     "SpeedFL",
     "SpeedST",
-    
+
     # Lap metadata
     "IsPersonalBest",
     "Compound",
@@ -2269,7 +2269,7 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "DeletedReason",
     "FastF1Generated",
     "IsAccurate",
-    
+
     # Weather (per-lap)
     "WeatherTime",
     "AirTemp",
@@ -2279,7 +2279,7 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "TrackTemp",
     "WindDirection",
     "WindSpeed",
-    
+
     # tif1-specific columns
     "LapTimeSeconds",
     "QualifyingSession",
@@ -2329,24 +2329,24 @@ The `ResourceManager` class implements the context manager protocol and tracks r
 ```python
 class ResourceManager:
     """Base class for resource management with guaranteed cleanup."""
-    
+
     def __init__(self) -> None:
         """Initialize the resource manager."""
         self._resources: list[tuple[str, Any]] = []
         self._initialized: bool = False
-    
+
     def _register_resource(self, name: str, resource: Any) -> None:
         """Register a resource for cleanup tracking."""
         ...
-    
+
     def _cleanup_resources(self) -> None:
         """Cleanup all registered resources in reverse order."""
         ...
-    
+
     def __enter__(self) -> ResourceManager:
         """Enter context manager."""
         ...
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Exit context manager and cleanup resources."""
         ...
@@ -2377,15 +2377,15 @@ class DatabaseManager(ResourceManager):
             # Create connection
             conn = create_connection(db_url)
             self._register_resource("database_connection", conn)
-            
+
             # Create connection pool
             pool = create_pool(conn)
             self._register_resource("connection_pool", pool)
-            
+
             # Create cache
             cache = create_cache()
             self._register_resource("cache", cache)
-            
+
             self._initialized = True
         except Exception:
             # Cleanup any resources created before the error
@@ -2440,19 +2440,19 @@ class SessionManager(ResourceManager):
             # Create HTTP session
             self.http_session = create_http_session()
             self._register_resource("http_session", self.http_session)
-            
+
             # Create cache connection
             self.cache = create_cache()
             self._register_resource("cache", self.cache)
-            
+
             self._initialized = True
         except Exception:
             self._cleanup_resources()
             raise
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cleanup_resources()
         return False
@@ -2479,15 +2479,15 @@ class ComplexManager(ResourceManager):
             # Step 1: Create database connection
             self.db = create_database()
             self._register_resource("database", self.db)
-            
+
             # Step 2: Create thread pool (might fail)
             self.pool = create_thread_pool()
             self._register_resource("thread_pool", self.pool)
-            
+
             # Step 3: Create cache (might fail)
             self.cache = create_cache()
             self._register_resource("cache", self.cache)
-            
+
             self._initialized = True
         except Exception as e:
             # If any step fails, cleanup resources created so far
@@ -2518,7 +2518,7 @@ class ManualManager(ResourceManager):
         super().__init__()
         self.session = create_session()
         self._register_resource("session", self.session)
-    
+
     def close(self):
         """Explicit cleanup method."""
         self._cleanup_resources()

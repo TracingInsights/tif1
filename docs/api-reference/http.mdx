@@ -684,7 +684,7 @@ logger = logging.getLogger(__name__)
 def log_connection_efficiency():
     """Log connection pool efficiency for monitoring."""
     stats = get_connection_stats()
-    
+
     if stats['reuse_rate'] < 70:
         logger.warning(
             f"Low connection reuse rate: {stats['reuse_rate']:.1f}% "
@@ -867,7 +867,7 @@ async def load_drivers():
     data = await fetch_json_async(
         2024, "Bahrain Grand Prix", "Race", "drivers.json"
     )
-    
+
     print(f"Loaded {len(data['DriverNumber'])} drivers")
     for i, driver in enumerate(data['BroadcastName']):
         print(f"  {data['DriverNumber'][i]}: {driver} ({data['TeamName'][i]})")
@@ -955,18 +955,18 @@ async def robust_fetch():
         )
         print(f"Success: {len(data['LapNumber'])} laps")
         return data
-        
+
     except DataNotFoundError as e:
         print(f"Data not found: {e.year} {e.event} {e.session}")
         print("This session may not have been run yet or driver code is invalid")
         return None
-        
+
     except NetworkError as e:
         print(f"Network error: {e.url}")
         print(f"Status code: {e.status_code}")
         print("Check your internet connection, CDN health, or try again later")
         return None
-        
+
     except InvalidDataError as e:
         print(f"Invalid data: {e.reason}")
         print("Data may be corrupted, try clearing cache or check CDN status")
@@ -1087,16 +1087,16 @@ from tif1.async_fetch import fetch_multiple_async
 async def load_multiple_drivers():
     """Load lap data for multiple drivers in parallel."""
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
-    
+
     # Build requests for all drivers
     requests = [
         (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
         for driver in drivers
     ]
-    
+
     # Fetch all in parallel (default 20 concurrent)
     results = await fetch_multiple_async(requests)
-    
+
     # Process results (None for failed requests)
     for driver, data in zip(drivers, results):
         if data:
@@ -1117,22 +1117,22 @@ async def prefetch_all_telemetry():
     """Prefetch telemetry for all drivers and laps with high concurrency."""
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
     laps = range(1, 58)  # 57 laps
-    
+
     # Build requests for all driver/lap combinations (285 files)
     requests = [
         (2024, "Bahrain Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
         for driver in drivers
         for lap in laps
     ]
-    
+
     print(f"Fetching {len(requests)} telemetry files...")
-    
+
     # Fetch with high concurrency for speed (128 concurrent requests)
     results = await fetch_multiple_async(
         requests,
         max_concurrent_requests=128  # High concurrency for telemetry
     )
-    
+
     # Count successes
     success_count = sum(1 for r in results if r is not None)
     print(f"Successfully loaded {success_count}/{len(requests)} files")
@@ -1152,13 +1152,13 @@ async def load_with_low_concurrency():
         (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
-    
+
     # Limit to 5 concurrent requests for slow network
     results = await fetch_multiple_async(
         requests,
         max_concurrent_requests=5
     )
-    
+
     return results
 
 asyncio.run(load_with_low_concurrency())
@@ -1176,32 +1176,32 @@ async def batch_process_large_dataset():
         (2024, "Bahrain Grand Prix", "Race", f"telemetry_VER_{lap}.json")
         for lap in range(1, 501)
     ]
-    
+
     batch_size = 50
     all_results = []
-    
+
     # Process in batches of 50
     for i in range(0, len(all_requests), batch_size):
         batch = all_requests[i:i+batch_size]
         batch_num = i//batch_size + 1
         total_batches = (len(all_requests) + batch_size - 1) // batch_size
-        
+
         print(f"Processing batch {batch_num}/{total_batches}")
-        
+
         results = await fetch_multiple_async(
             batch,
             max_concurrent_requests=20
         )
-        
+
         all_results.extend(results)
-        
+
         # Optional: Add delay between batches to avoid rate limiting
         if i + batch_size < len(all_requests):
             await asyncio.sleep(1)
-    
+
     success_count = sum(1 for r in all_results if r is not None)
     print(f"Total: {success_count}/{len(all_requests)} successful")
-    
+
     return all_results
 
 asyncio.run(batch_process_large_dataset())
@@ -1215,26 +1215,26 @@ from tif1.async_fetch import fetch_multiple_async
 async def load_and_filter():
     """Load multiple files and filter out failures."""
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR", "INVALID"]
-    
+
     requests = [
         (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
         for driver in drivers
     ]
-    
+
     results = await fetch_multiple_async(requests)
-    
+
     # Filter out None values (failed requests)
     successful = [
         (driver, data)
         for driver, data in zip(drivers, results)
         if data is not None
     ]
-    
+
     print(f"Loaded {len(successful)}/{len(drivers)} drivers")
-    
+
     for driver, data in successful:
         print(f"{driver}: {len(data['LapNumber'])} laps")
-    
+
     return successful
 
 asyncio.run(load_and_filter())
@@ -1249,28 +1249,28 @@ async def load_with_progress():
     """Load files with progress tracking."""
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
     laps = range(1, 58)
-    
+
     requests = [
         (2024, "Bahrain Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
         for driver in drivers
         for lap in laps
     ]
-    
+
     print(f"Starting fetch of {len(requests)} files...")
     start_time = asyncio.get_event_loop().time()
-    
+
     results = await fetch_multiple_async(
         requests,
         max_concurrent_requests=128
     )
-    
+
     elapsed = asyncio.get_event_loop().time() - start_time
     success_count = sum(1 for r in results if r is not None)
-    
+
     print(f"Completed in {elapsed:.2f}s")
     print(f"Success rate: {success_count/len(requests)*100:.1f}%")
     print(f"Throughput: {len(requests)/elapsed:.1f} files/sec")
-    
+
     return results
 
 asyncio.run(load_with_progress())
@@ -1717,20 +1717,20 @@ import time
 def monitor_pool_health(duration_seconds=60):
     """Monitor connection pool health over time."""
     start_time = time.time()
-    
+
     while time.time() - start_time < duration_seconds:
         stats = get_connection_stats()
-        
+
         print(f"Time: {time.time() - start_time:.1f}s")
         print(f"  Total requests: {stats['total_requests']}")
         print(f"  Reuse rate: {stats['reuse_rate']:.1f}%")
         print(f"  Pools created: {stats['connections_created']}")
-        
+
         # Alert on low reuse rate
         if stats['total_requests'] > 50 and stats['reuse_rate'] < 70:
             print("  ⚠️  WARNING: Low connection reuse rate!")
             print("     Consider increasing pool_connections or reducing concurrency")
-        
+
         time.sleep(10)
 
 # Run monitoring
@@ -1808,19 +1808,19 @@ from tif1 import get_config
 async def benchmark_json_parsing():
     """Benchmark JSON parsing strategies."""
     config = get_config()
-    
+
     # Test 1: Thread pool (default)
     config.set("json_parse_workers", 0)
     start = time.time()
     data1 = await fetch_json_async(2024, "Bahrain", "Race", "laps_VER.json")
     thread_time = time.time() - start
-    
+
     # Test 2: Process pool
     config.set("json_parse_workers", 4)
     start = time.time()
     data2 = await fetch_json_async(2024, "Bahrain", "Race", "laps_VER.json", use_cache=False)
     process_time = time.time() - start
-    
+
     print(f"Thread pool: {thread_time:.3f}s")
     print(f"Process pool: {process_time:.3f}s")
     print(f"Speedup: {thread_time/process_time:.2f}x")
@@ -1886,32 +1886,32 @@ async def robust_zero_retry_fetch():
     """Fetch with zero-retry mode and handle failures gracefully."""
     config = get_config()
     config.set("max_retries", 0)
-    
+
     requests = [
         (2024, "Bahrain", "Race", f"laps_{driver}.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
-    
+
     # First attempt with zero retries
     results = await fetch_multiple_async(requests)
-    
+
     # Identify failures
     failed_indices = [i for i, r in enumerate(results) if r is None]
-    
+
     if failed_indices:
         print(f"First attempt: {len(results) - len(failed_indices)}/{len(results)} succeeded")
-        
+
         # Retry failures with normal retry logic
         config.set("max_retries", 3)
         failed_requests = [requests[i] for i in failed_indices]
         retry_results = await fetch_multiple_async(failed_requests)
-        
+
         # Merge results
         for i, result in zip(failed_indices, retry_results):
             results[i] = result
-        
+
         print(f"After retry: {sum(1 for r in results if r)}/{len(results)} succeeded")
-    
+
     return results
 
 asyncio.run(robust_zero_retry_fetch())
@@ -1962,16 +1962,16 @@ async def measure_multiplexing():
         (2024, "Bahrain", "Race", f"telemetry_VER_{lap}.json")
         for lap in range(1, 101)
     ]
-    
+
     await fetch_multiple_async(requests, max_concurrent_requests=50)
-    
+
     # Check connection stats
     stats = get_connection_stats()
-    
+
     print(f"Total requests: {stats['total_requests']}")
     print(f"Connections created: {stats['connections_created']}")
     print(f"Requests per connection: {stats['total_requests'] / stats['connections_created']:.1f}")
-    
+
     # With HTTP/2 multiplexing, you should see:
     # - 1-2 connections created (one per CDN host)
     # - 50-100 requests per connection
@@ -2025,19 +2025,19 @@ def monitor_circuit_breaker(duration_seconds=60):
     """Monitor circuit breaker state over time."""
     cb = get_circuit_breaker()
     start_time = time.time()
-    
+
     while time.time() - start_time < duration_seconds:
         print(f"Time: {time.time() - start_time:.1f}s")
         print(f"  State: {cb.state}")
         print(f"  Failures: {cb.failures}")
-        
+
         if cb.state == "open":
             print("  ⚠️  Circuit breaker is OPEN - requests are blocked!")
             if cb.last_failure_time:
                 elapsed = (time.time() - cb._last_failure_monotonic)
                 remaining = cb.timeout - elapsed
                 print(f"  Time until half-open: {remaining:.1f}s")
-        
+
         time.sleep(5)
 
 monitor_circuit_breaker(60)
@@ -2053,11 +2053,11 @@ cb = get_circuit_breaker()
 # Check state
 if cb.state == "open":
     print("Circuit breaker is open, waiting for recovery...")
-    
+
     # Option 1: Wait for automatic recovery
     import time
     time.sleep(cb.timeout)
-    
+
     # Option 2: Force reset (use with caution!)
     reset_circuit_breaker()
     print("Circuit breaker reset")
@@ -2097,43 +2097,43 @@ from tif1.cdn import get_cdn_manager
 async def performance_dashboard():
     """Real-time performance monitoring dashboard."""
     start_time = time.time()
-    
+
     while True:
         elapsed = time.time() - start_time
-        
+
         # Connection stats
         conn_stats = get_connection_stats()
-        
+
         # Circuit breaker
         cb = get_circuit_breaker()
-        
+
         # CDN health
         cdn_manager = get_cdn_manager()
         cdn_sources = cdn_manager.get_sources()
-        
+
         # Clear screen (optional)
         print("\033[2J\033[H")  # ANSI escape codes
-        
+
         print(f"=== tif1 Performance Dashboard (Runtime: {elapsed:.1f}s) ===\n")
-        
+
         print("Connection Pool:")
         print(f"  Total requests: {conn_stats['total_requests']}")
         print(f"  Reuse rate: {conn_stats['reuse_rate']:.1f}%")
         print(f"  Pools created: {conn_stats['connections_created']}")
-        
+
         if conn_stats['total_requests'] > 0:
             throughput = conn_stats['total_requests'] / elapsed
             print(f"  Throughput: {throughput:.1f} req/s")
-        
+
         print(f"\nCircuit Breaker:")
         print(f"  State: {cb.state}")
         print(f"  Failures: {cb.failures}")
-        
+
         print(f"\nCDN Health:")
         for source in cdn_sources:
             status = "✓" if source.enabled else "✗"
             print(f"  {status} {source.name} (priority: {source.priority})")
-        
+
         await asyncio.sleep(1)
 
 # Run dashboard
@@ -2153,17 +2153,17 @@ async def profile_fetch_operation():
         (2024, "Bahrain", "Race", f"laps_{driver}.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
-    
+
     # Measure total time
     start = time.time()
     results = await fetch_multiple_async(requests, max_concurrent_requests=20)
     total_time = time.time() - start
-    
+
     # Calculate metrics
     success_count = sum(1 for r in results if r is not None)
     throughput = len(requests) / total_time
     avg_time_per_request = total_time / len(requests)
-    
+
     print(f"Profile Results:")
     print(f"  Total time: {total_time:.3f}s")
     print(f"  Requests: {len(requests)}")
@@ -2171,7 +2171,7 @@ async def profile_fetch_operation():
     print(f"  Failures: {len(requests) - success_count}")
     print(f"  Throughput: {throughput:.1f} req/s")
     print(f"  Avg time per request: {avg_time_per_request:.3f}s")
-    
+
     # Connection stats
     from tif1.http_session import get_connection_stats
     stats = get_connection_stats()
@@ -2351,15 +2351,15 @@ config.set("telemetry_prefetch_max_concurrent_requests", 10)
 async def fetch_with_delays():
     requests = [...]  # Your requests
     batch_size = 10
-    
+
     for i in range(0, len(requests), batch_size):
         batch = requests[i:i+batch_size]
         results = await fetch_multiple_async(batch, max_concurrent_requests=5)
-        
+
         # Add delay between batches
         if i + batch_size < len(requests):
             await asyncio.sleep(2)  # 2 second delay
-    
+
     return results
 
 # Solution 3: Increase retry backoff to give CDN time to recover
@@ -2415,24 +2415,24 @@ async def memory_efficient_fetch():
     all_requests = [...]  # Large list of requests
     batch_size = 10
     all_results = []
-    
+
     for i in range(0, len(all_requests), batch_size):
         batch = all_requests[i:i+batch_size]
         results = await fetch_multiple_async(batch)
-        
+
         # Process results immediately
         for result in results:
             if result:
                 # Process data
                 pass
-        
+
         # Free memory
         del results
-        
+
         # Optional: Force garbage collection
         import gc
         gc.collect()
-    
+
     return all_results
 
 # Solution 4: Reduce cache size
@@ -2678,11 +2678,11 @@ async def debug_fetch():
     except Exception as e:
         print(f"Error type: {type(e).__name__}")
         print(f"Error message: {e}")
-        
+
         # Print detailed error context
         if hasattr(e, '__dict__'):
             print(f"Error context: {e.__dict__}")
-        
+
         # Print traceback
         import traceback
         traceback.print_exc()
@@ -2704,7 +2704,7 @@ async def test_connectivity():
         (2024, "Bahrain", "Race", "laps_VER.json", "Verstappen laps"),
         (2024, "Bahrain", "Race", "telemetry_VER_1.json", "Verstappen lap 1 telemetry"),
     ]
-    
+
     for year, gp, session, path, description in test_cases:
         try:
             data = await fetch_json_async(year, gp, session, path)

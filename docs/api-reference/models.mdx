@@ -151,7 +151,7 @@ When weather data is available, each lap includes:
 
 <ResponseField name="session" type="Session">
   Reference to the parent Session object. This provides access to session-level data and methods, enabling operations like telemetry loading and driver information lookup. The session reference is automatically propagated when filtering or slicing Laps objects, ensuring that derived objects maintain full context.
-  
+
   **Usage:**
   ```python
   laps = session.laps
@@ -342,7 +342,7 @@ multi_driver_laps = laps.pick_drivers(drivers)
 for driver in drivers:
     driver_laps = multi_driver_laps.pick_driver(driver)
     if not driver_laps.empty:
-        plt.plot(driver_laps["LapNumber"], driver_laps["LapTimeSeconds"], 
+        plt.plot(driver_laps["LapNumber"], driver_laps["LapTimeSeconds"],
                  label=driver, marker='o')
 
 plt.xlabel("Lap Number")
@@ -417,7 +417,7 @@ fastest = session.laps.pick_fastest()
 if fastest is not None:
     print(f"Fastest lap: {fastest['LapTime']} by {fastest['Driver']}")
     print(f"On lap {fastest['LapNumber']} with {fastest['Compound']} tires")
-    
+
     # Access telemetry of fastest lap
     fastest_tel = fastest.telemetry
     if not fastest_tel.empty:
@@ -465,11 +465,11 @@ if fastest is not None:
         # Analyze speed trace
         max_speed = tel["Speed"].max()
         avg_speed = tel["Speed"].mean()
-        
+
         # Find braking zones
         braking = tel[tel["Brake"] == True]
         num_braking_zones = len(braking)
-        
+
         print(f"Max speed: {max_speed:.1f} km/h")
         print(f"Avg speed: {avg_speed:.1f} km/h")
         print(f"Braking zones: {num_braking_zones}")
@@ -662,7 +662,7 @@ import matplotlib.pyplot as plt
 for compound in ["SOFT", "MEDIUM", "HARD"]:
     compound_laps = laps.pick_driver("VER").pick_tyre(compound)
     if not compound_laps.empty:
-        plt.scatter(compound_laps["TyreLife"], compound_laps["LapTimeSeconds"], 
+        plt.scatter(compound_laps["TyreLife"], compound_laps["LapTimeSeconds"],
                    label=compound, alpha=0.6)
 
 plt.xlabel("Tire Life (laps)")
@@ -1046,7 +1046,7 @@ if not lap_19_tel.empty:
     # Find braking zones
     braking = lap_19_tel[lap_19_tel["Brake"] == True]
     print(f"Braking zones: {len(braking)} samples")
-    
+
     # DRS usage
     drs_active = lap_19_tel[lap_19_tel["DRS"] >= 10]
     print(f"DRS active: {len(drs_active)} samples")
@@ -1055,12 +1055,12 @@ if not lap_19_tel.empty:
 fastest_lap = ver_laps.pick_fastest()
 if fastest_lap is not None:
     fastest_tel = fastest_lap.telemetry
-    
+
     # Compare with average lap
     avg_lap_num = int(ver_laps["LapNumber"].median())
     avg_lap = ver_laps.pick_lap(avg_lap_num)
     avg_tel = avg_lap.telemetry
-    
+
     if not fastest_tel.empty and not avg_tel.empty:
         print(f"Fastest lap max speed: {fastest_tel['Speed'].max()}")
         print(f"Average lap max speed: {avg_tel['Speed'].max()}")
@@ -1073,25 +1073,25 @@ if fastest is not None:
     tel = fastest.telemetry
     if not tel.empty:
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-        
+
         # Speed trace
         ax1.plot(tel["Distance"], tel["Speed"], color='red')
         ax1.set_ylabel("Speed (km/h)")
         ax1.grid(True)
-        
+
         # Throttle and brake
         ax2.plot(tel["Distance"], tel["Throttle"], label="Throttle", color='green')
         ax2.plot(tel["Distance"], tel["Brake"] * 100, label="Brake", color='red')
         ax2.set_ylabel("Input (%)")
         ax2.legend()
         ax2.grid(True)
-        
+
         # Gear
         ax3.plot(tel["Distance"], tel["nGear"], color='blue')
         ax3.set_ylabel("Gear")
         ax3.set_xlabel("Distance (m)")
         ax3.grid(True)
-        
+
         plt.tight_layout()
         plt.show()
 ```
@@ -1399,61 +1399,61 @@ tyre_life = lap.get("TyreLife", 0)
 
 <ResponseField name="lap_number" type="int">
   The lap number extracted from the `LapNumber` column. This is a convenience property that returns the lap number as an integer.
-  
+
   **Usage:**
   ```python
   lap = driver.get_lap(19)
   print(f"Lap number: {lap.lap_number}")  # 19
   ```
-  
+
   **Note:** Returns `None` if `LapNumber` column is missing or null.
 </ResponseField>
 
 <ResponseField name="driver" type="str">
   The 3-letter driver code extracted from the `Driver` column. This identifies which driver completed this lap.
-  
+
   **Usage:**
   ```python
   lap = laps.pick_fastest()
   if lap is not None:
       print(f"Fastest lap by: {lap.driver}")  # e.g., "VER"
   ```
-  
+
   **Note:** Returns `None` if `Driver` column is missing or null.
 </ResponseField>
 
 <ResponseField name="telemetry" type="Telemetry">
   High-frequency telemetry data for this lap. This property provides lazy-loaded access to detailed sensor data including speed, throttle, brake, gear, DRS, and position information.
-  
+
   **Behavior:**
   - Loaded lazily on first access (not fetched until you access this property)
   - Cached after first load for performance
   - Returns empty Telemetry DataFrame if data not found or unavailable
   - Automatically handles network requests and caching
   - Preserves session context for continued analysis
-  
+
   **Performance:**
   - First access may trigger network request (~50-200ms depending on connection)
   - Subsequent accesses are instant (cached in memory)
   - Telemetry data is typically 1000-3000 samples per lap
-  
+
   **Usage:**
   ```python
   lap = driver.get_lap(19)
   tel = lap.telemetry
-  
+
   if not tel.empty:
       print(f"Telemetry samples: {len(tel)}")
       print(f"Max speed: {tel['Speed'].max()} km/h")
       print(f"Avg throttle: {tel['Throttle'].mean():.1f}%")
-      
+
       # Analyze braking
       braking_points = tel[tel["Brake"] == True]
       print(f"Braking zones: {len(braking_points)}")
   else:
       print("No telemetry available for this lap")
   ```
-  
+
   **Error Handling:**
   ```python
   try:
@@ -1470,16 +1470,16 @@ tyre_life = lap.get("TyreLife", 0)
 
 <ResponseField name="session" type="Session">
   Reference to the parent Session object. This maintains the connection to the session that created this lap, enabling access to session-level data and methods.
-  
+
   **Usage:**
   ```python
   lap = driver.get_lap(19)
-  
+
   # Access session information
   print(f"Year: {lap.session.year}")
   print(f"GP: {lap.session.gp}")
   print(f"Session: {lap.session.session}")
-  
+
   # Access other session data
   all_laps = lap.session.laps
   weather = lap.session.weather_data
@@ -1519,15 +1519,15 @@ if not tel.empty:
         ahead_data = tel[tel["DriverAhead"].notna()]
         if not ahead_data.empty:
             print(f"Car ahead detected in {len(ahead_data)} samples")
-            
+
             # Find closest approach
             min_distance = ahead_data["DistanceToDriverAhead"].min()
             print(f"Closest approach: {min_distance:.1f}m")
-            
+
             # Identify the driver ahead
             drivers_ahead = ahead_data["DriverAhead"].unique()
             print(f"Drivers ahead: {', '.join(drivers_ahead)}")
-    
+
     # Standard telemetry analysis
     print(f"Max speed: {tel['Speed'].max()} km/h")
     print(f"DRS usage: {len(tel[tel['DRS'] >= 10])} samples")
@@ -1729,7 +1729,7 @@ for lap_result in driver_laps.iterlaps():
         print(f"Personal best: Lap {lap.lap_number}")
         print(f"Time: {lap['LapTime']}")
         print(f"Compound: {lap['Compound']}")
-        
+
         # Analyze the personal best lap
         tel = lap.telemetry
         if not tel.empty:
@@ -1796,31 +1796,31 @@ if "HeadshotUrl" in driver:
 
 <ResponseField name="driver" type="str">
   The 3-letter driver code (e.g., "VER", "HAM", "LEC"). This is stored as an attribute (not in the Series data) and provides quick access to the driver identifier.
-  
+
   **Usage:**
   ```python
   driver = session.get_driver("VER")
   print(f"Driver code: {driver.driver}")  # "VER"
-  
+
   # Use in filtering
   all_laps = session.laps
   driver_laps = all_laps[all_laps["Driver"] == driver.driver]
   ```
-  
+
   **Note:** This is the primary identifier for the driver and is used throughout tif1 for filtering and lookups.
 </ResponseField>
 
 <ResponseField name="session" type="Session">
   Reference to the parent Session object. This maintains the connection to the session, enabling access to session-level data and methods.
-  
+
   **Usage:**
   ```python
   driver = session.get_driver("VER")
-  
+
   # Access session information
   print(f"Year: {driver.session.year}")
   print(f"GP: {driver.session.gp}")
-  
+
   # Access other session data
   all_laps = driver.session.laps
   weather = driver.session.weather_data
@@ -1829,42 +1829,42 @@ if "HeadshotUrl" in driver:
 
 <ResponseField name="laps" type="Laps | DataFrame">
   All laps completed by this driver in the session. This property provides lazy-loaded access to the driver's lap data.
-  
+
   **Type:** Returns `Laps` (pandas backend) or `DataFrame` (polars backend)
-  
+
   **Behavior:**
   - Loaded lazily on first access (not fetched until you access this property)
   - Cached after first load for performance
   - Returns empty DataFrame if no laps found
   - Automatically filters session laps to this driver
   - Preserves session context in returned Laps object
-  
+
   **Performance:**
   - First access may trigger network request if not cached (~50-200ms)
   - Subsequent accesses are instant (cached in memory)
   - Efficient filtering using pandas/polars vectorized operations
-  
+
   **Usage:**
   ```python
   driver = session.get_driver("VER")
   laps = driver.laps
-  
+
   if not laps.empty:
       print(f"Total laps: {len(laps)}")
       print(f"Fastest lap: {laps['LapTime'].min()}")
-      
+
       # Use all Laps methods
       fastest = laps.pick_fastest()
       soft_laps = laps.pick_tyre("SOFT")
       quick_laps = laps.pick_quicklaps()
-      
+
       # Analyze lap times
       avg_time = laps["LapTimeSeconds"].mean()
       print(f"Average lap time: {avg_time:.3f}s")
   else:
       print("No laps found for this driver")
   ```
-  
+
   **Common Patterns:**
   ```python
   # Tire strategy analysis
@@ -1872,13 +1872,13 @@ if "HeadshotUrl" in driver:
       compound_laps = driver.laps.pick_tyre(compound)
       if not compound_laps.empty:
           print(f"{compound}: {len(compound_laps)} laps")
-  
+
   # Pace analysis
   race_pace = driver.laps.pick_wo_box().pick_quicklaps()
   if not race_pace.empty:
       median_time = race_pace["LapTimeSeconds"].median()
       print(f"Race pace: {median_time:.3f}s")
-  
+
   # Lap time progression
   import matplotlib.pyplot as plt
   plt.plot(driver.laps["LapNumber"], driver.laps["LapTimeSeconds"])
@@ -1953,7 +1953,7 @@ for lap_num in [1, 10, 20, 30]:
 try:
     lap_10 = driver.get_lap(10)
     lap_11 = driver.get_lap(11)
-    
+
     time_diff = lap_11["LapTimeSeconds"] - lap_10["LapTimeSeconds"]
     print(f"Time difference: {time_diff:.3f}s")
 except LapNotFoundError as e:
@@ -2040,16 +2040,16 @@ if not fastest.empty:
     lap_time = fastest["LapTime"].iloc[0]
     lap_number = fastest["LapNumber"].iloc[0]
     compound = fastest["Compound"].iloc[0]
-    
+
     print(f"Fastest lap: {lap_time}")
     print(f"On lap: {lap_number}")
     print(f"Compound: {compound}")
-    
+
     # Get telemetry for fastest lap
     lap_num = int(lap_number)
     fastest_lap_obj = driver.get_lap(lap_num)
     tel = fastest_lap_obj.telemetry
-    
+
     if not tel.empty:
         print(f"Max speed: {tel['Speed'].max()} km/h")
 else:
@@ -2060,7 +2060,7 @@ drivers = ["VER", "HAM", "LEC"]
 for driver_code in drivers:
     driver = session.get_driver(driver_code)
     fastest = driver.get_fastest_lap()
-    
+
     if not fastest.empty:
         time = fastest["LapTime"].iloc[0]
         lap_num = fastest["LapNumber"].iloc[0]
@@ -2086,13 +2086,13 @@ if not fastest.empty:
     lap_num = int(fastest["LapNumber"].iloc[0])
     lap = driver.get_lap(lap_num)
     tel = lap.telemetry
-    
+
     if not tel.empty:
         # Detailed analysis
         max_speed = tel["Speed"].max()
         avg_speed = tel["Speed"].mean()
         max_rpm = tel["RPM"].max()
-        
+
         print(f"Fastest lap analysis:")
         print(f"  Time: {fastest['LapTime'].iloc[0]}")
         print(f"  Max speed: {max_speed:.1f} km/h")
@@ -2145,21 +2145,21 @@ fastest_tel = driver.get_fastest_lap_tel()
 
 if not fastest_tel.empty:
     print(f"Telemetry samples: {len(fastest_tel)}")
-    
+
     # Analyze speed
     max_speed = fastest_tel["Speed"].max()
     avg_speed = fastest_tel["Speed"].mean()
     print(f"Max speed: {max_speed:.1f} km/h")
     print(f"Avg speed: {avg_speed:.1f} km/h")
-    
+
     # Analyze braking
     braking = fastest_tel[fastest_tel["Brake"] == True]
     print(f"Braking zones: {len(braking)} samples")
-    
+
     # Analyze DRS
     drs_active = fastest_tel[fastest_tel["DRS"] >= 10]
     print(f"DRS active: {len(drs_active)} samples")
-    
+
     # Gear usage
     for gear in range(1, 9):
         gear_samples = fastest_tel[fastest_tel["nGear"] == gear]
@@ -2176,7 +2176,7 @@ fig, ax = plt.subplots(figsize=(12, 6))
 for driver_code in ["VER", "HAM", "LEC"]:
     driver = session.get_driver(driver_code)
     tel = driver.get_fastest_lap_tel()
-    
+
     if not tel.empty:
         ax.plot(tel["Distance"], tel["Speed"], label=driver_code)
 
@@ -2191,9 +2191,9 @@ plt.show()
 fastest_tel = driver.get_fastest_lap_tel()
 if not fastest_tel.empty:
     full_throttle = fastest_tel[fastest_tel["Throttle"] >= 99]
-    partial_throttle = fastest_tel[(fastest_tel["Throttle"] > 0) & 
+    partial_throttle = fastest_tel[(fastest_tel["Throttle"] > 0) &
                                     (fastest_tel["Throttle"] < 99)]
-    
+
     print(f"Full throttle: {len(full_throttle)} samples "
           f"({len(full_throttle)/len(fastest_tel)*100:.1f}%)")
     print(f"Partial throttle: {len(partial_throttle)} samples "
@@ -2246,7 +2246,7 @@ if not fastest.empty:
     print(f"Time: {fastest['LapTime'].iloc[0]}")
     print(f"Lap: {fastest['LapNumber'].iloc[0]}")
     print(f"Compound: {fastest['Compound'].iloc[0]}")
-    
+
     # Telemetry
     fastest_tel = driver.get_fastest_lap_tel()
     if not fastest_tel.empty:
@@ -2260,20 +2260,20 @@ drivers = ["VER", "HAM", "LEC"]
 
 for driver_code in drivers:
     driver = session.get_driver(driver_code)
-    
+
     print(f"\n{driver['FullName']} ({driver['TeamName']}):")
-    
+
     # Fastest lap
     fastest = driver.get_fastest_lap()
     if not fastest.empty:
         print(f"  Fastest: {fastest['LapTime'].iloc[0]}")
-    
+
     # Race pace
     race_pace = driver.laps.pick_wo_box().pick_quicklaps()
     if not race_pace.empty:
         median = race_pace["LapTimeSeconds"].median()
         print(f"  Race pace: {median:.3f}s")
-    
+
     # Consistency
     if len(driver.laps) > 1:
         std = driver.laps["LapTimeSeconds"].std()
@@ -2417,22 +2417,22 @@ if not tel.empty:
     # Get first 10 seconds
     first_10s = tel.slice_by_time(0, 10)
     print(f"First 10s: {len(first_10s)} samples")
-    
+
     # Get specific time window (20-30 seconds)
     mid_section = tel.slice_by_time(20, 30)
-    
+
     # With padding (5 samples before and after)
     padded = tel.slice_by_time(10, 20, pad=5, pad_side="both")
-    
+
     # Analyze braking in first sector
     first_sector = tel.slice_by_time(0, 25)
     braking = first_sector[first_sector["Brake"] == True]
     print(f"Braking points in first sector: {len(braking)}")
-    
+
     # Compare throttle application in different sections
     section1 = tel.slice_by_time(0, 30)
     section2 = tel.slice_by_time(30, 60)
-    
+
     print(f"Section 1 avg throttle: {section1['Throttle'].mean():.1f}%")
     print(f"Section 2 avg throttle: {section2['Throttle'].mean():.1f}%")
 ```
@@ -2512,15 +2512,15 @@ if not tel.empty:
     high_speed_mask = tel["Speed"] > 300
     high_speed_tel = tel.slice_by_mask(high_speed_mask)
     print(f"High-speed samples: {len(high_speed_tel)}")
-    
+
     # Full throttle sections
     full_throttle_mask = tel["Throttle"] >= 99
     full_throttle_tel = tel.slice_by_mask(full_throttle_mask)
-    
+
     # Braking zones with padding
     braking_mask = tel["Brake"] == True
     braking_tel = tel.slice_by_mask(braking_mask, pad=10)
-    
+
     # Complex conditions
     complex_mask = (tel["Speed"] > 250) & (tel["Throttle"] > 90) & (tel["nGear"] >= 7)
     high_speed_high_gear = tel.slice_by_mask(complex_mask)
@@ -2741,18 +2741,18 @@ if not tel.empty:
     print(f"Telemetry Analysis for Lap {lap.lap_number}:")
     print(f"Samples: {len(tel)}")
     print(f"Duration: {tel['Time'].max()}")
-    
+
     # Speed analysis
     print(f"\nSpeed:")
     print(f"  Max: {tel['Speed'].max():.1f} km/h")
     print(f"  Avg: {tel['Speed'].mean():.1f} km/h")
     print(f"  Min: {tel['Speed'].min():.1f} km/h")
-    
+
     # Engine analysis
     print(f"\nEngine:")
     print(f"  Max RPM: {tel['RPM'].max()}")
     print(f"  Avg RPM: {tel['RPM'].mean():.0f}")
-    
+
     # Driver inputs
     print(f"\nDriver Inputs:")
     print(f"  Avg Throttle: {tel['Throttle'].mean():.1f}%")
@@ -2760,11 +2760,11 @@ if not tel.empty:
     print(f"  Full Throttle: {full_throttle/len(tel)*100:.1f}% of lap")
     braking = len(tel[tel['Brake'] == True])
     print(f"  Braking: {braking/len(tel)*100:.1f}% of lap")
-    
+
     # DRS usage
     drs_active = len(tel[tel['DRS'] >= 10])
     print(f"  DRS Active: {drs_active/len(tel)*100:.1f}% of lap")
-    
+
     # Gear usage
     print(f"\nGear Usage:")
     for gear in range(1, 9):
@@ -2786,31 +2786,31 @@ tel2 = lap2.telemetry
 
 if not tel1.empty and not tel2.empty:
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    
+
     # Speed comparison
     ax1.plot(tel1["Distance"], tel1["Speed"], label=f"Lap {lap1.lap_number}", color='blue')
     ax1.plot(tel2["Distance"], tel2["Speed"], label=f"Lap {lap2.lap_number}", color='red')
     ax1.set_ylabel("Speed (km/h)")
     ax1.legend()
     ax1.grid(True)
-    
+
     # Throttle comparison
     ax2.plot(tel1["Distance"], tel1["Throttle"], label=f"Lap {lap1.lap_number}", color='blue')
     ax2.plot(tel2["Distance"], tel2["Throttle"], label=f"Lap {lap2.lap_number}", color='red')
     ax2.set_ylabel("Throttle (%)")
     ax2.legend()
     ax2.grid(True)
-    
+
     # Brake comparison
-    ax3.plot(tel1["Distance"], tel1["Brake"].astype(int) * 100, 
+    ax3.plot(tel1["Distance"], tel1["Brake"].astype(int) * 100,
              label=f"Lap {lap1.lap_number}", color='blue')
-    ax3.plot(tel2["Distance"], tel2["Brake"].astype(int) * 100, 
+    ax3.plot(tel2["Distance"], tel2["Brake"].astype(int) * 100,
              label=f"Lap {lap2.lap_number}", color='red')
     ax3.set_ylabel("Brake")
     ax3.set_xlabel("Distance (m)")
     ax3.legend()
     ax3.grid(True)
-    
+
     plt.tight_layout()
     plt.show()
 ```
@@ -2823,19 +2823,19 @@ tel = lap.telemetry
 if not tel.empty:
     # Find all braking points
     braking = tel[tel["Brake"] == True]
-    
+
     if not braking.empty:
         # Group consecutive braking samples
         braking_zones = []
         current_zone = []
-        
+
         for idx, row in tel.iterrows():
             if row["Brake"]:
                 current_zone.append(row)
             elif current_zone:
                 braking_zones.append(current_zone)
                 current_zone = []
-        
+
         print(f"Found {len(braking_zones)} braking zones:")
         for i, zone in enumerate(braking_zones, 1):
             start_dist = zone[0]["Distance"]
@@ -2904,11 +2904,11 @@ results = session.results
 if results is not None and not results.empty:
     print("Race Results:")
     print(results[["Position", "Driver", "Team", "Points", "Status"]])
-    
+
     # Get winner
     winner = results.iloc[0]
     print(f"\nWinner: {winner['Driver']} ({winner['Team']})")
-    
+
     # Get podium
     podium = results.head(3)
     print("\nPodium:")
@@ -2925,14 +2925,14 @@ if results is not None and not results.empty:
     # Count finishers
     finishers = results[results["Status"] == "Finished"]
     print(f"Finishers: {len(finishers)}/{len(results)}")
-    
+
     # Find DNFs
     dnfs = results[results["Status"].str.contains("DNF|Retired", na=False)]
     if not dnfs.empty:
         print(f"\nDNFs:")
         for _, driver in dnfs.iterrows():
             print(f"  {driver['Driver']}: {driver['Status']}")
-    
+
     # Points scorers
     points_scorers = results[results["Points"] > 0]
     print(f"\nPoints scorers: {len(points_scorers)}")
@@ -2959,7 +2959,7 @@ The `DriverResult` class represents an individual driver's race result. It inher
 results = session.results
 if results is not None and not results.empty:
     winner = results.iloc[0]  # DriverResult object
-    
+
     # Iterate over results
     for idx, driver_result in results.iterrows():
         # driver_result is a DriverResult object
@@ -2990,12 +2990,12 @@ if results is not None and not results.empty:
 
 <ResponseField name="dnf" type="bool">
   Whether the driver did not finish (computed property). Returns True if status indicates DNF, retirement, or disqualification.
-  
+
   **Behavior:**
   - Returns `True` if status is NOT one of: "Finished", "+1 Lap", "+2 Laps", "Not classified"
   - Returns `False` otherwise
   - Case-insensitive comparison
-  
+
   **Usage:**
   ```python
   result = results.iloc[0]
@@ -3019,7 +3019,7 @@ if results is not None and not results.empty:
             driver = result['Driver']
             position = result['Position']
             points = result.get('Points', 0)
-            
+
             if result.dnf:
                 print(f"{driver}: DNF ({result['Status']})")
             else:
@@ -3052,7 +3052,7 @@ if circuit is not None:
 
 <ResponseField name="corners" type="DataFrame">
   Location of corners on the circuit. DataFrame with columns: `X`, `Y`, `Number`, `Letter`, `Angle`, `Distance`.
-  
+
   **Columns:**
   - **`X`** (float): X coordinate of corner
   - **`Y`** (float): Y coordinate of corner
@@ -3060,7 +3060,7 @@ if circuit is not None:
   - **`Letter`** (str): Corner letter designation (if applicable)
   - **`Angle`** (float): Corner angle in degrees
   - **`Distance`** (float): Distance along track (populated after `add_marker_distance()`)
-  
+
   **Usage:**
   ```python
   circuit = session.get_circuit_info()
@@ -3072,19 +3072,19 @@ if circuit is not None:
 
 <ResponseField name="marshal_lights" type="DataFrame">
   Location of marshal lights (always empty in tif1 - not available in source data). Provided for FastF1 compatibility.
-  
+
   **Note:** This data is not available through the tif1 data source. The DataFrame will always be empty but maintains the correct column schema.
 </ResponseField>
 
 <ResponseField name="marshal_sectors" type="DataFrame">
   Location of marshal sectors (always empty in tif1 - not available in source data). Provided for FastF1 compatibility.
-  
+
   **Note:** This data is not available through the tif1 data source. The DataFrame will always be empty but maintains the correct column schema.
 </ResponseField>
 
 <ResponseField name="rotation" type="float">
   Rotation of the circuit in degrees. Default is 0.0.
-  
+
   **Usage:**
   ```python
   circuit = session.get_circuit_info()
@@ -3130,30 +3130,30 @@ circuit = session.get_circuit_info()
 if circuit is not None:
     # Get a reference lap (typically the fastest lap)
     fastest_lap = session.laps.pick_fastest()
-    
+
     if fastest_lap is not None:
         # Add distance markers
         circuit.add_marker_distance(fastest_lap)
-        
+
         # Now corners have distance information
         if not circuit.corners.empty:
             print("Corner distances:")
             for _, corner in circuit.corners.iterrows():
                 print(f"  Corner {corner['Number']}: {corner['Distance']:.0f}m")
-    
+
     # Use corner distances for analysis
     if not circuit.corners.empty and "Distance" in circuit.corners.columns:
         # Find telemetry at each corner
         lap = driver.get_lap(19)
         tel = lap.telemetry
-        
+
         if not tel.empty:
             for _, corner in circuit.corners.iterrows():
                 corner_dist = corner["Distance"]
                 # Find closest telemetry sample
                 closest_idx = (tel["Distance"] - corner_dist).abs().idxmin()
                 corner_tel = tel.loc[closest_idx]
-                
+
                 print(f"Corner {corner['Number']}:")
                 print(f"  Speed: {corner_tel['Speed']:.1f} km/h")
                 print(f"  Gear: {corner_tel['nGear']}")
@@ -3205,28 +3205,28 @@ for driver_code in top_drivers:
     print(f"\n{'='*50}")
     print(f"Analysis for {driver_code}")
     print(f"{'='*50}")
-    
+
     # Get driver object
     driver = session.get_driver(driver_code)
     print(f"Driver: {driver['FullName']}")
     print(f"Team: {driver['TeamName']}")
     print(f"Number: {driver['DriverNumber']}")
-    
+
     # Get driver's laps
     driver_laps = driver.laps
     if driver_laps.empty:
         print("No laps found")
         continue
-    
+
     print(f"\nLap Statistics:")
     print(f"  Total laps: {len(driver_laps)}")
-    
+
     # Fastest lap
     fastest = driver_laps.pick_fastest()
     if fastest is not None:
         print(f"  Fastest lap: {fastest['LapTime']} (Lap {fastest['LapNumber']})")
         print(f"  Compound: {fastest['Compound']}")
-    
+
     # Race pace (excluding pit laps, within 110% of fastest)
     race_pace = driver_laps.pick_wo_box().pick_quicklaps(threshold=1.10)
     if not race_pace.empty:
@@ -3234,7 +3234,7 @@ for driver_code in top_drivers:
         std_dev = race_pace["LapTimeSeconds"].std()
         print(f"  Race pace (median): {median_time:.3f}s")
         print(f"  Consistency (std dev): {std_dev:.3f}s")
-    
+
     # Tire strategy
     print(f"\nTire Strategy:")
     for compound in ["SOFT", "MEDIUM", "HARD"]:
@@ -3244,7 +3244,7 @@ for driver_code in top_drivers:
             avg_time = compound_laps["LapTimeSeconds"].mean()
             print(f"  {compound}: {len(compound_laps)} laps "
                   f"(max life: {max_life}, avg: {avg_time:.3f}s)")
-    
+
     # Telemetry analysis of fastest lap
     if fastest is not None:
         tel = fastest.telemetry
@@ -3253,11 +3253,11 @@ for driver_code in top_drivers:
             print(f"  Max speed: {tel['Speed'].max():.1f} km/h")
             print(f"  Avg speed: {tel['Speed'].mean():.1f} km/h")
             print(f"  Max RPM: {tel['RPM'].max()}")
-            
+
             # DRS usage
             drs_active = len(tel[tel['DRS'] >= 10])
             print(f"  DRS usage: {drs_active/len(tel)*100:.1f}% of lap")
-            
+
             # Full throttle
             full_throttle = len(tel[tel['Throttle'] >= 99])
             print(f"  Full throttle: {full_throttle/len(tel)*100:.1f}% of lap")
@@ -3290,22 +3290,22 @@ fig, axes = plt.subplots(4, 1, figsize=(16, 12), sharex=True)
 for driver_code, color in zip(drivers, colors):
     driver = session.get_driver(driver_code)
     tel = driver.get_fastest_lap_tel()
-    
+
     if not tel.empty:
         # Speed
-        axes[0].plot(tel["Distance"], tel["Speed"], 
+        axes[0].plot(tel["Distance"], tel["Speed"],
                     label=driver_code, color=color, linewidth=2)
-        
+
         # Throttle
-        axes[1].plot(tel["Distance"], tel["Throttle"], 
+        axes[1].plot(tel["Distance"], tel["Throttle"],
                     label=driver_code, color=color, linewidth=2)
-        
+
         # Brake
-        axes[2].plot(tel["Distance"], tel["Brake"].astype(int) * 100, 
+        axes[2].plot(tel["Distance"], tel["Brake"].astype(int) * 100,
                     label=driver_code, color=color, linewidth=2)
-        
+
         # Gear
-        axes[3].plot(tel["Distance"], tel["nGear"], 
+        axes[3].plot(tel["Distance"], tel["nGear"],
                     label=driver_code, color=color, linewidth=2)
 
 # Formatting
@@ -3350,32 +3350,32 @@ colors = ["#FF3333", "#FFD700", "#FFFFFF"]
 
 for ax, compound, color in zip(axes, compounds, colors):
     compound_laps = laps.pick_tyre(compound).pick_wo_box()
-    
+
     if not compound_laps.empty:
         # Plot lap time vs tire life
-        ax.scatter(compound_laps["TyreLife"], 
+        ax.scatter(compound_laps["TyreLife"],
                   compound_laps["LapTimeSeconds"],
                   c=color, edgecolors='black', s=100, alpha=0.7)
-        
+
         # Trend line
         if len(compound_laps) > 1:
-            z = np.polyfit(compound_laps["TyreLife"], 
+            z = np.polyfit(compound_laps["TyreLife"],
                           compound_laps["LapTimeSeconds"], 1)
             p = np.poly1d(z)
-            ax.plot(compound_laps["TyreLife"], 
+            ax.plot(compound_laps["TyreLife"],
                    p(compound_laps["TyreLife"]),
                    "r--", linewidth=2, label=f"Trend: {z[0]:.3f}s/lap")
-        
+
         ax.set_xlabel("Tire Life (laps)", fontsize=12)
         ax.set_ylabel("Lap Time (seconds)", fontsize=12)
         ax.set_title(f"{compound} Tire Degradation", fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.legend()
     else:
-        ax.text(0.5, 0.5, f"No {compound} tire data", 
+        ax.text(0.5, 0.5, f"No {compound} tire data",
                ha='center', va='center', transform=ax.transAxes)
 
-plt.suptitle(f"{driver['FullName']} - Tire Degradation Analysis", 
+plt.suptitle(f"{driver['FullName']} - Tire Degradation Analysis",
             fontsize=16, fontweight='bold')
 plt.tight_layout()
 plt.show()

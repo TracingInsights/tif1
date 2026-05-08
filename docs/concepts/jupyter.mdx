@@ -336,7 +336,7 @@ def show_driver(driver_code):
     driver = session.get_driver(driver_code)
     display(driver)
     display_dataframe_summary(driver.laps)
-    
+
     # Show fastest lap
     fastest = driver.get_fastest_lap()
     display(fastest)
@@ -546,11 +546,11 @@ display(session)
 for driver_code in ['VER', 'LEC', 'HAM']:
     driver = session.get_driver(driver_code)
     display(driver)
-    
+
     # Show their fastest lap
     fastest = driver.get_fastest_lap()
     display(fastest)
-    
+
     # Analyze stint strategy
     stints = driver.laps.groupby('Stint')['LapNumber'].count()
     print(f"{driver_code} stint lengths: {stints.tolist()}")
@@ -569,7 +569,7 @@ q3_drivers = ['VER', 'NOR', 'HAM', 'LEC']
 for driver_code in q3_drivers:
     driver = quali.get_driver(driver_code)
     display(driver)
-    
+
     # Get fastest Q3 lap
     q3_laps = driver.laps[driver.laps['Segment'] == 'Q3']
     if not q3_laps.empty:
@@ -629,18 +629,18 @@ def compare_laps(driver1, driver2, lap_num):
     # Show both drivers
     d1 = session.get_driver(driver1)
     d2 = session.get_driver(driver2)
-    
+
     display(d1)
     display(d2)
-    
+
     # Compare specific lap
     try:
         lap1 = d1.get_lap(lap_num)
         lap2 = d2.get_lap(lap_num)
-        
+
         display(lap1)
         display(lap2)
-        
+
         # Calculate time difference
         if lap1.lap_time and lap2.lap_time:
             diff = (lap1.lap_time - lap2.lap_time).total_seconds()
@@ -672,4 +672,3 @@ For detailed information about the Jupyter module functions, see the [Jupyter AP
 <Tip>
   If you're using **Polars** as your backend, all Jupyter features work identically, and you'll benefit from even faster data processing in your interactive sessions. Simply set `tif1.config.backend = 'polars'` before loading data.
 </Tip>
-

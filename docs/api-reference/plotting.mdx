@@ -169,19 +169,19 @@ Configure matplotlib with Formula 1-optimized defaults including color schemes, 
 
 #### Parameters
 
-- **`mpl_timedelta_support`** (`bool`, default: `True`)  
+- **`mpl_timedelta_support`** (`bool`, default: `True`)
   Enable timedelta plotting support via the `timple` library. When enabled, matplotlib can natively plot `pandas.Timedelta` and `datetime.timedelta` objects on axes. Requires the optional `plotting` extra to be installed.
 
-- **`color_scheme`** (`str | None`, default: `None`)  
+- **`color_scheme`** (`str | None`, default: `None`)
   Color scheme to apply. Valid values:
   - `"fastf1"` - Use FastF1's color palette
   - `"official"` - Use official F1 team colors
   - `None` - Use tif1's default color scheme
 
-- **`misc_mpl_mods`** (`bool`, default: `True`)  
+- **`misc_mpl_mods`** (`bool`, default: `True`)
   Apply additional matplotlib style modifications including grid styling, tick parameters, and figure aesthetics.
 
-- **`**kwargs`**  
+- **`**kwargs`**
   Additional keyword arguments passed to matplotlib configuration.
 
 #### Behavior
@@ -280,25 +280,25 @@ Retrieve the color hex code for a team based on the selected colormap.
 
 #### Parameters
 
-- **`identifier`** (`str`)  
+- **`identifier`** (`str`)
   Team identifier. Accepts multiple formats:
   - Full team name: `"Red Bull Racing"`
   - Short name: `"Red Bull"`
   - Team code: `"RBR"`
   - Fuzzy matches: `"redbull"`, `"RedBull"` (when `exact_match=False`)
 
-- **`session`** (required)  
+- **`session`** (required)
   A loaded tif1 Session object. Cannot be `None` - raises `ValueError` if omitted.
 
-- **`colormap`** (`str`, default: `"default"`)  
+- **`colormap`** (`str`, default: `"default"`)
   Color scheme to use:
   - `"default"` - tif1's optimized color palette
   - `"fastf1"` - FastF1-compatible colors
   - `"official"` - Official F1 team colors from liveries
-  
+
   Invalid values raise `ValueError`.
 
-- **`exact_match`** (`bool`, default: `False`)  
+- **`exact_match`** (`bool`, default: `False`)
   When `False`, enables fuzzy matching for team identifiers. When `True`, requires exact string match (case-sensitive).
 
 #### Returns
@@ -378,14 +378,14 @@ Retrieve the color hex code for a tire compound, with automatic season-aware pal
 
 #### Parameters
 
-- **`compound`** (`str`)  
+- **`compound`** (`str`)
   Tire compound name. Valid values depend on the session year:
   - **2018**: `"HYPERSOFT"`, `"ULTRASOFT"`, `"SUPERSOFT"`, `"SOFT"`, `"MEDIUM"`, `"HARD"`, `"SUPERHARD"`, `"INTERMEDIATE"`, `"WET"`
   - **2019+**: `"SOFT"`, `"MEDIUM"`, `"HARD"`, `"INTERMEDIATE"`, `"WET"`
-  
+
   Case-insensitive matching is supported.
 
-- **`session`** (optional)  
+- **`session`** (optional)
   A loaded tif1 Session object. When provided, uses the session year to select the appropriate compound palette. When `None`, defaults to the modern (2019+) palette.
 
 #### Returns
@@ -487,7 +487,7 @@ Retrieve a complete mapping of all tire compounds to their color hex codes for a
 
 #### Parameters
 
-- **`session`** (optional)  
+- **`session`** (optional)
   A loaded tif1 Session object. When provided, returns the season-appropriate compound palette. When `None`, returns the modern (2019+) palette.
 
 #### Returns
@@ -577,7 +577,7 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
 
 #### Parameters
 
-- **`identifier`** (`str`, required)  
+- **`identifier`** (`str`, required)
   Driver identifier. Accepts multiple formats:
   - Three-letter abbreviation: `"VER"`, `"HAM"`, `"LEC"`
   - Full name: `"Max Verstappen"`, `"Lewis Hamilton"`
@@ -585,18 +585,18 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
   - Last name only: `"Verstappen"`, `"Hamilton"`
   - Fuzzy matches: `"verstappen"`, `"HAMILTON"`, `"max"` (when `exact_match=False`)
 
-- **`session`** (required)  
+- **`session`** (required)
   A loaded tif1 Session object. Cannot be `None` - raises `ValueError` if omitted. The session must have been loaded with `session.load()` to populate driver and team data.
 
-- **`colormap`** (`str`, default: `"default"`)  
+- **`colormap`** (`str`, default: `"default"`)
   Color scheme to use:
   - `"default"` - Resolves to the global default colormap (set via `set_default_colormap`, initially `"fastf1"`)
   - `"fastf1"` - FastF1-compatible colors optimized for dark backgrounds
   - `"official"` - Official F1 team colors from liveries and branding
-  
+
   Invalid values raise `ValueError` with a list of valid options.
 
-- **`exact_match`** (`bool`, default: `False`)  
+- **`exact_match`** (`bool`, default: `False`)
   When `False`, enables fuzzy matching using Levenshtein distance. When `True`, requires exact string match (case-sensitive) against driver abbreviation, full name, first name, or last name.
 
 #### Returns
@@ -745,32 +745,32 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
 
 #### Parameters
 
-- **`identifier`** (`str`, required)  
+- **`identifier`** (`str`, required)
   Driver identifier (same formats as `get_driver_color`)
 
-- **`style`** (`str | Sequence[str] | Sequence[dict[str, Any]]`, required)  
+- **`style`** (`str | Sequence[str] | Sequence[dict[str, Any]]`, required)
   Style specification. Three formats are supported:
-  
+
   1. **Single string**: A single style property name (e.g., `"color"`, `"linestyle"`, `"marker"`)
   2. **List of strings**: Multiple style property names (e.g., `["color", "linestyle", "marker"]`)
   3. **List of dictionaries**: Custom style dictionaries per driver, indexed by team position (e.g., `[{"color": "auto", "linewidth": 2}, {"color": "auto", "linewidth": 3}]`)
-  
+
   Valid style property names:
   - `"color"` - Driver/team color
   - `"linestyle"` - Line style (rotates through: `"solid"`, `"dashed"`, `"dashdot"`, `"dotted"`)
   - `"marker"` - Marker style (rotates through: `"x"`, `"o"`, `"^"`, `"D"`)
   - Any matplotlib color keyword: `"facecolor"`, `"edgecolor"`, `"markerfacecolor"`, `"markeredgecolor"`, etc.
 
-- **`session`** (required)  
+- **`session`** (required)
   A loaded tif1 Session object
 
-- **`colormap`** (`str`, default: `"default"`)  
+- **`colormap`** (`str`, default: `"default"`)
   Color scheme to use (same as `get_driver_color`)
 
-- **`additional_color_kws`** (`Sequence[str]`, default: `()`)  
+- **`additional_color_kws`** (`Sequence[str]`, default: `()`)
   Additional keyword arguments that should be treated as color properties. Useful for custom matplotlib artists with non-standard color parameters.
 
-- **`exact_match`** (`bool`, default: `False`)  
+- **`exact_match`** (`bool`, default: `False`)
   Enable exact matching for driver identifier resolution
 
 #### Returns
@@ -786,7 +786,7 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
 
 **Team Position Rotation**: Drivers within the same team are assigned different linestyles and markers based on their grid position (order in session results). The first driver (typically the one who qualified higher) gets the first style in the rotation, the second driver gets the second style, etc.
 
-**Linestyle Rotation**: `["solid", "dashed", "dashdot", "dotted"]`  
+**Linestyle Rotation**: `["solid", "dashed", "dashdot", "dotted"]`
 **Marker Rotation**: `["x", "o", "^", "D"]`
 
 **Auto Color Replacement**: When using custom style dictionaries (format 3), any property with value `"auto"` is automatically replaced with the driver's team color. This allows you to define custom styles while still respecting team colors.

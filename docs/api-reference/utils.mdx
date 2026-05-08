@@ -391,7 +391,7 @@ Calculates the time delta between two laps at each telemetry sample point along 
 - **`reference_lap`** (`Lap`): The baseline lap used as the reference point for comparison
   - Typically the faster lap or the lap you want to compare against
   - Must have telemetry data available (call `.get_telemetry()` to verify)
-  
+
 - **`compare_lap`** (`Lap`): The lap to compare against the reference
   - The lap being analyzed for performance differences
   - Must have telemetry data available
@@ -487,21 +487,21 @@ ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
 
 # Fill areas where each driver is faster
 ax.fill_between(
-    ver_tel['Distance'], 
-    0, 
-    delta, 
-    where=(delta > 0), 
-    color='cyan', 
-    alpha=0.3, 
+    ver_tel['Distance'],
+    0,
+    delta,
+    where=(delta > 0),
+    color='cyan',
+    alpha=0.3,
     label='HAM slower'
 )
 ax.fill_between(
-    ver_tel['Distance'], 
-    0, 
-    delta, 
-    where=(delta < 0), 
-    color='red', 
-    alpha=0.3, 
+    ver_tel['Distance'],
+    0,
+    delta,
+    where=(delta < 0),
+    color='red',
+    alpha=0.3,
     label='HAM faster'
 )
 
@@ -600,10 +600,10 @@ for idx in top_5_changes.index:
     delta_value = delta.loc[idx]
     speed_ver = ver_tel.loc[idx, 'Speed']
     speed_ham = ham_tel.loc[idx, 'Speed']
-    
+
     faster_driver = "VER" if delta_value < 0 else "HAM"
     time_diff = abs(delta_value)
-    
+
     print(f"\nDistance: {distance:.0f}m")
     print(f"  {faster_driver} faster by {time_diff:.3f}s")
     print(f"  VER speed: {speed_ver:.1f} km/h")
@@ -631,9 +631,9 @@ fig, ax = plt.subplots(figsize=(15, 8))
 for driver_code, color in zip(drivers, colors):
     driver = session.get_driver(driver_code)
     compare_lap = driver.get_lap(driver.laps['LapTime'].idxmin())
-    
+
     delta, ref_tel, comp_tel = delta_time(reference_lap, compare_lap)
-    
+
     ax.plot(ref_tel['Distance'], delta, label=driver_code, color=color, linewidth=2)
 
 ax.axhline(y=0, color='black', linestyle='--', linewidth=2, label='VER (Reference)')
@@ -872,22 +872,22 @@ from tif1.utils import recursive_dict_get
 
 def process_session_data(session_json):
     """Process session data with safe nested access."""
-    
+
     # Extract session info (may not exist)
     session_name = recursive_dict_get(
         session_json, "session", "info", "name", default_none=True
     )
-    
+
     # Extract weather data (may not exist)
     temperature = recursive_dict_get(
         session_json, "session", "weather", "temperature", default_none=True
     )
-    
+
     # Extract timing data (may not exist)
     fastest_lap = recursive_dict_get(
         session_json, "session", "timing", "fastest_lap", default_none=True
     )
-    
+
     # Build result dict with only available data
     result = {}
     if session_name:
@@ -896,7 +896,7 @@ def process_session_data(session_json):
         result['temperature'] = temperature
     if fastest_lap:
         result['fastest_lap'] = fastest_lap
-    
+
     return result
 
 # Test with complete data
@@ -1056,7 +1056,7 @@ top_drivers = laps['Driver'].value_counts().head(10).index
 for driver in top_drivers:
     driver_laps = laps[laps['Driver'] == driver]
     axes[0].plot(
-        driver_laps['LapNumber'], 
+        driver_laps['LapNumber'],
         driver_laps['LapTimeSeconds'],
         marker='o',
         label=driver,
@@ -1116,12 +1116,12 @@ laps['ElapsedTime'] = (laps['Time'] - session_start).dt.total_seconds() / 60  # 
 if hasattr(session, 'race_control_messages'):
     messages = session.race_control_messages.copy()
     messages['ElapsedTime'] = (messages['Time'] - session_start).dt.total_seconds() / 60
-    
+
     # Filter for important events
     important_events = messages[
         messages['Category'].isin(['Flag', 'SafetyCar', 'Drs'])
     ]
-    
+
     print(f"\nImportant events during session:")
     print(important_events[['ElapsedTime', 'Category', 'Message']])
 
@@ -1132,18 +1132,18 @@ print(f"\nLaps under safety car: {len(safety_car_laps)}")
 # Compare lap times before and after safety car
 if len(safety_car_laps) > 0:
     sc_lap_numbers = safety_car_laps['LapNumber'].unique()
-    
+
     for sc_lap in sc_lap_numbers[:3]:  # First 3 SC periods
         before_sc = laps[
-            (laps['LapNumber'] >= sc_lap - 3) & 
+            (laps['LapNumber'] >= sc_lap - 3) &
             (laps['LapNumber'] < sc_lap)
         ]['LapTime'].apply(to_timedelta).dt.total_seconds().mean()
-        
+
         after_sc = laps[
-            (laps['LapNumber'] > sc_lap) & 
+            (laps['LapNumber'] > sc_lap) &
             (laps['LapNumber'] <= sc_lap + 3)
         ]['LapTime'].apply(to_timedelta).dt.total_seconds().mean()
-        
+
         print(f"\nSafety Car at lap {sc_lap}:")
         print(f"  Average lap time before: {before_sc:.3f}s")
         print(f"  Average lap time after: {after_sc:.3f}s")
@@ -1156,7 +1156,7 @@ fig, ax = plt.subplots(figsize=(15, 8))
 for driver in laps['Driver'].value_counts().head(5).index:
     driver_laps = laps[laps['Driver'] == driver]
     lap_times = driver_laps['LapTime'].apply(to_timedelta).dt.total_seconds()
-    
+
     ax.scatter(
         driver_laps['ElapsedTime'],
         lap_times,
@@ -1222,7 +1222,7 @@ telemetries = {}
 for driver_code, data in driver_data.items():
     if driver_code == reference_driver:
         continue
-    
+
     delta, ref_tel, comp_tel = delta_time(reference_lap, data['lap'])
     deltas[driver_code] = delta
     telemetries[driver_code] = comp_tel
@@ -1299,7 +1299,7 @@ sector_data = []
 for driver_code, data in driver_data.items():
     if driver_code == reference_driver:
         continue
-    
+
     lap = data['lap']
     sector_data.append({
         'Driver': driver_code,
@@ -1352,15 +1352,15 @@ import json
 def extract_session_metadata(session_json):
     """
     Safely extract session metadata from complex JSON structure.
-    
+
     Args:
         session_json: Raw JSON data from API
-        
+
     Returns:
         dict: Cleaned and validated session metadata
     """
     metadata = {}
-    
+
     # Extract basic session info
     metadata['session_name'] = recursive_dict_get(
         session_json, "session", "info", "name", default_none=True
@@ -1371,7 +1371,7 @@ def extract_session_metadata(session_json):
     metadata['year'] = recursive_dict_get(
         session_json, "session", "info", "year", default_none=True
     )
-    
+
     # Extract circuit info
     metadata['circuit_name'] = recursive_dict_get(
         session_json, "session", "circuit", "name", default_none=True
@@ -1382,14 +1382,14 @@ def extract_session_metadata(session_json):
     metadata['circuit_country'] = recursive_dict_get(
         session_json, "session", "circuit", "country", default_none=True
     )
-    
+
     # Extract timing info
     start_time_str = recursive_dict_get(
         session_json, "session", "timing", "start_time", default_none=True
     )
     if start_time_str:
         metadata['start_time'] = to_datetime(start_time_str)
-    
+
     # Extract weather info
     weather_data = recursive_dict_get(
         session_json, "session", "weather", default_none=False
@@ -1404,34 +1404,34 @@ def extract_session_metadata(session_json):
         metadata['conditions'] = recursive_dict_get(
             weather_data, "conditions", default_none=True
         )
-    
+
     # Extract driver count
     drivers = recursive_dict_get(
         session_json, "session", "drivers", default_none=False
     )
     metadata['driver_count'] = len(drivers) if isinstance(drivers, list) else 0
-    
+
     # Remove None values
     metadata = {k: v for k, v in metadata.items() if v is not None}
-    
+
     return metadata
 
 
 def process_lap_data_safely(lap_json_list):
     """
     Process a list of lap data JSON objects safely.
-    
+
     Args:
         lap_json_list: List of lap data dictionaries
-        
+
     Returns:
         pd.DataFrame: Processed lap data
     """
     processed_laps = []
-    
+
     for lap_json in lap_json_list:
         lap_data = {}
-        
+
         # Extract driver info
         lap_data['Driver'] = recursive_dict_get(
             lap_json, "driver", "code", default_none=True
@@ -1439,7 +1439,7 @@ def process_lap_data_safely(lap_json_list):
         lap_data['Team'] = recursive_dict_get(
             lap_json, "driver", "team", default_none=True
         )
-        
+
         # Extract lap timing
         lap_time_str = recursive_dict_get(
             lap_json, "timing", "lap_time", default_none=True
@@ -1451,7 +1451,7 @@ def process_lap_data_safely(lap_json_list):
             except:
                 lap_data['LapTime'] = pd.NaT
                 lap_data['LapTimeSeconds'] = None
-        
+
         # Extract sector times
         for sector_num in [1, 2, 3]:
             sector_time_str = recursive_dict_get(
@@ -1462,12 +1462,12 @@ def process_lap_data_safely(lap_json_list):
                     lap_data[f'Sector{sector_num}Time'] = to_timedelta(sector_time_str)
                 except:
                     lap_data[f'Sector{sector_num}Time'] = pd.NaT
-        
+
         # Extract lap number
         lap_data['LapNumber'] = recursive_dict_get(
             lap_json, "lap_number", default_none=True
         )
-        
+
         # Extract tyre info
         lap_data['Compound'] = recursive_dict_get(
             lap_json, "tyre", "compound", default_none=True
@@ -1475,21 +1475,21 @@ def process_lap_data_safely(lap_json_list):
         lap_data['TyreLife'] = recursive_dict_get(
             lap_json, "tyre", "life", default_none=True
         )
-        
+
         # Extract position
         lap_data['Position'] = recursive_dict_get(
             lap_json, "position", default_none=True
         )
-        
+
         # Extract track status
         lap_data['TrackStatus'] = recursive_dict_get(
             lap_json, "track_status", default_none=True
         )
-        
+
         # Only add lap if we have minimum required data
         if lap_data.get('Driver') and lap_data.get('LapNumber'):
             processed_laps.append(lap_data)
-    
+
     return pd.DataFrame(processed_laps)
 
 
@@ -1522,12 +1522,12 @@ if __name__ == "__main__":
             ]
         }
     }
-    
+
     # Extract metadata safely
     metadata = extract_session_metadata(api_response)
     print("Session Metadata:")
     print(json.dumps(metadata, indent=2, default=str))
-    
+
     # Simulated lap data
     lap_data_json = [
         {
@@ -1554,7 +1554,7 @@ if __name__ == "__main__":
             # Missing tyre and track status
         }
     ]
-    
+
     # Process lap data safely
     laps_df = process_lap_data_safely(lap_data_json)
     print("\nProcessed Lap Data:")
@@ -1577,7 +1577,7 @@ Understanding the performance characteristics of utility functions helps you wri
    ```python
    # Slower: Apply to each element
    df['LapTime'] = df['LapTimeStr'].apply(to_timedelta)
-   
+
    # Faster: Vectorized pandas operation
    df['LapTime'] = pd.to_timedelta(df['LapTimeStr'])
    ```
@@ -1586,7 +1586,7 @@ Understanding the performance characteristics of utility functions helps you wri
    ```python
    # Slower: Individual conversions
    times = [to_timedelta(t) for t in time_list]
-   
+
    # Faster: Batch conversion
    times = pd.to_timedelta(time_list)
    ```
@@ -1606,7 +1606,7 @@ Understanding the performance characteristics of utility functions helps you wri
    ```python
    # Cache telemetry for reference lap
    reference_telemetry = reference_lap.get_telemetry()
-   
+
    # Compare against multiple laps
    for compare_lap in laps_to_compare:
        delta, _, comp_tel = delta_time(reference_lap, compare_lap)
@@ -1616,7 +1616,7 @@ Understanding the performance characteristics of utility functions helps you wri
 2. **Limit telemetry channels**: If you only need specific channels, filter after retrieval:
    ```python
    delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
-   
+
    # Only keep needed columns
    ref_tel_minimal = ref_tel[['Distance', 'Speed', 'Time']]
    comp_tel_minimal = comp_tel[['Distance', 'Speed', 'Time']]
@@ -1625,10 +1625,10 @@ Understanding the performance characteristics of utility functions helps you wri
 3. **Parallel processing**: For multiple comparisons, use parallel processing:
    ```python
    from concurrent.futures import ThreadPoolExecutor
-   
+
    def compare_lap(compare_lap):
        return delta_time(reference_lap, compare_lap)
-   
+
    with ThreadPoolExecutor(max_workers=4) as executor:
        results = list(executor.map(compare_lap, laps_to_compare))
    ```
@@ -1642,7 +1642,7 @@ Understanding the performance characteristics of utility functions helps you wri
    # Less efficient: Multiple deep accesses
    name = recursive_dict_get(data, "a", "b", "c", "name")
    age = recursive_dict_get(data, "a", "b", "c", "age")
-   
+
    # More efficient: Get parent once
    person = recursive_dict_get(data, "a", "b", "c")
    name = person.get("name")
@@ -1653,7 +1653,7 @@ Understanding the performance characteristics of utility functions helps you wri
    ```python
    # Cache session info
    session_info = recursive_dict_get(data, "session", "info")
-   
+
    # Access multiple fields from cached object
    name = session_info.get("name")
    year = session_info.get("year")
@@ -1664,7 +1664,7 @@ Understanding the performance characteristics of utility functions helps you wri
    ```python
    # Use default_none=False for chaining
    drivers = recursive_dict_get(data, "session", "drivers") or []
-   
+
    # Use default_none=True for explicit checks
    temperature = recursive_dict_get(data, "weather", "temp", default_none=True)
    if temperature is not None:
@@ -1687,9 +1687,9 @@ Understanding the performance characteristics of utility functions helps you wri
 2. **Delete unused data**: Free memory by deleting intermediate results:
    ```python
    delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
-   
+
    # Process delta...
-   
+
    # Free memory if telemetry not needed
    del ref_tel, comp_tel
    ```
@@ -1715,7 +1715,7 @@ Understanding the performance characteristics of utility functions helps you wri
        except Exception as e:
            print(f"Warning: Could not convert {value}: {e}")
            return pd.NaT
-   
+
    df['LapTime'] = df['LapTimeStr'].apply(safe_to_timedelta)
    ```
 

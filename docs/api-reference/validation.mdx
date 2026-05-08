@@ -65,7 +65,7 @@ Validates lap timing data structure with comprehensive field checking and length
 def validate_laps(data: dict) -> LapData
 ```
 
-**Purpose:**  
+**Purpose:**
 Validates raw lap timing JSON from the CDN, ensuring all required fields are present, arrays have consistent lengths, and values meet domain constraints (e.g., stint >= 1, tire life >= 0).
 
 **Parameters:**
@@ -112,7 +112,7 @@ try:
     validated = validate_laps(raw_data)
     print(f"✓ Validated {len(validated.lap)} laps")
     print(f"  Required fields: {len([f for f in validated.model_fields if validated.__getattribute__(f)])}")
-    
+
     # Access validated data
     print(f"  Fastest lap: {min(validated.time)} seconds")
     print(f"  Compounds used: {set(validated.compound)}")
@@ -160,7 +160,7 @@ Validates high-frequency telemetry data in batch mode (significantly faster than
 def validate_telemetry(data: dict) -> TelemetryData
 ```
 
-**Purpose:**  
+**Purpose:**
 Validates raw telemetry JSON containing arrays of sensor readings (speed, RPM, throttle, brake, etc.). Handles nested `tel` objects and performs boolean coercion for brake/DRS fields.
 
 **Parameters:**
@@ -227,7 +227,7 @@ try:
     print(f"  Time range: {validated.time[0]:.3f}s - {validated.time[-1]:.3f}s")
     print(f"  Speed range: {min(validated.speed):.1f} - {max(validated.speed):.1f} km/h")
     print(f"  Max RPM: {max(validated.rpm)}")
-    
+
     # Boolean fields are properly typed
     print(f"  Brake applications: {sum(validated.brake)}")
     print(f"  DRS active samples: {sum(validated.drs)}")
@@ -254,7 +254,7 @@ print(f"Time: {validated.time}")  # [0.0, 0.1]
 print(f"Speed: {validated.speed}")  # [250.0, 251.0]
 ```
 
-**Performance Note:**  
+**Performance Note:**
 Batch validation is ~50x faster than point-by-point validation. Always use `validate_telemetry()` for array data rather than validating individual telemetry points.
 
 ---
@@ -267,7 +267,7 @@ Validates driver information data structure.
 def validate_drivers(data: dict) -> DriversData
 ```
 
-**Purpose:**  
+**Purpose:**
 Validates driver roster data from the CDN, ensuring all driver codes follow the 3-letter format and required metadata fields are present.
 
 **Parameters:**
@@ -319,7 +319,7 @@ raw_data = {
 try:
     validated = validate_drivers(raw_data)
     print(f"✓ Validated {len(validated.drivers)} drivers")
-    
+
     for driver in validated.drivers:
         print(f"  {driver.driver} - {driver.fn} {driver.ln} ({driver.team})")
         print(f"    Number: #{driver.dn}, Color: #{driver.tc}")
@@ -385,7 +385,7 @@ Validates weather data structure with automatic key normalization.
 def validate_weather(data: dict) -> WeatherData
 ```
 
-**Purpose:**  
+**Purpose:**
 Validates weather sensor data from the CDN, handling both PascalCase and aliased field names. Ensures consistent array lengths for time-series weather data.
 
 **Parameters:**
@@ -496,7 +496,7 @@ Validates race control messages (flags, safety car, penalties, etc.).
 def validate_race_control(data: dict) -> RaceControlData
 ```
 
-**Purpose:**  
+**Purpose:**
 Validates race control message data from the CDN, ensuring message timestamps, categories, and metadata are properly structured.
 
 **Parameters:**
@@ -540,11 +540,11 @@ raw_data = {
 try:
     validated = validate_race_control(raw_data)
     print(f"✓ Validated {len(validated.time)} race control messages")
-    
+
     # Analyze message types
     categories = [cat for cat in validated.category if cat]
     print(f"  Message categories: {set(categories)}")
-    
+
     # Find safety car periods
     safety_car_msgs = [
         (validated.time[i], validated.message[i])
@@ -552,7 +552,7 @@ try:
         if validated.category[i] == "SafetyCar"
     ]
     print(f"  Safety car deployments: {len(safety_car_msgs)}")
-    
+
     # Find penalties
     penalties = [
         (validated.time[i], validated.message[i], validated.racing_number[i])
@@ -562,7 +562,7 @@ try:
     print(f"  Penalties issued: {len(penalties)}")
     for time, msg, driver in penalties:
         print(f"    Lap {time:.0f}s: {msg} (Driver #{driver})")
-        
+
 except Exception as e:
     print(f"✗ Validation failed: {e}")
 ```
@@ -633,10 +633,10 @@ sc_events = [
 
 Comprehensive Pydantic model for lap timing data with automatic length consistency validation.
 
-**Purpose:**  
+**Purpose:**
 Represents validated lap timing data with all required and optional fields. Ensures all parallel arrays have consistent lengths, which is critical for DataFrame construction.
 
-**Architecture:**  
+**Architecture:**
 Inherits from `ConsistentLengthsMixin` which provides automatic array length validation across all fields.
 
 **Required Fields:**
@@ -766,10 +766,10 @@ print(lap_data.source_driver)  # ["VER"]
 
 Comprehensive Pydantic model for high-frequency telemetry data with automatic unwrapping of nested structures.
 
-**Purpose:**  
+**Purpose:**
 Represents validated telemetry sensor data with support for multiple CDN formats. Handles nested `tel` objects and performs boolean coercion for brake/DRS fields.
 
-**Architecture:**  
+**Architecture:**
 - Inherits from `ConsistentLengthsMixin` for automatic array length validation
 - Implements `_unwrap_tel` pre-validator to handle nested structures
 - Supports both aliased and standard field names
@@ -891,10 +891,10 @@ print(tel_data.drs)    # [True, True, False]
 
 Pydantic model for session weather data with automatic key normalization.
 
-**Purpose:**  
+**Purpose:**
 Represents validated weather sensor data with support for multiple naming conventions (PascalCase, aliased, snake_case).
 
-**Architecture:**  
+**Architecture:**
 - Inherits from `ConsistentLengthsMixin` for array length validation
 - Implements `_normalize_pascalcase_keys` pre-validator for key normalization
 - Supports three naming conventions simultaneously
@@ -954,10 +954,10 @@ weather_dict = weather_data.model_dump()
 
 Pydantic model for race control messages with flexible field types.
 
-**Purpose:**  
+**Purpose:**
 Represents validated race control message data including flags, safety car deployments, and penalties.
 
-**Architecture:**  
+**Architecture:**
 - Inherits from `ConsistentLengthsMixin` for array length validation
 - Supports aliased field names
 - Flexible sector field (accepts both int and string)
@@ -1175,7 +1175,7 @@ valid_laps = [lap for lap in laps if lap["status"] == LapStatus.VALID.value]
 
 # Identify pit laps
 pit_laps = [
-    lap for lap in laps 
+    lap for lap in laps
     if lap["status"] in [LapStatus.OUTLAP.value, LapStatus.INLAP.value]
 ]
 ```
@@ -1228,7 +1228,7 @@ Detects data quality issues in lap data with structured, actionable results.
 def detect_lap_anomalies(laps: list[dict]) -> list[Anomaly]
 ```
 
-**Purpose:**  
+**Purpose:**
 Analyzes lap data to identify missing laps, duplicate lap numbers, and statistical outliers. Returns structured anomaly objects with severity levels and detailed context.
 
 **Parameters:**
@@ -1640,7 +1640,7 @@ try:
     drivers = validate_drivers(raw_drivers)
     weather = validate_weather(raw_weather)
     rcm = validate_race_control(raw_rcm)
-    
+
     print("✓ All data validated successfully")
 except Exception as e:
     print(f"✗ Validation failed: {e}")

@@ -95,7 +95,7 @@ The function returns an `EventSchedule` object, which is a specialized pandas Da
 
 <ParamField path="year" type="int" required>
   The Formula 1 season year to query. Must be between 2018 and the current year (2026). Years outside this range will raise a `DataNotFoundError` as schedule data is not available.
-  
+
   **Supported years:** 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026
 </ParamField>
 
@@ -103,7 +103,7 @@ The function returns an `EventSchedule` object, which is a specialized pandas Da
 
 <ResponseField name="EventSchedule" type="EventSchedule">
   A pandas DataFrame subclass containing all events for the specified year. The DataFrame includes the following columns:
-  
+
   - `EventName`: Official short name (e.g., "Belgian Grand Prix")
   - `Location`: Circuit or venue name (e.g., "Spa-Francorchamps")
   - `OfficialEventName`: Full official event title with sponsors
@@ -114,7 +114,7 @@ The function returns an `EventSchedule` object, which is a specialized pandas Da
   - `Session1`, `Session2`, ...: Names of available sessions
   - `Session1Date`, `Session2Date`, ...: Local session start times with timezone
   - `Session1DateUtc`, `Session2DateUtc`, ...: UTC session start times
-  
+
   The EventSchedule object also provides specialized methods like `get_event_by_round()` and `get_event_by_name()` for convenient event lookup.
 </ResponseField>
 
@@ -217,7 +217,7 @@ Session availability varies by event format:
 
 <ParamField path="event" type="str" required>
   The Grand Prix event name. This should match the official event name (e.g., "Belgian Grand Prix"), but fuzzy matching is applied internally so partial names like "Belgian" will also work.
-  
+
   **Accepted formats:**
   - Full official name: "Belgian Grand Prix"
   - Partial name: "Belgian"
@@ -228,7 +228,7 @@ Session availability varies by event format:
 
 <ResponseField name="sessions" type="list[str]">
   An ordered list of session names available for the specified event. Sessions are returned in chronological order (Practice 1 → Practice 2 → ... → Race).
-  
+
   **Common session names:**
   - `"Practice 1"`, `"Practice 2"`, `"Practice 3"`
   - `"Qualifying"`
@@ -290,7 +290,7 @@ session_counts = {}
 for event_name in schedule['EventName']:
     sessions = tif1.get_sessions(year, event_name)
     session_count = len(sessions)
-    
+
     if session_count not in session_counts:
         session_counts[session_count] = []
     session_counts[session_count].append(event_name)
@@ -328,7 +328,7 @@ event = tif1.get_event(year, event_name)
 for session_name in sessions:
     print(f"\nLoading {session_name}...")
     session = event.get_session(session_name)
-    
+
     try:
         session.load(laps=True, telemetry=False)
         print(f"  ✓ Loaded {len(session.laps)} laps")
@@ -365,12 +365,12 @@ The returned `Event` object is a pandas Series subclass that contains all event 
 
 <ParamField path="gp" type="int | str" required>
   The Grand Prix identifier. Can be either:
-  
+
   **Round number (int):**
   - Championship round number (1-indexed)
   - Example: `12` for the 12th race of the season
   - Must be within the valid range for the season (typically 1-23)
-  
+
   **Event name (str):**
   - Full official name: `"Belgian Grand Prix"`
   - Partial name: `"Belgian"`, `"Spa"`
@@ -380,10 +380,10 @@ The returned `Event` object is a pandas Series subclass that contains all event 
 
 <ParamField path="exact_match" type="bool" default="False">
   Controls the string matching behavior when `gp` is a string:
-  
+
   - `False` (default): Uses fuzzy matching algorithm to find the best match. Tolerates typos, partial names, and case variations.
   - `True`: Requires an exact string match (case-sensitive). Use this when you need precise control or want to avoid ambiguous matches.
-  
+
   **Note:** This parameter is ignored when `gp` is an integer (round number).
 </ParamField>
 
@@ -391,7 +391,7 @@ The returned `Event` object is a pandas Series subclass that contains all event 
 
 <ResponseField name="Event" type="Event | None">
   An `Event` object (pandas Series subclass) containing event metadata and methods for session access. Returns `None` if the event is not found and `exact_match=False`.
-  
+
   When `exact_match=True`, raises `DataNotFoundError` instead of returning `None`.
 </ResponseField>
 
@@ -461,13 +461,13 @@ print(f"Comparing {event_name} across years:\n")
 
 for year in years:
     event = tif1.get_event(year, event_name)
-    
+
     if event:
         print(f"{year}:")
         print(f"  Round: {event['RoundNumber']}")
         print(f"  Date: {event['EventDate']}")
         print(f"  Format: {event['EventFormat']}")
-        
+
         # Get sessions
         sessions = tif1.get_sessions(year, event_name)
         print(f"  Sessions: {', '.join(sessions)}")
@@ -485,19 +485,19 @@ def find_and_load_race(year: int, event_identifier: int | str):
     """
     # Try to get the event
     event = tif1.get_event(year, event_identifier)
-    
+
     if event is None:
         print(f"Could not find event: {event_identifier}")
         return None
-    
+
     print(f"Found: {event['EventName']}")
     print(f"Location: {event['Location']}")
     print(f"Round: {event['RoundNumber']}")
-    
+
     # Load the race session
     race = event.get_race()
     race.load()
-    
+
     print(f"Loaded {len(race.laps)} laps from {len(race.drivers)} drivers")
     return race
 
@@ -531,12 +531,12 @@ Round numbers are 1-indexed and correspond to the official FIA Formula 1 World C
 
 <ParamField path="round_number" type="int" required>
   The championship round number (1-indexed). Must be within the valid range for the specified season.
-  
+
   **Valid ranges by season:**
   - Most seasons: 1-22 or 1-23 rounds
   - 2020 (COVID-affected): 1-17 rounds
   - Check `len(tif1.get_events(year))` for exact count
-  
+
   **Note:** Round numbers include all championship events but typically exclude pre-season testing.
 </ParamField>
 
@@ -596,9 +596,9 @@ print(f"{year} F1 Season - {total_rounds} rounds\n")
 # Iterate through all rounds
 for round_num in range(1, total_rounds + 1):
     event = tif1.get_event_by_round(year, round_num)
-    
+
     print(f"Round {round_num:2d}: {event['EventName']:30s} | {event['Location']:25s} | {event['Country']}")
-    
+
     # Check if it's a sprint weekend
     if event['EventFormat'] == 'sprint':
         print(f"          ^ Sprint Weekend")
@@ -616,29 +616,29 @@ def load_round_data(year: int, round_number: int):
     try:
         # Get the event
         event = tif1.get_event_by_round(year, round_number)
-        
+
         print(f"Loading Round {round_number}: {event['EventName']}")
         print(f"Location: {event['Location']}, {event['Country']}")
         print(f"Date: {event['EventDate']}")
         print(f"Format: {event['EventFormat']}")
         print()
-        
+
         # Get all sessions
         sessions = tif1.get_sessions(year, event['EventName'])
         print(f"Available sessions: {', '.join(sessions)}")
         print()
-        
+
         # Load race data
         race = event.get_race()
         race.load()
-        
+
         print(f"Race loaded successfully:")
         print(f"  - {len(race.laps)} total laps")
         print(f"  - {len(race.drivers)} drivers")
         print(f"  - Winner: {race.results.iloc[0]['Abbreviation']}")
-        
+
         return race
-        
+
     except ValueError as e:
         print(f"Error: Invalid round number - {e}")
         return None
@@ -679,41 +679,41 @@ The fuzzy matching algorithm uses Levenshtein distance and token-based matching 
 
 <ParamField path="name" type="str" required>
   The event name or partial name to search for. The function accepts multiple formats:
-  
+
   **Full official names:**
   - `"Belgian Grand Prix"`
   - `"British Grand Prix"`
   - `"Monaco Grand Prix"`
-  
+
   **Partial names:**
   - `"Belgian"` → matches "Belgian Grand Prix"
   - `"British"` → matches "British Grand Prix"
   - `"Monaco"` → matches "Monaco Grand Prix"
-  
+
   **Circuit names:**
   - `"Spa"` → matches "Belgian Grand Prix" (Spa-Francorchamps)
   - `"Silverstone"` → matches "British Grand Prix"
   - `"Monza"` → matches "Italian Grand Prix"
-  
+
   **Case-insensitive:**
   - `"belgian grand prix"`, `"BELGIAN GP"`, `"Belgian"` all work
-  
+
   **Testing events:**
   - `"Pre-Season Testing"` or `"Testing"` for test sessions
 </ParamField>
 
 <ParamField path="exact_match" type="bool" default="False">
   Controls the string matching behavior:
-  
+
   - `False` (default): Uses fuzzy matching algorithm to find the best match. Tolerates typos, partial names, case variations, and common abbreviations.
-  
+
   - `True`: Requires an exact string match (case-sensitive). The provided name must match the official event name character-for-character.
-  
+
   **When to use exact_match=True:**
   - Validating user input against known event names
   - Ensuring no false positives in automated systems
   - When you have the exact official event name
-  
+
   **When to use exact_match=False (default):**
   - Interactive applications where users type event names
   - When accepting partial or abbreviated input
@@ -790,18 +790,18 @@ def find_event_interactive(year: int):
     Interactive event finder with fuzzy matching.
     """
     user_input = input(f"Enter event name for {year}: ")
-    
+
     try:
         event = tif1.get_event_by_name(year, user_input)
-        
+
         print(f"\nFound: {event['EventName']}")
         print(f"Location: {event['Location']}, {event['Country']}")
         print(f"Round: {event['RoundNumber']}")
         print(f"Date: {event['EventDate']}")
         print(f"Format: {event['EventFormat']}")
-        
+
         return event
-        
+
     except tif1.DataNotFoundError:
         print(f"\nNo event found matching '{user_input}' in {year}")
         print("\nAvailable events:")
@@ -841,15 +841,15 @@ The returned `EventSchedule` object is a specialized pandas DataFrame subclass t
 
 <ParamField path="include_testing" type="bool" default="True">
   Controls whether pre-season testing events are included in the returned schedule.
-  
+
   - `True` (default): Includes all events including pre-season testing sessions
   - `False`: Excludes testing events, returning only championship Grand Prix events
-  
+
   **Use cases for include_testing=False:**
   - Championship analysis (only counting points-scoring events)
   - Season statistics (excluding non-competitive sessions)
   - Calendar visualization (showing only race weekends)
-  
+
   **Use cases for include_testing=True:**
   - Complete data availability overview
   - Pre-season analysis and testing data
@@ -860,7 +860,7 @@ The returned `EventSchedule` object is a specialized pandas DataFrame subclass t
 
 <ResponseField name="EventSchedule" type="EventSchedule">
   An `EventSchedule` object (pandas DataFrame subclass) containing all events for the specified year. The DataFrame includes the following columns:
-  
+
   **Core Event Information:**
   - `EventName`: Official short name (e.g., "Belgian Grand Prix")
   - `Location`: Circuit or venue name (e.g., "Spa-Francorchamps")
@@ -869,17 +869,17 @@ The returned `EventSchedule` object is a specialized pandas DataFrame subclass t
   - `Country`: Country where the event takes place (e.g., "Belgium")
   - `EventDate`: Main event date as pandas Timestamp (typically race day)
   - `EventFormat`: Format type - one of "conventional", "sprint", or "testing"
-  
+
   **Session Information:**
   - `Session1`, `Session2`, `Session3`, `Session4`, `Session5`: Names of available sessions (e.g., "Practice 1", "Qualifying", "Race")
   - `Session1Date`, `Session2Date`, ...: Local session start times with timezone information
   - `Session1DateUtc`, `Session2DateUtc`, ...: UTC session start times as pandas Timestamps
-  
+
   The EventSchedule object also provides specialized methods:
   - `get_event_by_round(round_number)`: Get a specific event by round number
   - `get_event_by_name(name, strict_search=False)`: Get a specific event by name with optional fuzzy matching
   - `get_event(identifier, strict_search=False)`: Get an event by either round number or name
-  
+
   All standard pandas DataFrame operations are available (filtering, sorting, grouping, etc.).
 </ResponseField>
 
@@ -1035,10 +1035,10 @@ fig, ax = plt.subplots(figsize=(14, 8))
 # Plot events on timeline
 for idx, row in schedule.iterrows():
     color = 'red' if row['EventFormat'] == 'sprint' else 'blue'
-    ax.scatter(row['EventDate'], row['RoundNumber'], 
+    ax.scatter(row['EventDate'], row['RoundNumber'],
                c=color, s=100, alpha=0.6)
-    ax.text(row['EventDate'], row['RoundNumber'], 
-            f" {row['EventName']}", 
+    ax.text(row['EventDate'], row['RoundNumber'],
+            f" {row['EventName']}",
             fontsize=8, va='center')
 
 ax.set_xlabel('Date')
@@ -1479,7 +1479,7 @@ year_stats = []
 
 for year in years:
     schedule = tif1.get_event_schedule(year, include_testing=False)
-    
+
     stats = {
         'Year': year,
         'Total Events': len(schedule),
@@ -1514,7 +1514,7 @@ schedule = tif1.get_event_schedule(year, include_testing=False)
 
 # Find all European events
 european_countries = [
-    'Belgium', 'Netherlands', 'Italy', 'Monaco', 'Spain', 
+    'Belgium', 'Netherlands', 'Italy', 'Monaco', 'Spain',
     'Austria', 'United Kingdom', 'Hungary', 'Azerbaijan'
 ]
 european_events = schedule[schedule['Country'].isin(european_countries)]
@@ -1555,19 +1555,19 @@ sessions = tif1.get_sessions(year, event_name)
 session_data = {}
 for session_name in sessions:
     print(f"Loading {session_name}...")
-    
+
     try:
         session = event.get_session(session_name)
         session.load(laps=True, telemetry=False, messages=False)
-        
+
         session_data[session_name] = session
-        
+
         print(f"  ✓ Loaded {len(session.laps)} laps from {len(session.drivers)} drivers")
         print(f"  ✓ Fastest lap: {session.laps['LapTime'].min()}")
-        
+
     except Exception as e:
         print(f"  ✗ Failed: {e}")
-    
+
     print()
 
 # Analyze across sessions
@@ -1592,27 +1592,27 @@ current_month = None
 for idx, row in schedule.iterrows():
     event_date = pd.to_datetime(row['EventDate'])
     month_name = event_date.strftime('%B %Y')
-    
+
     # Print month header
     if month_name != current_month:
         print(f"\n{month_name}")
         print("=" * 60)
         current_month = month_name
-    
+
     # Format event info
     round_num = row['RoundNumber']
     event_name = row['EventName']
     location = row['Location']
     country = row['Country']
     event_format = row['EventFormat']
-    
+
     # Format indicator
     format_indicator = " [SPRINT]" if event_format == 'sprint' else ""
-    
+
     print(f"Round {round_num:2d}: {event_name}{format_indicator}")
     print(f"          {location}, {country}")
     print(f"          {event_date.strftime('%A, %B %d, %Y')}")
-    
+
     # Show session schedule
     sessions = tif1.get_sessions(year, event_name)
     print(f"          Sessions: {', '.join(sessions)}")
@@ -1632,16 +1632,16 @@ print("=== Sprint Weekend Evolution ===\n")
 for year in years:
     schedule = tif1.get_event_schedule(year, include_testing=False)
     sprint_events = schedule[schedule['EventFormat'] == 'sprint']
-    
+
     print(f"{year}: {len(sprint_events)} sprint weekends")
-    
+
     for idx, row in sprint_events.iterrows():
         event_name = row['EventName']
         sessions = tif1.get_sessions(year, event_name)
-        
+
         print(f"  - {event_name}")
         print(f"    Sessions: {sessions}")
-    
+
     print()
 
 # Output shows how sprint format changed:
@@ -1667,7 +1667,7 @@ print(f"Exported to f1_schedule_{year}.csv")
 # Export to Excel with formatting
 with pd.ExcelWriter(f'f1_schedule_{year}.xlsx', engine='openpyxl') as writer:
     schedule.to_excel(writer, sheet_name='Schedule', index=False)
-    
+
     # Add a summary sheet
     summary = pd.DataFrame({
         'Metric': [
@@ -1712,10 +1712,10 @@ def event_lookup_cli():
         print("Example: python event_lookup.py 2021 Monaco")
         print("Example: python event_lookup.py 2021 12")
         sys.exit(1)
-    
+
     year = int(sys.argv[1])
     identifier = sys.argv[2]
-    
+
     # Try to parse as round number
     try:
         round_num = int(identifier)
@@ -1723,7 +1723,7 @@ def event_lookup_cli():
     except ValueError:
         # It's a name, use fuzzy matching
         event = tif1.get_event_by_name(year, identifier)
-    
+
     if event is None:
         print(f"Event not found: {identifier}")
         print(f"\nAvailable events in {year}:")
@@ -1731,7 +1731,7 @@ def event_lookup_cli():
         for event_name in schedule['EventName']:
             print(f"  - {event_name}")
         sys.exit(1)
-    
+
     # Display event information
     print(f"\n{'='*60}")
     print(f"{event['EventName']}")
@@ -1742,14 +1742,14 @@ def event_lookup_cli():
     print(f"Format:        {event['EventFormat']}")
     print(f"Official Name: {event['OfficialEventName']}")
     print()
-    
+
     # Display sessions
     sessions = tif1.get_sessions(year, event['EventName'])
     print(f"Sessions ({len(sessions)}):")
     for i, session_name in enumerate(sessions, 1):
         print(f"  {i}. {session_name}")
     print()
-    
+
     # Display session times if available
     print("Session Schedule:")
     for session_name in sessions:
@@ -1776,41 +1776,41 @@ def compare_calendars(year1: int, year2: int):
     """
     schedule1 = tif1.get_event_schedule(year1, include_testing=False)
     schedule2 = tif1.get_event_schedule(year2, include_testing=False)
-    
+
     events1 = set(schedule1['EventName'])
     events2 = set(schedule2['EventName'])
-    
+
     # Find differences
     new_events = events2 - events1
     removed_events = events1 - events2
     common_events = events1 & events2
-    
+
     print(f"=== Calendar Comparison: {year1} vs {year2} ===\n")
-    
+
     print(f"Total events: {len(events1)} ({year1}) → {len(events2)} ({year2})")
     print(f"Common events: {len(common_events)}")
     print()
-    
+
     if new_events:
         print(f"New in {year2}:")
         for event in sorted(new_events):
             event_data = schedule2[schedule2['EventName'] == event].iloc[0]
             print(f"  + {event} ({event_data['Country']})")
         print()
-    
+
     if removed_events:
         print(f"Removed from {year1}:")
         for event in sorted(removed_events):
             event_data = schedule1[schedule1['EventName'] == event].iloc[0]
             print(f"  - {event} ({event_data['Country']})")
         print()
-    
+
     # Check for round number changes
     print("Round number changes:")
     for event_name in common_events:
         round1 = schedule1[schedule1['EventName'] == event_name].iloc[0]['RoundNumber']
         round2 = schedule2[schedule2['EventName'] == event_name].iloc[0]['RoundNumber']
-        
+
         if round1 != round2:
             print(f"  {event_name}: Round {round1} → Round {round2}")
 
@@ -1950,7 +1950,7 @@ def load_race_for_event(year: int, event_identifier: int | str):
     event = tif1.get_event(year, event_identifier)
     if event is None:
         raise ValueError(f"Event not found: {event_identifier}")
-    
+
     race = event.get_race()
     race.load()
     return race
@@ -1975,7 +1975,7 @@ from typing import Optional
 import tif1
 
 def find_event_by_country(
-    year: int, 
+    year: int,
     country: str
 ) -> Optional[tif1.Event]:
     """
@@ -1983,10 +1983,10 @@ def find_event_by_country(
     """
     schedule = tif1.get_events(year)
     events = schedule[schedule['Country'] == country]
-    
+
     if len(events) == 0:
         return None
-    
+
     return events.iloc[0]
 ```
 
@@ -1996,14 +1996,14 @@ def find_event_by_country(
 def analyze_qualifying_performance(year: int, event_name: str):
     """
     Analyze qualifying performance for an event.
-    
+
     Note: Requires qualifying session data to be available.
     May raise DataNotFoundError if qualifying data is missing.
     """
     event = tif1.get_event(year, event_name)
     qualifying = event.get_qualifying()
     qualifying.load()
-    
+
     # Analysis code...
 ```
 
@@ -2064,7 +2064,7 @@ def test_event_lookup():
     event = tif1.get_event_by_name(2021, "Monaco")
     assert event is not None
     assert event['Country'] == 'Monaco'
-    
+
     # Round 1 always exists
     event = tif1.get_event_by_round(2021, 1)
     assert event is not None
@@ -2079,7 +2079,7 @@ from unittest.mock import patch
 def test_event_loading_with_network_error():
     with patch('tif1.events._load_f1schedule_year_from_cdn') as mock_cdn:
         mock_cdn.side_effect = tif1.NetworkError("CDN unavailable")
-        
+
         # Should fall back to vendored data or raise error
         with pytest.raises(tif1.NetworkError):
             schedule = tif1.get_events(2015)  # Year without vendored data
@@ -2096,7 +2096,7 @@ def test_fuzzy_matching():
         ("BELGIAN GP", "Belgian Grand Prix"),
         ("Spa", "Belgian Grand Prix"),
     ]
-    
+
     for input_name, expected_name in test_cases:
         event = tif1.get_event_by_name(2021, input_name)
         assert event['EventName'] == expected_name
@@ -2116,7 +2116,7 @@ def analyze_season(year: int):
     Comprehensive season analysis.
     """
     schedule = tif1.get_event_schedule(year, include_testing=False)
-    
+
     results = {
         'year': year,
         'total_events': len(schedule),
@@ -2125,7 +2125,7 @@ def analyze_season(year: int):
         'locations': schedule['Location'].nunique(),
         'events_by_country': schedule['Country'].value_counts().to_dict(),
     }
-    
+
     return results
 
 # Analyze multiple years
@@ -2149,27 +2149,27 @@ def discover_and_load_event(year: int, user_query: str):
     except tif1.DataNotFoundError:
         print(f"Event not found: {user_query}")
         return None
-    
+
     # Step 2: Display event info
     print(f"\nFound: {event['EventName']}")
     print(f"Location: {event['Location']}, {event['Country']}")
     print(f"Round: {event['RoundNumber']}")
     print(f"Date: {event['EventDate']}")
     print(f"Format: {event['EventFormat']}")
-    
+
     # Step 3: Show available sessions
     sessions = tif1.get_sessions(year, event['EventName'])
     print(f"\nAvailable sessions:")
     for i, session in enumerate(sessions, 1):
         print(f"  {i}. {session}")
-    
+
     # Step 4: Load race data
     print(f"\nLoading race data...")
     race = event.get_race()
     race.load()
-    
+
     print(f"✓ Loaded {len(race.laps)} laps from {len(race.drivers)} drivers")
-    
+
     return race
 
 # Usage
@@ -2187,28 +2187,28 @@ def process_all_races_in_season(year: int, processor_func):
     """
     schedule = tif1.get_event_schedule(year, include_testing=False)
     results = {}
-    
+
     for idx, row in schedule.iterrows():
         event_name = row['EventName']
         round_num = row['RoundNumber']
-        
+
         print(f"Processing Round {round_num}: {event_name}...")
-        
+
         try:
             event = tif1.get_event_by_round(year, round_num)
             race = event.get_race()
             race.load()
-            
+
             # Apply custom processing
             result = processor_func(race)
             results[event_name] = result
-            
+
             print(f"  ✓ Success")
-            
+
         except Exception as e:
             print(f"  ✗ Failed: {e}")
             results[event_name] = None
-    
+
     return results
 
 # Example processor
@@ -2274,7 +2274,7 @@ try:
 except tif1.NetworkError as e:
     print(f"Network error: {e}")
     print("Try a more recent year with vendored data")
-    
+
     # Recent years (2023+) typically have vendored data
     schedule = tif1.get_events(2024)
 ```

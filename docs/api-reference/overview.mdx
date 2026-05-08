@@ -127,7 +127,7 @@ laps = session.laps
 print(f"Total laps: {len(laps)}")  # e.g., 1247 laps across all drivers
 print(f"Drivers: {laps['Driver'].nunique()}")  # e.g., 20 drivers
 print(f"Columns: {list(laps.columns)}")
-# ['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 'Sector2Time', 
+# ['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 'Sector2Time',
 #  'Sector3Time', 'Compound', 'TyreLife', 'IsPersonalBest', 'Position', ...]
 
 # Get specific driver data using three-letter driver code
@@ -316,7 +316,7 @@ def get_session(
 ) -> Session:
     """
     Load a Formula 1 session with specified data sources.
-    
+
     Args:
         year: Championship year (2018-2026 supported)
         event: Event name (supports fuzzy matching)
@@ -327,10 +327,10 @@ def get_session(
         messages: Load race control messages (default: True)
         backend: Override global backend setting ("pandas" or "polars")
         force_reload: Bypass cache and fetch fresh data (default: False)
-    
+
     Returns:
         Session object with requested data loaded
-    
+
     Raises:
         DataNotFoundError: Event or session doesn't exist for the given year
         NetworkError: All CDN sources failed
@@ -542,7 +542,7 @@ from tif1.exceptions import DataNotFoundError, NetworkError, InvalidDataError
 
 try:
     session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-    
+
 except DataNotFoundError as e:
     # Event or session doesn't exist
     print(f"Data not found: {e.message}")
@@ -550,20 +550,20 @@ except DataNotFoundError as e:
     print(f"Event: {e.context['event']}")
     print(f"Session: {e.context['session_type']}")
     # Suggestion: Check available events with get_events(year)
-    
+
 except NetworkError as e:
     # All CDN sources failed
     print(f"Network error: {e.message}")
     print(f"URL: {e.context.get('url')}")
     print(f"Status code: {e.context.get('status_code')}")
     # Suggestion: Check internet connection, try again later
-    
+
 except InvalidDataError as e:
     # Data corruption detected
     print(f"Invalid data: {e.message}")
     print(f"Source: {e.context.get('source')}")
     # Suggestion: Try force_reload=True to fetch fresh data
-    
+
 except ValueError as e:
     # Invalid parameter values
     print(f"Invalid parameter: {e}")
@@ -592,7 +592,7 @@ except ValueError as e:
 4. **Batch load sessions**: Use async methods for parallel loading
    ```python
    import asyncio
-   
+
    async def load_multiple():
        sessions = await asyncio.gather(
            tif1.get_session_async(2021, "Monaco", "Race"),
@@ -615,14 +615,14 @@ def get_events(
 ) -> pd.DataFrame | pl.DataFrame:
     """
     Get all Formula 1 events for a specific championship year.
-    
+
     Args:
         year: Championship year (2018-2026 supported)
         backend: Override global backend setting
-    
+
     Returns:
         DataFrame with event schedule and metadata
-    
+
     Raises:
         ValueError: Invalid year
         DataNotFoundError: No schedule data for year
@@ -640,7 +640,7 @@ events = tif1.get_events(2024)
 # Inspect the structure
 print(f"Events in 2024: {len(events)}")
 print(f"Columns: {list(events.columns)}")
-# ['RoundNumber', 'EventName', 'OfficialEventName', 'Location', 'Country', 
+# ['RoundNumber', 'EventName', 'OfficialEventName', 'Location', 'Country',
 #  'EventDate', 'EventFormat', 'Session1', 'Session1Date', 'Session1DateUtc',
 #  'Session2', 'Session2Date', 'Session2DateUtc', 'Session3', 'Session3Date',
 #  'Session3DateUtc', 'Session4', 'Session4Date', 'Session4DateUtc',
@@ -680,7 +680,7 @@ print(f"Standard weekends in 2024: {len(standard_events)}")
 import pandas as pd
 events['EventDate'] = pd.to_datetime(events['EventDate'])
 summer_events = events[
-    (events['EventDate'] >= '2024-06-01') & 
+    (events['EventDate'] >= '2024-06-01') &
     (events['EventDate'] <= '2024-08-31')
 ]
 print(f"Summer events: {summer_events['EventName'].tolist()}")
@@ -785,14 +785,14 @@ def get_sessions(
 ) -> list[str]:
     """
     Get list of available sessions for a specific event.
-    
+
     Args:
         year: Championship year
         event: Event name (supports fuzzy matching)
-    
+
     Returns:
         List of session names
-    
+
     Raises:
         DataNotFoundError: Event doesn't exist for year
     """
@@ -964,7 +964,7 @@ print(f"Length: {session.circuit_info.length_km:.3f} km")
 all_laps = session.laps
 print(f"Total laps: {len(all_laps)}")
 print(f"Columns: {list(all_laps.columns)}")
-# ['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 'Sector2Time', 
+# ['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 'Sector2Time',
 #  'Sector3Time', 'Compound', 'TyreLife', 'IsPersonalBest', ...]
 
 # Get fastest laps per driver
@@ -1057,7 +1057,7 @@ print(f"S3: {lap.sector_times[2]:.3f}s")
 tel = lap.get_telemetry()
 print(f"Telemetry points: {len(tel)}")
 print(f"Columns: {list(tel.columns)}")
-# ['Distance', 'Speed', 'RPM', 'Throttle', 'Brake', 'DRS', 
+# ['Distance', 'Speed', 'RPM', 'Throttle', 'Brake', 'DRS',
 #  'Gear', 'X', 'Y', 'Z']
 
 # Speed analysis

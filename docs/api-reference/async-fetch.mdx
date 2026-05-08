@@ -115,17 +115,17 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 
 <ParamField path="max_retries" type="int | None" default="None">
   Maximum retry attempts for failed requests. If `None`, uses global config value (default: 3).
-  
+
   - Set to `0` for ultra-cold start optimization (no retries, fastest possible fetch)
   - Set to `3-5` for production use (balance between reliability and latency)
   - Set to `10+` for unreliable networks (maximum reliability)
-  
+
   When `ultra_cold_skip_retries=True` in config, this is automatically set to `0` for the first fetch.
 </ParamField>
 
 <ParamField path="timeout" type="int | None" default="None">
   Request timeout in seconds. If `None`, uses global config value (default: 30).
-  
+
   - Set to `10-15` for fast networks (minimize latency)
   - Set to `30-60` for typical networks (balance between speed and reliability)
   - Set to `120+` for slow networks (maximum reliability)
@@ -133,25 +133,25 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 
 <ParamField path="use_cache" type="bool" default="True">
   If `True`, check cache (in-memory + SQLite) before making network requests. Set to `False` to force fresh data from CDN.
-  
+
   **Performance impact**: Cache hits are 1000x faster than network fetches (~0.1ms vs ~100ms).
 </ParamField>
 
 <ParamField path="write_cache" type="bool" default="True">
   If `True`, persist successful network responses to cache (both in-memory and SQLite). Set to `False` for ephemeral data or testing.
-  
+
   **Note**: Automatically disabled when `ci_mode=True` in config.
 </ParamField>
 
 <ParamField path="validate_payload" type="bool" default="True">
   If `True`, run pydantic validation on the fetched data before returning. Validation rules depend on the payload type:
-  
+
   - `drivers.json`: Validate driver metadata (names, numbers, teams)
   - `rcm.json`: Validate race control messages (strict=False)
   - `weather.json`: Validate weather data (strict=False)
   - `*_tel.json`: Validate telemetry data (strict=False)
   - `laps.json` / `laptimes.json`: Validate lap times (if `validate_lap_times=True`)
-  
+
   Set to `False` for ~10-20% faster parsing when data integrity is guaranteed.
 </ParamField>
 
@@ -159,7 +159,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 
 <ResponseField name="data" type="dict[str, Any]">
   Parsed JSON data as a dictionary. **Never returns `None`** - raises an exception on error instead.
-  
+
   The structure depends on the requested path:
   - `laps.json`: `{"laps": [{"lap": 1, "time": "1:23.456", ...}, ...]}`
   - `drivers.json`: `{"drivers": [{"code": "VER", "name": "Max Verstappen", ...}, ...]}`
@@ -173,7 +173,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
   Raised when network request fails after all retry attempts. Context includes:
   - `url`: The URL that failed
   - `status_code`: HTTP status code (if available)
-  
+
   **Common causes**:
   - Network connectivity issues
   - CDN downtime (all CDN sources failed)
@@ -186,7 +186,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
   - `year`: Season year
   - `event`: Grand Prix name
   - `session`: Session name
-  
+
   **Common causes**:
   - Invalid year/event/session combination
   - Data not yet available for future events
@@ -196,7 +196,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 <ResponseField name="InvalidDataError" type="exception">
   Raised when JSON parsing or validation fails. Context includes:
   - `reason`: Description of the validation failure
-  
+
   **Common causes**:
   - Corrupted JSON data
   - Unexpected data structure
@@ -346,7 +346,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 
 <ParamField path="requests" type="list[tuple[int, str, str, str]]" required>
   List of `(year, gp, session, path)` tuples to fetch in parallel. Each tuple represents a single fetch operation.
-  
+
   **Example**:
   ```python
   requests = [
@@ -355,7 +355,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
       (2025, "Monaco Grand Prix", "Qualifying", "laps/LEC.json"),
   ]
   ```
-  
+
   **Performance tip**: Group related requests together for optimal HTTP/2 multiplexing.
 </ParamField>
 
@@ -373,7 +373,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 
 <ParamField path="max_retries" type="int | None" default="None">
   Maximum retry attempts per request. If `None`, uses global config value (default: 3).
-  
+
   **Note**: Each request retries independently. A failed request doesn't block other requests.
 </ParamField>
 
@@ -383,13 +383,13 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 
 <ParamField path="max_concurrent_requests" type="int | None" default="None">
   Maximum number of concurrent network requests. If `None`, uses global config value (default: 20).
-  
+
   **Tuning guide**:
   - `10-20`: Conservative, good for shared networks or rate-limited CDNs
   - `20-50`: Balanced, good for most use cases
   - `50-100`: Aggressive, good for dedicated networks and high-throughput scenarios
   - `100+`: Ultra-aggressive, only for specialized scenarios (e.g., telemetry prefetching with `telemetry_prefetch_max_concurrent_requests`)
-  
+
   **Note**: Higher concurrency doesn't always mean faster. The optimal value depends on network bandwidth, CDN rate limits, and CPU capacity for JSON parsing.
 </ParamField>
 
@@ -397,9 +397,9 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 
 <ResponseField name="results" type="list[dict[str, Any] | None]">
   List of parsed JSON dictionaries or `None` for failed requests, **in the same order as the input `requests` list**.
-  
+
   **Graceful degradation**: Failed requests return `None` and are logged as warnings. The function never raises exceptions - it always returns a list of the same length as the input.
-  
+
   **Special case**: `DataNotFoundError` (404) is silently converted to `None` without logging a warning, since missing data is often expected (e.g., driver didn't participate in session).
 </ResponseField>
 
@@ -451,7 +451,7 @@ async def fetch_driver_telemetry():
     # Fetch telemetry for all laps of a driver
     driver = "VER"
     num_laps = 50
-    
+
     requests = [
         (2025, "Monaco Grand Prix", "Race", f"telemetry/{driver}_{lap}_tel.json")
         for lap in range(1, num_laps + 1)
@@ -590,7 +590,7 @@ Execute an async function with rate limiting using a semaphore for concurrency c
 
 <ParamField path="semaphore" type="asyncio.Semaphore | None" default="None">
   Optional semaphore for rate limiting. If `None`, creates a new semaphore based on `max_concurrent_requests` config (default: 20).
-  
+
   **Use cases**:
   - Pass a shared semaphore to coordinate concurrency across multiple operations
   - Create a custom semaphore with specific limits for fine-grained control
@@ -642,7 +642,7 @@ from tif1.async_fetch import fetch_with_rate_limit, fetch_json_async
 async def fetch_with_shared_limit():
     # Share a semaphore across multiple operations
     semaphore = asyncio.Semaphore(10)
-    
+
     # All these operations share the same concurrency limit
     tasks = [
         fetch_with_rate_limit(
@@ -652,7 +652,7 @@ async def fetch_with_shared_limit():
         )
         for i in range(50)
     ]
-    
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
     return results
 
@@ -670,12 +670,12 @@ async def custom_operation(value: int) -> int:
 async def rate_limited_operations():
     # Rate limit custom async operations
     semaphore = asyncio.Semaphore(5)
-    
+
     tasks = [
         fetch_with_rate_limit(custom_operation, i, semaphore=semaphore)
         for i in range(20)
     ]
-    
+
     results = await asyncio.gather(*tasks)
     return results
 

@@ -386,17 +386,17 @@ class CircuitBreaker:
 
 <ParamField path="threshold" type="int" default={5}>
   Number of consecutive failures required before the circuit breaker opens. Must be >= 1.
-  
+
   **Choosing the right threshold:**
   - **Lower values (1-3)**: More sensitive, opens quickly. Use for critical services where fast failure detection is important, or when you have good fallback strategies.
   - **Medium values (4-7)**: Balanced approach. Good default for most use cases. Tolerates brief transient errors while still detecting persistent problems.
   - **Higher values (8-15)**: More tolerant, slower to open. Use for services with expected intermittent failures or when you want to avoid false positives from brief network hiccups.
-  
+
   **Trade-offs:**
   - Higher thresholds make the circuit breaker more tolerant of transient failures but slower to detect persistent problems
   - Lower thresholds provide faster failure detection but may open prematurely on brief network hiccups
   - Consider your service's typical failure patterns and SLAs when choosing a threshold
-  
+
   **Example scenarios:**
   - Threshold=2 for a critical payment API where failures are rare and fast detection is crucial
   - Threshold=5 (default) for general CDN requests with occasional transient failures
@@ -405,18 +405,18 @@ class CircuitBreaker:
 
 <ParamField path="timeout" type="int" default={60}>
   Number of seconds the circuit breaker remains open before transitioning to half-open state to test recovery. Must be >= 1.
-  
+
   **Choosing the right timeout:**
   - **Short timeouts (10-30s)**: Quick recovery testing. Use when services typically recover quickly or when you want to minimize downtime.
   - **Medium timeouts (60-120s)**: Balanced approach. Good default for most services. Gives services adequate time to recover without excessive waiting.
   - **Long timeouts (180-300s)**: Patient recovery. Use for services that need significant time to recover (e.g., database failovers, service restarts).
-  
+
   **Trade-offs:**
   - Shorter timeouts mean faster recovery when the service comes back online
   - Longer timeouts give the failing service more breathing room to recover fully
   - Too short and you might test recovery before the service is ready, causing it to open again
   - Too long and you'll wait unnecessarily if the service recovers quickly
-  
+
   **Example scenarios:**
   - Timeout=30 for a CDN that typically recovers from transient issues quickly
   - Timeout=60 (default) for general API services with moderate recovery times
@@ -427,12 +427,12 @@ class CircuitBreaker:
 
 <ResponseField name="state" type="str">
   Current circuit breaker state - one of `"closed"`, `"open"`, or `"half_open"`.
-  
+
   This is a read-only property that's thread-safe. The state reflects the current operational mode:
   - `"closed"`: Normal operation, all requests allowed through
   - `"open"`: Failure mode, all requests blocked immediately
   - `"half_open"`: Recovery testing, one test request allowed through
-  
+
   **Usage:**
   ```python
   cb = get_circuit_breaker()
@@ -447,18 +447,18 @@ class CircuitBreaker:
 
 <ResponseField name="failures" type="int">
   Current count of consecutive failures. Resets to 0 on successful request or when circuit closes.
-  
+
   This property is thread-safe with atomic operations. The failure count accumulates across requests:
   - Increments by 1 for each failed request
   - Resets to 0 when a request succeeds in Closed or Half-Open state
   - Does NOT reset in Open state (only resets when transitioning to Closed via Half-Open)
   - When it reaches the threshold, the circuit opens
-  
+
   **Usage:**
   ```python
   cb = get_circuit_breaker()
   print(f"Current failures: {cb.failures}/{cb.threshold}")
-  
+
   # Monitor failure rate
   if cb.failures > cb.threshold * 0.8:
       logger.warning(f"Circuit breaker approaching threshold: {cb.failures}/{cb.threshold}")
@@ -467,16 +467,16 @@ class CircuitBreaker:
 
 <ResponseField name="last_failure_time" type="datetime | None">
   Timestamp of the most recent failure using `datetime.now()`. Useful for logging, monitoring, and debugging.
-  
+
   This property is `None` if no failures have occurred since the circuit breaker was created or reset. The timestamp uses wall-clock time (not monotonic time) for human readability.
-  
+
   **Usage:**
   ```python
   cb = get_circuit_breaker()
   if cb.last_failure_time:
       elapsed = datetime.now() - cb.last_failure_time
       print(f"Last failure was {elapsed.total_seconds():.1f} seconds ago")
-      
+
       # Alert if failures are recent
       if elapsed.total_seconds() < 60:
           logger.error("Recent failures detected in circuit breaker")
@@ -487,25 +487,25 @@ class CircuitBreaker:
 
 <ResponseField name="_last_failure_monotonic" type="float | None">
   Monotonic time of last failure used for timeout calculations. Immune to system clock adjustments.
-  
+
   This internal property uses `time.monotonic()` for accurate timeout calculations that aren't affected by:
   - System clock adjustments (manual or automatic)
   - NTP synchronization
   - Daylight saving time changes
   - Leap seconds
-  
+
   You typically don't need to access this property directly; it's used internally for timeout calculations.
 </ResponseField>
 
 <ResponseField name="_lock" type="threading.RLock">
   Reentrant lock protecting all state transitions and counter operations.
-  
+
   This internal lock ensures thread safety:
   - Allows nested calls from the same thread without deadlocking
   - Provides mutual exclusion across different threads
   - Protects all reads and writes to state and counters
   - Held for minimal time to reduce contention
-  
+
   You typically don't need to access this property directly; it's used internally for synchronization.
 </ResponseField>
 
@@ -624,7 +624,7 @@ logger = logging.getLogger(__name__)
 
 class MonitoredCircuitBreaker(CircuitBreaker):
     """Circuit breaker with detailed logging."""
-    
+
     def record_failure(self):
         """Record failure with logging."""
         super().record_failure()
@@ -633,18 +633,18 @@ class MonitoredCircuitBreaker(CircuitBreaker):
             f"failures={self.failures}/{self.threshold}, "
             f"state={self.state}"
         )
-        
+
         if self.state == "open":
             logger.error(
                 f"Circuit breaker OPENED after {self.failures} failures. "
                 f"Will test recovery in {self.timeout} seconds."
             )
-    
+
     def record_success(self):
         """Record success with logging."""
         old_state = self.state
         super().record_success()
-        
+
         if old_state == "half_open" and self.state == "closed":
             logger.info("Circuit breaker CLOSED - service recovered")
 
@@ -666,7 +666,7 @@ def get_circuit_breaker() -> CircuitBreaker
 
 <ResponseField name="CircuitBreaker" type="CircuitBreaker">
   The global `CircuitBreaker` instance that `tif1` uses internally for all CDN requests and network operations.
-  
+
   This is a singleton instance that's shared across your entire application. All `tif1` data fetching operations (session loading, lap data, telemetry, etc.) use this same circuit breaker instance, providing unified failure detection and protection across all network operations.
 </ResponseField>
 
@@ -706,7 +706,7 @@ app = Flask(__name__)
 def health_check():
     """Health check endpoint that includes circuit breaker status."""
     cb = get_circuit_breaker()
-    
+
     health_status = {
         "status": "healthy" if cb.state == "closed" else "degraded",
         "circuit_breaker": {
@@ -716,10 +716,10 @@ def health_check():
             "timeout": cb.timeout
         }
     }
-    
+
     if cb.last_failure_time:
         health_status["circuit_breaker"]["last_failure"] = cb.last_failure_time.isoformat()
-    
+
     status_code = 200 if cb.state == "closed" else 503
     return jsonify(health_status), status_code
 ```
@@ -733,18 +733,18 @@ import tif1
 def load_session_intelligently(year, gp, session_name):
     """Load session with intelligent fallback based on circuit breaker state."""
     cb = get_circuit_breaker()
-    
+
     if cb.state == "open":
         # Circuit is open, don't even try network requests
         print("Circuit breaker is open, using cache-only mode")
         return load_from_cache(year, gp, session_name)
-    
+
     elif cb.state == "half_open":
         # Circuit is testing recovery, be cautious
         print("Circuit breaker is testing recovery, using short timeout")
         # Could set a shorter timeout for this request
         return tif1.get_session(year, gp, session_name)
-    
+
     else:  # closed
         # Normal operation
         return tif1.get_session(year, gp, session_name)
@@ -758,16 +758,16 @@ import time
 
 class CircuitBreakerMetrics:
     """Collect metrics about circuit breaker behavior."""
-    
+
     def __init__(self):
         self.state_changes = []
         self.last_state = None
-    
+
     def collect(self):
         """Collect current metrics."""
         cb = get_circuit_breaker()
         current_state = cb.state
-        
+
         # Detect state changes
         if current_state != self.last_state:
             self.state_changes.append({
@@ -777,7 +777,7 @@ class CircuitBreakerMetrics:
                 "failures": cb.failures
             })
             self.last_state = current_state
-        
+
         return {
             "state": current_state,
             "failures": cb.failures,
@@ -847,22 +847,22 @@ import tif1
 def recover_from_outage():
     """Recover from a CDN outage after manual intervention."""
     cb = get_circuit_breaker()
-    
+
     if cb.state == "open":
         print(f"Circuit breaker is open with {cb.failures} failures")
         print("Waiting for manual confirmation that service is back...")
-        
+
         # Wait for user confirmation
         input("Press Enter when service is back online...")
-        
+
         # Reset the circuit breaker
         print("Resetting circuit breaker...")
         reset_circuit_breaker()
-        
+
         # Verify reset
         cb = get_circuit_breaker()
         print(f"Circuit breaker reset: State={cb.state}, Failures={cb.failures}")
-        
+
         # Try loading data
         try:
             session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
@@ -882,20 +882,20 @@ def reset_circuit_breaker_between_tests():
     """Automatically reset circuit breaker between tests."""
     # Reset before test
     reset_circuit_breaker()
-    
+
     yield
-    
+
     # Reset after test
     reset_circuit_breaker()
 
 def test_circuit_breaker_opens_on_failures():
     """Test that circuit breaker opens after threshold failures."""
     from tif1.retry import get_circuit_breaker
-    
+
     cb = get_circuit_breaker()
     assert cb.state == "closed"
     assert cb.failures == 0
-    
+
     # Test logic here...
 ```
 
@@ -908,14 +908,14 @@ import tif1
 def update_circuit_breaker_config(threshold, timeout):
     """Update circuit breaker configuration and reset."""
     config = tif1.get_config()
-    
+
     # Update configuration
     config.set("circuit_breaker_threshold", threshold)
     config.set("circuit_breaker_timeout", timeout)
-    
+
     # Reset to apply new configuration
     reset_circuit_breaker()
-    
+
     # Verify new configuration
     cb = get_circuit_breaker()
     print(f"New configuration: threshold={cb.threshold}, timeout={cb.timeout}")
@@ -944,7 +944,7 @@ def call(
 
 <ParamField path="func" type="Callable[..., T]" required>
   The function to execute with circuit breaker protection. This can be any callable (function, lambda, method, etc.) that might fail and needs protection.
-  
+
   The function is executed outside the circuit breaker's lock to prevent holding the lock during I/O operations, which could cause deadlocks or performance issues.
 </ParamField>
 
@@ -966,7 +966,7 @@ def call(
 
 <ResponseField name="Exception" type="Exception">
   Raises `Exception("Circuit breaker is open")` if the circuit breaker is in Open state and the timeout hasn't elapsed.
-  
+
   Also raises any exception that `func` raises during execution. These exceptions are propagated after recording the failure in the circuit breaker.
 </ResponseField>
 
@@ -1069,7 +1069,7 @@ cb = get_circuit_breaker()
 class DataFetcher:
     def __init__(self, base_url):
         self.base_url = base_url
-    
+
     def fetch(self, endpoint):
         """Fetch data from endpoint."""
         import requests
