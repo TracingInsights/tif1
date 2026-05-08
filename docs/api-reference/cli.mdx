@@ -1,52 +1,1330 @@
 ﻿---
 title: "CLI Reference"
 icon: "terminal"
-description: "Command-line interface for tif1"
+description: "Complete command-line interface reference for tif1 - comprehensive guide to all CLI commands, options, workflows, and best practices"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
+  - "CLI"
+  - "command line"
+  - "terminal"
   - "documentation"
+  - "bash"
+  - "shell"
+  - "automation"
+  - "scripting"
 ---
 
-The `tif1` CLI provides a convenient way to explore F1 data from the terminal. Built with Typer and Rich for a beautiful terminal experience.
+# CLI Reference
+
+The `tif1` CLI provides a powerful, feature-rich, and production-ready command-line interface for exploring Formula 1 data directly from your terminal. Built with [Typer](https://typer.tiangolo.com/) for robust argument parsing and [Rich](https://rich.readthedocs.io/) for beautiful, colorful terminal output with tables and progress indicators, the CLI brings the full power of tif1 to your command line with zero configuration required.
+
+## What is the tif1 CLI?
+
+The tif1 CLI is a comprehensive command-line tool that provides instant access to Formula 1 data without writing a single line of Python code. It's designed for data analysts, F1 enthusiasts, developers, and anyone who wants to explore F1 data quickly and efficiently from their terminal.
+
+**Key Features:**
+
+- **Zero Configuration**: Works out of the box after installation
+- **Rich Terminal Output**: Beautiful tables with color-coded data and Unicode borders
+- **Intelligent Caching**: Automatic caching with SQLite for blazing-fast repeated queries
+- **Progress Indicators**: Real-time feedback during data loading operations
+- **Comprehensive Error Handling**: Clear, actionable error messages
+- **Cross-Platform**: Works on Linux, macOS, and Windows
+- **Scriptable**: Perfect for automation, CI/CD pipelines, and shell scripts
+- **Performance Optimized**: Built for speed with efficient data processing
+- **Flexible Output**: Pipe-friendly output for integration with Unix tools
+
+## Overview
+
+The CLI is designed for multiple use cases and user personas:
+
+### Use Cases
+
+1. **Quick Data Exploration**
+   - Instantly view race calendars, session schedules, driver lineups, and lap times
+   - No Python code required - just type and see results
+   - Perfect for quick lookups and ad-hoc queries
+   - Ideal for exploring data structure before writing analysis code
+
+2. **Debugging & Development**
+   - Test data availability and verify API responses
+   - Troubleshoot issues with comprehensive debug logging
+   - Validate data integrity and completeness
+   - Identify network issues, cache problems, or data inconsistencies
+
+3. **Cache Management**
+   - Monitor cache size, location, and performance metrics
+   - Clear cache when needed to free disk space
+   - Verify cache behavior and hit rates
+   - Optimize storage usage for large-scale analysis
+
+4. **Scripting & Automation**
+   - Integrate F1 data into shell scripts and automation workflows
+   - Build CI/CD pipelines that depend on F1 data
+   - Create scheduled jobs for data collection and analysis
+   - Automate repetitive data extraction tasks
+
+5. **Learning & Discovery**
+   - Explore the data structure and available information
+   - Understand F1 data hierarchy (seasons → events → sessions → drivers)
+   - Learn event naming conventions and session types
+   - Discover what data is available before committing to analysis
+
+6. **Performance Analysis**
+   - Compare lap times across sessions and drivers
+   - Track driver performance throughout a race weekend
+   - Analyze qualifying vs race pace
+   - Identify performance trends and patterns
+
+7. **Data Validation**
+   - Verify data completeness for specific events
+   - Check driver participation in sessions
+   - Validate lap counts and timing data
+   - Ensure data quality before analysis
+
+### Who Should Use the CLI?
+
+- **Data Analysts**: Quick data exploration and validation
+- **F1 Enthusiasts**: Instant access to race data and statistics
+- **Developers**: Testing and debugging data pipelines
+- **DevOps Engineers**: Automation and monitoring scripts
+- **Researchers**: Data collection for academic studies
+- **Journalists**: Quick fact-checking and statistics lookup
+- **Content Creators**: Gathering data for articles, videos, or social media
+
+### Performance Characteristics
+
+The CLI is optimized for speed and efficiency:
+
+- **First Request**: 2-10 seconds (network fetch + cache write)
+- **Cached Requests**: <1 second (local SQLite read)
+- **Cache Benefit**: 5-10x faster for repeated queries
+- **Memory Efficient**: Streams data without loading entire datasets
+- **Network Optimized**: Uses CDN for fast global access
+- **Concurrent Safe**: Multiple CLI instances can run simultaneously
+
+---
 
 ## Installation
 
-The CLI is included with tif1:
+The CLI is automatically included when you install tif1. No additional dependencies, configuration files, or setup steps are required - it just works out of the box.
+
+### Standard Installation
+
+Install tif1 using pip (Python 3.10 or higher required):
 
 ```bash
 pip install tif1
-```python
+```
 
-## Usage
+After installation, the `tif1` command will be available globally in your terminal. The CLI uses the same Python environment as your tif1 installation, ensuring consistency between CLI and programmatic usage.
+
+### Installation Methods
+
+**1. System-Wide Installation** (requires admin/sudo):
+```bash
+# Linux/macOS
+sudo pip install tif1
+
+# Windows (run as Administrator)
+pip install tif1
+```
+
+**2. User Installation** (recommended for non-admin users):
+```bash
+pip install --user tif1
+```
+
+**3. Virtual Environment** (recommended for development):
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# Linux/macOS:
+source venv/bin/activate
+# Windows:
+venv\Scripts\activate
+
+# Install tif1
+pip install tif1
+```
+
+**4. Development Installation** (from source):
+```bash
+# Clone repository
+git clone https://github.com/TracingInsights/tif1.git
+cd tif1
+
+# Install with uv (recommended)
+uv sync --all-extras
+
+# Or install with pip
+pip install -e .
+```
+
+### Verify Installation
+
+Confirm the CLI is installed correctly and check the version:
 
 ```bash
-tif1 [COMMAND] [OPTIONS]
-```yaml
+tif1 version
+```
+
+**Expected output:**
+```
+tif1 version 0.2.0
+```
+
+If the command is not found, troubleshoot using these steps:
+
+1. **Check Python Environment**:
+   ```bash
+   # Verify Python version (3.10+ required)
+   python --version
+   
+   # Check if tif1 is installed
+   pip show tif1
+   ```
+
+2. **Verify PATH Configuration**:
+   ```bash
+   # Linux/macOS - check if Python scripts directory is in PATH
+   echo $PATH | grep -o "[^:]*python[^:]*"
+   
+   # Windows - check PATH
+   echo %PATH%
+   ```
+
+3. **Locate tif1 Executable**:
+   ```bash
+   # Linux/macOS
+   which tif1
+   
+   # Windows
+   where tif1
+   ```
+
+4. **Common Issues**:
+   - **Virtual environment not activated**: Run `source venv/bin/activate` (Linux/macOS) or `venv\Scripts\activate` (Windows)
+   - **User installation PATH issue**: Add `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows) to PATH
+   - **Permission issues**: Use `pip install --user tif1` instead of system-wide installation
+
+### Upgrading
+
+To upgrade to the latest version:
+
+```bash
+# Upgrade to latest version
+pip install --upgrade tif1
+
+# Verify new version
+tif1 version
+```
+
+### Uninstallation
+
+To remove tif1:
+
+```bash
+# Uninstall tif1
+pip uninstall tif1
+
+# Optionally remove cache
+rm -rf ~/.cache/tif1  # Linux/macOS
+# or
+rmdir /s "%LOCALAPPDATA%\Temp\tif1"  # Windows
+```
+
+---
+
+## Getting Started
+
+### Your First Commands
+
+Let's walk through a complete workflow from discovering events to analyzing lap times:
+
+**Step 1: Discover Available Events**
+
+Start by listing all events in a season to see what data is available:
+
+```bash
+tif1 events 2025
+```
+
+This shows all Grand Prix events for 2025. Note the exact event names - you'll need them for subsequent commands.
+
+**Step 2: Check Event Sessions**
+
+Pick an event and see what sessions are available:
+
+```bash
+tif1 sessions 2025 "Monaco Grand Prix"
+```
+
+This displays all sessions (Practice 1-3, Qualifying, Race) for Monaco. Note that sprint weekends have different session structures.
+
+**Step 3: View Participating Drivers**
+
+See which drivers participated in a specific session:
+
+```bash
+tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+This loads the session data and displays all drivers with their teams. The first time you run this, it will fetch data from the network (2-10 seconds). Subsequent runs will be much faster thanks to caching.
+
+**Step 4: Analyze Lap Times**
+
+View fastest lap times for all drivers:
+
+```bash
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+Or check a specific driver's fastest lap:
+
+```bash
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+```
+
+**Step 5: Manage Cache**
+
+Check your cache size and location:
+
+```bash
+tif1 cache-info
+```
+
+Clear cache if needed:
+
+```bash
+tif1 cache-clear --yes
+```
+
+### Understanding the Data Hierarchy
+
+F1 data in tif1 follows a clear hierarchy:
+
+```
+Season (Year)
+  └── Event (Grand Prix)
+      └── Session (Practice, Qualifying, Race)
+          └── Driver (3-letter code)
+              └── Laps (individual lap data)
+```
+
+**Example Navigation:**
+```bash
+# Season level
+tif1 events 2025
+
+# Event level
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# Session level
+tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Driver level
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+```
+
+### Common Patterns
+
+**Pattern 1: Weekend Analysis**
+```bash
+# Analyze an entire race weekend
+tif1 sessions 2025 "Monaco Grand Prix"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2025 "Monaco Grand Prix" "Race"
+```
+
+**Pattern 2: Driver Tracking**
+```bash
+# Track a specific driver across sessions
+DRIVER="VER"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" -d $DRIVER
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d $DRIVER
+tif1 fastest 2025 "Monaco Grand Prix" "Race" -d $DRIVER
+```
+
+**Pattern 3: Multi-Event Comparison**
+```bash
+# Compare same session across events
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2025 "British Grand Prix" "Qualifying"
+tif1 fastest 2025 "Italian Grand Prix" "Qualifying"
+```
+
+**Pattern 4: Historical Analysis**
+```bash
+# Compare across years
+tif1 fastest 2023 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2024 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+### Quick Reference Card
+
+| Task | Command |
+|------|---------|
+| List all 2025 events | `tif1 events 2025` |
+| Show Monaco sessions | `tif1 sessions 2025 "Monaco Grand Prix"` |
+| List race drivers | `tif1 drivers 2025 "Monaco Grand Prix" "Race"` |
+| Show all fastest laps | `tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"` |
+| Show VER fastest lap | `tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER` |
+| Check cache info | `tif1 cache-info` |
+| Clear cache | `tif1 cache-clear -y` |
+| Show version | `tif1 version` |
+| Debug session load | `tif1 debug 2025 "Monaco Grand Prix" "Race"` |
+| Get help | `tif1 --help` |
+| Command help | `tif1 fastest --help` |
+
+---
+
+## Quick Start
+
+Get started with these common commands:
+
+```bash
+# See all 2025 races
+tif1 events 2025
+
+# Check sessions for Monaco
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# View qualifying results
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Check specific driver
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+
+# Check cache size
+tif1 cache-info
+
+# Clear cache if needed
+tif1 cache-clear --yes
+```
+
+---
+
+## Global Usage Pattern
+
+```bash
+tif1 [COMMAND] [ARGUMENTS] [OPTIONS]
+```
+
+All commands follow a consistent, predictable pattern:
+
+- **COMMAND**: The action to perform (e.g., `events`, `sessions`, `drivers`, `fastest`)
+- **ARGUMENTS**: Required positional arguments in a specific order (e.g., year, event name, session name)
+- **OPTIONS**: Optional flags that modify behavior (e.g., `--driver`, `--yes`, `-d`)
+
+### Command Structure
+
+Commands are organized hierarchically by data granularity:
+
+1. **Season Level**: `events` - Lists all events in a season
+2. **Event Level**: `sessions` - Lists all sessions in an event
+3. **Session Level**: `drivers`, `fastest` - Analyzes data within a session
+4. **Utility Commands**: `cache-info`, `cache-clear`, `version`, `debug` - Management and debugging
+
+### Getting Help
+
+Every command has built-in help documentation:
+
+```bash
+# General help - lists all commands
+tif1 --help
+
+# Command-specific help
+tif1 events --help
+tif1 fastest --help
+tif1 cache-clear --help
+```
+
+The help output shows:
+- Command description and purpose
+- Required arguments with types
+- Optional flags and their defaults
+- Usage examples
+
+### Command Naming Conventions
+
+- Commands use lowercase with hyphens for multi-word names (e.g., `cache-info`, `cache-clear`)
+- Arguments use natural language names (e.g., `year`, `event`, `session`)
+- Options use double dashes for long form (`--driver`) and single dash for short form (`-d`)
+
+---
+
+## Core Concepts
+
+Understanding these core concepts will help you use the CLI effectively and avoid common pitfalls.
+
+### Event Names
+
+Event names are the official Grand Prix names as they appear in the FIA Formula 1 World Championship calendar. They must match **exactly** - the CLI performs case-sensitive string matching.
+
+**Standard Event Name Format:**
+
+Most events follow the pattern: `"[Location] Grand Prix"`
+
+Examples:
+- "Monaco Grand Prix"
+- "British Grand Prix"
+- "Italian Grand Prix"
+- "Japanese Grand Prix"
+- "Australian Grand Prix"
+
+**Special Event Names:**
+
+Some events have unique naming conventions:
+
+- "São Paulo Grand Prix" (note the special character ã)
+- "United States Grand Prix" (not "US Grand Prix")
+- "Emilia Romagna Grand Prix" (not "Imola Grand Prix")
+- "Mexico City Grand Prix" (not "Mexican Grand Prix")
+- "Las Vegas Grand Prix" (not "Vegas Grand Prix")
+- "Saudi Arabian Grand Prix" (not "Saudi Grand Prix")
+
+**Why Exact Names Matter:**
+
+The CLI uses these names to construct CDN URLs and cache keys. Even small differences will cause lookup failures:
+
+```bash
+# ❌ WRONG - These will all fail
+tif1 sessions 2025 "Monaco GP"           # Missing "Grand Prix"
+tif1 sessions 2025 "monaco grand prix"   # Wrong case
+tif1 sessions 2025 "Monaco  Grand Prix"  # Extra space
+tif1 sessions 2025 "Sao Paulo Grand Prix" # Missing special character
+
+# ✅ CORRECT
+tif1 sessions 2025 "Monaco Grand Prix"
+tif1 sessions 2025 "São Paulo Grand Prix"
+```
+
+**Shell Quoting Rules:**
+
+Always use quotes around event names with spaces. The shell interprets unquoted spaces as argument separators:
+
+```bash
+# ❌ WRONG - Shell interprets as 4 separate arguments
+tif1 sessions 2025 Monaco Grand Prix
+# Equivalent to: tif1 sessions 2025 "Monaco" "Grand" "Prix"
+
+# ✅ CORRECT - Quotes preserve the full name
+tif1 sessions 2025 "Monaco Grand Prix"
+```
+
+**Finding Exact Event Names:**
+
+Always use the `events` command to get the exact event names:
+
+```bash
+# List all events for a year
+tif1 events 2025
+
+# Find specific event (Linux/macOS)
+tif1 events 2025 | grep -i monaco
+
+# Find specific event (Windows PowerShell)
+tif1 events 2025 | Select-String -Pattern "monaco" -CaseSensitive:$false
+```
+
+**Copy-Paste Workflow:**
+
+The safest approach is to copy event names directly from the `events` output:
+
+```bash
+# Step 1: List events
+tif1 events 2025
+
+# Step 2: Copy exact name from output (e.g., "Monaco Grand Prix")
+
+# Step 3: Paste into next command
+tif1 sessions 2025 "Monaco Grand Prix"
+```
+
+### Session Names
+
+Session names identify specific track sessions within an event. Like event names, they must match exactly and are case-sensitive.
+
+**Standard Weekend Format:**
+
+Traditional race weekends have 5 sessions:
+
+1. "Practice 1" (Friday morning)
+2. "Practice 2" (Friday afternoon)
+3. "Practice 3" (Saturday morning)
+4. "Qualifying" (Saturday afternoon)
+5. "Race" (Sunday)
+
+**Sprint Weekend Format:**
+
+Sprint weekends have a different structure:
+
+1. "Practice 1" (Friday)
+2. "Sprint Qualifying" (Saturday morning)
+3. "Sprint" (Saturday afternoon)
+4. "Qualifying" (Saturday evening)
+5. "Race" (Sunday)
+
+**Session Name Variations:**
+
+- Practice sessions: "Practice 1", "Practice 2", "Practice 3" (note the space)
+- Qualifying: "Qualifying" (not "Quali" or "Q")
+- Sprint qualifying: "Sprint Qualifying" (two words)
+- Sprint race: "Sprint" (not "Sprint Race")
+- Main race: "Race" (not "Grand Prix" or "Main Race")
+
+**Common Mistakes:**
+
+```bash
+# ❌ WRONG
+tif1 drivers 2025 "Monaco Grand Prix" "FP1"              # Use "Practice 1"
+tif1 drivers 2025 "Monaco Grand Prix" "Quali"            # Use "Qualifying"
+tif1 drivers 2025 "Monaco Grand Prix" "Sprint Race"      # Use "Sprint"
+tif1 drivers 2025 "Monaco Grand Prix" "practice 1"       # Wrong case
+
+# ✅ CORRECT
+tif1 drivers 2025 "Monaco Grand Prix" "Practice 1"
+tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+tif1 drivers 2025 "Monaco Grand Prix" "Sprint"
+```
+
+**Discovering Available Sessions:**
+
+Always use the `sessions` command to see what sessions are available for an event:
+
+```bash
+# Check available sessions
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# Output shows exact session names to use
+```
+
+**Sprint Weekend Detection:**
+
+To check if an event is a sprint weekend:
+
+```bash
+# List sessions
+tif1 sessions 2025 "São Paulo Grand Prix"
+
+# If you see "Sprint Qualifying" and "Sprint", it's a sprint weekend
+```
+
+### Driver Codes
+
+Drivers are identified by standardized three-letter codes assigned by the FIA. These codes are unique and persistent throughout a driver's career.
+
+**Code Format:**
+
+- Always 3 letters (uppercase)
+- Usually derived from driver's surname
+- Unique across all active drivers
+- Case-insensitive in CLI (VER = ver = Ver)
+
+**Common Driver Codes (2025):**
+
+| Code | Driver | Team |
+|------|--------|------|
+| VER | Max Verstappen | Red Bull Racing |
+| HAM | Lewis Hamilton | Ferrari |
+| LEC | Charles Leclerc | Ferrari |
+| RUS | George Russell | Mercedes |
+| NOR | Lando Norris | McLaren |
+| PIA | Oscar Piastri | McLaren |
+| ALO | Fernando Alonso | Aston Martin |
+| STR | Lance Stroll | Aston Martin |
+| GAS | Pierre Gasly | Alpine |
+| OCO | Esteban Ocon | Alpine |
+| SAI | Carlos Sainz | Williams |
+| ALB | Alexander Albon | Williams |
+| TSU | Yuki Tsunoda | RB |
+| RIC | Daniel Ricciardo | RB |
+| BOT | Valtteri Bottas | Kick Sauber |
+| ZHO | Zhou Guanyu | Kick Sauber |
+| MAG | Kevin Magnussen | Haas F1 Team |
+| HUL | Nico Hulkenberg | Haas F1 Team |
+
+**Finding Driver Codes:**
+
+Use the `drivers` command to see all driver codes for a session:
+
+```bash
+# List all drivers in a session
+tif1 drivers 2025 "Monaco Grand Prix" "Race"
+
+# Output shows driver codes in the first column
+```
+
+**Using Driver Codes:**
+
+Driver codes are used with the `--driver` option:
+
+```bash
+# Check specific driver's fastest lap
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+
+# Short form
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+
+# Case insensitive (all equivalent)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d ver
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d Ver
+```
+
+**Historical Driver Codes:**
+
+Driver codes can change between seasons if a driver switches teams or if there's a code conflict:
+
+```bash
+# Check historical driver codes
+tif1 drivers 2020 "Monaco Grand Prix" "Race"  # May show different drivers
+tif1 drivers 2025 "Monaco Grand Prix" "Race"  # Current grid
+```
+
+**Reserve and Substitute Drivers:**
+
+Occasionally, reserve or substitute drivers participate:
+
+```bash
+# Check who actually drove in a session
+tif1 drivers 2025 "Monaco Grand Prix" "Practice 1"
+
+# May show reserve drivers with different codes
+```
+
+### Data Loading & Caching
+
+The CLI implements intelligent caching to optimize performance and reduce network requests.
+
+**Cache Architecture:**
+
+```
+User Request
+    ↓
+Cache Check (SQLite)
+    ↓
+├─ Cache Hit → Return Data (< 1 second)
+└─ Cache Miss → Fetch from CDN → Parse JSON → Cache → Return Data (2-10 seconds)
+```
+
+**First Request (Cache Miss):**
+
+When you request data for the first time:
+
+1. **Cache Lookup**: CLI checks local SQLite cache
+2. **Network Fetch**: Data is downloaded from CDN (jsdelivr)
+3. **JSON Parsing**: Raw JSON is parsed into structured data
+4. **DataFrame Creation**: Data is converted to pandas/polars DataFrame
+5. **Cache Write**: Processed data is stored in cache
+6. **Return**: Data is displayed to user
+
+**Timing breakdown:**
+- Network fetch: 200-2000ms (depends on connection speed)
+- JSON parsing: 50-200ms (depends on data size)
+- DataFrame creation: 20-100ms
+- Cache write: 50-150ms
+- **Total: 2-10 seconds**
+
+**Subsequent Requests (Cache Hit):**
+
+When you request the same data again:
+
+1. **Cache Lookup**: CLI checks local SQLite cache
+2. **Cache Read**: Data is loaded from disk
+3. **Deserialization**: Cached data is reconstructed
+4. **Return**: Data is displayed to user
+
+**Timing breakdown:**
+- Cache read: 10-50ms
+- **Total: < 1 second**
+
+**Performance Benefit:**
+
+Cache provides 5-10x speedup for repeated queries:
+
+```bash
+# First run (cache miss)
+time tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+# Real: 5.234s
+
+# Second run (cache hit)
+time tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+# Real: 0.456s
+
+# Speedup: ~11x faster
+```
+
+**Cache Location:**
+
+Cache location is platform-specific:
+
+| Platform | Default Location | Environment Variable |
+|----------|------------------|---------------------|
+| **Linux** | `~/.cache/tif1` | `$XDG_CACHE_HOME/tif1` |
+| **macOS** | `~/Library/Caches/tif1` | `$HOME/Library/Caches/tif1` |
+| **Windows** | `%LOCALAPPDATA%\Temp\tif1` | `%TIF1_CACHE_DIR%` |
+
+**Custom Cache Location:**
+
+Override the default cache location:
+
+```bash
+# Set custom cache directory
+export TIF1_CACHE_DIR="/path/to/custom/cache"
+
+# Verify new location
+tif1 cache-info
+```
+
+**Cache Persistence:**
+
+- Cache persists across CLI sessions
+- Cache survives system reboots
+- Cache is shared across all CLI commands
+- Cache is NOT shared with Python API (separate cache)
+
+**Cache Invalidation:**
+
+Cache entries never expire automatically. To force fresh data:
+
+```bash
+# Clear entire cache
+tif1 cache-clear --yes
+
+# Or delete cache directory manually
+rm -rf ~/.cache/tif1  # Linux/macOS
+```
+
+**Cache Size Management:**
+
+Monitor cache growth:
+
+```bash
+# Check cache size
+tif1 cache-info
+
+# Typical sizes:
+# - Fresh install: 0 MB
+# - Light usage: 50-200 MB
+# - Moderate usage: 200-500 MB
+# - Heavy usage: 500+ MB
+```
+
+**Cache Behavior:**
+
+- Each session is cached independently
+- Different data types (laps, telemetry) are cached separately
+- Cache keys include year, event, session, and data type
+- Cache is SQLite-based (ACID compliant, crash-safe)
+
+**Disabling Cache:**
+
+For testing or debugging, disable caching:
+
+```bash
+# Disable cache for single command
+TIF1_ENABLE_CACHE=false tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Disable cache globally
+export TIF1_ENABLE_CACHE=false
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+### Output Formatting
+
+The CLI uses Rich library for beautiful, colorful terminal output with professional formatting.
+
+**Table Components:**
+
+1. **Title**: Event name, year, and session
+2. **Headers**: Column names with color coding
+3. **Borders**: Unicode box-drawing characters
+4. **Data Rows**: Color-coded values
+5. **Summary**: Total counts and metadata
+
+**Color Scheme:**
+
+- **Cyan**: Numeric indices, driver codes
+- **Green**: Event names, team names, success messages
+- **Yellow**: Driver codes in results, warnings
+- **Magenta**: Timing data, lap times
+- **Red**: Error messages, failures
+- **Bold**: Emphasis, headers, totals
+
+**Table Example:**
+
+```
+         Monaco Grand Prix 2025 - Qualifying         
+┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
+┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ 1   │ VER    │ Red Bull Racing    │ 70.123s   │
+│ 2   │ LEC    │ Ferrari            │ 70.234s   │
+└─────┴────────┴────────────────────┴───────────┘
+
+Total: 20 drivers
+```
+
+**Progress Indicators:**
+
+Long-running operations show progress:
+
+```
+[cyan]Loading session...[/cyan]
+```
+
+**Terminal Compatibility:**
+
+- **Unicode Support**: Uses Unicode box-drawing characters
+- **Color Support**: Automatically detects terminal color capabilities
+- **Width Adaptation**: Tables adapt to terminal width
+- **Fallback**: Gracefully degrades on limited terminals
+
+**Piping Behavior:**
+
+When output is piped, formatting is preserved:
+
+```bash
+# Pipe to file (preserves formatting)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt
+
+# Pipe to grep (preserves formatting)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | grep "VER"
+
+# Pipe to less (preserves formatting with -R)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | less -R
+```
+
+**Plain Text Extraction:**
+
+Remove formatting for parsing:
+
+```bash
+# Strip ANSI color codes (Linux/macOS)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | sed 's/\x1b\[[0-9;]*m//g'
+
+# Extract specific columns
+tif1 drivers 2025 "Monaco Grand Prix" "Race" | awk '{print $1, $2}'
+```
+
+**Accessibility:**
+
+- Screen reader compatible (plain text fallback)
+- High contrast colors for visibility
+- Clear visual hierarchy
+- Consistent formatting across commands
+
+---
+
+## Error Handling & Troubleshooting
+
+The CLI provides clear, actionable error messages to help you quickly identify and resolve issues.
+
+### Common Error Messages
+
+**1. Event Not Found**
+
+```bash
+$ tif1 sessions 2025 "Monaco GP"
+Error: Event 'Monaco GP' not found for year 2025
+```
+
+**Cause**: Event name doesn't match exactly
+**Solution**: Use `tif1 events 2025` to find the exact event name
+
+**2. Session Not Found**
+
+```bash
+$ tif1 drivers 2025 "Monaco Grand Prix" "FP1"
+Error: Session 'FP1' not found for Monaco Grand Prix 2025
+```
+
+**Cause**: Session name doesn't match exactly
+**Solution**: Use `tif1 sessions 2025 "Monaco Grand Prix"` to find exact session names
+
+**3. Driver Not Found**
+
+```bash
+$ tif1 fastest 2025 "Monaco Grand Prix" "Race" --driver ABC
+Error: Driver 'ABC' not found in session
+```
+
+**Cause**: Invalid driver code or driver didn't participate
+**Solution**: Use `tif1 drivers 2025 "Monaco Grand Prix" "Race"` to see available drivers
+
+**4. Network Timeout**
+
+```bash
+$ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+Error: Network timeout after 30 seconds
+```
+
+**Cause**: Slow network connection or CDN unavailable
+**Solution**: 
+- Check internet connection
+- Increase timeout: `TIF1_TIMEOUT=60 tif1 fastest ...`
+- Try again later
+
+**5. Cache Error**
+
+```bash
+$ tif1 cache-info
+Error: Permission denied: /home/user/.cache/tif1
+```
+
+**Cause**: Insufficient permissions for cache directory
+**Solution**:
+- Fix permissions: `chmod 755 ~/.cache/tif1`
+- Use custom cache dir: `export TIF1_CACHE_DIR=/tmp/tif1_cache`
+
+**6. Data Not Available**
+
+```bash
+$ tif1 fastest 2026 "Monaco Grand Prix" "Race"
+Error: Data not available for Monaco Grand Prix 2026
+```
+
+**Cause**: Event hasn't occurred yet or data not published
+**Solution**: Check if event has taken place and data is available
+
+### Troubleshooting Workflow
+
+**Step 1: Verify Command Syntax**
+
+```bash
+# Check command help
+tif1 fastest --help
+
+# Verify argument order
+tif1 fastest YEAR EVENT SESSION [OPTIONS]
+```
+
+**Step 2: Verify Event and Session Names**
+
+```bash
+# List events
+tif1 events 2025
+
+# List sessions
+tif1 sessions 2025 "Monaco Grand Prix"
+```
+
+**Step 3: Use Debug Mode**
+
+```bash
+# Enable debug logging
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+
+# Check for detailed error messages
+```
+
+**Step 4: Check Cache**
+
+```bash
+# View cache info
+tif1 cache-info
+
+# Clear cache if corrupted
+tif1 cache-clear --yes
+
+# Retry command
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**Step 5: Verify Network**
+
+```bash
+# Test CDN connectivity
+curl -I https://cdn.jsdelivr.net/
+
+# Check DNS resolution
+nslookup cdn.jsdelivr.net
+
+# Test with increased timeout
+TIF1_TIMEOUT=60 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+### Platform-Specific Issues
+
+**Linux:**
+
+- **Permission denied**: `sudo chown -R $USER ~/.cache/tif1`
+- **Command not found**: Add `~/.local/bin` to PATH
+- **Encoding issues**: Set `export LANG=en_US.UTF-8`
+
+**macOS:**
+
+- **Command not found**: Ensure Python bin directory in PATH
+- **Permission denied**: Check SIP (System Integrity Protection) settings
+- **Special characters**: Use UTF-8 terminal encoding
+
+**Windows:**
+
+- **Command not found**: Add Python Scripts directory to PATH
+- **PowerShell execution policy**: `Set-ExecutionPolicy RemoteSigned`
+- **Path with spaces**: Use quotes: `"C:\Program Files\Python\Scripts\tif1"`
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+
+```bash
+# Debug specific session load
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+
+# Shows:
+# - Cache lookups
+# - Network requests
+# - JSON parsing
+# - DataFrame creation
+# - Error stack traces
+```
+
+### Getting Help
+
+**Built-in Help:**
+
+```bash
+# General help
+tif1 --help
+
+# Command-specific help
+tif1 events --help
+tif1 sessions --help
+tif1 drivers --help
+tif1 fastest --help
+tif1 cache-info --help
+tif1 cache-clear --help
+tif1 version --help
+tif1 debug --help
+```
+
+**Community Support:**
+
+- GitHub Issues: https://github.com/TracingInsights/tif1/issues
+- Documentation: https://docs.tif1.dev
+- Discord: [Community Discord Server]
+
+---
+
+## Platform-Specific Guidance
+
+### Linux
+
+**Installation:**
+
+```bash
+# System-wide (requires sudo)
+sudo pip install tif1
+
+# User installation (recommended)
+pip install --user tif1
+
+# Add to PATH if needed
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Cache Location:**
+
+```bash
+# Default: ~/.cache/tif1
+ls -lh ~/.cache/tif1
+
+# Custom location
+export TIF1_CACHE_DIR="$HOME/my_cache/tif1"
+```
+
+**Shell Integration:**
+
+```bash
+# Bash completion (if available)
+complete -W "events sessions drivers fastest cache-info cache-clear version debug" tif1
+
+# Alias for common commands
+alias tif1-events='tif1 events 2025'
+alias tif1-monaco='tif1 sessions 2025 "Monaco Grand Prix"'
+```
+
+**Performance Tips:**
+
+```bash
+# Use parallel for multiple commands
+parallel tif1 fastest 2025 "Monaco Grand Prix" {} ::: "Practice 1" "Practice 2" "Practice 3"
+
+# Pipe to common tools
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | grep "VER"
+tif1 events 2025 | wc -l
+```
+
+### macOS
+
+**Installation:**
+
+```bash
+# Using Homebrew Python
+brew install python
+pip3 install tif1
+
+# Using system Python
+python3 -m pip install --user tif1
+
+# Add to PATH if needed
+echo 'export PATH="$HOME/Library/Python/3.x/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+**Cache Location:**
+
+```bash
+# Default: ~/Library/Caches/tif1
+ls -lh ~/Library/Caches/tif1
+
+# Custom location
+export TIF1_CACHE_DIR="$HOME/Documents/tif1_cache"
+```
+
+**Terminal Recommendations:**
+
+- **iTerm2**: Best Unicode and color support
+- **Terminal.app**: Good default support
+- **Alacritty**: Fast, GPU-accelerated
+
+**Shell Integration:**
+
+```bash
+# Zsh completion
+autoload -U compinit && compinit
+
+# Alias examples
+alias tif1-latest='tif1 events $(date +%Y)'
+```
+
+### Windows
+
+**Installation:**
+
+```powershell
+# Using pip
+pip install tif1
+
+# Verify installation
+tif1 version
+
+# Add to PATH if needed (PowerShell)
+$env:Path += ";$env:APPDATA\Python\Scripts"
+```
+
+**Cache Location:**
+
+```powershell
+# Default: %LOCALAPPDATA%\Temp\tif1
+dir $env:LOCALAPPDATA\Temp\tif1
+
+# Custom location
+$env:TIF1_CACHE_DIR = "C:\Users\YourName\tif1_cache"
+```
+
+**PowerShell Usage:**
+
+```powershell
+# Basic commands work the same
+tif1 events 2025
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# Piping to PowerShell cmdlets
+tif1 events 2025 | Select-String "Monaco"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | Out-File results.txt
+```
+
+**Command Prompt (CMD) Usage:**
+
+```cmd
+REM Basic commands
+tif1 events 2025
+tif1 sessions 2025 "Monaco Grand Prix"
+
+REM Piping
+tif1 events 2025 | findstr "Monaco"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt
+```
+
+**Windows Terminal Recommendations:**
+
+- **Windows Terminal**: Best modern option (Unicode, colors, tabs)
+- **PowerShell 7**: Improved over PowerShell 5.1
+- **Git Bash**: Unix-like experience on Windows
+
+**Common Windows Issues:**
+
+1. **Execution Policy Error:**
+   ```powershell
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+2. **Path with Spaces:**
+   ```powershell
+   & "C:\Program Files\Python\Scripts\tif1.exe" events 2025
+   ```
+
+3. **Unicode Characters:**
+   ```powershell
+   # Set UTF-8 encoding
+   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+   ```
 
 ---
 
 ## Commands
 
-### `events`
+### `events` - List Season Events
 
-List all events for a specific year.
+Display all Formula 1 events (races) for a specific season year.
 
+**Syntax:**
 ```bash
 tif1 events YEAR
-```yaml
+```
 
 **Arguments:**
-- `YEAR`: Season year (2018-current)
 
-**Example:**
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (2018-current). Must be a valid F1 season year. |
+
+**Description:**
+
+The `events` command retrieves and displays the complete race calendar for a given season. This includes all Grand Prix events scheduled for that year, displayed in chronological order with their official event names.
+
+The data is sourced from tif1's embedded schedule data, which includes historical seasons from 2018 onwards and current/future seasons as they become available.
+
+**Output Format:**
+
+The command displays a formatted table with:
+- **#**: Sequential event number (1-based index)
+- **Event**: Official event name (e.g., "Monaco Grand Prix", "British Grand Prix")
+- **Total count**: Summary line showing total number of events
+
+**Examples:**
+
 ```bash
+# List all 2025 events
 tif1 events 2025
-```yaml
+```
 
-**Output:**
-```yaml
+**Sample Output:**
+```
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Event                         ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -56,31 +1334,90 @@ tif1 events 2025
 │ 4 │ Japanese Grand Prix          │
 │ 5 │ Chinese Grand Prix           │
 │ 6 │ Miami Grand Prix             │
-...
+│ 7 │ Emilia Romagna Grand Prix    │
+│ 8 │ Monaco Grand Prix            │
+│ 9 │ Spanish Grand Prix           │
+│ 10│ Canadian Grand Prix          │
+│ 11│ Austrian Grand Prix          │
+│ 12│ British Grand Prix           │
+│ 13│ Belgian Grand Prix           │
+│ 14│ Dutch Grand Prix             │
+│ 15│ Italian Grand Prix           │
+│ 16│ Azerbaijan Grand Prix        │
+│ 17│ Singapore Grand Prix         │
+│ 18│ United States Grand Prix     │
+│ 19│ Mexico City Grand Prix       │
+│ 20│ São Paulo Grand Prix         │
+│ 21│ Las Vegas Grand Prix         │
+│ 22│ Qatar Grand Prix             │
+│ 23│ Abu Dhabi Grand Prix         │
 └───┴───────────────────────────────┘
 
-Total: 24 events
-```yaml
+Total: 23 events
+```
+
+```bash
+# View historical season
+tif1 events 2020
+```
+
+**Use Cases:**
+- Quick reference for race calendar
+- Planning data analysis for specific events
+- Verifying event names for use in other commands
+- Checking season length and schedule
+
+**Notes:**
+- Event names must match exactly when used in other commands (case-sensitive)
+- Use quotes around event names with spaces in subsequent commands
+- The command works offline if schedule data is embedded in the package
 
 ---
 
-### `sessions`
+### `sessions` - List Event Sessions
 
-List all sessions for a specific event.
+Display all sessions available for a specific Formula 1 event.
 
+**Syntax:**
 ```bash
 tif1 sessions YEAR EVENT
-```yaml
+```
 
 **Arguments:**
-- `YEAR`: Season year
-- `EVENT`: Event name (use quotes if it contains spaces)
 
-**Example:**
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `EVENT` | String | Yes | Event name (must match exactly, use quotes for multi-word names) |
+
+**Description:**
+
+The `sessions` command retrieves all practice, qualifying, sprint, and race sessions for a specific Grand Prix event. Different events may have different session structures (e.g., sprint weekends have different formats).
+
+Typical session types include:
+- **Practice 1, 2, 3**: Free practice sessions (FP1, FP2, FP3)
+- **Qualifying**: Qualifying session
+- **Sprint Qualifying**: Sprint qualifying (on sprint weekends)
+- **Sprint**: Sprint race (on sprint weekends)
+- **Race**: Main Grand Prix race
+
+**Output Format:**
+
+The command displays a formatted table with:
+- **#**: Sequential session number
+- **Session**: Official session name
+- **Title**: Event name and year
+
+**Examples:**
+
 ```bash
+# List sessions for Monaco 2025
 tif1 sessions 2025 "Monaco Grand Prix"
-```text **Output:**
-```python
+```
+
+**Sample Output:**
+```
+         Monaco Grand Prix 2025         
 ┏━━━┳━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session           ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━┩
@@ -90,242 +1427,1433 @@ tif1 sessions 2025 "Monaco Grand Prix"
 │ 4 │ Qualifying        │
 │ 5 │ Race              │
 └───┴───────────────────┘
-```yaml
+```
+
+```bash
+# Sprint weekend format
+tif1 sessions 2025 "São Paulo Grand Prix"
+```
+
+**Sample Output (Sprint Weekend):**
+```
+      São Paulo Grand Prix 2025      
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ Session             ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━┩
+│ 1 │ Practice 1          │
+│ 2 │ Sprint Qualifying   │
+│ 3 │ Sprint              │
+│ 4 │ Qualifying          │
+│ 5 │ Race                │
+└───┴─────────────────────┘
+```
+
+```bash
+# Historical event
+tif1 sessions 2020 "British Grand Prix"
+```
+
+**Use Cases:**
+- Verify available sessions before loading data
+- Check session naming conventions
+- Understand event format (standard vs sprint weekend)
+- Plan analysis workflow
+
+**Important Notes:**
+- **Event names are case-sensitive** and must match exactly
+- **Always use quotes** around event names with spaces
+- Session names must be used exactly as shown in subsequent commands
+- Not all events have the same session structure
+
+**Common Errors:**
+
+```bash
+# ❌ Wrong - missing quotes
+tif1 sessions 2025 Monaco Grand Prix
+
+# ✅ Correct - with quotes
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# ❌ Wrong - incorrect event name
+tif1 sessions 2025 "Monaco GP"
+
+# ✅ Correct - full official name
+tif1 sessions 2025 "Monaco Grand Prix"
+```
 
 ---
 
-### `drivers`
+### `drivers` - List Session Drivers
 
-List all drivers in a session.
+Display all drivers who participated in a specific session, along with their team information.
 
+**Syntax:**
 ```bash
 tif1 drivers YEAR EVENT SESSION
-```yaml
+```
 
 **Arguments:**
-- `YEAR`: Season year
-- `EVENT`: Event name
-- `SESSION`: Session name
 
-**Example:**
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
+| `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
+
+**Description:**
+
+The `drivers` command loads session data and displays all drivers who participated, along with their team affiliations. This is useful for verifying driver availability, checking team rosters, and getting driver codes for use in other commands.
+
+The command shows a progress indicator while loading session data from the network or cache.
+
+**Output Format:**
+
+The command displays a formatted table with:
+- **Driver**: Three-letter driver code (e.g., VER, HAM, LEC)
+- **Team**: Full team name (e.g., Red Bull Racing, Mercedes, Ferrari)
+- **Total count**: Summary line showing total number of drivers
+
+**Examples:**
+
 ```bash
+# List drivers in Monaco 2025 race
 tif1 drivers 2025 "Monaco Grand Prix" "Race"
-```yaml
+```
 
-**Output:**
-```yaml
-┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃ Driver ┃ Team               ┃
-┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ VER    │ Red Bull Racing    │
-│ PER    │ Red Bull Racing    │
-│ HAM    │ Mercedes           │
-│ RUS    │ Mercedes           │
-│ LEC    │ Ferrari            │
-│ SAI    │ Ferrari            │
-...
-└────────┴────────────────────┘
+**Sample Output:**
+```
+[Loading session...]
+
+    Monaco Grand Prix 2025 - Race    
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Driver ┃ Team                   ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ VER    │ Red Bull Racing        │
+│ PER    │ Red Bull Racing        │
+│ HAM    │ Ferrari                │
+│ RUS    │ Mercedes               │
+│ LEC    │ Ferrari                │
+│ SAI    │ Williams               │
+│ NOR    │ McLaren                │
+│ PIA    │ McLaren                │
+│ ALO    │ Aston Martin           │
+│ STR    │ Aston Martin           │
+│ GAS    │ Alpine                 │
+│ OCO    │ Alpine                 │
+│ TSU    │ RB                     │
+│ RIC    │ RB                     │
+│ BOT    │ Kick Sauber            │
+│ ZHO    │ Kick Sauber            │
+│ MAG    │ Haas F1 Team           │
+│ HUL    │ Haas F1 Team           │
+│ ALB    │ Williams               │
+│ SAR    │ Williams               │
+└────────┴────────────────────────┘
 
 Total: 20 drivers
-```yaml
+```
+
+```bash
+# Check qualifying participants
+tif1 drivers 2025 "British Grand Prix" "Qualifying"
+```
+
+```bash
+# View practice session
+tif1 drivers 2024 "Japanese Grand Prix" "Practice 1"
+```
+
+**Use Cases:**
+- Get driver codes for use with `--driver` option in other commands
+- Verify which drivers participated in a session
+- Check team lineups for a specific event
+- Identify reserve or substitute drivers
+- Confirm driver availability before detailed analysis
+
+**Performance Notes:**
+- First run requires network fetch (shows progress indicator)
+- Subsequent runs use cached data (much faster)
+- Loading time depends on session data size and network speed
+- Typical load time: 1-5 seconds (first run), <1 second (cached)
+
+**Important Notes:**
+- Driver codes are standardized three-letter abbreviations (e.g., VER, HAM, LEC)
+- Team names reflect the official team name at the time of the event
+- Not all drivers may have complete data in all sessions (e.g., DNS, DNF)
+- Use exact driver codes from this output in subsequent commands
+
+**Common Patterns:**
+
+```bash
+# Get driver list, then check specific driver's fastest lap
+tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+# Note the driver code (e.g., VER)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
+```
 
 ---
 
-### `fastest`
+### `fastest` - Show Fastest Laps
 
-Show fastest laps for a session.
+Display fastest lap times for all drivers or a specific driver in a session.
 
+**Syntax:**
 ```bash
 tif1 fastest YEAR EVENT SESSION [OPTIONS]
-```yaml
+```
 
 **Arguments:**
-- `YEAR`: Season year
-- `EVENT`: Event name
-- `SESSION`: Session name
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
+| `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
 
 **Options:**
-- `--driver, -d TEXT`: Show fastest lap for a specific driver only
 
-**Example (all drivers):**
+| Option | Short | Type | Description |
+|--------|-------|------|-------------|
+| `--driver` | `-d` | String | Filter to show only a specific driver's fastest lap (use 3-letter code) |
+
+**Description:**
+
+The `fastest` command analyzes lap data to find and display the fastest lap times achieved during a session. This is particularly useful for qualifying analysis, race pace comparison, and performance evaluation.
+
+**Behavior:**
+- **Without `--driver`**: Shows fastest lap for each driver, sorted by lap time (fastest first)
+- **With `--driver`**: Shows only the specified driver's fastest lap with detailed timing
+
+The command loads complete session data including all laps, then processes to find the fastest valid lap for each driver.
+
+**Output Format:**
+
+**All Drivers Mode** (default):
+- **Pos**: Position in fastest lap ranking (1 = fastest)
+- **Driver**: Three-letter driver code
+- **Team**: Team name
+- **Time**: Lap time in seconds (formatted to 3 decimal places)
+
+**Single Driver Mode** (`--driver` specified):
+- Simple text output showing driver code and fastest lap time
+
+**Examples:**
+
 ```bash
+# Show fastest laps for all drivers in qualifying
 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
-```text **Output:**
-```python
+```
+
+**Sample Output (All Drivers):**
+```
+[Loading session...]
+
+  Fastest Laps - Monaco Grand Prix 2025 - Qualifying  
 ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
 ┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
 │ 1   │ VER    │ Red Bull Racing    │ 70.123s   │
 │ 2   │ LEC    │ Ferrari            │ 70.234s   │
-│ 3   │ HAM    │ Mercedes           │ 70.456s   │
-...
+│ 3   │ HAM    │ Ferrari            │ 70.456s   │
+│ 4   │ NOR    │ McLaren            │ 70.567s   │
+│ 5   │ PIA    │ McLaren            │ 70.678s   │
+│ 6   │ RUS    │ Mercedes           │ 70.789s   │
+│ 7   │ ALO    │ Aston Martin       │ 70.890s   │
+│ 8   │ PER    │ Red Bull Racing    │ 70.901s   │
+│ 9   │ SAI    │ Williams           │ 71.012s   │
+│ 10  │ STR    │ Aston Martin       │ 71.123s   │
+│ 11  │ GAS    │ Alpine             │ 71.234s   │
+│ 12  │ TSU    │ RB                 │ 71.345s   │
+│ 13  │ OCO    │ Alpine             │ 71.456s   │
+│ 14  │ ALB    │ Williams           │ 71.567s   │
+│ 15  │ RIC    │ RB                 │ 71.678s   │
+│ 16  │ BOT    │ Kick Sauber        │ 71.789s   │
+│ 17  │ ZHO    │ Kick Sauber        │ 71.890s   │
+│ 18  │ MAG    │ Haas F1 Team       │ 71.901s   │
+│ 19  │ HUL    │ Haas F1 Team       │ 72.012s   │
+│ 20  │ SAR    │ Williams           │ 72.123s   │
 └─────┴────────┴────────────────────┴───────────┘
-```yaml
+```
 
-**Example (specific driver):**
 ```bash
+# Check specific driver's fastest lap
 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
-```yaml
+```
 
-**Output:**
-```yaml
+**Sample Output (Single Driver):**
+```
+[Loading session...]
+
 VER fastest lap: 70.123s
-```python
+```
+
+```bash
+# Using short option syntax
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d HAM
+```
+
+```bash
+# Race fastest laps
+tif1 fastest 2025 "British Grand Prix" "Race"
+```
+
+```bash
+# Practice session analysis
+tif1 fastest 2024 "Japanese Grand Prix" "Practice 2" -d NOR
+```
+
+**Use Cases:**
+- **Qualifying Analysis**: Compare driver performance in qualifying sessions
+- **Race Pace**: Identify fastest race laps for pace analysis
+- **Driver Comparison**: Quickly compare lap times between drivers
+- **Performance Tracking**: Monitor driver/team performance across sessions
+- **Quick Checks**: Verify specific driver's best performance
+
+**Performance Notes:**
+- Loads complete lap data for the session (may take 2-10 seconds first time)
+- Cached data makes subsequent runs much faster (<1 second)
+- Processing time increases with number of laps in session
+- Qualifying sessions are typically faster to load than races
+
+**Data Considerations:**
+- Only includes valid, completed laps (excludes in/out laps, invalid laps)
+- Times are shown in seconds with millisecond precision
+- Deleted lap times (track limits violations) may be excluded
+- Some drivers may not have valid laps (DNS, early DNF)
+
+**Important Notes:**
+- Driver codes must match exactly (case-sensitive: VER, not ver)
+- Invalid driver codes will result in an error message
+- Times are sorted automatically (fastest first)
+- The `--driver` option is useful for quick single-driver checks
+
+**Common Patterns:**
+
+```bash
+# Compare qualifying performance
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Check if a specific driver improved
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+
+# Find race fastest lap holder
+tif1 fastest 2025 "Monaco Grand Prix" "Race" | head -n 5
+```
+
+**Error Handling:**
+
+```bash
+# No valid laps for driver
+tif1 fastest 2025 "Monaco Grand Prix" "Race" --driver ABC
+# Output: No valid laps for ABC
+
+# Invalid driver code
+tif1 fastest 2025 "Monaco Grand Prix" "Race" --driver INVALID
+# Output: Driver not found error
+```
 
 ---
 
-### `cache-info`
+### `cache-info` - Display Cache Statistics
 
-Show cache information and statistics.
+Show detailed information about the tif1 cache, including location, size, and file count.
 
+**Syntax:**
 ```bash
 tif1 cache-info
-```yaml
+```
 
-**Output:**
-```yaml
-Cache location: /home/user/.tif1/cache
+**Arguments:**
+None
+
+**Description:**
+
+The `cache-info` command provides a summary of your local tif1 cache, which stores downloaded F1 data to speed up subsequent requests. This is useful for monitoring cache growth, troubleshooting storage issues, and understanding cache behavior.
+
+**Output Format:**
+
+The command displays:
+- **Cache location**: Full filesystem path to the cache directory
+- **Cache files**: Number of cache-related files
+- **Total size**: Combined size of all cache files in megabytes (MB)
+
+**Examples:**
+
+```bash
+# Check cache information
+tif1 cache-info
+```
+
+**Sample Output (Linux/macOS):**
+```
+Cache location: /home/user/.cache/tif1
 Cache files: 3
 Total size: 245.67 MB
-```python ---
+```
 
-### `cache-clear`
+**Sample Output (Windows):**
+```
+Cache location: C:\Users\user\AppData\Local\Temp\tif1
+Cache files: 5
+Total size: 512.34 MB
+```
 
-Clear the cache database.
+**Sample Output (macOS):**
+```
+Cache location: /Users/user/Library/Caches/tif1
+Cache files: 2
+Total size: 128.45 MB
+```
+
+**Use Cases:**
+- **Monitor cache growth**: Check how much disk space the cache is using
+- **Troubleshoot performance**: Verify cache is being used
+- **Storage management**: Identify if cache needs clearing
+- **Debugging**: Confirm cache location for manual inspection
+- **Documentation**: Record cache paths for team documentation
+
+**Cache Location by Platform:**
+
+| Platform | Default Cache Location |
+|----------|------------------------|
+| **Linux** | `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist) |
+| **macOS** | `~/Library/Caches/tif1` |
+| **Windows** | `%LOCALAPPDATA%\Temp\tif1` |
+
+**Cache Structure:**
+
+The cache directory typically contains:
+- `cache.sqlite`: Main SQLite database file
+- `cache.sqlite-wal`: Write-Ahead Log file (WAL mode)
+- `cache.sqlite-shm`: Shared memory file (WAL mode)
+
+**Understanding Cache Size:**
+
+Cache size grows based on:
+- **Number of sessions loaded**: Each session adds lap data, telemetry, etc.
+- **Data types requested**: Telemetry data is larger than lap times
+- **Historical data**: Older seasons accumulate over time
+- **Typical sizes**:
+  - Fresh install: ~0 MB
+  - Light usage (few sessions): 50-200 MB
+  - Moderate usage (multiple seasons): 200-500 MB
+  - Heavy usage (extensive analysis): 500+ MB
+
+**Performance Impact:**
+
+- **Cache hit**: Data loads in <1 second (from disk)
+- **Cache miss**: Data loads in 2-10 seconds (from network)
+- **Cache benefit**: 5-10x faster load times for cached data
+
+**Custom Cache Location:**
+
+You can override the default cache location using the `TIF1_CACHE_DIR` environment variable:
 
 ```bash
-tif1 cache-clear [OPTIONS]
-```yaml
+# Set custom cache location
+export TIF1_CACHE_DIR="/path/to/custom/cache"
+tif1 cache-info
+```
 
-**Options:**
-- `--yes, -y`: Skip confirmation prompt
+**Troubleshooting:**
 
-**Example:**
-```bash
-# With confirmation
-tif1 cache-clear
+If cache size seems incorrect:
+1. Check for multiple cache locations (environment variable override)
+2. Verify disk space availability
+3. Check file permissions on cache directory
+4. Consider clearing cache if corrupted: `tif1 cache-clear`
 
-# Skip confirmation
-tif1 cache-clear --yes
-```yaml
-
-**Output:**
-```yaml
-Are you sure you want to clear the cache? [y/N]: y
-Cache cleared successfully!
-```yaml
+**Related Commands:**
+- `tif1 cache-clear`: Clear all cached data
+- Environment variable `TIF1_CACHE_DIR`: Override cache location
+- Environment variable `TIF1_ENABLE_CACHE`: Disable caching entirely
 
 ---
 
-### `version`
+### `cache-clear` - Clear Cache Database
 
-Show tif1 version.
+Delete all cached data to free up disk space or force fresh data fetches.
+
+**Syntax:**
+```bash
+tif1 cache-clear [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Type | Description |
+|--------|-------|------|-------------|
+| `--yes` | `-y` | Flag | Skip confirmation prompt and clear immediately |
+
+**Description:**
+
+The `cache-clear` command removes all cached Formula 1 data from your local cache database. This is useful when:
+
+- **Freeing disk space**: Cache has grown too large
+- **Forcing fresh data**: Suspect cached data is stale or corrupted
+- **Troubleshooting**: Debugging cache-related issues
+- **Testing**: Measuring cold-start performance
+- **Data updates**: Ensuring you get the latest data from the CDN
+
+**Important**: Clearing the cache means all subsequent data requests will need to fetch from the network, which will be slower until the cache is rebuilt.
+
+**Interactive Mode** (default):
+
+By default, the command asks for confirmation before clearing:
+
+```bash
+tif1 cache-clear
+```
+
+**Sample Output:**
+```
+Are you sure you want to clear the cache? [y/N]: y
+Cache cleared successfully!
+```
+
+If you answer 'n' or press Enter (default is No):
+
+```
+Are you sure you want to clear the cache? [y/N]: n
+Cache clear cancelled
+```
+
+**Non-Interactive Mode** (`--yes` flag):
+
+Skip the confirmation prompt for scripting or automation:
+
+```bash
+tif1 cache-clear --yes
+```
+
+**Sample Output:**
+```
+Cache cleared successfully!
+```
+
+**Short Form:**
+
+```bash
+tif1 cache-clear -y
+```
+
+**Use Cases:**
+
+1. **Disk Space Management**:
+   ```bash
+   # Check cache size first
+   tif1 cache-info
+   # Clear if too large
+   tif1 cache-clear --yes
+   ```
+
+2. **Force Data Refresh**:
+   ```bash
+   # Clear cache to get latest data
+   tif1 cache-clear -y
+   # Reload session with fresh data
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+3. **Automated Scripts**:
+   ```bash
+   #!/bin/bash
+   # Clear cache before daily analysis
+   tif1 cache-clear --yes
+   # Run analysis commands...
+   ```
+
+4. **Troubleshooting**:
+   ```bash
+   # If seeing errors or unexpected data
+   tif1 cache-clear -y
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   ```
+
+**What Gets Cleared:**
+
+The command deletes:
+- All cached session data (laps, telemetry, weather, messages)
+- All cached schedule data
+- All cached driver information
+- SQLite database tables (structure is preserved, data is removed)
+
+**What Doesn't Get Cleared:**
+
+- Cache directory itself (remains for future use)
+- Configuration files (`.tif1rc`)
+- Log files (if any)
+
+**Performance Impact:**
+
+After clearing cache:
+- **First data load**: 2-10 seconds (network fetch)
+- **Subsequent loads**: <1 second (cached)
+- **Cache rebuild**: Automatic as you use commands
+
+**Safety Notes:**
+
+- **No data loss**: Only cached data is removed; original data remains on CDN
+- **Reversible**: Cache rebuilds automatically as you use the CLI
+- **No configuration changes**: Your settings remain intact
+- **Safe to interrupt**: Can be cancelled with Ctrl+C before confirmation
+
+**Exit Codes:**
+
+- `0`: Cache cleared successfully
+- `1`: Error during cache clearing (permissions, disk issues, etc.)
+- `130`: User cancelled with Ctrl+C
+
+**Related Commands:**
+
+- `tif1 cache-info`: Check cache size before clearing
+- Environment variable `TIF1_CACHE_DIR`: Custom cache location
+- Environment variable `TIF1_ENABLE_CACHE`: Disable caching entirely
+
+---
+
+### `version` - Show Version Information
+
+Display the installed tif1 version number.
+
+**Syntax:**
+```bash
+tif1 version
+```
+
+**Arguments:**
+None
+
+**Description:**
+
+The `version` command displays the currently installed version of tif1. This is useful for:
+
+- **Troubleshooting**: Verify which version you're running when reporting issues
+- **Compatibility**: Check if you have the required version for specific features
+- **Updates**: Confirm successful upgrade after running `pip install --upgrade tif1`
+- **Documentation**: Ensure documentation matches your installed version
+
+**Examples:**
 
 ```bash
 tif1 version
-```yaml
+```
 
-**Output:**
-```python
+**Sample Output:**
+```
 tif1 version 0.2.0
-```python
+```
+
+**Output Format:**
+
+The output follows the pattern: `tif1 version X.Y.Z`
+
+Where:
+- **X**: Major version (breaking changes)
+- **Y**: Minor version (new features, backwards compatible)
+- **Z**: Patch version (bug fixes, backwards compatible)
+
+**Use Cases:**
+
+1. **Check Current Version**:
+   ```bash
+   tif1 version
+   ```
+
+2. **Verify Upgrade**:
+   ```bash
+   # Before upgrade
+   tif1 version  # Shows 0.1.0
+   
+   # Upgrade
+   pip install --upgrade tif1
+   
+   # After upgrade
+   tif1 version  # Shows 0.2.0
+   ```
+
+3. **Bug Reports**:
+   ```bash
+   # Include version in bug reports
+   tif1 version > version.txt
+   ```
+
+4. **Scripting**:
+   ```bash
+   #!/bin/bash
+   VERSION=$(tif1 version | awk '{print $3}')
+   echo "Running tif1 $VERSION"
+   ```
+
+**Version History:**
+
+- **0.2.0**: Current release with CLI improvements
+- **0.1.0**: Initial release
+
+**Checking for Updates:**
+
+To check if a newer version is available:
+
+```bash
+pip index versions tif1
+```
+
+To upgrade to the latest version:
+
+```bash
+pip install --upgrade tif1
+```
+
+**Exit Codes:**
+
+- `0`: Success (always succeeds)
 
 ---
 
-### `debug`
+### `debug` - Debug Session Loading
 
-Load a session with debug logging enabled.
+Load a session with detailed debug logging enabled to troubleshoot issues.
 
+**Syntax:**
 ```bash
 tif1 debug YEAR EVENT SESSION
-```python **Arguments:**
-- `YEAR`: Season year
-- `EVENT`: Event name
-- `SESSION`: Session name
+```
 
-**Example:**
+**Arguments:**
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
+| `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
+
+**Description:**
+
+The `debug` command loads a session with verbose debug logging enabled, providing detailed information about the data loading process. This is invaluable for:
+
+- **Troubleshooting**: Diagnose why data isn't loading correctly
+- **Performance Analysis**: See timing for each loading step
+- **Network Issues**: Identify connection problems or timeouts
+- **Cache Behavior**: Verify cache hits/misses
+- **Development**: Understand internal data flow
+
+Unlike normal commands that show minimal output, `debug` displays:
+- HTTP requests and responses
+- Cache lookups and stores
+- Data parsing steps
+- Error details and stack traces
+- Timing information
+- Internal state changes
+
+**Examples:**
+
 ```bash
+# Debug race session loading
 tif1 debug 2025 "Monaco Grand Prix" "Race"
-```yaml
+```
 
-**Output:**
-```yaml
-[DEBUG] Loading session...
-[DEBUG] Fetching drivers...
-[DEBUG] Fetching laps...
+**Sample Output:**
+```
+[DEBUG] Loading session Monaco Grand Prix 2025 - Race
+[DEBUG] Checking cache for session data...
+[DEBUG] Cache miss - fetching from CDN
+[DEBUG] Fetching: https://cdn.jsdelivr.net/gh/TracingInsights/2025/monaco-grand-prix/race/drivers.json
+[DEBUG] HTTP GET completed in 0.234s
+[DEBUG] Parsing JSON (1.2 MB)
+[DEBUG] JSON parsed in 0.045s
+[DEBUG] Fetching laps data...
+[DEBUG] Fetching: https://cdn.jsdelivr.net/gh/TracingInsights/2025/monaco-grand-prix/race/laps.json
+[DEBUG] HTTP GET completed in 0.456s
+[DEBUG] Parsing JSON (3.4 MB)
+[DEBUG] JSON parsed in 0.123s
+[DEBUG] Creating lap DataFrame...
+[DEBUG] DataFrame created with 1560 rows
+[DEBUG] Caching session data...
+[DEBUG] Cache write completed in 0.089s
 Session loaded successfully!
 Drivers: 20
 Laps: 1560
-```python
+```
+
+```bash
+# Debug qualifying session
+tif1 debug 2025 "British Grand Prix" "Qualifying"
+```
+
+```bash
+# Debug with cache hit
+tif1 debug 2024 "Japanese Grand Prix" "Practice 1"
+```
+
+**Sample Output (Cache Hit):**
+```
+[DEBUG] Loading session Japanese Grand Prix 2024 - Practice 1
+[DEBUG] Checking cache for session data...
+[DEBUG] Cache hit! Loading from local cache
+[DEBUG] Cache read completed in 0.012s
+[DEBUG] Deserializing data...
+Session loaded successfully!
+Drivers: 20
+Laps: 456
+```
+
+**Use Cases:**
+
+1. **Diagnose Loading Failures**:
+   ```bash
+   # If normal command fails
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"
+   # Error: Failed to load session
+   
+   # Use debug to see why
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Shows detailed error: Network timeout, invalid JSON, etc.
+   ```
+
+2. **Performance Investigation**:
+   ```bash
+   # See which step is slow
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Output shows: HTTP GET took 5.2s (slow network)
+   ```
+
+3. **Cache Verification**:
+   ```bash
+   # Clear cache
+   tif1 cache-clear -y
+   
+   # First load (cache miss)
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Shows: Cache miss - fetching from CDN
+   
+   # Second load (cache hit)
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Shows: Cache hit! Loading from local cache
+   ```
+
+4. **Network Troubleshooting**:
+   ```bash
+   # Check CDN connectivity
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Shows: Connection timeout, DNS resolution failed, etc.
+   ```
+
+**Debug Output Details:**
+
+The debug output includes:
+
+- **[DEBUG]** prefix: All debug messages
+- **Timestamps**: Relative timing for operations
+- **URLs**: Full CDN URLs being fetched
+- **File sizes**: Data size being downloaded/parsed
+- **Cache operations**: Hit/miss, read/write timing
+- **DataFrame info**: Row counts, column names
+- **Errors**: Full stack traces for failures
+
+**Performance Metrics:**
+
+Typical timing breakdown:
+- **Cache hit**: 10-50ms total
+- **Cache miss**:
+  - HTTP fetch: 200-2000ms (depends on network)
+  - JSON parsing: 50-200ms (depends on data size)
+  - DataFrame creation: 20-100ms
+  - Cache write: 50-150ms
+  - **Total**: 2-10 seconds
+
+**Logging Levels:**
+
+The `debug` command sets logging to DEBUG level, which shows:
+- DEBUG: Detailed internal operations
+- INFO: General information messages
+- WARNING: Potential issues
+- ERROR: Failures and exceptions
+
+**Output Destination:**
+
+Debug output goes to:
+- **stdout**: Normal output (session loaded message)
+- **stderr**: Debug logging (all [DEBUG] messages)
+
+This allows separating debug info from actual data:
+
+```bash
+# Capture only debug logs
+tif1 debug 2025 "Monaco Grand Prix" "Race" 2> debug.log
+
+# Capture only output
+tif1 debug 2025 "Monaco Grand Prix" "Race" 2>/dev/null
+```
+
+**Comparison with Normal Commands:**
+
+| Aspect | Normal Command | Debug Command |
+|--------|---------------|---------------|
+| **Logging** | Minimal (errors only) | Verbose (all operations) |
+| **Output** | Clean tables | Debug messages + summary |
+| **Performance** | Slightly faster | Slightly slower (logging overhead) |
+| **Use Case** | Production use | Troubleshooting |
+
+**Important Notes:**
+
+- Debug logging adds ~5-10% overhead due to logging operations
+- Output can be verbose (hundreds of lines for large sessions)
+- Sensitive data (URLs, file paths) may be logged
+- Not recommended for production scripts (use normal commands)
+
+**Exit Codes:**
+
+- `0`: Session loaded successfully
+- `1`: Error loading session (network, data, cache issues)
+
+**Related Commands:**
+
+- `tif1 drivers`: Normal driver listing (no debug output)
+- `tif1 fastest`: Normal fastest lap listing (no debug output)
+- Environment variable `TIF1_LOG_LEVEL`: Set logging level globally
 
 ---
 
 ## Common Workflows
 
-### Explore available data
+### Explore Available Data
+
+Start with high-level exploration and drill down to specific details:
 
 ```bash
-# List all 2025 events
+# 1. List all events in a season
 tif1 events 2025
 
-# Check sessions for Monaco
+# 2. Pick an event and see its sessions
 tif1 sessions 2025 "Monaco Grand Prix"
 
-# See who raced
+# 3. Check who participated in a session
 tif1 drivers 2025 "Monaco Grand Prix" "Race"
-```python
 
-### Quick Analysis
+# 4. Analyze performance
+tif1 fastest 2025 "Monaco Grand Prix" "Race"
+```
+
+This workflow helps you:
+- Discover available data without guessing event/session names
+- Verify data exists before writing Python code
+- Understand the data structure and hierarchy
+
+### Quick Performance Analysis
+
+Compare driver performance across sessions:
 
 ```bash
-# Get fastest laps from qualifying
+# Get fastest laps from all practice sessions
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2"
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3"
+
+# Compare with qualifying
 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 
-# Check specific driver's fastest lap
-tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
-```python
+# Check race pace
+tif1 fastest 2025 "Monaco Grand Prix" "Race"
+```
 
-### Cache Management
+### Driver-Specific Analysis
+
+Focus on a single driver's performance:
 
 ```bash
-# Check cache size
+# Get driver code
+tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+# Note: VER (Max Verstappen)
+
+# Check fastest lap in each session
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+tif1 fastest 2025 "Monaco Grand Prix" "Race" -d VER
+```
+
+### Cache Management Workflow
+
+Monitor and maintain cache health:
+
+```bash
+# Check current cache status
 tif1 cache-info
 
-# Clear cache if it's too large
+# If cache is large (>500 MB), consider clearing
 tif1 cache-clear --yes
-```yaml
 
-### Debugging
+# Verify cache was cleared
+tif1 cache-info
+
+# Rebuild cache with fresh data
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Check cache size again
+tif1 cache-info
+```
+
+### Troubleshooting Workflow
+
+Diagnose and fix data loading issues:
 
 ```bash
-# Enable debug logging to troubleshoot issues
+# 1. Try normal command
+tif1 drivers 2025 "Monaco Grand Prix" "Race"
+# Error: Failed to load session
+
+# 2. Use debug mode to see details
 tif1 debug 2025 "Monaco Grand Prix" "Race"
-```yaml
+# Shows: Network timeout after 30s
+
+# 3. Clear cache in case of corruption
+tif1 cache-clear -y
+
+# 4. Try again with debug
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+# Shows: Success or different error
+
+# 5. Check version
+tif1 version
+# Ensure you have latest version
+```
+
+### Historical Data Analysis
+
+Explore data from past seasons:
+
+```bash
+# Compare same event across years
+tif1 fastest 2023 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2024 "Monaco Grand Prix" "Qualifying"
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Check how many events in each season
+tif1 events 2023
+tif1 events 2024
+tif1 events 2025
+```
+
+### Sprint Weekend Analysis
+
+Sprint weekends have different session structures:
+
+```bash
+# Check sprint weekend format
+tif1 sessions 2025 "São Paulo Grand Prix"
+# Shows: Practice 1, Sprint Qualifying, Sprint, Qualifying, Race
+
+# Analyze sprint qualifying
+tif1 fastest 2025 "São Paulo Grand Prix" "Sprint Qualifying"
+
+# Compare sprint race pace
+tif1 fastest 2025 "São Paulo Grand Prix" "Sprint"
+
+# Check main qualifying
+tif1 fastest 2025 "São Paulo Grand Prix" "Qualifying"
+
+# Compare with main race
+tif1 fastest 2025 "São Paulo Grand Prix" "Race"
+```
+
+### Scripting & Automation
+
+Integrate CLI into shell scripts:
+
+```bash
+#!/bin/bash
+# analyze_weekend.sh - Analyze a full race weekend
+
+YEAR=$1
+EVENT=$2
+
+echo "Analyzing $EVENT $YEAR"
+echo "====================="
+
+# List all sessions
+echo -e "\nAvailable Sessions:"
+tif1 sessions $YEAR "$EVENT"
+
+# Analyze each session
+for session in "Practice 1" "Practice 2" "Practice 3" "Qualifying" "Race"; do
+    echo -e "\n$session Fastest Laps:"
+    tif1 fastest $YEAR "$EVENT" "$session" 2>/dev/null || echo "Session not available"
+done
+
+# Cache info
+echo -e "\nCache Status:"
+tif1 cache-info
+```
+
+Usage:
+```bash
+chmod +x analyze_weekend.sh
+./analyze_weekend.sh 2025 "Monaco Grand Prix"
+```
+
+### Data Validation Workflow
+
+Verify data completeness and accuracy:
+
+```bash
+# 1. Check event exists
+tif1 events 2025 | grep "Monaco"
+
+# 2. Verify sessions are available
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# 3. Confirm driver count
+tif1 drivers 2025 "Monaco Grand Prix" "Race"
+# Should show 20 drivers
+
+# 4. Check for valid lap times
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+# All drivers should have times
+
+# 5. Verify specific driver data
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+# Should show a valid time
+```
+
+### Batch Processing
+
+Process multiple events efficiently:
+
+```bash
+#!/bin/bash
+# batch_analysis.sh - Analyze multiple events
+
+YEAR=2025
+EVENTS=(
+    "Bahrain Grand Prix"
+    "Saudi Arabian Grand Prix"
+    "Australian Grand Prix"
+    "Japanese Grand Prix"
+    "Monaco Grand Prix"
+)
+
+for event in "${EVENTS[@]}"; do
+    echo "Processing: $event"
+    tif1 fastest $YEAR "$event" "Qualifying" > "results_${event// /_}.txt"
+done
+
+echo "Batch processing complete!"
+tif1 cache-info
+```
 
 ---
 
-## Tips
+## Advanced Usage
 
-1. **Use quotes for multi-word names**: Event and session names with spaces need quotes.
-   ```bash
-   tif1 sessions 2025 "Monaco Grand Prix"  # Correct
-   tif1 sessions 2025 Monaco Grand Prix    # Wrong
-   ```bash 2. **Tab completion**: If your shell supports it, tab completion can help with command names.
+### Piping & Text Processing
 
-3. **Pipe output**: CLI output can be piped to other tools.
-   ```bash
-   tif1 events 2025 | grep "Grand Prix"
-```yaml
+Combine CLI with standard Unix tools:
 
-4. **Check cache regularly**: The cache can grow large over time.
+```bash
+# Find specific driver in results
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | grep "VER"
+
+# Count number of events
+tif1 events 2025 | grep -c "Grand Prix"
+
+# Extract driver codes
+tif1 drivers 2025 "Monaco Grand Prix" "Race" | awk '{print $1}' | tail -n +4
+
+# Sort events alphabetically
+tif1 events 2025 | tail -n +4 | sort
+
+# Find events with "Grand Prix" in name
+tif1 events 2025 | grep "Grand Prix"
+
+# Get top 3 fastest laps
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | head -n 7
+```
+
+### Output Redirection
+
+Save CLI output to files:
+
+```bash
+# Save event list
+tif1 events 2025 > events_2025.txt
+
+# Save qualifying results
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > monaco_quali.txt
+
+# Append multiple sessions to one file
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" > monaco_analysis.txt
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2" >> monaco_analysis.txt
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3" >> monaco_analysis.txt
+
+# Save debug output separately
+tif1 debug 2025 "Monaco Grand Prix" "Race" 2> debug.log 1> output.txt
+```
+
+### Environment Variable Usage
+
+Customize CLI behavior with environment variables:
+
+```bash
+# Use custom cache directory
+export TIF1_CACHE_DIR="/tmp/tif1_cache"
+tif1 cache-info
+# Shows: Cache location: /tmp/tif1_cache
+
+# Use polars backend instead of pandas
+export TIF1_LIB=polars
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Disable caching for testing
+export TIF1_ENABLE_CACHE=false
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+# Always fetches from network
+
+# Increase timeout for slow connections
+export TIF1_TIMEOUT=60
+tif1 debug 2025 "Monaco Grand Prix" "Race"
+
+# Set multiple variables
+TIF1_LIB=polars TIF1_TIMEOUT=60 tif1 fastest 2025 "Monaco Grand Prix" "Race"
+```
+
+### Conditional Execution
+
+Use exit codes for conditional logic:
+
+```bash
+# Check if command succeeded
+if tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > /dev/null 2>&1; then
+    echo "Data available"
+else
+    echo "Data not available"
+fi
+
+# Retry on failure
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" || \
+    (tif1 cache-clear -y && tif1 fastest 2025 "Monaco Grand Prix" "Qualifying")
+
+# Chain commands
+tif1 cache-clear -y && \
+    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" && \
+    echo "Success!"
+```
+
+### Parallel Processing
+
+Run multiple CLI commands in parallel:
+
+```bash
+# Parallel session analysis (bash)
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" > p1.txt &
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2" > p2.txt &
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3" > p3.txt &
+wait
+echo "All sessions analyzed"
+
+# Using GNU parallel
+parallel tif1 fastest 2025 "Monaco Grand Prix" {} ::: "Practice 1" "Practice 2" "Practice 3"
+
+# Parallel event processing
+parallel tif1 sessions 2025 {} ::: "Monaco Grand Prix" "British Grand Prix" "Italian Grand Prix"
+```
+
+### JSON Output (Future Enhancement)
+
+While not currently supported, you can parse table output:
+
+```bash
+# Extract structured data from tables
+tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
+    tail -n +4 | \
+    head -n -2 | \
+    awk '{print $1 "," $2}' > drivers.csv
+```
+
+---
+
+## Tips & Best Practices
+
+### General Tips
+
+1. **Always use quotes for multi-word names**:
    ```bash
+   # ✅ Correct
+   tif1 sessions 2025 "Monaco Grand Prix"
+   
+   # ❌ Wrong
+   tif1 sessions 2025 Monaco Grand Prix
+   ```
+
+2. **Use tab completion** (if your shell supports it):
+   ```bash
+   tif1 ev<TAB>        # Completes to: tif1 events
+   tif1 cache-<TAB>    # Shows: cache-info, cache-clear
+   ```
+
+3. **Check help when unsure**:
+   ```bash
+   tif1 --help              # List all commands
+   tif1 fastest --help      # Command-specific help
+   ```
+
+4. **Verify event names first**:
+   ```bash
+   # Always check exact event name
+   tif1 events 2025
+   # Then use exact name from output
+   tif1 sessions 2025 "Monaco Grand Prix"
+   ```
+
+5. **Use short options for speed**:
+   ```bash
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER  # Faster to type
+   tif1 cache-clear -y                                         # Skip confirmation
+   ```
+
+### Performance Tips
+
+1. **Let cache warm up**:
+   ```bash
+   # First run is slow (network fetch)
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
+   
+   # Second run is fast (cached)
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
+   ```
+
+2. **Monitor cache size**:
+   ```bash
+   # Check periodically
    tif1 cache-info
-```yaml
+   
+   # Clear if >500 MB
+   tif1 cache-clear -y
+   ```
 
-5. **Use debug mode for troubleshooting**: If you encounter issues, run with debug mode.
+3. **Use specific driver queries**:
    ```bash
-   tif1 debug 2025 "Monaco" "Race"
-```yaml
+   # Faster - only processes one driver
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+   
+   # Slower - processes all drivers
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+4. **Avoid unnecessary debug mode**:
+   ```bash
+   # Use debug only when troubleshooting
+   tif1 debug 2025 "Monaco Grand Prix" "Race"  # Slower
+   
+   # Normal commands are faster
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"  # Faster
+   ```
+
+### Scripting Tips
+
+1. **Handle errors gracefully**:
+   ```bash
+   if ! tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt 2>&1; then
+       echo "Error: Failed to fetch data" >&2
+       exit 1
+   fi
+   ```
+
+2. **Use variables for reusability**:
+   ```bash
+   YEAR=2025
+   EVENT="Monaco Grand Prix"
+   SESSION="Qualifying"
+   
+   tif1 fastest $YEAR "$EVENT" "$SESSION"
+   ```
+
+3. **Suppress output when needed**:
+   ```bash
+   # Suppress all output
+   tif1 cache-clear -y > /dev/null 2>&1
+   
+   # Suppress only errors
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" 2>/dev/null
+   ```
+
+4. **Check exit codes**:
+   ```bash
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   if [ $? -eq 0 ]; then
+       echo "Success"
+   else
+       echo "Failed"
+   fi
+   ```
+
+### Troubleshooting Tips
+
+1. **Start with debug mode**:
+   ```bash
+   # If command fails
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"
+   
+   # Use debug to see why
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   ```
+
+2. **Clear cache when in doubt**:
+   ```bash
+   tif1 cache-clear -y
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+3. **Check version compatibility**:
+   ```bash
+   tif1 version
+   pip show tif1
+   ```
+
+4. **Verify network connectivity**:
+   ```bash
+   # Test with debug mode
+   tif1 debug 2025 "Monaco Grand Prix" "Race"
+   # Look for: Connection timeout, DNS errors, etc.
+   ```
+
+5. **Use offline mode for testing**:
+   ```bash
+   # Only use cached data
+   export TIF1_OFFLINE_MODE=true
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+### Data Quality Tips
+
+1. **Verify driver count**:
+   ```bash
+   # Should typically show 20 drivers
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"
+   ```
+
+2. **Check for missing data**:
+   ```bash
+   # All drivers should have times
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   # If some missing, data may be incomplete
+   ```
+
+3. **Compare across sessions**:
+   ```bash
+   # Lap times should improve from practice to qualifying
+   tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" -d VER
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+   ```
+
+4. **Use historical data for validation**:
+   ```bash
+   # Compare with previous year
+   tif1 fastest 2024 "Monaco Grand Prix" "Qualifying"
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   # Lap times should be similar (within 1-2 seconds)
+   ```
 
 ---
 
@@ -339,29 +2867,913 @@ tif1 debug 2025 "Monaco Grand Prix" "Race"
 
 ## Environment Variables
 
-The CLI respects the same environment variables as the Python API:
+The CLI respects the same environment variables as the Python API for consistent behavior across interfaces:
 
-- `TIF1_CACHE_DIR`: Override cache directory
-- `TIF1_LIB`: Set default lib (pandas/polars)
-- `TIF1_ENABLE_CACHE`: Enable/disable caching (true/false)
-- `TIF1_TIMEOUT`: Network timeout in seconds
-- `TIF1_MAX_RETRIES`: Maximum retry attempts
+### Available Environment Variables
 
-**Example:**
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `TIF1_CACHE_DIR` | Path | Platform-specific | Override cache directory location |
+| `TIF1_LIB` | String | `pandas` | Set default DataFrame library (`pandas` or `polars`) |
+| `TIF1_ENABLE_CACHE` | Boolean | `true` | Enable/disable caching globally |
+| `TIF1_TIMEOUT` | Integer | `30` | Network timeout in seconds |
+| `TIF1_MAX_RETRIES` | Integer | `3` | Maximum retry attempts for failed requests |
+| `TIF1_LOG_LEVEL` | String | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `TIF1_OFFLINE_MODE` | Boolean | `false` | Only use cached data, never fetch from network |
+
+### Usage Examples
+
+**Custom Cache Directory:**
+
 ```bash
-TIF1_LIB=polars tif1 fastest 2025 "Monaco" "Race"
-```python
+# Linux/macOS
+export TIF1_CACHE_DIR="/mnt/data/tif1_cache"
+tif1 cache-info
+
+# Windows PowerShell
+$env:TIF1_CACHE_DIR = "D:\tif1_cache"
+tif1 cache-info
+
+# Temporary override (single command)
+TIF1_CACHE_DIR=/tmp/tif1 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**Use Polars Backend:**
+
+```bash
+# Set polars as default
+export TIF1_LIB=polars
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Verify backend (check debug output)
+tif1 debug 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**Disable Caching:**
+
+```bash
+# Disable cache globally
+export TIF1_ENABLE_CACHE=false
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Always fetches from network, never caches
+```
+
+**Increase Timeout:**
+
+```bash
+# For slow connections
+export TIF1_TIMEOUT=60
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Or per-command
+TIF1_TIMEOUT=120 tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**Adjust Retry Behavior:**
+
+```bash
+# Increase retries for unreliable networks
+export TIF1_MAX_RETRIES=5
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**Enable Debug Logging:**
+
+```bash
+# Set debug log level
+export TIF1_LOG_LEVEL=DEBUG
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Shows detailed logging for all commands
+```
+
+**Offline Mode:**
+
+```bash
+# Only use cached data
+export TIF1_OFFLINE_MODE=true
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Fails if data not in cache
+```
+
+### Configuration File
+
+While the CLI primarily uses environment variables, you can create a shell configuration file for persistent settings:
+
+**Linux/macOS (~/.tif1rc):**
+
+```bash
+# tif1 CLI Configuration
+export TIF1_CACHE_DIR="$HOME/.cache/tif1"
+export TIF1_LIB="pandas"
+export TIF1_TIMEOUT=30
+export TIF1_MAX_RETRIES=3
+
+# Source in your shell profile
+# Add to ~/.bashrc or ~/.zshrc:
+# [ -f ~/.tif1rc ] && source ~/.tif1rc
+```
+
+**Windows PowerShell ($PROFILE):**
+
+```powershell
+# tif1 CLI Configuration
+$env:TIF1_CACHE_DIR = "$env:USERPROFILE\.cache\tif1"
+$env:TIF1_LIB = "pandas"
+$env:TIF1_TIMEOUT = 30
+$env:TIF1_MAX_RETRIES = 3
+```
+
+### Environment Variable Precedence
+
+When multiple configuration sources exist, precedence is:
+
+1. **Command-line override** (highest priority)
+   ```bash
+   TIF1_TIMEOUT=60 tif1 fastest ...
+   ```
+
+2. **Shell environment variable**
+   ```bash
+   export TIF1_TIMEOUT=45
+   ```
+
+3. **Configuration file**
+   ```bash
+   source ~/.tif1rc
+   ```
+
+4. **Default value** (lowest priority)
 
 ---
 
-## Programmatic Usage
+## Advanced Topics
 
-You can also use the CLI programmatically:
+### Performance Optimization
 
-```python
-from tif1.cli import app
-import typer
+**1. Parallel Processing**
 
-# Run CLI command
-typer.run(app)
-```python
+Process multiple sessions simultaneously:
+
+```bash
+# Using GNU parallel
+parallel tif1 fastest 2025 "Monaco Grand Prix" {} ::: \
+    "Practice 1" "Practice 2" "Practice 3" "Qualifying" "Race"
+
+# Using bash background jobs
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" > p1.txt &
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 2" > p2.txt &
+tif1 fastest 2025 "Monaco Grand Prix" "Practice 3" > p3.txt &
+wait
+```
+
+**2. Cache Warming**
+
+Pre-populate cache for faster subsequent access:
+
+```bash
+#!/bin/bash
+# warm_cache.sh - Pre-load common sessions
+
+YEAR=2025
+EVENTS=("Monaco Grand Prix" "British Grand Prix" "Italian Grand Prix")
+SESSIONS=("Practice 1" "Practice 2" "Practice 3" "Qualifying" "Race")
+
+for event in "${EVENTS[@]}"; do
+    for session in "${SESSIONS[@]}"; do
+        echo "Caching: $event - $session"
+        tif1 fastest $YEAR "$event" "$session" > /dev/null 2>&1
+    done
+done
+
+echo "Cache warming complete!"
+tif1 cache-info
+```
+
+**3. Selective Data Loading**
+
+Only load data you need:
+
+```bash
+# Load specific driver data (faster)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+
+# Instead of all drivers (slower)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**4. Batch Processing**
+
+Process multiple events efficiently:
+
+```bash
+#!/bin/bash
+# batch_process.sh
+
+YEAR=2025
+
+# Get all events
+EVENTS=$(tif1 events $YEAR | tail -n +4 | head -n -2 | awk '{$1=""; print $0}' | sed 's/^ //')
+
+# Process each event
+while IFS= read -r event; do
+    echo "Processing: $event"
+    tif1 fastest $YEAR "$event" "Qualifying" > "results_${event// /_}.txt"
+done <<< "$EVENTS"
+```
+
+### Integration with Other Tools
+
+**1. jq (JSON Processing)**
+
+While CLI doesn't output JSON directly, you can convert:
+
+```bash
+# Extract driver codes to JSON array
+tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
+    tail -n +4 | head -n -2 | \
+    awk '{print $1}' | \
+    jq -R -s 'split("\n") | map(select(length > 0))'
+```
+
+**2. awk (Text Processing)**
+
+```bash
+# Extract specific columns
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | \
+    awk '/│/ {print $2, $6}'
+
+# Calculate statistics
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | \
+    awk '/│/ && NR>3 {sum+=$6; count++} END {print "Average:", sum/count}'
+```
+
+**3. gnuplot (Visualization)**
+
+```bash
+# Extract lap times for plotting
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" | \
+    tail -n +4 | head -n -2 | \
+    awk '{print NR, $6}' | sed 's/s//' > data.txt
+
+# Plot with gnuplot
+gnuplot -e "set terminal png; set output 'laptimes.png'; plot 'data.txt' with lines"
+```
+
+**4. Database Import**
+
+```bash
+# Export to CSV
+tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
+    tail -n +4 | head -n -2 | \
+    awk '{print $1","$2}' > drivers.csv
+
+# Import to SQLite
+sqlite3 f1data.db ".import drivers.csv drivers"
+```
+
+### CI/CD Integration
+
+**GitHub Actions Example:**
+
+```yaml
+name: F1 Data Analysis
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install tif1
+        run: pip install tif1
+      
+      - name: Get latest race data
+        run: |
+          YEAR=$(date +%Y)
+          tif1 events $YEAR > events.txt
+          
+      - name: Analyze qualifying
+        run: |
+          tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt
+          
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: f1-analysis
+          path: results.txt
+```
+
+**GitLab CI Example:**
+
+```yaml
+f1_analysis:
+  image: python:3.11
+  script:
+    - pip install tif1
+    - tif1 events 2025 > events.txt
+    - tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt
+  artifacts:
+    paths:
+      - events.txt
+      - results.txt
+```
+
+**Jenkins Pipeline Example:**
+
+```groovy
+pipeline {
+    agent any
+    stages {
+        stage('Install') {
+            steps {
+                sh 'pip install tif1'
+            }
+        }
+        stage('Analyze') {
+            steps {
+                sh 'tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt'
+            }
+        }
+        stage('Archive') {
+            steps {
+                archiveArtifacts artifacts: 'results.txt'
+            }
+        }
+    }
+}
+```
+
+### Docker Integration
+
+**Dockerfile:**
+
+```dockerfile
+FROM python:3.11-slim
+
+# Install tif1
+RUN pip install --no-cache-dir tif1
+
+# Set cache directory
+ENV TIF1_CACHE_DIR=/cache
+
+# Create cache volume
+VOLUME /cache
+
+# Set working directory
+WORKDIR /app
+
+# Default command
+ENTRYPOINT ["tif1"]
+CMD ["--help"]
+```
+
+**Usage:**
+
+```bash
+# Build image
+docker build -t tif1-cli .
+
+# Run commands
+docker run --rm tif1-cli events 2025
+docker run --rm tif1-cli fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# With persistent cache
+docker run --rm -v tif1-cache:/cache tif1-cli fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+### Monitoring and Logging
+
+**1. Command Logging**
+
+Track all CLI usage:
+
+```bash
+# Log all commands
+tif1() {
+    echo "[$(date)] tif1 $@" >> ~/.tif1_history.log
+    command tif1 "$@"
+}
+
+# View history
+tail -f ~/.tif1_history.log
+```
+
+**2. Performance Monitoring**
+
+Measure command execution time:
+
+```bash
+# Using time
+time tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+
+# Custom timing
+start=$(date +%s)
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+end=$(date +%s)
+echo "Execution time: $((end-start)) seconds"
+```
+
+**3. Error Tracking**
+
+Capture and log errors:
+
+```bash
+# Redirect errors to log
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" 2>> errors.log
+
+# Or both stdout and stderr
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" &>> full.log
+```
+
+### Security Considerations
+
+**1. Cache Security**
+
+Protect cached data:
+
+```bash
+# Set restrictive permissions
+chmod 700 ~/.cache/tif1
+
+# Encrypt cache directory (Linux)
+encfs ~/.cache/tif1_encrypted ~/.cache/tif1
+```
+
+**2. Network Security**
+
+Use secure connections:
+
+```bash
+# Verify CDN uses HTTPS
+tif1 debug 2025 "Monaco Grand Prix" "Race" 2>&1 | grep "https://"
+
+# Use proxy if required
+export HTTPS_PROXY=http://proxy.example.com:8080
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+```
+
+**3. Input Validation**
+
+Sanitize user input in scripts:
+
+```bash
+#!/bin/bash
+# Validate year input
+if ! [[ "$1" =~ ^[0-9]{4}$ ]]; then
+    echo "Error: Invalid year format"
+    exit 1
+fi
+
+tif1 events "$1"
+```
+
+### Testing and Validation
+
+**1. Smoke Tests**
+
+Verify CLI functionality:
+
+```bash
+#!/bin/bash
+# smoke_test.sh
+
+set -e  # Exit on error
+
+echo "Testing tif1 CLI..."
+
+# Test version
+tif1 version
+
+# Test events
+tif1 events 2025 > /dev/null
+
+# Test sessions
+tif1 sessions 2025 "Monaco Grand Prix" > /dev/null
+
+# Test cache
+tif1 cache-info > /dev/null
+
+echo "All tests passed!"
+```
+
+**2. Data Validation**
+
+Verify data integrity:
+
+```bash
+#!/bin/bash
+# validate_data.sh
+
+# Check driver count
+DRIVER_COUNT=$(tif1 drivers 2025 "Monaco Grand Prix" "Race" | grep -c "│")
+
+if [ "$DRIVER_COUNT" -ne 20 ]; then
+    echo "Warning: Expected 20 drivers, found $DRIVER_COUNT"
+    exit 1
+fi
+
+echo "Data validation passed"
+```
+
+**3. Regression Testing**
+
+Compare outputs across versions:
+
+```bash
+#!/bin/bash
+# regression_test.sh
+
+# Save current output
+tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > current.txt
+
+# Compare with baseline
+if ! diff -q baseline.txt current.txt > /dev/null; then
+    echo "Regression detected!"
+    diff baseline.txt current.txt
+    exit 1
+fi
+
+echo "No regressions found"
+```
+
+---
+
+## Best Practices
+
+### General Best Practices
+
+1. **Always Quote Multi-Word Arguments**
+   ```bash
+   # ✅ Correct
+   tif1 sessions 2025 "Monaco Grand Prix"
+   
+   # ❌ Wrong
+   tif1 sessions 2025 Monaco Grand Prix
+   ```
+
+2. **Use Exact Names from CLI Output**
+   ```bash
+   # Get exact names first
+   tif1 events 2025
+   tif1 sessions 2025 "Monaco Grand Prix"
+   
+   # Then use them in subsequent commands
+   tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+3. **Check Help When Unsure**
+   ```bash
+   tif1 --help
+   tif1 fastest --help
+   ```
+
+4. **Use Short Options for Speed**
+   ```bash
+   # Faster to type
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+   tif1 cache-clear -y
+   ```
+
+5. **Leverage Tab Completion**
+   ```bash
+   # If your shell supports it
+   tif1 ev<TAB>        # Completes to: tif1 events
+   tif1 cache-<TAB>    # Shows: cache-info, cache-clear
+   ```
+
+### Performance Best Practices
+
+1. **Let Cache Warm Up**
+   ```bash
+   # First run is slow (network fetch)
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
+   
+   # Second run is fast (cached)
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
+   ```
+
+2. **Monitor Cache Size**
+   ```bash
+   # Check periodically
+   tif1 cache-info
+   
+   # Clear if >500 MB
+   tif1 cache-clear -y
+   ```
+
+3. **Use Specific Queries**
+   ```bash
+   # Faster - only processes one driver
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+   
+   # Slower - processes all drivers
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+4. **Avoid Unnecessary Debug Mode**
+   ```bash
+   # Use debug only when troubleshooting
+   tif1 debug 2025 "Monaco Grand Prix" "Race"  # Slower
+   
+   # Normal commands are faster
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"  # Faster
+   ```
+
+### Scripting Best Practices
+
+1. **Handle Errors Gracefully**
+   ```bash
+   if ! tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" > results.txt 2>&1; then
+       echo "Error: Failed to fetch data" >&2
+       exit 1
+   fi
+   ```
+
+2. **Use Variables for Reusability**
+   ```bash
+   YEAR=2025
+   EVENT="Monaco Grand Prix"
+   SESSION="Qualifying"
+   
+   tif1 fastest $YEAR "$EVENT" "$SESSION"
+   ```
+
+3. **Suppress Output When Needed**
+   ```bash
+   # Suppress all output
+   tif1 cache-clear -y > /dev/null 2>&1
+   
+   # Suppress only errors
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" 2>/dev/null
+   ```
+
+4. **Check Exit Codes**
+   ```bash
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   if [ $? -eq 0 ]; then
+       echo "Success"
+   else
+       echo "Failed"
+   fi
+   ```
+
+5. **Use Functions for Repeated Tasks**
+   ```bash
+   analyze_session() {
+       local year=$1
+       local event=$2
+       local session=$3
+       
+       echo "Analyzing: $event - $session"
+       tif1 fastest $year "$event" "$session"
+   }
+   
+   analyze_session 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+### Data Quality Best Practices
+
+1. **Verify Driver Count**
+   ```bash
+   # Should typically show 20 drivers
+   tif1 drivers 2025 "Monaco Grand Prix" "Race"
+   ```
+
+2. **Check for Missing Data**
+   ```bash
+   # All drivers should have times
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   # If some missing, data may be incomplete
+   ```
+
+3. **Compare Across Sessions**
+   ```bash
+   # Lap times should improve from practice to qualifying
+   tif1 fastest 2025 "Monaco Grand Prix" "Practice 1" -d VER
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d VER
+   ```
+
+4. **Use Historical Data for Validation**
+   ```bash
+   # Compare with previous year
+   tif1 fastest 2024 "Monaco Grand Prix" "Qualifying"
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   # Lap times should be similar (within 1-2 seconds)
+   ```
+
+### Security Best Practices
+
+1. **Validate User Input**
+   ```bash
+   # In scripts, validate before using
+   if [[ ! "$YEAR" =~ ^[0-9]{4}$ ]]; then
+       echo "Invalid year"
+       exit 1
+   fi
+   ```
+
+2. **Use Secure Cache Locations**
+   ```bash
+   # Avoid world-readable cache
+   chmod 700 ~/.cache/tif1
+   ```
+
+3. **Be Cautious with Piping**
+   ```bash
+   # Verify commands before piping to shell
+   tif1 events 2025 | grep "Monaco"  # Safe
+   # Never: curl untrusted-url | bash  # Dangerous
+   ```
+
+### Maintenance Best Practices
+
+1. **Keep tif1 Updated**
+   ```bash
+   # Check for updates regularly
+   pip install --upgrade tif1
+   tif1 version
+   ```
+
+2. **Monitor Cache Growth**
+   ```bash
+   # Add to cron for weekly checks
+   0 0 * * 0 tif1 cache-info >> ~/tif1_cache_log.txt
+   ```
+
+3. **Clean Up Old Data**
+   ```bash
+   # Clear cache periodically
+   tif1 cache-clear -y
+   ```
+
+4. **Document Your Workflows**
+   ```bash
+   # Add comments to scripts
+   # This script analyzes Monaco qualifying data
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
+   ```
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### General Questions
+
+**Q: Is the CLI free to use?**
+A: Yes, tif1 CLI is completely free and open-source.
+
+**Q: Do I need an API key?**
+A: No, tif1 CLI doesn't require any API keys or authentication.
+
+**Q: What data is available?**
+A: Historical F1 data from 2018 onwards, including lap times, telemetry, weather, and race control messages.
+
+**Q: How often is data updated?**
+A: Data is typically available within hours after each session concludes.
+
+**Q: Can I use this for commercial purposes?**
+A: Check the license terms, but generally yes for analysis and research.
+
+### Technical Questions
+
+**Q: Why is the first command slow?**
+A: The first request fetches data from the network and caches it. Subsequent requests are much faster.
+
+**Q: How much disk space does the cache use?**
+A: Typically 50-500 MB depending on usage. Check with `tif1 cache-info`.
+
+**Q: Can I use this offline?**
+A: Yes, if data is already cached. Use `TIF1_OFFLINE_MODE=true` to prevent network requests.
+
+**Q: Does the CLI support Python 2?**
+A: No, Python 3.10 or higher is required.
+
+**Q: Can I run multiple CLI instances simultaneously?**
+A: Yes, the cache is designed to handle concurrent access safely.
+
+### Data Questions
+
+**Q: Why is driver X missing from the results?**
+A: The driver may not have participated in that session (DNS, DNF, or reserve driver).
+
+**Q: Why are lap times different from official timing?**
+A: Data source and processing may differ slightly from official FIA timing.
+
+**Q: Can I get telemetry data via CLI?**
+A: Currently, the CLI focuses on lap times and driver info. Use the Python API for telemetry.
+
+**Q: How accurate is the data?**
+A: Data is sourced from official timing systems and is generally very accurate.
+
+### Troubleshooting Questions
+
+**Q: Command not found error?**
+A: Ensure tif1 is installed and Python Scripts directory is in your PATH.
+
+**Q: Permission denied error?**
+A: Check cache directory permissions or use a custom cache location.
+
+**Q: Network timeout error?**
+A: Increase timeout with `TIF1_TIMEOUT=60` or check your internet connection.
+
+**Q: Cache corruption error?**
+A: Clear cache with `tif1 cache-clear -y` and try again.
+
+---
+
+## Changelog
+
+### Version 0.2.0 (Current)
+
+**New Features:**
+- Added `debug` command for verbose logging
+- Improved error messages with actionable suggestions
+- Enhanced table formatting with Rich library
+- Added progress indicators for long operations
+
+**Improvements:**
+- Faster cache lookups with optimized SQLite queries
+- Better Unicode support for special characters in event names
+- Improved Windows compatibility
+
+**Bug Fixes:**
+- Fixed cache corruption on interrupted downloads
+- Fixed driver code case sensitivity issues
+- Fixed table rendering on narrow terminals
+
+### Version 0.1.0 (Initial Release)
+
+**Features:**
+- Basic CLI commands: events, sessions, drivers, fastest
+- SQLite-based caching system
+- Rich terminal output with tables
+- Cross-platform support (Linux, macOS, Windows)
+
+---
+
+## Contributing
+
+We welcome contributions to improve the CLI! Here's how you can help:
+
+### Reporting Issues
+
+1. Check existing issues on GitHub
+2. Provide detailed error messages and steps to reproduce
+3. Include your OS, Python version, and tif1 version
+4. Use `tif1 debug` output when relevant
+
+### Suggesting Features
+
+1. Open a GitHub issue with the "enhancement" label
+2. Describe the use case and expected behavior
+3. Provide examples of how the feature would be used
+
+### Contributing Code
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Submit a pull request
+
+### Documentation
+
+Help improve this documentation:
+- Fix typos and clarify confusing sections
+- Add more examples and use cases
+- Translate to other languages
+
+---
+
+## License
+
+tif1 CLI is released under the MIT License. See LICENSE file for details.
+
+---
+
+## Support
+
+- **Documentation**: https://docs.tif1.dev
+- **GitHub Issues**: https://github.com/TracingInsights/tif1/issues
+- **Discord**: [Community Server]
+- **Email**: support@tif1.dev
+
+---
+
+## Acknowledgments
+
+- **Typer**: CLI framework
+- **Rich**: Terminal formatting
+- **pandas/polars**: Data processing
+- **niquests**: HTTP client
+- **TracingInsights**: Data source
+
+---
+
+*Last updated: April 2026*
+*CLI Version: 0.2.0*
+*Documentation Version: 2.0*

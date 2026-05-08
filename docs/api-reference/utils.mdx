@@ -1,17 +1,42 @@
 ---
 title: "Utilities API"
 icon: "screwdriver-wrench"
-description: "Helper functions for data manipulation and conversion"
+description: "Comprehensive utility functions for data manipulation, time conversion, and analysis"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
   - "documentation"
+  - "utilities"
+  - "time conversion"
+  - "data analysis"
+  - "helper functions"
 ---
 
-The `utils` module provides utility functions for working with F1 data, including time conversions, delta calculations, and data access helpers.
+<Info>
+  The `utils` module provides a comprehensive suite of utility functions designed to simplify working with Formula 1 data. These functions handle common tasks such as time format conversions, lap-by-lap performance comparisons, and safe nested data access.
+</Info>
 
-## Time conversion functions
+## Overview
+
+The utilities module serves as the foundational toolkit for data manipulation in tif1. It provides four primary categories of functionality:
+
+1. **Time Conversion Functions**: Convert between various time representations (strings, floats, timedeltas, timestamps)
+2. **Performance Analysis Functions**: Calculate lap-by-lap deltas and performance metrics
+3. **Data Access Helpers**: Safely navigate nested data structures
+4. **FastF1 Compatibility**: Maintain API compatibility with the FastF1 library
+
+These utilities are used extensively throughout tif1's core functionality and are designed to handle the diverse data formats encountered in Formula 1 telemetry, timing, and session data.
+
+<Note>
+  All utility functions are optimized for performance and handle edge cases gracefully, returning sensible defaults rather than raising exceptions when possible.
+</Note>
+
+---
+
+## Time Conversion Functions
+
+Time conversion is a critical aspect of working with Formula 1 data, as timing information arrives in multiple formats: ISO strings from the API, numeric seconds from telemetry, and formatted strings from timing screens. The utilities module provides robust converters that handle all these formats seamlessly.
 
 ### `to_timedelta`
 
@@ -19,40 +44,159 @@ The `utils` module provides utility functions for working with F1 data, includin
 def to_timedelta(x: Any) -> pd.Timedelta
 ```
 
-Convert various time representations to pandas Timedelta.
+Converts various time representations to a standardized pandas Timedelta object. This function is the workhorse for lap time, sector time, and session time conversions throughout tif1.
 
-**Parameters:**
-- `x`: Time value in various formats:
-  - `timedelta`: Returned as-is
-  - `str`: Parsed as time string (e.g., "1:23.456" or "00:01:23.456")
-  - `int` or `float`: Interpreted as seconds
-  - Other pandas-compatible formats
+#### Parameters
 
-**Returns:**
-- `pd.Timedelta` object
+- **`x`** (`Any`): Time value in any of the following formats:
+  - **`datetime.timedelta`**: Returned unchanged (passthrough)
+  - **`str`**: Parsed as a time string with intelligent format detection
+    - Short format: `"1:23.456"` (minutes:seconds.milliseconds) → automatically prepended with `"00:"` to become `"00:01:23.456"`
+    - Full format: `"00:01:23.456"` (hours:minutes:seconds.milliseconds)
+    - ISO 8601 duration format: `"PT1M23.456S"`
+  - **`int` or `float`**: Interpreted as seconds (e.g., `83.456` → 1 minute 23.456 seconds)
+  - **`numpy.integer` or `numpy.floating`**: Numeric types from NumPy arrays
+  - Any other pandas-compatible time format
 
-**Example:**
+#### Returns
+
+- **`pd.Timedelta`**: A pandas Timedelta object representing the time duration
+
+#### Behavior Details
+
+The function implements intelligent format detection:
+
+1. **Passthrough for timedelta**: If the input is already a `datetime.timedelta`, it's returned immediately without conversion overhead
+2. **String parsing with auto-formatting**: String inputs are analyzed for colon count:
+   - If exactly one colon is found (e.g., `"1:23.456"`), the function prepends `"00:"` to create a valid hours:minutes:seconds format
+   - This allows users to input lap times naturally without typing leading zeros
+3. **Numeric conversion**: Integer and float inputs are treated as seconds and converted using pandas' optimized `to_timedelta(x, unit="s")`
+4. **Fallback to pandas**: Any other format is passed directly to `pd.to_timedelta()` for pandas' native parsing
+
+#### Performance Characteristics
+
+- **O(1) complexity** for all input types
+- **Zero-copy** for timedelta passthrough
+- **Optimized** for vectorized operations when used with pandas Series
+- **No exceptions**: Invalid inputs are handled by pandas' error handling (returns `NaT` for unparseable values)
+
+#### Examples
+
+**Basic conversions:**
 ```python
 from tif1.utils import to_timedelta
 
-# From string
-td1 = to_timedelta("1:23.456")  # 1 minute, 23.456 seconds
-td2 = to_timedelta("00:01:23.456")  # Same as above
+# From lap time string (short format)
+lap_time = to_timedelta("1:23.456")
+print(lap_time)  # 0 days 00:01:23.456000
+print(lap_time.total_seconds())  # 83.456
 
-# From seconds
-td3 = to_timedelta(83.456)  # 83.456 seconds
+# From lap time string (full format)
+lap_time_full = to_timedelta("00:01:23.456")
+print(lap_time_full.total_seconds())  # 83.456
 
-# From timedelta
+# From numeric seconds
+lap_time_numeric = to_timedelta(83.456)
+print(lap_time_numeric)  # 0 days 00:01:23.456000
+
+# From integer seconds
+lap_time_int = to_timedelta(90)
+print(lap_time_int)  # 0 days 00:01:30
+
+# From existing timedelta (passthrough)
 import datetime
-td4 = to_timedelta(datetime.timedelta(seconds=83.456))
-
-print(td1.total_seconds())  # 83.456
+td = datetime.timedelta(minutes=1, seconds=23, milliseconds=456)
+lap_time_td = to_timedelta(td)
+print(lap_time_td)  # 0 days 00:01:23.456000
 ```
 
-**Use cases:**
-- Converting lap times from strings to timedeltas
-- Normalizing time formats across different data sources
-- Calculating time differences
+**Working with lap data:**
+```python
+import tif1
+from tif1.utils import to_timedelta
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Convert string lap times to timedeltas for calculations
+# (Note: tif1 does this automatically, but you can use it for custom data)
+custom_lap_times = ["1:10.123", "1:09.876", "1:11.234"]
+timedeltas = [to_timedelta(t) for t in custom_lap_times]
+
+# Find fastest lap
+fastest = min(timedeltas)
+print(f"Fastest lap: {fastest}")  # 0 days 00:01:09.876000
+
+# Calculate gaps
+gaps = [td - fastest for td in timedeltas]
+print(f"Gaps: {[g.total_seconds() for g in gaps]}")  # [0.247, 0.0, 1.358]
+```
+
+**Vectorized operations with pandas:**
+```python
+import pandas as pd
+from tif1.utils import to_timedelta
+
+# Create a DataFrame with lap times as strings
+df = pd.DataFrame({
+    'Driver': ['VER', 'HAM', 'LEC'],
+    'LapTime': ['1:10.123', '1:09.876', '1:11.234']
+})
+
+# Convert entire column at once (vectorized)
+df['LapTimeDelta'] = df['LapTime'].apply(to_timedelta)
+
+# Now you can perform timedelta operations
+df['GapToFastest'] = df['LapTimeDelta'] - df['LapTimeDelta'].min()
+print(df)
+#   Driver   LapTime        LapTimeDelta GapToFastest
+# 0    VER  1:10.123 0 days 00:01:10.123  0 days 00:00:00.247000
+# 1    HAM  1:09.876 0 days 00:01:09.876  0 days 00:00:00
+# 2    LEC  1:11.234 0 days 00:01:11.234  0 days 00:00:01.358000
+```
+
+**Handling edge cases:**
+```python
+from tif1.utils import to_timedelta
+import pandas as pd
+
+# Very small times (milliseconds)
+milliseconds = to_timedelta(0.123)
+print(milliseconds)  # 0 days 00:00:00.123000
+
+# Large times (hours)
+long_session = to_timedelta("02:30:45.678")
+print(long_session.total_seconds())  # 9045.678
+
+# Zero time
+zero = to_timedelta(0)
+print(zero)  # 0 days 00:00:00
+
+# Negative times (for deltas)
+negative = to_timedelta(-5.5)
+print(negative)  # -1 days +23:59:54.500000
+```
+
+#### Common Use Cases
+
+1. **Lap time analysis**: Converting lap times from API responses or CSV files
+2. **Sector time calculations**: Normalizing sector times for comparison
+3. **Session time tracking**: Converting elapsed session time to timedelta format
+4. **Time gap calculations**: Preparing time values for arithmetic operations
+5. **Data import**: Standardizing time formats from external data sources
+6. **FastF1 compatibility**: Maintaining API compatibility when migrating from FastF1
+
+#### Integration with tif1
+
+The `to_timedelta` function is used internally by tif1 in several key areas:
+
+- **Lap data loading**: Converting `LapTime`, `Sector1Time`, `Sector2Time`, `Sector3Time` from numeric seconds
+- **Telemetry processing**: Converting `Time` column from float seconds to timedelta
+- **Weather data**: Converting `WeatherTime` to timedelta format
+- **Session timing**: Converting pit stop times, lap start times, and session times
+
+<Warning>
+  When working with very large datasets, consider using pandas' native `pd.to_timedelta()` directly on entire Series for better performance. The `to_timedelta` utility is optimized for single values and small batches.
+</Warning>
 
 ---
 
@@ -62,43 +206,174 @@ print(td1.total_seconds())  # 83.456
 def to_datetime(x: Any) -> pd.Timestamp
 ```
 
-Convert various datetime representations to pandas Timestamp.
+Converts various datetime representations to a standardized pandas Timestamp object. This function handles session start times, lap timestamps, and race control message times.
 
-**Parameters:**
-- `x`: Datetime value in various formats:
-  - `str`: Parsed as ISO 8601 or other common formats
-  - `datetime`: Converted to Timestamp
-  - Unix timestamp (int/float)
-  - Other pandas-compatible formats
+#### Parameters
 
-**Returns:**
-- `pd.Timestamp` object
+- **`x`** (`Any`): Datetime value in any of the following formats:
+  - **`str`**: ISO 8601 format (`"2025-05-25T14:00:00Z"`) or other common datetime strings
+  - **`datetime.datetime`**: Python datetime objects
+  - **`int` or `float`**: Unix timestamp (seconds since epoch)
+  - **`pd.Timestamp`**: Pandas Timestamp (passthrough)
+  - Any other pandas-compatible datetime format
 
-**Example:**
+#### Returns
+
+- **`pd.Timestamp`**: A pandas Timestamp object representing the datetime
+
+#### Behavior Details
+
+This function is a thin wrapper around pandas' `pd.to_datetime()` function, providing:
+
+1. **Automatic format detection**: Pandas intelligently detects ISO 8601, RFC 3339, and common datetime string formats
+2. **Unix timestamp support**: Numeric inputs are interpreted as Unix timestamps
+3. **Timezone awareness**: Preserves timezone information when present in the input
+4. **Consistent output**: Always returns a pandas Timestamp for uniform handling
+
+#### Performance Characteristics
+
+- **O(1) complexity** for all input types
+- **Delegates to pandas**: Leverages pandas' highly optimized C-based datetime parsing
+- **Timezone-aware**: Handles both naive and timezone-aware datetimes
+- **Error handling**: Invalid inputs return `NaT` (Not a Time) by default
+
+#### Examples
+
+**Basic conversions:**
 ```python
 from tif1.utils import to_datetime
 
-# From ISO string
+# From ISO 8601 string
 dt1 = to_datetime("2025-05-25T14:00:00Z")
+print(dt1)  # 2025-05-25 14:00:00+00:00
 
-# From datetime
+# From common datetime string
+dt2 = to_datetime("2025-05-25 14:00:00")
+print(dt2)  # 2025-05-25 14:00:00
+
+# From datetime object
 import datetime
-dt2 = to_datetime(datetime.datetime(2025, 5, 25, 14, 0, 0))
+dt3 = to_datetime(datetime.datetime(2025, 5, 25, 14, 0, 0))
+print(dt3)  # 2025-05-25 14:00:00
 
 # From Unix timestamp
-dt3 = to_datetime(1748181600)
-
-print(dt1)  # 2025-05-25 14:00:00+00:00
+dt4 = to_datetime(1748181600)
+print(dt4)  # 2025-05-25 14:00:00
 ```
 
-**Use cases:**
-- Converting session start times
-- Parsing timestamp strings from JSON
-- Normalizing datetime formats
+**Working with session data:**
+```python
+import tif1
+from tif1.utils import to_datetime
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+
+# Convert session start time (if stored as string)
+session_start = to_datetime("2024-05-26T15:00:00+02:00")
+print(f"Race started at: {session_start}")
+
+# Calculate time since session start
+import datetime
+now = to_datetime(datetime.datetime.now())
+elapsed = now - session_start
+print(f"Time since race: {elapsed}")
+```
+
+**Working with lap timestamps:**
+```python
+import tif1
+from tif1.utils import to_datetime
+import pandas as pd
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+laps = session.laps
+
+# If you have custom timestamp data
+custom_timestamps = [
+    "2024-05-26T15:00:00Z",
+    "2024-05-26T15:01:30Z",
+    "2024-05-26T15:03:00Z"
+]
+
+# Convert to pandas Timestamps
+timestamps = [to_datetime(ts) for ts in custom_timestamps]
+
+# Create a DataFrame with proper datetime index
+df = pd.DataFrame({
+    'Event': ['Start', 'Lap 1', 'Lap 2'],
+    'Timestamp': timestamps
+})
+df = df.set_index('Timestamp')
+print(df)
+```
+
+**Timezone handling:**
+```python
+from tif1.utils import to_datetime
+
+# UTC timezone
+utc_time = to_datetime("2025-05-25T14:00:00Z")
+print(utc_time.tz)  # UTC
+
+# European timezone
+eu_time = to_datetime("2025-05-25T16:00:00+02:00")
+print(eu_time.tz)  # UTC+02:00
+
+# Convert between timezones
+utc_converted = eu_time.tz_convert('UTC')
+print(utc_converted)  # 2025-05-25 14:00:00+00:00
+```
+
+**Vectorized operations:**
+```python
+import pandas as pd
+from tif1.utils import to_datetime
+
+# Create DataFrame with timestamp strings
+df = pd.DataFrame({
+    'Event': ['Qualifying', 'Race', 'Post-Race'],
+    'Time': [
+        "2024-05-25T14:00:00Z",
+        "2024-05-26T15:00:00Z",
+        "2024-05-26T17:30:00Z"
+    ]
+})
+
+# Convert entire column (pandas does this efficiently)
+df['Timestamp'] = pd.to_datetime(df['Time'])
+
+# Calculate time differences
+df['HoursSinceQualifying'] = (df['Timestamp'] - df['Timestamp'].iloc[0]).dt.total_seconds() / 3600
+print(df)
+```
+
+#### Common Use Cases
+
+1. **Session timing**: Converting session start/end times from API responses
+2. **Lap timestamps**: Parsing `LapStartDate` fields in lap data
+3. **Race control messages**: Converting message timestamps to datetime objects
+4. **Data synchronization**: Aligning data from multiple sources by timestamp
+5. **Time-based filtering**: Creating datetime-based queries and filters
+6. **Timezone conversions**: Standardizing times across different timezone formats
+
+#### Integration with tif1
+
+The `to_datetime` function is used internally by tif1 for:
+
+- **Session metadata**: Parsing session start times and dates
+- **Lap data**: Converting `LapStartDate` column from ISO strings
+- **Race control data**: Converting message timestamps in `Time` column
+- **Weather data**: Aligning weather observations with session timeline
+
+<Note>
+  Unlike `to_timedelta` which represents durations, `to_datetime` represents specific points in time. Use `to_timedelta` for lap times and intervals, and `to_datetime` for absolute timestamps.
+</Note>
 
 ---
 
-## Data analysis functions
+## Performance Analysis Functions
+
+Performance analysis is at the heart of Formula 1 data science. The utilities module provides functions to compare lap performance, calculate time deltas, and identify where drivers gain or lose time on track.
 
 ### `delta_time`
 
@@ -109,164 +384,65 @@ def delta_time(
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
 ```
 
-Calculate time delta between two laps at each telemetry sample point.
+Calculates the time delta between two laps at each telemetry sample point along the track. This function enables detailed lap-by-lap comparison, showing exactly where one driver is faster or slower than another.
 
-**Parameters:**
-- `reference_lap`: The reference lap (baseline)
-- `compare_lap`: The lap to compare against the reference
+#### Parameters
 
-**Returns:**
-- Tuple of `(delta_series, reference_telemetry, compare_telemetry)`:
-  - `delta_series`: Time delta at each distance point (seconds)
-  - `reference_telemetry`: Telemetry DataFrame for reference lap
-  - `compare_telemetry`: Telemetry DataFrame for comparison lap
+- **`reference_lap`** (`Lap`): The baseline lap used as the reference point for comparison
+  - Typically the faster lap or the lap you want to compare against
+  - Must have telemetry data available (call `.get_telemetry()` to verify)
+  
+- **`compare_lap`** (`Lap`): The lap to compare against the reference
+  - The lap being analyzed for performance differences
+  - Must have telemetry data available
 
-**Example:**
+#### Returns
+
+A tuple containing three elements:
+
+1. **`delta_series`** (`pd.Series`): Time delta at each distance point
+   - **Index**: Distance along the track (meters)
+   - **Values**: Time difference in seconds (positive = compare lap is slower, negative = compare lap is faster)
+   - **Length**: Matches the number of telemetry samples after interpolation
+
+2. **`reference_telemetry`** (`pd.DataFrame`): Complete telemetry data for the reference lap
+   - Contains all telemetry channels: `Time`, `Speed`, `RPM`, `nGear`, `Throttle`, `Brake`, `DRS`, `Distance`, etc.
+   - Useful for plotting speed traces alongside delta
+
+3. **`compare_telemetry`** (`pd.DataFrame`): Complete telemetry data for the comparison lap
+   - Same structure as reference telemetry
+   - Interpolated to match reference lap's distance points
+
+#### Algorithm Details
+
+The delta time calculation follows these steps:
+
+1. **Telemetry Retrieval**: Fetches full telemetry data for both laps using `.get_telemetry()`
+2. **Distance Alignment**: Interpolates both telemetry datasets to common distance points along the track
+3. **Time Comparison**: Calculates the time difference at each distance point
+4. **Delta Calculation**: Subtracts reference lap time from compare lap time at each point
+
+The result shows:
+- **Positive delta**: Compare lap is slower (losing time)
+- **Negative delta**: Compare lap is faster (gaining time)
+- **Zero delta**: Both laps are equal at that point
+
+#### Performance Characteristics
+
+- **Complexity**: O(n log n) where n is the number of telemetry samples (due to interpolation)
+- **Memory**: Requires loading full telemetry for both laps (~10-20 KB per lap)
+- **Interpolation**: Uses pandas' interpolation for smooth delta curves
+- **Accuracy**: Limited by telemetry sample rate (~10-20 Hz typical)
+
+#### Examples
+
+**Basic delta time comparison:**
 ```python
 import tif1
 from tif1.utils import delta_time
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-
-# Get two laps to compare
-ver = session.get_driver("VER")
-ham = session.get_driver("HAM")
-
-ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
-ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
-
-# Calculate delta
-delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
-
-# Plot delta
-import matplotlib.pyplot as plt
-plt.plot(ver_tel['Distance'], delta)
-plt.axhline(y=0, color='k', linestyle='--')
-plt.xlabel('Distance (m)')
-plt.ylabel('Delta (s)')
-plt.title('VER vs HAM - Time Delta')
-plt.show()
-```
-
-**Use cases:**
-- Comparing driver performance lap-by-lap
-- Identifying where time is gained/lost on track
-- Visualizing performance differences
-
-<Note>
-  The delta is calculated by interpolating telemetry to common distance points. Positive values mean the compare lap is slower than the reference.
-</Note>
-
----
-
-## Data access functions
-
-### `recursive_dict_get`
-
-```python
-def recursive_dict_get(
-    d: dict,
-    *keys: str,
-    default_none: bool = False
-) -> Any
-```
-
-Safely access nested dictionary values with multiple keys.
-
-**Parameters:**
-- `d`: The dictionary to access
-- `*keys`: Variable number of keys to traverse
-- `default_none`: If `True`, returns `None` on missing keys. If `False`, returns `{}`
-
-**Returns:**
-- The value at the nested key path, or default value if not found
-
-**Example:**
-```python
-from tif1.utils import recursive_dict_get
-
-data = {
-    "session": {
-        "info": {
-            "name": "Monaco Grand Prix",
-            "year": 2025
-        }
-    }
-}
-
-# Access nested value
-name = recursive_dict_get(data, "session", "info", "name")
-print(name)  # "Monaco Grand Prix"
-
-# Missing key with default_none=False
-missing = recursive_dict_get(data, "session", "missing", "key")
-print(missing)  # {}
-
-# Missing key with default_none=True
-missing = recursive_dict_get(data, "session", "missing", "key", default_none=True)
-print(missing)  # None
-```
-
-**Use cases:**
-- Safely accessing nested JSON data
-- Avoiding KeyError exceptions
-- Providing default values for missing data
-
----
-
-## Complete Examples
-
-### Lap Time Analysis
-
-```python
-import tif1
-from tif1.utils import to_timedelta
-
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-laps = session.laps
-
-# Convert lap times to timedeltas
-laps['LapTimeDelta'] = laps['LapTime'].apply(to_timedelta)
-
-# Find fastest lap
-fastest_time = laps['LapTimeDelta'].min()
-print(f"Fastest lap: {fastest_time}")
-
-# Calculate gap to fastest
-laps['GapToFastest'] = laps['LapTimeDelta'] - fastest_time
-print(laps[['Driver', 'LapNumber', 'GapToFastest']].head())
-```
-
-### Session timing analysis
-
-```python
-import tif1
-from tif1.utils import to_datetime
-
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-
-# Convert session start time
-start_time = to_datetime(session.session_start_time)
-print(f"Session started at: {start_time}")
-
-# Calculate elapsed time for each lap
-laps = session.laps
-laps['ElapsedTime'] = (laps['Time'] - start_time).dt.total_seconds()
-
-# Find when fastest laps were set
-fastest_laps = session.get_fastest_laps(by_driver=True)
-fastest_laps['ElapsedTime'] = (fastest_laps['Time'] - start_time).dt.total_seconds()
-print(fastest_laps[['Driver', 'LapTime', 'ElapsedTime']])
-```
-
-### Delta time visualization
-
-```python
-import tif1
-from tif1.utils import delta_time
-import matplotlib.pyplot as plt
-
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+# Load session and get driver data
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
 
 # Get fastest laps for two drivers
 ver = session.get_driver("VER")
@@ -278,43 +454,1521 @@ ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
 # Calculate delta
 delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
 
+# Analyze the delta
+print(f"Maximum time gained by VER: {-delta.min():.3f}s")
+print(f"Maximum time lost by VER: {delta.max():.3f}s")
+print(f"Total lap time difference: {delta.iloc[-1]:.3f}s")
+```
+
+**Visualizing delta time:**
+```python
+import tif1
+from tif1.utils import delta_time
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Get laps to compare
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+
+ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
+ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
+
+# Calculate delta
+delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
+
 # Create visualization
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+fig, ax = plt.subplots(figsize=(15, 6))
 
-# Speed comparison
-ax1.plot(ver_tel['Distance'], ver_tel['Speed'], label='VER', color='blue')
-ax1.plot(ham_tel['Distance'], ham_tel['Speed'], label='HAM', color='cyan')
-ax1.set_ylabel('Speed (km/h)')
-ax1.legend()
-ax1.grid(True)
+# Plot delta with color coding
+ax.plot(ver_tel['Distance'], delta, color='black', linewidth=2)
+ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
 
-# Delta time
-ax2.plot(ver_tel['Distance'], delta, color='red')
-ax2.axhline(y=0, color='k', linestyle='--', alpha=0.3)
-ax2.fill_between(ver_tel['Distance'], 0, delta, where=(delta > 0), color='red', alpha=0.3, label='HAM slower')
-ax2.fill_between(ver_tel['Distance'], 0, delta, where=(delta < 0), color='green', alpha=0.3, label='HAM faster')
-ax2.set_xlabel('Distance (m)')
-ax2.set_ylabel('Delta (s)')
-ax2.legend()
-ax2.grid(True)
+# Fill areas where each driver is faster
+ax.fill_between(
+    ver_tel['Distance'], 
+    0, 
+    delta, 
+    where=(delta > 0), 
+    color='cyan', 
+    alpha=0.3, 
+    label='HAM slower'
+)
+ax.fill_between(
+    ver_tel['Distance'], 
+    0, 
+    delta, 
+    where=(delta < 0), 
+    color='red', 
+    alpha=0.3, 
+    label='HAM faster'
+)
+
+ax.set_xlabel('Distance (m)', fontsize=12)
+ax.set_ylabel('Delta Time (s)', fontsize=12)
+ax.set_title('VER vs HAM - Lap Time Delta', fontsize=14, fontweight='bold')
+ax.legend()
+ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.show()
 ```
 
+**Multi-panel analysis with speed traces:**
+```python
+import tif1
+from tif1.utils import delta_time
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Get laps
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
+ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
+
+# Calculate delta
+delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
+
+# Create multi-panel figure
+fig, axes = plt.subplots(4, 1, figsize=(15, 12), sharex=True)
+
+# Panel 1: Speed comparison
+axes[0].plot(ver_tel['Distance'], ver_tel['Speed'], label='VER', color='blue', linewidth=2)
+axes[0].plot(ham_tel['Distance'], ham_tel['Speed'], label='HAM', color='cyan', linewidth=2)
+axes[0].set_ylabel('Speed (km/h)')
+axes[0].legend(loc='upper right')
+axes[0].grid(True, alpha=0.3)
+axes[0].set_title('Speed Comparison', fontweight='bold')
+
+# Panel 2: Throttle comparison
+axes[1].plot(ver_tel['Distance'], ver_tel['Throttle'], label='VER', color='blue', linewidth=1.5)
+axes[1].plot(ham_tel['Distance'], ham_tel['Throttle'], label='HAM', color='cyan', linewidth=1.5)
+axes[1].set_ylabel('Throttle (%)')
+axes[1].legend(loc='upper right')
+axes[1].grid(True, alpha=0.3)
+axes[1].set_title('Throttle Application', fontweight='bold')
+
+# Panel 3: Brake comparison
+axes[2].plot(ver_tel['Distance'], ver_tel['Brake'], label='VER', color='blue', linewidth=1.5)
+axes[2].plot(ham_tel['Distance'], ham_tel['Brake'], label='HAM', color='cyan', linewidth=1.5)
+axes[2].set_ylabel('Brake')
+axes[2].legend(loc='upper right')
+axes[2].grid(True, alpha=0.3)
+axes[2].set_title('Braking Points', fontweight='bold')
+
+# Panel 4: Delta time
+axes[3].plot(ver_tel['Distance'], delta, color='black', linewidth=2)
+axes[3].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+axes[3].fill_between(ver_tel['Distance'], 0, delta, where=(delta > 0), color='cyan', alpha=0.3)
+axes[3].fill_between(ver_tel['Distance'], 0, delta, where=(delta < 0), color='red', alpha=0.3)
+axes[3].set_xlabel('Distance (m)')
+axes[3].set_ylabel('Delta (s)')
+axes[3].grid(True, alpha=0.3)
+axes[3].set_title('Time Delta (Positive = HAM Slower)', fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+```
+
+**Identifying key performance differences:**
+```python
+import tif1
+from tif1.utils import delta_time
+import numpy as np
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Get laps
+ver = session.get_driver("VER")
+ham = session.get_driver("HAM")
+ver_fastest = ver.get_lap(ver.laps['LapTime'].idxmin())
+ham_fastest = ham.get_lap(ham.laps['LapTime'].idxmin())
+
+# Calculate delta
+delta, ver_tel, ham_tel = delta_time(ver_fastest, ham_fastest)
+
+# Find where most time is gained/lost
+delta_diff = delta.diff().abs()
+top_5_changes = delta_diff.nlargest(5)
+
+print("Top 5 locations with biggest time differences:")
+for idx in top_5_changes.index:
+    distance = ver_tel.loc[idx, 'Distance']
+    delta_value = delta.loc[idx]
+    speed_ver = ver_tel.loc[idx, 'Speed']
+    speed_ham = ham_tel.loc[idx, 'Speed']
+    
+    faster_driver = "VER" if delta_value < 0 else "HAM"
+    time_diff = abs(delta_value)
+    
+    print(f"\nDistance: {distance:.0f}m")
+    print(f"  {faster_driver} faster by {time_diff:.3f}s")
+    print(f"  VER speed: {speed_ver:.1f} km/h")
+    print(f"  HAM speed: {speed_ham:.1f} km/h")
+```
+
+**Comparing multiple laps:**
+```python
+import tif1
+from tif1.utils import delta_time
+import matplotlib.pyplot as plt
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Get one reference lap
+ver = session.get_driver("VER")
+reference_lap = ver.get_lap(ver.laps['LapTime'].idxmin())
+
+# Compare against multiple drivers
+drivers = ['HAM', 'LEC', 'SAI', 'NOR']
+colors = ['cyan', 'red', 'orange', 'papaya']
+
+fig, ax = plt.subplots(figsize=(15, 8))
+
+for driver_code, color in zip(drivers, colors):
+    driver = session.get_driver(driver_code)
+    compare_lap = driver.get_lap(driver.laps['LapTime'].idxmin())
+    
+    delta, ref_tel, comp_tel = delta_time(reference_lap, compare_lap)
+    
+    ax.plot(ref_tel['Distance'], delta, label=driver_code, color=color, linewidth=2)
+
+ax.axhline(y=0, color='black', linestyle='--', linewidth=2, label='VER (Reference)')
+ax.set_xlabel('Distance (m)', fontsize=12)
+ax.set_ylabel('Delta to VER (s)', fontsize=12)
+ax.set_title('Multi-Driver Comparison vs VER', fontsize=14, fontweight='bold')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+#### Common Use Cases
+
+1. **Qualifying analysis**: Compare fastest laps between teammates or rivals
+2. **Race pace comparison**: Analyze lap-by-lap performance during race stints
+3. **Setup evaluation**: Compare laps before and after setup changes
+4. **Driver coaching**: Identify specific corners where time is lost
+5. **Strategy analysis**: Understand tire degradation effects on lap time
+6. **Track evolution**: Compare laps from different sessions as track improves
+
+#### Interpretation Guidelines
+
+When analyzing delta time plots:
+
+- **Consistent positive delta**: Compare driver is consistently slower (setup or skill gap)
+- **Consistent negative delta**: Compare driver is consistently faster
+- **Oscillating delta**: Different driving styles or lines through corners
+- **Sharp spikes**: Mistakes, traffic, or yellow flags
+- **Gradual changes**: Tire degradation or fuel load differences
+- **Sector-specific patterns**: Car strengths/weaknesses in different corner types
+
+<Warning>
+  Delta time calculations require both laps to have complete telemetry data. Laps with missing telemetry (e.g., in-laps, out-laps, or laps with data gaps) may produce inaccurate results.
+</Warning>
+
+<Tip>
+  For the most accurate comparisons, use laps from the same session with similar track conditions, tire compounds, and fuel loads. Comparing laps across different sessions may show misleading deltas due to track evolution.
+</Tip>
+
 ---
 
-## Performance Considerations
+## Data Access Functions
 
-- **to_timedelta**: Fast for single values, use vectorized operations for DataFrames
-- **to_datetime**: Optimized for pandas-compatible formats
-- **delta_time**: Requires telemetry interpolation, can be slow for many laps
-- **recursive_dict_get**: O(n) where n is the number of keys
+Working with nested JSON data from Formula 1 APIs requires safe navigation through complex data structures. The utilities module provides helper functions to access nested dictionary values without raising exceptions.
+
+### `recursive_dict_get`
+
+```python
+def recursive_dict_get(
+    d: dict,
+    *keys: str,
+    default_none: bool = False
+) -> Any
+```
+
+Safely accesses nested dictionary values using a sequence of keys, returning a default value if any key in the path doesn't exist. This function eliminates the need for multiple `try-except` blocks or chained `.get()` calls.
+
+#### Parameters
+
+- **`d`** (`dict`): The dictionary to traverse
+  - Can be any nested dictionary structure
+  - Typically JSON data from API responses
+
+- **`*keys`** (`str`): Variable number of keys defining the path to traverse
+  - Each key represents one level deeper in the nested structure
+  - Keys are applied in order: `d[key1][key2][key3]...`
+  - Can be any number of keys (0 to N)
+
+- **`default_none`** (`bool`, optional): Controls the default return value
+  - `False` (default): Returns empty dict `{}` when key path not found
+  - `True`: Returns `None` when key path not found
+
+#### Returns
+
+- **`Any`**: The value at the specified key path, or the default value if not found
+  - If all keys exist: Returns the value at the final key
+  - If any key missing and `default_none=False`: Returns `{}`
+  - If any key missing and `default_none=True`: Returns `None`
+
+#### Behavior Details
+
+The function traverses the dictionary iteratively:
+
+1. **Start with root**: Begins with the input dictionary `d`
+2. **Apply each key**: For each key in `*keys`, attempts to access `d[key]`
+3. **Handle missing keys**: If `KeyError` or `TypeError` occurs, returns the default value
+4. **Return final value**: If all keys exist, returns the value at the final key
+
+The function handles two types of errors:
+- **`KeyError`**: Raised when a key doesn't exist in the dictionary
+- **`TypeError`**: Raised when trying to index a non-dict value (e.g., `None[key]`)
+
+#### Performance Characteristics
+
+- **Complexity**: O(n) where n is the number of keys
+- **Memory**: O(1) - no additional data structures created
+- **Safe**: Never raises exceptions, always returns a value
+- **Efficient**: Short-circuits on first missing key
+
+#### Examples
+
+**Basic nested access:**
+```python
+from tif1.utils import recursive_dict_get
+
+# Sample nested data structure
+data = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix",
+            "year": 2025,
+            "circuit": {
+                "location": "Monte Carlo",
+                "country": "Monaco"
+            }
+        },
+        "weather": {
+            "temperature": 24,
+            "conditions": "Sunny"
+        }
+    }
+}
+
+# Access deeply nested value
+name = recursive_dict_get(data, "session", "info", "name")
+print(name)  # "Monaco Grand Prix"
+
+# Access even deeper
+location = recursive_dict_get(data, "session", "info", "circuit", "location")
+print(location)  # "Monte Carlo"
+
+# Access top-level value
+session = recursive_dict_get(data, "session")
+print(type(session))  # <class 'dict'>
+```
+
+**Handling missing keys:**
+```python
+from tif1.utils import recursive_dict_get
+
+data = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix"
+        }
+    }
+}
+
+# Missing key with default_none=False (default)
+result1 = recursive_dict_get(data, "session", "missing", "key")
+print(result1)  # {}
+print(type(result1))  # <class 'dict'>
+
+# Missing key with default_none=True
+result2 = recursive_dict_get(data, "session", "missing", "key", default_none=True)
+print(result2)  # None
+print(type(result2))  # <class 'NoneType'>
+
+# Partially valid path
+result3 = recursive_dict_get(data, "session", "info", "missing")
+print(result3)  # {} (or None if default_none=True)
+```
+
+**Comparison with traditional approaches:**
+```python
+from tif1.utils import recursive_dict_get
+
+data = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix"
+        }
+    }
+}
+
+# Traditional approach (verbose and error-prone)
+try:
+    value = data["session"]["info"]["circuit"]["location"]
+except KeyError:
+    value = None
+
+# Using .get() (still verbose)
+value = data.get("session", {}).get("info", {}).get("circuit", {}).get("location")
+
+# Using recursive_dict_get (clean and concise)
+value = recursive_dict_get(data, "session", "info", "circuit", "location", default_none=True)
+```
+
+**Working with API responses:**
+```python
+from tif1.utils import recursive_dict_get
+import json
+
+# Simulated API response
+api_response = {
+    "data": {
+        "session": {
+            "drivers": [
+                {
+                    "code": "VER",
+                    "team": "Red Bull Racing",
+                    "timing": {
+                        "best_lap": "1:10.123"
+                    }
+                },
+                {
+                    "code": "HAM",
+                    "team": "Mercedes",
+                    "timing": {
+                        "best_lap": "1:10.456"
+                    }
+                }
+            ]
+        }
+    }
+}
+
+# Safely access nested session data
+drivers = recursive_dict_get(api_response, "data", "session", "drivers")
+if drivers:  # Check if we got data (not empty dict)
+    for driver in drivers:
+        code = recursive_dict_get(driver, "code", default_none=True)
+        best_lap = recursive_dict_get(driver, "timing", "best_lap", default_none=True)
+        print(f"{code}: {best_lap}")
+
+# Access potentially missing data
+telemetry = recursive_dict_get(api_response, "data", "session", "telemetry")
+print(f"Telemetry available: {bool(telemetry)}")  # False (empty dict)
+```
+
+**Conditional data processing:**
+```python
+from tif1.utils import recursive_dict_get
+
+def process_session_data(session_json):
+    """Process session data with safe nested access."""
+    
+    # Extract session info (may not exist)
+    session_name = recursive_dict_get(
+        session_json, "session", "info", "name", default_none=True
+    )
+    
+    # Extract weather data (may not exist)
+    temperature = recursive_dict_get(
+        session_json, "session", "weather", "temperature", default_none=True
+    )
+    
+    # Extract timing data (may not exist)
+    fastest_lap = recursive_dict_get(
+        session_json, "session", "timing", "fastest_lap", default_none=True
+    )
+    
+    # Build result dict with only available data
+    result = {}
+    if session_name:
+        result['name'] = session_name
+    if temperature:
+        result['temperature'] = temperature
+    if fastest_lap:
+        result['fastest_lap'] = fastest_lap
+    
+    return result
+
+# Test with complete data
+complete_data = {
+    "session": {
+        "info": {"name": "Monaco GP"},
+        "weather": {"temperature": 24},
+        "timing": {"fastest_lap": "1:10.123"}
+    }
+}
+print(process_session_data(complete_data))
+# {'name': 'Monaco GP', 'temperature': 24, 'fastest_lap': '1:10.123'}
+
+# Test with partial data
+partial_data = {
+    "session": {
+        "info": {"name": "Monaco GP"}
+    }
+}
+print(process_session_data(partial_data))
+# {'name': 'Monaco GP'}
+```
+
+**Choosing between default behaviors:**
+```python
+from tif1.utils import recursive_dict_get
+
+data = {"session": {"info": {"name": "Monaco GP"}}}
+
+# Use default_none=False when you want to chain operations
+result = recursive_dict_get(data, "session", "missing")
+# Returns {}, which is falsy but won't cause errors if you try to iterate
+for key in result:  # Safe - iterates over empty dict
+    print(key)
+
+# Use default_none=True when you want explicit None checks
+result = recursive_dict_get(data, "session", "missing", default_none=True)
+# Returns None, which is more explicit for missing data
+if result is None:
+    print("Data not found")  # This will execute
+
+# Use default_none=False for providing fallback values
+temperature = recursive_dict_get(data, "weather", "temperature") or 20
+print(temperature)  # 20 (fallback value)
+
+# Use default_none=True for distinguishing missing vs empty
+value = recursive_dict_get(data, "session", "missing", default_none=True)
+if value is None:
+    print("Key path doesn't exist")
+elif value == {}:
+    print("Key exists but value is empty dict")
+```
+
+#### Common Use Cases
+
+1. **API response parsing**: Safely extract data from JSON responses without try-except blocks
+2. **Configuration files**: Access nested configuration values with defaults
+3. **Data validation**: Check for presence of required fields in nested structures
+4. **ETL pipelines**: Extract data from complex nested sources
+5. **Error handling**: Gracefully handle missing or malformed data
+6. **Data exploration**: Probe unknown data structures without raising exceptions
+
+#### Integration with tif1
+
+The `recursive_dict_get` function is used internally by tif1 for:
+
+- **JSON parsing**: Extracting nested fields from API responses
+- **Session data**: Accessing optional session metadata
+- **Driver info**: Safely retrieving driver details from nested structures
+- **Weather data**: Extracting weather observations from nested JSON
+- **Race control**: Parsing race control messages with variable structure
+
+#### Best Practices
+
+**When to use `default_none=False` (default):**
+- When you want to continue processing even if data is missing
+- When you're iterating over results (empty dict is safe to iterate)
+- When you want to use `or` for fallback values
+- When you're building data structures incrementally
+
+**When to use `default_none=True`:**
+- When you need to distinguish between "missing" and "empty"
+- When you want explicit `None` checks with `is None`
+- When you're validating required fields
+- When you want to raise errors for missing data
+
+<Note>
+  The function returns the default value on the first missing key, so it short-circuits and doesn't traverse the entire key path if an early key is missing.
+</Note>
+
+<Tip>
+  For deeply nested structures with many optional fields, consider using `default_none=True` and checking for `None` explicitly. This makes your code's intent clearer and helps distinguish between missing data and empty values.
+</Tip>
 
 ---
 
-## Related APIs
+## Complete Real-World Examples
 
-- **[Core API](/api-reference/core)**: Uses utils for time conversions
-- **[Plotting API](/api-reference/plotting)**: Uses delta_time for visualizations
-- **[Types API](/api-reference/types)**: Defines type hints for utility functions
+These comprehensive examples demonstrate how to combine multiple utility functions to solve real-world Formula 1 data analysis problems.
+
+### Example 1: Comprehensive Lap Time Analysis
+
+This example shows how to analyze lap times across an entire session, identifying trends, outliers, and performance patterns.
+
+```python
+import tif1
+from tif1.utils import to_timedelta
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load session data
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+laps = session.laps.copy()
+
+# Convert lap times to timedeltas for analysis
+laps['LapTimeDelta'] = laps['LapTime'].apply(
+    lambda x: to_timedelta(x) if pd.notna(x) else pd.NaT
+)
+
+# Calculate lap time in seconds for numerical operations
+laps['LapTimeSeconds'] = laps['LapTimeDelta'].dt.total_seconds()
+
+# Find fastest lap overall
+fastest_time = laps['LapTimeDelta'].min()
+fastest_lap = laps[laps['LapTimeDelta'] == fastest_time].iloc[0]
+print(f"Fastest lap: {fastest_lap['Driver']} - {fastest_time}")
+
+# Calculate gap to fastest for each lap
+laps['GapToFastest'] = laps['LapTimeDelta'] - fastest_time
+laps['GapToFastestSeconds'] = laps['GapToFastest'].dt.total_seconds()
+
+# Analyze by driver
+driver_stats = laps.groupby('Driver').agg({
+    'LapTimeSeconds': ['mean', 'min', 'std', 'count'],
+    'GapToFastestSeconds': 'mean'
+}).round(3)
+
+print("\nDriver Statistics:")
+print(driver_stats)
+
+# Identify consistent vs inconsistent drivers
+driver_stats.columns = ['_'.join(col).strip() for col in driver_stats.columns]
+driver_stats['consistency_score'] = (
+    driver_stats['LapTimeSeconds_std'] / driver_stats['LapTimeSeconds_mean']
+)
+driver_stats = driver_stats.sort_values('consistency_score')
+
+print("\nMost Consistent Drivers:")
+print(driver_stats[['LapTimeSeconds_mean', 'LapTimeSeconds_std', 'consistency_score']].head())
+
+# Visualize lap time distribution
+fig, axes = plt.subplots(2, 1, figsize=(15, 10))
+
+# Top 10 drivers by lap count
+top_drivers = laps['Driver'].value_counts().head(10).index
+
+for driver in top_drivers:
+    driver_laps = laps[laps['Driver'] == driver]
+    axes[0].plot(
+        driver_laps['LapNumber'], 
+        driver_laps['LapTimeSeconds'],
+        marker='o',
+        label=driver,
+        alpha=0.7
+    )
+
+axes[0].set_xlabel('Lap Number')
+axes[0].set_ylabel('Lap Time (seconds)')
+axes[0].set_title('Lap Time Evolution - Top 10 Drivers')
+axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+axes[0].grid(True, alpha=0.3)
+
+# Gap to fastest over time
+for driver in top_drivers:
+    driver_laps = laps[laps['Driver'] == driver]
+    axes[1].plot(
+        driver_laps['LapNumber'],
+        driver_laps['GapToFastestSeconds'],
+        marker='o',
+        label=driver,
+        alpha=0.7
+    )
+
+axes[1].set_xlabel('Lap Number')
+axes[1].set_ylabel('Gap to Fastest (seconds)')
+axes[1].set_title('Performance Gap Evolution')
+axes[1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+axes[1].grid(True, alpha=0.3)
+axes[1].axhline(y=0, color='black', linestyle='--', linewidth=2)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Example 2: Session Timing and Event Correlation
+
+Analyze session timing to correlate events with lap times and identify patterns.
+
+```python
+import tif1
+from tif1.utils import to_datetime, to_timedelta
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load session
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+laps = session.laps.copy()
+
+# Convert session start time
+session_start = to_datetime(session.session_start_time)
+print(f"Session started at: {session_start}")
+
+# Calculate elapsed time for each lap
+laps['ElapsedTime'] = (laps['Time'] - session_start).dt.total_seconds() / 60  # minutes
+
+# Get race control messages if available
+if hasattr(session, 'race_control_messages'):
+    messages = session.race_control_messages.copy()
+    messages['ElapsedTime'] = (messages['Time'] - session_start).dt.total_seconds() / 60
+    
+    # Filter for important events
+    important_events = messages[
+        messages['Category'].isin(['Flag', 'SafetyCar', 'Drs'])
+    ]
+    
+    print(f"\nImportant events during session:")
+    print(important_events[['ElapsedTime', 'Category', 'Message']])
+
+# Analyze lap times around safety car periods
+safety_car_laps = laps[laps['TrackStatus'].isin(['4', '6'])]  # SC/VSC
+print(f"\nLaps under safety car: {len(safety_car_laps)}")
+
+# Compare lap times before and after safety car
+if len(safety_car_laps) > 0:
+    sc_lap_numbers = safety_car_laps['LapNumber'].unique()
+    
+    for sc_lap in sc_lap_numbers[:3]:  # First 3 SC periods
+        before_sc = laps[
+            (laps['LapNumber'] >= sc_lap - 3) & 
+            (laps['LapNumber'] < sc_lap)
+        ]['LapTime'].apply(to_timedelta).dt.total_seconds().mean()
+        
+        after_sc = laps[
+            (laps['LapNumber'] > sc_lap) & 
+            (laps['LapNumber'] <= sc_lap + 3)
+        ]['LapTime'].apply(to_timedelta).dt.total_seconds().mean()
+        
+        print(f"\nSafety Car at lap {sc_lap}:")
+        print(f"  Average lap time before: {before_sc:.3f}s")
+        print(f"  Average lap time after: {after_sc:.3f}s")
+        print(f"  Difference: {after_sc - before_sc:.3f}s")
+
+# Visualize session timeline
+fig, ax = plt.subplots(figsize=(15, 8))
+
+# Plot lap times over session time
+for driver in laps['Driver'].value_counts().head(5).index:
+    driver_laps = laps[laps['Driver'] == driver]
+    lap_times = driver_laps['LapTime'].apply(to_timedelta).dt.total_seconds()
+    
+    ax.scatter(
+        driver_laps['ElapsedTime'],
+        lap_times,
+        label=driver,
+        alpha=0.6,
+        s=50
+    )
+
+# Mark safety car periods
+if len(safety_car_laps) > 0:
+    for sc_time in safety_car_laps['ElapsedTime'].unique():
+        ax.axvline(x=sc_time, color='yellow', linestyle='--', alpha=0.5, linewidth=2)
+
+ax.set_xlabel('Elapsed Time (minutes)')
+ax.set_ylabel('Lap Time (seconds)')
+ax.set_title('Lap Times Throughout Session')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Example 3: Advanced Delta Time Analysis with Driver Comparison
+
+Perform comprehensive delta time analysis across multiple drivers and identify performance patterns.
+
+```python
+import tif1
+from tif1.utils import delta_time
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load session
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+
+# Get fastest laps for multiple drivers
+drivers_to_compare = ['VER', 'HAM', 'LEC', 'SAI', 'NOR']
+driver_data = {}
+
+for driver_code in drivers_to_compare:
+    try:
+        driver = session.get_driver(driver_code)
+        fastest_lap = driver.get_lap(driver.laps['LapTime'].idxmin())
+        driver_data[driver_code] = {
+            'lap': fastest_lap,
+            'time': fastest_lap['LapTime']
+        }
+    except Exception as e:
+        print(f"Could not get data for {driver_code}: {e}")
+
+# Use fastest overall as reference
+reference_driver = min(driver_data.items(), key=lambda x: x[1]['time'])[0]
+reference_lap = driver_data[reference_driver]['lap']
+
+print(f"Reference driver: {reference_driver}")
+print(f"Reference time: {driver_data[reference_driver]['time']}")
+
+# Calculate deltas for all drivers
+deltas = {}
+telemetries = {}
+
+for driver_code, data in driver_data.items():
+    if driver_code == reference_driver:
+        continue
+    
+    delta, ref_tel, comp_tel = delta_time(reference_lap, data['lap'])
+    deltas[driver_code] = delta
+    telemetries[driver_code] = comp_tel
+
+# Create comprehensive visualization
+fig = plt.figure(figsize=(20, 12))
+gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
+
+# Main delta plot
+ax_main = fig.add_subplot(gs[0:2, :])
+ref_tel = reference_lap.get_telemetry()
+
+for driver_code, delta in deltas.items():
+    ax_main.plot(
+        ref_tel['Distance'],
+        delta,
+        label=f"{driver_code} (+{(driver_data[driver_code]['time'] - driver_data[reference_driver]['time']).total_seconds():.3f}s)",
+        linewidth=2,
+        alpha=0.8
+    )
+
+ax_main.axhline(y=0, color='black', linestyle='--', linewidth=2, label=f'{reference_driver} (Reference)')
+ax_main.set_xlabel('Distance (m)', fontsize=12)
+ax_main.set_ylabel('Delta Time (s)', fontsize=12)
+ax_main.set_title(f'Multi-Driver Delta Analysis - Reference: {reference_driver}', fontsize=14, fontweight='bold')
+ax_main.legend(loc='best')
+ax_main.grid(True, alpha=0.3)
+
+# Speed comparison
+ax_speed = fig.add_subplot(gs[2, :])
+ax_speed.plot(ref_tel['Distance'], ref_tel['Speed'], label=reference_driver, linewidth=2, color='black')
+
+colors = plt.cm.tab10(np.linspace(0, 1, len(telemetries)))
+for (driver_code, tel), color in zip(telemetries.items(), colors):
+    ax_speed.plot(tel['Distance'], tel['Speed'], label=driver_code, linewidth=1.5, alpha=0.7, color=color)
+
+ax_speed.set_xlabel('Distance (m)', fontsize=12)
+ax_speed.set_ylabel('Speed (km/h)', fontsize=12)
+ax_speed.set_title('Speed Comparison', fontsize=12, fontweight='bold')
+ax_speed.legend(loc='best')
+ax_speed.grid(True, alpha=0.3)
+
+# Delta statistics
+ax_stats = fig.add_subplot(gs[3, 0])
+stats_data = []
+
+for driver_code, delta in deltas.items():
+    stats_data.append({
+        'Driver': driver_code,
+        'Max Gain': f"{-delta.min():.3f}s",
+        'Max Loss': f"{delta.max():.3f}s",
+        'Avg Delta': f"{delta.mean():.3f}s",
+        'Total Gap': f"{(driver_data[driver_code]['time'] - driver_data[reference_driver]['time']).total_seconds():.3f}s"
+    })
+
+stats_df = pd.DataFrame(stats_data)
+ax_stats.axis('tight')
+ax_stats.axis('off')
+table = ax_stats.table(
+    cellText=stats_df.values,
+    colLabels=stats_df.columns,
+    cellLoc='center',
+    loc='center'
+)
+table.auto_set_font_size(False)
+table.set_fontsize(9)
+table.scale(1, 2)
+ax_stats.set_title('Delta Statistics', fontsize=12, fontweight='bold', pad=20)
+
+# Sector analysis
+ax_sectors = fig.add_subplot(gs[3, 1])
+sector_data = []
+
+for driver_code, data in driver_data.items():
+    if driver_code == reference_driver:
+        continue
+    
+    lap = data['lap']
+    sector_data.append({
+        'Driver': driver_code,
+        'S1': f"{lap.get('Sector1Time', pd.NaT)}",
+        'S2': f"{lap.get('Sector2Time', pd.NaT)}",
+        'S3': f"{lap.get('Sector3Time', pd.NaT)}"
+    })
+
+sector_df = pd.DataFrame(sector_data)
+ax_sectors.axis('tight')
+ax_sectors.axis('off')
+table2 = ax_sectors.table(
+    cellText=sector_df.values,
+    colLabels=sector_df.columns,
+    cellLoc='center',
+    loc='center'
+)
+table2.auto_set_font_size(False)
+table2.set_fontsize(9)
+table2.scale(1, 2)
+ax_sectors.set_title('Sector Times', fontsize=12, fontweight='bold', pad=20)
+
+plt.suptitle('Comprehensive Qualifying Analysis', fontsize=16, fontweight='bold', y=0.995)
+plt.show()
+
+# Print detailed analysis
+print("\n" + "="*60)
+print("DETAILED DELTA ANALYSIS")
+print("="*60)
+
+for driver_code, delta in deltas.items():
+    print(f"\n{driver_code} vs {reference_driver}:")
+    print(f"  Total gap: {(driver_data[driver_code]['time'] - driver_data[reference_driver]['time']).total_seconds():.3f}s")
+    print(f"  Maximum time gained: {-delta.min():.3f}s at {ref_tel.loc[delta.idxmin(), 'Distance']:.0f}m")
+    print(f"  Maximum time lost: {delta.max():.3f}s at {ref_tel.loc[delta.idxmax(), 'Distance']:.0f}m")
+    print(f"  Average delta: {delta.mean():.3f}s")
+    print(f"  Delta std dev: {delta.std():.3f}s")
+```
+
+### Example 4: Data Pipeline with Safe Nested Access
+
+Build a robust data processing pipeline using `recursive_dict_get` for safe data extraction.
+
+```python
+import tif1
+from tif1.utils import recursive_dict_get, to_timedelta, to_datetime
+import pandas as pd
+import json
+
+def extract_session_metadata(session_json):
+    """
+    Safely extract session metadata from complex JSON structure.
+    
+    Args:
+        session_json: Raw JSON data from API
+        
+    Returns:
+        dict: Cleaned and validated session metadata
+    """
+    metadata = {}
+    
+    # Extract basic session info
+    metadata['session_name'] = recursive_dict_get(
+        session_json, "session", "info", "name", default_none=True
+    )
+    metadata['session_type'] = recursive_dict_get(
+        session_json, "session", "info", "type", default_none=True
+    )
+    metadata['year'] = recursive_dict_get(
+        session_json, "session", "info", "year", default_none=True
+    )
+    
+    # Extract circuit info
+    metadata['circuit_name'] = recursive_dict_get(
+        session_json, "session", "circuit", "name", default_none=True
+    )
+    metadata['circuit_location'] = recursive_dict_get(
+        session_json, "session", "circuit", "location", default_none=True
+    )
+    metadata['circuit_country'] = recursive_dict_get(
+        session_json, "session", "circuit", "country", default_none=True
+    )
+    
+    # Extract timing info
+    start_time_str = recursive_dict_get(
+        session_json, "session", "timing", "start_time", default_none=True
+    )
+    if start_time_str:
+        metadata['start_time'] = to_datetime(start_time_str)
+    
+    # Extract weather info
+    weather_data = recursive_dict_get(
+        session_json, "session", "weather", default_none=False
+    )
+    if weather_data:
+        metadata['temperature'] = recursive_dict_get(
+            weather_data, "temperature", default_none=True
+        )
+        metadata['humidity'] = recursive_dict_get(
+            weather_data, "humidity", default_none=True
+        )
+        metadata['conditions'] = recursive_dict_get(
+            weather_data, "conditions", default_none=True
+        )
+    
+    # Extract driver count
+    drivers = recursive_dict_get(
+        session_json, "session", "drivers", default_none=False
+    )
+    metadata['driver_count'] = len(drivers) if isinstance(drivers, list) else 0
+    
+    # Remove None values
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+    
+    return metadata
+
+
+def process_lap_data_safely(lap_json_list):
+    """
+    Process a list of lap data JSON objects safely.
+    
+    Args:
+        lap_json_list: List of lap data dictionaries
+        
+    Returns:
+        pd.DataFrame: Processed lap data
+    """
+    processed_laps = []
+    
+    for lap_json in lap_json_list:
+        lap_data = {}
+        
+        # Extract driver info
+        lap_data['Driver'] = recursive_dict_get(
+            lap_json, "driver", "code", default_none=True
+        )
+        lap_data['Team'] = recursive_dict_get(
+            lap_json, "driver", "team", default_none=True
+        )
+        
+        # Extract lap timing
+        lap_time_str = recursive_dict_get(
+            lap_json, "timing", "lap_time", default_none=True
+        )
+        if lap_time_str:
+            try:
+                lap_data['LapTime'] = to_timedelta(lap_time_str)
+                lap_data['LapTimeSeconds'] = lap_data['LapTime'].total_seconds()
+            except:
+                lap_data['LapTime'] = pd.NaT
+                lap_data['LapTimeSeconds'] = None
+        
+        # Extract sector times
+        for sector_num in [1, 2, 3]:
+            sector_time_str = recursive_dict_get(
+                lap_json, "timing", f"sector_{sector_num}", default_none=True
+            )
+            if sector_time_str:
+                try:
+                    lap_data[f'Sector{sector_num}Time'] = to_timedelta(sector_time_str)
+                except:
+                    lap_data[f'Sector{sector_num}Time'] = pd.NaT
+        
+        # Extract lap number
+        lap_data['LapNumber'] = recursive_dict_get(
+            lap_json, "lap_number", default_none=True
+        )
+        
+        # Extract tyre info
+        lap_data['Compound'] = recursive_dict_get(
+            lap_json, "tyre", "compound", default_none=True
+        )
+        lap_data['TyreLife'] = recursive_dict_get(
+            lap_json, "tyre", "life", default_none=True
+        )
+        
+        # Extract position
+        lap_data['Position'] = recursive_dict_get(
+            lap_json, "position", default_none=True
+        )
+        
+        # Extract track status
+        lap_data['TrackStatus'] = recursive_dict_get(
+            lap_json, "track_status", default_none=True
+        )
+        
+        # Only add lap if we have minimum required data
+        if lap_data.get('Driver') and lap_data.get('LapNumber'):
+            processed_laps.append(lap_data)
+    
+    return pd.DataFrame(processed_laps)
+
+
+# Example usage
+if __name__ == "__main__":
+    # Simulated API response
+    api_response = {
+        "session": {
+            "info": {
+                "name": "Monaco Grand Prix",
+                "type": "Race",
+                "year": 2024
+            },
+            "circuit": {
+                "name": "Circuit de Monaco",
+                "location": "Monte Carlo",
+                "country": "Monaco"
+            },
+            "timing": {
+                "start_time": "2024-05-26T15:00:00+02:00"
+            },
+            "weather": {
+                "temperature": 24,
+                "humidity": 65,
+                "conditions": "Sunny"
+            },
+            "drivers": [
+                {"code": "VER", "team": "Red Bull Racing"},
+                {"code": "HAM", "team": "Mercedes"}
+            ]
+        }
+    }
+    
+    # Extract metadata safely
+    metadata = extract_session_metadata(api_response)
+    print("Session Metadata:")
+    print(json.dumps(metadata, indent=2, default=str))
+    
+    # Simulated lap data
+    lap_data_json = [
+        {
+            "driver": {"code": "VER", "team": "Red Bull Racing"},
+            "timing": {
+                "lap_time": "1:10.123",
+                "sector_1": "20.456",
+                "sector_2": "30.789",
+                "sector_3": "18.878"
+            },
+            "lap_number": 1,
+            "tyre": {"compound": "SOFT", "life": 1},
+            "position": 1,
+            "track_status": "1"
+        },
+        {
+            "driver": {"code": "HAM", "team": "Mercedes"},
+            "timing": {
+                "lap_time": "1:10.456"
+                # Missing sector times
+            },
+            "lap_number": 1,
+            "position": 2
+            # Missing tyre and track status
+        }
+    ]
+    
+    # Process lap data safely
+    laps_df = process_lap_data_safely(lap_data_json)
+    print("\nProcessed Lap Data:")
+    print(laps_df)
+    print("\nData types:")
+    print(laps_df.dtypes)
+```
+
+---
+
+## Performance Considerations and Best Practices
+
+Understanding the performance characteristics of utility functions helps you write efficient data analysis code.
+
+### Time Conversion Performance
+
+**`to_timedelta` and `to_datetime` optimization tips:**
+
+1. **Vectorized operations**: When converting entire DataFrame columns, use pandas' native functions directly:
+   ```python
+   # Slower: Apply to each element
+   df['LapTime'] = df['LapTimeStr'].apply(to_timedelta)
+   
+   # Faster: Vectorized pandas operation
+   df['LapTime'] = pd.to_timedelta(df['LapTimeStr'])
+   ```
+
+2. **Batch processing**: Convert data in batches rather than one-by-one:
+   ```python
+   # Slower: Individual conversions
+   times = [to_timedelta(t) for t in time_list]
+   
+   # Faster: Batch conversion
+   times = pd.to_timedelta(time_list)
+   ```
+
+3. **Type checking**: Avoid unnecessary conversions by checking types first:
+   ```python
+   # Check if already converted
+   if not pd.api.types.is_timedelta64_ns_dtype(df['LapTime']):
+       df['LapTime'] = pd.to_timedelta(df['LapTime'])
+   ```
+
+### Delta Time Performance
+
+**`delta_time` optimization strategies:**
+
+1. **Cache telemetry data**: If comparing multiple laps, cache telemetry to avoid repeated fetches:
+   ```python
+   # Cache telemetry for reference lap
+   reference_telemetry = reference_lap.get_telemetry()
+   
+   # Compare against multiple laps
+   for compare_lap in laps_to_compare:
+       delta, _, comp_tel = delta_time(reference_lap, compare_lap)
+       # Process delta...
+   ```
+
+2. **Limit telemetry channels**: If you only need specific channels, filter after retrieval:
+   ```python
+   delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
+   
+   # Only keep needed columns
+   ref_tel_minimal = ref_tel[['Distance', 'Speed', 'Time']]
+   comp_tel_minimal = comp_tel[['Distance', 'Speed', 'Time']]
+   ```
+
+3. **Parallel processing**: For multiple comparisons, use parallel processing:
+   ```python
+   from concurrent.futures import ThreadPoolExecutor
+   
+   def compare_lap(compare_lap):
+       return delta_time(reference_lap, compare_lap)
+   
+   with ThreadPoolExecutor(max_workers=4) as executor:
+       results = list(executor.map(compare_lap, laps_to_compare))
+   ```
+
+### Nested Data Access Performance
+
+**`recursive_dict_get` best practices:**
+
+1. **Minimize depth**: Access data at the shallowest level possible:
+   ```python
+   # Less efficient: Multiple deep accesses
+   name = recursive_dict_get(data, "a", "b", "c", "name")
+   age = recursive_dict_get(data, "a", "b", "c", "age")
+   
+   # More efficient: Get parent once
+   person = recursive_dict_get(data, "a", "b", "c")
+   name = person.get("name")
+   age = person.get("age")
+   ```
+
+2. **Cache intermediate results**: Store frequently accessed nested objects:
+   ```python
+   # Cache session info
+   session_info = recursive_dict_get(data, "session", "info")
+   
+   # Access multiple fields from cached object
+   name = session_info.get("name")
+   year = session_info.get("year")
+   type_ = session_info.get("type")
+   ```
+
+3. **Use default_none appropriately**: Choose the right default for your use case:
+   ```python
+   # Use default_none=False for chaining
+   drivers = recursive_dict_get(data, "session", "drivers") or []
+   
+   # Use default_none=True for explicit checks
+   temperature = recursive_dict_get(data, "weather", "temp", default_none=True)
+   if temperature is not None:
+       process_temperature(temperature)
+   ```
+
+### Memory Management
+
+**Tips for working with large datasets:**
+
+1. **Process in chunks**: For very large lap datasets, process in chunks:
+   ```python
+   chunk_size = 1000
+   for i in range(0, len(laps), chunk_size):
+       chunk = laps.iloc[i:i+chunk_size]
+       chunk['LapTime'] = chunk['LapTime'].apply(to_timedelta)
+       # Process chunk...
+   ```
+
+2. **Delete unused data**: Free memory by deleting intermediate results:
+   ```python
+   delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
+   
+   # Process delta...
+   
+   # Free memory if telemetry not needed
+   del ref_tel, comp_tel
+   ```
+
+3. **Use appropriate data types**: Convert to efficient types after processing:
+   ```python
+   # Convert timedelta to float32 if precision allows
+   df['LapTimeSeconds'] = df['LapTime'].dt.total_seconds().astype('float32')
+   ```
+
+### Error Handling Best Practices
+
+**Robust error handling patterns:**
+
+1. **Validate inputs before conversion**:
+   ```python
+   def safe_to_timedelta(value):
+       """Safely convert to timedelta with validation."""
+       if pd.isna(value):
+           return pd.NaT
+       try:
+           return to_timedelta(value)
+       except Exception as e:
+           print(f"Warning: Could not convert {value}: {e}")
+           return pd.NaT
+   
+   df['LapTime'] = df['LapTimeStr'].apply(safe_to_timedelta)
+   ```
+
+2. **Handle missing telemetry gracefully**:
+   ```python
+   def safe_delta_time(ref_lap, comp_lap):
+       """Calculate delta with error handling."""
+       try:
+           return delta_time(ref_lap, comp_lap)
+       except Exception as e:
+           print(f"Warning: Could not calculate delta: {e}")
+           return pd.Series(), pd.DataFrame(), pd.DataFrame()
+   ```
+
+3. **Validate nested data structure**:
+   ```python
+   def validate_and_extract(data, *keys):
+       """Extract with validation."""
+       result = recursive_dict_get(data, *keys, default_none=True)
+       if result is None:
+           raise ValueError(f"Required path {keys} not found in data")
+       return result
+   ```
+
+---
+
+## API Reference Summary
+
+### Function Signatures
+
+```python
+# Time conversion
+def to_timedelta(x: Any) -> pd.Timedelta
+
+def to_datetime(x: Any) -> pd.Timestamp
+
+# Performance analysis
+def delta_time(
+    reference_lap: Lap,
+    compare_lap: Lap
+) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
+
+# Data access
+def recursive_dict_get(
+    d: dict,
+    *keys: str,
+    default_none: bool = False
+) -> Any
+```
+
+### Return Types
+
+| Function | Return Type | Description |
+|----------|-------------|-------------|
+| `to_timedelta` | `pd.Timedelta` | Pandas Timedelta object representing duration |
+| `to_datetime` | `pd.Timestamp` | Pandas Timestamp object representing point in time |
+| `delta_time` | `tuple[pd.Series, pd.DataFrame, pd.DataFrame]` | Delta series and telemetry DataFrames |
+| `recursive_dict_get` | `Any` | Value at key path, or `{}` / `None` if not found |
+
+### Common Exceptions
+
+While these utilities are designed to handle errors gracefully, you may encounter:
+
+- **`ValueError`**: Invalid input format that pandas cannot parse
+- **`TypeError`**: Attempting to convert incompatible types
+- **`AttributeError`**: Missing required methods on Lap objects (for `delta_time`)
+- **`KeyError`**: Only if using direct dict access instead of `recursive_dict_get`
+
+---
+
+## Integration with tif1 Ecosystem
+
+### Core Module Integration
+
+The utilities are used extensively throughout tif1's core functionality:
+
+```python
+# In core.py - Lap time conversion
+lap_df['LapTime'] = _numeric_seconds_to_timedelta(lap_df['LapTimeSeconds'])
+
+# In core.py - Session time conversion
+lap_df['Time'] = _numeric_seconds_to_timedelta(lap_df['TimeSeconds'])
+
+# In core.py - Datetime conversion
+lap_df['LapStartDate'] = pd.to_datetime(lap_df['LapStartDate'], errors='coerce')
+```
+
+### Plotting Module Integration
+
+The plotting module uses utilities for data preparation:
+
+```python
+from tif1.utils import delta_time
+
+# In plotting.py - Delta time visualization
+def plot_lap_comparison(ref_lap, comp_lap):
+    delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
+    # Create visualization...
+```
+
+### Session Module Integration
+
+Session loading uses utilities for data normalization:
+
+```python
+from tif1.utils import to_datetime, to_timedelta
+
+# In session.py - Session metadata
+session.start_time = to_datetime(session_data['start_time'])
+
+# In session.py - Lap data processing
+laps['LapTime'] = laps['LapTime'].apply(to_timedelta)
+```
+
+---
+
+## FastF1 Compatibility
+
+The utilities module maintains API compatibility with FastF1 for seamless migration:
+
+### Compatible Functions
+
+| tif1 Function | FastF1 Equivalent | Compatibility |
+|---------------|-------------------|---------------|
+| `to_timedelta` | `fastf1.utils.to_timedelta` | ✅ Full |
+| `to_datetime` | `fastf1.utils.to_datetime` | ✅ Full |
+| `delta_time` | `fastf1.utils.delta_time` | ✅ Full |
+| `recursive_dict_get` | `fastf1.utils.recursive_dict_get` | ✅ Full |
+
+### Migration Example
+
+```python
+# FastF1 code
+import fastf1
+from fastf1.utils import to_timedelta, delta_time
+
+session = fastf1.get_session(2024, "Monaco", "Race")
+# ... rest of code
+
+# tif1 code (drop-in replacement)
+import tif1
+from tif1.utils import to_timedelta, delta_time
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+# ... rest of code works identically
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+**Issue: `to_timedelta` returns NaT for valid strings**
+
+```python
+# Problem: Unexpected format
+time_str = "1.23.456"  # Wrong format (periods instead of colons)
+result = to_timedelta(time_str)  # Returns NaT
+
+# Solution: Use correct format
+time_str = "1:23.456"  # Correct format
+result = to_timedelta(time_str)  # Works correctly
+```
+
+**Issue: `delta_time` returns empty Series**
+
+```python
+# Problem: Laps don't have telemetry
+delta, _, _ = delta_time(in_lap, out_lap)  # Empty result
+
+# Solution: Check for telemetry availability
+if hasattr(lap, 'get_telemetry'):
+    telemetry = lap.get_telemetry()
+    if not telemetry.empty:
+        delta, _, _ = delta_time(ref_lap, lap)
+```
+
+**Issue: `recursive_dict_get` returns empty dict unexpectedly**
+
+```python
+# Problem: Using wrong default
+value = recursive_dict_get(data, "missing", "key")
+if value:  # This is True for empty dict!
+    process(value)
+
+# Solution: Use default_none=True for explicit checks
+value = recursive_dict_get(data, "missing", "key", default_none=True)
+if value is not None:
+    process(value)
+```
+
+**Issue: Performance degradation with large datasets**
+
+```python
+# Problem: Applying to each element
+df['LapTime'] = df['LapTimeStr'].apply(to_timedelta)  # Slow
+
+# Solution: Use vectorized pandas operations
+df['LapTime'] = pd.to_timedelta(df['LapTimeStr'])  # Fast
+```
+
+---
+
+## Related Documentation
+
+### Core APIs
+- **[Core API](/api-reference/core)**: Main data structures and session loading
+- **[Session API](/api-reference/session)**: Session management and data access
+- **[Models API](/api-reference/models)**: Lap, Driver, and Telemetry classes
+
+### Analysis Tools
+- **[Plotting API](/api-reference/plotting)**: Visualization functions using utilities
+- **[Lap Operations](/api-reference/lap-operations)**: Advanced lap analysis functions
+
+### Data Types
+- **[Types API](/api-reference/types)**: Type definitions for utility functions
+- **[Schedule API](/api-reference/schedule)**: Event scheduling and calendar
+
+### Concepts
+- **[Data Flow](/concepts/data-flow)**: Understanding data processing pipeline
+- **[Caching Strategy](/concepts/caching-strategy)**: Performance optimization
+
+---
+
+## Additional Resources
+
+### Example Notebooks
+
+Check out these Jupyter notebooks for more examples:
+- **Lap Time Analysis**: Comprehensive lap time analysis workflows
+- **Delta Time Visualization**: Advanced delta time plotting techniques
+- **Data Pipeline**: Building robust data processing pipelines
+
+### Community Examples
+
+Browse community-contributed examples:
+- **Performance Analysis**: Driver and team performance comparisons
+- **Race Strategy**: Analyzing race strategy and tire management
+- **Qualifying Analysis**: Qualifying session analysis and visualization
+
+### Support
+
+- **GitHub Issues**: [Report bugs or request features](https://github.com/TracingInsights/tif1/issues)
+- **Discussions**: [Ask questions and share examples](https://github.com/TracingInsights/tif1/discussions)
+- **Documentation**: [Full API documentation](https://docs.tif1.dev)
+
+---
+
+<Note>
+  This utilities module is designed for performance and reliability. All functions handle edge cases gracefully and are optimized for common Formula 1 data analysis workflows.
+</Note>
+
+<Tip>
+  For the best performance, use vectorized pandas operations when working with large datasets, and cache intermediate results when performing multiple analyses on the same data.
+</Tip>

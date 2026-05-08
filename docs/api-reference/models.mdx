@@ -1,643 +1,202 @@
 ---
 title: "Models"
 icon: "box"
-description: "Laps, Lap, Driver, and Telemetry classes"
+description: "Comprehensive guide to Laps, Lap, Driver, Telemetry, SessionResults, DriverResult, and CircuitInfo classes"
 keywords:
   - "data models"
   - "Laps model"
   - "Telemetry model"
   - "F1 data structures"
+  - "pandas DataFrame"
+  - "lap filtering"
+  - "telemetry analysis"
+  - "driver data"
+  - "race results"
+  - "circuit information"
 ---
 
-The models module provides object-oriented interfaces for working with F1 data. These classes wrap DataFrames and provide convenient methods for common operations.
+# Models API Reference
+
+The models module provides a comprehensive, object-oriented interface for working with Formula 1 data. These classes extend pandas DataFrame and Series objects with domain-specific methods tailored for F1 analysis, making it intuitive to filter, analyze, and visualize racing data with minimal code.
+
+## Overview
+
+All model classes in tif1 are built on top of pandas data structures, providing familiar DataFrame and Series interfaces while adding specialized methods for F1 data manipulation. This design philosophy allows you to leverage the full power of pandas operations alongside tif1-specific functionality, creating a seamless development experience.
+
+### Key Features
+
+- **Lazy Loading**: Data is loaded on-demand for optimal performance and memory efficiency
+- **Method Chaining**: Fluent API design enables expressive, readable code
+- **FastF1 Compatibility**: Drop-in replacement for FastF1 with minimal code changes
+- **Type Hints**: Full type annotation support for enhanced IDE autocomplete and type checking
+- **Automatic Validation**: Built-in data validation and error handling
+- **Dual Backend Support**: Works with both pandas and polars backends (where applicable)
+- **Zero-Copy Operations**: Optimized for performance with minimal data duplication
+- **Thread-Safe Caching**: Internal caching mechanisms for repeated access patterns
+
+### Model Hierarchy
+
+The tif1 models form a logical hierarchy that mirrors the structure of F1 data:
+
+- **`Laps`** (DataFrame) → Collection of lap timing data for multiple laps/drivers
+- **`Lap`** (Series) → Single lap with telemetry access and timing information
+- **`Driver`** (Series) → Driver metadata with access to all their laps
+- **`Telemetry`** (DataFrame) → High-frequency sensor data (speed, throttle, brake, etc.)
+- **`SessionResults`** (DataFrame) → Race results and final standings
+- **`DriverResult`** (Series) → Individual driver's race result
+- **`CircuitInfo`** (Dataclass) → Circuit layout information and track markers
+
+### Design Philosophy
+
+The models are designed with the following principles:
+
+1. **Intuitive Access Patterns**: Natural property access (e.g., `lap.telemetry`, `driver.laps`)
+2. **Consistent Filtering**: All filtering methods follow the `pick_*` naming convention
+3. **Graceful Degradation**: Methods return empty DataFrames instead of raising exceptions when data is unavailable
+4. **Session Context**: All models maintain a reference to their parent session for seamless data access
+5. **Performance First**: Optimized for speed with vectorized operations and intelligent caching
+
+---
 
 ## Laps
 
-A collection of lap data, typically accessed via `session.laps` or `driver.laps`. Inherits from pandas DataFrame with additional filtering methods.
+The `Laps` class represents a collection of lap timing data and is the primary interface for filtering and analyzing multiple laps. It inherits from `pandas.DataFrame`, providing all standard DataFrame operations plus specialized F1-specific filtering methods. This is the most commonly used class in tif1, serving as the entry point for most lap-based analysis.
+
+### Class Overview
+
+**Inheritance:** `pandas.DataFrame` → `Laps`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Thread Safety:** Read operations are thread-safe; write operations should be synchronized externally
+
+### Common Access Patterns
+
+The `Laps` class can be accessed through multiple pathways depending on your analysis needs:
+
+```python
+# All laps from all drivers in a session
+all_laps = session.laps
+
+# All laps for a specific driver
+driver_laps = driver.laps
+
+# Filter session laps to specific driver(s)
+verstappen_laps = session.laps.pick_driver("VER")
+
+# Chain multiple filters
+fast_soft_laps = session.laps.pick_driver("VER").pick_tyre("SOFT").pick_quicklaps()
+```
+
+### Data Structure
+
+Each row in a `Laps` DataFrame represents a single lap with comprehensive timing and metadata. The DataFrame contains the following column categories:
+
+#### Core Identity Columns
+- **`Driver`** (str): 3-letter driver code (e.g., "VER", "HAM", "LEC")
+- **`DriverNumber`** (str): Car racing number (e.g., "1", "44", "16")
+- **`Team`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes")
+- **`LapNumber`** (float): Sequential lap number within the session
+
+#### Timing Columns (timedelta64[ns])
+All timing columns are stored as pandas timedelta objects for precise time arithmetic:
+
+- **`LapTime`**: Total lap time from start line to start line
+- **`LapStartTime`**: Session time when the lap started
+- **`Time`**: Session time when the lap was completed
+- **`Sector1Time`**, **`Sector2Time`**, **`Sector3Time`**: Individual sector times
+- **`Sector1SessionTime`**, **`Sector2SessionTime`**, **`Sector3SessionTime`**: Session times at sector completion
+- **`PitInTime`**: Session time when entering pit lane (NaT if no pit stop)
+- **`PitOutTime`**: Session time when exiting pit lane (NaT if no pit stop)
+
+#### Speed Trap Columns (float64, km/h)
+- **`SpeedI1`**: Speed at intermediate 1 timing point
+- **`SpeedI2`**: Speed at intermediate 2 timing point
+- **`SpeedFL`**: Speed at finish line
+- **`SpeedST`**: Speed at speed trap location
+
+#### Tire Information
+- **`Compound`** (str): Tire compound ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
+- **`TyreLife`** (float): Number of laps completed on this tire set
+- **`FreshTyre`** (bool): Whether this is a fresh (unused) tire set
+- **`Stint`** (float): Stint number within the session
+
+#### Lap Metadata
+- **`TrackStatus`** (str): Track condition code ("1"=Green, "2"=Yellow, "4"=Safety Car, "5"=Red Flag, "6"=VSC, "7"=VSC Ending)
+- **`Position`** (float): Track position at lap completion
+- **`IsPersonalBest`** (bool): Whether this is the driver's fastest lap
+- **`Deleted`** (bool): Whether the lap time was deleted by race control
+- **`DeletedReason`** (str): Reason for lap deletion (if applicable)
+- **`IsAccurate`** (bool): Whether the lap has accurate timing data
+- **`FastF1Generated`** (bool): Internal flag for data source tracking
+
+#### Qualifying-Specific
+- **`QualifyingSession`** (str): Which qualifying session ("Q1", "Q2", "Q3")
+
+#### Derived Columns
+- **`LapTimeSeconds`** (float): Lap time in seconds (derived from LapTime for convenience)
+
+#### Weather Data (per-lap)
+When weather data is available, each lap includes:
+- **`WeatherTime`** (timedelta): Weather observation time
+- **`AirTemp`** (float): Air temperature in °C
+- **`TrackTemp`** (float): Track surface temperature in °C
+- **`Humidity`** (float): Relative humidity percentage
+- **`Pressure`** (float): Atmospheric pressure in mbar
+- **`WindSpeed`** (float): Wind speed in km/h
+- **`WindDirection`** (int): Wind direction in degrees
+- **`Rainfall`** (bool): Whether it's raining
 
 ### Properties
 
 <ResponseField name="session" type="Session">
-  Reference to the parent session object.
+  Reference to the parent Session object. This provides access to session-level data and methods, enabling operations like telemetry loading and driver information lookup. The session reference is automatically propagated when filtering or slicing Laps objects, ensuring that derived objects maintain full context.
+  
+  **Usage:**
+  ```python
+  laps = session.laps
+  filtered = laps.pick_driver("VER")
+  # filtered.session still references the original session
+  telemetry = filtered.telemetry  # Can access session data
+  ```
 </ResponseField>
 
-### Methods
+### Core Filtering Methods
+
+The Laps class provides a comprehensive set of filtering methods that can be chained together for complex queries. All filtering methods return new Laps objects, preserving the original data (immutable operations). These methods are optimized for performance using pandas' vectorized operations.
 
 #### `pick_driver(identifier)`
+
+Filter laps to a single driver using flexible identifier matching. This is one of the most commonly used methods in tif1.
+
 ```python
 def pick_driver(identifier: str | int | dict) -> Laps
 ```
-Filter laps for a specific driver. Accepts driver code, number, or dict with driver info.
-
-**Example:**
-```python
-laps = session.laps
-ver_laps = laps.pick_driver("VER")
-# Also works with driver number
-ver_laps = laps.pick_driver(1)
-```
-
-#### `pick_drivers(identifiers)`
-```python
-def pick_drivers(identifiers: list) -> Laps
-```
-Filter laps for multiple drivers.
-
-**Example:**
-```python
-top_three = laps.pick_drivers(["VER", "HAM", "LEC"])
-```
-
-#### `pick_fastest(only_by_time=False)`
-```python
-def pick_fastest(only_by_time: bool = False) -> Lap | None
-```
-Get the single fastest lap from the collection. Returns None if no valid laps found.
-
-**Example:**
-```python
-fastest = session.laps.pick_fastest()
-if fastest is not None:
-    print(f"Fastest lap: {fastest['LapTime']:.3f}s by {fastest['Driver']}")
-```
-
-#### `pick_quicklaps(threshold=1.07)`
-```python
-def pick_quicklaps(threshold: float = 1.07) -> Laps
-```
-Filter laps within a percentage of the fastest lap time (default 107%).
-
-**Example:**
-```python
-# Get all laps within 107% of fastest
-quick_laps = laps.pick_quicklaps(threshold=1.07)
-```
-
-#### `pick_tyre(compound)` / `pick_compounds(compounds)`
-```python
-def pick_tyre(compound: str) -> Laps
-def pick_compounds(compounds: list[str]) -> Laps
-```
-Filter laps by tire compound.
-
-**Example:**
-```python
-soft_laps = laps.pick_tyre("SOFT")
-# Multiple compounds
-slick_laps = laps.pick_compounds(["SOFT", "MEDIUM", "HARD"])
-```
-
-#### `pick_lap(lap_number)` / `pick_laps(laps)`
-```python
-def pick_lap(lap_number: int) -> Laps
-def pick_laps(laps: int | list | slice) -> Laps
-```
-Filter by lap number(s). Supports integers, lists, and slices.
-
-**Example:**
-```python
-lap_10 = laps.pick_lap(10)
-# Multiple laps
-laps_10_to_20 = laps.pick_laps(slice(10, 20))
-# Or specific laps
-laps_list = laps.pick_laps([1, 5, 10, 15])
-```
-
-#### `pick_team(name)` / `pick_teams(names)`
-```python
-def pick_team(name: str) -> Laps
-def pick_teams(names: list[str]) -> Laps
-```
-Filter laps by team name.
-
-**Example:**
-```python
-rbr_laps = laps.pick_team("Red Bull Racing")
-```
-
-#### `pick_track_status(status, how="equals")`
-```python
-def pick_track_status(status: str, how: str = "equals") -> Laps
-```
-Filter by track status. Use `how="contains"` for partial matching.
-
-**Example:**
-```python
-# Yellow flag laps
-yellow_laps = laps.pick_track_status("4", how="contains")
-```
-
-#### `pick_wo_box()` / `pick_box_laps(which="both")`
-```python
-def pick_wo_box() -> Laps
-def pick_box_laps(which: str = "both") -> Laps
-```
-Filter laps by pit stop activity. `which` can be "in", "out", or "both".
-
-**Example:**
-```python
-# Laps without pit stops
-no_pit = laps.pick_wo_box()
-# Pit in laps only
-pit_in = laps.pick_box_laps(which="in")
-```
-
-#### `pick_not_deleted()` / `pick_accurate()`
-```python
-def pick_not_deleted() -> Laps
-def pick_accurate() -> Laps
-```
-Filter for valid laps (not deleted) or accurate laps only.
-
-**Example:**
-```python
-valid_laps = laps.pick_not_deleted().pick_accurate()
-```
-
-#### `get_telemetry()` / `telemetry`
-```python
-def get_telemetry() -> Telemetry
-@property
-def telemetry(self) -> Telemetry
-```
-Get telemetry data for all laps. Only works for single-driver laps. `get_telemetry()` includes driver-ahead channels.
-
-**Example:**
-```python
-ver_laps = laps.pick_driver("VER")
-tel = ver_laps.telemetry
-```
-
-#### `iterlaps(require=None)`
-```python
-def iterlaps(require: list[str] | None = None) -> Generator
-```
-Iterate over laps with optional required columns. Skips laps with null values in required columns.
-
-**Example:**
-```python
-for lap_result in laps.iterlaps(require=["LapTime", "Driver"]):
-    print(f"Lap {lap_result.lap['LapNumber']}: {lap_result.lap['LapTime']}")
-```
-
-#### `split_qualifying_sessions()`
-```python
-def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
-```
-Returns tuple of (Q1, Q2, Q3) laps. Note: tif1 doesn't split by session, returns copies for compatibility.
-
-**Example:**
-```python
-q1, q2, q3 = laps.split_qualifying_sessions()
-```
-
----
-
-## Lap
-
-Represents a single lap with access to telemetry data. Inherits from pandas Series.
-
-### Properties
-
-<ResponseField name="lap_number" type="int">
-  The lap number (from LapNumber column).
-</ResponseField>
-
-<ResponseField name="driver" type="str">
-  The 3-letter driver code (from Driver column).
-</ResponseField>
-
-<ResponseField name="telemetry" type="Telemetry">
-  High-frequency telemetry data for this lap. Loaded lazily on first access. Returns empty Telemetry if not found.
-</ResponseField>
-
-<ResponseField name="session" type="Session">
-  Reference to the parent session.
-</ResponseField>
-
-### Methods
-
-#### `get_telemetry()`
-```python
-def get_telemetry() -> Telemetry
-```
-Explicitly load telemetry data with driver-ahead channels. Same as accessing the `telemetry` property but includes additional channels.
-
-**Example:**
-```python
-lap = driver.get_lap(19)
-tel = lap.get_telemetry()
-print(tel[["Time", "Speed", "Throttle", "DriverAhead"]].head())
-```
-
-#### `get_car_data()` / `get_pos_data()`
-```python
-def get_car_data(**kwargs) -> Telemetry
-def get_pos_data(**kwargs) -> Telemetry
-```
-Aliases for getting telemetry data (FastF1 compatibility).
-
-**Example:**
-```python
-car_data = lap.get_car_data()
-```
-
-#### `get_weather_data()`
-```python
-def get_weather_data() -> Series
-```
-Get weather data for this lap (returns empty Series).
-
----
-
-## Driver
-
-Represents a driver's performance within a session. Inherits from pandas Series with driver metadata.
-
-### Properties
-
-<ResponseField name="driver" type="str">
-  The 3-letter driver code (e.g., "VER"). Set as attribute, not in Series data.
-</ResponseField>
-
-<ResponseField name="DriverNumber" type="str">
-  The car number (e.g., "1", "33"). Available in Series data.
-</ResponseField>
-
-<ResponseField name="Abbreviation" type="str">
-  Driver abbreviation (same as driver code). Available in Series data.
-</ResponseField>
-
-<ResponseField name="TeamName" type="str">
-  Full team name. Available in Series data.
-</ResponseField>
-
-<ResponseField name="TeamColor" type="str">
-  Team color hex code. Available in Series data.
-</ResponseField>
-
-<ResponseField name="FirstName" type="str">
-  Driver's first name. Available in Series data.
-</ResponseField>
-
-<ResponseField name="LastName" type="str">
-  Driver's last name. Available in Series data.
-</ResponseField>
-
-<ResponseField name="FullName" type="str">
-  Driver's full name. Available in Series data.
-</ResponseField>
-
-<ResponseField name="HeadshotUrl" type="str">
-  URL to driver headshot image. Available in Series data.
-</ResponseField>
-
-<ResponseField name="laps" type="Laps | DataFrame">
-  All laps completed by this driver. Loaded lazily. Returns Laps object (pandas) or DataFrame (polars).
-</ResponseField>
-
-<ResponseField name="session" type="Session">
-  Reference to the parent session.
-</ResponseField>
-
-### Methods
-
-#### `get_lap(lap_number)`
-```python
-def get_lap(lap_number: int) -> Lap
-```
-Get a specific lap by number.
 
 **Parameters:**
-- `lap_number`: The lap number to retrieve (must be positive integer).
+
+- **`identifier`**: Can be one of several formats for maximum flexibility:
+  - **`str`**: 3-letter driver code (e.g., "VER", "HAM", "LEC") - most common usage
+  - **`int`**: Driver racing number (e.g., 1, 44, 16)
+  - **`dict`**: Dictionary containing driver info with keys like "driver", "dn", "RacingNumber", "Abbreviation"
+  - **Object**: Any object with a `driver` or `Abbreviation` attribute
 
 **Returns:**
-- `Lap` object for the specified lap.
-
-**Raises:**
-- `LapNotFoundError`: If the lap doesn't exist for this driver.
-- `ValueError`: If lap_number is invalid.
-
-**Example:**
-```python
-ver = session.get_driver("VER")
-lap_19 = ver.get_lap(19)
-print(f"Lap {lap_19.lap_number}: {lap_19['LapTime']}")
-```
-
-#### `get_fastest_lap()`
-```python
-def get_fastest_lap() -> DataFrame
-```
-Get this driver's fastest lap as a single-row DataFrame. Returns empty DataFrame if no valid laps found.
-
-**Example:**
-```python
-fastest = ver.get_fastest_lap()
-if not fastest.empty:
-    print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
-```
-
-#### `get_fastest_lap_tel()`
-```python
-def get_fastest_lap_tel() -> DataFrame
-```
-Get telemetry for this driver's fastest lap. Returns empty DataFrame if not found.
-
-**Returns:**
-- Telemetry DataFrame with columns: Time, Distance, Speed, RPM, nGear, Throttle, Brake, DRS, X, Y, Z, Driver, LapNumber.
-
-**Example:**
-```python
-fastest_tel = ver.get_fastest_lap_tel()
-if not fastest_tel.empty:
-    print(f"Max speed: {fastest_tel['Speed'].max()} km/h")
-```
-
----
-
-## Telemetry
-
-High-frequency data recorded throughout a lap. Inherits from pandas DataFrame with additional slicing and analysis methods.
-
-### Properties
-
-<ResponseField name="session" type="Session">
-  Reference to the parent session.
-</ResponseField>
-
-<ResponseField name="driver" type="str">
-  Driver code for this telemetry data.
-</ResponseField>
-
-### Available Columns
-
-| Column | Type | Unit | Description |
-| :--- | :--- | :--- | :--- |
-| `Time` | timedelta | Seconds | Time from lap start (timedelta64[ns]) |
-| `Distance` | float | Meters | Distance from lap start |
-| `Speed` | float | km/h | Current speed |
-| `RPM` | int | RPM | Engine revolutions per minute |
-| `nGear` | int | - | Current gear (1-8) |
-| `Throttle` | float | % | Throttle position (0-100) |
-| `Brake` | bool | - | Brake pedal pressed |
-| `DRS` | int | - | DRS status (0=Off, 10+=On) |
-| `X`, `Y`, `Z` | float | Meters | 3D position coordinates |
-| `Driver` | str | - | Driver code |
-| `LapNumber` | int | - | Lap number |
-
-### Methods
-
-#### `slice_by_time(start_time, end_time, pad=0, pad_side="both", interpolate_edges=False)`
-```python
-def slice_by_time(start_time, end_time, pad: int = 0,
-                  pad_side: str = "both",
-                  interpolate_edges: bool = False) -> Telemetry
-```
-Slice telemetry by time window.
-
-**Example:**
-```python
-# Get first 10 seconds
-first_10s = tel.slice_by_time(0, 10)
-```
-
-#### `slice_by_lap(ref_laps, pad=0, pad_side="both", interpolate_edges=False)`
-```python
-def slice_by_lap(ref_laps, pad: int = 0,
-                 pad_side: str = "both",
-                 interpolate_edges: bool = False) -> Telemetry
-```
-Slice telemetry by lap reference (Lap or Laps object).
-
-**Example:**
-```python
-lap = driver.get_lap(19)
-tel = session_telemetry.slice_by_lap(lap)
-```
-
-#### `slice_by_mask(mask, pad=0, pad_side="both")`
-```python
-def slice_by_mask(mask, pad: int = 0, pad_side: str = "both") -> Telemetry
-```
-Slice telemetry using a boolean mask.
-
-**Example:**
-```python
-# Get high-speed sections
-high_speed_mask = tel["Speed"] > 300
-high_speed_tel = tel.slice_by_mask(high_speed_mask)
-```
-
-#### `add_distance()` / `integrate_distance()`
-```python
-def add_distance() -> Telemetry
-def integrate_distance() -> Series
-```
-Calculate distance from speed and time. `add_distance()` adds Distance column, `integrate_distance()` returns Series.
-
-**Example:**
-```python
-tel_with_dist = tel.add_distance()
-```
-
-#### `add_relative_distance()`
-```python
-def add_relative_distance() -> Telemetry
-```
-Add RelativeDistance column (0-1 normalized distance).
-
-**Example:**
-```python
-tel_rel = tel.add_relative_distance()
-```
-
-#### `add_driver_ahead()` / `calculate_driver_ahead()`
-```python
-def add_driver_ahead() -> Telemetry
-def calculate_driver_ahead() -> tuple[Series, Series]
-```
-Add DriverAhead and DistanceToDriverAhead columns.
-
-**Example:**
-```python
-tel_with_ahead = tel.add_driver_ahead()
-```
-
-#### `add_track_status()`
-```python
-def add_track_status() -> Telemetry
-```
-Add TrackStatus column (defaults to "1" if not present).
-
-**Example:**
-```python
-tel_with_status = tel.add_track_status()
-```
-
-#### `fill_missing()`
-```python
-def fill_missing() -> Telemetry
-```
-Interpolate missing values in numeric columns.
-
-**Example:**
-```python
-tel_filled = tel.fill_missing()
-```
-
-#### `merge_channels(other, **kwargs)`
-```python
-def merge_channels(other, **kwargs) -> Telemetry
-```
-Merge telemetry from another source using time-based alignment.
-
-**Example:**
-```python
-merged = tel1.merge_channels(tel2)
-```
-
-#### `resample_channels(rule="1S", **kwargs)`
-```python
-def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
-```
-Resample telemetry to a different frequency.
-
-**Example:**
-```python
-# Resample to 1 second intervals
-resampled = tel.resample_channels(rule="1S")
-```
-
-### Basic Usage
-
-```python
-lap = driver.get_lap(19)
-tel = lap.telemetry
-
-# Filter to high-speed sections
-high_speed = tel[tel["Speed"] > 300]
-
-# Find maximum speed
-max_speed = tel["Speed"].max()
-
-# Plot speed trace
-import matplotlib.pyplot as plt
-plt.plot(tel["Distance"], tel["Speed"])
-plt.show()
-```
-
----
-
-## SessionResults
-
-Contains race results and final positions. Inherits from pandas DataFrame.
-
-### Properties
-
-<ResponseField name="session" type="Session">
-  Reference to the parent session.
-</ResponseField>
-
-### Available Columns
-
-| Column | Description |
-| :--- | :--- |
-| `Position` | Final position (1-20) |
-| `Driver` | 3-letter driver code |
-| `Team` | Team name |
-| `Points` | Championship points earned |
-| `Status` | Finish status (Finished, +1 Lap, Retired, etc.) |
-| `Time` | Total race time or gap to winner |
-
-**Example:**
-```python
-results = session.results
-print(results[["Position", "Driver", "Team", "Points"]])
-```
-
----
-
-## CircuitInfo
-
-Information about the circuit. Simple dataclass-like object.
-
-### Properties
-
-<ResponseField name="circuit_name" type="str">
-  Official circuit name.
-</ResponseField>
-
-<ResponseField name="location" type="str">
-  City/country location.
-</ResponseField>
-
-<ResponseField name="circuit_length" type="float">
-  Track length in meters.
-</ResponseField>
-
-### Methods
-
-#### `add_marker_distance(reference_lap)`
-```python
-def add_marker_distance(reference_lap: Lap) -> None
-```
-Add distance markers from a reference lap.
-
-**Example:**
-```python
-circuit = session.get_circuit_info()
-fastest_lap = session.laps.pick_fastest()
-circuit.add_marker_distance(fastest_lap)
-```
-
----
-
-## DriverResult
-
-Individual driver's race result. Inherits from pandas Series.
-
-### Properties
-
-<ResponseField name="session" type="Session">
-  Reference to the parent session.
-</ResponseField>
-
-<ResponseField name="Position" type="int">
-  Final position (available in Series data).
-</ResponseField>
-
-<ResponseField name="Driver" type="str">
-  Driver code (available in Series data).
-</ResponseField>
-
-<ResponseField name="Points" type="int">
-  Points earned (available in Series data).
-</ResponseField>
-
-<ResponseField name="Status" type="str">
-  Finish status (available in Series data).
-</ResponseField>
-
-<ResponseField name="dnf" type="bool">
-  Whether the driver did not finish (computed property).
-</ResponseField>
-
-**Example:**
-```python
-result = session.results.iloc[0]  # Winner
-if isinstance(result, DriverResult):
-    print(f"Winner: {result['Driver']}")
-    print(f"DNF: {result.dnf}")
-```
-
----
-
-## Usage Examples
-
-All examples use the 2021 Belgian Grand Prix Race session.
-
-### Working with Laps collection
+- **`Laps`** object containing only laps from the specified driver. Returns empty Laps if driver not found.
+
+**Behavior Details:**
+- **Case-sensitive** for driver codes (must use uppercase: "VER" not "ver")
+- Automatically normalizes various identifier formats to internal representation
+- Returns empty Laps if driver not found (no exception raised) - allows graceful handling
+- Preserves session reference in returned object for continued data access
+- Uses vectorized pandas operations for O(n) performance even with large datasets
+
+**Performance Characteristics:**
+- Time Complexity: O(n) where n is the number of laps
+- Space Complexity: O(m) where m is the number of matching laps
+- Optimized with pandas boolean indexing (no Python loops)
+
+**Example Usage:**
 
 ```python
 import tif1
@@ -645,122 +204,3184 @@ import tif1
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 
-# Filter by driver using pick_driver
+# Using driver code (most common and recommended)
 ver_laps = laps.pick_driver("VER")
+print(f"Verstappen completed {len(ver_laps)} laps")
 
-# Or use DataFrame filtering
-ham_laps = laps[laps["Driver"] == "HAM"]
+# Using driver number
+ver_laps = laps.pick_driver(1)
 
-# Get fastest lap
-fastest = laps.pick_fastest()
-if fastest is not None:
-    print(f"Fastest: {fastest['LapTime']} by {fastest['Driver']}")
+# Using driver info dict (useful when iterating over driver data)
+driver_info = {"driver": "VER", "dn": 1, "team": "Red Bull Racing"}
+ver_laps = laps.pick_driver(driver_info)
 
-# Filter by compound
-soft_laps = laps.pick_tyre("SOFT")
+# Chain with other filters for complex queries
+ver_soft_laps = laps.pick_driver("VER").pick_tyre("SOFT")
+ver_fast_laps = laps.pick_driver("VER").pick_quicklaps(threshold=1.05)
 
-# Get laps in a specific range using pick_laps
-lap_1 = laps.pick_lap(1)
-laps_1_to_3 = laps.pick_laps(slice(1, 3))
+# Graceful handling of missing drivers
+missing_laps = laps.pick_driver("XXX")  # Returns empty Laps, no exception
+if not missing_laps.empty:
+    print("Driver found")
+else:
+    print("Driver not in session")
 
-# Get quick laps (within 107% of fastest)
-quick_laps = laps.pick_quicklaps(threshold=1.07)
-
-# Filter by team
-rbr_laps = laps.pick_team("Red Bull Racing")
-
-# Iterate over laps
-for lap_result in laps.pick_driver("VER").iterlaps():
-    print(f"Lap {lap_result.lap['LapNumber']}: {lap_result.lap['LapTime']}")
+# Access telemetry after filtering
+ver_laps = laps.pick_driver("VER")
+if not ver_laps.empty:
+    fastest = ver_laps.pick_fastest()
+    if fastest is not None:
+        tel = fastest.telemetry  # Session context preserved
 ```
 
-### Working with Driver objects
+**Common Patterns:**
 
 ```python
-# Get driver
-ver = session.get_driver("VER")
+# Compare lap times between drivers
+for driver_code in ["VER", "HAM", "LEC"]:
+    driver_laps = laps.pick_driver(driver_code)
+    if not driver_laps.empty:
+        fastest = driver_laps.pick_fastest()
+        if fastest is not None:
+            print(f"{driver_code}: {fastest['LapTime']}")
 
-# Access driver info (from Series data)
-print(f"Driver: {ver.driver}")  # Attribute
-print(f"Full Name: {ver['FullName']}")  # Series data
-print(f"Team: {ver['TeamName']}")  # Series data
-print(f"Number: {ver['DriverNumber']}")  # Series data
-
-# Get all laps
-all_laps = ver.laps
-
-# Get specific lap
-lap_1 = ver.get_lap(1)
-
-# Get fastest lap
-fastest = ver.get_fastest_lap()
-if not fastest.empty:
-    print(f"Fastest: {fastest['LapTime'].iloc[0]}")
-
-# Get fastest lap telemetry
-fastest_tel = ver.get_fastest_lap_tel()
-if not fastest_tel.empty:
-    print(f"Max speed: {fastest_tel['Speed'].max()} km/h")
+# Analyze tire degradation for a driver
+ver_laps = laps.pick_driver("VER").pick_tyre("SOFT")
+if not ver_laps.empty:
+    # Group by stint and analyze lap time progression
+    for stint in ver_laps["Stint"].unique():
+        stint_laps = ver_laps[ver_laps["Stint"] == stint]
+        print(f"Stint {stint}: {len(stint_laps)} laps")
 ```
 
-### Working with Lap objects
+**Error Handling:**
+
+```python
+# The method never raises exceptions for missing drivers
+try:
+    laps_subset = laps.pick_driver("INVALID")
+    # laps_subset will be empty, but no exception
+except Exception:
+    # This block will never execute
+    pass
+
+# Proper way to check for driver existence
+driver_laps = laps.pick_driver("VER")
+if driver_laps.empty:
+    print("Driver not found or has no laps")
+else:
+    print(f"Found {len(driver_laps)} laps")
+```
+
+---
+
+#### `pick_drivers(identifiers)`
+
+Filter laps to multiple drivers simultaneously. Useful for comparing performance between specific drivers or analyzing battles.
+
+```python
+def pick_drivers(identifiers: list[str | int | dict]) -> Laps
+```
+
+**Parameters:**
+
+- **`identifiers`**: List of driver identifiers (same formats as `pick_driver`). Can mix different identifier types in the same list.
+
+**Returns:**
+- **`Laps`** object containing laps from all specified drivers. Returns empty Laps if no matching drivers found.
+
+**Behavior Details:**
+- Accepts mixed identifier types in the same list (e.g., ["VER", 44, {"driver": "LEC"}])
+- Order of drivers in result matches original lap chronological order, not identifier order
+- Duplicate identifiers are automatically deduplicated
+- Returns empty Laps if no matching drivers found
+- Preserves all lap metadata and session context
+
+**Performance Characteristics:**
+- Time Complexity: O(n) where n is the number of laps
+- More efficient than multiple `pick_driver` calls combined with concatenation
+- Uses pandas' `isin()` method for vectorized filtering
+
+**Example Usage:**
+
+```python
+# Top 3 drivers comparison
+top_three = laps.pick_drivers(["VER", "HAM", "LEC"])
+print(f"Total laps from top 3: {len(top_three)}")
+
+# Mixed identifier types
+mixed = laps.pick_drivers(["VER", 44, {"driver": "LEC"}])
+
+# Analyze multiple drivers' performance
+drivers_to_compare = ["VER", "HAM", "LEC", "SAI"]
+comparison_laps = laps.pick_drivers(drivers_to_compare)
+
+for driver in drivers_to_compare:
+    driver_laps = comparison_laps.pick_driver(driver)
+    if not driver_laps.empty:
+        fastest = driver_laps.pick_fastest()
+        if fastest is not None:
+            print(f"{driver}: {fastest['LapTime']} ({len(driver_laps)} laps)")
+
+# Team comparison (get all drivers from specific teams)
+rbr_drivers = ["VER", "PER"]
+merc_drivers = ["HAM", "RUS"]
+
+rbr_laps = laps.pick_drivers(rbr_drivers)
+merc_laps = laps.pick_drivers(merc_drivers)
+
+print(f"Red Bull: {len(rbr_laps)} laps")
+print(f"Mercedes: {len(merc_laps)} laps")
+
+# Visualize multiple drivers
+import matplotlib.pyplot as plt
+
+drivers = ["VER", "HAM", "LEC"]
+multi_driver_laps = laps.pick_drivers(drivers)
+
+for driver in drivers:
+    driver_laps = multi_driver_laps.pick_driver(driver)
+    if not driver_laps.empty:
+        plt.plot(driver_laps["LapNumber"], driver_laps["LapTimeSeconds"], 
+                 label=driver, marker='o')
+
+plt.xlabel("Lap Number")
+plt.ylabel("Lap Time (seconds)")
+plt.legend()
+plt.title("Lap Time Comparison")
+plt.show()
+```
+
+**Use Cases:**
+- Comparing performance between specific drivers
+- Analyzing battles between teammates or rivals
+- Creating visualizations with selected drivers
+- Team-level analysis (all drivers from specific teams)
+- Qualifying session analysis (top 10 drivers)
+
+**Common Patterns:**
+
+```python
+# Get fastest lap from a group of drivers
+contenders = laps.pick_drivers(["VER", "HAM", "LEC"])
+fastest_overall = contenders.pick_fastest()
+if fastest_overall is not None:
+    print(f"Fastest: {fastest_overall['Driver']} - {fastest_overall['LapTime']}")
+
+# Analyze tire strategy across multiple drivers
+strategy_drivers = ["VER", "HAM", "LEC", "SAI"]
+strategy_laps = laps.pick_drivers(strategy_drivers)
+
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = strategy_laps.pick_tyre(compound)
+    if not compound_laps.empty:
+        print(f"\n{compound} tire usage:")
+        for driver in strategy_drivers:
+            driver_compound = compound_laps.pick_driver(driver)
+            print(f"  {driver}: {len(driver_compound)} laps")
+```
+
+---
+
+#### `pick_fastest(only_by_time=False)`
+
+Get the single fastest lap from the collection. This is a convenience method that returns a `Lap` object (pandas Series) rather than a `Laps` DataFrame.
+
+```python
+def pick_fastest(only_by_time: bool = False) -> Lap | None
+```
+
+**Parameters:**
+
+- **`only_by_time`** (bool, default=False): Reserved for future use. Currently has no effect. In FastF1, this parameter controls whether to consider only lap time or also track status. In tif1, only lap time is considered.
+
+**Returns:**
+- **`Lap`** object representing the fastest lap, or **`None`** if no valid laps found
+
+**Behavior Details:**
+- Only considers laps with valid lap times (non-null, non-NaN)
+- Returns the lap with the minimum `LapTime` value
+- Returns `None` if the collection is empty or has no valid lap times
+- Preserves session context in the returned Lap object
+- If multiple laps have identical fastest times, returns the first occurrence
+
+**Performance Characteristics:**
+- Time Complexity: O(n) for finding minimum
+- Efficient pandas vectorized operation
+
+**Example Usage:**
+
+```python
+# Get fastest lap from all drivers
+fastest = session.laps.pick_fastest()
+if fastest is not None:
+    print(f"Fastest lap: {fastest['LapTime']} by {fastest['Driver']}")
+    print(f"On lap {fastest['LapNumber']} with {fastest['Compound']} tires")
+    
+    # Access telemetry of fastest lap
+    fastest_tel = fastest.telemetry
+    if not fastest_tel.empty:
+        print(f"Max speed: {fastest_tel['Speed'].max()} km/h")
+else:
+    print("No valid laps found")
+
+# Get fastest lap for a specific driver
+ver_fastest = session.laps.pick_driver("VER").pick_fastest()
+if ver_fastest is not None:
+    print(f"Verstappen's fastest: {ver_fastest['LapTime']}")
+
+# Compare fastest laps between drivers
+drivers = ["VER", "HAM", "LEC"]
+for driver in drivers:
+    fastest = session.laps.pick_driver(driver).pick_fastest()
+    if fastest is not None:
+        print(f"{driver}: {fastest['LapTime']} (Lap {fastest['LapNumber']})")
+
+# Get fastest lap on specific tire compound
+soft_fastest = session.laps.pick_tyre("SOFT").pick_fastest()
+if soft_fastest is not None:
+    print(f"Fastest on SOFT: {soft_fastest['LapTime']} by {soft_fastest['Driver']}")
+
+# Analyze fastest lap conditions
+fastest = session.laps.pick_fastest()
+if fastest is not None:
+    print(f"Driver: {fastest['Driver']}")
+    print(f"Lap: {fastest['LapNumber']}")
+    print(f"Time: {fastest['LapTime']}")
+    print(f"Compound: {fastest['Compound']}")
+    print(f"Tire Life: {fastest['TyreLife']} laps")
+    print(f"Track Status: {fastest['TrackStatus']}")
+    print(f"Personal Best: {fastest['IsPersonalBest']}")
+```
+
+**Common Patterns:**
+
+```python
+# Find fastest lap and analyze its telemetry
+fastest = session.laps.pick_fastest()
+if fastest is not None:
+    tel = fastest.telemetry
+    if not tel.empty:
+        # Analyze speed trace
+        max_speed = tel["Speed"].max()
+        avg_speed = tel["Speed"].mean()
+        
+        # Find braking zones
+        braking = tel[tel["Brake"] == True]
+        num_braking_zones = len(braking)
+        
+        print(f"Max speed: {max_speed:.1f} km/h")
+        print(f"Avg speed: {avg_speed:.1f} km/h")
+        print(f"Braking zones: {num_braking_zones}")
+
+# Compare fastest laps across sessions
+for session_name in ["Practice 1", "Practice 2", "Qualifying"]:
+    sess = tif1.get_session(2021, "Belgian Grand Prix", session_name)
+    fastest = sess.laps.pick_fastest()
+    if fastest is not None:
+        print(f"{session_name}: {fastest['LapTime']} by {fastest['Driver']}")
+```
+
+**Error Handling:**
+
+```python
+# Always check for None before accessing lap data
+fastest = laps.pick_fastest()
+if fastest is None:
+    print("No valid laps in collection")
+else:
+    # Safe to access lap attributes
+    lap_time = fastest["LapTime"]
+    driver = fastest["Driver"]
+
+# Chaining with other filters
+soft_laps = laps.pick_tyre("SOFT")
+if not soft_laps.empty:
+    fastest_soft = soft_laps.pick_fastest()
+    if fastest_soft is not None:
+        print(f"Fastest on SOFT: {fastest_soft['LapTime']}")
+```
+
+---
+
+#### `pick_quicklaps(threshold=1.07)`
+
+Filter laps within a percentage of the fastest lap time. This is useful for analyzing competitive laps and excluding outliers or slow laps affected by traffic, pit stops, or incidents.
+
+```python
+def pick_quicklaps(threshold: float = 1.07) -> Laps
+```
+
+**Parameters:**
+
+- **`threshold`** (float, default=1.07): Percentage multiplier for the fastest lap time. Default is 1.07 (107%), which is the F1 qualifying 107% rule. Must be >= 1.0.
+
+**Returns:**
+- **`Laps`** object containing only laps within the threshold. Returns empty Laps if no laps meet the criteria.
+
+**Behavior Details:**
+- Calculates the fastest lap time in the collection
+- Returns all laps where `LapTime <= fastest_time * threshold`
+- Only considers laps with valid lap times (non-null, non-NaN)
+- Returns empty Laps if no valid lap times exist
+- Preserves session context and all lap metadata
+
+**Performance Characteristics:**
+- Time Complexity: O(n) - one pass to find minimum, one pass to filter
+- Efficient pandas vectorized operations
+
+**Example Usage:**
+
+```python
+# Get all laps within 107% of fastest (F1 qualifying rule)
+quick_laps = laps.pick_quicklaps(threshold=1.07)
+print(f"Laps within 107%: {len(quick_laps)}")
+
+# More restrictive: laps within 102% (very competitive laps)
+very_quick = laps.pick_quicklaps(threshold=1.02)
+print(f"Laps within 102%: {len(very_quick)}")
+
+# Analyze only competitive laps for a driver
+ver_competitive = laps.pick_driver("VER").pick_quicklaps(threshold=1.05)
+if not ver_competitive.empty:
+    avg_time = ver_competitive["LapTimeSeconds"].mean()
+    print(f"Average competitive lap time: {avg_time:.3f}s")
+
+# Compare competitive pace between drivers
+threshold = 1.03
+drivers = ["VER", "HAM", "LEC"]
+
+for driver in drivers:
+    driver_quick = laps.pick_driver(driver).pick_quicklaps(threshold=threshold)
+    if not driver_quick.empty:
+        avg = driver_quick["LapTimeSeconds"].mean()
+        count = len(driver_quick)
+        print(f"{driver}: {count} quick laps, avg {avg:.3f}s")
+
+# Analyze tire degradation using only quick laps
+ver_soft = laps.pick_driver("VER").pick_tyre("SOFT").pick_quicklaps()
+if not ver_soft.empty:
+    # Plot lap time vs tire life
+    import matplotlib.pyplot as plt
+    plt.scatter(ver_soft["TyreLife"], ver_soft["LapTimeSeconds"])
+    plt.xlabel("Tire Life (laps)")
+    plt.ylabel("Lap Time (seconds)")
+    plt.title("Tire Degradation (Quick Laps Only)")
+    plt.show()
+
+# Find drivers who couldn't meet 107% rule in qualifying
+q1_laps = session.laps  # Assuming qualifying session
+quick_laps = q1_laps.pick_quicklaps(threshold=1.07)
+all_drivers = set(q1_laps["Driver"].unique())
+quick_drivers = set(quick_laps["Driver"].unique())
+slow_drivers = all_drivers - quick_drivers
+
+if slow_drivers:
+    print(f"Drivers outside 107%: {', '.join(slow_drivers)}")
+```
+
+**Use Cases:**
+- Filtering out slow laps affected by traffic or incidents
+- Analyzing competitive pace without outliers
+- Implementing F1's 107% qualifying rule
+- Tire degradation analysis with consistent pace
+- Race pace analysis excluding pit laps and safety car periods
+
+**Common Patterns:**
+
+```python
+# Calculate race pace excluding outliers
+race_laps = session.laps.pick_wo_box()  # Exclude pit laps
+quick_race_laps = race_laps.pick_quicklaps(threshold=1.10)
+
+for driver in ["VER", "HAM", "LEC"]:
+    driver_pace = quick_race_laps.pick_driver(driver)
+    if not driver_pace.empty:
+        median_time = driver_pace["LapTimeSeconds"].median()
+        print(f"{driver} race pace: {median_time:.3f}s")
+
+# Analyze consistency (standard deviation of quick laps)
+for driver in ["VER", "HAM"]:
+    quick = laps.pick_driver(driver).pick_quicklaps(threshold=1.02)
+    if not quick.empty and len(quick) > 1:
+        std = quick["LapTimeSeconds"].std()
+        print(f"{driver} consistency (std dev): {std:.3f}s")
+```
+
+---
+
+#### `pick_tyre(compound)` / `pick_compounds(compounds)`
+
+Filter laps by tire compound. Essential for tire strategy analysis and understanding performance characteristics of different compounds.
+
+```python
+def pick_tyre(compound: str) -> Laps
+def pick_compounds(compounds: list[str]) -> Laps
+```
+
+**Parameters:**
+
+- **`compound`** (str): Single tire compound name. Valid values: "SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN", "TEST_UNKNOWN"
+- **`compounds`** (list[str]): List of tire compound names for `pick_compounds`
+
+**Returns:**
+- **`Laps`** object containing only laps on the specified compound(s)
+
+**Behavior Details:**
+- Compound names are case-sensitive (use uppercase)
+- Returns empty Laps if no laps match the compound
+- `pick_tyre` is a convenience wrapper for `pick_compounds` with a single compound
+- Preserves all lap metadata and session context
+
+**Example Usage:**
+
+```python
+# Single compound
+soft_laps = laps.pick_tyre("SOFT")
+print(f"Laps on SOFT tires: {len(soft_laps)}")
+
+# Multiple compounds (all slick tires)
+slick_laps = laps.pick_compounds(["SOFT", "MEDIUM", "HARD"])
+print(f"Laps on slick tires: {len(slick_laps)}")
+
+# Wet weather compounds
+wet_laps = laps.pick_compounds(["INTERMEDIATE", "WET"])
+
+# Analyze tire performance for a driver
+ver_laps = laps.pick_driver("VER")
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = ver_laps.pick_tyre(compound)
+    if not compound_laps.empty:
+        fastest = compound_laps.pick_fastest()
+        if fastest is not None:
+            print(f"{compound}: {fastest['LapTime']} ({len(compound_laps)} laps)")
+
+# Compare tire degradation
+import matplotlib.pyplot as plt
+
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = laps.pick_driver("VER").pick_tyre(compound)
+    if not compound_laps.empty:
+        plt.scatter(compound_laps["TyreLife"], compound_laps["LapTimeSeconds"], 
+                   label=compound, alpha=0.6)
+
+plt.xlabel("Tire Life (laps)")
+plt.ylabel("Lap Time (seconds)")
+plt.legend()
+plt.title("Tire Degradation by Compound")
+plt.show()
+
+# Analyze stint length by compound
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = laps.pick_tyre(compound)
+    if not compound_laps.empty:
+        max_life = compound_laps["TyreLife"].max()
+        print(f"{compound}: Max stint length {max_life} laps")
+```
+
+---
+
+#### `pick_lap(lap_number)` / `pick_laps(laps)`
+
+Filter by specific lap number(s). Useful for analyzing specific moments in a race or comparing performance at the same point in different stints.
+
+```python
+def pick_lap(lap_number: int) -> Laps
+def pick_laps(laps: int | list | slice) -> Laps
+```
+
+**Parameters:**
+
+- **`lap_number`** (int): Single lap number to filter
+- **`laps`**: Can be:
+  - **`int`**: Single lap number
+  - **`list[int]`**: Multiple specific lap numbers
+  - **`slice`**: Range of laps (e.g., `slice(10, 20)` for laps 10-20 inclusive)
+
+**Returns:**
+- **`Laps`** object containing only the specified lap(s)
+
+**Behavior Details:**
+- Lap numbers are 1-indexed (first lap is lap 1)
+- Returns empty Laps if lap number doesn't exist
+- `pick_lap` is a convenience wrapper for `pick_laps` with a single lap
+- Slice ranges are inclusive on both ends
+- Preserves all driver data (returns laps from all drivers at that lap number)
+
+**Example Usage:**
+
+```python
+# Single lap (all drivers)
+lap_1 = laps.pick_lap(1)
+print(f"Drivers on lap 1: {lap_1['Driver'].nunique()}")
+
+# Range of laps using slice
+laps_10_to_20 = laps.pick_laps(slice(10, 20))
+print(f"Laps 10-20: {len(laps_10_to_20)} total laps")
+
+# Specific laps using list
+key_laps = laps.pick_laps([1, 10, 20, 30, 40])
+
+# Open-ended slice (from lap 50 to end)
+final_laps = laps.pick_laps(slice(50, None))
+
+# Analyze first lap incidents
+lap_1 = laps.pick_lap(1)
+for driver in lap_1["Driver"].unique():
+    driver_lap_1 = lap_1[lap_1["Driver"] == driver]
+    if not driver_lap_1.empty:
+        lap_time = driver_lap_1.iloc[0]["LapTime"]
+        position = driver_lap_1.iloc[0]["Position"]
+        print(f"{driver}: P{position}, {lap_time}")
+
+# Compare specific lap across drivers
+lap_19 = laps.pick_lap(19)
+for driver in ["VER", "HAM", "LEC"]:
+    driver_lap = lap_19[lap_19["Driver"] == driver]
+    if not driver_lap.empty:
+        print(f"{driver} lap 19: {driver_lap.iloc[0]['LapTime']}")
+
+# Analyze race start (first 3 laps)
+start_laps = laps.pick_laps(slice(1, 3))
+for driver in ["VER", "HAM"]:
+    driver_start = start_laps[start_laps["Driver"] == driver]
+    if not driver_start.empty:
+        avg_time = driver_start["LapTimeSeconds"].mean()
+        print(f"{driver} start pace: {avg_time:.3f}s")
+
+# Find fastest lap at specific race stage
+mid_race = laps.pick_laps(slice(20, 30))
+fastest_mid = mid_race.pick_fastest()
+if fastest_mid is not None:
+    print(f"Fastest in laps 20-30: {fastest_mid['Driver']} - {fastest_mid['LapTime']}")
+```
+
+**Use Cases:**
+- Analyzing race starts (lap 1)
+- Comparing performance at specific race stages
+- Identifying key moments (safety car laps, pit stop windows)
+- Studying tire warm-up (first few laps of a stint)
+- End-of-race analysis (final laps)
+
+---
+
+#### `pick_team(name)` / `pick_teams(names)`
+
+Filter laps by team name. Useful for team-level analysis and comparing constructor performance.
+
+```python
+def pick_team(name: str) -> Laps
+def pick_teams(names: list[str]) -> Laps
+```
+
+**Parameters:**
+
+- **`name`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes", "Ferrari")
+- **`names`** (list[str]): List of team names for `pick_teams`
+
+**Returns:**
+- **`Laps`** object containing only laps from the specified team(s)
+
+**Behavior Details:**
+- Team names must match exactly (case-sensitive)
+- Returns empty Laps if team not found
+- `pick_team` is a convenience wrapper for `pick_teams` with a single team
+- Includes all drivers from the specified team(s)
+
+**Example Usage:**
+
+```python
+# Single team
+rbr_laps = laps.pick_team("Red Bull Racing")
+print(f"Red Bull laps: {len(rbr_laps)}")
+
+# Multiple teams
+top_teams = laps.pick_teams(["Red Bull Racing", "Mercedes", "Ferrari"])
+
+# Compare team performance
+teams = ["Red Bull Racing", "Mercedes", "Ferrari"]
+for team in teams:
+    team_laps = laps.pick_team(team)
+    if not team_laps.empty:
+        fastest = team_laps.pick_fastest()
+        if fastest is not None:
+            print(f"{team}: {fastest['LapTime']} by {fastest['Driver']}")
+
+# Analyze team tire strategy
+team_laps = laps.pick_team("Red Bull Racing")
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = team_laps.pick_tyre(compound)
+    print(f"{compound}: {len(compound_laps)} laps")
+
+# Team consistency analysis
+team_laps = laps.pick_team("Mercedes").pick_quicklaps()
+if not team_laps.empty:
+    std_dev = team_laps["LapTimeSeconds"].std()
+    print(f"Team consistency (std dev): {std_dev:.3f}s")
+```
+
+---
+
+#### `pick_track_status(status, how="equals")`
+
+Filter by track status (green flag, yellow flag, safety car, etc.). Essential for analyzing race conditions and their impact on lap times.
+
+```python
+def pick_track_status(status: str, how: str = "equals") -> Laps
+```
+
+**Parameters:**
+
+- **`status`** (str): Track status code:
+  - "1" = Green flag (normal racing)
+  - "2" = Yellow flag
+  - "4" = Safety Car
+  - "5" = Red Flag
+  - "6" = Virtual Safety Car (VSC)
+  - "7" = VSC Ending
+- **`how`** (str): Matching mode:
+  - "equals" (default): Exact match
+  - "contains": Partial match (useful for complex status codes)
+
+**Returns:**
+- **`Laps`** object containing only laps with the specified track status
+
+**Example Usage:**
+
+```python
+# Green flag laps only
+green_laps = laps.pick_track_status("1", how="equals")
+print(f"Green flag laps: {len(green_laps)}")
+
+# Yellow flag laps (partial match for any yellow)
+yellow_laps = laps.pick_track_status("2", how="contains")
+
+# Safety car laps
+sc_laps = laps.pick_track_status("4")
+
+# Analyze pace under different conditions
+for status, name in [("1", "Green"), ("4", "Safety Car"), ("6", "VSC")]:
+    status_laps = laps.pick_track_status(status)
+    if not status_laps.empty:
+        avg_time = status_laps["LapTimeSeconds"].mean()
+        print(f"{name}: {len(status_laps)} laps, avg {avg_time:.3f}s")
+
+# Find fastest lap under green flag conditions
+green_fastest = laps.pick_track_status("1").pick_fastest()
+if green_fastest is not None:
+    print(f"Fastest under green: {green_fastest['Driver']} - {green_fastest['LapTime']}")
+```
+
+---
+
+#### `pick_wo_box()` / `pick_box_laps(which="both")`
+
+Filter laps by pit stop activity. Critical for race strategy analysis and understanding pit stop impact.
+
+```python
+def pick_wo_box() -> Laps
+def pick_box_laps(which: str = "both") -> Laps
+```
+
+**Parameters:**
+
+- **`which`** (str): For `pick_box_laps`:
+  - "both" (default): Laps with either pit in or pit out
+  - "in": Only laps where driver entered pits
+  - "out": Only laps where driver exited pits
+
+**Returns:**
+- **`Laps`** object filtered by pit activity
+
+**Behavior Details:**
+- `pick_wo_box()` returns laps without any pit activity (neither PitInTime nor PitOutTime)
+- `pick_box_laps()` returns laps with pit activity
+- Useful for excluding slow pit laps from pace analysis
+- Returns empty Laps if columns don't exist
+
+**Example Usage:**
+
+```python
+# Laps without pit stops (clean racing laps)
+no_pit = laps.pick_wo_box()
+print(f"Clean laps: {len(no_pit)}")
+
+# All pit laps
+pit_laps = laps.pick_box_laps(which="both")
+print(f"Pit laps: {len(pit_laps)}")
+
+# Only pit entry laps
+pit_in = laps.pick_box_laps(which="in")
+
+# Only pit exit laps
+pit_out = laps.pick_box_laps(which="out")
+
+# Calculate race pace excluding pit laps
+race_pace = laps.pick_wo_box().pick_quicklaps()
+for driver in ["VER", "HAM", "LEC"]:
+    driver_pace = race_pace.pick_driver(driver)
+    if not driver_pace.empty:
+        median = driver_pace["LapTimeSeconds"].median()
+        print(f"{driver} race pace: {median:.3f}s")
+
+# Analyze pit stop timing
+pit_in_laps = laps.pick_box_laps(which="in")
+for driver in ["VER", "HAM"]:
+    driver_pits = pit_in_laps[pit_in_laps["Driver"] == driver]
+    if not driver_pits.empty:
+        pit_laps = driver_pits["LapNumber"].tolist()
+        print(f"{driver} pit stops on laps: {pit_laps}")
+```
+
+---
+
+#### `pick_not_deleted()` / `pick_accurate()`
+
+Filter for valid and accurate laps. Essential for ensuring data quality in analysis.
+
+```python
+def pick_not_deleted() -> Laps
+def pick_accurate() -> Laps
+```
+
+**Returns:**
+- **`pick_not_deleted()`**: Laps that weren't deleted by race control
+- **`pick_accurate()`**: Laps with accurate timing data
+
+**Behavior Details:**
+- `pick_not_deleted()` filters out laps where `Deleted == True`
+- `pick_accurate()` filters for laps where `IsAccurate == True`
+- Often used together for high-quality data analysis
+- Returns all laps if the respective column doesn't exist
+
+**Example Usage:**
+
+```python
+# Valid laps only
+valid_laps = laps.pick_not_deleted()
+
+# Accurate laps only
+accurate_laps = laps.pick_accurate()
+
+# Both valid and accurate (recommended for analysis)
+clean_laps = laps.pick_not_deleted().pick_accurate()
+print(f"Clean laps: {len(clean_laps)}")
+
+# Analyze only high-quality data
+quality_laps = (laps
+    .pick_not_deleted()
+    .pick_accurate()
+    .pick_wo_box()
+    .pick_track_status("1"))
+
+fastest = quality_laps.pick_fastest()
+if fastest is not None:
+    print(f"Fastest clean lap: {fastest['Driver']} - {fastest['LapTime']}")
+
+# Find deleted laps (track limits violations, etc.)
+if "Deleted" in laps.columns:
+    deleted = laps[laps["Deleted"] == True]
+    if not deleted.empty:
+        print(f"Deleted laps: {len(deleted)}")
+        for _, lap in deleted.iterrows():
+            reason = lap.get("DeletedReason", "Unknown")
+            print(f"  {lap['Driver']} lap {lap['LapNumber']}: {reason}")
+```
+
+---
+
+### Telemetry Access Methods
+
+#### `get_telemetry()` / `telemetry` property
+
+Access high-frequency telemetry data for the laps in the collection. This is one of the most powerful features of tif1, enabling detailed analysis of driver inputs and car behavior.
+
+```python
+def get_telemetry() -> Telemetry
+@property
+def telemetry(self) -> Telemetry
+```
+
+**Returns:**
+- **`Telemetry`** DataFrame with high-frequency sensor data
+
+**Behavior Details:**
+- **Single-driver requirement**: Only works when all laps are from the same driver
+- Raises `ValueError` if laps contain multiple drivers
+- `get_telemetry()` includes driver-ahead channels (DriverAhead, DistanceToDriverAhead)
+- `telemetry` property provides basic telemetry without driver-ahead data
+- Returns empty Telemetry if no data available
+- Automatically concatenates telemetry from all laps in the collection
+- Preserves session context for continued analysis
+
+**Performance Characteristics:**
+- Lazy-loaded on first access
+- Cached for subsequent accesses
+- May trigger network requests if not cached
+
+**Example Usage:**
+
+```python
+# Get telemetry for a single driver's laps
+ver_laps = laps.pick_driver("VER")
+tel = ver_laps.telemetry
+
+if not tel.empty:
+    print(f"Telemetry samples: {len(tel)}")
+    print(f"Max speed: {tel['Speed'].max()} km/h")
+    print(f"Columns: {tel.columns.tolist()}")
+
+# Get telemetry with driver-ahead information
+tel_with_ahead = ver_laps.get_telemetry()
+if not tel_with_ahead.empty and "DriverAhead" in tel_with_ahead.columns:
+    # Analyze overtaking opportunities
+    ahead_data = tel_with_ahead[tel_with_ahead["DriverAhead"].notna()]
+    print(f"Samples with car ahead: {len(ahead_data)}")
+
+# Analyze specific lap's telemetry
+lap_19 = ver_laps.pick_lap(19)
+lap_19_tel = lap_19.telemetry
+
+if not lap_19_tel.empty:
+    # Find braking zones
+    braking = lap_19_tel[lap_19_tel["Brake"] == True]
+    print(f"Braking zones: {len(braking)} samples")
+    
+    # DRS usage
+    drs_active = lap_19_tel[lap_19_tel["DRS"] >= 10]
+    print(f"DRS active: {len(drs_active)} samples")
+
+# Compare telemetry between laps
+fastest_lap = ver_laps.pick_fastest()
+if fastest_lap is not None:
+    fastest_tel = fastest_lap.telemetry
+    
+    # Compare with average lap
+    avg_lap_num = int(ver_laps["LapNumber"].median())
+    avg_lap = ver_laps.pick_lap(avg_lap_num)
+    avg_tel = avg_lap.telemetry
+    
+    if not fastest_tel.empty and not avg_tel.empty:
+        print(f"Fastest lap max speed: {fastest_tel['Speed'].max()}")
+        print(f"Average lap max speed: {avg_tel['Speed'].max()}")
+
+# Visualize telemetry
+import matplotlib.pyplot as plt
+
+fastest = ver_laps.pick_fastest()
+if fastest is not None:
+    tel = fastest.telemetry
+    if not tel.empty:
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        
+        # Speed trace
+        ax1.plot(tel["Distance"], tel["Speed"], color='red')
+        ax1.set_ylabel("Speed (km/h)")
+        ax1.grid(True)
+        
+        # Throttle and brake
+        ax2.plot(tel["Distance"], tel["Throttle"], label="Throttle", color='green')
+        ax2.plot(tel["Distance"], tel["Brake"] * 100, label="Brake", color='red')
+        ax2.set_ylabel("Input (%)")
+        ax2.legend()
+        ax2.grid(True)
+        
+        # Gear
+        ax3.plot(tel["Distance"], tel["nGear"], color='blue')
+        ax3.set_ylabel("Gear")
+        ax3.set_xlabel("Distance (m)")
+        ax3.grid(True)
+        
+        plt.tight_layout()
+        plt.show()
+```
+
+**Error Handling:**
+
+```python
+# Handle multiple drivers error
+multi_driver_laps = laps.pick_drivers(["VER", "HAM"])
+try:
+    tel = multi_driver_laps.telemetry
+except ValueError as e:
+    print(f"Error: {e}")
+    # Solution: filter to single driver first
+    ver_tel = multi_driver_laps.pick_driver("VER").telemetry
+
+# Check for empty telemetry
+ver_laps = laps.pick_driver("VER")
+tel = ver_laps.telemetry
+if tel.empty:
+    print("No telemetry data available")
+else:
+    # Safe to analyze
+    max_speed = tel["Speed"].max()
+```
+
+**Use Cases:**
+- Detailed lap analysis (speed traces, braking points, throttle application)
+- Driver comparison (racing lines, braking techniques)
+- Car setup analysis (gear ratios, DRS effectiveness)
+- Overtaking analysis (with driver-ahead data)
+- Track mapping (X, Y, Z coordinates)
+
+---
+
+#### `get_car_data()` / `get_pos_data()`
+
+FastF1 compatibility aliases for telemetry access. These methods provide the same functionality as `telemetry` property but with FastF1-compatible naming.
+
+```python
+def get_car_data(**kwargs) -> Telemetry
+def get_pos_data(**kwargs) -> Telemetry
+```
+
+**Returns:**
+- **`Telemetry`** DataFrame (same as `telemetry` property)
+
+**Behavior Details:**
+- `get_car_data()` returns full telemetry data
+- `get_pos_data()` returns position data (same as car data in tif1)
+- Both methods accept `**kwargs` for FastF1 compatibility (ignored in tif1)
+- For multi-driver laps, concatenates telemetry from all laps
+
+**Example Usage:**
+
+```python
+# FastF1 compatibility
+ver_laps = laps.pick_driver("VER")
+car_data = ver_laps.get_car_data()
+pos_data = ver_laps.get_pos_data()
+
+# Both return the same telemetry data
+print(f"Car data samples: {len(car_data)}")
+print(f"Pos data samples: {len(pos_data)}")
+```
+
+---
+
+#### `get_weather_data()`
+
+Get weather data for the laps. Returns session-level weather information.
+
+```python
+def get_weather_data() -> DataFrame
+```
+
+**Returns:**
+- **`DataFrame`** with weather data from the session
+
+**Behavior Details:**
+- Returns session-level weather data (not lap-specific)
+- Returns empty DataFrame if weather data unavailable
+- Weather data includes: AirTemp, TrackTemp, Humidity, Pressure, WindSpeed, WindDirection, Rainfall
+
+**Example Usage:**
+
+```python
+weather = laps.get_weather_data()
+if not weather.empty:
+    print(f"Weather observations: {len(weather)}")
+    print(f"Average air temp: {weather['AirTemp'].mean():.1f}°C")
+    print(f"Average track temp: {weather['TrackTemp'].mean():.1f}°C")
+```
+
+---
+
+### Iteration Methods
+
+#### `iterlaps(require=None)`
+
+Iterate over laps with optional required columns. This is the recommended way to iterate over laps when you need to process each lap individually.
+
+```python
+def iterlaps(require: list[str] | None = None) -> Generator[_IterLapResult, None, None]
+```
+
+**Parameters:**
+
+- **`require`** (list[str] | None): List of column names that must have non-null values. Laps with null values in these columns are skipped. Default is `["LapTime", "Driver"]`.
+
+**Yields:**
+- **`_IterLapResult`**: Tuple-like object with:
+  - `index`: DataFrame index of the lap
+  - `lap`: Lap object (pandas Series) with lap data
+
+**Behavior Details:**
+- Skips laps with null values in required columns
+- Removes null columns from each lap before yielding
+- Preserves session context in yielded Lap objects
+- Raises `KeyError` if a required column doesn't exist in the DataFrame
+
+**Example Usage:**
+
+```python
+# Basic iteration
+for lap_result in laps.iterlaps():
+    lap = lap_result.lap
+    print(f"Lap {lap['LapNumber']}: {lap['Driver']} - {lap['LapTime']}")
+
+# Access via tuple unpacking
+for index, lap in laps.iterlaps():
+    print(f"Index {index}: {lap['Driver']} lap {lap['LapNumber']}")
+
+# Require specific columns
+for lap_result in laps.iterlaps(require=["LapTime", "Driver", "Compound"]):
+    lap = lap_result.lap
+    print(f"{lap['Driver']} on {lap['Compound']}: {lap['LapTime']}")
+
+# Process each lap's telemetry
+ver_laps = laps.pick_driver("VER")
+for lap_result in ver_laps.iterlaps(require=["LapTime"]):
+    lap = lap_result.lap
+    tel = lap.telemetry
+    if not tel.empty:
+        max_speed = tel["Speed"].max()
+        print(f"Lap {lap['LapNumber']}: Max speed {max_speed:.1f} km/h")
+
+# Calculate statistics across laps
+lap_times = []
+for lap_result in laps.pick_driver("VER").iterlaps():
+    lap = lap_result.lap
+    lap_times.append(lap["LapTimeSeconds"])
+
+if lap_times:
+    import statistics
+    print(f"Mean: {statistics.mean(lap_times):.3f}s")
+    print(f"Std Dev: {statistics.stdev(lap_times):.3f}s")
+
+# Filter and process
+for lap_result in laps.iterlaps(require=["LapTime", "Compound"]):
+    lap = lap_result.lap
+    if lap["Compound"] == "SOFT" and lap["TyreLife"] < 5:
+        print(f"{lap['Driver']} lap {lap['LapNumber']}: Fresh SOFT tires")
+```
+
+**Use Cases:**
+- Processing each lap individually
+- Calculating custom statistics
+- Filtering with complex logic
+- Accessing telemetry for each lap
+- Building custom data structures
+
+---
+
+### Qualifying-Specific Methods
+
+#### `split_qualifying_sessions()`
+
+Split qualifying laps into Q1, Q2, and Q3 sessions. Note: tif1 doesn't split by session internally, so this returns copies for FastF1 compatibility.
+
+```python
+def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
+```
+
+**Returns:**
+- **`tuple[Laps, Laps, Laps]`**: (Q1 laps, Q2 laps, Q3 laps)
+
+**Behavior Details:**
+- Returns three Laps objects representing Q1, Q2, and Q3
+- In tif1, this returns copies of the same data for compatibility
+- Each returned Laps object preserves session context
+- If `QualifyingSession` column exists, attempts to split by that column
+
+**Example Usage:**
+
+```python
+# Split qualifying sessions
+q1, q2, q3 = laps.split_qualifying_sessions()
+
+print(f"Q1 laps: {len(q1)}")
+print(f"Q2 laps: {len(q2)}")
+print(f"Q3 laps: {len(q3)}")
+
+# Analyze each session
+for session_laps, name in [(q1, "Q1"), (q2, "Q2"), (q3, "Q3")]:
+    fastest = session_laps.pick_fastest()
+    if fastest is not None:
+        print(f"{name} fastest: {fastest['Driver']} - {fastest['LapTime']}")
+
+# Find drivers eliminated in each session
+q1_drivers = set(q1["Driver"].unique())
+q2_drivers = set(q2["Driver"].unique())
+q3_drivers = set(q3["Driver"].unique())
+
+eliminated_q1 = q1_drivers - q2_drivers
+eliminated_q2 = q2_drivers - q3_drivers
+
+print(f"Eliminated in Q1: {eliminated_q1}")
+print(f"Eliminated in Q2: {eliminated_q2}")
+```
+
+---
+
+### DataFrame Operations
+
+The `Laps` class inherits all pandas DataFrame operations, so you can use standard pandas methods:
+
+```python
+# Standard pandas operations
+print(laps.shape)  # (rows, columns)
+print(laps.columns.tolist())  # List of column names
+print(laps.head())  # First 5 rows
+print(laps.describe())  # Statistical summary
+
+# Filtering with pandas
+fast_laps = laps[laps["LapTimeSeconds"] < 90]
+soft_tire_laps = laps[laps["Compound"] == "SOFT"]
+
+# Grouping and aggregation
+by_driver = laps.groupby("Driver")["LapTimeSeconds"].mean()
+print(by_driver)
+
+# Sorting
+sorted_laps = laps.sort_values("LapTime")
+fastest_10 = sorted_laps.head(10)
+
+# Column operations
+laps["LapTimeMinutes"] = laps["LapTimeSeconds"] / 60
+
+# Merging with other data
+# (Note: use join() or merge() methods to preserve Laps type)
+```
+
+**Important:** When using pandas operations that return DataFrames, the result may be a plain pandas DataFrame rather than a Laps object. Use the tif1-specific methods (pick_*) to maintain the Laps type and session context.
+
+---
+
+---
+
+## Lap
+
+The `Lap` class represents a single lap with comprehensive timing data and access to high-frequency telemetry. It inherits from `pandas.Series`, making it a row-like object with named fields that can be accessed like a dictionary or via attribute access.
+
+### Class Overview
+
+**Inheritance:** `pandas.Series` → `Lap`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Common Access Patterns:**
+
+```python
+# From Laps collection
+fastest_lap = laps.pick_fastest()  # Returns Lap object
+
+# From Driver object
+lap_19 = driver.get_lap(19)  # Returns Lap object
+
+# From iteration
+for lap_result in laps.iterlaps():
+    lap = lap_result.lap  # Lap object
+```
+
+### Data Structure
+
+A `Lap` object is a pandas Series containing all the lap data columns described in the Laps section. You can access any column value using dictionary-style or attribute-style access:
+
+```python
+lap = driver.get_lap(19)
+
+# Dictionary-style access (recommended)
+lap_time = lap["LapTime"]
+driver_code = lap["Driver"]
+compound = lap["Compound"]
+
+# Check if column exists
+if "SpeedI1" in lap:
+    speed_i1 = lap["SpeedI1"]
+
+# Get with default
+tyre_life = lap.get("TyreLife", 0)
+```
+
+### Properties
+
+<ResponseField name="lap_number" type="int">
+  The lap number extracted from the `LapNumber` column. This is a convenience property that returns the lap number as an integer.
+  
+  **Usage:**
+  ```python
+  lap = driver.get_lap(19)
+  print(f"Lap number: {lap.lap_number}")  # 19
+  ```
+  
+  **Note:** Returns `None` if `LapNumber` column is missing or null.
+</ResponseField>
+
+<ResponseField name="driver" type="str">
+  The 3-letter driver code extracted from the `Driver` column. This identifies which driver completed this lap.
+  
+  **Usage:**
+  ```python
+  lap = laps.pick_fastest()
+  if lap is not None:
+      print(f"Fastest lap by: {lap.driver}")  # e.g., "VER"
+  ```
+  
+  **Note:** Returns `None` if `Driver` column is missing or null.
+</ResponseField>
+
+<ResponseField name="telemetry" type="Telemetry">
+  High-frequency telemetry data for this lap. This property provides lazy-loaded access to detailed sensor data including speed, throttle, brake, gear, DRS, and position information.
+  
+  **Behavior:**
+  - Loaded lazily on first access (not fetched until you access this property)
+  - Cached after first load for performance
+  - Returns empty Telemetry DataFrame if data not found or unavailable
+  - Automatically handles network requests and caching
+  - Preserves session context for continued analysis
+  
+  **Performance:**
+  - First access may trigger network request (~50-200ms depending on connection)
+  - Subsequent accesses are instant (cached in memory)
+  - Telemetry data is typically 1000-3000 samples per lap
+  
+  **Usage:**
+  ```python
+  lap = driver.get_lap(19)
+  tel = lap.telemetry
+  
+  if not tel.empty:
+      print(f"Telemetry samples: {len(tel)}")
+      print(f"Max speed: {tel['Speed'].max()} km/h")
+      print(f"Avg throttle: {tel['Throttle'].mean():.1f}%")
+      
+      # Analyze braking
+      braking_points = tel[tel["Brake"] == True]
+      print(f"Braking zones: {len(braking_points)}")
+  else:
+      print("No telemetry available for this lap")
+  ```
+  
+  **Error Handling:**
+  ```python
+  try:
+      tel = lap.telemetry
+      if tel.empty:
+          print("Telemetry not available")
+      else:
+          # Process telemetry
+          pass
+  except Exception as e:
+      print(f"Error loading telemetry: {e}")
+  ```
+</ResponseField>
+
+<ResponseField name="session" type="Session">
+  Reference to the parent Session object. This maintains the connection to the session that created this lap, enabling access to session-level data and methods.
+  
+  **Usage:**
+  ```python
+  lap = driver.get_lap(19)
+  
+  # Access session information
+  print(f"Year: {lap.session.year}")
+  print(f"GP: {lap.session.gp}")
+  print(f"Session: {lap.session.session}")
+  
+  # Access other session data
+  all_laps = lap.session.laps
+  weather = lap.session.weather_data
+  ```
+</ResponseField>
+
+### Methods
+
+#### `get_telemetry()`
+
+Explicitly load telemetry data with driver-ahead channels. This method is similar to accessing the `telemetry` property but includes additional channels for analyzing car-to-car interactions.
+
+```python
+def get_telemetry() -> Telemetry
+```
+
+**Returns:**
+- **`Telemetry`** DataFrame with all telemetry channels including:
+  - Standard channels: Time, Speed, RPM, nGear, Throttle, Brake, DRS, Distance, X, Y, Z
+  - Driver-ahead channels: DriverAhead, DistanceToDriverAhead
+
+**Behavior Details:**
+- Includes `DriverAhead` and `DistanceToDriverAhead` columns (if available)
+- Useful for analyzing overtaking opportunities and battles
+- Same lazy-loading and caching behavior as `telemetry` property
+- Returns empty Telemetry if data not available
+
+**Example Usage:**
+
+```python
+lap = driver.get_lap(19)
+tel = lap.get_telemetry()
+
+if not tel.empty:
+    # Analyze driver-ahead data
+    if "DriverAhead" in tel.columns:
+        ahead_data = tel[tel["DriverAhead"].notna()]
+        if not ahead_data.empty:
+            print(f"Car ahead detected in {len(ahead_data)} samples")
+            
+            # Find closest approach
+            min_distance = ahead_data["DistanceToDriverAhead"].min()
+            print(f"Closest approach: {min_distance:.1f}m")
+            
+            # Identify the driver ahead
+            drivers_ahead = ahead_data["DriverAhead"].unique()
+            print(f"Drivers ahead: {', '.join(drivers_ahead)}")
+    
+    # Standard telemetry analysis
+    print(f"Max speed: {tel['Speed'].max()} km/h")
+    print(f"DRS usage: {len(tel[tel['DRS'] >= 10])} samples")
+```
+
+**Use Cases:**
+- Overtaking analysis
+- Battle analysis between drivers
+- Gap analysis during racing
+- Understanding traffic impact on lap times
+
+---
+
+#### `get_car_data(**kwargs)` / `get_pos_data(**kwargs)`
+
+FastF1 compatibility aliases for telemetry access. These methods provide the same functionality as the `telemetry` property but with FastF1-compatible naming conventions.
+
+```python
+def get_car_data(**kwargs) -> Telemetry
+def get_pos_data(**kwargs) -> Telemetry
+```
+
+**Parameters:**
+- **`**kwargs`**: Accepts any keyword arguments for FastF1 compatibility (ignored in tif1)
+
+**Returns:**
+- **`Telemetry`** DataFrame with telemetry data
+
+**Behavior Details:**
+- `get_car_data()` returns full telemetry data (same as `telemetry` property)
+- `get_pos_data()` returns position data (in tif1, same as car data)
+- Both methods are provided for FastF1 compatibility
+- No functional difference between the two in tif1
+
+**Example Usage:**
+
+```python
+lap = driver.get_lap(19)
+
+# FastF1-style access
+car_data = lap.get_car_data()
+pos_data = lap.get_pos_data()
+
+# Both return the same data in tif1
+print(f"Car data samples: {len(car_data)}")
+print(f"Pos data samples: {len(pos_data)}")
+
+# Use like regular telemetry
+if not car_data.empty:
+    max_speed = car_data["Speed"].max()
+    print(f"Max speed: {max_speed} km/h")
+```
+
+**Migration from FastF1:**
+
+```python
+# FastF1 code
+car_data = lap.get_car_data()
+pos_data = lap.get_pos_data()
+
+# Works identically in tif1
+car_data = lap.get_car_data()
+pos_data = lap.get_pos_data()
+
+# Or use tif1's preferred approach
+telemetry = lap.telemetry
+```
+
+---
+
+#### `get_weather_data()`
+
+Get weather data for this lap. Currently returns an empty Series as lap-specific weather data is included in the lap's columns.
+
+```python
+def get_weather_data() -> Series
+```
+
+**Returns:**
+- **`Series`**: Empty pandas Series (weather data is in lap columns)
+
+**Behavior Details:**
+- Provided for FastF1 compatibility
+- Weather data is already available in lap columns (AirTemp, TrackTemp, Humidity, etc.)
+- Returns empty Series in current implementation
+
+**Example Usage:**
+
+```python
+lap = driver.get_lap(19)
+
+# Weather data is in the lap itself
+if "AirTemp" in lap:
+    print(f"Air temp: {lap['AirTemp']}°C")
+if "TrackTemp" in lap:
+    print(f"Track temp: {lap['TrackTemp']}°C")
+if "Humidity" in lap:
+    print(f"Humidity: {lap['Humidity']}%")
+if "Rainfall" in lap:
+    print(f"Raining: {lap['Rainfall']}")
+
+# get_weather_data() returns empty Series
+weather = lap.get_weather_data()  # Empty Series
+```
+
+**Accessing Weather Data:**
+
+```python
+# Recommended approach: access weather columns directly
+lap = driver.get_lap(19)
+
+weather_info = {
+    "Air Temperature": lap.get("AirTemp"),
+    "Track Temperature": lap.get("TrackTemp"),
+    "Humidity": lap.get("Humidity"),
+    "Pressure": lap.get("Pressure"),
+    "Wind Speed": lap.get("WindSpeed"),
+    "Wind Direction": lap.get("WindDirection"),
+    "Rainfall": lap.get("Rainfall", False)
+}
+
+for key, value in weather_info.items():
+    if value is not None:
+        print(f"{key}: {value}")
+```
+
+---
+
+### Common Usage Patterns
+
+#### Analyzing a Single Lap
 
 ```python
 # Get a specific lap
-lap = ver.get_lap(1)
+lap = driver.get_lap(19)
 
-# Access lap properties
-print(f"Lap {lap.lap_number}")
+# Basic lap information
 print(f"Driver: {lap.driver}")
-print(f"Lap time: {lap['LapTime']}")  # Access Series data
+print(f"Lap: {lap.lap_number}")
+print(f"Time: {lap['LapTime']}")
+print(f"Compound: {lap['Compound']}")
+print(f"Tire Life: {lap['TyreLife']} laps")
+print(f"Position: {lap['Position']}")
 
-# Get telemetry (lazy loaded)
+# Sector times
+print(f"S1: {lap['Sector1Time']}")
+print(f"S2: {lap['Sector2Time']}")
+print(f"S3: {lap['Sector3Time']}")
+
+# Speed traps
+print(f"Speed I1: {lap['SpeedI1']} km/h")
+print(f"Speed I2: {lap['SpeedI2']} km/h")
+print(f"Speed FL: {lap['SpeedFL']} km/h")
+
+# Telemetry analysis
 tel = lap.telemetry
-
-# Get telemetry with driver-ahead channels
-tel_with_ahead = lap.get_telemetry()
-
-# Analyze telemetry
 if not tel.empty:
-    max_speed = tel["Speed"].max()
-    avg_throttle = tel["Throttle"].mean()
-    print(f"Max speed: {max_speed} km/h")
-    print(f"Avg throttle: {avg_throttle}%")
+    print(f"\nTelemetry Analysis:")
+    print(f"Max speed: {tel['Speed'].max():.1f} km/h")
+    print(f"Avg speed: {tel['Speed'].mean():.1f} km/h")
+    print(f"Max RPM: {tel['RPM'].max()}")
+    print(f"Avg throttle: {tel['Throttle'].mean():.1f}%")
 ```
 
-### Working with Telemetry
+#### Comparing Two Laps
 
 ```python
-# Get telemetry
-lap = ver.get_lap(1)
+# Get two laps to compare
+lap1 = driver.get_lap(10)
+lap2 = driver.get_lap(20)
+
+# Compare lap times
+time_diff = lap2["LapTimeSeconds"] - lap1["LapTimeSeconds"]
+print(f"Time difference: {time_diff:.3f}s")
+
+# Compare tire age
+print(f"Lap 10 tire life: {lap1['TyreLife']}")
+print(f"Lap 20 tire life: {lap2['TyreLife']}")
+
+# Compare telemetry
+tel1 = lap1.telemetry
+tel2 = lap2.telemetry
+
+if not tel1.empty and not tel2.empty:
+    speed_diff = tel2["Speed"].max() - tel1["Speed"].max()
+    print(f"Max speed difference: {speed_diff:.1f} km/h")
+```
+
+#### Finding Personal Best Lap
+
+```python
+# Get all laps for a driver
+driver_laps = laps.pick_driver("VER")
+
+# Find personal best
+for lap_result in driver_laps.iterlaps():
+    lap = lap_result.lap
+    if lap.get("IsPersonalBest", False):
+        print(f"Personal best: Lap {lap.lap_number}")
+        print(f"Time: {lap['LapTime']}")
+        print(f"Compound: {lap['Compound']}")
+        
+        # Analyze the personal best lap
+        tel = lap.telemetry
+        if not tel.empty:
+            print(f"Max speed: {tel['Speed'].max():.1f} km/h")
+```
+
+---
+
+---
+
+## Driver
+
+The `Driver` class represents a driver's participation in a session, providing access to their metadata, all their laps, and convenience methods for analyzing their performance. It inherits from `pandas.Series`, making it a dictionary-like object with driver information.
+
+### Class Overview
+
+**Inheritance:** `pandas.Series` → `Driver`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Common Access Patterns:**
+
+```python
+# From Session object
+driver = session.get_driver("VER")
+
+# Iterate over all drivers
+for driver_code in session.drivers:
+    driver = session.get_driver(driver_code)
+```
+
+### Data Structure
+
+A `Driver` object is a pandas Series containing driver metadata. The data is stored in the Series itself and can be accessed using dictionary-style or attribute-style access:
+
+**Available Fields (in Series data):**
+
+- **`DriverNumber`** (str): Racing number (e.g., "1", "44", "16")
+- **`Abbreviation`** (str): 3-letter driver code (e.g., "VER", "HAM", "LEC")
+- **`TeamName`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes")
+- **`TeamColor`** (str): Team color hex code (e.g., "#3671C6")
+- **`FirstName`** (str): Driver's first name (e.g., "Max", "Lewis")
+- **`LastName`** (str): Driver's last name (e.g., "Verstappen", "Hamilton")
+- **`FullName`** (str): Driver's full name (e.g., "Max Verstappen")
+- **`HeadshotUrl`** (str): URL to driver headshot image
+
+**Access Examples:**
+
+```python
+driver = session.get_driver("VER")
+
+# Access via dictionary-style (recommended)
+print(f"Number: {driver['DriverNumber']}")
+print(f"Team: {driver['TeamName']}")
+print(f"Full Name: {driver['FullName']}")
+print(f"Color: {driver['TeamColor']}")
+
+# Check if field exists
+if "HeadshotUrl" in driver:
+    print(f"Headshot: {driver['HeadshotUrl']}")
+```
+
+### Properties
+
+<ResponseField name="driver" type="str">
+  The 3-letter driver code (e.g., "VER", "HAM", "LEC"). This is stored as an attribute (not in the Series data) and provides quick access to the driver identifier.
+  
+  **Usage:**
+  ```python
+  driver = session.get_driver("VER")
+  print(f"Driver code: {driver.driver}")  # "VER"
+  
+  # Use in filtering
+  all_laps = session.laps
+  driver_laps = all_laps[all_laps["Driver"] == driver.driver]
+  ```
+  
+  **Note:** This is the primary identifier for the driver and is used throughout tif1 for filtering and lookups.
+</ResponseField>
+
+<ResponseField name="session" type="Session">
+  Reference to the parent Session object. This maintains the connection to the session, enabling access to session-level data and methods.
+  
+  **Usage:**
+  ```python
+  driver = session.get_driver("VER")
+  
+  # Access session information
+  print(f"Year: {driver.session.year}")
+  print(f"GP: {driver.session.gp}")
+  
+  # Access other session data
+  all_laps = driver.session.laps
+  weather = driver.session.weather_data
+  ```
+</ResponseField>
+
+<ResponseField name="laps" type="Laps | DataFrame">
+  All laps completed by this driver in the session. This property provides lazy-loaded access to the driver's lap data.
+  
+  **Type:** Returns `Laps` (pandas backend) or `DataFrame` (polars backend)
+  
+  **Behavior:**
+  - Loaded lazily on first access (not fetched until you access this property)
+  - Cached after first load for performance
+  - Returns empty DataFrame if no laps found
+  - Automatically filters session laps to this driver
+  - Preserves session context in returned Laps object
+  
+  **Performance:**
+  - First access may trigger network request if not cached (~50-200ms)
+  - Subsequent accesses are instant (cached in memory)
+  - Efficient filtering using pandas/polars vectorized operations
+  
+  **Usage:**
+  ```python
+  driver = session.get_driver("VER")
+  laps = driver.laps
+  
+  if not laps.empty:
+      print(f"Total laps: {len(laps)}")
+      print(f"Fastest lap: {laps['LapTime'].min()}")
+      
+      # Use all Laps methods
+      fastest = laps.pick_fastest()
+      soft_laps = laps.pick_tyre("SOFT")
+      quick_laps = laps.pick_quicklaps()
+      
+      # Analyze lap times
+      avg_time = laps["LapTimeSeconds"].mean()
+      print(f"Average lap time: {avg_time:.3f}s")
+  else:
+      print("No laps found for this driver")
+  ```
+  
+  **Common Patterns:**
+  ```python
+  # Tire strategy analysis
+  for compound in ["SOFT", "MEDIUM", "HARD"]:
+      compound_laps = driver.laps.pick_tyre(compound)
+      if not compound_laps.empty:
+          print(f"{compound}: {len(compound_laps)} laps")
+  
+  # Pace analysis
+  race_pace = driver.laps.pick_wo_box().pick_quicklaps()
+  if not race_pace.empty:
+      median_time = race_pace["LapTimeSeconds"].median()
+      print(f"Race pace: {median_time:.3f}s")
+  
+  # Lap time progression
+  import matplotlib.pyplot as plt
+  plt.plot(driver.laps["LapNumber"], driver.laps["LapTimeSeconds"])
+  plt.xlabel("Lap Number")
+  plt.ylabel("Lap Time (s)")
+  plt.title(f"{driver.driver} Lap Times")
+  plt.show()
+  ```
+</ResponseField>
+
+### Methods
+
+#### `get_lap(lap_number)`
+
+Get a specific lap by number. This is the primary method for accessing individual laps from a driver.
+
+```python
+def get_lap(lap_number: int) -> Lap
+```
+
+**Parameters:**
+
+- **`lap_number`** (int): The lap number to retrieve. Must be a positive integer.
+
+**Returns:**
+- **`Lap`** object for the specified lap
+
+**Raises:**
+- **`LapNotFoundError`**: If the lap doesn't exist for this driver
+- **`ValueError`**: If lap_number is invalid (negative, zero, or not an integer)
+
+**Behavior Details:**
+- Uses optimized O(1) lookup with internal lap index map
+- Validates lap number before lookup
+- Returns a Lap object with full lap data and telemetry access
+- Preserves session context in returned Lap object
+- Raises specific exceptions for better error handling
+
+**Performance Characteristics:**
+- Time Complexity: O(1) after first call (builds index map on first access)
+- Space Complexity: O(n) for index map where n is number of laps
+- Subsequent calls are extremely fast (dictionary lookup)
+
+**Example Usage:**
+
+```python
+driver = session.get_driver("VER")
+
+# Get a specific lap
+lap_19 = driver.get_lap(19)
+print(f"Lap {lap_19.lap_number}: {lap_19['LapTime']}")
+
+# Access lap data
+print(f"Compound: {lap_19['Compound']}")
+print(f"Tire Life: {lap_19['TyreLife']}")
+print(f"Position: {lap_19['Position']}")
+
+# Access telemetry
+tel = lap_19.telemetry
+if not tel.empty:
+    print(f"Max speed: {tel['Speed'].max()} km/h")
+
+# Analyze multiple laps
+for lap_num in [1, 10, 20, 30]:
+    try:
+        lap = driver.get_lap(lap_num)
+        print(f"Lap {lap_num}: {lap['LapTime']}")
+    except LapNotFoundError:
+        print(f"Lap {lap_num}: Not found")
+
+# Compare consecutive laps
+try:
+    lap_10 = driver.get_lap(10)
+    lap_11 = driver.get_lap(11)
+    
+    time_diff = lap_11["LapTimeSeconds"] - lap_10["LapTimeSeconds"]
+    print(f"Time difference: {time_diff:.3f}s")
+except LapNotFoundError as e:
+    print(f"Lap not found: {e}")
+
+# Find pit stop lap
+for lap_num in range(1, 60):
+    try:
+        lap = driver.get_lap(lap_num)
+        if lap.get("PitInTime") is not None:
+            print(f"Pit stop on lap {lap_num}")
+            break
+    except LapNotFoundError:
+        break
+```
+
+**Error Handling:**
+
+```python
+from tif1.exceptions import LapNotFoundError
+
+driver = session.get_driver("VER")
+
+# Proper error handling
+try:
+    lap = driver.get_lap(99)
+except LapNotFoundError as e:
+    print(f"Lap not found: {e}")
+    print(f"Driver: {e.driver}")
+    print(f"Lap number: {e.lap_number}")
+except ValueError as e:
+    print(f"Invalid lap number: {e}")
+
+# Check if lap exists before accessing
+total_laps = len(driver.laps)
+if lap_number <= total_laps:
+    lap = driver.get_lap(lap_number)
+else:
+    print(f"Lap {lap_number} doesn't exist (only {total_laps} laps)")
+```
+
+**Use Cases:**
+- Analyzing specific race moments (lap 1, pit stop laps, final lap)
+- Comparing performance at different race stages
+- Telemetry analysis for specific laps
+- Incident investigation
+- Tire warm-up analysis (first lap of stint)
+
+---
+
+#### `get_fastest_lap()`
+
+Get this driver's fastest lap as a single-row DataFrame. This is a convenience method for quickly accessing the driver's best performance.
+
+```python
+def get_fastest_lap() -> DataFrame
+```
+
+**Returns:**
+- **`DataFrame`**: Single-row DataFrame containing the fastest lap data. Returns empty DataFrame if no valid laps found.
+
+**Behavior Details:**
+- Filters to laps with valid lap times (non-null, non-NaN)
+- Returns the lap with minimum `LapTime` value
+- Returns empty DataFrame (not None) if no valid laps exist
+- Result is a DataFrame (not a Lap object) for consistency with FastF1
+- Includes all lap columns
+
+**Performance Characteristics:**
+- Time Complexity: O(n) where n is number of driver's laps
+- Efficient pandas vectorized operation
+- May use cached lap data if already loaded
+
+**Example Usage:**
+
+```python
+driver = session.get_driver("VER")
+
+# Get fastest lap
+fastest = driver.get_fastest_lap()
+
+if not fastest.empty:
+    # Access as DataFrame
+    lap_time = fastest["LapTime"].iloc[0]
+    lap_number = fastest["LapNumber"].iloc[0]
+    compound = fastest["Compound"].iloc[0]
+    
+    print(f"Fastest lap: {lap_time}")
+    print(f"On lap: {lap_number}")
+    print(f"Compound: {compound}")
+    
+    # Get telemetry for fastest lap
+    lap_num = int(lap_number)
+    fastest_lap_obj = driver.get_lap(lap_num)
+    tel = fastest_lap_obj.telemetry
+    
+    if not tel.empty:
+        print(f"Max speed: {tel['Speed'].max()} km/h")
+else:
+    print("No valid laps found")
+
+# Compare fastest laps between drivers
+drivers = ["VER", "HAM", "LEC"]
+for driver_code in drivers:
+    driver = session.get_driver(driver_code)
+    fastest = driver.get_fastest_lap()
+    
+    if not fastest.empty:
+        time = fastest["LapTime"].iloc[0]
+        lap_num = fastest["LapNumber"].iloc[0]
+        print(f"{driver_code}: {time} (Lap {lap_num})")
+
+# Analyze fastest lap conditions
+fastest = driver.get_fastest_lap()
+if not fastest.empty:
+    print(f"Tire: {fastest['Compound'].iloc[0]}")
+    print(f"Tire Life: {fastest['TyreLife'].iloc[0]} laps")
+    print(f"Track Status: {fastest['TrackStatus'].iloc[0]}")
+    print(f"Air Temp: {fastest.get('AirTemp', pd.Series([None])).iloc[0]}°C")
+```
+
+**Common Patterns:**
+
+```python
+# Find fastest lap and analyze telemetry
+driver = session.get_driver("VER")
+fastest = driver.get_fastest_lap()
+
+if not fastest.empty:
+    lap_num = int(fastest["LapNumber"].iloc[0])
+    lap = driver.get_lap(lap_num)
+    tel = lap.telemetry
+    
+    if not tel.empty:
+        # Detailed analysis
+        max_speed = tel["Speed"].max()
+        avg_speed = tel["Speed"].mean()
+        max_rpm = tel["RPM"].max()
+        
+        print(f"Fastest lap analysis:")
+        print(f"  Time: {fastest['LapTime'].iloc[0]}")
+        print(f"  Max speed: {max_speed:.1f} km/h")
+        print(f"  Avg speed: {avg_speed:.1f} km/h")
+        print(f"  Max RPM: {max_rpm}")
+
+# Compare fastest lap to average
+fastest = driver.get_fastest_lap()
+if not fastest.empty:
+    fastest_time = fastest["LapTimeSeconds"].iloc[0]
+    avg_time = driver.laps["LapTimeSeconds"].mean()
+    diff = avg_time - fastest_time
+    print(f"Fastest: {fastest_time:.3f}s")
+    print(f"Average: {avg_time:.3f}s")
+    print(f"Difference: {diff:.3f}s")
+```
+
+---
+
+#### `get_fastest_lap_tel()`
+
+Get telemetry from this driver's fastest lap. This is a convenience method that combines finding the fastest lap and loading its telemetry in one call.
+
+```python
+def get_fastest_lap_tel() -> DataFrame
+```
+
+**Returns:**
+- **`DataFrame`**: Telemetry DataFrame for the fastest lap. Returns empty DataFrame if not found.
+
+**Behavior Details:**
+- Automatically identifies the fastest lap
+- Loads telemetry for that lap
+- Returns empty DataFrame if no fastest lap or no telemetry available
+- More efficient than calling `get_fastest_lap()` then loading telemetry separately
+- Uses internal optimization to avoid redundant lookups
+
+**Performance Characteristics:**
+- Optimized to minimize data fetching
+- May use cached telemetry if available
+- Single method call for convenience
+
+**Example Usage:**
+
+```python
+driver = session.get_driver("VER")
+
+# Get fastest lap telemetry directly
+fastest_tel = driver.get_fastest_lap_tel()
+
+if not fastest_tel.empty:
+    print(f"Telemetry samples: {len(fastest_tel)}")
+    
+    # Analyze speed
+    max_speed = fastest_tel["Speed"].max()
+    avg_speed = fastest_tel["Speed"].mean()
+    print(f"Max speed: {max_speed:.1f} km/h")
+    print(f"Avg speed: {avg_speed:.1f} km/h")
+    
+    # Analyze braking
+    braking = fastest_tel[fastest_tel["Brake"] == True]
+    print(f"Braking zones: {len(braking)} samples")
+    
+    # Analyze DRS
+    drs_active = fastest_tel[fastest_tel["DRS"] >= 10]
+    print(f"DRS active: {len(drs_active)} samples")
+    
+    # Gear usage
+    for gear in range(1, 9):
+        gear_samples = fastest_tel[fastest_tel["nGear"] == gear]
+        if not gear_samples.empty:
+            print(f"Gear {gear}: {len(gear_samples)} samples")
+else:
+    print("No telemetry available for fastest lap")
+
+# Compare fastest lap telemetry between drivers
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+for driver_code in ["VER", "HAM", "LEC"]:
+    driver = session.get_driver(driver_code)
+    tel = driver.get_fastest_lap_tel()
+    
+    if not tel.empty:
+        ax.plot(tel["Distance"], tel["Speed"], label=driver_code)
+
+ax.set_xlabel("Distance (m)")
+ax.set_ylabel("Speed (km/h)")
+ax.set_title("Fastest Lap Speed Comparison")
+ax.legend()
+ax.grid(True)
+plt.show()
+
+# Analyze throttle application
+fastest_tel = driver.get_fastest_lap_tel()
+if not fastest_tel.empty:
+    full_throttle = fastest_tel[fastest_tel["Throttle"] >= 99]
+    partial_throttle = fastest_tel[(fastest_tel["Throttle"] > 0) & 
+                                    (fastest_tel["Throttle"] < 99)]
+    
+    print(f"Full throttle: {len(full_throttle)} samples "
+          f"({len(full_throttle)/len(fastest_tel)*100:.1f}%)")
+    print(f"Partial throttle: {len(partial_throttle)} samples "
+          f"({len(partial_throttle)/len(fastest_tel)*100:.1f}%)")
+```
+
+**Use Cases:**
+- Quick access to best performance telemetry
+- Driver comparison visualizations
+- Optimal racing line analysis
+- Braking point identification
+- Gear shift analysis
+- DRS effectiveness study
+
+---
+
+### Common Usage Patterns
+
+#### Complete Driver Analysis
+
+```python
+driver = session.get_driver("VER")
+
+# Basic information
+print(f"Driver: {driver['FullName']}")
+print(f"Number: {driver['DriverNumber']}")
+print(f"Team: {driver['TeamName']}")
+
+# Lap statistics
+laps = driver.laps
+if not laps.empty:
+    print(f"\nLap Statistics:")
+    print(f"Total laps: {len(laps)}")
+    print(f"Fastest: {laps['LapTime'].min()}")
+    print(f"Average: {laps['LapTimeSeconds'].mean():.3f}s")
+    print(f"Std Dev: {laps['LapTimeSeconds'].std():.3f}s")
+
+# Tire strategy
+print(f"\nTire Strategy:")
+for compound in ["SOFT", "MEDIUM", "HARD"]:
+    compound_laps = laps.pick_tyre(compound)
+    if not compound_laps.empty:
+        max_life = compound_laps["TyreLife"].max()
+        print(f"{compound}: {len(compound_laps)} laps (max life: {max_life})")
+
+# Fastest lap analysis
+fastest = driver.get_fastest_lap()
+if not fastest.empty:
+    print(f"\nFastest Lap:")
+    print(f"Time: {fastest['LapTime'].iloc[0]}")
+    print(f"Lap: {fastest['LapNumber'].iloc[0]}")
+    print(f"Compound: {fastest['Compound'].iloc[0]}")
+    
+    # Telemetry
+    fastest_tel = driver.get_fastest_lap_tel()
+    if not fastest_tel.empty:
+        print(f"Max speed: {fastest_tel['Speed'].max():.1f} km/h")
+```
+
+#### Comparing Drivers
+
+```python
+drivers = ["VER", "HAM", "LEC"]
+
+for driver_code in drivers:
+    driver = session.get_driver(driver_code)
+    
+    print(f"\n{driver['FullName']} ({driver['TeamName']}):")
+    
+    # Fastest lap
+    fastest = driver.get_fastest_lap()
+    if not fastest.empty:
+        print(f"  Fastest: {fastest['LapTime'].iloc[0]}")
+    
+    # Race pace
+    race_pace = driver.laps.pick_wo_box().pick_quicklaps()
+    if not race_pace.empty:
+        median = race_pace["LapTimeSeconds"].median()
+        print(f"  Race pace: {median:.3f}s")
+    
+    # Consistency
+    if len(driver.laps) > 1:
+        std = driver.laps["LapTimeSeconds"].std()
+        print(f"  Consistency: {std:.3f}s")
+```
+
+---
+
+---
+
+## Telemetry
+
+The `Telemetry` class represents high-frequency data recorded throughout a lap or multiple laps. It inherits from `pandas.DataFrame` with additional slicing and analysis methods specifically designed for telemetry data. This is one of the most powerful classes in tif1, enabling detailed analysis of driver inputs, car behavior, and racing lines.
+
+### Class Overview
+
+**Inheritance:** `pandas.DataFrame` → `Telemetry`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Sampling Rate:** Typically 10-20 Hz (10-20 samples per second), resulting in 1000-3000 samples per lap
+
+**Common Access Patterns:**
+
+```python
+# From Lap object
+lap = driver.get_lap(19)
 tel = lap.telemetry
 
-# Basic analysis
-if not tel.empty:
-    print(f"Samples: {len(tel)}")
-    print(f"Max speed: {tel['Speed'].max()} km/h")
-    print(f"Max RPM: {tel['RPM'].max()}")
+# From Laps collection (single driver only)
+ver_laps = laps.pick_driver("VER")
+tel = ver_laps.telemetry
 
-    # Find braking zones
-    braking = tel[tel["Brake"] == True]
-    print(f"Braking points: {len(braking)}")
-
-    # DRS usage
-    drs_active = tel[tel["DRS"] >= 10]
-    print(f"DRS active: {len(drs_active)} samples")
-
-    # Slice by time
-    first_10s = tel.slice_by_time(0, 10)
-
-    # Add distance if not present
-    tel_with_dist = tel.add_distance()
-
-    # Add driver ahead info
-    tel_with_ahead = tel.add_driver_ahead()
-
-    # Resample to 1 second intervals
-    resampled = tel.resample_channels(rule="1S")
+# From Driver object (fastest lap)
+tel = driver.get_fastest_lap_tel()
 ```
+
+### Properties
+
+<ResponseField name="session" type="Session">
+  Reference to the parent Session object. Maintains connection to the session for accessing session-level data.
+</ResponseField>
+
+<ResponseField name="driver" type="str">
+  Driver code for this telemetry data (e.g., "VER", "HAM"). May be None if telemetry is from multiple drivers.
+</ResponseField>
+
+### Available Columns
+
+Telemetry DataFrames contain high-frequency sensor data with the following columns:
+
+#### Time and Distance
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Time` | timedelta64[ns] | Seconds | Time from lap start (or session start) |
+| `Distance` | float64 | Meters | Distance from lap start along the racing line |
+| `RelativeDistance` | float64 | 0-1 | Normalized distance (0 = start, 1 = finish) |
+
+#### Speed and Engine
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Speed` | float64 | km/h | Current speed |
+| `RPM` | int | RPM | Engine revolutions per minute |
+| `nGear` | int | - | Current gear (1-8, 0 for neutral/reverse) |
+
+#### Driver Inputs
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Throttle` | float64 | % | Throttle position (0-100%) |
+| `Brake` | bool | - | Brake pedal pressed (True/False) |
+| `DRS` | int | - | DRS status (0=Off, 10+=On, values 10-14 indicate different DRS states) |
+
+#### Position (3D Coordinates)
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `X` | float64 | Meters | X coordinate on track |
+| `Y` | float64 | Meters | Y coordinate on track |
+| `Z` | float64 | Meters | Z coordinate (elevation) |
+
+#### Lap Context
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `Driver` | str | - | Driver code (e.g., "VER") |
+| `LapNumber` | int | - | Lap number this telemetry belongs to |
+| `TrackStatus` | str | - | Track condition code ("1"=Green, "2"=Yellow, etc.) |
+
+#### Driver-Ahead Data (when available)
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `DriverAhead` | str | - | Driver code of car ahead |
+| `DistanceToDriverAhead` | float64 | Meters | Distance to car ahead |
+
+**Note:** Not all columns are always present. Use `if "ColumnName" in tel.columns` to check availability.
+
+### Core Methods
+
+#### `slice_by_time(start_time, end_time, pad=0, pad_side="both", interpolate_edges=False)`
+
+Slice telemetry by time window. Essential for analyzing specific sections of a lap or comparing the same time window across different laps.
+
+```python
+def slice_by_time(
+    start_time,
+    end_time,
+    pad: int = 0,
+    pad_side: str = "both",
+    interpolate_edges: bool = False
+) -> Telemetry
+```
+
+**Parameters:**
+
+- **`start_time`**: Start time (timedelta, float seconds, or int seconds)
+- **`end_time`**: End time (same format as start_time)
+- **`pad`** (int, default=0): Number of samples to include before/after the slice
+- **`pad_side`** (str, default="both"): Where to apply padding ("both", "before", "after")
+- **`interpolate_edges`** (bool, default=False): Whether to interpolate at slice boundaries (reserved for future use)
+
+**Returns:**
+- **`Telemetry`** DataFrame containing only the specified time window
+
+**Behavior Details:**
+- Time values can be provided as timedelta, float (seconds), or int (seconds)
+- Automatically adjusts Time column to be zero-based relative to start_time
+- Padding adds extra samples for context
+- Returns empty Telemetry if time window doesn't exist
+
+**Example Usage:**
+
+```python
+lap = driver.get_lap(19)
+tel = lap.telemetry
+
+if not tel.empty:
+    # Get first 10 seconds
+    first_10s = tel.slice_by_time(0, 10)
+    print(f"First 10s: {len(first_10s)} samples")
+    
+    # Get specific time window (20-30 seconds)
+    mid_section = tel.slice_by_time(20, 30)
+    
+    # With padding (5 samples before and after)
+    padded = tel.slice_by_time(10, 20, pad=5, pad_side="both")
+    
+    # Analyze braking in first sector
+    first_sector = tel.slice_by_time(0, 25)
+    braking = first_sector[first_sector["Brake"] == True]
+    print(f"Braking points in first sector: {len(braking)}")
+    
+    # Compare throttle application in different sections
+    section1 = tel.slice_by_time(0, 30)
+    section2 = tel.slice_by_time(30, 60)
+    
+    print(f"Section 1 avg throttle: {section1['Throttle'].mean():.1f}%")
+    print(f"Section 2 avg throttle: {section2['Throttle'].mean():.1f}%")
+```
+
+---
+
+#### `slice_by_lap(ref_laps, pad=0, pad_side="both", interpolate_edges=False)`
+
+Slice telemetry by lap reference. Useful for extracting telemetry for specific laps from a larger telemetry dataset.
+
+```python
+def slice_by_lap(
+    ref_laps,
+    pad: int = 0,
+    pad_side: str = "both",
+    interpolate_edges: bool = False
+) -> Telemetry
+```
+
+**Parameters:**
+
+- **`ref_laps`**: Lap or Laps object to use as reference
+- **`pad`** (int, default=0): Number of samples to include before/after
+- **`pad_side`** (str, default="both"): Where to apply padding
+- **`interpolate_edges`** (bool, default=False): Whether to interpolate at boundaries
+
+**Returns:**
+- **`Telemetry`** DataFrame for the specified lap(s)
+
+**Behavior Details:**
+- Extracts telemetry based on lap start/end times or lap numbers
+- Raises ValueError if ref_laps contains multiple drivers
+- Returns empty Telemetry if lap not found
+
+**Example Usage:**
+
+```python
+# Get telemetry for specific lap
+lap = driver.get_lap(19)
+session_tel = session.car_data  # All telemetry
+lap_tel = session_tel.slice_by_lap(lap)
+
+# Get telemetry for multiple laps
+laps_10_to_15 = driver.laps.pick_laps(slice(10, 15))
+multi_lap_tel = session_tel.slice_by_lap(laps_10_to_15)
+```
+
+---
+
+#### `slice_by_mask(mask, pad=0, pad_side="both")`
+
+Slice telemetry using a boolean mask. Powerful for custom filtering based on any condition.
+
+```python
+def slice_by_mask(mask, pad: int = 0, pad_side: str = "both") -> Telemetry
+```
+
+**Parameters:**
+
+- **`mask`**: Boolean array/Series matching telemetry length
+- **`pad`** (int, default=0): Number of samples to include before/after
+- **`pad_side`** (str, default="both"): Where to apply padding
+
+**Returns:**
+- **`Telemetry`** DataFrame containing only masked samples
+
+**Raises:**
+- **`ValueError`**: If mask length doesn't match telemetry length
+
+**Example Usage:**
+
+```python
+tel = lap.telemetry
+
+if not tel.empty:
+    # High-speed sections (>300 km/h)
+    high_speed_mask = tel["Speed"] > 300
+    high_speed_tel = tel.slice_by_mask(high_speed_mask)
+    print(f"High-speed samples: {len(high_speed_tel)}")
+    
+    # Full throttle sections
+    full_throttle_mask = tel["Throttle"] >= 99
+    full_throttle_tel = tel.slice_by_mask(full_throttle_mask)
+    
+    # Braking zones with padding
+    braking_mask = tel["Brake"] == True
+    braking_tel = tel.slice_by_mask(braking_mask, pad=10)
+    
+    # Complex conditions
+    complex_mask = (tel["Speed"] > 250) & (tel["Throttle"] > 90) & (tel["nGear"] >= 7)
+    high_speed_high_gear = tel.slice_by_mask(complex_mask)
+```
+
+---
+
+### Distance and Position Methods
+
+#### `add_distance()` / `integrate_distance()`
+
+Calculate distance from speed and time. Essential when Distance column is missing.
+
+```python
+def add_distance(drop_existing: bool = True) -> Telemetry
+def integrate_distance() -> Series
+```
+
+**Returns:**
+- **`add_distance()`**: Telemetry with Distance column added
+- **`integrate_distance()`**: Series with calculated distances
+
+**Behavior Details:**
+- Integrates speed over time to calculate distance
+- Converts speed from km/h to m/s internally
+- Returns original telemetry if Distance already exists
+- `integrate_distance()` returns Series without modifying telemetry
+
+**Example Usage:**
+
+```python
+tel = lap.telemetry
+
+# Add distance if missing
+if "Distance" not in tel.columns:
+    tel_with_dist = tel.add_distance()
+    print(f"Distance added: {tel_with_dist['Distance'].max():.0f}m")
+
+# Get distance as Series
+distance_series = tel.integrate_distance()
+print(f"Total distance: {distance_series.max():.0f}m")
+```
+
+---
+
+#### `add_relative_distance()`
+
+Add normalized distance column (0-1 scale). Useful for comparing laps of different lengths.
+
+```python
+def add_relative_distance(drop_existing: bool = True) -> Telemetry
+```
+
+**Returns:**
+- **`Telemetry`** with RelativeDistance column (0 = start, 1 = finish)
+
+**Example Usage:**
+
+```python
+tel = lap.telemetry
+tel_rel = tel.add_relative_distance()
+
+# Plot speed vs relative distance (normalized)
+import matplotlib.pyplot as plt
+plt.plot(tel_rel["RelativeDistance"], tel_rel["Speed"])
+plt.xlabel("Relative Distance (0-1)")
+plt.ylabel("Speed (km/h)")
+plt.show()
+```
+
+---
+
+### Driver-Ahead Methods
+
+#### `add_driver_ahead()` / `calculate_driver_ahead()`
+
+Add driver-ahead information for analyzing battles and overtaking.
+
+```python
+def add_driver_ahead(drop_existing: bool = True) -> Telemetry
+def calculate_driver_ahead(return_reference: bool = False) -> tuple
+```
+
+**Returns:**
+- **`add_driver_ahead()`**: Telemetry with DriverAhead and DistanceToDriverAhead columns
+- **`calculate_driver_ahead()`**: Tuple of (driver_ahead_array, distance_array) or (driver_ahead, distance, reference_tel)
+
+**Behavior Details:**
+- Currently returns placeholder data (not fully implemented in tif1)
+- Provided for FastF1 compatibility
+- Future versions will include actual driver-ahead calculations
+
+**Example Usage:**
+
+```python
+tel = lap.get_telemetry()  # Use get_telemetry() for driver-ahead data
+
+if "DriverAhead" in tel.columns:
+    ahead_data = tel[tel["DriverAhead"].notna()]
+    if not ahead_data.empty:
+        print(f"Car ahead detected: {ahead_data['DriverAhead'].iloc[0]}")
+        print(f"Min distance: {ahead_data['DistanceToDriverAhead'].min():.1f}m")
+```
+
+---
+
+### Data Processing Methods
+
+#### `fill_missing()`
+
+Interpolate missing values in numeric columns. Useful for cleaning telemetry data.
+
+```python
+def fill_missing() -> Telemetry
+```
+
+**Returns:**
+- **`Telemetry`** with interpolated values
+
+**Behavior Details:**
+- Interpolates all numeric columns
+- Uses linear interpolation
+- Fills in both directions (forward and backward)
+
+**Example Usage:**
+
+```python
+tel = lap.telemetry
+tel_filled = tel.fill_missing()
+
+# Check for missing values
+print(f"Missing before: {tel.isnull().sum().sum()}")
+print(f"Missing after: {tel_filled.isnull().sum().sum()}")
+```
+
+---
+
+#### `merge_channels(other, **kwargs)`
+
+Merge telemetry from another source using time-based alignment.
+
+```python
+def merge_channels(other, **kwargs) -> Telemetry
+```
+
+**Parameters:**
+- **`other`**: Another Telemetry or DataFrame to merge
+- **`**kwargs`**: Additional arguments (for compatibility)
+
+**Returns:**
+- **`Telemetry`** with merged channels
+
+**Behavior Details:**
+- Uses time-based alignment (merge_asof)
+- Aligns on Time column
+- Adds suffix "_other" to conflicting columns
+
+**Example Usage:**
+
+```python
+tel1 = lap1.telemetry
+tel2 = lap2.telemetry
+
+# Merge telemetry from two laps
+merged = tel1.merge_channels(tel2)
+```
+
+---
+
+#### `resample_channels(rule="1S", **kwargs)`
+
+Resample telemetry to a different frequency. Useful for reducing data size or standardizing sampling rates.
+
+```python
+def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
+```
+
+**Parameters:**
+- **`rule`** (str, default="1S"): Resampling frequency (e.g., "1S" = 1 second, "100ms" = 100 milliseconds)
+- **`**kwargs`**: Additional arguments (for compatibility)
+
+**Returns:**
+- **`Telemetry`** resampled to specified frequency
+
+**Behavior Details:**
+- Resamples numeric columns using mean aggregation
+- Interpolates missing values after resampling
+- Useful for reducing data size or aligning different telemetry sources
+
+**Example Usage:**
+
+```python
+tel = lap.telemetry
+
+# Resample to 1 second intervals
+resampled_1s = tel.resample_channels(rule="1S")
+print(f"Original: {len(tel)} samples")
+print(f"Resampled: {len(resampled_1s)} samples")
+
+# Resample to 100ms intervals
+resampled_100ms = tel.resample_channels(rule="100ms")
+
+# Resample to 5 second intervals for overview
+resampled_5s = tel.resample_channels(rule="5S")
+```
+
+---
+
+### Common Usage Patterns
+
+#### Basic Telemetry Analysis
+
+```python
+lap = driver.get_lap(19)
+tel = lap.telemetry
+
+if not tel.empty:
+    print(f"Telemetry Analysis for Lap {lap.lap_number}:")
+    print(f"Samples: {len(tel)}")
+    print(f"Duration: {tel['Time'].max()}")
+    
+    # Speed analysis
+    print(f"\nSpeed:")
+    print(f"  Max: {tel['Speed'].max():.1f} km/h")
+    print(f"  Avg: {tel['Speed'].mean():.1f} km/h")
+    print(f"  Min: {tel['Speed'].min():.1f} km/h")
+    
+    # Engine analysis
+    print(f"\nEngine:")
+    print(f"  Max RPM: {tel['RPM'].max()}")
+    print(f"  Avg RPM: {tel['RPM'].mean():.0f}")
+    
+    # Driver inputs
+    print(f"\nDriver Inputs:")
+    print(f"  Avg Throttle: {tel['Throttle'].mean():.1f}%")
+    full_throttle = len(tel[tel['Throttle'] >= 99])
+    print(f"  Full Throttle: {full_throttle/len(tel)*100:.1f}% of lap")
+    braking = len(tel[tel['Brake'] == True])
+    print(f"  Braking: {braking/len(tel)*100:.1f}% of lap")
+    
+    # DRS usage
+    drs_active = len(tel[tel['DRS'] >= 10])
+    print(f"  DRS Active: {drs_active/len(tel)*100:.1f}% of lap")
+    
+    # Gear usage
+    print(f"\nGear Usage:")
+    for gear in range(1, 9):
+        gear_samples = len(tel[tel['nGear'] == gear])
+        if gear_samples > 0:
+            print(f"  Gear {gear}: {gear_samples/len(tel)*100:.1f}%")
+```
+
+#### Comparing Two Laps
+
+```python
+import matplotlib.pyplot as plt
+
+lap1 = driver.get_lap(10)
+lap2 = driver.get_lap(20)
+
+tel1 = lap1.telemetry
+tel2 = lap2.telemetry
+
+if not tel1.empty and not tel2.empty:
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+    
+    # Speed comparison
+    ax1.plot(tel1["Distance"], tel1["Speed"], label=f"Lap {lap1.lap_number}", color='blue')
+    ax1.plot(tel2["Distance"], tel2["Speed"], label=f"Lap {lap2.lap_number}", color='red')
+    ax1.set_ylabel("Speed (km/h)")
+    ax1.legend()
+    ax1.grid(True)
+    
+    # Throttle comparison
+    ax2.plot(tel1["Distance"], tel1["Throttle"], label=f"Lap {lap1.lap_number}", color='blue')
+    ax2.plot(tel2["Distance"], tel2["Throttle"], label=f"Lap {lap2.lap_number}", color='red')
+    ax2.set_ylabel("Throttle (%)")
+    ax2.legend()
+    ax2.grid(True)
+    
+    # Brake comparison
+    ax3.plot(tel1["Distance"], tel1["Brake"].astype(int) * 100, 
+             label=f"Lap {lap1.lap_number}", color='blue')
+    ax3.plot(tel2["Distance"], tel2["Brake"].astype(int) * 100, 
+             label=f"Lap {lap2.lap_number}", color='red')
+    ax3.set_ylabel("Brake")
+    ax3.set_xlabel("Distance (m)")
+    ax3.legend()
+    ax3.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+```
+
+#### Finding Braking Points
+
+```python
+tel = lap.telemetry
+
+if not tel.empty:
+    # Find all braking points
+    braking = tel[tel["Brake"] == True]
+    
+    if not braking.empty:
+        # Group consecutive braking samples
+        braking_zones = []
+        current_zone = []
+        
+        for idx, row in tel.iterrows():
+            if row["Brake"]:
+                current_zone.append(row)
+            elif current_zone:
+                braking_zones.append(current_zone)
+                current_zone = []
+        
+        print(f"Found {len(braking_zones)} braking zones:")
+        for i, zone in enumerate(braking_zones, 1):
+            start_dist = zone[0]["Distance"]
+            end_dist = zone[-1]["Distance"]
+            start_speed = zone[0]["Speed"]
+            end_speed = zone[-1]["Speed"]
+            print(f"  Zone {i}: {start_dist:.0f}m - {end_dist:.0f}m "
+                  f"({start_speed:.0f} → {end_speed:.0f} km/h)")
+```
+
+---
+
+---
+
+## SessionResults
+
+The `SessionResults` class contains race results and final standings for a session. It inherits from `pandas.DataFrame`, providing a tabular view of how drivers finished the session.
+
+### Class Overview
+
+**Inheritance:** `pandas.DataFrame` → `SessionResults`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Common Access Patterns:**
+
+```python
+# From Session object
+results = session.results
+
+# Check if results are available
+if results is not None and not results.empty:
+    print(results)
+```
+
+### Properties
+
+<ResponseField name="session" type="Session">
+  Reference to the parent Session object. Maintains connection to the session for accessing session-level data.
+</ResponseField>
+
+### Available Columns
+
+The SessionResults DataFrame typically contains the following columns:
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `Position` | int/float | Final position (1-20) |
+| `Driver` | str | 3-letter driver code |
+| `DriverNumber` | str | Racing number |
+| `Team` | str | Team name |
+| `Points` | int/float | Championship points earned |
+| `Status` | str | Finish status (Finished, +1 Lap, Retired, DNF, etc.) |
+| `Time` | timedelta/str | Total race time or gap to winner |
+| `GridPosition` | int/float | Starting grid position (if available) |
+
+**Note:** Column availability depends on session type and data source.
+
+### Usage Examples
+
+#### Basic Results Access
+
+```python
+results = session.results
+
+if results is not None and not results.empty:
+    print("Race Results:")
+    print(results[["Position", "Driver", "Team", "Points", "Status"]])
+    
+    # Get winner
+    winner = results.iloc[0]
+    print(f"\nWinner: {winner['Driver']} ({winner['Team']})")
+    
+    # Get podium
+    podium = results.head(3)
+    print("\nPodium:")
+    for idx, driver_result in podium.iterrows():
+        print(f"  P{driver_result['Position']}: {driver_result['Driver']}")
+```
+
+#### Analyzing Results
+
+```python
+results = session.results
+
+if results is not None and not results.empty:
+    # Count finishers
+    finishers = results[results["Status"] == "Finished"]
+    print(f"Finishers: {len(finishers)}/{len(results)}")
+    
+    # Find DNFs
+    dnfs = results[results["Status"].str.contains("DNF|Retired", na=False)]
+    if not dnfs.empty:
+        print(f"\nDNFs:")
+        for _, driver in dnfs.iterrows():
+            print(f"  {driver['Driver']}: {driver['Status']}")
+    
+    # Points scorers
+    points_scorers = results[results["Points"] > 0]
+    print(f"\nPoints scorers: {len(points_scorers)}")
+    total_points = points_scorers["Points"].sum()
+    print(f"Total points awarded: {total_points}")
+```
+
+---
+
+## DriverResult
+
+The `DriverResult` class represents an individual driver's race result. It inherits from `pandas.Series`, making it a single row from the SessionResults DataFrame.
+
+### Class Overview
+
+**Inheritance:** `pandas.Series` → `DriverResult`
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Common Access Patterns:**
+
+```python
+# From SessionResults
+results = session.results
+if results is not None and not results.empty:
+    winner = results.iloc[0]  # DriverResult object
+    
+    # Iterate over results
+    for idx, driver_result in results.iterrows():
+        # driver_result is a DriverResult object
+        print(f"{driver_result['Driver']}: P{driver_result['Position']}")
+```
+
+### Properties
+
+<ResponseField name="session" type="Session">
+  Reference to the parent Session object.
+</ResponseField>
+
+<ResponseField name="Position" type="int/float">
+  Final position (available in Series data). Access via `driver_result['Position']`.
+</ResponseField>
+
+<ResponseField name="Driver" type="str">
+  Driver code (available in Series data). Access via `driver_result['Driver']`.
+</ResponseField>
+
+<ResponseField name="Points" type="int/float">
+  Points earned (available in Series data). Access via `driver_result['Points']`.
+</ResponseField>
+
+<ResponseField name="Status" type="str">
+  Finish status (available in Series data). Access via `driver_result['Status']`.
+</ResponseField>
+
+<ResponseField name="dnf" type="bool">
+  Whether the driver did not finish (computed property). Returns True if status indicates DNF, retirement, or disqualification.
+  
+  **Behavior:**
+  - Returns `True` if status is NOT one of: "Finished", "+1 Lap", "+2 Laps", "Not classified"
+  - Returns `False` otherwise
+  - Case-insensitive comparison
+  
+  **Usage:**
+  ```python
+  result = results.iloc[0]
+  if isinstance(result, DriverResult):
+      if result.dnf:
+          print(f"{result['Driver']} did not finish")
+      else:
+          print(f"{result['Driver']} finished the race")
+  ```
+</ResponseField>
+
+### Usage Examples
+
+```python
+results = session.results
+
+if results is not None and not results.empty:
+    # Analyze each result
+    for idx, result in results.iterrows():
+        if isinstance(result, DriverResult):
+            driver = result['Driver']
+            position = result['Position']
+            points = result.get('Points', 0)
+            
+            if result.dnf:
+                print(f"{driver}: DNF ({result['Status']})")
+            else:
+                print(f"{driver}: P{position} ({points} points)")
+```
+
+---
+
+## CircuitInfo
+
+The `CircuitInfo` class holds information about the circuit layout, including corner locations and track markers. This is a dataclass (not a pandas object) that provides circuit-specific data.
+
+### Class Overview
+
+**Type:** Dataclass
+
+**Module:** `tif1.models` (re-exported from `tif1.core`)
+
+**Common Access Patterns:**
+
+```python
+# From Session object
+circuit = session.get_circuit_info()
+
+if circuit is not None:
+    print(f"Corners: {len(circuit.corners)}")
+```
+
+### Properties
+
+<ResponseField name="corners" type="DataFrame">
+  Location of corners on the circuit. DataFrame with columns: `X`, `Y`, `Number`, `Letter`, `Angle`, `Distance`.
+  
+  **Columns:**
+  - **`X`** (float): X coordinate of corner
+  - **`Y`** (float): Y coordinate of corner
+  - **`Number`** (int): Corner number
+  - **`Letter`** (str): Corner letter designation (if applicable)
+  - **`Angle`** (float): Corner angle in degrees
+  - **`Distance`** (float): Distance along track (populated after `add_marker_distance()`)
+  
+  **Usage:**
+  ```python
+  circuit = session.get_circuit_info()
+  if circuit is not None and not circuit.corners.empty:
+      print(f"Circuit has {len(circuit.corners)} corners")
+      print(circuit.corners[["Number", "X", "Y"]])
+  ```
+</ResponseField>
+
+<ResponseField name="marshal_lights" type="DataFrame">
+  Location of marshal lights (always empty in tif1 - not available in source data). Provided for FastF1 compatibility.
+  
+  **Note:** This data is not available through the tif1 data source. The DataFrame will always be empty but maintains the correct column schema.
+</ResponseField>
+
+<ResponseField name="marshal_sectors" type="DataFrame">
+  Location of marshal sectors (always empty in tif1 - not available in source data). Provided for FastF1 compatibility.
+  
+  **Note:** This data is not available through the tif1 data source. The DataFrame will always be empty but maintains the correct column schema.
+</ResponseField>
+
+<ResponseField name="rotation" type="float">
+  Rotation of the circuit in degrees. Default is 0.0.
+  
+  **Usage:**
+  ```python
+  circuit = session.get_circuit_info()
+  if circuit is not None:
+      print(f"Circuit rotation: {circuit.rotation}°")
+  ```
+</ResponseField>
+
+### Methods
+
+#### `add_marker_distance(reference_lap)`
+
+Compute the `Distance` value for each track marker using telemetry from a reference lap. This method populates the Distance column in the corners DataFrame.
+
+```python
+def add_marker_distance(reference_lap: Lap) -> None
+```
+
+**Parameters:**
+
+- **`reference_lap`** (Lap): A Lap object whose telemetry contains `X`, `Y`, and `Distance` columns
+
+**Behavior Details:**
+- Uses best-fit approach to match marker positions with telemetry samples
+- For each marker, finds the telemetry sample with minimum squared XY error
+- Assigns that sample's Distance value to the marker
+- Modifies the corners DataFrame in-place
+- Logs warnings if telemetry is unavailable or missing required columns
+- Requires valid X, Y, and Distance data in the reference lap's telemetry
+
+**Algorithm:**
+1. Loads telemetry from reference lap
+2. Filters to samples with valid X, Y, Distance values
+3. For each marker, calculates squared Euclidean distance to all telemetry samples
+4. Assigns the Distance from the closest telemetry sample
+
+**Example Usage:**
+
+```python
+# Get circuit info
+circuit = session.get_circuit_info()
+
+if circuit is not None:
+    # Get a reference lap (typically the fastest lap)
+    fastest_lap = session.laps.pick_fastest()
+    
+    if fastest_lap is not None:
+        # Add distance markers
+        circuit.add_marker_distance(fastest_lap)
+        
+        # Now corners have distance information
+        if not circuit.corners.empty:
+            print("Corner distances:")
+            for _, corner in circuit.corners.iterrows():
+                print(f"  Corner {corner['Number']}: {corner['Distance']:.0f}m")
+    
+    # Use corner distances for analysis
+    if not circuit.corners.empty and "Distance" in circuit.corners.columns:
+        # Find telemetry at each corner
+        lap = driver.get_lap(19)
+        tel = lap.telemetry
+        
+        if not tel.empty:
+            for _, corner in circuit.corners.iterrows():
+                corner_dist = corner["Distance"]
+                # Find closest telemetry sample
+                closest_idx = (tel["Distance"] - corner_dist).abs().idxmin()
+                corner_tel = tel.loc[closest_idx]
+                
+                print(f"Corner {corner['Number']}:")
+                print(f"  Speed: {corner_tel['Speed']:.1f} km/h")
+                print(f"  Gear: {corner_tel['nGear']}")
+```
+
+**Use Cases:**
+- Mapping corner locations to lap distance
+- Analyzing speed through specific corners
+- Comparing corner performance between drivers
+- Visualizing racing lines with corner markers
+- Sector analysis based on corner positions
+
+**Error Handling:**
+
+```python
+circuit = session.get_circuit_info()
+fastest_lap = session.laps.pick_fastest()
+
+if circuit is not None and fastest_lap is not None:
+    try:
+        circuit.add_marker_distance(fastest_lap)
+        print("Marker distances added successfully")
+    except Exception as e:
+        print(f"Failed to add marker distances: {e}")
+        # Circuit info is still usable, just without distances
+```
+
+---
+
+## Complete Usage Examples
+
+### Example 1: Comprehensive Race Analysis
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Load session
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+
+# Get all laps
+laps = session.laps
+print(f"Total laps in session: {len(laps)}")
+
+# Analyze top 3 drivers
+top_drivers = ["VER", "HAM", "LEC"]
+
+for driver_code in top_drivers:
+    print(f"\n{'='*50}")
+    print(f"Analysis for {driver_code}")
+    print(f"{'='*50}")
+    
+    # Get driver object
+    driver = session.get_driver(driver_code)
+    print(f"Driver: {driver['FullName']}")
+    print(f"Team: {driver['TeamName']}")
+    print(f"Number: {driver['DriverNumber']}")
+    
+    # Get driver's laps
+    driver_laps = driver.laps
+    if driver_laps.empty:
+        print("No laps found")
+        continue
+    
+    print(f"\nLap Statistics:")
+    print(f"  Total laps: {len(driver_laps)}")
+    
+    # Fastest lap
+    fastest = driver_laps.pick_fastest()
+    if fastest is not None:
+        print(f"  Fastest lap: {fastest['LapTime']} (Lap {fastest['LapNumber']})")
+        print(f"  Compound: {fastest['Compound']}")
+    
+    # Race pace (excluding pit laps, within 110% of fastest)
+    race_pace = driver_laps.pick_wo_box().pick_quicklaps(threshold=1.10)
+    if not race_pace.empty:
+        median_time = race_pace["LapTimeSeconds"].median()
+        std_dev = race_pace["LapTimeSeconds"].std()
+        print(f"  Race pace (median): {median_time:.3f}s")
+        print(f"  Consistency (std dev): {std_dev:.3f}s")
+    
+    # Tire strategy
+    print(f"\nTire Strategy:")
+    for compound in ["SOFT", "MEDIUM", "HARD"]:
+        compound_laps = driver_laps.pick_tyre(compound)
+        if not compound_laps.empty:
+            max_life = compound_laps["TyreLife"].max()
+            avg_time = compound_laps["LapTimeSeconds"].mean()
+            print(f"  {compound}: {len(compound_laps)} laps "
+                  f"(max life: {max_life}, avg: {avg_time:.3f}s)")
+    
+    # Telemetry analysis of fastest lap
+    if fastest is not None:
+        tel = fastest.telemetry
+        if not tel.empty:
+            print(f"\nFastest Lap Telemetry:")
+            print(f"  Max speed: {tel['Speed'].max():.1f} km/h")
+            print(f"  Avg speed: {tel['Speed'].mean():.1f} km/h")
+            print(f"  Max RPM: {tel['RPM'].max()}")
+            
+            # DRS usage
+            drs_active = len(tel[tel['DRS'] >= 10])
+            print(f"  DRS usage: {drs_active/len(tel)*100:.1f}% of lap")
+            
+            # Full throttle
+            full_throttle = len(tel[tel['Throttle'] >= 99])
+            print(f"  Full throttle: {full_throttle/len(tel)*100:.1f}% of lap")
+
+# Race results
+results = session.results
+if results is not None and not results.empty:
+    print(f"\n{'='*50}")
+    print("Race Results")
+    print(f"{'='*50}")
+    print(results[["Position", "Driver", "Team", "Points", "Status"]].head(10))
+```
+
+### Example 2: Telemetry Comparison Visualization
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load session
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+
+# Compare fastest laps of top 3 drivers
+drivers = ["VER", "HAM", "LEC"]
+colors = ["#3671C6", "#6CD3BF", "#E8002D"]
+
+fig, axes = plt.subplots(4, 1, figsize=(16, 12), sharex=True)
+
+for driver_code, color in zip(drivers, colors):
+    driver = session.get_driver(driver_code)
+    tel = driver.get_fastest_lap_tel()
+    
+    if not tel.empty:
+        # Speed
+        axes[0].plot(tel["Distance"], tel["Speed"], 
+                    label=driver_code, color=color, linewidth=2)
+        
+        # Throttle
+        axes[1].plot(tel["Distance"], tel["Throttle"], 
+                    label=driver_code, color=color, linewidth=2)
+        
+        # Brake
+        axes[2].plot(tel["Distance"], tel["Brake"].astype(int) * 100, 
+                    label=driver_code, color=color, linewidth=2)
+        
+        # Gear
+        axes[3].plot(tel["Distance"], tel["nGear"], 
+                    label=driver_code, color=color, linewidth=2)
+
+# Formatting
+axes[0].set_ylabel("Speed (km/h)", fontsize=12)
+axes[0].legend(loc="upper right")
+axes[0].grid(True, alpha=0.3)
+
+axes[1].set_ylabel("Throttle (%)", fontsize=12)
+axes[1].legend(loc="upper right")
+axes[1].grid(True, alpha=0.3)
+
+axes[2].set_ylabel("Brake", fontsize=12)
+axes[2].legend(loc="upper right")
+axes[2].grid(True, alpha=0.3)
+
+axes[3].set_ylabel("Gear", fontsize=12)
+axes[3].set_xlabel("Distance (m)", fontsize=12)
+axes[3].legend(loc="upper right")
+axes[3].grid(True, alpha=0.3)
+
+plt.suptitle("Fastest Lap Telemetry Comparison", fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+### Example 3: Tire Degradation Analysis
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# Load race session
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+
+driver = session.get_driver("VER")
+laps = driver.laps
+
+# Analyze each tire compound
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+compounds = ["SOFT", "MEDIUM", "HARD"]
+colors = ["#FF3333", "#FFD700", "#FFFFFF"]
+
+for ax, compound, color in zip(axes, compounds, colors):
+    compound_laps = laps.pick_tyre(compound).pick_wo_box()
+    
+    if not compound_laps.empty:
+        # Plot lap time vs tire life
+        ax.scatter(compound_laps["TyreLife"], 
+                  compound_laps["LapTimeSeconds"],
+                  c=color, edgecolors='black', s=100, alpha=0.7)
+        
+        # Trend line
+        if len(compound_laps) > 1:
+            z = np.polyfit(compound_laps["TyreLife"], 
+                          compound_laps["LapTimeSeconds"], 1)
+            p = np.poly1d(z)
+            ax.plot(compound_laps["TyreLife"], 
+                   p(compound_laps["TyreLife"]),
+                   "r--", linewidth=2, label=f"Trend: {z[0]:.3f}s/lap")
+        
+        ax.set_xlabel("Tire Life (laps)", fontsize=12)
+        ax.set_ylabel("Lap Time (seconds)", fontsize=12)
+        ax.set_title(f"{compound} Tire Degradation", fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+    else:
+        ax.text(0.5, 0.5, f"No {compound} tire data", 
+               ha='center', va='center', transform=ax.transAxes)
+
+plt.suptitle(f"{driver['FullName']} - Tire Degradation Analysis", 
+            fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+---
 
 ---
 
@@ -815,5 +3436,178 @@ Use these classes to write clean, maintainable F1 analysis code.
   </Card>
   <Card title="Examples" href="/examples">
     Usage examples
+  </Card>
+</CardGroup>
+
+
+## Type Hints and IDE Support
+
+All models support comprehensive type hints for better IDE integration, autocomplete, and type checking. This makes development faster and reduces errors.
+
+### Type Annotations
+
+```python
+from tif1 import Session, Driver, Lap, Laps, Telemetry, SessionResults, DriverResult, CircuitInfo
+from tif1.types import DataFrame, LapDataDict, TelemetryDataDict
+import tif1
+
+# Session type
+session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+
+# Driver type
+driver: Driver = session.get_driver("VER")
+
+# Lap type
+lap: Lap = driver.get_lap(1)
+
+# Laps type (DataFrame-like)
+laps: Laps = session.laps
+driver_laps: Laps = driver.laps
+
+# Telemetry type (DataFrame-like)
+telemetry: Telemetry = lap.telemetry
+
+# Results types
+results: SessionResults | None = session.results
+if results is not None and not results.empty:
+    winner: DriverResult = results.iloc[0]
+
+# Circuit info
+circuit: CircuitInfo | None = session.get_circuit_info()
+
+# DataFrame types (for polars backend)
+from pandas import DataFrame as PandasDataFrame
+laps_df: PandasDataFrame = session.laps
+telemetry_df: PandasDataFrame = lap.telemetry
+```
+
+---
+
+## Performance Considerations
+
+### Lazy Loading
+
+All models use lazy loading for optimal performance:
+
+```python
+# Creating a Driver object doesn't load laps
+driver = session.get_driver("VER")  # Fast, no network request
+
+# Laps are loaded on first access
+laps = driver.laps  # May trigger network request (first time)
+laps_again = driver.laps  # Instant (cached)
+
+# Telemetry is loaded per-lap on demand
+lap = driver.get_lap(19)  # Fast, no telemetry loaded yet
+tel = lap.telemetry  # May trigger network request (first time)
+tel_again = lap.telemetry  # Instant (cached)
+```
+
+### Efficient Filtering
+
+Use tif1's filtering methods instead of pandas operations for better performance:
+
+```python
+# ✓ Efficient: Uses optimized filtering
+ver_laps = laps.pick_driver("VER")
+soft_laps = ver_laps.pick_tyre("SOFT")
+quick_laps = soft_laps.pick_quicklaps()
+
+# ✗ Less efficient: Multiple pandas operations
+ver_laps = laps[laps["Driver"] == "VER"]
+soft_laps = ver_laps[ver_laps["Compound"] == "SOFT"]
+fastest_time = soft_laps["LapTime"].min()
+quick_laps = soft_laps[soft_laps["LapTime"] <= fastest_time * 1.07]
+```
+
+---
+
+## Best Practices
+
+### 1. Check for Empty Data
+
+Always check if data is available before processing:
+
+```python
+# ✓ Good: Check before accessing
+laps = driver.laps
+if not laps.empty:
+    fastest = laps.pick_fastest()
+    if fastest is not None:
+        print(f"Fastest: {fastest['LapTime']}")
+
+# ✗ Bad: Assume data exists
+fastest = driver.laps.pick_fastest()
+print(f"Fastest: {fastest['LapTime']}")  # May raise AttributeError
+```
+
+### 2. Use Method Chaining
+
+Chain filtering methods for readable code:
+
+```python
+# ✓ Good: Clear and concise
+analysis_laps = (laps
+    .pick_driver("VER")
+    .pick_tyre("SOFT")
+    .pick_wo_box()
+    .pick_quicklaps(threshold=1.05))
+```
+
+### 3. Handle Exceptions Properly
+
+Use specific exception types for better error handling:
+
+```python
+from tif1.exceptions import LapNotFoundError, DriverNotFoundError
+
+# ✓ Good: Specific exception handling
+try:
+    lap = driver.get_lap(99)
+except LapNotFoundError as e:
+    print(f"Lap not found: {e.lap_number}")
+```
+
+---
+
+## Summary
+
+The models module provides a comprehensive, intuitive API for F1 data analysis:
+
+### Key Takeaways
+
+1. **Laps**: Primary interface for lap timing data with powerful filtering methods
+2. **Lap**: Single lap with telemetry access and timing information
+3. **Driver**: Driver metadata with access to all their laps
+4. **Telemetry**: High-frequency sensor data with slicing and analysis methods
+5. **SessionResults**: Race results and final standings
+6. **DriverResult**: Individual driver's race result
+7. **CircuitInfo**: Circuit layout information and track markers
+
+### Core Principles
+
+- **Lazy Loading**: Data loaded on-demand for performance
+- **Method Chaining**: Fluent API for readable code
+- **Type Safety**: Full type hints for IDE support
+- **FastF1 Compatible**: Easy migration from FastF1
+- **Pandas-Based**: Familiar DataFrame/Series interface
+- **Performance Optimized**: Vectorized operations and intelligent caching
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Core API" href="/api-reference/core" icon="code">
+    Session and data loading methods
+  </Card>
+  <Card title="Types" href="/api-reference/types" icon="brackets-curly">
+    Type definitions and schemas
+  </Card>
+  <Card title="Data Schema" href="/reference/data-schema" icon="table">
+    Complete data structure reference
+  </Card>
+  <Card title="Examples" href="/examples" icon="lightbulb">
+    Real-world usage examples
   </Card>
 </CardGroup>

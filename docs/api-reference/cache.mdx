@@ -1,181 +1,1219 @@
 ---
 title: "Cache API"
 icon: "database"
-description: "Interacting with the tif1 caching layer"
+description: "Complete reference for interacting with the tif1 two-tier caching system"
 keywords:
   - "data caching"
   - "SQLite cache"
   - "cache management"
   - "performance optimization"
+  - "memory cache"
+  - "LRU cache"
+  - "telemetry caching"
 ---
 
-`tif1` provides a programmatic interface to manage its two-tier caching system (Memory + SQLite).
+## Overview
 
-## `get_cache`
+`tif1` implements a sophisticated two-tier caching architecture designed to maximize performance while minimizing redundant network requests. The caching system consists of:
+
+1. **In-Memory LRU Cache**: Fast, volatile cache for frequently accessed data with configurable size limits
+2. **SQLite Persistent Cache**: Durable disk-based storage that survives across sessions
+
+This dual-layer approach ensures that hot data is served from memory (microsecond latency), while cold data can be retrieved from disk (millisecond latency) without hitting the network (second+ latency). The cache is thread-safe and supports both synchronous and asynchronous operations.
+
+### Cache Architecture
+
+The cache stores two primary types of data:
+
+- **JSON Data**: Session metadata, lap data, driver information, weather data, and race control messages stored in a key-value table
+- **Telemetry Data**: High-frequency sensor data (speed, throttle, brake, gear, RPM, DRS) stored in a dedicated optimized table with composite indexing on (year, gp, session, driver, lap)
+
+All data is automatically cached when loaded through `Session.load()` and can be manually managed through the Cache API.
+
+## Getting the Cache Instance
+
+### `get_cache()`
 
 ```python
 def get_cache() -> Cache
 ```
 
-Returns the global singleton cache instance.
+Returns the global singleton `Cache` instance used throughout the library. This is the primary entry point for all cache operations.
+
+The cache is initialized lazily on first access and configured based on environment variables and `.tif1rc` settings. The same instance is shared across all sessions and operations within your application.
+
+**Returns:** `Cache` - The global cache singleton
+
+**Thread Safety:** The cache instance is thread-safe and can be safely accessed from multiple threads.
+
+**Example:**
+```python
+import tif1
+
+# Get the cache instance
+cache = tif1.get_cache()
+
+# Check cache configuration
+print(f"Cache directory: {cache.cache_dir}")
+print(f"Database path: {cache.db_path}")
+print(f"Read-only mode: {cache.read_only}")
+```
+
+**Configuration:**
+The cache behavior can be customized through environment variables:
+- `TIF1_CACHE_DIR`: Custom cache directory (default: `~/.tif1/cache`)
+- `TIF1_CACHE_ENABLED`: Set to `"false"` to disable caching entirely
+- `TIF1_CACHE_READ_ONLY`: Set to `"true"` to prevent writing new cache entries
+
+---
+
+## Cache Management Operations
+
+### `clear()`
+
+```python
+def clear() -> None
+```
+
+Removes all cached data from both the in-memory LRU cache and the persistent SQLite database. This operation is irreversible and will force all subsequent data requests to fetch from the CDN.
+
+**Use Cases:**
+- Clearing corrupted cache data
+- Freeing disk space
+- Forcing a complete data refresh
+- Troubleshooting data inconsistencies
+
+**Performance Impact:** After clearing the cache, the first load of any session will be significantly slower as all data must be fetched from the network.
 
 **Example:**
 ```python
 import tif1
 
 cache = tif1.get_cache()
+
+# Clear all cached data
+cache.clear()
+print("Cache cleared successfully")
+
+# Verify cache is empty
+has_data = cache.has_session_data(2024, "Monaco_Grand_Prix", "Race")
+print(f"Has cached data: {has_data}")  # False
+```
+
+**Advanced Usage:**
+```python
+# Clear cache before a critical data refresh
+cache.clear()
+
+# Load fresh data
+session = tif1.get_session(2024, "Monaco_Grand_Prix", "Race")
+session.load(laps=True, telemetry=True, weather=True)
+print("Fresh data loaded and cached")
 ```
 
 ---
 
-## Cache Management
-
-### `clear()`
-Removes all entries from both the in-memory LRU cache and the persistent SQLite database.
+### `has_session_data()`
 
 ```python
-cache.clear()
+def has_session_data(year: int, gp: str, session: str) -> bool
 ```
 
-### `has_session_data(year, gp, session)`
-Checks if the cache contains any data for a specific session without loading it. Returns `True` if any JSON or telemetry data exists for the session.
+Checks whether the cache contains any data for a specific session without actually loading it. This is a lightweight operation that queries the cache index rather than deserializing data.
 
 **Parameters:**
-- `year` (int): Season year
-- `gp` (str): Grand Prix identifier (e.g., `"Belgian_Grand_Prix"`)
-- `session` (str): Session type (e.g., `"Race"`, `"Qualifying"`)
+- `year` (int): Season year (e.g., `2024`, `2023`)
+- `gp` (str): Grand Prix identifier in snake_case format (e.g., `"Monaco_Grand_Prix"`, `"Belgian_Grand_Prix"`)
+- `session` (str): Session type - one of `"Race"`, `"Qualifying"`, `"Sprint"`, `"Practice_1"`, `"Practice_2"`, `"Practice_3"`, `"Sprint_Qualifying"`
 
-**Returns:** `bool`
+**Returns:** `bool` - `True` if any JSON or telemetry data exists for the session, `False` otherwise
 
+**Use Cases:**
+- Checking cache availability before loading
+- Building cache status dashboards
+- Implementing cache warming strategies
+- Conditional data loading logic
+
+**Example:**
 ```python
-exists = cache.has_session_data(2021, "Belgian_Grand_Prix", "Race")
+import tif1
+
+cache = tif1.get_cache()
+
+# Check if data is cached before loading
+year, gp, session_type = 2024, "Monaco_Grand_Prix", "Race"
+
+if cache.has_session_data(year, gp, session_type):
+    print(f"✓ {year} {gp} {session_type} is cached")
+    session = tif1.get_session(year, gp, session_type)
+    session.load()  # Fast load from cache
+else:
+    print(f"✗ {year} {gp} {session_type} not cached")
+    session = tif1.get_session(year, gp, session_type)
+    session.load()  # Slower load from CDN
 ```
+
+**Batch Checking:**
+```python
+# Check cache status for multiple sessions
+sessions_to_check = [
+    (2024, "Monaco_Grand_Prix", "Race"),
+    (2024, "Monaco_Grand_Prix", "Qualifying"),
+    (2024, "Canadian_Grand_Prix", "Race"),
+]
+
+for year, gp, session_type in sessions_to_check:
+    cached = cache.has_session_data(year, gp, session_type)
+    status = "✓ Cached" if cached else "✗ Not cached"
+    print(f"{year} {gp} {session_type}: {status}")
+```
+
+---
 
 ### `close()`
-Closes the SQLite database connection. This is called automatically on exit, but can be used manually if needed.
 
 ```python
+def close() -> None
+```
+
+Explicitly closes the SQLite database connection and releases associated resources. This method is called automatically when the Python process exits via an `atexit` handler, but can be invoked manually for fine-grained resource management.
+
+**When to Use:**
+- Long-running applications that need to release resources
+- Testing scenarios requiring clean cache state
+- Before forking processes (to avoid connection sharing issues)
+- Explicit resource cleanup in context managers
+
+**Note:** After calling `close()`, the cache can still be used - it will automatically reconnect to the database on the next operation.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Use the cache
+session = tif1.get_session(2024, "Monaco_Grand_Prix", "Race")
+session.load()
+
+# Explicitly close when done
 cache.close()
+print("Cache connection closed")
+```
+
+**Context Manager Pattern:**
+```python
+import tif1
+
+def process_session_data():
+    cache = tif1.get_cache()
+    try:
+        # Perform cache operations
+        session = tif1.get_session(2024, "Monaco_Grand_Prix", "Race")
+        session.load()
+        # ... process data ...
+    finally:
+        cache.close()  # Ensure cleanup
 ```
 
 ---
 
-## General Cache Access
+## General Cache Access (JSON Data)
 
-### `get(key)`
-Returns the cached JSON-serializable data for a specific key. Returns `None` if not found.
+These methods provide low-level access to the cache's key-value store for JSON-serializable data. Most users won't need these methods directly, as `Session.load()` handles caching automatically. However, they're useful for advanced use cases like custom data pipelines or cache inspection.
 
-**Parameters:**
-- `key` (str): Cache key in format `"{year}/{gp}/{session}/{file}.json"`
-
-**Returns:** `Any | None`
+### `get()`
 
 ```python
-data = cache.get("2021/Belgian_Grand_Prix/Race/drivers.json")
+def get(key: str) -> Any | None
 ```
 
-### `set(key, data)`
-Stores data in the cache with the specified key. Updates both memory and SQLite caches.
+Retrieves cached JSON-serializable data for a specific key. Checks the in-memory LRU cache first, then falls back to SQLite if not found in memory.
 
 **Parameters:**
-- `key` (str): Cache key
-- `data` (Any): JSON-serializable data to cache
+- `key` (str): Cache key in the format `"{year}/{gp}/{session}/{file}.json"` where `file` is one of:
+  - `drivers.json` - Driver list and metadata
+  - `laps.json` - Lap timing data
+  - `weather.json` - Weather conditions
+  - `messages.json` - Race control messages
+  - `session_info.json` - Session metadata
+
+**Returns:** `Any | None` - The cached data (typically a dict or list), or `None` if not found
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Retrieve cached driver data
+key = "2024/Monaco_Grand_Prix/Race/drivers.json"
+drivers = cache.get(key)
+
+if drivers:
+    print(f"Found {len(drivers)} drivers in cache")
+    for driver in drivers:
+        print(f"  - {driver['code']}: {driver['name']}")
+else:
+    print("Driver data not cached")
+```
+
+**Advanced Usage - Cache Inspection:**
+```python
+# Inspect what's cached for a session
+year, gp, session_type = 2024, "Monaco_Grand_Prix", "Race"
+base_key = f"{year}/{gp}/{session_type}"
+
+data_files = ["drivers.json", "laps.json", "weather.json", "messages.json"]
+for file in data_files:
+    key = f"{base_key}/{file}"
+    data = cache.get(key)
+    status = "✓" if data else "✗"
+    print(f"{status} {file}")
+```
+
+---
+
+### `set()`
 
 ```python
-cache.set("2021/Belgian_Grand_Prix/Race/drivers.json", drivers_data)
+def set(key: str, data: Any) -> None
+```
+
+Stores JSON-serializable data in the cache with the specified key. Updates both the in-memory LRU cache and the persistent SQLite database.
+
+**Parameters:**
+- `key` (str): Cache key in the format `"{year}/{gp}/{session}/{file}.json"`
+- `data` (Any): JSON-serializable data to cache (dict, list, str, int, float, bool, None)
+
+**Serialization:** Data is serialized using `orjson` for performance. Ensure your data contains only JSON-compatible types.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Manually cache custom data
+custom_data = {
+    "drivers": ["VER", "HAM", "LEC"],
+    "fastest_lap": 94.123,
+    "conditions": "dry"
+}
+
+key = "2024/Monaco_Grand_Prix/Race/custom_analysis.json"
+cache.set(key, custom_data)
+print(f"Cached custom data at {key}")
+
+# Retrieve it later
+retrieved = cache.get(key)
+print(f"Retrieved: {retrieved}")
+```
+
+**Bulk Caching:**
+```python
+# Cache multiple related datasets
+session_data = {
+    "drivers.json": [...],  # driver list
+    "laps.json": [...],     # lap data
+    "weather.json": [...]   # weather data
+}
+
+base_key = "2024/Monaco_Grand_Prix/Race"
+for filename, data in session_data.items():
+    cache.set(f"{base_key}/{filename}", data)
+    print(f"Cached {filename}")
 ```
 
 ---
 
 ## Telemetry Cache Access
 
-Telemetry data uses a dedicated SQLite table optimized for lap-by-lap queries.
+Telemetry data (high-frequency sensor readings) is stored in a dedicated SQLite table optimized for lap-by-lap queries. This separation improves performance for telemetry-heavy workloads and enables efficient batch operations.
 
-### `get_telemetry(year, gp, session, driver, lap)`
-Retrieves telemetry data for a specific lap. Returns `None` if not found.
+### Telemetry Data Structure
 
-**Parameters:**
-- `year` (int): Season year
-- `gp` (str): Grand Prix identifier
-- `session` (str): Session type
-- `driver` (str): Driver code (e.g., `"VER"`, `"HAM"`)
-- `lap` (int): Lap number
+Each telemetry entry contains time-series data for a single lap:
+- **Time** - Elapsed time in seconds from session start
+- **Speed** - Vehicle speed in km/h
+- **RPM** - Engine revolutions per minute
+- **Gear** - Current gear (0-8, where 0 is neutral)
+- **Throttle** - Throttle position (0-100%)
+- **Brake** - Brake pressure (0-100%)
+- **DRS** - DRS status (0=closed, 1=open, 2-14=various states)
+- **Distance** - Distance traveled in meters
+- **X, Y, Z** - 3D position coordinates
 
-**Returns:** `Any | None`
+### `get_telemetry()`
 
 ```python
-telemetry = cache.get_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1)
+def get_telemetry(
+    year: int,
+    gp: str,
+    session: str,
+    driver: str,
+    lap: int
+) -> Any | None
 ```
 
-### `set_telemetry(year, gp, session, driver, lap, data)`
-Stores telemetry data for a specific lap.
+Retrieves telemetry data for a specific driver's lap. Returns `None` if the telemetry is not cached.
 
 **Parameters:**
-- `year` (int): Season year
-- `gp` (str): Grand Prix identifier
-- `session` (str): Session type
-- `driver` (str): Driver code
-- `lap` (int): Lap number
-- `data` (Any): Telemetry data to cache
+- `year` (int): Season year (e.g., `2024`)
+- `gp` (str): Grand Prix identifier (e.g., `"Monaco_Grand_Prix"`)
+- `session` (str): Session type (e.g., `"Race"`, `"Qualifying"`)
+- `driver` (str): Three-letter driver code (e.g., `"VER"`, `"HAM"`, `"LEC"`)
+- `lap` (int): Lap number (1-indexed)
 
+**Returns:** `Any | None` - Telemetry data structure (typically a dict with arrays), or `None` if not found
+
+**Performance:** Single telemetry lookup is optimized with a composite index on (year, gp, session, driver, lap).
+
+**Example:**
 ```python
-cache.set_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1, telemetry_data)
+import tif1
+
+cache = tif1.get_cache()
+
+# Get telemetry for Verstappen's lap 1
+telemetry = cache.get_telemetry(
+    year=2024,
+    gp="Monaco_Grand_Prix",
+    session="Race",
+    driver="VER",
+    lap=1
+)
+
+if telemetry:
+    print(f"Telemetry data points: {len(telemetry['Time'])}")
+    print(f"Max speed: {max(telemetry['Speed'])} km/h")
+    print(f"Max RPM: {max(telemetry['RPM'])}")
+else:
+    print("Telemetry not cached")
 ```
 
-### `get_telemetry_batch(year, gp, session, driver_laps)`
-Retrieves multiple telemetry entries in a single optimized batch query. More efficient than multiple individual `get_telemetry()` calls.
+**Analyzing Cached Telemetry:**
+```python
+# Compare telemetry availability for multiple drivers
+drivers = ["VER", "HAM", "LEC", "SAI"]
+lap_num = 1
+
+for driver in drivers:
+    telem = cache.get_telemetry(2024, "Monaco_Grand_Prix", "Race", driver, lap_num)
+    if telem:
+        points = len(telem.get('Time', []))
+        print(f"{driver} lap {lap_num}: {points} data points cached")
+    else:
+        print(f"{driver} lap {lap_num}: not cached")
+```
+
+---
+
+### `set_telemetry()`
+
+```python
+def set_telemetry(
+    year: int,
+    gp: str,
+    session: str,
+    driver: str,
+    lap: int,
+    data: Any
+) -> None
+```
+
+Stores telemetry data for a specific driver's lap in the dedicated telemetry table.
 
 **Parameters:**
 - `year` (int): Season year
 - `gp` (str): Grand Prix identifier
 - `session` (str): Session type
-- `driver_laps` (list[tuple[str, int]]): List of (driver_code, lap_number) tuples
+- `driver` (str): Three-letter driver code
+- `lap` (int): Lap number
+- `data` (Any): Telemetry data structure to cache
 
-**Returns:** `dict[tuple[str, int], Any]` - Dictionary mapping (driver, lap) to telemetry data
+**Serialization:** Data is serialized using `orjson` before storage.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Manually cache telemetry data
+telemetry_data = {
+    "Time": [0.0, 0.1, 0.2, 0.3],
+    "Speed": [0, 50, 100, 150],
+    "RPM": [8000, 10000, 12000, 11000],
+    "Throttle": [0, 50, 100, 100],
+    "Brake": [0, 0, 0, 0],
+    "Gear": [1, 2, 3, 4]
+}
+
+cache.set_telemetry(
+    year=2024,
+    gp="Monaco_Grand_Prix",
+    session="Race",
+    driver="VER",
+    lap=1,
+    data=telemetry_data
+)
+print("Telemetry cached successfully")
+```
+
+---
+
+### `get_telemetry_batch()`
 
 ```python
+def get_telemetry_batch(
+    year: int,
+    gp: str,
+    session: str,
+    driver_laps: list[tuple[str, int]]
+) -> dict[tuple[str, int], Any]
+```
+
+Retrieves multiple telemetry entries in a single optimized batch query. This is significantly more efficient than calling `get_telemetry()` multiple times, as it uses a single SQL query with an `IN` clause.
+
+**Parameters:**
+- `year` (int): Season year
+- `gp` (str): Grand Prix identifier
+- `session` (str): Session type
+- `driver_laps` (list[tuple[str, int]]): List of (driver_code, lap_number) tuples to fetch
+
+**Returns:** `dict[tuple[str, int], Any]` - Dictionary mapping (driver, lap) tuples to telemetry data. Missing entries are not included in the result.
+
+**Performance Benefits:**
+- Single database query instead of N queries
+- Reduced Python-SQLite round trips
+- Optimized for bulk telemetry analysis
+- Ideal for comparing multiple drivers/laps
+
+**Example - Basic Batch Fetch:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
 # Fetch telemetry for multiple driver-lap combinations
-driver_laps = [("VER", 1), ("VER", 2), ("HAM", 1)]
-batch = cache.get_telemetry_batch(2021, "Belgian_Grand_Prix", "Race", driver_laps)
+driver_laps = [
+    ("VER", 1),
+    ("VER", 2),
+    ("HAM", 1),
+    ("HAM", 2),
+    ("LEC", 1)
+]
+
+batch = cache.get_telemetry_batch(
+    year=2024,
+    gp="Monaco_Grand_Prix",
+    session="Race",
+    driver_laps=driver_laps
+)
 
 # Access individual entries
-ver_lap1 = batch.get(("VER", 1))
+for (driver, lap), telemetry in batch.items():
+    if telemetry:
+        max_speed = max(telemetry['Speed'])
+        print(f"{driver} lap {lap}: max speed {max_speed} km/h")
+```
+
+**Example - Comparing Driver Performance:**
+```python
+# Compare first 5 laps for top 3 drivers
+drivers = ["VER", "HAM", "LEC"]
+laps = range(1, 6)
+
+# Build request list
+driver_laps = [(driver, lap) for driver in drivers for lap in laps]
+
+# Fetch all telemetry in one query
+batch = cache.get_telemetry_batch(2024, "Monaco_Grand_Prix", "Race", driver_laps)
+
+# Analyze results
+for driver in drivers:
+    driver_data = [(lap, batch.get((driver, lap))) for lap in laps]
+    cached_count = sum(1 for _, telem in driver_data if telem)
+    print(f"{driver}: {cached_count}/{len(laps)} laps cached")
+```
+
+**Example - Fastest Lap Analysis:**
+```python
+# Find fastest lap from cached telemetry
+drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
+laps = range(1, 21)  # First 20 laps
+
+driver_laps = [(d, l) for d in drivers for l in laps]
+batch = cache.get_telemetry_batch(2024, "Monaco_Grand_Prix", "Race", driver_laps)
+
+fastest = None
+fastest_key = None
+
+for (driver, lap), telemetry in batch.items():
+    if telemetry and 'Speed' in telemetry:
+        max_speed = max(telemetry['Speed'])
+        if fastest is None or max_speed > fastest:
+            fastest = max_speed
+            fastest_key = (driver, lap)
+
+if fastest_key:
+    print(f"Fastest: {fastest_key[0]} lap {fastest_key[1]} - {fastest} km/h")
 ```
 
 ---
 
 ## Async Methods
 
-All cache read/write operations have async variants for use in async contexts:
+All cache read/write operations have async variants for use in async contexts. These methods are essential for building high-performance async applications that need to interact with the cache without blocking the event loop.
 
-- `get_async(key)` - Async version of `get()`
-- `set_async(key, data)` - Async version of `set()`
-- `get_telemetry_async(year, gp, session, driver, lap)` - Async version of `get_telemetry()`
-- `set_telemetry_async(year, gp, session, driver, lap, data)` - Async version of `set_telemetry()`
-- `get_telemetry_batch_async(year, gp, session, driver_laps)` - Async version of `get_telemetry_batch()`
+### Async Method Overview
+
+| Sync Method | Async Method | Description |
+| :--- | :--- | :--- |
+| `get(key)` | `get_async(key)` | Retrieve JSON data asynchronously |
+| `set(key, data)` | `set_async(key, data)` | Store JSON data asynchronously |
+| `get_telemetry(...)` | `get_telemetry_async(...)` | Retrieve single telemetry entry asynchronously |
+| `set_telemetry(...)` | `set_telemetry_async(...)` | Store single telemetry entry asynchronously |
+| `get_telemetry_batch(...)` | `get_telemetry_batch_async(...)` | Retrieve multiple telemetry entries asynchronously |
+
+### Implementation Details
+
+Async methods use `asyncio.to_thread()` to execute synchronous SQLite operations in a thread pool, preventing event loop blocking. This approach maintains thread safety while providing async compatibility.
+
+### `get_async()`
 
 ```python
-import asyncio
+async def get_async(key: str) -> Any | None
+```
 
-async def fetch_cached_data():
+Asynchronously retrieves cached JSON data for a specific key.
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def fetch_cached_drivers():
     cache = tif1.get_cache()
-    data = await cache.get_async("2021/Belgian_Grand_Prix/Race/drivers.json")
-    return data
+    key = "2024/Monaco_Grand_Prix/Race/drivers.json"
+    drivers = await cache.get_async(key)
+    
+    if drivers:
+        print(f"Found {len(drivers)} drivers")
+        return drivers
+    else:
+        print("No cached driver data")
+        return None
+
+# Run the async function
+asyncio.run(fetch_cached_drivers())
 ```
 
 ---
 
-## Cache Attributes
+### `set_async()`
 
-| Attribute | Type | Description |
-| :--- | :--- | :--- |
-| `cache_dir` | `Path` | The directory where the `cache.sqlite` file is stored. |
-| `db_path` | `Path` | Full path to the `cache.sqlite` database file. |
-| `read_only` | `bool` | If `True`, the cache will not save any new data to disk. |
+```python
+async def set_async(key: str, data: Any) -> None
+```
+
+Asynchronously stores JSON data in the cache.
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def cache_custom_data():
+    cache = tif1.get_cache()
+    
+    data = {
+        "analysis": "Monaco 2024 Race Strategy",
+        "optimal_pit_window": [15, 20],
+        "tire_compounds": ["soft", "medium"]
+    }
+    
+    key = "2024/Monaco_Grand_Prix/Race/strategy_analysis.json"
+    await cache.set_async(key, data)
+    print(f"Cached strategy analysis")
+
+asyncio.run(cache_custom_data())
+```
 
 ---
 
-## Related Pages
+### `get_telemetry_async()`
+
+```python
+async def get_telemetry_async(
+    year: int,
+    gp: str,
+    session: str,
+    driver: str,
+    lap: int
+) -> Any | None
+```
+
+Asynchronously retrieves telemetry data for a specific driver's lap.
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def fetch_driver_telemetry():
+    cache = tif1.get_cache()
+    
+    telemetry = await cache.get_telemetry_async(
+        year=2024,
+        gp="Monaco_Grand_Prix",
+        session="Race",
+        driver="VER",
+        lap=1
+    )
+    
+    if telemetry:
+        max_speed = max(telemetry['Speed'])
+        print(f"VER lap 1 max speed: {max_speed} km/h")
+    
+    return telemetry
+
+asyncio.run(fetch_driver_telemetry())
+```
+
+---
+
+### `set_telemetry_async()`
+
+```python
+async def set_telemetry_async(
+    year: int,
+    gp: str,
+    session: str,
+    driver: str,
+    lap: int,
+    data: Any
+) -> None
+```
+
+Asynchronously stores telemetry data for a specific driver's lap.
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def cache_telemetry():
+    cache = tif1.get_cache()
+    
+    telemetry = {
+        "Time": [0.0, 0.1, 0.2],
+        "Speed": [0, 50, 100],
+        "RPM": [8000, 10000, 12000]
+    }
+    
+    await cache.set_telemetry_async(
+        year=2024,
+        gp="Monaco_Grand_Prix",
+        session="Race",
+        driver="VER",
+        lap=1,
+        data=telemetry
+    )
+    print("Telemetry cached")
+
+asyncio.run(cache_telemetry())
+```
+
+---
+
+### `get_telemetry_batch_async()`
+
+```python
+async def get_telemetry_batch_async(
+    year: int,
+    gp: str,
+    session: str,
+    driver_laps: list[tuple[str, int]]
+) -> dict[tuple[str, int], Any]
+```
+
+Asynchronously retrieves multiple telemetry entries in a single optimized batch query.
+
+**Example - Parallel Telemetry Fetching:**
+```python
+import asyncio
+import tif1
+
+async def analyze_multiple_sessions():
+    cache = tif1.get_cache()
+    
+    # Define multiple batch requests
+    sessions = [
+        (2024, "Monaco_Grand_Prix", "Race"),
+        (2024, "Monaco_Grand_Prix", "Qualifying"),
+        (2024, "Canadian_Grand_Prix", "Race")
+    ]
+    
+    driver_laps = [("VER", 1), ("HAM", 1), ("LEC", 1)]
+    
+    # Fetch all batches concurrently
+    tasks = [
+        cache.get_telemetry_batch_async(year, gp, session, driver_laps)
+        for year, gp, session in sessions
+    ]
+    
+    results = await asyncio.gather(*tasks)
+    
+    # Process results
+    for (year, gp, session), batch in zip(sessions, results):
+        print(f"\n{year} {gp} {session}:")
+        for (driver, lap), telemetry in batch.items():
+            if telemetry:
+                print(f"  {driver} lap {lap}: ✓ cached")
+
+asyncio.run(analyze_multiple_sessions())
+```
+
+**Example - High-Performance Data Pipeline:**
+```python
+import asyncio
+import tif1
+
+async def build_telemetry_dataset():
+    """Build a complete telemetry dataset using async batch operations."""
+    cache = tif1.get_cache()
+    
+    # Define scope
+    drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
+    laps = range(1, 51)  # First 50 laps
+    
+    # Build request list
+    driver_laps = [(driver, lap) for driver in drivers for lap in laps]
+    
+    # Fetch all telemetry asynchronously
+    batch = await cache.get_telemetry_batch_async(
+        year=2024,
+        gp="Monaco_Grand_Prix",
+        session="Race",
+        driver_laps=driver_laps
+    )
+    
+    # Analyze results
+    total_requested = len(driver_laps)
+    total_cached = len(batch)
+    cache_hit_rate = (total_cached / total_requested) * 100
+    
+    print(f"Telemetry dataset:")
+    print(f"  Requested: {total_requested} entries")
+    print(f"  Cached: {total_cached} entries")
+    print(f"  Cache hit rate: {cache_hit_rate:.1f}%")
+    
+    return batch
+
+asyncio.run(build_telemetry_dataset())
+```
+
+---
+
+## Cache Instance Attributes
+
+The `Cache` instance exposes several read-only attributes for inspecting cache configuration and state.
+
+### `cache_dir`
+
+```python
+cache_dir: Path
+```
+
+The directory where the cache database and related files are stored. This is typically `~/.tif1/cache` but can be customized via the `TIF1_CACHE_DIR` environment variable or `.tif1rc` configuration.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+print(f"Cache directory: {cache.cache_dir}")
+# Output: Cache directory: /home/user/.tif1/cache
+```
+
+---
+
+### `db_path`
+
+```python
+db_path: Path
+```
+
+The full filesystem path to the SQLite database file (`cache.sqlite`). This file contains all persistent cache data.
+
+**Use Cases:**
+- Backing up the cache database
+- Checking database file size
+- Manually inspecting cache with SQLite tools
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+print(f"Database path: {cache.db_path}")
+print(f"Database size: {cache.db_path.stat().st_size / 1024 / 1024:.2f} MB")
+# Output: Database path: /home/user/.tif1/cache/cache.sqlite
+#         Database size: 245.67 MB
+```
+
+---
+
+### `read_only`
+
+```python
+read_only: bool
+```
+
+Indicates whether the cache is operating in read-only mode. When `True`, the cache will serve existing data but will not write new entries to disk.
+
+**Use Cases:**
+- Running in environments with read-only filesystems
+- Preventing cache pollution during testing
+- Analyzing existing cache without modifications
+
+**Configuration:**
+Set via `TIF1_CACHE_READ_ONLY=true` environment variable or in `.tif1rc`.
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+if cache.read_only:
+    print("⚠️  Cache is in read-only mode - new data will not be cached")
+else:
+    print("✓ Cache is writable")
+```
+
+---
+
+## Cache Statistics and Monitoring
+
+While the `Cache` class doesn't expose built-in statistics methods, you can query the SQLite database directly for monitoring purposes.
+
+### Example - Cache Size Analysis
+
+```python
+import sqlite3
+import tif1
+
+cache = tif1.get_cache()
+
+# Connect to the database
+conn = sqlite3.connect(cache.db_path)
+cursor = conn.cursor()
+
+# Count total cache entries
+cursor.execute("SELECT COUNT(*) FROM cache")
+json_count = cursor.fetchone()[0]
+
+cursor.execute("SELECT COUNT(*) FROM telemetry")
+telemetry_count = cursor.fetchone()[0]
+
+print(f"Cache Statistics:")
+print(f"  JSON entries: {json_count:,}")
+print(f"  Telemetry entries: {telemetry_count:,}")
+print(f"  Total entries: {json_count + telemetry_count:,}")
+
+conn.close()
+```
+
+### Example - Session Coverage Report
+
+```python
+import sqlite3
+import tif1
+
+def get_cached_sessions():
+    """Get a list of all cached sessions."""
+    cache = tif1.get_cache()
+    conn = sqlite3.connect(cache.db_path)
+    cursor = conn.cursor()
+    
+    # Extract unique sessions from cache keys
+    cursor.execute("""
+        SELECT DISTINCT 
+            substr(key, 1, instr(key, '/') - 1) as year,
+            substr(key, instr(key, '/') + 1, 
+                   instr(substr(key, instr(key, '/') + 1), '/') - 1) as gp,
+            substr(key, 
+                   instr(key, '/') + instr(substr(key, instr(key, '/') + 1), '/') + 1,
+                   instr(substr(key, 
+                        instr(key, '/') + instr(substr(key, instr(key, '/') + 1), '/') + 1), '/') - 1) as session
+        FROM cache
+        ORDER BY year DESC, gp, session
+    """)
+    
+    sessions = cursor.fetchall()
+    conn.close()
+    
+    return sessions
+
+# Generate report
+sessions = get_cached_sessions()
+print(f"Cached Sessions ({len(sessions)} total):\n")
+
+current_year = None
+for year, gp, session in sessions:
+    if year != current_year:
+        print(f"\n{year}:")
+        current_year = year
+    print(f"  • {gp} - {session}")
+```
+
+---
+
+## Performance Considerations
+
+### Cache Hit Rates
+
+The cache is most effective when:
+- Loading the same session multiple times
+- Analyzing historical data that doesn't change
+- Working with telemetry-heavy workloads
+- Running batch analyses across multiple sessions
+
+**Typical Performance:**
+- Memory cache hit: ~1-10 microseconds
+- SQLite cache hit: ~1-10 milliseconds
+- CDN fetch (cache miss): ~500-2000 milliseconds
+
+### Memory Management
+
+The in-memory LRU cache has a default size limit to prevent excessive memory usage. When the limit is reached, least-recently-used entries are evicted (but remain in SQLite).
+
+**Memory Usage Estimates:**
+- Session metadata: ~10-50 KB per session
+- Lap data: ~50-200 KB per session
+- Telemetry data: ~500 KB - 5 MB per session (depending on lap count)
+
+### Disk Space
+
+The SQLite database grows as more data is cached. Typical sizes:
+- Single session (no telemetry): ~100-500 KB
+- Single session (with telemetry): ~5-50 MB
+- Full season (all sessions, all telemetry): ~5-20 GB
+
+**Disk Space Management:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+
+# Check current cache size
+size_mb = cache.db_path.stat().st_size / 1024 / 1024
+print(f"Current cache size: {size_mb:.2f} MB")
+
+# Clear cache if it's too large
+if size_mb > 1000:  # 1 GB threshold
+    print("Cache exceeds 1 GB, clearing...")
+    cache.clear()
+```
+
+### Optimization Tips
+
+1. **Use Batch Operations**: `get_telemetry_batch()` is significantly faster than multiple `get_telemetry()` calls
+2. **Selective Loading**: Only load the data you need (e.g., `session.load(laps=True, telemetry=False)`)
+3. **Async for Concurrency**: Use async methods when fetching data for multiple sessions in parallel
+4. **Cache Warming**: Pre-load frequently accessed sessions during off-peak hours
+5. **Read-Only Mode**: Use read-only mode in production environments to prevent cache pollution
+
+**Example - Cache Warming Script:**
+```python
+import tif1
+
+def warm_cache_for_season(year: int):
+    """Pre-load all race sessions for a season."""
+    schedule = tif1.get_event_schedule(year)
+    
+    for event in schedule:
+        try:
+            session = tif1.get_session(year, event['EventName'], 'Race')
+            session.load(laps=True, telemetry=True, weather=True)
+            print(f"✓ Cached {event['EventName']} Race")
+        except Exception as e:
+            print(f"✗ Failed to cache {event['EventName']}: {e}")
+
+# Warm cache for 2024 season
+warm_cache_for_season(2024)
+```
+
+---
+
+## Common Use Cases
+
+### Use Case 1: Cache Status Dashboard
+
+```python
+import tif1
+
+def cache_dashboard():
+    """Display comprehensive cache status."""
+    cache = tif1.get_cache()
+    
+    print("=" * 60)
+    print("TIF1 CACHE DASHBOARD")
+    print("=" * 60)
+    
+    # Configuration
+    print(f"\nConfiguration:")
+    print(f"  Directory: {cache.cache_dir}")
+    print(f"  Database: {cache.db_path.name}")
+    print(f"  Read-only: {cache.read_only}")
+    
+    # Size
+    size_mb = cache.db_path.stat().st_size / 1024 / 1024
+    print(f"\nStorage:")
+    print(f"  Database size: {size_mb:.2f} MB")
+    
+    # Check specific sessions
+    print(f"\nRecent Sessions:")
+    sessions_to_check = [
+        (2024, "Monaco_Grand_Prix", "Race"),
+        (2024, "Monaco_Grand_Prix", "Qualifying"),
+        (2024, "Canadian_Grand_Prix", "Race"),
+    ]
+    
+    for year, gp, session_type in sessions_to_check:
+        cached = cache.has_session_data(year, gp, session_type)
+        status = "✓" if cached else "✗"
+        print(f"  {status} {year} {gp} {session_type}")
+
+cache_dashboard()
+```
+
+### Use Case 2: Selective Cache Clearing
+
+```python
+import sqlite3
+import tif1
+
+def clear_session_cache(year: int, gp: str, session: str):
+    """Clear cache for a specific session."""
+    cache = tif1.get_cache()
+    conn = sqlite3.connect(cache.db_path)
+    cursor = conn.cursor()
+    
+    # Clear JSON data
+    key_pattern = f"{year}/{gp}/{session}/%"
+    cursor.execute("DELETE FROM cache WHERE key LIKE ?", (key_pattern,))
+    json_deleted = cursor.rowcount
+    
+    # Clear telemetry data
+    cursor.execute("""
+        DELETE FROM telemetry 
+        WHERE year = ? AND gp = ? AND session = ?
+    """, (year, gp, session))
+    telemetry_deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"Cleared {year} {gp} {session}:")
+    print(f"  JSON entries: {json_deleted}")
+    print(f"  Telemetry entries: {telemetry_deleted}")
+
+# Clear specific session
+clear_session_cache(2024, "Monaco_Grand_Prix", "Race")
+```
+
+### Use Case 3: Cache Export/Import
+
+```python
+import shutil
+import tif1
+from pathlib import Path
+
+def export_cache(backup_path: str):
+    """Export cache database to a backup location."""
+    cache = tif1.get_cache()
+    cache.close()  # Close connection before copying
+    
+    backup = Path(backup_path)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    
+    shutil.copy2(cache.db_path, backup)
+    print(f"Cache exported to {backup}")
+
+def import_cache(backup_path: str):
+    """Import cache database from a backup."""
+    cache = tif1.get_cache()
+    cache.close()  # Close connection before replacing
+    
+    backup = Path(backup_path)
+    if not backup.exists():
+        print(f"Backup not found: {backup}")
+        return
+    
+    shutil.copy2(backup, cache.db_path)
+    print(f"Cache imported from {backup}")
+
+# Export cache
+export_cache("~/backups/tif1_cache_2024.sqlite")
+
+# Import cache
+import_cache("~/backups/tif1_cache_2024.sqlite")
+```
+
+### Use Case 4: Cache Validation
+
+```python
+import tif1
+
+def validate_session_cache(year: int, gp: str, session: str):
+    """Validate that all expected data is cached for a session."""
+    cache = tif1.get_cache()
+    
+    print(f"Validating cache for {year} {gp} {session}...")
+    
+    # Check JSON data
+    base_key = f"{year}/{gp}/{session}"
+    expected_files = [
+        "drivers.json",
+        "laps.json",
+        "weather.json",
+        "messages.json",
+        "session_info.json"
+    ]
+    
+    print("\nJSON Data:")
+    for file in expected_files:
+        key = f"{base_key}/{file}"
+        data = cache.get(key)
+        status = "✓" if data else "✗"
+        print(f"  {status} {file}")
+    
+    # Check telemetry (sample first 3 drivers, first 5 laps)
+    print("\nTelemetry Sample:")
+    drivers = ["VER", "HAM", "LEC"]
+    laps = range(1, 6)
+    
+    for driver in drivers:
+        cached_laps = []
+        for lap in laps:
+            telem = cache.get_telemetry(year, gp, session, driver, lap)
+            if telem:
+                cached_laps.append(lap)
+        
+        if cached_laps:
+            print(f"  ✓ {driver}: laps {cached_laps}")
+        else:
+            print(f"  ✗ {driver}: no telemetry cached")
+
+# Validate specific session
+validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
+```
+
+---
 
 <CardGroup cols={2}>
   <Card title="Caching Strategy" href="/concepts/caching-strategy">
@@ -186,5 +1224,182 @@ async def fetch_cached_data():
   </Card>
   <Card title="Performance" href="/guides/best-practices">
     Optimization
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Cache Not Working
+
+**Symptoms:** Data is fetched from CDN every time, even for previously loaded sessions.
+
+**Solutions:**
+1. Check if caching is enabled:
+   ```python
+   import tif1
+   cache = tif1.get_cache()
+   print(f"Read-only: {cache.read_only}")
+   print(f"Cache dir: {cache.cache_dir}")
+   ```
+
+2. Verify cache directory is writable:
+   ```python
+   import os
+   cache = tif1.get_cache()
+   print(f"Writable: {os.access(cache.cache_dir, os.W_OK)}")
+   ```
+
+3. Check environment variables:
+   ```bash
+   echo $TIF1_CACHE_ENABLED
+   echo $TIF1_CACHE_READ_ONLY
+   ```
+
+---
+
+### Database Locked Errors
+
+**Symptoms:** `sqlite3.OperationalError: database is locked`
+
+**Causes:**
+- Multiple processes accessing the cache simultaneously
+- Long-running transactions
+- Improper connection handling
+
+**Solutions:**
+1. Ensure proper connection cleanup:
+   ```python
+   cache = tif1.get_cache()
+   try:
+       # ... cache operations ...
+   finally:
+       cache.close()
+   ```
+
+2. Avoid concurrent writes from multiple processes
+3. Use read-only mode for read-heavy workloads
+
+---
+
+### Cache Corruption
+
+**Symptoms:** Errors when reading cached data, invalid JSON, or database integrity errors.
+
+**Solutions:**
+1. Clear and rebuild the cache:
+   ```python
+   import tif1
+   cache = tif1.get_cache()
+   cache.clear()
+   print("Cache cleared - will rebuild on next load")
+   ```
+
+2. Delete the database file manually:
+   ```bash
+   rm ~/.tif1/cache/cache.sqlite
+   ```
+
+3. Verify database integrity:
+   ```python
+   import sqlite3
+   import tif1
+   
+   cache = tif1.get_cache()
+   conn = sqlite3.connect(cache.db_path)
+   cursor = conn.cursor()
+   cursor.execute("PRAGMA integrity_check")
+   result = cursor.fetchone()[0]
+   print(f"Integrity check: {result}")
+   conn.close()
+   ```
+
+---
+
+### High Memory Usage
+
+**Symptoms:** Python process consuming excessive RAM.
+
+**Causes:**
+- Large in-memory LRU cache
+- Loading many sessions with telemetry
+
+**Solutions:**
+1. Reduce memory cache size (requires code modification)
+2. Load data selectively:
+   ```python
+   # Only load what you need
+   session.load(laps=True, telemetry=False)
+   ```
+
+3. Process data in batches:
+   ```python
+   # Process one session at a time
+   for event in schedule:
+       session = tif1.get_session(year, event['EventName'], 'Race')
+       session.load()
+       # ... process ...
+       del session  # Free memory
+   ```
+
+---
+
+### Slow Cache Performance
+
+**Symptoms:** Cache reads are slower than expected.
+
+**Solutions:**
+1. Use batch operations for telemetry:
+   ```python
+   # Slow: multiple individual queries
+   for driver, lap in driver_laps:
+       telem = cache.get_telemetry(year, gp, session, driver, lap)
+   
+   # Fast: single batch query
+   batch = cache.get_telemetry_batch(year, gp, session, driver_laps)
+   ```
+
+2. Optimize database (vacuum):
+   ```python
+   import sqlite3
+   import tif1
+   
+   cache = tif1.get_cache()
+   conn = sqlite3.connect(cache.db_path)
+   conn.execute("VACUUM")
+   conn.close()
+   print("Database optimized")
+   ```
+
+3. Check disk I/O performance:
+   ```python
+   import time
+   import tif1
+   
+   cache = tif1.get_cache()
+   
+   # Benchmark cache read
+   start = time.perf_counter()
+   data = cache.get("2024/Monaco_Grand_Prix/Race/drivers.json")
+   elapsed = time.perf_counter() - start
+   
+   print(f"Cache read took {elapsed*1000:.2f} ms")
+   ```
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Caching Strategy" href="/concepts/caching-strategy">
+    Understand the two-tier cache architecture
+  </Card>
+  <Card title="Config API" href="/api-reference/config">
+    Configure cache behavior and location
+  </Card>
+  <Card title="Performance Guide" href="/guides/best-practices">
+    Optimization techniques and best practices
+  </Card>
+  <Card title="Session API" href="/api-reference/sessions">
+    Learn how sessions interact with the cache
   </Card>
 </CardGroup>
