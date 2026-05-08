@@ -1,35 +1,90 @@
 ---
 title: "Jupyter Integration"
 icon: "book"
-description: "Rich display and notebook utilities"
+description: "Rich display and notebook utilities for interactive F1 data analysis"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
   - "documentation"
+  - "jupyter"
+  - "notebook"
+  - "ipython"
+  - "interactive"
 ---
 
-`tif1` provides enhanced Jupyter notebook integration with rich HTML displays for Session, Driver, and Lap objects.
+# Jupyter Notebook Integration
 
-## Auto-Enabling
+`tif1` provides comprehensive Jupyter notebook integration with rich HTML displays, automatic environment detection, and interactive utilities designed specifically for Formula 1 data analysis. The library automatically enhances your notebook experience with formatted displays for Session, Driver, and Lap objects, making data exploration intuitive and visually appealing.
 
-Jupyter display is automatically enabled when running in a Jupyter environment. No manual setup required.
+## Overview
+
+The Jupyter integration module (`tif1.jupyter`) provides:
+
+- **Automatic Environment Detection**: Detects when running in Jupyter and enables rich displays automatically
+- **Rich HTML Representations**: Beautiful, formatted displays for all major tif1 objects
+- **DataFrame Summaries**: Enhanced DataFrame displays with memory usage and shape information
+- **Zero Configuration**: Works out of the box with no setup required
+- **Fallback Support**: Gracefully degrades to standard repr() when not in Jupyter
+- **Performance Optimized**: Minimal overhead with lazy loading and efficient HTML generation
+
+---
+
+## Automatic Activation
+
+The Jupyter integration activates automatically when you import `tif1` in a Jupyter environment. The library uses intelligent detection to identify Jupyter notebooks, JupyterLab, and IPython kernels.
+
+### How It Works
+
+When you import `tif1`, the library:
+
+1. **Detects the Environment**: Checks if IPython is available and if an IPython kernel is running
+2. **Enables Rich Displays**: Automatically patches Session, Driver, and Lap classes with `_repr_html_()` methods
+3. **Logs Activation**: Records activation status in the logger (visible with debug logging enabled)
+4. **Handles Errors Gracefully**: Falls back to standard text representation if HTML generation fails
 
 ```python
 import tif1
 
-# Rich display is automatically enabled
+# Rich display is automatically enabled - no configuration needed
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-session  # Displays rich HTML representation
+session  # Displays rich HTML representation automatically
 ```
+
+### Environment Detection Details
+
+The `_is_notebook()` function performs the following checks:
+
+- Attempts to import `IPython` module
+- Retrieves the current IPython instance via `get_ipython()`
+- Checks for `IPKernelApp` in the shell configuration (indicates Jupyter kernel)
+- Returns `True` only if all checks pass, ensuring we're in a genuine Jupyter environment
+
+This approach ensures compatibility with:
+- Jupyter Notebook (classic interface)
+- JupyterLab
+- VS Code Jupyter extension
+- Google Colab
+- Kaggle Notebooks
+- Any IPython kernel-based environment
 
 ---
 
-## Rich Displays
+## Rich HTML Displays
+
+All major tif1 objects provide rich HTML representations that display automatically when you evaluate them in a Jupyter cell. These displays are styled with borders, colors, and structured tables for maximum readability.
 
 ### Session Display
 
-When you display a `Session` object in Jupyter, you get a formatted HTML table:
+The Session object displays comprehensive information about the loaded F1 session, including year, Grand Prix name, session type, backend library, and driver count.
+
+**Display Features:**
+- 🏎️ Emoji icon for quick visual identification
+- Bordered container with light gray background
+- Structured table layout with key-value pairs
+- URL-decoded Grand Prix and session names (handles special characters)
+- Dynamic driver count (shows "Not loaded" if drivers haven't been fetched yet)
+- Backend library indicator (pandas or polars)
 
 ```python
 import tif1
@@ -38,7 +93,21 @@ session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session
 ```
 
-**Output:**
+**HTML Output Structure:**
+```html
+<div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #f9f9f9;">
+    <h3>🏎️ F1 Session</h3>
+    <table>
+        <tr><td><strong>Year:</strong></td><td>2021</td></tr>
+        <tr><td><strong>Grand Prix:</strong></td><td>Belgian Grand Prix</td></tr>
+        <tr><td><strong>Session:</strong></td><td>Race</td></tr>
+        <tr><td><strong>Library:</strong></td><td>pandas</td></tr>
+        <tr><td><strong>Drivers:</strong></td><td>20</td></tr>
+    </table>
+</div>
+```
+
+**Visual Output:**
 ```text
 🏎️ F1 Session
 ┌─────────────┬──────────────────────────┐
@@ -52,12 +121,32 @@ session
 
 ### Driver Display
 
+The Driver object displays information about a specific driver within a session, including their driver code, session context, and data loading status.
+
+**Display Features:**
+- 👤 Emoji icon for driver identification
+- Light blue background (#f0f8ff) for visual distinction
+- Session context (year, Grand Prix, session type)
+- Laps loading status indicator
+- Compact, single-driver focused layout
+
 ```python
 ver = session.get_driver("VER")
 ver
-```yaml
+```
 
-**Output:**
+**HTML Output Structure:**
+```html
+<div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #f0f8ff;">
+    <h3>👤 Driver: VER</h3>
+    <table>
+        <tr><td><strong>Session:</strong></td><td>2021 Belgian Grand Prix - Race</td></tr>
+        <tr><td><strong>Laps loaded:</strong></td><td>Yes</td></tr>
+    </table>
+</div>
+```
+
+**Visual Output:**
 ```text
 👤 Driver: VER
 ┌─────────────┬──────────────────────────────────────┐
@@ -68,10 +157,34 @@ ver
 
 ### Lap Display
 
+The Lap object displays information about a specific lap, including lap number, driver, session context, and telemetry loading status.
+
+**Display Features:**
+- 🏁 Emoji icon for lap identification
+- Wheat-colored background (#fff8dc) for visual distinction
+- Lap number prominently displayed in header
+- Driver code and session context
+- Telemetry loading status indicator
+- Useful for tracking which laps have telemetry data loaded
+
 ```python
 lap = ver.get_lap(19)
 lap
-```text **Output:**
+```
+
+**HTML Output Structure:**
+```html
+<div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #fff8dc;">
+    <h3>🏁 Lap 19</h3>
+    <table>
+        <tr><td><strong>Driver:</strong></td><td>VER</td></tr>
+        <tr><td><strong>Session:</strong></td><td>2021 Belgian Grand Prix - Race</td></tr>
+        <tr><td><strong>Telemetry loaded:</strong></td><td>No</td></tr>
+    </table>
+</div>
+```
+
+**Visual Output:**
 ```text
 🏁 Lap 19
 ┌──────────────────┬──────────────────────────────────────┐
@@ -81,139 +194,321 @@ lap
 └──────────────────┴──────────────────────────────────────┘
 ```
 
+### DataFrame Summary Display
+
+DataFrames (both pandas and polars) automatically display with enhanced summary information when returned from tif1 methods.
+
+**Display Features:**
+- Green left border for visual emphasis
+- Row count with thousands separator
+- Column count
+- Memory usage in MB (calculated differently for pandas vs polars)
+- Compact single-line format
+- Appears above the standard DataFrame display
+
+```python
+laps = session.laps
+laps  # Shows summary + standard DataFrame display
+```
+
+**HTML Output Structure:**
+```html
+<div style="border-left: 3px solid #4CAF50; padding-left: 10px; margin: 10px 0;">
+    <strong>DataFrame Summary:</strong> 1,234 rows × 25 columns | Memory: 2.45 MB
+</div>
+```
+
+**Memory Calculation:**
+- **Pandas**: Uses `df.memory_usage(deep=True).sum()` for accurate memory including object dtypes
+- **Polars**: Uses `df.estimated_size()` if available, otherwise returns 0
+
 ---
 
-## Manual Control
+## Manual Control and Advanced Usage
 
-### Enable jupyter display
+While the Jupyter integration activates automatically, you can manually control and customize the display behavior for advanced use cases.
+
+### Manual Activation
+
+If you need to manually enable Jupyter displays (e.g., after importing tif1 before IPython was available), use the `enable_jupyter_display()` function:
 
 ```python
 from tif1.jupyter import enable_jupyter_display
 
+# Manually enable rich displays
 enable_jupyter_display()
-```python
+```
 
-### Check if running in jupyter
+**What This Does:**
+- Imports Session, Driver, and Lap classes from `tif1.core`
+- Patches each class with a `_repr_html_()` method
+- Logs activation status to the logger
+- Handles errors gracefully if classes can't be imported
+
+**When to Use:**
+- Dynamic module loading scenarios
+- Custom IPython kernel configurations
+- Testing and development
+- Troubleshooting display issues
+
+### Environment Detection
+
+Check if your code is running in a Jupyter environment:
 
 ```python
 from tif1.jupyter import _is_notebook
 
 if _is_notebook():
-    print("Running in Jupyter")
+    print("Running in Jupyter - rich displays enabled")
 else:
-    print("Not in Jupyter")
+    print("Not in Jupyter - using standard text output")
+```
+
+**Use Cases:**
+- Conditional display logic
+- Notebook vs script detection
+- Custom display implementations
+- Testing different output formats
+
+**Note**: The function name starts with underscore (`_is_notebook`) indicating it's an internal API, but it's stable and safe to use.
+
+### Programmatic HTML Generation
+
+Generate HTML representations programmatically without displaying them:
+
 ```python
+from tif1.jupyter import display_session_info, display_driver_info, display_lap_info
 
----
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
-## DataFrame Summaries
+# Generate HTML string
+html_output = display_session_info(session)
 
-DataFrames automatically display with summary information:
+# Use in custom displays
+from IPython.display import HTML, display
+display(HTML(html_output))
 
-```python
-laps = session.laps
-laps
-```python
+# Save to file
+with open("session_info.html", "w") as f:
+    f.write(html_output)
 
-**Output includes:**
-- Row count
-- Column count
-- Memory usage
-- Standard DataFrame display
+# Combine multiple displays
+driver = session.get_driver("VER")
+combined_html = f"""
+<div>
+    {display_session_info(session)}
+    <br>
+    {display_driver_info(driver)}
+</div>
+"""
+display(HTML(combined_html))
+```
 
----
+### Custom Display Functions
 
-## Custom display functions
-
-### `display_session_info()`
-
-Generate HTML display for a Session object.
+Create custom display functions for specific use cases:
 
 ```python
 from tif1.jupyter import display_session_info
+from IPython.display import HTML, display
+import tif1
 
-html = display_session_info(session)
-# Returns HTML string
+def display_session_with_fastest_lap(session):
+    """Custom display showing session info + fastest lap."""
+    fastest = session.get_fastest_laps(by_driver=False).iloc[0]
+    
+    session_html = display_session_info(session)
+    fastest_html = f"""
+    <div style="border: 1px solid #4CAF50; padding: 10px; margin-top: 10px; border-radius: 5px;">
+        <h4>⚡ Fastest Lap</h4>
+        <p><strong>Driver:</strong> {fastest['Driver']}</p>
+        <p><strong>Time:</strong> {fastest['LapTimeSeconds']:.3f}s</p>
+        <p><strong>Lap:</strong> {fastest['LapNumber']}</p>
+    </div>
+    """
+    
+    display(HTML(session_html + fastest_html))
+
+# Usage
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+display_session_with_fastest_lap(session)
+```
+
+### Disabling Rich Displays
+
+If you prefer standard text output even in Jupyter:
+
 ```python
+# Remove _repr_html_ methods
+from tif1.core import Session, Driver, Lap
 
-### `display_driver_info()`
+if hasattr(Session, '_repr_html_'):
+    delattr(Session, '_repr_html_')
+if hasattr(Driver, '_repr_html_'):
+    delattr(Driver, '_repr_html_')
+if hasattr(Lap, '_repr_html_'):
+    delattr(Lap, '_repr_html_')
 
-Generate HTML display for a Driver object.
-
-```python
-from tif1.jupyter import display_driver_info
-
-html = display_driver_info(driver)
-# Returns HTML string
-```python
-
-### `display_lap_info()`
-
-Generate HTML display for a Lap object.
-
-```python
-from tif1.jupyter import display_lap_info
-
-html = display_lap_info(lap)
-# Returns HTML string
-```python ### `display_dataframe_summary()`
-
-Generate summary display for a DataFrame.
-
-```python
-from tif1.jupyter import display_dataframe_summary
-
-html = display_dataframe_summary(laps)
-# Returns HTML string with row/column/memory info
-```python
+# Now objects will use standard repr()
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session  # Shows text representation
+```
 
 ---
 
-## Notebook best practices
+## Notebook Best Practices and Patterns
 
-### 1. Load data efficiently
+### 1. Efficient Data Loading
+
+Load session data efficiently by controlling what gets fetched:
 
 ```python
 import tif1
 
+# Basic session creation (no data loaded yet)
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
-# Load session data
+# Load only what you need
+session.load(laps=True, telemetry=False, messages=False, weather=False)
+
+# Access loaded data
+laps = session.laps
+print(f"Loaded {len(laps)} laps")
+
+# Load additional data on demand
+session.load(weather=True)
+weather = session.weather
+```
+
+**Performance Tips:**
+- Use `session.load()` with specific parameters to avoid fetching unnecessary data
+- Telemetry data is large - only load when needed
+- Weather and messages are lightweight - safe to load by default
+- Cache is automatically used for subsequent loads
+
+### 2. Progress Indication
+
+Provide visual feedback during long-running operations:
+
+```python
+from IPython.display import display, HTML, clear_output
+import tif1
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+
+# Show loading message
+display(HTML("<p>⏳ Loading session data...</p>"))
+
+# Load data
 session.load()
 laps = session.laps
+
+# Update with success message
+clear_output(wait=True)
+display(HTML(f"<p>✅ Loaded {len(laps)} laps from {len(session.drivers)} drivers</p>"))
+
+# Display session
+session
 ```
 
-### 2. Display Progress
+**Advanced Progress Tracking:**
 
 ```python
-from IPython.display import display, HTML
+from IPython.display import display, HTML, clear_output
+import tif1
+
+def load_session_with_progress(year, gp, session_type):
+    """Load session with detailed progress updates."""
+    display(HTML("<div id='progress'>⏳ Creating session...</div>"))
+    session = tif1.get_session(year, gp, session_type)
+    
+    clear_output(wait=True)
+    display(HTML("<div id='progress'>⏳ Loading laps...</div>"))
+    session.load(laps=True, telemetry=False)
+    
+    clear_output(wait=True)
+    display(HTML("<div id='progress'>⏳ Loading weather...</div>"))
+    session.load(weather=True)
+    
+    clear_output(wait=True)
+    display(HTML(f"<div id='progress'>✅ Complete! Loaded {len(session.laps)} laps</div>"))
+    
+    return session
+
+session = load_session_with_progress(2021, "Belgian Grand Prix", "Race")
+```
+
+### 3. Interactive Data Exploration
+
+Explore data interactively with rich displays:
+
+```python
 import tif1
 
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 
-display(HTML("<p>Loading session data...</p>"))
-laps = session.laps
-display(HTML(f"<p>✓ Loaded {len(laps)} laps</p>"))
-```
-
-### 3. Interactive Exploration
-
-```python
-import tif1
-
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-
-# Display session info
+# Display session overview
 session
 
-# Get driver codes from drivers_df
+# Explore drivers
 drivers_df = session.drivers_df
-for driver_code in drivers_df["Driver"][:3]:
+print(f"\n📊 {len(drivers_df)} drivers in session:\n")
+
+# Display first 5 drivers with rich output
+for driver_code in drivers_df["Driver"][:5]:
     driver = session.get_driver(driver_code)
     display(driver)
+    
+    # Show fastest lap for each driver
+    fastest = driver.get_fastest_lap()
+    if not fastest.empty:
+        print(f"  ⚡ Fastest: {fastest['LapTimeSeconds'].iloc[0]:.3f}s on {fastest['Compound'].iloc[0]}")
+    print()
 ```
 
-### 4. Combine with Plotting
+**Structured Exploration Pattern:**
+
+```python
+import tif1
+from IPython.display import display, HTML
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+# Create exploration dashboard
+display(HTML("<h2>🏎️ Session Analysis Dashboard</h2>"))
+
+# Section 1: Session Overview
+display(HTML("<h3>Session Overview</h3>"))
+display(session)
+
+# Section 2: Top 3 Drivers
+display(HTML("<h3>Top 3 Drivers</h3>"))
+fastest_laps = session.get_fastest_laps(by_driver=True).head(3)
+
+for idx, row in fastest_laps.iterrows():
+    driver = session.get_driver(row['Driver'])
+    display(driver)
+    display(HTML(f"<p>⚡ Fastest lap: {row['LapTimeSeconds']:.3f}s (Lap {row['LapNumber']})</p>"))
+
+# Section 3: Lap Statistics
+display(HTML("<h3>Lap Statistics</h3>"))
+laps = session.laps
+stats_html = f"""
+<table style="border-collapse: collapse; width: 100%;">
+    <tr><td style="padding: 5px;"><strong>Total Laps:</strong></td><td>{len(laps)}</td></tr>
+    <tr><td style="padding: 5px;"><strong>Fastest Lap:</strong></td><td>{laps['LapTimeSeconds'].min():.3f}s</td></tr>
+    <tr><td style="padding: 5px;"><strong>Average Lap:</strong></td><td>{laps['LapTimeSeconds'].mean():.3f}s</td></tr>
+    <tr><td style="padding: 5px;"><strong>Slowest Lap:</strong></td><td>{laps['LapTimeSeconds'].max():.3f}s</td></tr>
+</table>
+"""
+display(HTML(stats_html))
+```
+
+### 4. Combining with Plotting
+
+Integrate rich displays with matplotlib visualizations:
 
 ```python
 import tif1
@@ -224,65 +519,284 @@ from tif1.plotting import setup_mpl, get_driver_color_mapping
 setup_mpl()
 
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+# Display session info
+session
+
+# Get data
 laps = session.laps
 colors = get_driver_color_mapping(session)
 
-# Plot lap times for top drivers
-fig, ax = plt.subplots(figsize=(12, 6))
+# Create visualization
+fig, ax = plt.subplots(figsize=(14, 7))
 
-for driver in ["VER", "HAM", "BOT"]:
+# Plot lap times for top 3 drivers
+fastest_drivers = session.get_fastest_laps(by_driver=True).head(3)['Driver'].tolist()
+
+for driver in fastest_drivers:
     driver_laps = laps[laps["Driver"] == driver]
     ax.plot(
         driver_laps["LapNumber"],
         driver_laps["LapTimeSeconds"],
         color=colors.get(driver),
         label=driver,
-        linewidth=2
+        linewidth=2.5,
+        marker='o',
+        markersize=5,
+        alpha=0.8
     )
 
-ax.set_xlabel("Lap Number")
-ax.set_ylabel("Lap Time (s)")
-ax.set_title("Race Lap Times - 2021 Belgian Grand Prix")
-ax.legend()
-ax.grid(True, alpha=0.3)
+ax.set_xlabel("Lap Number", fontsize=12)
+ax.set_ylabel("Lap Time (seconds)", fontsize=12)
+ax.set_title("Race Lap Times - 2021 Belgian Grand Prix", fontsize=14, fontweight='bold')
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3, linestyle='--')
 
+plt.tight_layout()
 plt.show()
+
+# Display driver details
+from IPython.display import HTML
+display(HTML("<h3>Driver Details</h3>"))
+for driver_code in fastest_drivers:
+    driver = session.get_driver(driver_code)
+    display(driver)
 ```
 
-### 5. Use Widgets for Interactivity
+### 5. Interactive Widgets
+
+Use ipywidgets for interactive data exploration:
 
 ```python
 import tif1
 import ipywidgets as widgets
-from IPython.display import display
+from IPython.display import display, HTML
 
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
 
-# Get driver codes from drivers_df
+# Display session
+session
+
+# Get driver codes
 drivers_df = session.drivers_df
-driver_codes = drivers_df["Driver"].tolist()
+driver_codes = sorted(drivers_df["Driver"].tolist())
 
-# Create driver selector
+# Create interactive driver selector
 driver_dropdown = widgets.Dropdown(
     options=driver_codes,
     description='Driver:',
+    style={'description_width': '80px'}
 )
 
 # Create output widget
 output = widgets.Output()
 
 def on_driver_change(change):
+    """Update display when driver selection changes."""
     with output:
         output.clear_output()
-        driver = session.get_driver(change['new'])
+        
+        driver_code = change['new']
+        driver = session.get_driver(driver_code)
+        
+        # Display driver info
+        display(driver)
+        
+        # Get and display statistics
+        driver_laps = driver.laps
         fastest = driver.get_fastest_lap()
+        
         if not fastest.empty:
-            print(f"Fastest lap: {fastest['LapTimeSeconds'].iloc[0]:.3f}s")
-            print(f"Compound: {fastest['Compound'].iloc[0]}")
+            stats_html = f"""
+            <div style="border: 1px solid #ddd; padding: 10px; margin-top: 10px; border-radius: 5px;">
+                <h4>📊 Statistics</h4>
+                <table style="width: 100%;">
+                    <tr><td><strong>Total Laps:</strong></td><td>{len(driver_laps)}</td></tr>
+                    <tr><td><strong>Fastest Lap:</strong></td><td>{fastest['LapTimeSeconds'].iloc[0]:.3f}s</td></tr>
+                    <tr><td><strong>Fastest Lap Number:</strong></td><td>{fastest['LapNumber'].iloc[0]}</td></tr>
+                    <tr><td><strong>Compound:</strong></td><td>{fastest['Compound'].iloc[0]}</td></tr>
+                    <tr><td><strong>Average Lap Time:</strong></td><td>{driver_laps['LapTimeSeconds'].mean():.3f}s</td></tr>
+                </table>
+            </div>
+            """
+            display(HTML(stats_html))
 
+# Attach event handler
 driver_dropdown.observe(on_driver_change, names='value')
 
+# Display widgets
+display(HTML("<h3>🔍 Interactive Driver Explorer</h3>"))
 display(driver_dropdown, output)
+
+# Trigger initial display
+on_driver_change({'new': driver_codes[0]})
+```
+
+**Advanced Widget Example with Multiple Controls:**
+
+```python
+import tif1
+import ipywidgets as widgets
+from IPython.display import display, HTML
+import matplotlib.pyplot as plt
+from tif1.plotting import setup_mpl, get_driver_color_mapping
+
+setup_mpl()
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+# Create controls
+drivers_df = session.drivers_df
+driver_codes = sorted(drivers_df["Driver"].tolist())
+
+driver_selector = widgets.SelectMultiple(
+    options=driver_codes,
+    value=[driver_codes[0]],
+    description='Drivers:',
+    rows=10
+)
+
+metric_selector = widgets.Dropdown(
+    options=['LapTimeSeconds', 'Speed_I1', 'Speed_I2', 'Speed_FL', 'Speed_ST'],
+    value='LapTimeSeconds',
+    description='Metric:'
+)
+
+plot_button = widgets.Button(
+    description='Plot',
+    button_style='success',
+    icon='chart-line'
+)
+
+output = widgets.Output()
+
+def on_plot_click(b):
+    """Generate plot when button clicked."""
+    with output:
+        output.clear_output(wait=True)
+        
+        selected_drivers = driver_selector.value
+        metric = metric_selector.value
+        
+        if not selected_drivers:
+            display(HTML("<p>⚠️ Please select at least one driver</p>"))
+            return
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=(14, 7))
+        colors = get_driver_color_mapping(session)
+        laps = session.laps
+        
+        for driver in selected_drivers:
+            driver_laps = laps[laps["Driver"] == driver]
+            if metric in driver_laps.columns:
+                ax.plot(
+                    driver_laps["LapNumber"],
+                    driver_laps[metric],
+                    color=colors.get(driver),
+                    label=driver,
+                    linewidth=2,
+                    marker='o',
+                    markersize=4
+                )
+        
+        ax.set_xlabel("Lap Number")
+        ax.set_ylabel(metric)
+        ax.set_title(f"{metric} Comparison - 2021 Belgian Grand Prix")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+
+plot_button.on_click(on_plot_click)
+
+# Layout
+controls = widgets.VBox([
+    widgets.HTML("<h3>📊 Multi-Driver Comparison Tool</h3>"),
+    driver_selector,
+    metric_selector,
+    plot_button
+])
+
+display(controls, output)
+```
+
+### 6. Memory Management
+
+Handle large datasets efficiently in notebooks:
+
+```python
+import tif1
+
+# Use polars backend for better memory efficiency
+config = tif1.get_config()
+config.set("lib", "polars")
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+# Check memory usage
+laps = session.laps
+print(f"Laps DataFrame: {laps.estimated_size() / 1024 / 1024:.2f} MB")
+
+# Load telemetry selectively
+driver = session.get_driver("VER")
+fastest_lap = driver.get_fastest_lap()
+
+# Only load telemetry for specific lap
+if not fastest_lap.empty:
+    lap_number = fastest_lap['LapNumber'].iloc[0]
+    lap = driver.get_lap(lap_number)
+    tel = lap.telemetry
+    print(f"Telemetry DataFrame: {tel.estimated_size() / 1024 / 1024:.2f} MB")
+
+# Clear large objects when done
+del tel
+del laps
+```
+
+**Memory Monitoring:**
+
+```python
+import tif1
+from IPython.display import display, HTML
+import psutil
+import os
+
+def display_memory_usage():
+    """Display current memory usage."""
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    
+    html = f"""
+    <div style="border-left: 3px solid #FF9800; padding-left: 10px; margin: 10px 0;">
+        <strong>Memory Usage:</strong> {mem_mb:.2f} MB
+    </div>
+    """
+    display(HTML(html))
+
+# Monitor memory during operations
+display_memory_usage()
+
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session.load()
+
+display_memory_usage()
+
+# Load telemetry for all drivers
+for driver_code in session.drivers_df["Driver"][:5]:
+    driver = session.get_driver(driver_code)
+    fastest = driver.get_fastest_lap()
+    if not fastest.empty:
+        lap_num = fastest['LapNumber'].iloc[0]
+        lap = driver.get_lap(lap_num)
+        tel = lap.telemetry
+
+display_memory_usage()
 ```
 
 ---

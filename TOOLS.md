@@ -1,6 +1,10 @@
-# agents.md — Available CLI Tools (WSL2)
 
-> **WSL2 path rule**: Always work under `~/`. Never use `/mnt/c/...` — slower I/O, permission issues, symlink breakage.
+# agents.md — Available CLI Tools
+
+> **Default environment: WSL.** Always run commands under WSL. Never use Windows-native shells (PowerShell, CMD). WSL is the only supported environment for all development, scripting, and tooling.
+
+
+> **Python rule**: Use `uv` for all Python operations. Never use `python`, `python3`, `poetry`, `pip`, or `pip3`. `uv` replaces the Python interpreter, package manager, and virtual environment tooling.
 
 ---
 
@@ -47,13 +51,14 @@
 | `oxfmt` | JS/TS | JS/TS formatter. Replaces prettier. |
 | `basedpyright` | Python | Type checking. Prefer over `ty` (immature) and Pyrefly (resource heavy). |
 | `lychee` | Markdown/HTML | Link checker. |
-| `pip-audit` | Python | Scan dependencies for known vulnerabilities. |
+| `uv pip audit` | Python | Scan dependencies for known vulnerabilities. Replaces `pip-audit`. |
 
 ## Runtimes & Package Management
 
-| Tool | Purpose |
-|------|---------|
-| `bun` | **Use for all JS/TS** — runtime, package manager, bundler, test runner. Replaces node/npm/npx/yarn. |
+| Tool | Replaces | Purpose |
+|------|----------|---------|
+| `uv` | `python`, `python3`, `pip`, `pip3`, `venv`, `virtualenv`, `pyenv`, `poetry` | **Use for all Python** — interpreter, package installer, virtual environments, project management, script runner. Single tool for everything Python. |
+| `bun` | `node`, `npm`, `npx`, `yarn` | **Use for all JS/TS** — runtime, package manager, bundler, test runner. Replaces node/npm/npx/yarn. |
 
 ## Browser Automation
 
@@ -87,3 +92,19 @@
 | Tool | Purpose |
 |------|---------|
 | `tailwindcss-language-server` | Tailwind CSS LSP (editor-invoked). |
+
+---
+
+## `uv` Quick Reference
+
+| Instead of… | Use… |
+|-------------|------|
+| `python script.py` | `uv run script.py` |
+| `python3 script.py` | `uv run script.py` |
+| `pip install foo` | `uv pip install foo` |
+| `pip install -r requirements.txt` | `uv pip install -r requirements.txt` |
+| `python -m venv .venv` | `uv venv` |
+| `source .venv/bin/activate` | Not needed — `uv run` handles this automatically |
+| `pip list` | `uv pip list` |
+| `python -m foo` | `uv run python -m foo` |
+| `pyenv install 3.12` | `uv python install 3.12` |

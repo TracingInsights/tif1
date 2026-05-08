@@ -1,23 +1,51 @@
 ---
 title: "FastF1 Compatibility API"
 icon: "code-compare"
-description: "Drop-in replacement functions for migrating from fastf1"
+description: "Comprehensive guide to drop-in replacement functions for migrating from fastf1"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
   - "documentation"
+  - "fastf1"
+  - "migration"
+  - "compatibility"
 ---
 
-The `fastf1_compat` module provides compatibility shims for applications migrating from `fastf1`. These functions maintain the same API surface while using tif1's optimized lib.
+# FastF1 Compatibility Layer
+
+The `fastf1_compat` module provides a comprehensive compatibility layer for applications migrating from `fastf1` to `tif1`. This module maintains API compatibility while leveraging tif1's performance optimizations, including async data fetching, HTTP/2 multiplexing, and intelligent caching strategies.
 
 <Info>
-  For new projects, use the native tif1 API. This compatibility layer is provided to ease migration from fastf1.
+  **For new projects**: Use the native tif1 API directly for the best experience. This compatibility layer is specifically designed to ease migration from existing fastf1 codebases with minimal code changes.
 </Info>
 
-## Cache Class
+<Note>
+  **Performance benefit**: While maintaining API compatibility, tif1 delivers significant performance improvements:
+  - **2-5x faster** cold starts (first-time data loads)
+  - **10-20x faster** warm starts (cached data)
+  - **Async-first architecture** for parallel data fetching
+  - **HTTP/2 multiplexing** for efficient network usage
+  - **SQLite-backed caching** with in-memory LRU layer
+</Note>
 
-The `Cache` class provides fastf1-compatible cache management.
+---
+
+## Cache Management
+
+The `Cache` class provides fastf1-compatible cache management with enhanced performance through a multi-layer caching strategy. tif1 uses a sophisticated caching system that combines in-memory LRU caches with SQLite persistence, delivering significantly faster data access than fastf1's HTTP cache approach.
+
+### Architecture Overview
+
+tif1's caching system consists of three layers:
+
+1. **In-Memory LRU Cache**: Lock-free reads for frequently accessed data (configurable size, default 1024 items)
+2. **Telemetry-Specific Cache**: Dedicated in-memory cache for telemetry data (default 2048 items)
+3. **SQLite Persistence**: WAL-mode SQLite database for durable storage with optimized concurrency
+
+This multi-layer approach ensures that hot data is served from memory while maintaining persistence across sessions.
+
+---
 
 ### `Cache.enable_cache`
 
@@ -29,40 +57,116 @@ def enable_cache(
     force_renew: bool = False,
     use_requests_cache: bool = True
 ) -> Cache
-```python
+```
 
-Enable caching with fastf1-compatible API.
+Enable caching with fastf1-compatible API. This method initializes tif1's caching system and configures the cache directory. Once enabled, all data fetched through tif1 will be automatically cached for faster subsequent access.
 
-**Parameters:**
-- `cache_dir`: Directory for cache storage. If `None`, uses `~/.tif1/cache`
-- `ignore_version`: Ignored for compatibility (tif1 handles versioning automatically)
-- `force_renew`: Ignored for compatibility (use `Cache.clear_cache()` instead)
-- `use_requests_cache`: Ignored for compatibility (tif1 uses SQLite cache)
+#### Parameters
 
-**Returns:**
-- Cache instance
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `cache_dir` | `str \| Path \| None` | `None` | Directory path for cache storage. If `None`, uses the configured cache directory (default: `~/.tif1/cache` on Linux/macOS, `%LOCALAPPDATA%/Temp/tif1` on Windows) |
+| `ignore_version` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 handles cache versioning automatically through content-based keys |
+| `force_renew` | `bool` | `False` | If `True`, clears all existing cache data after enabling. Use `Cache.clear_cache()` for more control |
+| `use_requests_cache` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 uses SQLite-backed caching instead of requests-cache |
 
-**Example:**
+#### Returns
+
+- **`Cache`**: The configured global tif1 cache instance
+
+#### Behavior Details
+
+When `enable_cache()` is called:
+
+1. **Directory Creation**: Creates the cache directory if it doesn't exist, with restricted permissions (0o700 on Unix-like systems)
+2. **SQLite Initialization**: Sets up the SQLite database with WAL (Write-Ahead Logging) mode for better concurrency
+3. **Configuration Update**: Updates the global tif1 configuration to enable caching
+4. **Instance Reset**: Closes any existing cache instance and creates a fresh one
+5. **Optional Clear**: If `force_renew=True`, clears all cached data
+
+#### Cache Directory Resolution
+
+The cache directory is resolved in the following order of precedence:
+
+1. Explicit `cache_dir` parameter
+2. `TIF1_CACHE_DIR` environment variable
+3. Configuration file setting (`~/.tif1rc`)
+4. Platform-specific default:
+   - **Windows**: `%LOCALAPPDATA%/Temp/tif1`
+   - **macOS**: `~/Library/Caches/tif1`
+   - **Linux**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist)
+
+#### Examples
+
+**Basic usage with default location:**
 ```python
 import tif1
 
-# Enable cache with default location
+# Enable cache with platform-specific default directory
 tif1.Cache.enable_cache()
 
-# Enable cache with custom directory
-tif1.Cache.enable_cache(cache_dir="./my_cache")
-```python
+# Now all data fetching will be cached
+session = tif1.get_session(2024, "Monaco", "Q")
+session.load()  # Data is fetched and cached
+```
 
-**Migration from fastf1:**
+**Custom cache directory:**
+```python
+import tif1
+from pathlib import Path
+
+# Use a project-specific cache directory
+cache_path = Path("./project_cache")
+tif1.Cache.enable_cache(cache_dir=cache_path)
+
+# Cache will be stored in ./project_cache/cache.sqlite
+```
+
+**Enable cache and clear existing data:**
+```python
+import tif1
+
+# Start fresh - clear any existing cached data
+tif1.Cache.enable_cache(cache_dir="./cache", force_renew=True)
+```
+
+**Environment variable configuration:**
+```bash
+# Set cache directory via environment variable
+export TIF1_CACHE_DIR="/mnt/fast-ssd/f1-cache"
+```
+
+```python
+import tif1
+
+# Will use /mnt/fast-ssd/f1-cache automatically
+tif1.Cache.enable_cache()
+```
+
+#### Migration from fastf1
+
+The API is identical, making migration seamless:
+
 ```python
 # fastf1 code
 import fastf1
 fastf1.Cache.enable_cache("./cache")
 
-# tif1 equivalent
+# tif1 equivalent (identical call)
 import tif1
 tif1.Cache.enable_cache("./cache")
-```python
+```
+
+#### Performance Considerations
+
+- **First call overhead**: The first `enable_cache()` call creates the SQLite database and initializes tables (~10-50ms)
+- **Subsequent calls**: Reusing an existing cache directory is nearly instant
+- **Memory usage**: In-memory caches use approximately 50-100 bytes per cached item
+- **Disk usage**: SQLite database grows with cached data; typical session data is 1-5 MB
+
+#### Thread Safety
+
+`enable_cache()` is thread-safe and can be called from multiple threads. However, it's recommended to call it once during application initialization to avoid unnecessary overhead.
 
 ---
 
@@ -70,20 +174,87 @@ tif1.Cache.enable_cache("./cache")
 
 ```python
 @staticmethod
-def clear_cache() -> None
-```python
+def clear_cache(
+    cache_dir: str | Path | None = None,
+    deep: bool = False
+) -> None
+```
 
-Clear all cached data.
+Clear cached data from the specified cache directory. This method removes all cached session data, lap times, telemetry, and other stored information. Use this when you want to force fresh data fetches or when troubleshooting cache-related issues.
 
-**Example:**
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `cache_dir` | `str \| Path \| None` | `None` | Optional cache directory path. If `None`, clears the currently active cache directory |
+| `deep` | `bool` | `False` | If `True`, also removes legacy FastF1 HTTP cache database files (`fastf1_http_cache.sqlite*`) for complete cleanup |
+
+#### Behavior Details
+
+The clearing process works as follows:
+
+1. **Active Cache Detection**: If `cache_dir` is `None`, uses the currently active cache instance
+2. **Directory Validation**: Verifies the cache directory exists and is a valid directory
+3. **SQLite Clearing**: Executes `DELETE` statements on all cache tables
+4. **Memory Cache Flush**: Clears in-memory LRU caches
+5. **Legacy Cleanup** (if `deep=True`): Removes FastF1 HTTP cache files for users migrating from fastf1
+
+#### Cache Tables Cleared
+
+- **`cache` table**: General session data, lap times, race control messages, weather data
+- **`telemetry_cache` table**: Telemetry data indexed by (year, GP, session, driver, lap)
+- **In-memory caches**: Both general and telemetry-specific LRU caches
+
+#### Examples
+
+**Clear the active cache:**
 ```python
 import tif1
 
-# Clear the cache
-tif1.Cache.clear_cache()
-```python
+# Enable cache
+tif1.Cache.enable_cache("./cache")
 
-**Migration from fastf1:**
+# ... use tif1 to fetch data ...
+
+# Clear all cached data
+tif1.Cache.clear_cache()
+
+# Next data fetch will retrieve fresh data from CDN
+```
+
+**Clear a specific cache directory:**
+```python
+import tif1
+
+# Clear cache in a specific directory without activating it
+tif1.Cache.clear_cache(cache_dir="./old_cache")
+```
+
+**Deep clean (remove legacy FastF1 files):**
+```python
+import tif1
+
+# Migrating from fastf1? Remove old HTTP cache files too
+tif1.Cache.clear_cache(cache_dir="./cache", deep=True)
+```
+
+**Clear cache before important race weekend:**
+```python
+import tif1
+
+# Ensure fresh data for the latest race
+tif1.Cache.enable_cache()
+tif1.Cache.clear_cache()
+
+# Fetch latest data
+session = tif1.get_session(2024, "Abu Dhabi", "R")
+session.load()
+```
+
+#### Migration from fastf1
+
+The basic API is identical:
+
 ```python
 # fastf1 code
 import fastf1
@@ -92,7 +263,34 @@ fastf1.Cache.clear_cache()
 # tif1 equivalent (identical)
 import tif1
 tif1.Cache.clear_cache()
-```python
+```
+
+#### Error Handling
+
+- **`NotADirectoryError`**: Raised if the specified `cache_dir` exists but is not a directory
+- **`OSError`**: May be raised if file permissions prevent deletion (logged as warning for legacy files)
+
+#### Performance Impact
+
+- **Clearing time**: Typically 10-100ms depending on cache size
+- **Disk I/O**: Minimal - SQLite `DELETE` operations are fast with WAL mode
+- **Memory**: In-memory caches are cleared instantly
+
+#### When to Clear Cache
+
+Consider clearing the cache in these scenarios:
+
+- **Data corruption**: If you suspect cached data is corrupted or invalid
+- **Schema changes**: After updating tif1 to a version with data format changes
+- **Disk space**: When cache directory grows too large
+- **Testing**: To ensure tests fetch fresh data
+- **Season updates**: At the start of a new F1 season to remove old data
+
+#### Thread Safety
+
+`clear_cache()` is thread-safe but should not be called concurrently with data fetching operations, as this may lead to inconsistent cache states.
+
+---
 
 ---
 

@@ -1,111 +1,787 @@
 ---
 title: "CLI Tool"
 icon: "terminal"
-description: "Command-line interface for tif1"
+description: "Comprehensive command-line interface for tif1 - Fast F1 data access from your terminal"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
+  - "CLI"
+  - "command line"
+  - "terminal"
   - "documentation"
 ---
 
+## Overview
+
+The tif1 CLI provides a powerful command-line interface for accessing Formula 1 data directly from your terminal. Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/), it offers beautiful, formatted output with progress indicators and interactive tables.
+
+The CLI is designed for:
+- **Quick data exploration** - Browse events, sessions, and drivers without writing code
+- **Performance testing** - Benchmark data loading and cache performance
+- **Cache management** - Inspect and manage your local data cache
+- **Debugging** - Enable detailed logging to troubleshoot issues
+- **Scripting** - Integrate F1 data into shell scripts and automation workflows
+
 ## Installation
 
-The CLI is automatically installed with tif1:
+The CLI is automatically installed when you install tif1:
 
 ```bash
 pip install tif1
-```yaml
+```
 
-## Commands
-
-### events
-
-List all events for a year:
-
-```bash
-tif1 events 2025
-```yaml
-
-### sessions
-
-List all sessions for an event:
-
-```bash
-tif1 sessions 2025 "Abu Dhabi Grand Prix"
-```yaml
-
-### drivers
-
-List all drivers in a session:
-
-```bash
-tif1 drivers 2025 "Abu Dhabi Grand Prix" "Practice 1"
-```text
-
-### fastest
-
-Show fastest laps:
-
-```bash
-# All drivers
-tif1 fastest 2025 "Abu Dhabi Grand Prix" "Qualifying"
-
-# Specific driver
-tif1 fastest 2025 "Abu Dhabi Grand Prix" "Qualifying" --driver VER
-```yaml
-
-### cache-info
-
-Show cache information:
-
-```bash
-tif1 cache-info
-```yaml
-
-### cache-clear
-
-Clear cache:
-
-```bash
-tif1 cache-clear --yes
-```yaml
-
-### version
-
-Show tif1 version:
+After installation, the `tif1` command will be available in your terminal. Verify the installation:
 
 ```bash
 tif1 version
-```python ### debug
+```
 
-Enable debug logging:
+## Global Options
 
-```bash
-tif1 debug 2025 "Abu Dhabi Grand Prix" "Practice 1"
-```python
-
-## Examples
+All commands support standard help output:
 
 ```bash
-# Get 2025 events
+tif1 --help              # Show all available commands
+tif1 events --help       # Show help for a specific command
+```
+
+## Commands Reference
+
+### `events` - List Events for a Season
+
+Display all Formula 1 events (Grand Prix weekends) for a specific year.
+
+**Syntax:**
+```bash
+tif1 events <year>
+```
+
+**Arguments:**
+- `year` (required): Season year (2018-current)
+
+**Output:**
+- Formatted table with event numbers and names
+- Total event count for the season
+
+**Examples:**
+
+```bash
+# List all 2025 events
 tif1 events 2025
 
-# Get sessions for Abu Dhabi GP
+# List 2024 events
+tif1 events 2024
+
+# List 2018 events (earliest supported year)
+tif1 events 2018
+```
+
+**Sample Output:**
+```
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ Event                         ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1 │ Bahrain Grand Prix           │
+│ 2 │ Saudi Arabian Grand Prix     │
+│ 3 │ Australian Grand Prix        │
+│ 4 │ Japanese Grand Prix          │
+...
+└───┴───────────────────────────────┘
+
+Total: 24 events
+```
+
+**Use Cases:**
+- Discover available events for a season
+- Find the exact event name for use in other commands
+- Verify data availability for a specific year
+
+---
+
+### `sessions` - List Sessions for an Event
+
+Display all sessions available for a specific Grand Prix event.
+
+**Syntax:**
+```bash
+tif1 sessions <year> <event>
+```
+
+**Arguments:**
+- `year` (required): Season year (2018-current)
+- `event` (required): Event name (use quotes for multi-word names)
+
+**Output:**
+- Formatted table with session numbers and names
+- Typical sessions include: Practice 1, Practice 2, Practice 3, Qualifying, Sprint, Sprint Qualifying, Race
+
+**Examples:**
+
+```bash
+# List sessions for 2025 Abu Dhabi GP
 tif1 sessions 2025 "Abu Dhabi Grand Prix"
 
-# Get drivers in Practice 1
+# List sessions for Monaco (single-word event names don't need quotes)
+tif1 sessions 2024 Monaco
+
+# List sessions for a sprint weekend
+tif1 sessions 2024 "São Paulo Grand Prix"
+```
+
+**Sample Output:**
+```
+┏━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ Session            ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ 1 │ Practice 1         │
+│ 2 │ Practice 2         │
+│ 3 │ Practice 3         │
+│ 4 │ Qualifying         │
+│ 5 │ Race               │
+└───┴────────────────────┘
+```
+
+**Use Cases:**
+- Determine available sessions for an event
+- Find the exact session name for data queries
+- Identify sprint weekends (which have Sprint and Sprint Qualifying sessions)
+
+---
+
+### `drivers` - List Drivers in a Session
+
+Display all drivers who participated in a specific session, along with their team information.
+
+**Syntax:**
+```bash
+tif1 drivers <year> <event> <session>
+```
+
+**Arguments:**
+- `year` (required): Season year (2018-current)
+- `event` (required): Event name (use quotes for multi-word names)
+- `session` (required): Session name (use quotes for multi-word names)
+
+**Output:**
+- Formatted table with driver codes and team names
+- Total driver count
+- Progress indicator during data loading
+
+**Examples:**
+
+```bash
+# List drivers in 2025 Abu Dhabi GP Practice 1
 tif1 drivers 2025 "Abu Dhabi Grand Prix" "Practice 1"
 
-# Get fastest laps in Qualifying
-tif1 fastest 2025 "Abu Dhabi Grand Prix" "Qualifying"
+# List drivers in qualifying
+tif1 drivers 2024 Monaco Qualifying
 
-# Get VER's fastest lap
-tif1 fastest 2025 "Abu Dhabi Grand Prix" "Qualifying" -d VER
+# List drivers in the race
+tif1 drivers 2024 "British Grand Prix" Race
+```
 
-# Check cache
+**Sample Output:**
+```
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Driver ┃ Team                   ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ VER    │ Red Bull Racing        │
+│ PER    │ Red Bull Racing        │
+│ HAM    │ Mercedes               │
+│ RUS    │ Mercedes               │
+│ LEC    │ Ferrari                │
+│ SAI    │ Ferrari                │
+...
+└────────┴────────────────────────┘
+
+Total: 20 drivers
+```
+
+**Use Cases:**
+- Identify which drivers participated in a session
+- Find driver codes for use in other commands
+- Verify team lineups for a specific event
+- Check for reserve drivers or substitutions
+
+---
+
+### `fastest` - Show Fastest Laps
+
+Display the fastest lap times for all drivers or a specific driver in a session.
+
+**Syntax:**
+```bash
+tif1 fastest <year> <event> <session> [OPTIONS]
+```
+
+**Arguments:**
+- `year` (required): Season year (2018-current)
+- `event` (required): Event name (use quotes for multi-word names)
+- `session` (required): Session name (use quotes for multi-word names)
+
+**Options:**
+- `--driver <code>` or `-d <code>`: Filter to a specific driver (3-letter code)
+
+**Output:**
+- **All drivers mode**: Sorted table of fastest laps with position, driver, team, and time
+- **Single driver mode**: Driver's fastest lap time
+- Progress indicator during data loading
+
+**Examples:**
+
+```bash
+# Show fastest laps for all drivers in qualifying
+tif1 fastest 2025 "Abu Dhabi Grand Prix" Qualifying
+
+# Show Verstappen's fastest lap
+tif1 fastest 2025 "Abu Dhabi Grand Prix" Qualifying --driver VER
+
+# Show Hamilton's fastest lap (short option)
+tif1 fastest 2024 Monaco Qualifying -d HAM
+
+# Show fastest laps in practice session
+tif1 fastest 2024 "British Grand Prix" "Practice 1"
+
+# Show fastest laps in the race
+tif1 fastest 2024 "Italian Grand Prix" Race
+```
+
+**Sample Output (All Drivers):**
+```
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Pos ┃ Driver ┃ Team                   ┃ Time      ┃
+┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ 1   │ VER    │ Red Bull Racing        │ 82.456s   │
+│ 2   │ LEC    │ Ferrari                │ 82.789s   │
+│ 3   │ HAM    │ Mercedes               │ 82.901s   │
+│ 4   │ SAI    │ Ferrari                │ 83.012s   │
+...
+└─────┴────────┴────────────────────────┴───────────┘
+```
+
+**Sample Output (Single Driver):**
+```
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+VER fastest lap: 82.456s
+```
+
+**Use Cases:**
+- Compare driver performance in a session
+- Identify the fastest driver in qualifying or practice
+- Analyze individual driver lap times
+- Generate performance reports for specific drivers
+
+---
+
+### `cache-info` - Show Cache Information
+
+Display detailed information about your local tif1 cache, including location, file count, and total size.
+
+**Syntax:**
+```bash
+tif1 cache-info
+```
+
+**Arguments:**
+None
+
+**Output:**
+- Cache directory path
+- Number of cache files
+- Total cache size in megabytes
+
+**Examples:**
+
+```bash
+# Show cache information
+tif1 cache-info
+```
+
+**Sample Output:**
+```
+Cache location: /home/user/.tif1/cache
+Cache files: 3
+Total size: 145.67 MB
+```
+
+**Use Cases:**
+- Monitor cache disk usage
+- Verify cache location
+- Determine if cache needs cleaning
+- Troubleshoot cache-related issues
+
+**Cache Details:**
+
+The tif1 cache uses SQLite with Write-Ahead Logging (WAL) for optimal performance:
+- **Main cache database**: `cache.sqlite` - Stores session data, lap data, and metadata
+- **WAL files**: `cache.sqlite-wal` and `cache.sqlite-shm` - Transaction logs for concurrent access
+- **In-memory cache**: LRU caches for frequently accessed data (not shown in file count)
+
+The cache stores:
+- Event schedules
+- Session metadata
+- Lap data
+- Telemetry data
+- Weather information
+- Race control messages
+
+---
+
+### `cache-clear` - Clear Cache
+
+Remove all cached data to free up disk space or force fresh data downloads.
+
+**Syntax:**
+```bash
+tif1 cache-clear [OPTIONS]
+```
+
+**Options:**
+- `--yes` or `-y`: Skip confirmation prompt (useful for scripts)
+
+**Output:**
+- Confirmation prompt (unless `--yes` is used)
+- Success or cancellation message
+
+**Examples:**
+
+```bash
+# Clear cache with confirmation prompt
+tif1 cache-clear
+
+# Clear cache without confirmation (for scripts)
+tif1 cache-clear --yes
+
+# Clear cache without confirmation (short option)
+tif1 cache-clear -y
+```
+
+**Sample Output (With Confirmation):**
+```
+Are you sure you want to clear the cache? [y/N]: y
+Cache cleared successfully!
+```
+
+**Sample Output (Without Confirmation):**
+```
+Cache cleared successfully!
+```
+
+**Sample Output (Cancelled):**
+```
+Cache clear cancelled
+```
+
+**Use Cases:**
+- Free up disk space
+- Force fresh data downloads after data corrections
+- Troubleshoot cache corruption issues
+- Reset cache during development/testing
+
+**Warning:** Clearing the cache will require re-downloading all data on next access, which may take time depending on your network speed and the amount of data requested.
+
+---
+
+### `version` - Show Version Information
+
+Display the currently installed version of tif1.
+
+**Syntax:**
+```bash
+tif1 version
+```
+
+**Arguments:**
+None
+
+**Output:**
+- tif1 version number
+
+**Examples:**
+
+```bash
+# Show version
+tif1 version
+```
+
+**Sample Output:**
+```
+tif1 version 0.1.0
+```
+
+**Use Cases:**
+- Verify installed version
+- Check for updates
+- Report version in bug reports
+- Confirm successful installation
+
+---
+
+### `debug` - Debug Mode Session Loading
+
+Load a session with debug-level logging enabled to troubleshoot issues or understand data loading behavior.
+
+**Syntax:**
+```bash
+tif1 debug <year> <event> <session>
+```
+
+**Arguments:**
+- `year` (required): Season year (2018-current)
+- `event` (required): Event name (use quotes for multi-word names)
+- `session` (required): Session name (use quotes for multi-word names)
+
+**Output:**
+- Detailed debug logs showing:
+  - HTTP requests and responses
+  - Cache hits and misses
+  - Data parsing steps
+  - Performance metrics
+- Session summary (driver count, lap count)
+- Progress indicator during loading
+
+**Examples:**
+
+```bash
+# Debug session loading
+tif1 debug 2025 "Abu Dhabi Grand Prix" "Practice 1"
+
+# Debug qualifying session
+tif1 debug 2024 Monaco Qualifying
+
+# Debug race session
+tif1 debug 2024 "British Grand Prix" Race
+```
+
+**Sample Output:**
+```
+2025-04-18 10:30:15 - tif1.cache - DEBUG - Cache miss: 2025/Abu Dhabi Grand Prix/Practice 1/laps
+2025-04-18 10:30:15 - tif1.http_session - DEBUG - GET https://cdn.jsdelivr.net/gh/TracingInsights/2025/...
+2025-04-18 10:30:16 - tif1.core - DEBUG - Parsing lap data: 342 laps
+2025-04-18 10:30:16 - tif1.cache - DEBUG - Cached: 2025/Abu Dhabi Grand Prix/Practice 1/laps
+Loading session with debug logging... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+Session loaded successfully!
+Drivers: 20
+Laps: 342
+```
+
+**Use Cases:**
+- Troubleshoot data loading issues
+- Understand cache behavior
+- Measure performance and identify bottlenecks
+- Debug network connectivity problems
+- Report detailed information in bug reports
+- Verify data sources and CDN behavior
+
+**Debug Information Includes:**
+- Cache operations (hits, misses, writes)
+- HTTP requests (URLs, response times, status codes)
+- JSON parsing performance
+- DataFrame construction steps
+- Data validation results
+- Retry and circuit breaker activity
+
+---
+
+## Configuration
+
+The CLI respects all tif1 configuration options set via environment variables or the `.tif1rc` configuration file.
+
+### Environment Variables
+
+Key environment variables that affect CLI behavior:
+
+```bash
+# Cache location
+export TIF1_CACHE_DIR="$HOME/.tif1/cache"
+
+# Enable/disable caching
+export TIF1_ENABLE_CACHE=true
+
+# Network timeout (seconds)
+export TIF1_TIMEOUT=30
+
+# Maximum retry attempts
+export TIF1_MAX_RETRIES=3
+
+# Offline mode (use cache only)
+export TIF1_OFFLINE_MODE=false
+
+# Backend library (pandas or polars)
+export TIF1_LIB=pandas
+
+# Log level
+export TIF1_LOG_LEVEL=WARNING
+```
+
+### Configuration File
+
+Create a `.tif1rc` file in your home directory for persistent configuration:
+
+```json
+{
+  "cache_dir": "/custom/cache/path",
+  "timeout": 60,
+  "max_retries": 5,
+  "enable_cache": true,
+  "lib": "pandas"
+}
+```
+
+See the [Configuration documentation](/concepts/configuration) for complete details.
+
+---
+
+## Advanced Usage
+
+### Scripting and Automation
+
+The CLI is designed for use in shell scripts and automation workflows:
+
+```bash
+#!/bin/bash
+# Script to check fastest laps for all 2025 qualifying sessions
+
+for event in $(tif1 events 2025 | grep -oP '\d+\s+\K.*'); do
+  echo "Processing: $event"
+  tif1 fastest 2025 "$event" Qualifying
+done
+```
+
+### Performance Testing
+
+Use the CLI to benchmark cache performance:
+
+```bash
+# First run (cold cache)
+time tif1 drivers 2025 "Abu Dhabi Grand Prix" Race
+
+# Second run (warm cache)
+time tif1 drivers 2025 "Abu Dhabi Grand Prix" Race
+```
+
+### Pipeline Integration
+
+Combine CLI commands with other tools:
+
+```bash
+# Export fastest laps to CSV (requires jq and custom processing)
+tif1 fastest 2025 Monaco Qualifying > fastest_laps.txt
+
+# Check cache size before and after clearing
+tif1 cache-info
+tif1 cache-clear -y
+tif1 cache-info
+```
+
+---
+
+## Common Workflows
+
+### Exploring a New Season
+
+```bash
+# 1. List all events
+tif1 events 2025
+
+# 2. Check sessions for an event
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# 3. View drivers in qualifying
+tif1 drivers 2025 "Monaco Grand Prix" Qualifying
+
+# 4. Check fastest laps
+tif1 fastest 2025 "Monaco Grand Prix" Qualifying
+```
+
+### Analyzing Driver Performance
+
+```bash
+# Compare a driver across multiple sessions
+tif1 fastest 2025 Monaco "Practice 1" -d VER
+tif1 fastest 2025 Monaco "Practice 2" -d VER
+tif1 fastest 2025 Monaco "Practice 3" -d VER
+tif1 fastest 2025 Monaco Qualifying -d VER
+```
+
+### Cache Management
+
+```bash
+# Check cache size
+tif1 cache-info
+
+# Clear cache if too large
+tif1 cache-clear -y
+
+# Verify cache cleared
+tif1 cache-info
+```
+
+### Troubleshooting
+
+```bash
+# Enable debug logging to diagnose issues
+tif1 debug 2025 "Abu Dhabi Grand Prix" Race
+
+# Check version
+tif1 version
+
+# Verify cache location
+tif1 cache-info
+```
+
+---
+
+## Tips and Best Practices
+
+### Event and Session Names
+
+- Use quotes for multi-word names: `"Abu Dhabi Grand Prix"`
+- Single-word events don't need quotes: `Monaco`
+- Session names are case-sensitive: `Qualifying` not `qualifying`
+- Use `tif1 events` and `tif1 sessions` to find exact names
+
+### Performance Optimization
+
+- The first data access will be slower (cold cache)
+- Subsequent accesses are much faster (warm cache)
+- Use `cache-clear` sparingly to maintain performance
+- Enable debug mode to identify performance bottlenecks
+
+### Error Handling
+
+- If a command fails, try with `debug` mode for detailed error information
+- Check your internet connection for network-related errors
+- Verify event and session names are correct
+- Ensure the year is within the supported range (2018-current)
+
+### Cache Location
+
+- Default cache location varies by OS:
+  - **Linux**: `~/.cache/tif1` or `~/.tif1`
+  - **macOS**: `~/Library/Caches/tif1`
+  - **Windows**: `%LOCALAPPDATA%\Temp\tif1`
+- Override with `TIF1_CACHE_DIR` environment variable
+- Cache permissions are restricted to user-only (0o700)
+
+---
+
+## Troubleshooting
+
+### Command Not Found
+
+If `tif1` command is not found after installation:
+
+```bash
+# Verify installation
+pip show tif1
+
+# Check if pip bin directory is in PATH
+pip show tif1 | grep Location
+
+# Reinstall if necessary
+pip install --force-reinstall tif1
+```
+
+### Network Errors
+
+If you encounter network errors:
+
+```bash
+# Check with debug mode
+tif1 debug 2025 Monaco Race
+
+# Verify internet connection
+ping cdn.jsdelivr.net
+
+# Try increasing timeout
+export TIF1_TIMEOUT=60
+tif1 drivers 2025 Monaco Race
+```
+
+### Cache Issues
+
+If you suspect cache corruption:
+
+```bash
+# Clear cache and retry
+tif1 cache-clear -y
+tif1 drivers 2025 Monaco Race
+
+# Check cache location
+tif1 cache-info
+```
+
+### Data Not Found
+
+If data is not available:
+
+```bash
+# Verify event exists
+tif1 events 2025
+
+# Verify session exists
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# Check if session has completed (future sessions have no data)
+```
+
+---
+
+## Related Documentation
+
+- [Python API Reference](/api-reference/session) - Use tif1 programmatically
+- [Caching Strategy](/concepts/caching-strategy) - Understand cache behavior
+- [Configuration](/concepts/configuration) - Configure tif1 settings
+- [Data Flow](/concepts/data-flow) - Learn how data is fetched and processed
+
+---
+
+## Support
+
+For issues, questions, or feature requests:
+- GitHub Issues: [TracingInsights/tif1](https://github.com/TracingInsights/tif1/issues)
+- Documentation: [tif1.dev](https://tif1.dev)
+
+---
+
+## Quick Reference
+
+```bash
+# List commands
+tif1 --help
+
+# Events
+tif1 events 2025
+
+# Sessions
+tif1 sessions 2025 "Monaco Grand Prix"
+
+# Drivers
+tif1 drivers 2025 "Monaco Grand Prix" Race
+
+# Fastest laps (all)
+tif1 fastest 2025 "Monaco Grand Prix" Qualifying
+
+# Fastest lap (single driver)
+tif1 fastest 2025 "Monaco Grand Prix" Qualifying -d VER
+
+# Cache info
 tif1 cache-info
 
 # Clear cache
 tif1 cache-clear -y
-```python
+
+# Version
+tif1 version
+
+# Debug
+tif1 debug 2025 "Monaco Grand Prix" Race
+```

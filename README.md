@@ -62,7 +62,7 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 
 ## Features
 
-- **Fast**: Direct CDN access via jsDelivr with SQLite caching
+- **Fast**: Direct CDN access via StaticDelivr (primary) and jsDelivr (fallback) with SQLite caching
 - No need to session.load() - only the required data is fetched when necessary. You can just get the telemetry data of any specific lap within seconds.
 - **Canonical**: Focused tif1 API surface
 - **Complete**: Lap times, sectors, telemetry, tire compounds, and more

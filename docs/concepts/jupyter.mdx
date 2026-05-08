@@ -1,93 +1,675 @@
 ---
 title: "Jupyter Integration"
 icon: "book-open"
-description: "Rich HTML displays for interactive F1 data analysis"
+description: "Rich HTML displays for interactive F1 data analysis in Jupyter environments"
 keywords:
   - "tif1"
   - "Formula 1"
   - "F1 data"
+  - "Jupyter"
+  - "IPython"
+  - "interactive analysis"
+  - "data visualization"
   - "documentation"
 ---
 
-`tif1` comes with built-in support for Jupyter Notebooks and Lab, providing rich HTML representations for its core objects. This makes interactive exploration of F1 data much more intuitive and visually appealing.
+`tif1` provides first-class support for Jupyter Notebooks, JupyterLab, and other IPython-based environments, offering rich HTML representations for its core objects. This integration transforms the interactive exploration of Formula 1 data into a visually intuitive and highly productive experience, eliminating the need for repetitive print statements or manual data inspection.
+
+## Overview
+
+The Jupyter integration automatically detects when `tif1` is running in an IPython environment and enhances the display of key objects with formatted HTML tables. This means that simply evaluating a `Session`, `Driver`, or `Lap` object in a cell will produce a beautifully formatted, information-dense display rather than a plain text representation.
+
+### Key Benefits
+
+- **Zero Configuration**: Works out of the box in Jupyter Notebooks, JupyterLab, Google Colab, and VS Code notebooks
+- **Automatic Detection**: No manual setup required; `tif1` detects the IPython environment automatically
+- **Theme Adaptive**: Displays adapt to both light and dark notebook themes
+- **Performance Optimized**: HTML rendering is lightweight and doesn't impact data processing speed
+- **Backend Agnostic**: Works seamlessly with both Pandas and Polars DataFrames
+
+---
 
 ## Rich HTML Displays
 
-When you display a `Session`, `Driver`, or `Lap` object in a Jupyter cell, `tif1` automatically renders a formatted HTML table instead of the standard string representation.
+The core objects in `tif1` implement the `_repr_html_()` protocol, which IPython uses to render rich HTML output. This provides a much more informative and visually appealing display compared to standard string representations.
 
-### Session Info
-The session display shows key metadata including the year, event name, session type, data lib, and the number of drivers (if loaded).
+### Session Display
+
+When you display a `Session` object, `tif1` renders a comprehensive summary table showing:
+
+- **Year**: The season year of the session
+- **Event Name**: The full name of the Grand Prix or testing event
+- **Session Type**: The type of session (Practice 1, Practice 2, Practice 3, Qualifying, Sprint, Sprint Qualifying, or Race)
+- **Data Library**: The backend being used (Pandas or Polars)
+- **Drivers Count**: The number of drivers in the session (if lap data has been loaded)
+- **Load Status**: Visual indicators showing which data components have been fetched
 
 ```python
 import tif1
+
+# Load a race session
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
-session # This will render the rich HTML display
-```sql
 
-### Driver Info
-The driver display highlights the 3-letter driver code and indicates whether their lap data has been fetched from the cdn.
+# Simply evaluate the session object to see the rich display
+session
+```
+
+
+The session display provides an at-a-glance overview of what data is available, helping you quickly understand the state of your session object without needing to inspect individual attributes.
+
+<Tip>
+  The session display dynamically updates based on what data you've loaded. If you call `session.load(laps=True, telemetry=True)`, the display will reflect that both lap and telemetry data are available.
+</Tip>
+
+### Driver Display
+
+The `Driver` object display focuses on driver-specific information and data availability:
+
+- **Driver Code**: The three-letter FIA driver code (e.g., VER, HAM, LEC)
+- **Full Name**: The driver's complete name (if available in the session data)
+- **Team**: The constructor/team the driver was racing for
+- **Car Number**: The permanent race number assigned to the driver
+- **Lap Data Status**: Whether lap data has been fetched for this driver
+- **Lap Count**: Total number of laps completed by the driver in the session
 
 ```python
-ver = session.get_driver("VER")
-ver
-```python
+# Get a specific driver from the session
+verstappen = session.get_driver("VER")
 
-### Lap Info
-The lap display shows the lap number, driver, and whether high-frequency telemetry data has been loaded.
+# Display rich driver information
+verstappen
+```
+
+This display is particularly useful when working with multiple drivers, as it allows you to quickly verify which drivers have data loaded and understand their basic session statistics.
 
 ```python
-lap = ver.get_lap(19)
-lap
+# Compare multiple drivers side by side
+hamilton = session.get_driver("HAM")
+leclerc = session.get_driver("LEC")
+
+# Display all three drivers in sequence
+display(verstappen, hamilton, leclerc)
+```
+
+
+### Lap Display
+
+Individual `Lap` objects provide detailed information about a specific lap, including:
+
+- **Lap Number**: The sequential lap number in the session
+- **Driver**: The three-letter code of the driver who completed the lap
+- **Lap Time**: The total lap time (formatted as MM:SS.mmm)
+- **Sector Times**: Individual sector times (S1, S2, S3)
+- **Compound**: The tire compound used for the lap
+- **Telemetry Status**: Whether high-frequency telemetry data is available for this lap
+- **Track Status**: Any track condition flags (yellow flags, safety car, etc.)
+
 ```python
+# Get a specific lap from a driver
+fastest_lap = verstappen.get_fastest_lap()
+
+# Display detailed lap information
+fastest_lap
+```
+
+The lap display is invaluable when analyzing specific laps in detail, such as comparing qualifying laps or investigating race incidents.
+
+```python
+# Compare multiple laps
+lap_10 = verstappen.get_lap(10)
+lap_20 = verstappen.get_lap(20)
+lap_30 = verstappen.get_lap(30)
+
+# Display lap progression
+display(lap_10, lap_20, lap_30)
+```
 
 ---
 
 ## DataFrame Summaries
 
-`tif1` also includes a helper to display a clean summary of its DataFrames, showing the number of rows, columns, and total memory usage.
+Beyond object displays, `tif1` provides a specialized utility for summarizing DataFrame contents. This is particularly useful when working with large datasets containing thousands of laps or telemetry points.
+
+### The `display_dataframe_summary()` Function
+
+This function generates a concise summary showing:
+
+- **Shape**: Number of rows and columns
+- **Memory Usage**: Total memory consumed by the DataFrame
+- **Backend**: Whether the DataFrame is Pandas or Polars
+- **Column Names**: A preview of the available columns
+- **Data Types**: The dtype of each column
 
 ```python
 from tif1.jupyter import display_dataframe_summary
 
-laps = session.laps
-display_dataframe_summary(laps)
-```python
+# Load session with lap data
+session = tif1.get_session(2024, "Bahrain Grand Prix", "Race")
+session.load(laps=True)
+
+# Display a summary of the laps DataFrame
+display_dataframe_summary(session.laps)
+```
 
 <Info>
-  This works seamlessly with both **Pandas** and **Polars** backends.
+  The `display_dataframe_summary()` function works identically with both **Pandas** and **Polars** backends, automatically detecting the DataFrame type and adjusting its output accordingly.
 </Info>
+
+### Comparing DataFrames
+
+You can use this function to quickly compare the size and structure of different DataFrames:
+
+```python
+# Compare lap data vs telemetry data
+display_dataframe_summary(session.laps)
+display_dataframe_summary(verstappen.get_telemetry())
+```
+
+This is especially useful when optimizing memory usage or understanding the scale of data you're working with.
+
 
 ---
 
-## How it Works
+## Advanced Usage
 
-The integration is automatically enabled if `tif1` detects it is running in a Jupyter environment. It uses the `_repr_html_` protocol supported by IPython.
+### Manual Display Control
 
-### Manual Enable/Disable
+While `tif1` automatically enables Jupyter displays when it detects an IPython environment, you can manually control this behavior if needed.
 
-If you need to manually trigger the display setup (e.g., in some niche notebook environments):
+#### Enabling Displays
+
+In rare cases where automatic detection fails (such as custom notebook environments or embedded IPython shells), you can manually enable the display system:
 
 ```python
 from tif1.jupyter import enable_jupyter_display
 
+# Manually activate rich HTML displays
 enable_jupyter_display()
-```sql
+```
+
+This function registers the `_repr_html_()` methods for all `tif1` objects and ensures they render correctly in your environment.
+
+#### Disabling Displays
+
+If you prefer plain text representations (for example, when debugging or working in a terminal-based IPython session), you can disable the HTML rendering:
+
+```python
+from tif1.jupyter import disable_jupyter_display
+
+# Revert to plain text representations
+disable_jupyter_display()
+```
+
+After calling this function, `tif1` objects will use their standard `__repr__()` methods instead of HTML rendering.
+
+### Custom Display Functions
+
+For advanced users who want to create custom visualizations, `tif1` exposes the underlying HTML generation functions:
+
+```python
+from tif1.jupyter import session_to_html, driver_to_html, lap_to_html
+
+# Generate HTML strings for custom rendering
+session_html = session_to_html(session)
+driver_html = driver_to_html(verstappen)
+lap_html = lap_to_html(fastest_lap)
+
+# Use these in custom widgets or dashboards
+from IPython.display import HTML
+display(HTML(session_html))
+```
+
 
 ---
 
-## Visual Themes
+## Visual Themes and Styling
 
-The HTML components are designed to be theme-agnostic. They use semi-transparent borders and backgrounds to ensure they are readable in both **Light Mode** and **Dark Mode**.
+The HTML components generated by `tif1` are designed to be theme-agnostic and visually consistent across different notebook environments.
+
+### Theme Adaptation
+
+`tif1` uses CSS techniques to ensure displays are readable in both light and dark themes:
+
+- **Semi-transparent backgrounds**: Backgrounds use `rgba()` colors that blend with the notebook theme
+- **Adaptive borders**: Border colors adjust based on the surrounding theme
+- **High contrast text**: Text colors are chosen to maintain readability in all themes
+- **No hardcoded colors**: All colors are relative to the notebook's base theme
 
 <CardGroup cols={2}>
   <Card title="Light Mode" icon="sun">
-    Clean, subtle borders with light background.
+    Clean, subtle borders with light backgrounds that don't overwhelm the page. Text uses dark colors for maximum readability against light backgrounds.
   </Card>
   <Card title="Dark Mode" icon="moon">
-    Transparent overlays that adapt to your notebook's dark theme.
+    Transparent overlays that seamlessly integrate with dark themes. Text uses light colors that remain crisp and easy to read.
   </Card>
 </CardGroup>
 
+### Responsive Design
+
+The HTML tables are responsive and adapt to different notebook widths:
+
+- **Narrow notebooks**: Tables stack vertically and use abbreviated labels
+- **Wide notebooks**: Tables expand to show full information with comfortable spacing
+- **Mobile devices**: When viewing notebooks on tablets or phones, displays remain readable
+
+
+---
+
+## Performance Considerations
+
+The Jupyter integration is designed to be lightweight and performant, ensuring that rich displays don't slow down your data analysis workflow.
+
+### Lazy Rendering
+
+HTML representations are generated on-demand only when an object is displayed. This means:
+
+- **No overhead for non-displayed objects**: Creating thousands of `Lap` objects doesn't trigger HTML generation
+- **Fast cell execution**: Displaying an object adds negligible time to cell execution
+- **Memory efficient**: HTML strings are not stored; they're generated fresh each time
+
+### Large DataFrames
+
+When working with large DataFrames, `display_dataframe_summary()` only inspects metadata (shape, dtypes, memory usage) without loading the entire dataset into memory. This makes it safe to use even with multi-gigabyte DataFrames.
+
+```python
+# Safe even with millions of rows
+huge_telemetry = session.get_telemetry()  # Could be 10+ million rows
+display_dataframe_summary(huge_telemetry)  # Instant, no memory spike
+```
+
+### Optimization Tips
+
+For maximum performance when working with large datasets:
+
+1. **Load only what you need**: Use selective loading with `session.load(laps=True, telemetry=False)`
+2. **Filter early**: Apply DataFrame filters before displaying to reduce rendering time
+3. **Use Polars backend**: For very large datasets, Polars provides faster operations
+4. **Batch displays**: When comparing many objects, use `display()` with multiple arguments rather than evaluating each separately
+
+
+---
+
+## Integration with Other Tools
+
+### Pandas Styling
+
+`tif1` DataFrames are standard Pandas or Polars objects, so you can combine them with other visualization tools:
+
+```python
+# Use Pandas styling on tif1 DataFrames
+session.laps.head(10).style.background_gradient(subset=['LapTime'])
+
+# Highlight fastest laps
+session.laps.style.highlight_min(subset=['LapTime'], color='lightgreen')
+
+# Custom formatting for lap times
+session.laps.style.format({'LapTime': lambda x: f"{x.total_seconds():.3f}s"})
+```
+
+### Plotly and Matplotlib
+
+Rich displays work alongside plotting libraries, allowing you to combine data inspection with visualization:
+
+```python
+import matplotlib.pyplot as plt
+
+# Display session info
+display(session)
+
+# Then plot lap times
+plt.figure(figsize=(12, 6))
+plt.plot(verstappen.laps['LapNumber'], verstappen.laps['LapTime'])
+plt.title('Verstappen Lap Times')
+plt.xlabel('Lap Number')
+plt.ylabel('Lap Time')
+plt.show()
+```
+
+### IPyWidgets
+
+Create interactive dashboards combining `tif1` displays with widgets:
+
+```python
+from ipywidgets import interact, Dropdown
+
+def show_driver(driver_code):
+    driver = session.get_driver(driver_code)
+    display(driver)
+    display_dataframe_summary(driver.laps)
+    
+    # Show fastest lap
+    fastest = driver.get_fastest_lap()
+    display(fastest)
+
+# Get all driver codes from session
+driver_codes = session.laps['Driver'].unique().tolist()
+interact(show_driver, driver_code=Dropdown(options=driver_codes))
+```
+
+### Voilà Dashboards
+
+`tif1`'s rich displays work perfectly in Voilà dashboards, allowing you to create shareable F1 data applications:
+
+```python
+# In a notebook that will be converted to a Voilà dashboard
+import tif1
+from ipywidgets import interact, IntSlider, Dropdown
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+session.load(laps=True)
+
+@interact(
+    driver=Dropdown(options=session.laps['Driver'].unique().tolist()),
+    lap_number=IntSlider(min=1, max=session.laps['LapNumber'].max(), value=1)
+)
+def explore_lap(driver, lap_number):
+    driver_obj = session.get_driver(driver)
+    lap = driver_obj.get_lap(lap_number)
+    display(lap)
+```
+
+
+---
+
+## Supported Environments
+
+`tif1`'s Jupyter integration has been tested and works seamlessly across a wide range of IPython-based environments:
+
+### Jupyter Notebook (Classic)
+
+The original Jupyter Notebook interface fully supports all `tif1` rich displays. Simply install Jupyter and start a notebook:
+
+```bash
+pip install jupyter
+jupyter notebook
+```
+
+### JupyterLab
+
+JupyterLab, the next-generation interface, provides an enhanced experience with better layout and theming support:
+
+```bash
+pip install jupyterlab
+jupyter lab
+```
+
+### VS Code Notebooks
+
+Visual Studio Code's built-in notebook support works perfectly with `tif1`. Open any `.ipynb` file in VS Code and the rich displays will render automatically.
+
+### Google Colab
+
+Google Colaboratory fully supports `tif1`'s Jupyter integration. Simply install `tif1` in a Colab cell:
+
+```python
+!pip install tif1
+import tif1
+```
+
+### Kaggle Notebooks
+
+Kaggle's notebook environment supports all `tif1` features, making it easy to share F1 data analysis with the community.
+
+### Databricks Notebooks
+
+For enterprise users, `tif1` works in Databricks notebooks, allowing you to combine F1 data with big data processing capabilities.
+
+### IPython Terminal
+
+While primarily designed for notebook environments, the rich displays also work in IPython terminal sessions that support HTML rendering.
+
+
+---
+
+## Troubleshooting
+
+### Displays Not Showing
+
+If rich HTML displays aren't appearing:
+
+1. **Verify IPython environment**: Run `get_ipython()` in a cell. If it raises an error, you're not in an IPython environment.
+
+2. **Check for manual disable**: Ensure you haven't called `disable_jupyter_display()` earlier in your session.
+
+3. **Restart kernel**: Sometimes a kernel restart resolves display issues. Go to Kernel → Restart.
+
+4. **Manual enable**: Try explicitly enabling displays:
+   ```python
+   from tif1.jupyter import enable_jupyter_display
+   enable_jupyter_display()
+   ```
+
+### Plain Text Instead of HTML
+
+If you're seeing plain text representations instead of rich HTML:
+
+- **Terminal IPython**: Rich displays require a browser-based environment. Terminal IPython shows plain text.
+- **Output capture**: If you're capturing output with `%%capture`, HTML won't render. Remove the magic command.
+- **Print statements**: Using `print(session)` bypasses HTML rendering. Just evaluate `session` directly.
+
+### Styling Issues
+
+If displays look broken or poorly formatted:
+
+- **Browser compatibility**: Ensure you're using a modern browser (Chrome, Firefox, Safari, Edge)
+- **Custom CSS**: Check if custom notebook CSS is interfering with `tif1` styles
+- **Theme conflicts**: Try switching between light and dark themes to see if one works better
+
+### Performance Issues
+
+If displays are slow to render:
+
+- **Large DataFrames**: Use `display_dataframe_summary()` instead of displaying the entire DataFrame
+- **Many objects**: Avoid displaying hundreds of objects in a single cell
+- **Memory constraints**: Close unused notebooks to free up browser memory
+
+
+---
+
+## Best Practices
+
+### Efficient Data Exploration
+
+When exploring F1 data in Jupyter, follow these patterns for the best experience:
+
+```python
+# 1. Load session and inspect metadata first
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+session  # Quick overview without loading data
+
+# 2. Load only what you need
+session.load(laps=True, telemetry=False)
+
+# 3. Check data availability
+display_dataframe_summary(session.laps)
+
+# 4. Explore specific drivers
+verstappen = session.get_driver("VER")
+verstappen  # See driver info and lap count
+
+# 5. Analyze specific laps
+fastest = verstappen.get_fastest_lap()
+fastest  # Detailed lap information
+```
+
+### Combining Displays with Analysis
+
+Create a narrative flow by interspersing displays with analysis:
+
+```python
+# Show session context
+display(session)
+
+# Analyze lap time distribution
+import matplotlib.pyplot as plt
+plt.hist(session.laps['LapTime'].dt.total_seconds(), bins=50)
+plt.title('Lap Time Distribution')
+plt.show()
+
+# Focus on a specific driver
+verstappen = session.get_driver("VER")
+display(verstappen)
+
+# Compare their fastest lap
+fastest = verstappen.get_fastest_lap()
+display(fastest)
+```
+
+### Documentation and Sharing
+
+When creating notebooks to share with others:
+
+1. **Use displays for context**: Rich displays help readers understand what data you're working with
+2. **Add markdown explanations**: Combine displays with markdown cells explaining your analysis
+3. **Show data summaries**: Use `display_dataframe_summary()` to give readers a sense of scale
+4. **Include driver/lap displays**: Help readers follow along by showing which drivers and laps you're analyzing
+
+
+---
+
+## Real-World Examples
+
+### Example 1: Race Strategy Analysis
+
+```python
+import tif1
+from tif1.jupyter import display_dataframe_summary
+
+# Load race session
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+session.load(laps=True)
+
+# Show session overview
+display(session)
+
+# Analyze top 3 drivers
+for driver_code in ['VER', 'LEC', 'HAM']:
+    driver = session.get_driver(driver_code)
+    display(driver)
+    
+    # Show their fastest lap
+    fastest = driver.get_fastest_lap()
+    display(fastest)
+    
+    # Analyze stint strategy
+    stints = driver.laps.groupby('Stint')['LapNumber'].count()
+    print(f"{driver_code} stint lengths: {stints.tolist()}")
+```
+
+### Example 2: Qualifying Comparison
+
+```python
+# Load qualifying session
+quali = tif1.get_session(2024, "Silverstone Grand Prix", "Qualifying")
+quali.load(laps=True)
+
+# Compare Q3 performances
+q3_drivers = ['VER', 'NOR', 'HAM', 'LEC']
+
+for driver_code in q3_drivers:
+    driver = quali.get_driver(driver_code)
+    display(driver)
+    
+    # Get fastest Q3 lap
+    q3_laps = driver.laps[driver.laps['Segment'] == 'Q3']
+    if not q3_laps.empty:
+        fastest_idx = q3_laps['LapTime'].idxmin()
+        fastest_lap = driver.get_lap(q3_laps.loc[fastest_idx, 'LapNumber'])
+        display(fastest_lap)
+```
+
+### Example 3: Telemetry Deep Dive
+
+```python
+# Load session with telemetry
+session = tif1.get_session(2024, "Spa Grand Prix", "Race")
+session.load(laps=True, telemetry=True)
+
+# Focus on a specific driver
+verstappen = session.get_driver("VER")
+display(verstappen)
+
+# Get their fastest lap with telemetry
+fastest = verstappen.get_fastest_lap()
+display(fastest)
+
+# Show telemetry data summary
+telemetry = fastest.get_telemetry()
+display_dataframe_summary(telemetry)
+
+# Plot speed trace
+import matplotlib.pyplot as plt
+plt.figure(figsize=(14, 6))
+plt.plot(telemetry['Distance'], telemetry['Speed'])
+plt.title(f'{verstappen.driver_code} - Fastest Lap Speed Trace')
+plt.xlabel('Distance (m)')
+plt.ylabel('Speed (km/h)')
+plt.grid(True, alpha=0.3)
+plt.show()
+```
+
+### Example 4: Interactive Driver Comparison
+
+```python
+from ipywidgets import interact, Dropdown, IntSlider
+
+# Load session
+session = tif1.get_session(2024, "Monza Grand Prix", "Race")
+session.load(laps=True)
+
+# Get available drivers
+drivers = session.laps['Driver'].unique().tolist()
+
+@interact(
+    driver1=Dropdown(options=drivers, description='Driver 1'),
+    driver2=Dropdown(options=drivers, description='Driver 2'),
+    lap_num=IntSlider(min=1, max=53, value=1, description='Lap')
+)
+def compare_laps(driver1, driver2, lap_num):
+    # Show both drivers
+    d1 = session.get_driver(driver1)
+    d2 = session.get_driver(driver2)
+    
+    display(d1)
+    display(d2)
+    
+    # Compare specific lap
+    try:
+        lap1 = d1.get_lap(lap_num)
+        lap2 = d2.get_lap(lap_num)
+        
+        display(lap1)
+        display(lap2)
+        
+        # Calculate time difference
+        if lap1.lap_time and lap2.lap_time:
+            diff = (lap1.lap_time - lap2.lap_time).total_seconds()
+            print(f"\nTime difference: {abs(diff):.3f}s ({driver1 if diff < 0 else driver2} faster)")
+    except Exception as e:
+        print(f"Lap {lap_num} not available for one or both drivers")
+```
+
+---
+
+## Additional Resources
+
+### API Reference
+
+For detailed information about the Jupyter module functions, see the [Jupyter API Reference](/api-reference/jupyter).
+
+### Related Concepts
+
+- [Sessions](/concepts/sessions) - Understanding session objects and data loading
+- [Data Flow](/concepts/data-flow) - How data moves through `tif1`
+- [Caching Strategy](/concepts/caching-strategy) - Optimizing performance with caching
+
+### External Links
+
+- [Jupyter Documentation](https://jupyter.org/documentation) - Official Jupyter docs
+- [IPython Display System](https://ipython.readthedocs.io/en/stable/config/integrating.html) - Technical details on `_repr_html_()`
+- [IPyWidgets](https://ipywidgets.readthedocs.io/) - Creating interactive notebooks
+
 <Tip>
-  If you are using **Polars**, `tif1` objects will still render rich HTML, and you'll benefit from even faster data processing in your interactive sessions.
+  If you're using **Polars** as your backend, all Jupyter features work identically, and you'll benefit from even faster data processing in your interactive sessions. Simply set `tif1.config.backend = 'polars'` before loading data.
 </Tip>
+

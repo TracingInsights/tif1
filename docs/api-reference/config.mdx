@@ -1,113 +1,803 @@
 ---
 title: "Configuration API"
 icon: "gear"
-description: "Programmatic control over tif1 settings via config files, environment variables, and runtime API"
+description: "Comprehensive guide to configuring tif1 via config files, environment variables, and runtime API for optimal performance"
 keywords:
   - "configuration"
   - "tif1 config"
   - "environment variables"
   - "settings"
+  - "performance tuning"
+  - "optimization"
+  - "cache configuration"
+  - "network settings"
+  - "HTTP session"
+  - "connection pooling"
 ---
 
-`tif1` can be configured via a `.tif1rc` file, environment variables, or programmatically using the `Config` object. Configuration is loaded in this order (later sources override earlier ones):
+## Overview
 
-1. Default values
-2. `.tif1rc` file in home directory (`~/.tif1rc`)
-3. Environment variables (prefixed with `TIF1_`)
-4. Programmatic `config.set()` calls
+The `tif1` configuration system provides fine-grained control over every aspect of the library's behavior, from network settings and caching strategies to data validation and performance optimization. The configuration architecture is designed with flexibility and performance in mind, allowing you to tune the library for your specific use case—whether that's low-latency data access, high-throughput batch processing, or development debugging.
 
-## `get_config`
+This comprehensive guide covers all configuration options, their interactions, performance implications, and best practices for different deployment scenarios. Whether you're running interactive Jupyter notebooks, building production data pipelines, or optimizing for CI/CD environments, this guide will help you configure `tif1` for optimal performance.
+
+### Configuration Philosophy
+
+`tif1` is built for **performance-first** operation. The default configuration values are carefully chosen to provide excellent out-of-the-box performance for most use cases, but the library exposes dozens of tuning parameters for advanced users who need to squeeze every millisecond of latency or maximize throughput for their specific workload.
+
+The configuration system follows a **layered override model**, where settings can be specified at multiple levels with clear precedence rules:
+
+1. **Default values** — Hardcoded defaults optimized for general use
+2. **Configuration file** (`.tif1rc`) — Persistent settings stored in your home directory
+3. **Environment variables** (`TIF1_*`) — Deployment-specific overrides
+4. **Programmatic API** (`config.set()`) — Runtime adjustments based on workload
+
+Each layer overrides the previous one, giving you maximum flexibility to configure the library for different environments (development, staging, production) and different use cases (interactive analysis, batch processing, CI/CD pipelines).
+
+### Configuration Architecture
+
+The configuration system is implemented as a **singleton pattern**, ensuring that all parts of your application share the same configuration state. This design provides several benefits:
+
+- **Consistency**: All modules and components use the same settings
+- **Efficiency**: No redundant configuration loading or memory overhead
+- **Simplicity**: Single source of truth for all configuration values
+- **Thread-safe reads**: Multiple threads can safely read configuration values
+- **Dynamic updates**: Changes propagate immediately to all components
+
+The singleton is lazily initialized on first access, loading configuration from files and environment variables in the correct precedence order. Once initialized, the configuration remains in memory for the lifetime of the Python process.
+
+### When to Configure
+
+You should consider customizing the configuration when:
+
+- **Performance is critical** — You need to minimize latency or maximize throughput for time-sensitive applications
+- **Network conditions vary** — You're on a slow connection, behind a corporate proxy, experiencing DNS issues, or have specific network requirements
+- **Resource constraints exist** — You need to limit memory usage, connection pools, or concurrent requests due to system limitations
+- **Data validation is needed** — You're debugging data issues, implementing quality checks, or need strict validation for compliance
+- **Caching behavior matters** — You want to disable caching for fresh data, change cache location for shared storage, or tune cache parameters for your access patterns
+- **Backend preferences differ** — You prefer polars over pandas for performance, or need specific DataFrame behavior for your workflow
+- **Deployment environment differs** — Production, staging, development, or CI/CD environments have different performance, reliability, and debugging requirements
+- **Workload characteristics change** — You're switching between interactive analysis (low concurrency) and batch processing (high concurrency)
+- **Compliance requirements exist** — You need to control data storage locations, disable certain features, or meet specific regulatory requirements
+- **Debugging is required** — You need verbose logging, validation, or specific diagnostic information
+
+### Configuration Use Cases
+
+Different use cases benefit from different configuration strategies:
+
+**Interactive Analysis (Jupyter/IPython)**
+- Lower concurrency (5-20 workers) to avoid overwhelming the system
+- Enable ultra cold start for fast initial loads
+- Moderate cache settings for iterative exploration
+- Optional validation for data quality checks
+
+**Batch Processing**
+- High concurrency (50-200 workers) for maximum throughput
+- Aggressive connection pooling to handle burst traffic
+- Large cache sizes to minimize redundant fetches
+- Disable validation for maximum performance
+
+**Production Services**
+- Balanced concurrency based on expected load
+- Robust retry and circuit breaker settings
+- Persistent cache with appropriate sizing
+- Comprehensive logging for monitoring
+
+**CI/CD Pipelines**
+- CI mode enabled for optimized testing
+- Shorter timeouts to fail fast
+- Minimal caching to ensure fresh data
+- Validation enabled to catch data issues early
+
+**Development/Debugging**
+- Cache disabled for fresh data on every run
+- Validation enabled to catch issues early
+- Verbose logging (DEBUG level)
+- Lower concurrency for easier debugging
+
+### Configuration Loading Process
+
+When `tif1` initializes, it loads configuration in the following sequence:
+
+1. **Initialize defaults** — All configuration keys start with sensible default values hardcoded in the library
+2. **Load config file** — If a `.tif1rc` file exists, its values override defaults. The library searches for config files in this order:
+   - Path specified in `TIF1_CONFIG_FILE` environment variable (if set)
+   - `.tif1rc` in current working directory (only if `TIF1_TRUST_CWD_CONFIG=true`)
+   - `~/.tif1rc` in user's home directory (default location)
+3. **Apply environment variables** — Any `TIF1_*` environment variables override file settings
+4. **Accept runtime changes** — Programmatic `config.set()` calls override everything
+
+This layered approach means you can set baseline configuration in a file, override specific settings per environment with environment variables, and make dynamic adjustments at runtime based on workload characteristics.
+
+**Configuration File Search Order:**
+
+The library searches for configuration files in a specific order and uses the **first file found**:
+
+1. **Explicit path** (`TIF1_CONFIG_FILE` env var) — Highest priority, useful for testing or custom deployments
+2. **Current directory** (`./.tif1rc`) — Only checked if `TIF1_TRUST_CWD_CONFIG=true` for security
+3. **Home directory** (`~/.tif1rc`) — Default location, most common for user-specific settings
+
+**Security Note:** By default, the library does **not** load `.tif1rc` from the current working directory to prevent malicious config files in untrusted directories. Set `TIF1_TRUST_CWD_CONFIG=true` only if you trust the current directory.
+
+**Example Configuration Loading:**
+
+```python
+# Scenario 1: Default loading (no env vars, no config file)
+# Result: All default values from library
+
+# Scenario 2: Config file exists at ~/.tif1rc
+# Result: Defaults + values from ~/.tif1rc
+
+# Scenario 3: Config file + environment variables
+# Result: Defaults + ~/.tif1rc + TIF1_* env vars
+
+# Scenario 4: Everything + runtime changes
+# Result: Defaults + ~/.tif1rc + TIF1_* env vars + config.set() calls
+```
+
+**Configuration Validation:**
+
+The configuration system performs validation when values are **read** (via `get()`), not when they're **set**. This design allows you to set any value programmatically, but invalid values are rejected when accessed, falling back to the provided default. Validation includes:
+
+- Type checking (int, float, bool, str, list)
+- Range validation (positive numbers, valid enums)
+- Format validation (HTTPS URLs for CDNs)
+- Path expansion (~ to home directory)
+
+Invalid values trigger warnings in the logs and return the default value instead.
+
+---
+
+## Configuration File Management
+
+### File Location and Discovery
+
+The `.tif1rc` configuration file is a JSON file that stores persistent configuration settings. The library searches for this file in multiple locations with a specific precedence order.
+
+**Default Location:**
+```
+~/.tif1rc
+```
+
+This is the recommended location for user-specific configuration that persists across all projects.
+
+**Custom Locations:**
+
+You can specify a custom configuration file location using the `TIF1_CONFIG_FILE` environment variable:
+
+```bash
+export TIF1_CONFIG_FILE=/path/to/custom-config.json
+```
+
+**Current Directory:**
+
+For project-specific configuration, you can place a `.tif1rc` file in your project directory. However, for security reasons, this file is **only loaded** if you explicitly enable it:
+
+```bash
+export TIF1_TRUST_CWD_CONFIG=true
+```
+
+<Warning>
+  Only set `TIF1_TRUST_CWD_CONFIG=true` in directories you trust. Malicious `.tif1rc` files could modify library behavior in unexpected ways.
+</Warning>
+
+### File Format
+
+The configuration file must be valid JSON with a single object containing key-value pairs:
+
+```json
+{
+  "lib": "polars",
+  "enable_cache": true,
+  "cache_dir": "~/.tif1/cache",
+  "timeout": 60,
+  "max_workers": 50,
+  "max_retries": 5,
+  "validate_data": false,
+  "ultra_cold_start": true
+}
+```
+
+**Format Requirements:**
+
+- Must be valid JSON (not JSON5, JSONC, or other variants)
+- Root element must be an object `{}`
+- Keys must be strings matching configuration key names
+- Values must match expected types (string, number, boolean, array)
+- Comments are not supported (JSON doesn't allow comments)
+- Trailing commas are not allowed
+
+**Invalid File Handling:**
+
+If the configuration file is invalid (malformed JSON, wrong type, etc.), the library logs a warning and continues with default values. The library never crashes due to invalid configuration files.
+
+### Creating Configuration Files
+
+**Method 1: Programmatic Creation**
+
+The recommended way to create a configuration file is using the `save()` method:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Set desired values
+config.set("lib", "polars")
+config.set("max_workers", 100)
+config.set("enable_cache", True)
+
+# Save to default location (~/.tif1rc)
+config.save()
+
+# Or save to custom location
+from pathlib import Path
+config.save(Path("/path/to/config.json"))
+```
+
+**Method 2: Manual Creation**
+
+You can also create the file manually using any text editor:
+
+```bash
+# Create config file
+cat > ~/.tif1rc << 'EOF'
+{
+  "lib": "polars",
+  "max_workers": 100,
+  "enable_cache": true,
+  "cache_dir": "/var/cache/tif1"
+}
+EOF
+```
+
+**Method 3: Copy from Template**
+
+Start with a template and customize:
+
+```bash
+# Create a template with all default values
+python -c "import tif1; tif1.get_config().save()"
+
+# Edit the file
+nano ~/.tif1rc
+```
+
+### Managing Multiple Configurations
+
+For different environments or use cases, you can maintain multiple configuration files and switch between them using environment variables.
+
+**Example: Development vs Production**
+
+```bash
+# Create development config
+cat > ~/.tif1rc.dev << 'EOF'
+{
+  "enable_cache": false,
+  "validate_data": true,
+  "max_workers": 5,
+  "log_level": "DEBUG"
+}
+EOF
+
+# Create production config
+cat > ~/.tif1rc.prod << 'EOF'
+{
+  "enable_cache": true,
+  "validate_data": false,
+  "max_workers": 100,
+  "log_level": "WARNING",
+  "cache_dir": "/var/cache/tif1"
+}
+EOF
+
+# Use development config
+export TIF1_CONFIG_FILE=~/.tif1rc.dev
+python my_script.py
+
+# Use production config
+export TIF1_CONFIG_FILE=~/.tif1rc.prod
+python my_script.py
+```
+
+**Example: Per-Project Configuration**
+
+```bash
+# In project directory
+cat > .tif1rc << 'EOF'
+{
+  "lib": "polars",
+  "max_workers": 50,
+  "cache_dir": "./.tif1-cache"
+}
+EOF
+
+# Enable project-specific config
+export TIF1_TRUST_CWD_CONFIG=true
+python my_analysis.py
+```
+
+### Configuration File Best Practices
+
+1. **Version control**: Commit project-specific `.tif1rc` files to version control
+2. **Documentation**: Add comments in a separate README explaining configuration choices
+3. **Validation**: Test configuration files before deploying to production
+4. **Backup**: Keep backups of working configurations before making changes
+5. **Minimal**: Only include settings that differ from defaults to keep files small
+6. **Security**: Never commit sensitive information (API keys, passwords) to config files
+
+---
+
+## Environment Variables
+
+All configuration keys can be overridden using environment variables with the `TIF1_` prefix. Environment variables take precedence over configuration files but are overridden by programmatic `config.set()` calls.
+
+### Environment Variable Naming
+
+Configuration keys are converted to environment variables by:
+
+1. Adding the `TIF1_` prefix
+2. Converting to uppercase
+3. Replacing underscores with underscores (no change)
+
+**Examples:**
+- `lib` → `TIF1_LIB`
+- `enable_cache` → `TIF1_ENABLE_CACHE`
+- `max_workers` → `TIF1_MAX_WORKERS`
+- `cache_dir` → `TIF1_CACHE_DIR`
+
+### Type Conversion
+
+Environment variables are strings, so the library automatically converts them to the appropriate type:
+
+**Boolean Values:**
+- True: `1`, `true`, `yes`, `on` (case-insensitive)
+- False: `0`, `false`, `no`, `off` (case-insensitive)
+
+```bash
+export TIF1_ENABLE_CACHE=true
+export TIF1_VALIDATE_DATA=1
+export TIF1_OFFLINE_MODE=yes
+```
+
+**Numeric Values:**
+- Integers: `42`, `100`, `0`
+- Floats: `3.14`, `2.0`, `0.5`
+
+```bash
+export TIF1_TIMEOUT=60
+export TIF1_MAX_WORKERS=100
+export TIF1_RETRY_BACKOFF_FACTOR=2.5
+```
+
+**String Values:**
+- Used as-is
+
+```bash
+export TIF1_LIB=polars
+export TIF1_CACHE_DIR=/var/cache/tif1
+export TIF1_LOG_LEVEL=DEBUG
+```
+
+**List Values:**
+- Comma-separated strings
+
+```bash
+export TIF1_CDNS=https://cdn1.example.com,https://cdn2.example.com
+export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+```
+
+### Complete Environment Variable Reference
+
+```bash
+# Core Settings
+export TIF1_LIB=pandas                    # or "polars"
+export TIF1_ENABLE_CACHE=true
+export TIF1_CACHE_DIR=~/.tif1/cache
+export TIF1_VALIDATE_DATA=false
+export TIF1_ULTRA_COLD_START=true
+export TIF1_OFFLINE_MODE=false
+export TIF1_CI_MODE=false
+
+# Network Settings
+export TIF1_TIMEOUT=30
+export TIF1_MAX_RETRIES=3
+export TIF1_MAX_WORKERS=20
+export TIF1_MAX_CONCURRENT_REQUESTS=20
+
+# HTTP Session Settings
+export TIF1_HTTP_MULTIPLEXED=true
+export TIF1_HTTP_DISABLE_HTTP3=false
+export TIF1_POOL_CONNECTIONS=256
+export TIF1_POOL_MAXSIZE=512
+export TIF1_KEEPALIVE_TIMEOUT=120
+export TIF1_KEEPALIVE_MAX_REQUESTS=1000
+export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+
+# Retry & Circuit Breaker
+export TIF1_RETRY_BACKOFF_FACTOR=2.0
+export TIF1_RETRY_JITTER=true
+export TIF1_RETRY_JITTER_MAX=0.0
+export TIF1_MAX_RETRY_DELAY=60.0
+export TIF1_CIRCUIT_BREAKER_THRESHOLD=5
+export TIF1_CIRCUIT_BREAKER_TIMEOUT=60
+
+# HTTP/2 Configuration
+export TIF1_HTTP2_MAX_CONNECTIONS=10
+export TIF1_HTTP2_MAX_POOL_SIZE=20
+
+# Cache Configuration
+export TIF1_CACHE_COMMIT_INTERVAL=25
+export TIF1_SQLITE_TIMEOUT=30.0
+export TIF1_MEMORY_CACHE_MAX_ITEMS=1024
+export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=2048
+
+# CDN Configuration
+export TIF1_CDNS=https://cdn.jsdelivr.net/gh/TracingInsights
+export TIF1_CDN_USE_MINIFICATION=false
+
+# Validation
+export TIF1_VALIDATE_LAP_TIMES=false
+export TIF1_VALIDATE_TELEMETRY=false
+
+# Prefetch Strategies
+export TIF1_PREFETCH_DRIVER_LAPS_ON_GET_DRIVER=true
+export TIF1_PREFETCH_ALL_TELEMETRY_ON_FIRST_LAP_REQUEST=false
+export TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD=false
+export TIF1_ULTRA_COLD_BACKGROUND_CACHE_FILL=false
+export TIF1_ULTRA_COLD_SKIP_RETRIES=true
+
+# Telemetry Settings
+export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=32
+
+# Logging
+export TIF1_LOG_LEVEL=WARNING
+export TIF1_CONNECTION_STATS_LOG_INTERVAL=60.0
+
+# Connection Pool Exhaustion
+export TIF1_POOL_EXHAUSTION_BACKOFF_BASE=0.01
+export TIF1_POOL_EXHAUSTION_BACKOFF_MAX=0.5
+export TIF1_POOL_EXHAUSTION_BACKOFF_JITTER=0.01
+
+# Advanced
+export TIF1_POLARS_LAP_CATEGORICAL=false
+export TIF1_JSON_PARSE_WORKERS=0
+
+# Configuration File Control
+export TIF1_CONFIG_FILE=/path/to/config.json
+export TIF1_TRUST_CWD_CONFIG=false
+```
+
+### Environment Variable Use Cases
+
+**Docker Containers:**
+```dockerfile
+FROM python:3.11
+ENV TIF1_CACHE_DIR=/app/cache
+ENV TIF1_MAX_WORKERS=50
+ENV TIF1_ENABLE_CACHE=true
+```
+
+**Kubernetes:**
+```yaml
+env:
+  - name: TIF1_LIB
+    value: "polars"
+  - name: TIF1_MAX_WORKERS
+    value: "100"
+  - name: TIF1_CACHE_DIR
+    value: "/var/cache/tif1"
+```
+
+**CI/CD Pipelines:**
+```yaml
+# GitHub Actions
+env:
+  TIF1_CI_MODE: true
+  TIF1_ENABLE_CACHE: false
+  TIF1_TIMEOUT: 30
+```
+
+**Shell Scripts:**
+```bash
+#!/bin/bash
+export TIF1_LIB=polars
+export TIF1_MAX_WORKERS=100
+python my_analysis.py
+```
+
+---
+
+## Configuration API Reference
+
+### `get_config()`
 
 ```python
 def get_config() -> Config
 ```
 
-Returns the global singleton configuration instance.
+Returns the global singleton configuration instance. The `Config` object is a singleton, meaning there's only one instance per Python process. All calls to `get_config()` return the same object, ensuring configuration consistency across your entire application.
 
 **Returns:**
-- Global `Config` object
+- `Config` — The global configuration singleton instance
+
+**Thread Safety:**
+The configuration object is thread-safe for reading. However, modifying configuration values (`config.set()`) during concurrent operations may lead to race conditions. It's recommended to configure the library once at startup before spawning threads or processes.
 
 **Example:**
 ```python
 import tif1
 
+# Get the global configuration instance
 config = tif1.get_config()
-print(f"Lib: {config.get('lib')}")
+
+# Read current settings
+print(f"DataFrame library: {config.get('lib')}")
 print(f"Cache enabled: {config.get('enable_cache')}")
+print(f"Cache directory: {config.get('cache_dir')}")
+print(f"Max workers: {config.get('max_workers')}")
+print(f"Timeout: {config.get('timeout')} seconds")
+
+# Check if ultra cold start is enabled
+if config.get('ultra_cold_start'):
+    print("Ultra cold start mode is active")
+```
+
+**Singleton Behavior:**
+```python
+import tif1
+
+# These all reference the same object
+config1 = tif1.get_config()
+config2 = tif1.get_config()
+
+assert config1 is config2  # True - same instance
+
+# Changes in one reference affect all references
+config1.set("timeout", 60)
+print(config2.get("timeout"))  # 60
 ```
 
 ---
 
-## Config Methods
+## Configuration Methods
+
+The `Config` object provides three primary methods for interacting with configuration values: `get()` for reading, `set()` for modifying, and `save()` for persisting changes to disk.
 
 ### `get(key, default=None)`
 
-Get the value for a configuration key.
+Retrieve the value for a specific configuration key. This method includes built-in validation for many configuration keys to ensure values are within acceptable ranges and of the correct type.
 
 ```python
 def get(key: str, default: Any = None) -> Any
 ```
 
 **Parameters:**
-- `key`: Configuration key name
-- `default`: Default value if key doesn't exist
+- `key` (str) — The configuration key name (case-sensitive)
+- `default` (Any, optional) — Default value to return if the key doesn't exist or validation fails. Defaults to `None`.
 
 **Returns:**
-- Configuration value or default
+- `Any` — The configuration value, or `default` if the key doesn't exist or validation fails
+
+**Validation Behavior:**
+
+The `get()` method performs automatic validation for many configuration keys:
+
+- **Numeric values** — Must be positive integers or floats for keys like `timeout`, `max_workers`, `pool_connections`, etc.
+- **Retry count** — `max_retries` can be 0 or positive (0 means no retries)
+- **Backoff factor** — `retry_backoff_factor` must be >= 1.0
+- **Library selection** — `lib` must be either `"pandas"` or `"polars"`
+- **CDN URLs** — `cdns` must be a list of HTTPS URLs
+- **Path expansion** — `cache_dir` automatically expands `~` to the user's home directory
+
+If validation fails, the method logs a warning and returns the `default` value instead of the invalid value.
 
 **Example:**
 ```python
 config = tif1.get_config()
 
-lib = config.get("lib")  # "pandas"
-timeout = config.get("timeout", 30)  # 30 if not set
-custom = config.get("custom_key", "default")  # "default"
+# Basic retrieval
+lib = config.get("lib")  # "pandas" or "polars"
+timeout = config.get("timeout")  # 30 (default)
+
+# With custom default
+custom_timeout = config.get("timeout", 60)  # 60 if not set, otherwise configured value
+custom_key = config.get("my_custom_key", "default_value")  # "default_value"
+
+# Checking boolean flags
+if config.get("enable_cache"):
+    print("Caching is enabled")
+
+if config.get("ultra_cold_start"):
+    print("Ultra cold start mode is active")
+
+# Reading network settings
+max_workers = config.get("max_workers")
+max_concurrent = config.get("max_concurrent_requests")
+print(f"Concurrency: {max_workers} workers, {max_concurrent} concurrent requests")
+
+# Reading cache settings
+cache_dir = config.get("cache_dir")  # Path with ~ expanded
+memory_cache_size = config.get("memory_cache_max_items")
+print(f"Cache: {cache_dir}, in-memory limit: {memory_cache_size} items")
+```
+
+**Validation Examples:**
+```python
+config = tif1.get_config()
+
+# Invalid values are rejected and default is returned
+config.set("timeout", -10)  # Invalid (negative)
+timeout = config.get("timeout", 30)  # Returns 30 (default)
+
+config.set("lib", "numpy")  # Invalid (not pandas or polars)
+lib = config.get("lib", "pandas")  # Returns "pandas" (default)
+
+config.set("max_retries", -1)  # Invalid (negative)
+retries = config.get("max_retries", 3)  # Returns 3 (default)
+
+# Valid values are returned as-is
+config.set("timeout", 60)
+timeout = config.get("timeout")  # Returns 60
+
+config.set("max_retries", 0)  # Valid (0 means no retries)
+retries = config.get("max_retries")  # Returns 0
 ```
 
 ---
 
 ### `set(key, value)`
 
-Update a configuration value in memory for the current session.
+Update a configuration value in memory for the current Python session. Changes made with `set()` are **not persisted** to disk unless you explicitly call `save()`.
 
 ```python
 def set(key: str, value: Any) -> None
 ```
 
 **Parameters:**
-- `key`: Configuration key name
-- `value`: New value to set
+- `key` (str) — The configuration key name (case-sensitive)
+- `value` (Any) — The new value to set. Type should match the expected type for the key.
+
+**Returns:**
+- `None`
+
+**Behavior:**
+
+- Changes take effect **immediately** for all subsequent operations
+- Changes are **session-only** unless you call `save()`
+- No validation is performed during `set()` — validation happens in `get()`
+- You can set custom keys that aren't part of the default configuration
+
+**When to Use:**
+
+- **Runtime optimization** — Adjust settings based on workload characteristics
+- **A/B testing** — Compare performance with different configurations
+- **Dynamic tuning** — Increase concurrency for large batches, decrease for small queries
+- **Temporary overrides** — Disable caching for a specific operation, then re-enable
 
 **Example:**
 ```python
 config = tif1.get_config()
 
-# Change lib
+# Change DataFrame library
 config.set("lib", "polars")
 
-# Disable cache
+# Disable caching temporarily
 config.set("enable_cache", False)
 
-# Increase timeout
-config.set("timeout", 60)
+# Increase timeout for slow connections
+config.set("timeout", 120)
+
+# Boost concurrency for batch processing
+config.set("max_workers", 100)
+config.set("max_concurrent_requests", 100)
+
+# Configure connection pooling
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+
+# Adjust retry behavior
+config.set("max_retries", 5)
+config.set("retry_backoff_factor", 3.0)
+
+# Enable validation for debugging
+config.set("validate_data", True)
+config.set("validate_lap_times", True)
+
+# Set custom application-specific keys
+config.set("my_app_version", "1.2.3")
+config.set("my_custom_flag", True)
+```
+
+**Dynamic Configuration Pattern:**
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Save original settings
+original_cache = config.get("enable_cache")
+original_workers = config.get("max_workers")
+
+try:
+    # Temporarily adjust for specific workload
+    config.set("enable_cache", False)  # Fresh data
+    config.set("max_workers", 50)  # High concurrency
+    
+    # Perform operations with adjusted settings
+    session = tif1.get_session(2024, 1, "R")
+    session.load()
+    
+finally:
+    # Restore original settings
+    config.set("enable_cache", original_cache)
+    config.set("max_workers", original_workers)
+```
+
+**Persistence Pattern:**
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Make multiple changes
+config.set("lib", "polars")
+config.set("max_workers", 100)
+config.set("enable_cache", True)
+config.set("cache_dir", "/var/cache/tif1")
+
+# Persist all changes to disk
+config.save()  # Saves to ~/.tif1rc
+
+# Changes will now persist across Python sessions
 ```
 
 <Note>
-  Changes made with `set()` only affect the current Python session. Use `save()` to persist changes to disk.
+  Changes made with `set()` only affect the current Python session. To make changes permanent, call `save()` after setting your desired values.
 </Note>
+
+<Warning>
+  Modifying configuration during concurrent operations (multi-threading) may lead to race conditions. Configure the library at startup before spawning threads.
+</Warning>
 
 ---
 
 ### `save(path=None)`
 
-Save the current configuration to a JSON file.
+Persist the current in-memory configuration to a JSON file on disk. This allows you to make configuration changes permanent across Python sessions.
 
 ```python
 def save(path: Path | None = None) -> None
 ```
 
 **Parameters:**
-- `path`: Path to save config file. If `None`, saves to `~/.tif1rc`
+- `path` (Path | None, optional) — Path where the configuration file should be saved. If `None`, saves to the default location (`~/.tif1rc`). Defaults to `None`.
+
+**Returns:**
+- `None`
+
+**Behavior:**
+
+- Writes the **entire** current configuration (including defaults) to the specified file
+- Creates the file if it doesn't exist
+- Overwrites the file if it already exists
+- Uses JSON format with 2-space indentation for readability
+- Logs success or failure messages
+
+**File Format:**
+
+The saved file is a JSON object with all configuration keys and their current values:
+
+```json
+{
+  "lib": "polars",
+  "enable_cache": true,
+  "cache_dir": "/var/cache/tif1",
+  "timeout": 60,
+  "max_workers": 100,
+  ...
+}
+```
 
 **Example:**
 ```python
@@ -116,13 +806,83 @@ config = tif1.get_config()
 # Modify settings
 config.set("lib", "polars")
 config.set("enable_cache", True)
+config.set("max_workers", 100)
 
 # Save to default location (~/.tif1rc)
 config.save()
 
 # Save to custom location
+from pathlib import Path
 config.save(Path("./my-config.json"))
+config.save(Path("/etc/tif1/config.json"))
+config.save(Path.home() / ".config" / "tif1" / "config.json")
 ```
+
+**Workflow Patterns:**
+
+**One-time setup:**
+```python
+import tif1
+
+# Configure once
+config = tif1.get_config()
+config.set("lib", "polars")
+config.set("max_workers", 100)
+config.set("cache_dir", "/var/cache/tif1")
+config.save()
+
+# Future sessions will use these settings automatically
+```
+
+**Environment-specific configs:**
+```python
+import tif1
+from pathlib import Path
+
+config = tif1.get_config()
+
+# Development config
+config.set("enable_cache", False)
+config.set("validate_data", True)
+config.set("max_workers", 5)
+config.save(Path("./config-dev.json"))
+
+# Production config
+config.set("enable_cache", True)
+config.set("validate_data", False)
+config.set("max_workers", 100)
+config.save(Path("./config-prod.json"))
+
+# Load appropriate config with TIF1_CONFIG_FILE environment variable
+```
+
+**Backup and restore:**
+```python
+import tif1
+from pathlib import Path
+import shutil
+
+config = tif1.get_config()
+
+# Backup current config
+backup_path = Path.home() / ".tif1rc.backup"
+config.save(backup_path)
+
+# Make experimental changes
+config.set("max_workers", 200)
+config.set("pool_connections", 1024)
+
+# If something goes wrong, restore from backup
+# (manually copy backup_path to ~/.tif1rc and restart)
+```
+
+<Note>
+  The `save()` method writes the **entire** configuration, not just the keys you've modified. This ensures the saved file is a complete, self-contained configuration.
+</Note>
+
+<Tip>
+  Use environment variables (`TIF1_CONFIG_FILE`) to load different configuration files for different environments (dev, staging, production) without modifying code.
+</Tip>
 
 ---
 
@@ -270,19 +1030,53 @@ config.save(Path("./my-config.json"))
   ```
 </ResponseField>
 
-<ResponseField name="user_agent" type="str" default="tif1/0.2.0">
-  User-Agent header for HTTP requests.
+<ResponseField name="user_agent" type="str" default="tif1/{version}">
+  User-Agent header sent with all HTTP requests. Useful for identifying your application in server logs or implementing custom rate limiting.
+
+  **Default:** `tif1/{version}` (e.g., `tif1/0.2.0`)
+
+  **Use Cases:**
+  - Identify your application in CDN logs
+  - Implement custom rate limiting per application
+  - Debug network issues by filtering logs
+  - Comply with API usage policies
 
   ```python
   config.set("user_agent", "my-app/1.0.0")
+  config.set("user_agent", "research-project/2024.1")
   ```
 </ResponseField>
 
 <ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
-  DNS resolvers with DoH fallback.
+  DNS resolver configuration with DNS-over-HTTPS (DoH) fallback support. The library tries resolvers in order until one succeeds.
+
+  **Default:** `["standard", "doh://cloudflare", "doh://google"]`
+
+  **Resolver Types:**
+  - `standard` — System DNS resolver (fastest, but may be blocked or censored)
+  - `doh://cloudflare` — Cloudflare DNS-over-HTTPS (1.1.1.1)
+  - `doh://google` — Google DNS-over-HTTPS (8.8.8.8)
+
+  **Benefits of DoH:**
+  - Bypass DNS blocking or censorship
+  - Improved privacy (encrypted DNS queries)
+  - Reliability when system DNS is misconfigured
+  - Consistent resolution across different networks
+
+  **Performance Considerations:**
+  - System DNS (`standard`) is fastest when working correctly
+  - DoH adds latency due to HTTPS overhead
+  - DoH is useful as fallback, not primary resolver
 
   ```python
-  config.set("http_resolvers", ["doh://cloudflare"])
+  # Use only system DNS (fastest)
+  config.set("http_resolvers", ["standard"])
+
+  # Use only DoH (most private)
+  config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+
+  # Custom order (try Cloudflare first, then system)
+  config.set("http_resolvers", ["doh://cloudflare", "standard"])
   ```
 </ResponseField>
 
@@ -797,43 +1591,1183 @@ tif1.set_log_level(logging.DEBUG)
 
 ---
 
+## Configuration Patterns and Recipes
+
+This section provides comprehensive configuration recipes for common use cases, with detailed explanations of why each setting is chosen.
+
+### Maximum Performance Configuration
+
+For absolute maximum throughput in batch processing scenarios:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use polars for better performance
+config.set("lib", "polars")
+
+# Maximize concurrency
+config.set("max_workers", 200)
+config.set("max_concurrent_requests", 200)
+config.set("telemetry_prefetch_max_concurrent_requests", 256)
+
+# Aggressive connection pooling
+config.set("pool_connections", 1024)
+config.set("pool_maxsize", 4096)
+
+# Long keep-alive for connection reuse
+config.set("keepalive_timeout", 600)
+config.set("keepalive_max_requests", 50000)
+
+# Disable validation overhead
+config.set("validate_data", False)
+config.set("validate_lap_times", False)
+config.set("validate_telemetry", False)
+
+# Enable aggressive prefetching
+config.set("prefetch_all_telemetry_after_laps_load", True)
+config.set("prefetch_driver_laps_on_get_driver", True)
+
+# Optimize cache for high throughput
+config.set("memory_cache_max_items", 4096)
+config.set("memory_telemetry_cache_max_items", 8192)
+config.set("cache_commit_interval", 100)
+
+# Save for future use
+config.save()
+```
+
+**Why these settings:**
+- High worker counts maximize parallel fetching
+- Large connection pools prevent pool exhaustion
+- Long keep-alive reduces connection overhead
+- Disabled validation eliminates CPU overhead
+- Aggressive prefetching reduces sequential fetches
+- Large caches reduce redundant network requests
+
+**Trade-offs:**
+- High memory usage (4-8GB+)
+- May overwhelm slower systems
+- Not suitable for resource-constrained environments
+
+---
+
+### Minimum Latency Configuration
+
+For interactive analysis where first-byte latency matters most:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable ultra cold start for fastest initial load
+config.set("ultra_cold_start", True)
+config.set("ultra_cold_skip_retries", True)
+
+# Use DoH for faster DNS resolution
+config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+
+# Moderate concurrency (avoid overwhelming)
+config.set("max_workers", 32)
+config.set("max_concurrent_requests", 32)
+
+# Optimized connection pooling
+config.set("pool_connections", 256)
+config.set("pool_maxsize", 1024)
+
+# Shorter timeout for fast failure
+config.set("timeout", 15)
+
+# Enable HTTP/2 multiplexing
+config.set("http_multiplexed", True)
+
+# Prefetch driver laps for faster access
+config.set("prefetch_driver_laps_on_get_driver", True)
+
+config.save()
+```
+
+**Why these settings:**
+- Ultra cold start skips unnecessary data loading
+- DoH can be faster than misconfigured system DNS
+- Moderate concurrency balances speed and resource usage
+- Short timeout fails fast on slow connections
+- HTTP/2 multiplexing reduces connection overhead
+- Selective prefetching reduces wait time for common operations
+
+**Trade-offs:**
+- May skip retries on transient failures
+- Short timeout may fail on slow networks
+- Moderate concurrency limits maximum throughput
+
+---
+
+### Development and Debugging Configuration
+
+For development environments where debugging and data quality matter more than performance:
+
+```python
+import tif1
+import logging
+
+config = tif1.get_config()
+
+# Disable cache for fresh data
+config.set("enable_cache", False)
+
+# Enable all validation
+config.set("validate_data", True)
+config.set("validate_lap_times", True)
+config.set("validate_telemetry", True)
+
+# Lower concurrency for easier debugging
+config.set("max_workers", 5)
+config.set("max_concurrent_requests", 5)
+
+# Longer timeout for debugging
+config.set("timeout", 120)
+
+# Disable ultra cold start to load all data
+config.set("ultra_cold_start", False)
+
+# Enable verbose logging
+tif1.setup_logging(logging.DEBUG)
+
+# More frequent connection stats logging
+config.set("connection_stats_log_interval", 30.0)
+
+config.save()
+```
+
+**Why these settings:**
+- Disabled cache ensures fresh data on every run
+- Validation catches data quality issues early
+- Low concurrency makes logs easier to follow
+- Long timeout accommodates debugging pauses
+- Full data loading helps understand data structure
+- Verbose logging provides detailed diagnostic information
+
+**Trade-offs:**
+- Much slower than production configuration
+- High CPU overhead from validation
+- Verbose logs can be overwhelming
+
+---
+
+### Production Service Configuration
+
+For production services that need reliability, performance, and observability:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use polars for performance
+config.set("lib", "polars")
+
+# Enable cache with production location
+config.set("enable_cache", True)
+config.set("cache_dir", "/var/cache/tif1")
+
+# Balanced concurrency
+config.set("max_workers", 100)
+config.set("max_concurrent_requests", 100)
+
+# Robust retry settings
+config.set("max_retries", 5)
+config.set("retry_backoff_factor", 2.5)
+config.set("retry_jitter", True)
+config.set("retry_jitter_max", 1.0)
+config.set("max_retry_delay", 120.0)
+
+# Circuit breaker for fault tolerance
+config.set("circuit_breaker_threshold", 10)
+config.set("circuit_breaker_timeout", 120)
+
+# Reasonable timeout
+config.set("timeout", 60)
+
+# Disable validation for performance
+config.set("validate_data", False)
+
+# Production-appropriate logging
+config.set("log_level", "WARNING")
+config.set("connection_stats_log_interval", 300.0)
+
+# Optimized connection pooling
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+config.set("keepalive_timeout", 300)
+config.set("keepalive_max_requests", 10000)
+
+config.save()
+```
+
+**Why these settings:**
+- Balanced concurrency handles typical load
+- Robust retry settings handle transient failures
+- Circuit breaker prevents cascading failures
+- Reasonable timeout balances reliability and speed
+- Production logging reduces noise
+- Optimized pooling handles burst traffic
+
+**Trade-offs:**
+- Not maximum performance (prioritizes reliability)
+- Higher memory usage than minimal configuration
+- May be overkill for low-traffic services
+
+---
+
+### CI/CD Pipeline Configuration
+
+For continuous integration and testing environments:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable CI mode
+config.set("ci_mode", True)
+
+# Disable cache for fresh data
+config.set("enable_cache", False)
+
+# Enable validation to catch issues
+config.set("validate_data", True)
+
+# Lower concurrency for CI runners
+config.set("max_workers", 10)
+config.set("max_concurrent_requests", 10)
+
+# Shorter timeout to fail fast
+config.set("timeout", 30)
+
+# Fewer retries to fail fast
+config.set("max_retries", 2)
+
+# Use system DNS (faster in CI)
+config.set("http_resolvers", ["standard"])
+
+config.save()
+```
+
+**Why these settings:**
+- CI mode enables CI-specific optimizations
+- Disabled cache ensures tests use fresh data
+- Validation catches data quality regressions
+- Low concurrency respects CI runner limits
+- Short timeout and few retries fail fast
+- System DNS is faster in CI environments
+
+**Trade-offs:**
+- Slower than production configuration
+- May fail on transient network issues
+- Not suitable for performance testing
+
+---
+
+### Resource-Constrained Configuration
+
+For systems with limited CPU, memory, or network bandwidth:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use pandas (lower memory overhead)
+config.set("lib", "pandas")
+
+# Minimal concurrency
+config.set("max_workers", 5)
+config.set("max_concurrent_requests", 5)
+config.set("telemetry_prefetch_max_concurrent_requests", 8)
+
+# Small connection pools
+config.set("pool_connections", 32)
+config.set("pool_maxsize", 64)
+
+# Small cache sizes
+config.set("memory_cache_max_items", 256)
+config.set("memory_telemetry_cache_max_items", 512)
+
+# Disable prefetching
+config.set("prefetch_driver_laps_on_get_driver", False)
+config.set("prefetch_all_telemetry_on_first_lap_request", False)
+config.set("prefetch_all_telemetry_after_laps_load", False)
+
+# Enable ultra cold start
+config.set("ultra_cold_start", True)
+
+config.save()
+```
+
+**Why these settings:**
+- Pandas has lower memory overhead than polars
+- Minimal concurrency reduces CPU and memory usage
+- Small pools reduce memory footprint
+- Small caches limit memory usage
+- Disabled prefetching reduces unnecessary fetches
+- Ultra cold start loads only needed data
+
+**Trade-offs:**
+- Much slower than high-performance configuration
+- Sequential operations dominate execution time
+- Not suitable for large-scale analysis
+
+---
+
+### Offline/Cache-Only Configuration
+
+For working with previously cached data without network access:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Enable offline mode
+config.set("offline_mode", True)
+
+# Ensure cache is enabled
+config.set("enable_cache", True)
+
+# Set cache location
+config.set("cache_dir", "~/.tif1/cache")
+
+# Disable retries (no network anyway)
+config.set("max_retries", 0)
+
+# Short timeout (will fail immediately)
+config.set("timeout", 1)
+
+config.save()
+```
+
+**Why these settings:**
+- Offline mode prevents network requests
+- Cache must be enabled to serve data
+- No retries since network is unavailable
+- Short timeout fails fast on cache misses
+
+**Trade-offs:**
+- Only works with previously cached data
+- Cache misses result in immediate failures
+- No way to fetch new data
+
+---
+
+### High-Reliability Configuration
+
+For scenarios where reliability matters more than performance:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Conservative concurrency
+config.set("max_workers", 20)
+config.set("max_concurrent_requests", 20)
+
+# Aggressive retry settings
+config.set("max_retries", 10)
+config.set("retry_backoff_factor", 3.0)
+config.set("retry_jitter", True)
+config.set("retry_jitter_max", 2.0)
+config.set("max_retry_delay", 300.0)
+
+# Long timeout
+config.set("timeout", 120)
+
+# Conservative circuit breaker
+config.set("circuit_breaker_threshold", 20)
+config.set("circuit_breaker_timeout", 300)
+
+# Multiple DNS resolvers
+config.set("http_resolvers", ["standard", "doh://cloudflare", "doh://google"])
+
+# Enable cache for redundancy
+config.set("enable_cache", True)
+
+config.save()
+```
+
+**Why these settings:**
+- Conservative concurrency reduces load on CDN
+- Aggressive retries handle transient failures
+- Long timeout accommodates slow networks
+- Conservative circuit breaker tolerates more failures
+- Multiple DNS resolvers provide fallback
+- Cache provides redundancy
+
+**Trade-offs:**
+- Slower than performance-optimized configuration
+- May retry excessively on persistent failures
+- Higher latency due to conservative settings
+
+---
+
+### Memory-Optimized Configuration
+
+For minimizing memory usage while maintaining reasonable performance:
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Use pandas (lower memory overhead)
+config.set("lib", "pandas")
+
+# Moderate concurrency
+config.set("max_workers", 20)
+config.set("max_concurrent_requests", 20)
+
+# Small cache sizes
+config.set("memory_cache_max_items", 512)
+config.set("memory_telemetry_cache_max_items", 1024)
+
+# Frequent cache commits (reduce memory buffer)
+config.set("cache_commit_interval", 10)
+
+# Smaller connection pools
+config.set("pool_connections", 128)
+config.set("pool_maxsize", 256)
+
+# Disable aggressive prefetching
+config.set("prefetch_all_telemetry_after_laps_load", False)
+
+# Enable ultra cold start
+config.set("ultra_cold_start", True)
+
+config.save()
+```
+
+**Why these settings:**
+- Pandas has lower memory overhead
+- Moderate concurrency balances speed and memory
+- Small caches reduce memory footprint
+- Frequent commits reduce memory buffer size
+- Smaller pools reduce connection overhead
+- Disabled prefetching reduces memory usage
+
+**Trade-offs:**
+- Slower than high-performance configuration
+- More frequent disk I/O from cache commits
+- May not be suitable for large-scale analysis
+
+---
+
+## Configuration Troubleshooting
+
+### Common Configuration Issues
+
+**Issue: Configuration changes not taking effect**
+
+**Symptoms:**
+- Changes made with `config.set()` don't seem to work
+- Environment variables are ignored
+- Config file changes don't apply
+
+**Solutions:**
+1. Check configuration precedence (programmatic > env > file > defaults)
+2. Verify environment variable names (must be `TIF1_` prefix, uppercase)
+3. Ensure config file is valid JSON
+4. Check config file location (use `TIF1_CONFIG_FILE` to specify)
+5. Restart Python process after changing config file
+6. Check for validation failures in logs
+
+```python
+import tif1
+import logging
+
+# Enable debug logging to see configuration loading
+tif1.setup_logging(logging.DEBUG)
+
+config = tif1.get_config()
+
+# Check actual value
+print(f"max_workers: {config.get('max_workers')}")
+
+# Check if validation is failing
+config.set("max_workers", -10)  # Invalid
+print(f"max_workers after invalid set: {config.get('max_workers', 20)}")  # Returns default
+```
+
+---
+
+**Issue: Poor performance despite high concurrency settings**
+
+**Symptoms:**
+- High `max_workers` but slow execution
+- Connection pool exhaustion warnings
+- Low CPU utilization
+
+**Solutions:**
+1. Check if connection pool is too small
+2. Verify network bandwidth isn't saturated
+3. Check if CDN is rate limiting
+4. Ensure cache is enabled
+5. Monitor connection reuse rate
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Increase connection pool sizes
+config.set("pool_connections", 512)
+config.set("pool_maxsize", 2048)
+
+# Enable connection stats logging
+config.set("connection_stats_log_interval", 60.0)
+
+# Check cache is enabled
+print(f"Cache enabled: {config.get('enable_cache')}")
+```
+
+---
+
+**Issue: High memory usage**
+
+**Symptoms:**
+- Python process using excessive memory
+- Out of memory errors
+- System slowdown
+
+**Solutions:**
+1. Reduce cache sizes
+2. Lower concurrency
+3. Use pandas instead of polars
+4. Disable prefetching
+5. Enable ultra cold start
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Reduce cache sizes
+config.set("memory_cache_max_items", 256)
+config.set("memory_telemetry_cache_max_items", 512)
+
+# Lower concurrency
+config.set("max_workers", 10)
+config.set("max_concurrent_requests", 10)
+
+# Use pandas
+config.set("lib", "pandas")
+
+# Disable prefetching
+config.set("prefetch_all_telemetry_after_laps_load", False)
+```
+
+---
+
+**Issue: Frequent timeout errors**
+
+**Symptoms:**
+- Many timeout errors in logs
+- Slow data loading
+- Inconsistent performance
+
+**Solutions:**
+1. Increase timeout value
+2. Check network connectivity
+3. Try different DNS resolvers
+4. Reduce concurrency
+5. Enable retries
+
+```python
+import tif1
+
+config = tif1.get_config()
+
+# Increase timeout
+config.set("timeout", 120)
+
+# Try DoH resolvers
+config.set("http_resolvers", ["doh://cloudflare", "doh://google", "standard"])
+
+# Enable retries
+config.set("max_retries", 5)
+config.set("retry_backoff_factor", 2.5)
+```
+
+---
+
+**Issue: Cache not working**
+
+**Symptoms:**
+- Every request hits the network
+- No performance improvement on repeated queries
+- Cache directory empty
+
+**Solutions:**
+1. Verify cache is enabled
+2. Check cache directory permissions
+3. Ensure cache directory exists
+4. Check disk space
+5. Verify SQLite timeout isn't too short
+
+```python
+import tif1
+from pathlib import Path
+
+config = tif1.get_config()
+
+# Verify cache settings
+print(f"Cache enabled: {config.get('enable_cache')}")
+print(f"Cache dir: {config.get('cache_dir')}")
+
+# Check cache directory
+cache_dir = Path(config.get('cache_dir'))
+print(f"Cache dir exists: {cache_dir.exists()}")
+print(f"Cache dir writable: {cache_dir.is_dir() and os.access(cache_dir, os.W_OK)}")
+
+# Increase SQLite timeout
+config.set("sqlite_timeout", 60.0)
+```
+
+---
+
 ## Best Practices
 
-1. **Use config files for persistent settings**: Store common settings in `~/.tif1rc`
-2. **Use environment variables for deployment**: Configure per-environment settings
-3. **Use programmatic API for runtime changes**: Adjust settings based on workload
-4. **Save after making changes**: Call `config.save()` to persist changes
-5. **Test configuration changes**: Verify performance impact before deploying
-6. **Monitor connection stats**: Track connection reuse rate to optimize pooling
-7. **Let pool sizing auto-calculate**: Only override `pool_connections` and `pool_maxsize` for specific tuning needs
-8. **Keep validation disabled in production**: Enable only for debugging or data quality checks
+### Configuration Strategy
+
+1. **Start with defaults** — The default configuration is optimized for most use cases. Only change settings when you have a specific need.
+
+2. **Use config files for persistent settings** — Store common settings in `~/.tif1rc` for user-specific configuration that persists across all projects.
+
+3. **Use environment variables for deployment** — Configure per-environment settings (dev, staging, production) using environment variables without modifying code.
+
+4. **Use programmatic API for runtime changes** — Adjust settings dynamically based on workload characteristics or user preferences.
+
+5. **Document your configuration** — Keep a README or comments explaining why specific settings were chosen.
+
+6. **Test configuration changes** — Verify performance impact before deploying to production. Use benchmarks to measure improvements.
+
+7. **Monitor in production** — Track connection stats, cache hit rates, and error rates to validate configuration choices.
+
+8. **Version control project configs** — Commit project-specific `.tif1rc` files to version control for reproducibility.
+
+### Performance Optimization
+
+1. **Let pool sizing auto-calculate** — Only override `pool_connections` and `pool_maxsize` for specific tuning needs. The automatic sizing works well for most cases.
+
+2. **Monitor connection reuse** — Enable connection stats logging to track connection reuse rate. Low reuse indicates pool exhaustion.
+
+3. **Balance concurrency and resources** — Higher concurrency isn't always better. Find the sweet spot for your system and network.
+
+4. **Use polars for large datasets** — Polars provides better performance for large-scale analysis, but pandas has lower memory overhead.
+
+5. **Enable caching** — Cache dramatically improves performance for repeated queries. Only disable for debugging or when fresh data is critical.
+
+6. **Tune prefetching** — Enable prefetching for common access patterns, but disable for memory-constrained environments.
+
+7. **Use ultra cold start** — Enable for interactive analysis where first-byte latency matters. Disable for batch processing that needs all data.
+
+### Reliability and Robustness
+
+1. **Keep validation disabled in production** — Enable only for debugging or data quality checks. Validation adds significant overhead.
+
+2. **Configure robust retry settings** — Use exponential backoff with jitter to handle transient failures gracefully.
+
+3. **Set appropriate timeouts** — Balance between failing fast and tolerating slow networks. 30-60 seconds is reasonable for most cases.
+
+4. **Use circuit breakers** — Configure circuit breaker thresholds to prevent cascading failures.
+
+5. **Multiple DNS resolvers** — Use DoH as fallback for reliability, but prefer system DNS for performance.
+
+6. **Monitor error rates** — Track timeout, retry, and circuit breaker events to identify configuration issues.
+
+### Security and Privacy
+
+1. **Trust config files carefully** — Only set `TIF1_TRUST_CWD_CONFIG=true` in directories you trust.
+
+2. **Use DoH for privacy** — DNS-over-HTTPS encrypts DNS queries, improving privacy on untrusted networks.
+
+3. **Validate config files** — Ensure config files are valid JSON and don't contain malicious values.
+
+4. **Limit cache locations** — Store cache in secure locations with appropriate permissions.
+
+5. **Custom user agents** — Use descriptive user agents to identify your application in logs.
+
+### Development Workflow
+
+1. **Separate dev and prod configs** — Maintain different configurations for development and production environments.
+
+2. **Use CI mode in pipelines** — Enable `ci_mode` for CI/CD-specific optimizations.
+
+3. **Enable validation in dev** — Catch data quality issues early by enabling validation in development.
+
+4. **Disable cache in dev** — Ensure fresh data during development by disabling cache.
+
+5. **Verbose logging in dev** — Use DEBUG logging to understand library behavior during development.
+
+### Memory Management
+
+1. **Monitor memory usage** — Track Python process memory to identify configuration issues.
+
+2. **Reduce cache sizes** — Lower cache sizes if memory usage is too high.
+
+3. **Use pandas for low memory** — Pandas has lower memory overhead than polars.
+
+4. **Disable prefetching** — Reduce memory usage by disabling aggressive prefetching.
+
+5. **Frequent cache commits** — Reduce memory buffer size by committing cache more frequently.
+
+### Troubleshooting
+
+1. **Enable debug logging** — Use `tif1.setup_logging(logging.DEBUG)` to see detailed diagnostic information.
+
+2. **Check configuration values** — Verify actual configuration values with `config.get()`.
+
+3. **Monitor connection stats** — Enable connection stats logging to track pool usage.
+
+4. **Test incrementally** — Change one setting at a time to isolate issues.
+
+5. **Compare with defaults** — Reset to defaults to verify custom configuration is the issue.
+
+### Configuration Maintenance
+
+1. **Review periodically** — Revisit configuration as workload characteristics change.
+
+2. **Update with library** — Check release notes for new configuration options.
+
+3. **Benchmark regularly** — Measure performance to validate configuration choices.
+
+4. **Document changes** — Keep a changelog of configuration changes and their rationale.
+
+5. **Backup working configs** — Save backups before making experimental changes.
 
 ---
 
 ## Summary
 
-The configuration system provides:
-- Multiple configuration sources (file, env, API)
-- Clear precedence rules
-- Runtime configuration changes
-- Persistent configuration storage
-- Comprehensive settings for all aspects of the library
-- Performance tuning capabilities
+The `tif1` configuration system provides comprehensive control over library behavior through multiple configuration sources with clear precedence rules. Key takeaways:
 
-Use configuration to optimize `tif1` for your specific use case and environment.
+### Configuration Sources (Precedence Order)
+
+1. **Programmatic API** (`config.set()`) — Highest precedence, runtime changes
+2. **Environment variables** (`TIF1_*`) — Deployment-specific overrides
+3. **Configuration file** (`.tif1rc`) — Persistent user settings
+4. **Default values** — Hardcoded defaults optimized for general use
+
+### Key Features
+
+- **Singleton pattern** — Single configuration instance per Python process
+- **Lazy initialization** — Configuration loaded on first access
+- **Validation on read** — Invalid values rejected when accessed, not when set
+- **Type conversion** — Automatic conversion from environment variables
+- **Path expansion** — Automatic `~` expansion for paths
+- **Thread-safe reads** — Safe to read from multiple threads
+
+### Configuration Categories
+
+- **Core settings** — DataFrame library, caching, validation
+- **Network settings** — Timeouts, retries, concurrency
+- **HTTP session** — Connection pooling, keep-alive, multiplexing
+- **Cache configuration** — Memory limits, commit intervals, SQLite settings
+- **CDN configuration** — CDN URLs, minification
+- **Retry & circuit breaker** — Backoff, jitter, thresholds
+- **Prefetch strategies** — Automatic data prefetching
+- **Telemetry settings** — Telemetry-specific concurrency
+- **Logging** — Log levels, connection stats
+- **Advanced settings** — Polars options, JSON parsing, offline mode
+
+### Common Use Cases
+
+- **Maximum performance** — High concurrency, large pools, aggressive prefetching
+- **Minimum latency** — Ultra cold start, DoH, moderate concurrency
+- **Development** — Disabled cache, enabled validation, verbose logging
+- **Production** — Balanced settings, robust retries, monitoring
+- **CI/CD** — CI mode, disabled cache, fast failure
+- **Resource-constrained** — Low concurrency, small caches, minimal prefetching
+- **Offline** — Cache-only mode, no network requests
+- **High-reliability** — Aggressive retries, long timeouts, multiple resolvers
+
+### Best Practices Summary
+
+1. Start with defaults, change only when needed
+2. Use config files for persistent settings
+3. Use environment variables for deployment
+4. Use programmatic API for runtime changes
+5. Monitor performance and adjust accordingly
+6. Document configuration choices
+7. Test changes before production deployment
+8. Keep validation disabled in production
+9. Enable caching for performance
+10. Balance concurrency with resources
+
+### Getting Help
+
+If you encounter configuration issues:
+
+1. Enable debug logging: `tif1.setup_logging(logging.DEBUG)`
+2. Check actual values: `config.get(key)`
+3. Verify precedence: Check file, env vars, and programmatic sets
+4. Review validation: Check logs for validation warnings
+5. Compare with defaults: Reset to defaults to isolate issues
+6. Consult documentation: Review this guide for detailed explanations
+
+The configuration system is designed to be flexible, powerful, and easy to use. Whether you're running interactive notebooks, building production pipelines, or optimizing for specific workloads, the configuration system provides the tools you need to tune `tif1` for your use case.
+
+---
+
+## Configuration Reference Tables
+
+### Quick Reference: Common Settings
+
+| Setting | Default | Production | Development | CI/CD |
+|---------|---------|------------|-------------|-------|
+| `lib` | `pandas` | `polars` | `pandas` | `pandas` |
+| `enable_cache` | `True` | `True` | `False` | `False` |
+| `validate_data` | `False` | `False` | `True` | `True` |
+| `max_workers` | `20` | `100` | `5` | `10` |
+| `timeout` | `30` | `60` | `120` | `30` |
+| `max_retries` | `3` | `5` | `3` | `2` |
+| `ultra_cold_start` | `True` | `True` | `False` | `True` |
+| `log_level` | `WARNING` | `WARNING` | `DEBUG` | `INFO` |
+
+### Quick Reference: Performance Impact
+
+| Setting | Performance Impact | Memory Impact | Reliability Impact |
+|---------|-------------------|---------------|-------------------|
+| `max_workers` | High ↑ | Medium ↑ | Low |
+| `pool_connections` | Medium ↑ | Medium ↑ | High ↑ |
+| `enable_cache` | Very High ↑ | High ↑ | Medium ↑ |
+| `validate_data` | High ↓ | Low | High ↑ |
+| `ultra_cold_start` | High ↑ | Low ↓ | Low |
+| `prefetch_*` | Medium ↑ | Medium ↑ | Low |
+| `lib=polars` | Medium ↑ | Medium ↑ | Low |
+| `max_retries` | Low ↓ | Low | High ↑ |
+
+Legend: ↑ = Increases, ↓ = Decreases
+
+### Quick Reference: Memory Usage
+
+| Configuration | Estimated Memory | Use Case |
+|---------------|------------------|----------|
+| Minimal | 100-200 MB | Resource-constrained |
+| Default | 200-500 MB | General use |
+| High-performance | 1-2 GB | Batch processing |
+| Maximum | 4-8 GB+ | Large-scale analysis |
+
+*Memory estimates are approximate and depend on workload*
+
+### Quick Reference: Concurrency Settings
+
+| Workload | `max_workers` | `pool_connections` | `pool_maxsize` |
+|----------|---------------|-------------------|----------------|
+| Interactive | 5-20 | 128-256 | 256-512 |
+| Batch | 50-200 | 512-1024 | 2048-4096 |
+| Production | 50-100 | 256-512 | 1024-2048 |
+| CI/CD | 5-10 | 64-128 | 128-256 |
+| Resource-constrained | 5-10 | 32-64 | 64-128 |
 
 ---
 
 ## Related Pages
 
 <CardGroup cols={2}>
-  <Card title="Environment Variables" href="/reference/environment-variables">
-    Env var reference
+  <Card title="Caching Strategy" href="/concepts/caching-strategy">
+    Learn about the multi-layer caching system and how to optimize cache configuration
+  </Card>
+  <Card title="Performance Tuning" href="/guides/performance">
+    Advanced performance optimization techniques and benchmarking
+  </Card>
+  <Card title="HTTP Session" href="/api-reference/http">
+    Deep dive into HTTP session configuration and connection pooling
   </Card>
   <Card title="Installation" href="/installation">
-    Setup guide
+    Setup guide and initial configuration
   </Card>
-  <Card title="Best Practices" href="/guides/best-practices">
-    Configuration tips
+  <Card title="CLI Configuration" href="/concepts/cli">
+    Configure tif1 via command-line interface
+  </Card>
+  <Card title="Backends" href="/concepts/backends">
+    Pandas vs Polars backend comparison and configuration
   </Card>
 </CardGroup>
+
+---
+
+## Additional Resources
+
+### Example Configuration Files
+
+**Minimal Configuration:**
+```json
+{
+  "lib": "pandas",
+  "enable_cache": true
+}
+```
+
+**Typical Configuration:**
+```json
+{
+  "lib": "polars",
+  "enable_cache": true,
+  "cache_dir": "~/.tif1/cache",
+  "max_workers": 50,
+  "timeout": 60
+}
+```
+
+**Complete Configuration (All Defaults):**
+```json
+{
+  "cache_dir": "~/.tif1/cache",
+  "log_level": "WARNING",
+  "timeout": 30,
+  "max_retries": 3,
+  "retry_backoff_factor": 2.0,
+  "retry_jitter": true,
+  "retry_jitter_max": 0.0,
+  "max_retry_delay": 60.0,
+  "circuit_breaker_threshold": 5,
+  "circuit_breaker_timeout": 60,
+  "http2_max_connections": 10,
+  "http2_max_pool_size": 20,
+  "max_workers": 20,
+  "max_concurrent_requests": 20,
+  "enable_cache": true,
+  "offline_mode": false,
+  "ci_mode": false,
+  "lib": "pandas",
+  "polars_lap_categorical": false,
+  "cache_commit_interval": 25,
+  "sqlite_timeout": 30.0,
+  "memory_cache_max_items": 1024,
+  "memory_telemetry_cache_max_items": 2048,
+  "keepalive_timeout": 120,
+  "keepalive_max_requests": 1000,
+  "connection_stats_log_interval": 60.0,
+  "pool_exhaustion_backoff_base": 0.01,
+  "pool_exhaustion_backoff_max": 0.5,
+  "pool_exhaustion_backoff_jitter": 0.01,
+  "http_multiplexed": true,
+  "http_disable_http3": false,
+  "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights"],
+  "cdn_use_minification": false,
+  "validate_data": false,
+  "validate_lap_times": false,
+  "validate_telemetry": false,
+  "ultra_cold_start": true,
+  "ultra_cold_background_cache_fill": false,
+  "ultra_cold_skip_retries": true,
+  "prefetch_driver_laps_on_get_driver": true,
+  "prefetch_all_telemetry_on_first_lap_request": false,
+  "prefetch_all_telemetry_after_laps_load": false,
+  "telemetry_prefetch_max_concurrent_requests": 32,
+  "json_parse_workers": 0,
+  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+}
+```
+
+### Configuration Validation Script
+
+Use this script to validate your configuration:
+
+```python
+import tif1
+import json
+from pathlib import Path
+
+def validate_config(config_path: Path):
+    """Validate a tif1 configuration file."""
+    print(f"Validating {config_path}...")
+    
+    # Check file exists
+    if not config_path.exists():
+        print(f"❌ File not found: {config_path}")
+        return False
+    
+    # Check valid JSON
+    try:
+        with open(config_path) as f:
+            config_data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON: {e}")
+        return False
+    
+    # Check is object
+    if not isinstance(config_data, dict):
+        print("❌ Config must be a JSON object")
+        return False
+    
+    # Load config and check values
+    config = tif1.get_config()
+    issues = []
+    
+    for key, value in config_data.items():
+        # Try to get value (triggers validation)
+        result = config.get(key)
+        if result is None and value is not None:
+            issues.append(f"⚠️  {key}={value} may be invalid")
+    
+    if issues:
+        print("\n".join(issues))
+        return False
+    
+    print("✅ Configuration is valid")
+    return True
+
+# Validate default config
+validate_config(Path.home() / ".tif1rc")
+```
+
+### Configuration Migration Script
+
+Use this script to migrate from old configuration format:
+
+```python
+import tif1
+import json
+from pathlib import Path
+
+def migrate_config():
+    """Migrate configuration to latest format."""
+    config = tif1.get_config()
+    
+    # Add any new settings with defaults
+    # (This is just an example - adjust for actual migrations)
+    
+    # Save updated config
+    config.save()
+    print("✅ Configuration migrated successfully")
+
+migrate_config()
+```
+
+### Environment Variable Generator
+
+Use this script to generate environment variables from config file:
+
+```python
+import json
+from pathlib import Path
+
+def generate_env_vars(config_path: Path):
+    """Generate environment variables from config file."""
+    with open(config_path) as f:
+        config = json.load(f)
+    
+    print("# tif1 Environment Variables")
+    print("# Generated from", config_path)
+    print()
+    
+    for key, value in config.items():
+        env_var = f"TIF1_{key.upper()}"
+        
+        if isinstance(value, bool):
+            value_str = "true" if value else "false"
+        elif isinstance(value, list):
+            value_str = ",".join(str(v) for v in value)
+        else:
+            value_str = str(value)
+        
+        print(f'export {env_var}="{value_str}"')
+
+# Generate from default config
+generate_env_vars(Path.home() / ".tif1rc")
+```
+
+---
+
+## Frequently Asked Questions
+
+**Q: Do I need to configure tif1?**
+
+A: No, the default configuration works well for most use cases. Only configure if you have specific performance, reliability, or resource requirements.
+
+**Q: What's the difference between config file and environment variables?**
+
+A: Config files are persistent and user-specific. Environment variables are deployment-specific and override config files. Use config files for personal settings, environment variables for deployment settings.
+
+**Q: Can I use multiple config files?**
+
+A: Yes, use the `TIF1_CONFIG_FILE` environment variable to specify which config file to load. Only one config file is loaded at a time (first found in search order).
+
+**Q: How do I reset to default configuration?**
+
+A: Delete or rename your `.tif1rc` file and unset all `TIF1_*` environment variables. The library will use hardcoded defaults.
+
+**Q: Why isn't my configuration taking effect?**
+
+A: Check configuration precedence (programmatic > env > file > defaults). Verify environment variable names are correct (`TIF1_` prefix, uppercase). Ensure config file is valid JSON. Check logs for validation warnings.
+
+**Q: What's the performance impact of validation?**
+
+A: Validation adds 10-30% overhead depending on workload. Disable in production for maximum performance.
+
+**Q: Should I use pandas or polars?**
+
+A: Polars is faster for large datasets but uses more memory. Pandas has lower memory overhead and better compatibility. Start with pandas, switch to polars if you need more performance.
+
+**Q: How much memory does tif1 use?**
+
+A: Depends on configuration and workload. Typical usage: 200-500 MB. High-performance: 1-2 GB. Maximum: 4-8 GB+. Reduce cache sizes and concurrency to lower memory usage.
+
+**Q: What's ultra cold start mode?**
+
+A: Ultra cold start skips loading full session data when only specific data is needed, reducing initial load time by 50-80%. Enable for interactive analysis, disable for batch processing.
+
+**Q: How do I optimize for my use case?**
+
+A: See the "Configuration Patterns and Recipes" section for detailed configurations for different use cases (performance, latency, development, production, etc.).
+
+**Q: Can I change configuration at runtime?**
+
+A: Yes, use `config.set()` to change values at runtime. Changes take effect immediately but are not persisted unless you call `config.save()`.
+
+**Q: What's the recommended production configuration?**
+
+A: See the "Production Service Configuration" in the "Configuration Patterns and Recipes" section for a complete production-ready configuration.
+
+**Q: How do I debug configuration issues?**
+
+A: Enable debug logging (`tif1.setup_logging(logging.DEBUG)`), check actual values (`config.get(key)`), verify precedence, and review logs for validation warnings.
+
+**Q: What's the difference between `pool_connections` and `pool_maxsize`?**
+
+A: `pool_connections` is the number of connection pools (one per host). `pool_maxsize` is the maximum connections per pool. Both auto-calculate by default based on concurrency settings.
+
+**Q: Should I enable prefetching?**
+
+A: Enable for common access patterns (e.g., accessing driver laps after loading session). Disable for memory-constrained environments or when access patterns are unpredictable.
+
+**Q: What's the recommended cache size?**
+
+A: Default (1024 items) works for most cases. Increase for large-scale analysis (4096+). Decrease for memory-constrained environments (256-512).
+
+**Q: How do I configure for CI/CD?**
+
+A: Enable `ci_mode`, disable cache, enable validation, use lower concurrency, shorter timeout, and fewer retries. See "CI/CD Pipeline Configuration" for details.
+
+**Q: Can I use tif1 offline?**
+
+A: Yes, enable `offline_mode` to use only cached data. Requires previously cached data. See "Offline/Cache-Only Configuration" for details.
+
+**Q: What's the impact of HTTP/2 multiplexing?**
+
+A: HTTP/2 multiplexing reduces connection overhead by reusing connections for multiple requests. Enabled by default. Disable only if you have issues with specific proxies or CDNs.
+
+**Q: How do I configure DNS resolvers?**
+
+A: Use `http_resolvers` to specify resolver order. Default tries system DNS first, then DoH fallbacks. Use DoH for privacy or when system DNS is blocked.
+
+**Q: What's the circuit breaker for?**
+
+A: Circuit breaker prevents cascading failures by stopping requests after consecutive failures. Automatically recovers after timeout. Configure threshold and timeout based on reliability requirements.
+
+**Q: How do I monitor configuration effectiveness?**
+
+A: Enable connection stats logging, track cache hit rates, monitor error rates, and benchmark performance. Adjust configuration based on metrics.
