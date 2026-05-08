@@ -38,11 +38,13 @@ graph TD
     G --> H{Circuit Breaker Open?}
     H -->|Yes| I[Fail Fast]
     H -->|No| J[Async HTTP Fetcher]
-    J --> K[jsDelivr CDN Primary]
-    K -->|Success| L[JSON Data]
-    K -->|Failure| M[GitHub Fallback]
-    M --> L
-    L --> N[orjson Parser]
+    J --> K[CDN Manager]
+    K --> L{Try StaticDelivr}
+    L -->|Success| M[JSON Data]
+    L -->|Failure| N{Try jsDelivr}
+    N -->|Success| M
+    N -->|Failure| O[Fail]
+    M --> P[orjson Parser]
     N --> O[Schema Validator]
     O --> P[DataFrame Constructor]
     P --> Q[Column Transformer]
@@ -55,7 +57,7 @@ graph TD
     style C fill:#90EE90
     style E fill:#FFD700
     style K fill:#87CEEB
-    style N fill:#FFA07A
+    style P fill:#FFA07A
     style P fill:#DDA0DD
 ```
 
@@ -83,11 +85,13 @@ graph TD
 - Thread-safe with connection pooling
 
 **CDN Manager (`cdn.py`)**
-- Constructs URLs for TracingInsights data repositories
-- Primary: jsDelivr CDN (`cdn.jsdelivr.net/gh/TracingInsights/{year}@main`)
-- Fallback: Direct GitHub API (rate limited to 60 req/hour for unauthenticated)
-- Never uses `raw.githubusercontent.com` (strict rate limits)
+- Manages multiple CDN sources with automatic fallback
+- Primary: StaticDelivr CDN (`cdn.staticdelivr.com/gh/TracingInsights/{year}@main`)
+- Fallback: jsDelivr CDN (`cdn.jsdelivr.net/gh/TracingInsights/{year}@main`)
+- Tracks failure counts per CDN source
+- Automatically disables failing sources after 3 consecutive failures
 - Handles URL encoding and path construction
+- Never uses `raw.githubusercontent.com` (strict rate limits)
 
 **Async HTTP Fetcher (`async_fetch.py`)**
 - Parallel HTTP requests using `niquests` (HTTP/2 support)
@@ -426,8 +430,8 @@ When data isn't found in either cache tier, tif1 fetches from the CDN using a so
 
 #### CDN Architecture
 
-**Primary Source: jsDelivr CDN**
-- URL Pattern: `https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{path}`
+**Primary Source: StaticDelivr CDN**
+- URL Pattern: `https://cdn.staticdelivr.com/gh/TracingInsights/{year}@main/{path}`
 - Global CDN with edge locations worldwide
 - Automatic caching and compression
 - No rate limits for reasonable usage
@@ -435,12 +439,14 @@ When data isn't found in either cache tier, tif1 fetches from the CDN using a so
 - Average latency: 50-200ms (depending on location)
 - Uptime: 99.9%+
 
-**Fallback Source: GitHub API**
-- URL Pattern: `https://api.github.com/repos/TracingInsights/{year}/contents/{path}`
-- Direct access to repository contents
-- Rate limited: 60 requests/hour (unauthenticated), 5000/hour (authenticated)
-- Higher latency: 200-500ms
-- Used only when jsDelivr fails
+**Fallback Source: jsDelivr CDN**
+- URL Pattern: `https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{path}`
+- Global CDN with edge locations worldwide
+- Automatic caching and compression
+- No rate limits for reasonable usage
+- HTTPS with HTTP/2 support
+- Average latency: 50-200ms (depending on location)
+- Used when StaticDelivr fails or is unavailable
 
 **Forbidden Source: raw.githubusercontent.com**
 - Never used due to strict rate limits (10 requests/hour)
@@ -455,10 +461,10 @@ gp_name = "monaco"  # Normalized (lowercase, no spaces)
 session_type = "race"  # Normalized
 driver = "VER"
 
-# Primary URL (jsDelivr)
-base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main"
+# Primary URL (StaticDelivr)
+base_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}@main"
 lap_url = f"{base_url}/laps/{gp_name}/{session_type}/driver_{driver}.json"
-# Result: https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/laps/monaco/race/driver_VER.json
+# Result: https://cdn.staticdelivr.com/gh/TracingInsights/2025@main/laps/monaco/race/driver_VER.json
 
 # Telemetry URL
 telemetry_url = f"{base_url}/telemetry/{gp_name}/{session_type}/driver_{driver}_lap_{lap_number}.json"
@@ -474,9 +480,20 @@ messages_url = f"{base_url}/messages/{gp_name}/{session_type}/messages.json"
 
 ```python
 async def fetch_with_fallback(url_path):
-    """Fetch data with automatic fallback."""
+    """Fetch data with automatic CDN fallback."""
 
-    # Attempt 1: jsDelivr CDN (primary)
+    # Attempt 1: StaticDelivr CDN (primary)
+    try:
+        staticdelivr_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}@main/{url_path}"
+        response = await http_client.get(staticdelivr_url, timeout=30)
+        if response.status_code == 200:
+            logger.info(f"StaticDelivr success: {url_path}")
+            return response.content
+        logger.warning(f"StaticDelivr returned {response.status_code}")
+    except Exception as e:
+        logger.warning(f"StaticDelivr failed: {e}")
+
+    # Attempt 2: jsDelivr CDN (fallback)
     try:
         jsdelivr_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{url_path}"
         response = await http_client.get(jsdelivr_url, timeout=30)
@@ -487,24 +504,9 @@ async def fetch_with_fallback(url_path):
     except Exception as e:
         logger.warning(f"jsDelivr failed: {e}")
 
-    # Attempt 2: GitHub API (fallback)
-    try:
-        github_url = f"https://api.github.com/repos/TracingInsights/{year}/contents/{url_path}"
-        response = await http_client.get(github_url, timeout=30)
-        if response.status_code == 200:
-            # GitHub API returns base64-encoded content
-            import base64
-            content_b64 = response.json()["content"]
-            content = base64.b64decode(content_b64)
-            logger.info(f"GitHub API success: {url_path}")
-            return content
-        logger.warning(f"GitHub API returned {response.status_code}")
-    except Exception as e:
-        logger.warning(f"GitHub API failed: {e}")
-
     # All sources failed
     raise tif1.NetworkError(
-        f"Failed to fetch {url_path} from all sources",
+        f"Failed to fetch {url_path} from all CDN sources",
         url=url_path,
         attempts=2
     )

@@ -62,12 +62,12 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 
 ## Features
 
-- **Fast**: Direct CDN access via StaticDelivr (primary) and jsDelivr (fallback) with SQLite caching
+- **Fast**: Multi-CDN access via StaticDelivr (primary) and jsDelivr (fallback) with automatic failover and SQLite caching
 - No need to session.load() - only the required data is fetched when necessary. You can just get the telemetry data of any specific lap within seconds.
 - **Canonical**: Focused tif1 API surface
 - **Complete**: Lap times, sectors, telemetry, tire compounds, and more
 - **Historical**: Data from 2018-current
-- **Reliable**: Automatic retry logic with circuit breaker and CDN fallback
+- **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
 - **Async**: Parallel data fetching for better performance
 - **Optimized**: SQLite cache with JSON storage
 - **Flexible**: Supports both pandas and polars backends
@@ -92,7 +92,12 @@ import tif1
 # {
 #   "max_retries": 5,
 #   "validate_data": true,
-#   "backend": "polars"
+#   "backend": "polars",
+#   "cdns": [
+#     "https://cdn.staticdelivr.com/gh/TracingInsights",
+#     "https://cdn.jsdelivr.net/gh/TracingInsights"
+#   ],
+#   "cdn_use_minification": false
 # }
 
 # Get configuration

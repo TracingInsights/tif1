@@ -19,7 +19,7 @@ Location for the SQLite cache database.
 
 ```bash
 export TIF1_CACHE_DIR="/path/to/cache"
-```bash
+```
 
 <Info>
   Default: `~/.tif1/cache`
@@ -31,7 +31,7 @@ Enable or disable caching globally.
 
 ```bash
 export TIF1_CACHE_ENABLED=false
-```bash
+```
 
 <Info>
   Default: `true`
@@ -43,25 +43,56 @@ Default DataFrame lib to use.
 
 ```bash
 export TIF1_LIB=polars
-```bash
+```
 
 <Info>
   Default: `pandas`
+  
   Options: `pandas`, `polars`
 </Info>
 
 ## Network Configuration
 
+### TIF1_CDNS
+
+Configure multiple CDN sources for data fetching with automatic fallback.
+
+```bash
+export TIF1_CDNS='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights"]'
+```
+
+<Info>
+  Default: StaticDelivr (primary), jsDelivr (fallback)
+  
+  The system tries CDNs in order and automatically falls back on failures.
+</Info>
+
+### TIF1_CDN_USE_MINIFICATION
+
+Enable JSON minification for reduced file sizes.
+
+```bash
+export TIF1_CDN_USE_MINIFICATION=true
+```
+
+<Info>
+  Default: `false`
+  
+  When enabled, requests `.min.json` files which are 20-40% smaller.
+</Info>
+
 ### TIF1_CDN_BASE_URL
 
-Base URL for the CDN serving F1 data.
+Legacy single CDN configuration (deprecated in favor of TIF1_CDNS).
 
 ```bash
 export TIF1_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/TracingInsights"
-```bash
+```
 
 <Warning>
   Only change this if you're hosting your own data mirror. Never use `raw.githubusercontent.com` due to rate limits.
+  
+  Consider using `TIF1_CDNS` for multi-CDN support with automatic fallback.
 </Warning>
 
 ### TIF1_REQUEST_TIMEOUT
@@ -70,7 +101,7 @@ Timeout for HTTP requests in seconds.
 
 ```bash
 export TIF1_REQUEST_TIMEOUT=30
-```bash
+```
 
 <Info>
   Default: `10` seconds
@@ -82,7 +113,7 @@ Maximum number of retry attempts for failed requests.
 
 ```bash
 export TIF1_MAX_RETRIES=5
-```bash
+```
 
 <Info>
   Default: `3`
@@ -94,10 +125,11 @@ Backoff multiplier for exponential retry delays.
 
 ```bash
 export TIF1_RETRY_BACKOFF=2.0
-```bash
+```
 
 <Info>
   Default: `1.5`
+  
   Formula: `delay = base_delay * (backoff ^ attempt)`
 </Info>
 
@@ -109,7 +141,9 @@ Number of consecutive failures before opening the circuit.
 
 ```bash
 export TIF1_CIRCUIT_BREAKER_THRESHOLD=10
-```python <Info>
+```
+
+<Info>
   Default: `5`
 </Info>
 
@@ -119,7 +153,7 @@ Time in seconds before attempting to close an open circuit.
 
 ```bash
 export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
-```bash
+```
 
 <Info>
   Default: `60` seconds
@@ -133,10 +167,11 @@ Set the logging verbosity.
 
 ```bash
 export TIF1_LOG_LEVEL=DEBUG
-```bash
+```
 
 <Info>
   Default: `INFO`
+  
   Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 </Info>
 
@@ -146,7 +181,7 @@ Write logs to a file instead of stdout.
 
 ```bash
 export TIF1_LOG_FILE="/var/log/tif1.log"
-```bash
+```
 
 <Info>
   Default: None (logs to stdout)
@@ -160,10 +195,11 @@ Number of concurrent workers for async operations.
 
 ```bash
 export TIF1_ASYNC_WORKERS=20
-```bash
+```
 
 <Info>
   Default: `10`
+  
   Higher values = more parallelism but more memory usage
 </Info>
 
@@ -173,7 +209,7 @@ Size of the in-memory LRU cache (number of items).
 
 ```bash
 export TIF1_MEMORY_CACHE_SIZE=200
-```bash
+```
 
 <Info>
   Default: `100`
@@ -185,10 +221,11 @@ Enable HTTP/2 for network requests.
 
 ```bash
 export TIF1_HTTP2_ENABLED=true
-```bash
+```
 
 <Info>
   Default: `true`
+  
   Disable only if experiencing connection issues
 </Info>
 
@@ -200,10 +237,11 @@ Convert string columns to categorical types for memory savings.
 
 ```bash
 export TIF1_USE_CATEGORICAL=true
-```bash
+```
 
 <Info>
   Default: `true`
+  
   Can reduce memory usage by 30-50%
 </Info>
 
@@ -213,8 +251,11 @@ Telemetry sampling frequency in Hz.
 
 ```bash
 export TIF1_TELEMETRY_FREQUENCY=4
-```python <Info>
+```
+
+<Info>
   Default: `4` Hz
+  
   Higher values = more data points but larger files
 </Info>
 
@@ -231,7 +272,8 @@ directory = ~/.tif1/cache
 memory_size = 100
 
 [network]
-cdn_base_url = https://cdn.jsdelivr.net/gh/TracingInsights
+cdns = ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights"]
+cdn_use_minification = false
 request_timeout = 10
 max_retries = 3
 retry_backoff = 1.5
@@ -252,7 +294,7 @@ file =
 [performance]
 async_workers = 10
 telemetry_frequency = 4
-```python
+```
 
 ## Programmatic Configuration
 
@@ -269,12 +311,19 @@ config.cache_enabled = False
 config.lib = "polars"
 config.log_level = "DEBUG"
 
+# Configure multiple CDNs
+config.cdns = [
+    "https://cdn.staticdelivr.com/gh/TracingInsights",
+    "https://cdn.jsdelivr.net/gh/TracingInsights"
+]
+config.cdn_use_minification = True
+
 # Or use the Config class directly
 from tif1 import Config
 
 Config.CACHE_DIR = "/custom/cache/path"
 Config.MAX_RETRIES = 5
-```python
+```
 
 ## Priority Order
 
@@ -297,7 +346,7 @@ try:
     config = tif1.get_config()
 except tif1.ConfigError as e:
     print(f"Configuration error: {e}")
-```python
+```
 
 ## Best Practices
 
