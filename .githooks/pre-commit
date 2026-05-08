@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pre-commit hook to run ruff checks on staged files
+# Pre-commit hook to run ruff checks on staged Python files
+# and Mintlify validation on staged documentation files
 # Works on Linux, macOS, WSL, and Windows (Git Bash)
 
 set -e
@@ -11,55 +12,123 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 # Check for \\wsl.localhost\ or /mnt/wsl/ patterns
 if [[ "$REPO_ROOT" == *"wsl.localhost"* ]] || [[ "$REPO_ROOT" == *"\\wsl"* ]]; then
     echo "🔄 Detected Windows → WSL commit, delegating to WSL..."
-    
+
     # Extract WSL path - convert \\wsl.localhost\Ubuntu\path to /path
     WSL_PATH=$(echo "$REPO_ROOT" | sed 's|.*wsl.localhost[/\\][^/\\]*||' | sed 's|\\|/|g')
-    
+
     # Get staged Python files
-    STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
-    
-    if [ -z "$STAGED_FILES" ]; then
-        echo "No Python files staged for commit."
+    STAGED_PY_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
+
+    # Get staged documentation files (MDX and docs.json)
+    STAGED_DOC_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^docs/.*\.(mdx|json)$' || true)
+
+    if [ -z "$STAGED_PY_FILES" ] && [ -z "$STAGED_DOC_FILES" ]; then
+        echo "No Python or documentation files staged for commit."
         exit 0
     fi
-    
-    echo "Running ruff checks on staged files..."
-    echo "Files to check:"
-    echo "$STAGED_FILES"
-    echo ""
-    
-    # Convert newline-separated files to space-separated for proper passing
-    STAGED_FILES_ARGS=$(echo "$STAGED_FILES" | tr '\n' ' ')
-    
-    # Execute in WSL - use full path to uv if it's in a standard location
-    # Try common locations: ~/.cargo/bin/uv, /usr/local/bin/uv, or just 'uv' in PATH
-    wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff check $STAGED_FILES_ARGS"
-    CHECK_EXIT=$?
-    
-    if [ $CHECK_EXIT -ne 0 ]; then
+
+    if [ -n "$STAGED_PY_FILES" ]; then
+        echo "Running ruff checks on staged Python files..."
+        echo "Files to check:"
+        echo "$STAGED_PY_FILES"
         echo ""
-        echo "❌ Ruff check failed!"
-        echo "To fix issues, run in WSL terminal:"
-        echo "  uv run ruff check --fix $STAGED_FILES_ARGS"
-        echo ""
-        echo "To bypass (not recommended): git commit --no-verify"
-        exit 1
+
+        # Convert newline-separated files to space-separated for proper passing
+        STAGED_PY_FILES_ARGS=$(echo "$STAGED_PY_FILES" | tr '\n' ' ')
+
+        # Execute in WSL - use full path to uv if it's in a standard location
+        # Try common locations: ~/.cargo/bin/uv, /usr/local/bin/uv, or just 'uv' in PATH
+        wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff check $STAGED_PY_FILES_ARGS"
+        CHECK_EXIT=$?
+
+        if [ $CHECK_EXIT -ne 0 ]; then
+            echo ""
+            echo "❌ Ruff check failed!"
+            echo "To fix issues, run in WSL terminal:"
+            echo "  uv run ruff check --fix $STAGED_PY_FILES_ARGS"
+            echo ""
+            echo "To bypass (not recommended): git commit --no-verify"
+            exit 1
+        fi
+
+        wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff format --check $STAGED_PY_FILES_ARGS"
+        FORMAT_EXIT=$?
+
+        if [ $FORMAT_EXIT -ne 0 ]; then
+            echo ""
+            echo "❌ Ruff format check failed!"
+            echo "To fix formatting, run in WSL terminal:"
+            echo "  uv run ruff format $STAGED_PY_FILES_ARGS"
+            echo ""
+            echo "To bypass (not recommended): git commit --no-verify"
+            exit 1
+        fi
+
+        echo "✅ All ruff checks passed!"
     fi
-    
-    wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff format --check $STAGED_FILES_ARGS"
-    FORMAT_EXIT=$?
-    
-    if [ $FORMAT_EXIT -ne 0 ]; then
+
+    if [ -n "$STAGED_DOC_FILES" ]; then
         echo ""
-        echo "❌ Ruff format check failed!"
-        echo "To fix formatting, run in WSL terminal:"
-        echo "  uv run ruff format $STAGED_FILES_ARGS"
+        echo "Running Mintlify validation on staged documentation files..."
+        echo "Files to check:"
+        echo "$STAGED_DOC_FILES"
         echo ""
-        echo "To bypass (not recommended): git commit --no-verify"
-        exit 1
+
+        # Check if mintlify CLI is available in WSL
+        wsl.exe bash -l -c "cd '$WSL_PATH' && command -v mintlify > /dev/null 2>&1"
+        MINTLIFY_AVAILABLE=$?
+
+        if [ $MINTLIFY_AVAILABLE -ne 0 ]; then
+            echo "⚠️  Mintlify CLI not found in WSL."
+            echo "To install: npm i -g mintlify"
+            echo "Skipping Mintlify validation..."
+        else
+            # Run mintlify validate
+            echo "🔍 Running mintlify validate..."
+            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify validate"
+            VALIDATE_EXIT=$?
+
+            if [ $VALIDATE_EXIT -ne 0 ]; then
+                echo ""
+                echo "❌ Mintlify validation failed!"
+                echo "Please fix the documentation issues before committing."
+                echo ""
+                echo "To bypass (not recommended): git commit --no-verify"
+                exit 1
+            fi
+
+            # Run mintlify broken-links
+            echo "🔗 Running mintlify broken-links..."
+            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify broken-links"
+            LINKS_EXIT=$?
+
+            if [ $LINKS_EXIT -ne 0 ]; then
+                echo ""
+                echo "❌ Mintlify broken links check failed!"
+                echo "Please fix broken links before committing."
+                echo ""
+                echo "To bypass (not recommended): git commit --no-verify"
+                exit 1
+            fi
+
+            # Run mintlify a11y
+            echo "♿ Running mintlify a11y..."
+            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify a11y"
+            A11Y_EXIT=$?
+
+            if [ $A11Y_EXIT -ne 0 ]; then
+                echo ""
+                echo "❌ Mintlify accessibility check failed!"
+                echo "Please fix accessibility issues before committing."
+                echo ""
+                echo "To bypass (not recommended): git commit --no-verify"
+                exit 1
+            fi
+
+            echo "✅ All Mintlify checks passed!"
+        fi
     fi
-    
-    echo "✅ All ruff checks passed!"
+
     exit 0
 fi
 
@@ -67,20 +136,25 @@ fi
 # Get list of staged Python files
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
 
-if [ -z "$STAGED_FILES" ]; then
-    echo "No Python files staged for commit."
+# Get staged documentation files (MDX and docs.json)
+STAGED_DOC_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^docs/.*\.(mdx|json)$' || true)
+
+if [ -z "$STAGED_FILES" ] && [ -z "$STAGED_DOC_FILES" ]; then
+    echo "No Python or documentation files staged for commit."
     exit 0
 fi
 
-echo "Running ruff checks on staged files..."
-echo "Files to check:"
-echo "$STAGED_FILES"
-echo ""
+if [ -n "$STAGED_FILES" ]; then
+    echo "Running ruff checks on staged files..."
+    echo "Files to check:"
+    echo "$STAGED_FILES"
+    echo ""
+fi
 
 # Normalize path for different environments
 normalize_path() {
     local path="$1"
-    
+
     # Check if path starts with /c/ or similar (Git Bash)
     if [[ "$path" =~ ^/[a-z]/ ]]; then
         echo "$path"
@@ -100,54 +174,134 @@ cd "$REPO_ROOT" || {
     exit 1
 }
 
-# Check if uv is available
-if ! command -v uv &> /dev/null; then
-    echo "⚠️  uv not found in PATH."
-    echo "Please install uv: https://docs.astral.sh/uv/getting-started/installation/"
-    exit 1
+if [ -n "$STAGED_FILES" ]; then
+    # Check if uv is available
+    if ! command -v uv &> /dev/null; then
+        echo "⚠️  uv not found in PATH."
+        echo "Please install uv: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+
+    # Run ruff check on staged files using uv run
+    echo "🔍 Running ruff check..."
+    uv run ruff check $STAGED_FILES
+
+    RUFF_CHECK_EXIT_CODE=$?
+
+    if [ $RUFF_CHECK_EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo "❌ Pre-commit hook failed!"
+        echo "Ruff found linting issues in your staged files."
+        echo ""
+        echo "To fix issues automatically, run:"
+        echo "  uv run ruff check --fix $STAGED_FILES"
+        echo ""
+        echo "Then stage the fixed files and commit again."
+        echo ""
+        echo "To bypass this hook (not recommended), use:"
+        echo "  git commit --no-verify"
+        exit 1
+    fi
+
+    # Run ruff format check on staged files
+    echo "🎨 Running ruff format check..."
+    uv run ruff format --check $STAGED_FILES
+
+    RUFF_FORMAT_EXIT_CODE=$?
+
+    if [ $RUFF_FORMAT_EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo "❌ Pre-commit hook failed!"
+        echo "Ruff found formatting issues in your staged files."
+        echo ""
+        echo "To fix formatting, run:"
+        echo "  uv run ruff format $STAGED_FILES"
+        echo ""
+        echo "Then stage the fixed files and commit again."
+        echo ""
+        echo "To bypass this hook (not recommended), use:"
+        echo "  git commit --no-verify"
+        exit 1
+    fi
+
+    echo "✅ All ruff checks passed!"
 fi
 
-# Run ruff check on staged files using uv run
-echo "🔍 Running ruff check..."
-uv run ruff check $STAGED_FILES
+if [ -n "$STAGED_DOC_FILES" ]; then
+    echo ""
+    echo "Running Mintlify validation on staged documentation files..."
+    echo "Files to check:"
+    echo "$STAGED_DOC_FILES"
+    echo ""
 
-RUFF_CHECK_EXIT_CODE=$?
+    # Check if mintlify CLI is available
+    if ! command -v mintlify &> /dev/null; then
+        echo "⚠️  Mintlify CLI not found in PATH."
+        echo "To install: npm i -g mintlify"
+        echo "Skipping Mintlify validation..."
+    else
+        # Change to docs directory for mintlify commands
+        cd "$REPO_ROOT/docs" || {
+            echo "❌ Failed to change to docs directory"
+            exit 1
+        }
 
-if [ $RUFF_CHECK_EXIT_CODE -ne 0 ]; then
-    echo ""
-    echo "❌ Pre-commit hook failed!"
-    echo "Ruff found linting issues in your staged files."
-    echo ""
-    echo "To fix issues automatically, run:"
-    echo "  uv run ruff check --fix $STAGED_FILES"
-    echo ""
-    echo "Then stage the fixed files and commit again."
-    echo ""
-    echo "To bypass this hook (not recommended), use:"
-    echo "  git commit --no-verify"
-    exit 1
+        # Run mintlify validate
+        echo "🔍 Running mintlify validate..."
+        mintlify validate
+
+        VALIDATE_EXIT_CODE=$?
+
+        if [ $VALIDATE_EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Pre-commit hook failed!"
+            echo "Mintlify validation found issues in your documentation."
+            echo ""
+            echo "Please fix the issues and commit again."
+            echo ""
+            echo "To bypass this hook (not recommended), use:"
+            echo "  git commit --no-verify"
+            exit 1
+        fi
+
+        # Run mintlify broken-links
+        echo "🔗 Running mintlify broken-links..."
+        mintlify broken-links
+
+        LINKS_EXIT_CODE=$?
+
+        if [ $LINKS_EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Pre-commit hook failed!"
+            echo "Mintlify found broken links in your documentation."
+            echo ""
+            echo "Please fix the broken links and commit again."
+            echo ""
+            echo "To bypass this hook (not recommended), use:"
+            echo "  git commit --no-verify"
+            exit 1
+        fi
+
+        # Run mintlify a11y
+        echo "♿ Running mintlify a11y..."
+        mintlify a11y
+
+        A11Y_EXIT_CODE=$?
+
+        if [ $A11Y_EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Pre-commit hook failed!"
+            echo "Mintlify found accessibility issues in your documentation."
+            echo ""
+            echo "Please fix the accessibility issues and commit again."
+            echo ""
+            echo "To bypass this hook (not recommended), use:"
+            echo "  git commit --no-verify"
+            exit 1
+        fi
+
+        echo "✅ All Mintlify checks passed!"
+    fi
 fi
 
-# Run ruff format check on staged files
-echo "🎨 Running ruff format check..."
-uv run ruff format --check $STAGED_FILES
-
-RUFF_FORMAT_EXIT_CODE=$?
-
-if [ $RUFF_FORMAT_EXIT_CODE -ne 0 ]; then
-    echo ""
-    echo "❌ Pre-commit hook failed!"
-    echo "Ruff found formatting issues in your staged files."
-    echo ""
-    echo "To fix formatting, run:"
-    echo "  uv run ruff format $STAGED_FILES"
-    echo ""
-    echo "Then stage the fixed files and commit again."
-    echo ""
-    echo "To bypass this hook (not recommended), use:"
-    echo "  git commit --no-verify"
-    exit 1
-fi
-
-echo "✅ All ruff checks passed!"
 exit 0
