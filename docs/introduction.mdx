@@ -48,10 +48,10 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 
 ## Key Features
 
-- **Fast**: Direct CDN access via jsDelivr with SQLite caching
+- **Fast**: Multi-CDN access (StaticDelivr + jsDelivr) with automatic fallback and SQLite caching
 - **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and more
 - **Historical**: Data from 2018-current
-- **Reliable**: Automatic retry logic with circuit breaker and CDN fallback
+- **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
 - **Async**: Parallel data fetching for better performance
 - **HTTP/2**: Uses niquests for 20-30% faster network requests
 - **Flexible**: Supports both pandas and polars backends
@@ -68,19 +68,21 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 
 ## Core Architecture
 
-`tif1` uses a modern networking stack and a multi-tiered caching strategy to ensure you spend less time waiting for data and more time analyzing it.
+`tif1` uses a modern networking stack with multi-CDN support and a multi-tiered caching strategy to ensure you spend less time waiting for data and more time analyzing it.
 
 ```mermaid
 graph TD
     User[User Script] --> Session[tif1 Session]
     Session --> MemCache[Memory LRU Cache]
     MemCache -- Miss --> SQLite[SQLite Persistent Cache]
-    SQLite -- Miss --> CDN[TracingInsights CDN]
-    CDN --> JS[jsDelivr / GitHub]
+    SQLite -- Miss --> CDN[CDN Manager]
+    CDN --> SD[StaticDelivr Primary]
+    CDN --> JS[jsDelivr Fallback]
+    SD -- Data --> SQLite
     JS -- Data --> SQLite
     SQLite -- Data --> MemCache
     MemCache -- Data --> Session
-```yaml
+```
 
 ## Data Available
 

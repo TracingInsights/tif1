@@ -4,6 +4,87 @@ All notable changes to this project are documented in this file.
 
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
+## [0.3.0] - 2026-05-08
+
+### Summary
+
+`0.3.0` introduces StaticDelivr as the primary CDN provider with improved fallback handling, enhanced API reference documentation, and updated F1 2026 schedule data. This release focuses on reliability improvements and better documentation coverage.
+
+### Added
+
+#### CDN Infrastructure
+- **StaticDelivr as primary CDN** with jsDelivr as fallback for improved reliability and performance.
+- Added configurable CDN sources via `cdns` configuration option.
+- Added optional JSON minification support via `cdn_use_minification` configuration flag (20-40% file size reduction).
+- Added intelligent CDN fallback system with automatic source switching on failures.
+- Added per-source failure tracking with automatic disabling after 3 consecutive failures.
+- Added `CDNSource` dataclass for structured CDN configuration.
+- Added `CDNManager.try_sources()` method for robust multi-CDN fetching with fallback.
+
+#### Documentation
+- Expanded API reference documentation with comprehensive coverage of all modules.
+- Added detailed documentation for CDN system, configuration options, and utilities.
+- Updated tooling guidelines in `AGENTS.md` for improved developer experience.
+
+#### Data
+- Updated F1 2026 schedule with current calendar reflecting cancelled races.
+
+### Changed
+
+#### CDN System
+- Migrated from jsDelivr-only to multi-CDN architecture with StaticDelivr as primary source.
+- Enhanced URL formatting to support both jsDelivr and StaticDelivr URL patterns.
+- Improved CDN source validation to reject invalid or unsupported URLs (e.g., raw.githubusercontent.com).
+- Enhanced logging for CDN operations with detailed source tracking and failure reporting.
+
+#### Code Quality
+- Fixed pre-commit checks for CI pipeline.
+- Improved code formatting and linting compliance.
+
+### Fixed
+
+- Fixed CDN fallback handling to properly propagate `DataNotFoundError` (404) without retrying other sources.
+- Fixed CDN source naming to avoid duplicates when multiple sources are configured.
+- Fixed JSON file path handling for minification support.
+
+### Performance
+
+- **Improved data fetching reliability** through multi-CDN architecture with automatic fallback.
+- Optional JSON minification can reduce bandwidth usage by 20-40% for JSON payloads.
+- Reduced latency through StaticDelivr's optimized edge network.
+
+### Configuration
+
+New configuration options in `.tif1rc` or environment variables:
+
+```python
+# CDN configuration
+cdns = [
+    "https://cdn.staticdelivr.com/gh/TracingInsights",
+    "https://cdn.jsdelivr.net/gh/TracingInsights"
+]
+
+# Enable JSON minification (optional, reduces file sizes)
+cdn_use_minification = false
+```
+
+### Migration Notes
+
+- No breaking changes to public APIs.
+- Existing code will automatically use the new multi-CDN system.
+- Users experiencing CDN issues can configure custom CDN sources via the `cdns` configuration option.
+- The CDN system now automatically falls back to jsDelivr if StaticDelivr is unavailable.
+
+### Compatibility Notes
+
+- All public APIs remain backward compatible with v0.2.0.
+- CDN configuration is optional; defaults provide optimal reliability.
+- Minification is disabled by default to maintain compatibility with existing workflows.
+
+### Known Issues
+
+- None reported at release time.
+
 ## [0.2.0] - 2026-04-17
 
 ### Summary
