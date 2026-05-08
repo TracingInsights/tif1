@@ -789,23 +789,23 @@ import tif1
 
 async def fetch_cached_data():
     cache = tif1.get_cache()
-    
+
     # Async get
     data = await cache.get_async("2025/Monaco_Grand_Prix/Race/laps.json")
-    
+
     # Async set
     await cache.set_async("custom/key", {"data": "value"})
-    
+
     # Async telemetry get
     tel = await cache.get_telemetry_async(
         2021, "Belgian_Grand_Prix", "Race", "VER", 1
     )
-    
+
     # Async batch telemetry
     batch = await cache.get_telemetry_batch_async(
         2021, "Belgian_Grand_Prix", "Race", "VER", [1, 2, 3]
     )
-    
+
     return data
 
 # Run async code
@@ -1481,13 +1481,13 @@ import time
 def load_session_with_retry():
     """Load session with circuit breaker awareness."""
     cb = get_circuit_breaker()
-    
+
     # Check circuit breaker state before attempting
     if cb.state == "open":
         print(f"Circuit breaker is open. Waiting {cb.timeout}s...")
         time.sleep(cb.timeout)
         reset_circuit_breaker()
-    
+
     try:
         session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
         laps = session.laps
@@ -1512,7 +1512,7 @@ def monitor_circuit_breaker(duration_seconds=60):
     """Monitor circuit breaker state over time."""
     cb = get_circuit_breaker()
     start_time = time.time()
-    
+
     while time.time() - start_time < duration_seconds:
         print(f"State: {cb.state:12} | Failures: {cb.failures}/{cb.threshold}")
         time.sleep(5)
@@ -1529,17 +1529,17 @@ import tif1
 def test_cdn_fallback():
     """Test CDN fallback behavior."""
     cdn = get_cdn_manager()
-    
+
     print("Initial CDN sources:")
     for source in cdn.get_sources():
         print(f"  {source.name}: {source.base_url}")
-    
+
     # Simulate failures
     print("\nSimulating failures...")
     for i in range(3):
         cdn.mark_failure("jsDelivr")
         print(f"  Failure {i+1}: {cdn._failure_counts}")
-    
+
     print("\nRemaining sources:")
     remaining = cdn.get_sources()
     if remaining:
@@ -1547,7 +1547,7 @@ def test_cdn_fallback():
             print(f"  {source.name}: {source.base_url}")
     else:
         print("  No sources available!")
-    
+
     # Reset
     print("\nResetting CDN manager...")
     cdn.reset()
@@ -1572,7 +1572,7 @@ def robust_session_loader(year, gp, session_type, max_attempts=3):
     """Production-grade session loader with comprehensive error handling."""
     cb = get_circuit_breaker()
     cdn = get_cdn_manager()
-    
+
     for attempt in range(max_attempts):
         try:
             # Check circuit breaker
@@ -1580,25 +1580,25 @@ def robust_session_loader(year, gp, session_type, max_attempts=3):
                 logging.warning(f"Circuit breaker open, waiting {cb.timeout}s...")
                 time.sleep(cb.timeout)
                 reset_circuit_breaker()
-            
+
             # Attempt to load session
             logging.info(f"Loading session (attempt {attempt + 1}/{max_attempts})...")
             session = tif1.get_session(year, gp, session_type)
             laps = session.laps
-            
+
             logging.info(f"Successfully loaded {len(laps)} laps")
             return session
-            
+
         except DataNotFoundError as e:
             # Data genuinely doesn't exist - don't retry
             logging.error(f"Data not found: {e.message}")
             raise
-            
+
         except NetworkError as e:
             logging.error(f"Network error: {e.message}")
             logging.info(f"Circuit breaker: {cb.state}, failures: {cb.failures}")
             logging.info(f"CDN sources: {len(cdn.get_sources())} available")
-            
+
             if attempt < max_attempts - 1:
                 wait_time = 2 ** attempt  # Exponential backoff
                 logging.info(f"Retrying in {wait_time}s...")
@@ -1606,7 +1606,7 @@ def robust_session_loader(year, gp, session_type, max_attempts=3):
             else:
                 logging.error("Max attempts reached, giving up")
                 raise
-    
+
     raise RuntimeError("Failed to load session after all attempts")
 
 # Use in production
@@ -1728,16 +1728,16 @@ from tif1.core import clear_lap_cache
 def process_season_with_memory_management(year):
     """Process entire season with periodic cache clearing."""
     events = tif1.get_events(year)
-    
+
     for i, event in enumerate(events):
         # Load and process session
         session = tif1.get_session(year, event.EventName, "Race")
         laps = session.laps
-        
+
         # Your analysis here
         fastest = laps.pick_fastest()
         print(f"{event.EventName}: Fastest lap {fastest['LapTime'].iloc[0]}")
-        
+
         # Clear cache every 5 events to manage memory
         if (i + 1) % 5 == 0:
             clear_lap_cache()
@@ -1763,32 +1763,32 @@ from pathlib import Path
 def setup_production_config():
     """Configure tif1 for production use with optimal settings."""
     config = tif1.get_config()
-    
+
     # Performance settings
     config.set("lib", "polars")  # Use polars for better performance
     config.set("validate_data", False)  # Skip validation in production
     config.set("ultra_cold_start", False)  # Load full sessions
-    
+
     # Network settings
     config.set("timeout", 60)  # Longer timeout for reliability
     config.set("max_retries", 5)  # More retries for resilience
-    
+
     # Circuit breaker settings
     config.set("circuit_breaker_threshold", 10)  # Tolerate more failures
     config.set("circuit_breaker_timeout", 120)  # Longer recovery time
-    
+
     # Cache settings
     cache_dir = Path.home() / ".cache" / "tif1_production"
     config.set("cache_dir", str(cache_dir))
     config.set("enable_cache", True)
-    
+
     # CDN settings
     config.set("cdn_use_minification", True)  # Reduce bandwidth
-    
+
     # Save configuration
     config.save()
     print(f"Production configuration saved to ~/.tif1rc")
-    
+
     # Print summary
     print("\nConfiguration Summary:")
     print(f"  DataFrame library: {config.get('lib')}")
@@ -1815,35 +1815,35 @@ def debug_session_load(year, gp, session_type):
     """Load session with comprehensive debug logging."""
     # Enable debug logging
     tif1.setup_logging(logging.DEBUG)
-    
+
     print(f"{'='*60}")
     print(f"Debug Session Load: {year} {gp} {session_type}")
     print(f"Started at: {datetime.now()}")
     print(f"{'='*60}\n")
-    
+
     try:
         # Load session with debug output
         start_time = datetime.now()
         session = tif1.get_session(year, gp, session_type)
         load_time = (datetime.now() - start_time).total_seconds()
-        
+
         print(f"\n{'='*60}")
         print(f"Session loaded successfully in {load_time:.2f}s")
         print(f"{'='*60}\n")
-        
+
         # Load laps
         start_time = datetime.now()
         laps = session.laps
         laps_time = (datetime.now() - start_time).total_seconds()
-        
+
         print(f"\n{'='*60}")
         print(f"Laps loaded in {laps_time:.2f}s")
         print(f"Total laps: {len(laps)}")
         print(f"Drivers: {laps['Driver'].unique().tolist()}")
         print(f"{'='*60}\n")
-        
+
         return session
-        
+
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"ERROR: {type(e).__name__}: {e}")
@@ -1870,19 +1870,19 @@ def cache_management_dashboard():
     """Interactive cache management dashboard."""
     cache = tif1.get_cache()
     config = tif1.get_config()
-    
+
     print("="*60)
     print("TIF1 Cache Management Dashboard")
     print("="*60)
-    
+
     # Cache location
     cache_dir = Path(cache.cache_dir)
     cache_db = cache_dir / "cache.db"
-    
+
     print(f"\nCache Location:")
     print(f"  Directory: {cache_dir}")
     print(f"  Database: {cache_db}")
-    
+
     # Cache size
     if cache_db.exists():
         size_bytes = cache_db.stat().st_size
@@ -1891,7 +1891,7 @@ def cache_management_dashboard():
     else:
         print(f"  Status: Not initialized")
         return
-    
+
     # Check specific sessions
     print(f"\nCached Sessions:")
     test_sessions = [
@@ -1900,7 +1900,7 @@ def cache_management_dashboard():
         (2024, "Abu_Dhabi_Grand_Prix", "Race"),
         (2021, "Belgian_Grand_Prix", "Race"),
     ]
-    
+
     cached_count = 0
     for year, gp, session in test_sessions:
         is_cached = cache.has_session_data(year, gp, session)
@@ -1908,14 +1908,14 @@ def cache_management_dashboard():
         print(f"  {year} {gp} {session}: {status}")
         if is_cached:
             cached_count += 1
-    
+
     print(f"\nSummary: {cached_count}/{len(test_sessions)} sessions cached")
-    
+
     # Configuration
     print(f"\nCache Configuration:")
     print(f"  Enabled: {config.get('enable_cache')}")
     print(f"  Library: {config.get('lib')}")
-    
+
     # Management options
     print(f"\n{'='*60}")
     print("Management Options:")
@@ -1923,9 +1923,9 @@ def cache_management_dashboard():
     print("  2. Clear cache (free disk space)")
     print("  3. Export cache info")
     print(f"{'='*60}")
-    
+
     choice = input("\nSelect option (1-3): ").strip()
-    
+
     if choice == "2":
         confirm = input("Are you sure you want to clear the cache? (yes/no): ")
         if confirm.lower() == "yes":
@@ -1973,11 +1973,11 @@ def load_with_resilience(year, gp, session_type, max_retries=3):
     """Load session with comprehensive error handling and retry logic."""
     cb = get_circuit_breaker()
     cdn = get_cdn_manager()
-    
+
     print(f"Loading {year} {gp} {session_type}...")
     print(f"Circuit breaker: {cb.state}, failures: {cb.failures}/{cb.threshold}")
     print(f"Available CDNs: {len(cdn.get_sources())}")
-    
+
     for attempt in range(max_retries):
         try:
             # Check circuit breaker state
@@ -1988,35 +1988,35 @@ def load_with_resilience(year, gp, session_type, max_retries=3):
                 time.sleep(wait_time)
                 reset_circuit_breaker()
                 print(f"  Circuit breaker reset")
-            
+
             # Attempt to load
             print(f"\nAttempt {attempt + 1}/{max_retries}...")
             start_time = time.time()
-            
+
             session = tif1.get_session(year, gp, session_type)
             laps = session.laps
-            
+
             load_time = time.time() - start_time
             print(f"✓ Success! Loaded {len(laps)} laps in {load_time:.2f}s")
-            
+
             return session
-            
+
         except DataNotFoundError as e:
             # Data doesn't exist - don't retry
             print(f"\n✗ Data not found: {e.message}")
             print(f"  This session may not have data available")
             raise
-            
+
         except NetworkError as e:
             print(f"\n✗ Network error: {e.message}")
             print(f"  Status code: {e.status_code}")
             print(f"  Circuit breaker: {cb.state}")
             print(f"  Failures: {cb.failures}/{cb.threshold}")
-            
+
             # Check CDN health
             available_cdns = cdn.get_sources()
             print(f"  Available CDNs: {len(available_cdns)}")
-            
+
             if attempt < max_retries - 1:
                 # Exponential backoff
                 wait_time = 2 ** attempt
@@ -2030,11 +2030,11 @@ def load_with_resilience(year, gp, session_type, max_retries=3):
                 print(f"    - Increasing timeout (current: {tif1.get_config().get('timeout')}s)")
                 print(f"    - Trying again later")
                 raise
-        
+
         except Exception as e:
             print(f"\n✗ Unexpected error: {type(e).__name__}: {e}")
             raise
-    
+
     raise RuntimeError("Failed to load session")
 
 # Example usage
@@ -2059,11 +2059,11 @@ def create_project_config(project_name, project_dir):
     """Create and save project-specific tif1 configuration."""
     config = tif1.get_config()
     project_path = Path(project_dir)
-    
+
     # Create project-specific cache directory
     cache_dir = project_path / ".cache" / "tif1"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Configure for project
     config.set("cache_dir", str(cache_dir))
     config.set("lib", "polars")  # Use polars for performance
@@ -2071,11 +2071,11 @@ def create_project_config(project_name, project_dir):
     config.set("max_retries", 4)
     config.set("validate_data", True)  # Validate in development
     config.set("ultra_cold_start", False)
-    
+
     # Save to project directory
     config_file = project_path / "tif1_config.json"
     config.save(config_file)
-    
+
     print(f"Project Configuration Created: {project_name}")
     print(f"{'='*60}")
     print(f"Config file: {config_file}")
@@ -2088,7 +2088,7 @@ def create_project_config(project_name, project_dir):
     print(f"\nTo use this config:")
     print(f"  1. Set TIF1_CACHE_DIR={cache_dir}")
     print(f"  2. Or load config programmatically")
-    
+
     # Create README
     readme = project_path / "TIF1_README.md"
     with open(readme, "w") as f:
@@ -2107,9 +2107,9 @@ def create_project_config(project_name, project_dir):
         f.write(f"# Use tif1 normally\n")
         f.write(f"session = tif1.get_session(2021, 'Monaco Grand Prix', 'Race')\n")
         f.write(f"```\n")
-    
+
     print(f"\n✓ README created: {readme}")
-    
+
     return config_file
 
 # Create project config
@@ -2131,10 +2131,10 @@ import time
 def optimize_for_performance():
     """Configure tif1 for maximum performance."""
     config = tif1.get_config()
-    
+
     print("Optimizing tif1 for performance...")
     print("="*60)
-    
+
     # Performance settings
     optimizations = {
         "lib": "polars",  # Faster DataFrame operations
@@ -2144,48 +2144,48 @@ def optimize_for_performance():
         "timeout": 30,  # Don't wait too long
         "max_retries": 3,  # Reasonable retry count
     }
-    
+
     for key, value in optimizations.items():
         old_value = config.get(key)
         config.set(key, value)
         print(f"  {key}: {old_value} → {value}")
-    
+
     config.save()
     print("\n✓ Configuration optimized and saved")
-    
+
     # Benchmark
     print("\nRunning benchmark...")
     print("-"*60)
-    
+
     # Clear cache for fair test
     cache = tif1.get_cache()
     cache.clear()
     clear_lap_cache()
-    
+
     # Test load time
     start = time.time()
     session = tif1.get_session(2021, "Monaco Grand Prix", "Race")
     laps = session.laps
     first_load = time.time() - start
-    
+
     print(f"First load (cold): {first_load:.2f}s")
-    
+
     # Test cached load
     clear_lap_cache()  # Clear memory cache only
     start = time.time()
     session = tif1.get_session(2021, "Monaco Grand Prix", "Race")
     laps = session.laps
     cached_load = time.time() - start
-    
+
     print(f"Second load (cached): {cached_load:.2f}s")
     print(f"Speedup: {first_load/cached_load:.1f}x faster")
-    
+
     # Test telemetry access
     start = time.time()
     fastest = laps.pick_fastest()
     tel = fastest.get_telemetry()
     telemetry_time = time.time() - start
-    
+
     print(f"Telemetry load: {telemetry_time:.3f}s")
     print(f"\n✓ Benchmark complete")
 
@@ -2211,28 +2211,28 @@ def batch_process_season(year, cache_clear_interval=5):
     """Process entire season with memory management."""
     print(f"Batch Processing Season {year}")
     print("="*60)
-    
+
     # Get all events
     events = tif1.get_events(year)
     print(f"Found {len(events)} events\n")
-    
+
     results = []
     initial_memory = get_memory_mb()
-    
+
     for i, event in enumerate(events, 1):
         event_name = event.EventName
         print(f"[{i}/{len(events)}] Processing {event_name}...")
-        
+
         try:
             # Load session
             session = tif1.get_session(year, event_name, "Race")
             laps = session.laps
-            
+
             # Analyze
             fastest = laps.pick_fastest()
             fastest_time = fastest['LapTime'].iloc[0]
             fastest_driver = fastest['Driver'].iloc[0]
-            
+
             result = {
                 "event": event_name,
                 "fastest_driver": fastest_driver,
@@ -2240,36 +2240,36 @@ def batch_process_season(year, cache_clear_interval=5):
                 "total_laps": len(laps)
             }
             results.append(result)
-            
+
             current_memory = get_memory_mb()
             memory_increase = current_memory - initial_memory
-            
+
             print(f"  Fastest: {fastest_driver} - {fastest_time}")
             print(f"  Memory: {current_memory:.1f} MB (+{memory_increase:.1f} MB)")
-            
+
             # Clear cache periodically
             if i % cache_clear_interval == 0:
                 clear_lap_cache()
                 after_clear = get_memory_mb()
                 freed = current_memory - after_clear
                 print(f"  Cleared cache: freed {freed:.1f} MB")
-            
+
         except Exception as e:
             print(f"  ✗ Error: {e}")
             results.append({
                 "event": event_name,
                 "error": str(e)
             })
-        
+
         print()
-    
+
     # Summary
     print("="*60)
     print("Batch Processing Complete")
     print(f"Processed: {len(results)} events")
     print(f"Final memory: {get_memory_mb():.1f} MB")
     print(f"Peak increase: {get_memory_mb() - initial_memory:.1f} MB")
-    
+
     return results
 
 # Run batch processing
@@ -2294,7 +2294,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    import tif1
    import logging
-   
+
    # Enable detailed logging
    tif1.setup_logging(logging.DEBUG)
    ```
@@ -2405,10 +2405,10 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 7. **Set Up Proper Logging**
    ```python
    import logging
-   
+
    # Use INFO level for production monitoring
    tif1.setup_logging(logging.INFO)
-   
+
    # Configure file handler
    handler = logging.FileHandler("/var/log/tif1.log")
    handler.setFormatter(logging.Formatter(
@@ -2425,7 +2425,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    import atexit
    import tif1
-   
+
    cache = tif1.get_cache()
    atexit.register(cache.close)
    ```
@@ -2448,7 +2448,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 2. **Clear Lap Cache Periodically**
    ```python
    from tif1.core import clear_lap_cache
-   
+
    # Clear after processing each session
    clear_lap_cache()
    ```
@@ -2460,12 +2460,12 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 3. **Use Batch Telemetry Operations**
    ```python
    cache = tif1.get_cache()
-   
+
    # Batch operation (fast)
    telemetry_batch = cache.get_telemetry_batch(
        2021, "Monaco_Grand_Prix", "Race", "VER", [1, 2, 3, 4, 5]
    )
-   
+
    # Individual operations (slow)
    # for lap in [1, 2, 3, 4, 5]:
    #     tel = cache.get_telemetry(2021, "Monaco_Grand_Prix", "Race", "VER", lap)
@@ -2477,11 +2477,11 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 4. **Monitor Cache Size**
    ```python
    from pathlib import Path
-   
+
    cache = tif1.get_cache()
    cache_db = Path(cache.cache_dir) / "cache.db"
    size_mb = cache_db.stat().st_size / (1024 * 1024)
-   
+
    if size_mb > 5000:  # 5 GB
        print("Cache is large, consider clearing old data")
    ```
@@ -2505,7 +2505,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 1. **Distinguish Between Error Types**
    ```python
    from tif1.exceptions import DataNotFoundError, NetworkError
-   
+
    try:
        session = tif1.get_session(2021, "Test GP", "Race")
    except DataNotFoundError:
@@ -2522,7 +2522,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 2. **Monitor Circuit Breaker State**
    ```python
    from tif1.retry import get_circuit_breaker
-   
+
    cb = get_circuit_breaker()
    if cb.state == "open":
        # Alert monitoring system
@@ -2536,7 +2536,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 3. **Implement Exponential Backoff**
    ```python
    import time
-   
+
    for attempt in range(max_retries):
        try:
            session = tif1.get_session(year, gp, session_type)
@@ -2554,7 +2554,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 4. **Log Errors with Context**
    ```python
    import logging
-   
+
    try:
        session = tif1.get_session(year, gp, session_type)
    except Exception as e:
@@ -2579,11 +2579,11 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 1. **Clear Cache in Batch Processing**
    ```python
    from tif1.core import clear_lap_cache
-   
+
    for i, event in enumerate(events):
        session = tif1.get_session(year, event, "Race")
        # Process session...
-       
+
        if (i + 1) % 5 == 0:
            clear_lap_cache()
    ```
@@ -2598,10 +2598,10 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
        def __enter__(self):
            self.cache = tif1.get_cache()
            return self.cache
-       
+
        def __exit__(self, *args):
            self.cache.close()
-   
+
    with CacheManager() as cache:
        # Use cache...
        pass
@@ -2615,7 +2615,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    import psutil
    import os
-   
+
    def check_memory():
        process = psutil.Process(os.getpid())
        mem_mb = process.memory_info().rss / 1024 / 1024
@@ -2670,7 +2670,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    import pytest
    import tif1
-   
+
    @pytest.fixture(autouse=True)
    def clear_cache():
        cache = tif1.get_cache()
@@ -2686,7 +2686,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 2. **Mock Network Calls**
    ```python
    from unittest.mock import patch
-   
+
    @patch('tif1.http_session.fetch')
    def test_session_load(mock_fetch):
        mock_fetch.return_value = {"laps": []}
@@ -2700,15 +2700,15 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 3. **Test Circuit Breaker Behavior**
    ```python
    from tif1.retry import get_circuit_breaker, reset_circuit_breaker
-   
+
    def test_circuit_breaker():
        reset_circuit_breaker()
        cb = get_circuit_breaker()
-       
+
        # Simulate failures
        for _ in range(cb.threshold):
            cb.record_failure()
-       
+
        assert cb.state == "open"
    ```
    - Verify reliability patterns
@@ -2721,11 +2721,11 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 1. **Track Performance Metrics**
    ```python
    import time
-   
+
    start = time.time()
    session = tif1.get_session(year, gp, session_type)
    load_time = time.time() - start
-   
+
    # Log metric
    logging.info(f"Session load time: {load_time:.2f}s")
    ```
@@ -2741,7 +2741,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
        cb = get_circuit_breaker()
        cdn = get_cdn_manager()
        cache = tif1.get_cache()
-       
+
        return {
            "circuit_breaker": cb.state,
            "failures": cb.failures,
@@ -2758,7 +2758,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    import logging
    import json
-   
+
    class StructuredFormatter(logging.Formatter):
        def format(self, record):
            log_data = {
@@ -2768,7 +2768,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
                "module": record.module
            }
            return json.dumps(log_data)
-   
+
    handler = logging.StreamHandler()
    handler.setFormatter(StructuredFormatter())
    logging.getLogger("tif1").addHandler(handler)

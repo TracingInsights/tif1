@@ -51,7 +51,7 @@ graph TD
     S --> T[Save to SQLite]
     T --> U[Save to Memory]
     U --> D
-    
+
     style C fill:#90EE90
     style E fill:#FFD700
     style K fill:#87CEEB
@@ -328,36 +328,36 @@ cache.clear_before(date)  # Remove entries older than date
 ```python
 def get_data(key):
     """Simplified cache lookup logic."""
-    
+
     # Step 1: Check memory cache (L1)
     if key in memory_cache:
         logger.debug(f"Memory cache hit: {key}")
         return memory_cache[key]
-    
+
     logger.debug(f"Memory cache miss: {key}")
-    
+
     # Step 2: Check SQLite cache (L2)
     sqlite_data = sqlite_cache.get(key)
     if sqlite_data is not None:
         logger.debug(f"SQLite cache hit: {key}")
-        
+
         # Deserialize and reconstruct DataFrame
         data = deserialize(sqlite_data)
-        
+
         # Promote to memory cache (L1)
         memory_cache[key] = data
-        
+
         return data
-    
+
     logger.debug(f"SQLite cache miss: {key}")
-    
+
     # Step 3: Fetch from CDN (cache miss)
     data = fetch_from_cdn(key)
-    
+
     # Step 4: Save to both cache tiers
     sqlite_cache.set(key, serialize(data))
     memory_cache[key] = data
-    
+
     return data
 ```
 
@@ -475,7 +475,7 @@ messages_url = f"{base_url}/messages/{gp_name}/{session_type}/messages.json"
 ```python
 async def fetch_with_fallback(url_path):
     """Fetch data with automatic fallback."""
-    
+
     # Attempt 1: jsDelivr CDN (primary)
     try:
         jsdelivr_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{url_path}"
@@ -486,7 +486,7 @@ async def fetch_with_fallback(url_path):
         logger.warning(f"jsDelivr returned {response.status_code}")
     except Exception as e:
         logger.warning(f"jsDelivr failed: {e}")
-    
+
     # Attempt 2: GitHub API (fallback)
     try:
         github_url = f"https://api.github.com/repos/TracingInsights/{year}/contents/{url_path}"
@@ -501,7 +501,7 @@ async def fetch_with_fallback(url_path):
         logger.warning(f"GitHub API returned {response.status_code}")
     except Exception as e:
         logger.warning(f"GitHub API failed: {e}")
-    
+
     # All sources failed
     raise tif1.NetworkError(
         f"Failed to fetch {url_path} from all sources",
@@ -534,17 +534,17 @@ tif1 implements a circuit breaker to prevent cascading failures during network i
 ```python
 class CircuitBreaker:
     """Circuit breaker for network requests."""
-    
+
     def __init__(self, failure_threshold=5, recovery_timeout=60):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.failure_count = 0
         self.last_failure_time = None
         self.state = "CLOSED"
-    
+
     async def call(self, func, *args, **kwargs):
         """Execute function with circuit breaker protection."""
-        
+
         # Check if circuit is open
         if self.state == "OPEN":
             if time.time() - self.last_failure_time > self.recovery_timeout:
@@ -552,28 +552,28 @@ class CircuitBreaker:
                 logger.info("Circuit breaker: OPEN → HALF_OPEN")
             else:
                 raise tif1.NetworkError("Circuit breaker is OPEN")
-        
+
         # Attempt request
         try:
             result = await func(*args, **kwargs)
-            
+
             # Success - reset failure count
             if self.state == "HALF_OPEN":
                 self.state = "CLOSED"
                 logger.info("Circuit breaker: HALF_OPEN → CLOSED")
             self.failure_count = 0
-            
+
             return result
-            
+
         except Exception as e:
             # Failure - increment count
             self.failure_count += 1
             self.last_failure_time = time.time()
-            
+
             if self.failure_count >= self.failure_threshold:
                 self.state = "OPEN"
                 logger.error(f"Circuit breaker: CLOSED → OPEN (failures: {self.failure_count})")
-            
+
             raise
 ```
 
@@ -590,12 +590,12 @@ for attempt in range(max_retries):
     except NetworkError as e:
         if attempt == max_retries - 1:
             raise  # Final attempt failed
-        
+
         # Calculate delay with exponential backoff and jitter
         delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
         jitter = random.uniform(0, 0.1 * delay)  # ±10% jitter
         total_delay = delay + jitter
-        
+
         logger.warning(f"Retry {attempt + 1}/{max_retries} after {total_delay:.2f}s")
         await asyncio.sleep(total_delay)
 ```
@@ -644,18 +644,18 @@ import niquests
 
 async def fetch_all_drivers(drivers):
     """Fetch data for all drivers in parallel."""
-    
+
     async def fetch_driver(driver):
         url = construct_url(driver)
         async with http_client.get(url) as response:
             return await response.json()
-    
+
     # Create tasks for all drivers
     tasks = [fetch_driver(driver) for driver in drivers]
-    
+
     # Execute all tasks concurrently
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     return results
 
 # Time: max(500ms across all drivers) ≈ 500-800ms
@@ -684,12 +684,12 @@ tif1 uses `niquests` library which supports HTTP/2, enabling true request multip
 async with niquests.AsyncSession() as session:
     # Single TCP connection established
     # All subsequent requests reuse this connection
-    
+
     tasks = []
     for driver in drivers:
         task = session.get(construct_url(driver))
         tasks.append(task)
-    
+
     # All requests multiplexed over single connection
     responses = await asyncio.gather(*tasks)
 ```
@@ -726,10 +726,10 @@ http_client = niquests.AsyncSession(
 ```python
 async def fetch_with_progress(drivers):
     """Fetch data with progress tracking."""
-    
+
     total = len(drivers)
     completed = 0
-    
+
     async def fetch_and_track(driver):
         nonlocal completed
         try:
@@ -742,10 +742,10 @@ async def fetch_with_progress(drivers):
             logger.error(f"Failed to fetch {driver}: {e}")
             completed += 1
             return None
-    
+
     tasks = [fetch_and_track(driver) for driver in drivers]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     return results
 ```
 
@@ -754,7 +754,7 @@ async def fetch_with_progress(drivers):
 ```python
 async def fetch_with_error_handling(drivers):
     """Fetch data with robust error handling."""
-    
+
     async def fetch_safe(driver):
         """Fetch with exception handling."""
         try:
@@ -768,19 +768,19 @@ async def fetch_with_error_handling(drivers):
         except Exception as e:
             logger.error(f"Unexpected error for {driver}: {e}")
             return None
-    
+
     # gather with return_exceptions=True prevents one failure from canceling others
     results = await asyncio.gather(
         *[fetch_safe(driver) for driver in drivers],
         return_exceptions=True
     )
-    
+
     # Filter out None results (failed fetches)
     valid_results = [r for r in results if r is not None]
-    
+
     success_rate = len(valid_results) / len(drivers)
     logger.info(f"Fetch success rate: {success_rate:.1%}")
-    
+
     return valid_results
 ```
 
@@ -790,20 +790,20 @@ async def fetch_with_error_handling(drivers):
 # For very large batches, split into smaller chunks to avoid overwhelming the server
 async def fetch_in_batches(drivers, batch_size=10):
     """Fetch data in batches to control concurrency."""
-    
+
     results = []
-    
+
     for i in range(0, len(drivers), batch_size):
         batch = drivers[i:i + batch_size]
         logger.info(f"Fetching batch {i // batch_size + 1} ({len(batch)} drivers)")
-        
+
         batch_results = await fetch_all_drivers(batch)
         results.extend(batch_results)
-        
+
         # Optional: Small delay between batches to be respectful to CDN
         if i + batch_size < len(drivers):
             await asyncio.sleep(0.1)
-    
+
     return results
 ```
 
@@ -861,7 +861,7 @@ import orjson
 
 async def parse_json_response(response_bytes):
     """Parse JSON response with validation."""
-    
+
     # Step 1: Parse JSON bytes to Python dict
     try:
         data = orjson.loads(response_bytes)
@@ -870,14 +870,14 @@ async def parse_json_response(response_bytes):
             f"Failed to parse JSON: {e}",
             raw_data=response_bytes[:1000]  # First 1KB for debugging
         )
-    
+
     # Step 2: Validate structure
     if not isinstance(data, dict):
         raise tif1.InvalidDataError(
             f"Expected dict, got {type(data).__name__}",
             data_type=type(data).__name__
         )
-    
+
     # Step 3: Check required fields
     required_fields = ["laps", "metadata"]
     missing_fields = [f for f in required_fields if f not in data]
@@ -887,7 +887,7 @@ async def parse_json_response(response_bytes):
             missing=missing_fields,
             available=list(data.keys())
         )
-    
+
     return data
 ```
 
@@ -998,18 +998,18 @@ def parse_large_telemetry(file_path):
     with open(file_path, 'rb') as f:
         # Parse telemetry array incrementally
         telemetry_points = ijson.items(f, 'telemetry.item')
-        
+
         # Process in chunks
         chunk_size = 10000
         chunk = []
-        
+
         for point in telemetry_points:
             chunk.append(point)
-            
+
             if len(chunk) >= chunk_size:
                 yield chunk
                 chunk = []
-        
+
         if chunk:
             yield chunk
 ```
@@ -1019,18 +1019,18 @@ def parse_large_telemetry(file_path):
 # For memory-constrained environments
 def parse_with_memory_limit(response_bytes, max_memory_mb=100):
     """Parse JSON with memory limit check."""
-    
+
     # Estimate memory usage (rough approximation)
     estimated_memory = len(response_bytes) * 3  # JSON → Python objects ≈ 3x
     estimated_mb = estimated_memory / (1024 * 1024)
-    
+
     if estimated_mb > max_memory_mb:
         raise tif1.InvalidDataError(
             f"Data too large: {estimated_mb:.1f}MB (limit: {max_memory_mb}MB)",
             size_mb=estimated_mb,
             limit_mb=max_memory_mb
         )
-    
+
     return orjson.loads(response_bytes)
 ```
 
@@ -1039,31 +1039,31 @@ def parse_with_memory_limit(response_bytes, max_memory_mb=100):
 ```python
 def parse_with_recovery(response_bytes):
     """Parse JSON with error recovery."""
-    
+
     try:
         # Attempt normal parsing
         return orjson.loads(response_bytes)
-        
+
     except orjson.JSONDecodeError as e:
         # Try to identify and fix common issues
-        
+
         # Issue 1: Trailing commas
         if "trailing comma" in str(e).lower():
             logger.warning("Attempting to fix trailing commas")
             fixed = response_bytes.replace(b',]', b']').replace(b',}', b'}')
             return orjson.loads(fixed)
-        
+
         # Issue 2: Incomplete JSON (truncated response)
         if "unexpected end" in str(e).lower():
             logger.error("JSON appears truncated - re-fetching")
             raise tif1.NetworkError("Incomplete response received")
-        
+
         # Issue 3: Invalid UTF-8
         if "utf" in str(e).lower():
             logger.warning("Attempting UTF-8 error recovery")
             text = response_bytes.decode('utf-8', errors='replace')
             return orjson.loads(text.encode('utf-8'))
-        
+
         # Unrecoverable error
         raise tif1.InvalidDataError(
             f"JSON parsing failed: {e}",
@@ -1080,7 +1080,7 @@ from typing import List, Optional
 
 class LapData(BaseModel):
     """Pydantic model for lap data validation."""
-    
+
     lap_number: int = Field(ge=1, le=100)
     lap_time: Optional[float] = Field(None, gt=0)
     sector_1_time: Optional[float] = Field(None, gt=0)
@@ -1088,7 +1088,7 @@ class LapData(BaseModel):
     sector_3_time: Optional[float] = Field(None, gt=0)
     compound: str = Field(pattern=r'^(SOFT|MEDIUM|HARD|INTERMEDIATE|WET)$')
     position: int = Field(ge=1, le=20)
-    
+
     @validator('lap_time')
     def validate_lap_time(cls, v, values):
         """Ensure lap time matches sum of sectors."""
@@ -1125,7 +1125,7 @@ After parsing and validating JSON, tif1 constructs DataFrames with optimized col
 ```python
 def construct_lap_dataframe(lap_data, backend="pandas"):
     """Construct DataFrame from validated lap data."""
-    
+
     # Step 1: Create initial DataFrame
     if backend == "pandas":
         import pandas as pd
@@ -1135,20 +1135,20 @@ def construct_lap_dataframe(lap_data, backend="pandas"):
         df = pl.DataFrame(lap_data["laps"])
     else:
         raise ValueError(f"Unknown backend: {backend}")
-    
+
     # Step 2: Rename columns (snake_case → PascalCase)
     df = df.rename(columns=COLUMN_RENAME_MAP)
-    
+
     # Step 3: Set data types
     df = optimize_dtypes(df)
-    
+
     # Step 4: Reorder columns
     df = df[COLUMN_ORDER]
-    
+
     # Step 5: Set index (optional)
     if backend == "pandas":
         df = df.set_index("LapNumber")
-    
+
     return df
 ```
 
@@ -1163,28 +1163,28 @@ COLUMN_RENAME_MAP = {
     "lap_number": "LapNumber",
     "driver": "Driver",
     "team": "Team",
-    
+
     # Timing
     "lap_time": "LapTime",
     "sector_1_time": "Sector1Time",
     "sector_2_time": "Sector2Time",
     "sector_3_time": "Sector3Time",
-    
+
     # Speed traps
     "speed_i1": "SpeedI1",
     "speed_i2": "SpeedI2",
     "speed_fl": "SpeedFL",
     "speed_st": "SpeedST",
-    
+
     # Tyre information
     "compound": "Compound",
     "tyre_life": "TyreLife",
     "stint": "Stint",
-    
+
     # Position and status
     "position": "Position",
     "track_status": "TrackStatus",
-    
+
     # Flags
     "is_personal_best": "IsPersonalBest",
     "is_accurate": "IsAccurate",
@@ -1199,7 +1199,7 @@ COLUMN_RENAME_MAP = {
 ```python
 def optimize_dtypes_pandas(df):
     """Optimize pandas DataFrame dtypes for memory efficiency."""
-    
+
     # Numeric columns - use smallest safe type
     numeric_optimizations = {
         "LapNumber": "uint8",        # 1-100 laps
@@ -1215,11 +1215,11 @@ def optimize_dtypes_pandas(df):
         "Stint": "uint8",            # 1-5 stints
         "Position": "uint8",         # 1-20 positions
     }
-    
+
     for col, dtype in numeric_optimizations.items():
         if col in df.columns:
             df[col] = df[col].astype(dtype)
-    
+
     # Categorical columns - huge memory savings
     categorical_columns = [
         "Driver",        # 20 unique values
@@ -1227,17 +1227,17 @@ def optimize_dtypes_pandas(df):
         "Compound",      # 5 unique values
         "TrackStatus",   # 4 unique values
     ]
-    
+
     for col in categorical_columns:
         if col in df.columns:
             df[col] = df[col].astype("category")
-    
+
     # Boolean columns
     boolean_columns = ["IsPersonalBest", "IsAccurate", "Deleted"]
     for col in boolean_columns:
         if col in df.columns:
             df[col] = df[col].astype(bool)
-    
+
     return df
 
 # Memory savings example:
@@ -1249,9 +1249,9 @@ def optimize_dtypes_pandas(df):
 ```python
 def optimize_dtypes_polars(df):
     """Optimize polars DataFrame dtypes."""
-    
+
     import polars as pl
-    
+
     # Polars has better default type inference, but we can still optimize
     type_mapping = {
         "LapNumber": pl.UInt8,
@@ -1267,11 +1267,11 @@ def optimize_dtypes_polars(df):
         "IsAccurate": pl.Boolean,
         "Deleted": pl.Boolean,
     }
-    
+
     for col, dtype in type_mapping.items():
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(dtype))
-    
+
     return df
 ```
 
@@ -1285,32 +1285,32 @@ COLUMN_ORDER = [
     "LapNumber",
     "Driver",
     "Team",
-    
+
     # Timing (core data)
     "LapTime",
     "Sector1Time",
     "Sector2Time",
     "Sector3Time",
-    
+
     # Speed traps
     "SpeedI1",
     "SpeedI2",
     "SpeedFL",
     "SpeedST",
-    
+
     # Tyre strategy
     "Compound",
     "TyreLife",
     "Stint",
-    
+
     # Position
     "Position",
-    
+
     # Status flags
     "TrackStatus",
     "IsPersonalBest",
     "IsAccurate",
-    
+
     # Metadata (last)
     "Deleted",
     "DeletedReason",
@@ -1320,10 +1320,10 @@ def reorder_columns(df, column_order):
     """Reorder DataFrame columns."""
     # Only include columns that exist in the DataFrame
     ordered_cols = [col for col in column_order if col in df.columns]
-    
+
     # Add any remaining columns not in the order list
     remaining_cols = [col for col in df.columns if col not in ordered_cols]
-    
+
     return df[ordered_cols + remaining_cols]
 ```
 
@@ -1370,19 +1370,19 @@ verstappen_lap_45 = df.filter(
 ```python
 def handle_missing_data(df):
     """Handle missing data appropriately."""
-    
+
     # Strategy 1: Fill with sentinel values
     df["LapTime"] = df["LapTime"].fillna(-1.0)  # -1 indicates missing
-    
+
     # Strategy 2: Forward fill (for cumulative data)
     df["Position"] = df["Position"].fillna(method="ffill")
-    
+
     # Strategy 3: Interpolate (for continuous data)
     df["SpeedI1"] = df["SpeedI1"].interpolate(method="linear")
-    
+
     # Strategy 4: Leave as NaN (for optional data)
     # DeletedReason can be NaN when Deleted=False
-    
+
     return df
 ```
 
@@ -1391,7 +1391,7 @@ def handle_missing_data(df):
 ```python
 def validate_dataframe(df):
     """Validate DataFrame structure and content."""
-    
+
     # Check required columns
     required_columns = ["LapNumber", "Driver", "LapTime"]
     missing_columns = [col for col in required_columns if col not in df.columns]
@@ -1400,14 +1400,14 @@ def validate_dataframe(df):
             f"Missing required columns: {missing_columns}",
             missing=missing_columns
         )
-    
+
     # Check data ranges
     if (df["LapNumber"] < 1).any() or (df["LapNumber"] > 100).any():
         raise tif1.InvalidDataError("LapNumber out of valid range (1-100)")
-    
+
     if (df["Position"] < 1).any() or (df["Position"] > 20).any():
         raise tif1.InvalidDataError("Position out of valid range (1-20)")
-    
+
     # Check for duplicates
     duplicates = df.duplicated(subset=["Driver", "LapNumber"])
     if duplicates.any():
@@ -1416,14 +1416,14 @@ def validate_dataframe(df):
             f"Found {dup_count} duplicate lap entries",
             duplicate_count=dup_count
         )
-    
+
     # Check data consistency
     # Lap time should approximately equal sum of sectors
     df["SectorSum"] = df["Sector1Time"] + df["Sector2Time"] + df["Sector3Time"]
     inconsistent = (df["LapTime"] - df["SectorSum"]).abs() > 0.5
     if inconsistent.any():
         logger.warning(f"Found {inconsistent.sum()} laps with inconsistent sector times")
-    
+
     return df
 ```
 
@@ -1458,26 +1458,26 @@ After constructing the base DataFrame, tif1 automatically enriches data with com
 ```python
 def enrich_lap_times(df):
     """Add computed time columns."""
-    
+
     # LapTimeSeconds - helper for time-based calculations
     df["LapTimeSeconds"] = df["LapTime"]
-    
+
     # Sector percentages
     df["Sector1Percent"] = (df["Sector1Time"] / df["LapTime"]) * 100
     df["Sector2Percent"] = (df["Sector2Time"] / df["LapTime"]) * 100
     df["Sector3Percent"] = (df["Sector3Time"] / df["LapTime"]) * 100
-    
+
     # Delta to personal best
     personal_best = df.groupby("Driver")["LapTime"].transform("min")
     df["DeltaToPersonalBest"] = df["LapTime"] - personal_best
-    
+
     # Delta to session best
     session_best = df["LapTime"].min()
     df["DeltaToSessionBest"] = df["LapTime"] - session_best
-    
+
     # Cumulative time
     df["CumulativeTime"] = df.groupby("Driver")["LapTime"].cumsum()
-    
+
     return df
 ```
 
@@ -1485,19 +1485,19 @@ def enrich_lap_times(df):
 ```python
 def enrich_position_data(df):
     """Add position-related computed columns."""
-    
+
     # Position changes
     df["PositionChange"] = df.groupby("Driver")["Position"].diff()
     df["StartPosition"] = df.groupby("Driver")["Position"].transform("first")
     df["CurrentPositionChange"] = df["StartPosition"] - df["Position"]
-    
+
     # Gaps (requires sorting by position within each lap)
     df = df.sort_values(["LapNumber", "Position"])
     df["GapToLeader"] = df.groupby("LapNumber")["CumulativeTime"].transform(
         lambda x: x - x.iloc[0]
     )
     df["GapToAhead"] = df.groupby("LapNumber")["CumulativeTime"].diff()
-    
+
     return df
 ```
 
@@ -1505,25 +1505,25 @@ def enrich_position_data(df):
 ```python
 def enrich_tyre_data(df):
     """Add tyre strategy computed columns."""
-    
+
     # Stint identification (already in data, but validate)
     df["Stint"] = (df.groupby("Driver")["Compound"].shift() != df["Compound"]).groupby(df["Driver"]).cumsum() + 1
-    
+
     # Stint length
     df["StintLength"] = df.groupby(["Driver", "Stint"]).cumcount() + 1
-    
+
     # Tyre age at lap start
     df["TyreAge"] = df["TyreLife"]
-    
+
     # Compound history
     df["PreviousCompound"] = df.groupby("Driver")["Compound"].shift()
-    
+
     # Pit stop detection
     df["IsPitLap"] = df.groupby("Driver")["Stint"].diff() == 1
-    
+
     # Laps since pit
     df["LapsSincePit"] = df.groupby(["Driver", "Stint"]).cumcount()
-    
+
     return df
 ```
 
@@ -1531,26 +1531,26 @@ def enrich_tyre_data(df):
 ```python
 def enrich_performance_flags(df):
     """Add performance-related boolean flags."""
-    
+
     # Personal best lap
     df["IsPersonalBest"] = df.groupby("Driver")["LapTime"].transform(
         lambda x: x == x.min()
     )
-    
+
     # Session best lap
     df["IsSessionBest"] = df["LapTime"] == df["LapTime"].min()
-    
+
     # Top 3 lap
     df["IsTop3Lap"] = df["LapTime"] <= df["LapTime"].nsmallest(3).max()
-    
+
     # Outlier detection (lap time > 3 std dev from mean)
     mean_time = df.groupby("Driver")["LapTime"].transform("mean")
     std_time = df.groupby("Driver")["LapTime"].transform("std")
     df["IsOutlier"] = (df["LapTime"] - mean_time).abs() > (3 * std_time)
-    
+
     # Consistent lap (within 0.5s of personal average)
     df["IsConsistent"] = (df["LapTime"] - mean_time).abs() < 0.5
-    
+
     return df
 ```
 
@@ -1559,13 +1559,13 @@ def enrich_performance_flags(df):
 ```python
 def merge_weather_data(lap_df, weather_df):
     """Merge weather data with lap data."""
-    
+
     # Weather data is sampled every minute
     # Need to match each lap to closest weather sample
-    
+
     # Convert lap times to timestamps
     lap_df["Timestamp"] = lap_df["LapStartTime"]  # Assuming this exists
-    
+
     # Merge using nearest timestamp
     lap_df = pd.merge_asof(
         lap_df.sort_values("Timestamp"),
@@ -1574,17 +1574,17 @@ def merge_weather_data(lap_df, weather_df):
         direction="nearest",
         suffixes=("", "_weather")
     )
-    
+
     # Add weather-related computed columns
     lap_df["TrackTempChange"] = lap_df.groupby("Driver")["TrackTemp"].diff()
     lap_df["AirTempChange"] = lap_df.groupby("Driver")["AirTemp"].diff()
-    
+
     # Weather condition categories
     lap_df["WeatherCondition"] = "Dry"
     lap_df.loc[lap_df["Rainfall"] == True, "WeatherCondition"] = "Wet"
     lap_df.loc[lap_df["TrackTemp"] < 20, "WeatherCondition"] = "Cold"
     lap_df.loc[lap_df["TrackTemp"] > 50, "WeatherCondition"] = "Hot"
-    
+
     return lap_df
 ```
 
@@ -1594,31 +1594,31 @@ def merge_weather_data(lap_df, weather_df):
 ```python
 def enrich_telemetry_acceleration(tel_df):
     """Calculate acceleration from speed data."""
-    
+
     # Time delta between samples (typically 0.02s for 50Hz)
     tel_df["TimeDelta"] = tel_df["Time"].diff()
-    
+
     # Speed delta
     tel_df["SpeedDelta"] = tel_df["Speed"].diff()
-    
+
     # Acceleration (m/s²)
     # Convert km/h to m/s: speed / 3.6
     # Acceleration = (v2 - v1) / dt
     tel_df["Acceleration"] = (
         (tel_df["SpeedDelta"] / 3.6) / tel_df["TimeDelta"]
     )
-    
+
     # Lateral acceleration (from X, Y coordinates)
     tel_df["XDelta"] = tel_df["X"].diff()
     tel_df["YDelta"] = tel_df["Y"].diff()
     tel_df["LateralAcceleration"] = (
         ((tel_df["XDelta"]**2 + tel_df["YDelta"]**2)**0.5) / tel_df["TimeDelta"]**2
     )
-    
+
     # G-force (1g = 9.81 m/s²)
     tel_df["AccelerationG"] = tel_df["Acceleration"] / 9.81
     tel_df["LateralG"] = tel_df["LateralAcceleration"] / 9.81
-    
+
     return tel_df
 ```
 
@@ -1626,14 +1626,14 @@ def enrich_telemetry_acceleration(tel_df):
 ```python
 def normalize_telemetry_distance(tel_df):
     """Normalize distance to 0.0-1.0 range."""
-    
+
     # Original distance is in meters
     max_distance = tel_df["Distance"].max()
     tel_df["NormalizedDistance"] = tel_df["Distance"] / max_distance
-    
+
     # Percentage through lap
     tel_df["LapPercentage"] = tel_df["NormalizedDistance"] * 100
-    
+
     return tel_df
 ```
 
@@ -1641,22 +1641,22 @@ def normalize_telemetry_distance(tel_df):
 ```python
 def add_driver_ahead_info(tel_df, lap_df):
     """Add information about driver ahead."""
-    
+
     # Get position from lap data
     position = lap_df.loc[lap_df["LapNumber"] == tel_df["LapNumber"].iloc[0], "Position"].iloc[0]
-    
+
     if position > 1:
         # Find driver ahead
         driver_ahead = lap_df.loc[
-            (lap_df["LapNumber"] == tel_df["LapNumber"].iloc[0]) & 
+            (lap_df["LapNumber"] == tel_df["LapNumber"].iloc[0]) &
             (lap_df["Position"] == position - 1),
             "Driver"
         ].iloc[0]
-        
+
         tel_df["DriverAhead"] = driver_ahead
     else:
         tel_df["DriverAhead"] = None
-    
+
     return tel_df
 ```
 
@@ -1664,22 +1664,22 @@ def add_driver_ahead_info(tel_df, lap_df):
 ```python
 def detect_corners(tel_df, speed_threshold=200):
     """Detect corners based on speed and steering."""
-    
+
     # Corner = low speed + high steering angle
     # Approximate steering from lateral G
     tel_df["IsCorner"] = (
-        (tel_df["Speed"] < speed_threshold) & 
+        (tel_df["Speed"] < speed_threshold) &
         (tel_df["LateralG"].abs() > 1.5)
     )
-    
+
     # Corner number (sequential numbering)
     tel_df["CornerNumber"] = (
         tel_df["IsCorner"].diff() == 1
     ).cumsum()
-    
+
     # Only keep corner number where IsCorner=True
     tel_df.loc[~tel_df["IsCorner"], "CornerNumber"] = None
-    
+
     return tel_df
 ```
 
@@ -1718,7 +1718,7 @@ The final stage saves processed data to both cache tiers and returns the DataFra
 ```python
 def save_to_cache(key, data):
     """Save data to both cache tiers."""
-    
+
     # Step 1: Save to SQLite (persistent)
     try:
         sqlite_cache.set(key, data)
@@ -1726,14 +1726,14 @@ def save_to_cache(key, data):
     except Exception as e:
         logger.error(f"Failed to save to SQLite: {e}")
         # Continue even if SQLite save fails
-    
+
     # Step 2: Save to memory (fast access)
     try:
         memory_cache[key] = data
         logger.debug(f"Saved to memory cache: {key}")
     except Exception as e:
         logger.error(f"Failed to save to memory: {e}")
-    
+
     return data
 ```
 
@@ -1744,7 +1744,7 @@ import zlib
 
 def serialize_for_cache(df, backend="pandas"):
     """Serialize DataFrame for cache storage."""
-    
+
     if backend == "pandas":
         # Convert DataFrame to dict (orient='split' for efficiency)
         data_dict = {
@@ -1761,16 +1761,16 @@ def serialize_for_cache(df, backend="pandas"):
             "version": "1.0",
             "timestamp": time.time()
         }
-    
+
     # Serialize to JSON
     json_bytes = orjson.dumps(data_dict)
-    
+
     # Compress
     compressed = zlib.compress(json_bytes, level=6)
-    
+
     logger.debug(f"Serialization: {len(json_bytes)} bytes → {len(compressed)} bytes "
                 f"({len(compressed)/len(json_bytes)*100:.1f}% of original)")
-    
+
     return compressed
 ```
 
@@ -1778,16 +1778,16 @@ def serialize_for_cache(df, backend="pandas"):
 ```python
 def deserialize_from_cache(compressed_data):
     """Deserialize DataFrame from cache storage."""
-    
+
     # Decompress
     json_bytes = zlib.decompress(compressed_data)
-    
+
     # Parse JSON
     data_dict = orjson.loads(json_bytes)
-    
+
     # Reconstruct DataFrame
     backend = data_dict["backend"]
-    
+
     if backend == "pandas":
         import pandas as pd
         df = pd.DataFrame(**data_dict["data"])
@@ -1796,7 +1796,7 @@ def deserialize_from_cache(compressed_data):
         df = pl.DataFrame(data_dict["data"])
     else:
         raise ValueError(f"Unknown backend: {backend}")
-    
+
     return df
 ```
 
@@ -1805,7 +1805,7 @@ def deserialize_from_cache(compressed_data):
 ```python
 class CacheEntry:
     """Metadata for cache entry."""
-    
+
     def __init__(self, key, data, metadata=None):
         self.key = key
         self.data = data
@@ -1814,17 +1814,17 @@ class CacheEntry:
         self.access_count = 0
         self.size_bytes = len(serialize_for_cache(data))
         self.metadata = metadata or {}
-    
+
     def access(self):
         """Record cache access."""
         self.accessed_at = time.time()
         self.access_count += 1
-    
+
     def is_expired(self, ttl_seconds=604800):  # 7 days default
         """Check if entry is expired."""
         age = time.time() - self.created_at
         return age > ttl_seconds
-    
+
     def to_dict(self):
         """Convert to dictionary for storage."""
         return {
@@ -1846,20 +1846,20 @@ from collections import OrderedDict
 
 class LRUCache:
     """LRU cache with size limit."""
-    
+
     def __init__(self, max_size=1024):
         self.cache = OrderedDict()
         self.max_size = max_size
-    
+
     def get(self, key):
         """Get item from cache."""
         if key not in self.cache:
             return None
-        
+
         # Move to end (most recently used)
         self.cache.move_to_end(key)
         return self.cache[key]
-    
+
     def set(self, key, value):
         """Set item in cache."""
         if key in self.cache:
@@ -1871,9 +1871,9 @@ class LRUCache:
                 # Evict least recently used
                 evicted_key, evicted_value = self.cache.popitem(last=False)
                 logger.debug(f"Evicted from cache: {evicted_key}")
-        
+
         self.cache[key] = value
-    
+
     def clear(self):
         """Clear all items."""
         self.cache.clear()
@@ -1883,21 +1883,21 @@ class LRUCache:
 ```python
 def cleanup_expired_entries(cache, ttl_seconds=604800):
     """Remove expired entries from SQLite cache."""
-    
+
     current_time = time.time()
     cutoff_time = current_time - ttl_seconds
-    
+
     # SQL query to delete old entries
     query = "DELETE FROM cache WHERE timestamp < ?"
-    
+
     cursor = cache.conn.execute(query, (cutoff_time,))
     deleted_count = cursor.rowcount
-    
+
     logger.info(f"Cleaned up {deleted_count} expired cache entries")
-    
+
     # Vacuum database to reclaim space
     cache.conn.execute("VACUUM")
-    
+
     return deleted_count
 ```
 
@@ -1906,7 +1906,7 @@ def cleanup_expired_entries(cache, ttl_seconds=604800):
 ```python
 class CacheStatistics:
     """Track cache performance statistics."""
-    
+
     def __init__(self):
         self.hits = 0
         self.misses = 0
@@ -1914,29 +1914,29 @@ class CacheStatistics:
         self.errors = 0
         self.total_bytes_read = 0
         self.total_bytes_written = 0
-    
+
     def record_hit(self, size_bytes=0):
         """Record cache hit."""
         self.hits += 1
         self.total_bytes_read += size_bytes
-    
+
     def record_miss(self):
         """Record cache miss."""
         self.misses += 1
-    
+
     def record_eviction(self):
         """Record cache eviction."""
         self.evictions += 1
-    
+
     def record_error(self):
         """Record cache error."""
         self.errors += 1
-    
+
     def get_hit_rate(self):
         """Calculate cache hit rate."""
         total = self.hits + self.misses
         return self.hits / total if total > 0 else 0.0
-    
+
     def get_stats(self):
         """Get all statistics."""
         return {
@@ -1948,7 +1948,7 @@ class CacheStatistics:
             "bytes_read": self.total_bytes_read,
             "bytes_written": self.total_bytes_written,
         }
-    
+
     def reset(self):
         """Reset all statistics."""
         self.__init__()
@@ -1959,23 +1959,23 @@ class CacheStatistics:
 ```python
 def finalize_and_return(df, session_info):
     """Finalize DataFrame and return to user."""
-    
+
     # Step 1: Final validation
     validate_dataframe(df)
-    
+
     # Step 2: Add metadata attributes (pandas only)
     if hasattr(df, 'attrs'):
         df.attrs['session_info'] = session_info
         df.attrs['loaded_at'] = time.time()
         df.attrs['tif1_version'] = tif1.__version__
-    
+
     # Step 3: Log completion
     logger.info(
         f"Data loading complete: {len(df)} rows, "
         f"{len(df.columns)} columns, "
         f"{df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB"
     )
-    
+
     # Step 4: Return DataFrame
     return df
 ```
@@ -2356,32 +2356,32 @@ Lazy loading ensures data is only fetched when actually needed, reducing unneces
 ```python
 class Session:
     """Session with lazy loading."""
-    
+
     def __init__(self, year, gp, session_type):
         self.year = year
         self.gp = gp
         self.session_type = session_type
-        
+
         # Data not loaded yet
         self._laps = None
         self._telemetry = None
         self._weather = None
         self._messages = None
-    
+
     @property
     def laps(self):
         """Lazy load lap data."""
         if self._laps is None:
             self._laps = self._load_laps()
         return self._laps
-    
+
     @property
     def weather(self):
         """Lazy load weather data."""
         if self._weather is None:
             self._weather = self._load_weather()
         return self._weather
-    
+
     # Similar for telemetry, messages, etc.
 ```
 
@@ -2554,11 +2554,11 @@ import asyncio
 def fetch_sequential(drivers):
     results = []
     start = time.time()
-    
+
     for driver in drivers:
         result = fetch_driver_sync(driver)  # 500ms each
         results.append(result)
-    
+
     duration = time.time() - start
     print(f"Sequential: {duration:.2f}s for {len(drivers)} drivers")
     return results
@@ -2566,10 +2566,10 @@ def fetch_sequential(drivers):
 # Parallel fetching
 async def fetch_parallel(drivers):
     start = time.time()
-    
+
     tasks = [fetch_driver_async(driver) for driver in drivers]
     results = await asyncio.gather(*tasks)
-    
+
     duration = time.time() - start
     print(f"Parallel: {duration:.2f}s for {len(drivers)} drivers")
     return results
@@ -2594,16 +2594,16 @@ from asyncio import Semaphore
 
 async def fetch_with_limit(drivers, max_concurrent=10):
     """Fetch with concurrency limit."""
-    
+
     semaphore = Semaphore(max_concurrent)
-    
+
     async def fetch_limited(driver):
         async with semaphore:
             return await fetch_driver(driver)
-    
+
     tasks = [fetch_limited(driver) for driver in drivers]
     results = await asyncio.gather(*tasks)
-    
+
     return results
 
 # Limit to 10 concurrent requests
@@ -2653,19 +2653,19 @@ print(f"Speedup: {time_json / time_orjson:.1f}x")
 ```python
 def warm_cache_intelligent(year):
     """Intelligently pre-warm cache."""
-    
+
     events = tif1.get_events(year)
-    
+
     # Priority 1: Race sessions (most commonly accessed)
     for event in events:
         session = tif1.get_session(year, event, "Race")
         _ = session.laps
-    
+
     # Priority 2: Qualifying sessions
     for event in events:
         session = tif1.get_session(year, event, "Qualifying")
         _ = session.laps
-    
+
     # Priority 3: Practice sessions (if time permits)
     for event in events:
         for practice in ["Practice 1", "Practice 2", "Practice 3"]:
@@ -2775,7 +2775,7 @@ except tif1.NetworkError as e:
     print(f"URL: {e.url}")
     print(f"Attempts: {e.attempts}")
     print(f"Last error: {e.last_error}")
-    
+
     # Retry with exponential backoff
     for attempt in range(3):
         try:
@@ -2797,7 +2797,7 @@ except tif1.ConnectionError as e:
     print(f"Connection failed: {e}")
     print(f"Host: {e.host}")
     print(f"Port: {e.port}")
-    
+
     # Check network connectivity
     import socket
     try:
@@ -2817,11 +2817,11 @@ except tif1.TimeoutError as e:
     print(f"Request timed out: {e}")
     print(f"Timeout: {e.timeout}s")
     print(f"Elapsed: {e.elapsed}s")
-    
+
     # Increase timeout
     import os
     os.environ["TIF1_TIMEOUT"] = "60"  # Increase to 60s
-    
+
     # Retry
     laps = session.laps
 ```
@@ -2836,7 +2836,7 @@ except tif1.CDNError as e:
     print(f"CDN error: {e}")
     print(f"Status code: {e.status_code}")
     print(f"CDN: {e.cdn_name}")
-    
+
     # Handle specific status codes
     if e.status_code == 404:
         print("Data not found on CDN")
@@ -2861,7 +2861,7 @@ except tif1.DataNotFoundError as e:
     print(f"Year: {e.year}")
     print(f"Event: {e.event}")
     print(f"Session: {e.session_type}")
-    
+
     # List available events
     events = tif1.get_events(2025)
     print(f"Available events: {events}")
@@ -2876,7 +2876,7 @@ except tif1.DriverNotFoundError as e:
     print(f"Driver not found: {e}")
     print(f"Requested: {e.driver_code}")
     print(f"Available: {e.available_drivers}")
-    
+
     # Fuzzy match
     from difflib import get_close_matches
     matches = get_close_matches(e.driver_code, e.available_drivers, n=3)
@@ -2892,7 +2892,7 @@ except tif1.LapNotFoundError as e:
     print(f"Lap not found: {e}")
     print(f"Requested lap: {e.lap_number}")
     print(f"Available laps: {e.min_lap}-{e.max_lap}")
-    
+
     # Get closest lap
     closest_lap = min(e.max_lap, max(e.min_lap, e.lap_number))
     lap = driver.get_lap(closest_lap)
@@ -2913,7 +2913,7 @@ except tif1.InvalidDataError as e:
     print(f"Field: {e.field}")
     print(f"Value: {e.value}")
     print(f"Expected: {e.expected}")
-    
+
     # Log for debugging
     logger.error(f"Invalid data encountered: {e.to_dict()}")
 ```
@@ -2929,7 +2929,7 @@ except tif1.JSONParseError as e:
     print(f"Line: {e.line}")
     print(f"Column: {e.column}")
     print(f"Context: {e.context}")
-    
+
     # Save raw data for debugging
     with open("invalid_data.json", "wb") as f:
         f.write(e.raw_data)
@@ -2943,7 +2943,7 @@ try:
 except tif1.ValidationError as e:
     print(f"Validation failed: {e}")
     print(f"Errors: {e.errors}")
-    
+
     # Detailed error information
     for error in e.errors:
         print(f"  Field: {error['field']}")
@@ -2965,7 +2965,7 @@ except tif1.CacheError as e:
     print(f"Cache error: {e}")
     print(f"Operation: {e.operation}")
     print(f"Cache type: {e.cache_type}")
-    
+
     # Fallback: Disable cache
     import os
     os.environ["TIF1_CACHE_ENABLED"] = "false"
@@ -2979,11 +2979,11 @@ try:
 except tif1.CacheCorruptionError as e:
     print(f"Cache corrupted: {e}")
     print(f"Cache file: {e.cache_file}")
-    
+
     # Clear corrupted cache
     cache = tif1.get_cache()
     cache.clear()
-    
+
     # Retry
     laps = session.laps
 ```
@@ -2998,7 +2998,7 @@ from functools import wraps
 
 def retry_with_backoff(max_retries=3, base_delay=1.0):
     """Decorator for automatic retry with exponential backoff."""
-    
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -3008,17 +3008,17 @@ def retry_with_backoff(max_retries=3, base_delay=1.0):
                 except tif1.NetworkError as e:
                     if attempt == max_retries - 1:
                         raise
-                    
+
                     delay = base_delay * (2 ** attempt)
                     jitter = random.uniform(0, 0.1 * delay)
                     total_delay = delay + jitter
-                    
+
                     logger.warning(
                         f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
                         f"Retrying in {total_delay:.2f}s"
                     )
                     time.sleep(total_delay)
-            
+
             return None
         return wrapper
     return decorator
@@ -3035,14 +3035,14 @@ def load_session_data():
 ```python
 def load_with_fallback(year, event, session_type):
     """Load data with fallback to alternative sources."""
-    
+
     # Try primary source (tif1)
     try:
         session = tif1.get_session(year, event, session_type)
         return session.laps
     except tif1.DataNotFoundError:
         logger.warning("Primary source failed, trying fallback")
-    
+
     # Try fallback source (e.g., local files)
     try:
         import pandas as pd
@@ -3050,7 +3050,7 @@ def load_with_fallback(year, event, session_type):
         return pd.read_csv(file_path)
     except FileNotFoundError:
         logger.error("Fallback source also failed")
-    
+
     # No data available
     raise tif1.DataNotFoundError(
         f"No data available for {year} {event} {session_type}",
@@ -3065,33 +3065,33 @@ def load_with_fallback(year, event, session_type):
 ```python
 def load_with_degradation(year, event, session_type):
     """Load data with graceful degradation."""
-    
+
     session = tif1.get_session(year, event, session_type)
-    
+
     # Try to load all data
     data = {}
-    
+
     # Laps (critical)
     try:
         data["laps"] = session.laps
     except Exception as e:
         logger.error(f"Failed to load laps: {e}")
         raise  # Laps are critical, don't continue
-    
+
     # Weather (optional)
     try:
         data["weather"] = session.weather
     except Exception as e:
         logger.warning(f"Failed to load weather: {e}")
         data["weather"] = None  # Continue without weather
-    
+
     # Telemetry (optional)
     try:
         data["telemetry"] = session.telemetry
     except Exception as e:
         logger.warning(f"Failed to load telemetry: {e}")
         data["telemetry"] = None  # Continue without telemetry
-    
+
     return data
 ```
 
@@ -3105,18 +3105,18 @@ try:
 except tif1.TIF1Error as e:
     # Get error context
     context = e.to_dict()
-    
+
     print(f"Error type: {context['error_type']}")
     print(f"Message: {context['message']}")
     print(f"Timestamp: {context['timestamp']}")
     print(f"Context: {context['context']}")
-    
+
     # Log to file
     import json
     with open("error_log.json", "a") as f:
         json.dump(context, f)
         f.write("\n")
-    
+
     # Send to monitoring service
     # send_to_sentry(context)
 ```
@@ -3205,7 +3205,7 @@ from functools import wraps
 
 def time_operation(operation_name):
     """Decorator to time operations."""
-    
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -3234,7 +3234,7 @@ def load_session():
 ```python
 class PerformanceMonitor:
     """Collect and report performance metrics."""
-    
+
     def __init__(self):
         self.metrics = {
             "cache_hits": 0,
@@ -3246,29 +3246,29 @@ class PerformanceMonitor:
             "total_time_parsing": 0.0,
             "total_time_dataframe": 0.0,
         }
-    
+
     def record_cache_hit(self):
         self.metrics["cache_hits"] += 1
-    
+
     def record_cache_miss(self):
         self.metrics["cache_misses"] += 1
-    
+
     def record_network_request(self, duration, bytes_downloaded):
         self.metrics["network_requests"] += 1
         self.metrics["total_bytes_downloaded"] += bytes_downloaded
         self.metrics["total_time_network"] += duration
-    
+
     def record_network_failure(self):
         self.metrics["network_failures"] += 1
-    
+
     def get_cache_hit_rate(self):
         total = self.metrics["cache_hits"] + self.metrics["cache_misses"]
         return self.metrics["cache_hits"] / total if total > 0 else 0.0
-    
+
     def get_network_success_rate(self):
         total = self.metrics["network_requests"] + self.metrics["network_failures"]
         return self.metrics["network_requests"] / total if total > 0 else 0.0
-    
+
     def get_report(self):
         """Generate performance report."""
         return {
@@ -3320,30 +3320,30 @@ import time
 
 def test_cache_performance():
     """Test cache performance."""
-    
+
     session = tif1.get_session(2025, "Monaco", "Race")
-    
+
     # Test 1: Cold start (cache miss)
     cache = tif1.get_cache()
     cache.clear()
-    
+
     start = time.time()
     laps = session.laps
     cold_time = time.time() - start
-    
+
     # Test 2: Warm start (SQLite cache hit)
     # Clear memory cache only
     session._laps = None
-    
+
     start = time.time()
     laps = session.laps
     warm_time = time.time() - start
-    
+
     # Test 3: Hot start (memory cache hit)
     start = time.time()
     laps = session.laps
     hot_time = time.time() - start
-    
+
     print(f"Cache Performance:")
     print(f"  Cold start: {cold_time * 1000:.2f}ms")
     print(f"  Warm start: {warm_time * 1000:.2f}ms ({cold_time / warm_time:.1f}x faster)")
@@ -3380,10 +3380,10 @@ if state_info['state'] == "OPEN":
 ```python
 class RequestTracker:
     """Track HTTP requests."""
-    
+
     def __init__(self):
         self.requests = []
-    
+
     def record_request(self, url, method, status_code, duration, size):
         """Record HTTP request."""
         self.requests.append({
@@ -3394,17 +3394,17 @@ class RequestTracker:
             "duration": duration,
             "size": size,
         })
-    
+
     def get_summary(self):
         """Get request summary."""
         if not self.requests:
             return {}
-        
+
         total_requests = len(self.requests)
         successful_requests = sum(1 for r in self.requests if 200 <= r["status_code"] < 300)
         total_duration = sum(r["duration"] for r in self.requests)
         total_size = sum(r["size"] for r in self.requests)
-        
+
         return {
             "total_requests": total_requests,
             "successful_requests": successful_requests,
@@ -3414,7 +3414,7 @@ class RequestTracker:
             "total_size_mb": total_size / 1024 / 1024,
             "avg_size_kb": total_size / total_requests / 1024,
         }
-    
+
     def get_slowest_requests(self, n=5):
         """Get slowest requests."""
         sorted_requests = sorted(self.requests, key=lambda r: r["duration"], reverse=True)
@@ -3439,10 +3439,10 @@ import os
 
 def monitor_memory():
     """Monitor memory usage."""
-    
+
     process = psutil.Process(os.getpid())
     memory_info = process.memory_info()
-    
+
     return {
         "rss_mb": memory_info.rss / 1024 / 1024,  # Resident Set Size
         "vms_mb": memory_info.vms / 1024 / 1024,  # Virtual Memory Size
@@ -3470,19 +3470,19 @@ print(f"  Increase: {mem_after['rss_mb'] - mem_before['rss_mb']:.2f} MB")
 ```python
 class MonitoringDashboard:
     """Comprehensive monitoring dashboard."""
-    
+
     def __init__(self):
         self.performance_monitor = PerformanceMonitor()
         self.request_tracker = RequestTracker()
         self.start_time = time.time()
-    
+
     def get_dashboard(self):
         """Get complete dashboard."""
-        
+
         # System info
         uptime = time.time() - self.start_time
         memory = monitor_memory()
-        
+
         # Cache info
         cache = tif1.get_cache()
         cache_stats = {
@@ -3490,20 +3490,20 @@ class MonitoringDashboard:
             "entries": cache.get_entry_count(),
             "hit_rate": cache.get_hit_rate(),
         }
-        
+
         # Performance info
         perf_stats = self.performance_monitor.get_report()
-        
+
         # Network info
         network_stats = self.request_tracker.get_summary()
-        
+
         # Circuit breaker info
         cb = tif1.get_circuit_breaker()
         cb_stats = {
             "state": cb.state,
             "failures": cb.failure_count,
         }
-        
+
         return {
             "system": {
                 "uptime_seconds": uptime,
@@ -3515,37 +3515,37 @@ class MonitoringDashboard:
             "network": network_stats,
             "circuit_breaker": cb_stats,
         }
-    
+
     def print_dashboard(self):
         """Print formatted dashboard."""
         dashboard = self.get_dashboard()
-        
+
         print("=" * 60)
         print("TIF1 MONITORING DASHBOARD")
         print("=" * 60)
-        
+
         print("\nSYSTEM:")
         print(f"  Uptime: {dashboard['system']['uptime_seconds']:.1f}s")
         print(f"  Memory: {dashboard['system']['memory_mb']:.2f} MB ({dashboard['system']['memory_percent']:.1f}%)")
-        
+
         print("\nCACHE:")
         print(f"  Size: {dashboard['cache']['size_mb']:.2f} MB")
         print(f"  Entries: {dashboard['cache']['entries']}")
         print(f"  Hit rate: {dashboard['cache']['hit_rate']:.1%}")
-        
+
         print("\nPERFORMANCE:")
         for key, value in dashboard['performance'].items():
             print(f"  {key}: {value}")
-        
+
         print("\nNETWORK:")
         if dashboard['network']:
             for key, value in dashboard['network'].items():
                 print(f"  {key}: {value}")
-        
+
         print("\nCIRCUIT BREAKER:")
         print(f"  State: {dashboard['circuit_breaker']['state']}")
         print(f"  Failures: {dashboard['circuit_breaker']['failures']}")
-        
+
         print("=" * 60)
 
 # Usage
@@ -3602,10 +3602,10 @@ Memory Cache Save (< 1ms)
 Return DataFrame
 ```
 
-**Total Time:** ~2.5-3.0 seconds  
-**Network I/O:** ~500-800ms (parallel)  
-**CPU Processing:** ~370ms  
-**Cache Operations:** ~52ms  
+**Total Time:** ~2.5-3.0 seconds
+**Network I/O:** ~500-800ms (parallel)
+**CPU Processing:** ~370ms
+**Cache Operations:** ~52ms
 **Overhead:** ~5ms
 
 **Optimization Tips:**
@@ -3635,9 +3635,9 @@ Memory Cache Save (< 1ms)
 Return DataFrame
 ```
 
-**Total Time:** ~30-50ms  
-**Network I/O:** 0ms (no network)  
-**CPU Processing:** ~30ms  
+**Total Time:** ~30-50ms
+**Network I/O:** 0ms (no network)
+**CPU Processing:** ~30ms
 **Cache Operations:** ~35ms
 
 **Speedup vs Cold Start:** ~93x faster (30ms vs 2800ms)
@@ -3659,12 +3659,12 @@ Memory Cache Hit (< 1ms)
 Return DataFrame
 ```
 
-**Total Time:** < 1ms  
-**Network I/O:** 0ms  
-**CPU Processing:** < 1ms  
+**Total Time:** < 1ms
+**Network I/O:** 0ms
+**CPU Processing:** < 1ms
 **Cache Operations:** < 1ms
 
-**Speedup vs Cold Start:** ~2800x faster (< 1ms vs 2800ms)  
+**Speedup vs Cold Start:** ~2800x faster (< 1ms vs 2800ms)
 **Speedup vs Warm Start:** ~30x faster (< 1ms vs 30ms)
 
 **Optimization Tips:**
@@ -3694,7 +3694,7 @@ Memory Cache Check
             Process & Cache (200ms)
 ```
 
-**Total Time:** ~700ms  
+**Total Time:** ~700ms
 **Breakdown:**
 - 15 drivers from memory: < 1ms
 - 3 drivers from SQLite: ~90ms
@@ -3737,7 +3737,7 @@ Process & Cache (370ms)
 Return DataFrame
 ```
 
-**Total Time:** ~34 seconds (with failures)  
+**Total Time:** ~34 seconds (with failures)
 **Breakdown:**
 - Attempt 1: 30s (timeout)
 - Backoff 1: 1s
@@ -3809,10 +3809,10 @@ import threading
 
 def warm_cache_background(year):
     """Warm cache in background thread."""
-    
+
     def warm():
         events = tif1.get_events(year)
-        
+
         # Priority 1: Recent races (most likely to be accessed)
         recent_events = events[-5:]  # Last 5 races
         for event in recent_events:
@@ -3822,7 +3822,7 @@ def warm_cache_background(year):
                 logger.info(f"Cached: {event} Race")
             except Exception as e:
                 logger.warning(f"Failed to cache {event}: {e}")
-        
+
         # Priority 2: Qualifying sessions
         for event in recent_events:
             try:
@@ -3831,7 +3831,7 @@ def warm_cache_background(year):
                 logger.info(f"Cached: {event} Qualifying")
             except Exception as e:
                 logger.warning(f"Failed to cache {event}: {e}")
-    
+
     thread = threading.Thread(target=warm, daemon=True)
     thread.start()
 
@@ -3850,15 +3850,15 @@ Pre-warm cache strategically based on usage patterns.
 ```python
 class IntelligentCacheWarmer:
     """Intelligent cache warming based on usage patterns."""
-    
+
     def __init__(self):
         self.usage_stats = {}  # Track access patterns
-    
+
     def record_access(self, year, event, session_type):
         """Record data access."""
         key = (year, event, session_type)
         self.usage_stats[key] = self.usage_stats.get(key, 0) + 1
-    
+
     def get_top_accessed(self, n=10):
         """Get most frequently accessed sessions."""
         sorted_sessions = sorted(
@@ -3867,11 +3867,11 @@ class IntelligentCacheWarmer:
             reverse=True
         )
         return [key for key, count in sorted_sessions[:n]]
-    
+
     def warm_cache_intelligent(self):
         """Warm cache for most accessed sessions."""
         top_sessions = self.get_top_accessed(n=10)
-        
+
         for year, event, session_type in top_sessions:
             try:
                 session = tif1.get_session(year, event, session_type)
@@ -3899,24 +3899,24 @@ Adjust timeouts based on network conditions.
 ```python
 class AdaptiveTimeout:
     """Adaptive timeout based on network performance."""
-    
+
     def __init__(self, initial_timeout=30):
         self.timeout = initial_timeout
         self.recent_durations = []
         self.max_history = 10
-    
+
     def record_request(self, duration):
         """Record request duration."""
         self.recent_durations.append(duration)
         if len(self.recent_durations) > self.max_history:
             self.recent_durations.pop(0)
-        
+
         # Adjust timeout based on recent performance
         if self.recent_durations:
             avg_duration = sum(self.recent_durations) / len(self.recent_durations)
             # Set timeout to 3x average duration (with min/max bounds)
             self.timeout = max(10, min(60, avg_duration * 3))
-    
+
     def get_timeout(self):
         """Get current timeout."""
         return self.timeout
@@ -4000,11 +4000,11 @@ for event in events:
 for event in events:
     session = tif1.get_session(2025, event, "Race")
     laps = session.laps
-    
+
     # Process data
     result = analyze_laps(laps)
     save_result(result)
-    
+
     # Data can be garbage collected
     del laps, session
 # Memory: ~7 MB (constant)
@@ -4149,27 +4149,27 @@ Use monitoring data to identify bottlenecks.
 ```python
 class PerformanceProfiler:
     """Profile performance to identify bottlenecks."""
-    
+
     def __init__(self):
         self.timings = {}
-    
+
     def time_section(self, name):
         """Context manager to time code sections."""
         import contextlib
         import time
-        
+
         @contextlib.contextmanager
         def timer():
             start = time.time()
             yield
             duration = time.time() - start
-            
+
             if name not in self.timings:
                 self.timings[name] = []
             self.timings[name].append(duration)
-        
+
         return timer()
-    
+
     def get_report(self):
         """Get performance report."""
         report = {}
@@ -4182,21 +4182,21 @@ class PerformanceProfiler:
                 "max": max(durations),
             }
         return report
-    
+
     def print_report(self):
         """Print formatted report."""
         report = self.get_report()
-        
+
         print("Performance Profile:")
         print("-" * 60)
-        
+
         # Sort by total time (descending)
         sorted_sections = sorted(
             report.items(),
             key=lambda x: x[1]["total"],
             reverse=True
         )
-        
+
         for name, stats in sorted_sections:
             print(f"{name}:")
             print(f"  Count: {stats['count']}")

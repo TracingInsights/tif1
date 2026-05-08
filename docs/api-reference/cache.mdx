@@ -598,7 +598,7 @@ async def fetch_cached_drivers():
     cache = tif1.get_cache()
     key = "2024/Monaco_Grand_Prix/Race/drivers.json"
     drivers = await cache.get_async(key)
-    
+
     if drivers:
         print(f"Found {len(drivers)} drivers")
         return drivers
@@ -627,13 +627,13 @@ import tif1
 
 async def cache_custom_data():
     cache = tif1.get_cache()
-    
+
     data = {
         "analysis": "Monaco 2024 Race Strategy",
         "optimal_pit_window": [15, 20],
         "tire_compounds": ["soft", "medium"]
     }
-    
+
     key = "2024/Monaco_Grand_Prix/Race/strategy_analysis.json"
     await cache.set_async(key, data)
     print(f"Cached strategy analysis")
@@ -664,7 +664,7 @@ import tif1
 
 async def fetch_driver_telemetry():
     cache = tif1.get_cache()
-    
+
     telemetry = await cache.get_telemetry_async(
         year=2024,
         gp="Monaco_Grand_Prix",
@@ -672,11 +672,11 @@ async def fetch_driver_telemetry():
         driver="VER",
         lap=1
     )
-    
+
     if telemetry:
         max_speed = max(telemetry['Speed'])
         print(f"VER lap 1 max speed: {max_speed} km/h")
-    
+
     return telemetry
 
 asyncio.run(fetch_driver_telemetry())
@@ -706,13 +706,13 @@ import tif1
 
 async def cache_telemetry():
     cache = tif1.get_cache()
-    
+
     telemetry = {
         "Time": [0.0, 0.1, 0.2],
         "Speed": [0, 50, 100],
         "RPM": [8000, 10000, 12000]
     }
-    
+
     await cache.set_telemetry_async(
         year=2024,
         gp="Monaco_Grand_Prix",
@@ -748,24 +748,24 @@ import tif1
 
 async def analyze_multiple_sessions():
     cache = tif1.get_cache()
-    
+
     # Define multiple batch requests
     sessions = [
         (2024, "Monaco_Grand_Prix", "Race"),
         (2024, "Monaco_Grand_Prix", "Qualifying"),
         (2024, "Canadian_Grand_Prix", "Race")
     ]
-    
+
     driver_laps = [("VER", 1), ("HAM", 1), ("LEC", 1)]
-    
+
     # Fetch all batches concurrently
     tasks = [
         cache.get_telemetry_batch_async(year, gp, session, driver_laps)
         for year, gp, session in sessions
     ]
-    
+
     results = await asyncio.gather(*tasks)
-    
+
     # Process results
     for (year, gp, session), batch in zip(sessions, results):
         print(f"\n{year} {gp} {session}:")
@@ -784,14 +784,14 @@ import tif1
 async def build_telemetry_dataset():
     """Build a complete telemetry dataset using async batch operations."""
     cache = tif1.get_cache()
-    
+
     # Define scope
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR"]
     laps = range(1, 51)  # First 50 laps
-    
+
     # Build request list
     driver_laps = [(driver, lap) for driver in drivers for lap in laps]
-    
+
     # Fetch all telemetry asynchronously
     batch = await cache.get_telemetry_batch_async(
         year=2024,
@@ -799,17 +799,17 @@ async def build_telemetry_dataset():
         session="Race",
         driver_laps=driver_laps
     )
-    
+
     # Analyze results
     total_requested = len(driver_laps)
     total_cached = len(batch)
     cache_hit_rate = (total_cached / total_requested) * 100
-    
+
     print(f"Telemetry dataset:")
     print(f"  Requested: {total_requested} entries")
     print(f"  Cached: {total_cached} entries")
     print(f"  Cache hit rate: {cache_hit_rate:.1f}%")
-    
+
     return batch
 
 asyncio.run(build_telemetry_dataset())
@@ -938,24 +938,24 @@ def get_cached_sessions():
     cache = tif1.get_cache()
     conn = sqlite3.connect(cache.db_path)
     cursor = conn.cursor()
-    
+
     # Extract unique sessions from cache keys
     cursor.execute("""
-        SELECT DISTINCT 
+        SELECT DISTINCT
             substr(key, 1, instr(key, '/') - 1) as year,
-            substr(key, instr(key, '/') + 1, 
+            substr(key, instr(key, '/') + 1,
                    instr(substr(key, instr(key, '/') + 1), '/') - 1) as gp,
-            substr(key, 
+            substr(key,
                    instr(key, '/') + instr(substr(key, instr(key, '/') + 1), '/') + 1,
-                   instr(substr(key, 
+                   instr(substr(key,
                         instr(key, '/') + instr(substr(key, instr(key, '/') + 1), '/') + 1), '/') - 1) as session
         FROM cache
         ORDER BY year DESC, gp, session
     """)
-    
+
     sessions = cursor.fetchall()
     conn.close()
-    
+
     return sessions
 
 # Generate report
@@ -1034,7 +1034,7 @@ import tif1
 def warm_cache_for_season(year: int):
     """Pre-load all race sessions for a season."""
     schedule = tif1.get_event_schedule(year)
-    
+
     for event in schedule:
         try:
             session = tif1.get_session(year, event['EventName'], 'Race')
@@ -1059,22 +1059,22 @@ import tif1
 def cache_dashboard():
     """Display comprehensive cache status."""
     cache = tif1.get_cache()
-    
+
     print("=" * 60)
     print("TIF1 CACHE DASHBOARD")
     print("=" * 60)
-    
+
     # Configuration
     print(f"\nConfiguration:")
     print(f"  Directory: {cache.cache_dir}")
     print(f"  Database: {cache.db_path.name}")
     print(f"  Read-only: {cache.read_only}")
-    
+
     # Size
     size_mb = cache.db_path.stat().st_size / 1024 / 1024
     print(f"\nStorage:")
     print(f"  Database size: {size_mb:.2f} MB")
-    
+
     # Check specific sessions
     print(f"\nRecent Sessions:")
     sessions_to_check = [
@@ -1082,7 +1082,7 @@ def cache_dashboard():
         (2024, "Monaco_Grand_Prix", "Qualifying"),
         (2024, "Canadian_Grand_Prix", "Race"),
     ]
-    
+
     for year, gp, session_type in sessions_to_check:
         cached = cache.has_session_data(year, gp, session_type)
         status = "✓" if cached else "✗"
@@ -1102,22 +1102,22 @@ def clear_session_cache(year: int, gp: str, session: str):
     cache = tif1.get_cache()
     conn = sqlite3.connect(cache.db_path)
     cursor = conn.cursor()
-    
+
     # Clear JSON data
     key_pattern = f"{year}/{gp}/{session}/%"
     cursor.execute("DELETE FROM cache WHERE key LIKE ?", (key_pattern,))
     json_deleted = cursor.rowcount
-    
+
     # Clear telemetry data
     cursor.execute("""
-        DELETE FROM telemetry 
+        DELETE FROM telemetry
         WHERE year = ? AND gp = ? AND session = ?
     """, (year, gp, session))
     telemetry_deleted = cursor.rowcount
-    
+
     conn.commit()
     conn.close()
-    
+
     print(f"Cleared {year} {gp} {session}:")
     print(f"  JSON entries: {json_deleted}")
     print(f"  Telemetry entries: {telemetry_deleted}")
@@ -1137,10 +1137,10 @@ def export_cache(backup_path: str):
     """Export cache database to a backup location."""
     cache = tif1.get_cache()
     cache.close()  # Close connection before copying
-    
+
     backup = Path(backup_path)
     backup.parent.mkdir(parents=True, exist_ok=True)
-    
+
     shutil.copy2(cache.db_path, backup)
     print(f"Cache exported to {backup}")
 
@@ -1148,12 +1148,12 @@ def import_cache(backup_path: str):
     """Import cache database from a backup."""
     cache = tif1.get_cache()
     cache.close()  # Close connection before replacing
-    
+
     backup = Path(backup_path)
     if not backup.exists():
         print(f"Backup not found: {backup}")
         return
-    
+
     shutil.copy2(backup, cache.db_path)
     print(f"Cache imported from {backup}")
 
@@ -1172,9 +1172,9 @@ import tif1
 def validate_session_cache(year: int, gp: str, session: str):
     """Validate that all expected data is cached for a session."""
     cache = tif1.get_cache()
-    
+
     print(f"Validating cache for {year} {gp} {session}...")
-    
+
     # Check JSON data
     base_key = f"{year}/{gp}/{session}"
     expected_files = [
@@ -1184,26 +1184,26 @@ def validate_session_cache(year: int, gp: str, session: str):
         "messages.json",
         "session_info.json"
     ]
-    
+
     print("\nJSON Data:")
     for file in expected_files:
         key = f"{base_key}/{file}"
         data = cache.get(key)
         status = "✓" if data else "✗"
         print(f"  {status} {file}")
-    
+
     # Check telemetry (sample first 3 drivers, first 5 laps)
     print("\nTelemetry Sample:")
     drivers = ["VER", "HAM", "LEC"]
     laps = range(1, 6)
-    
+
     for driver in drivers:
         cached_laps = []
         for lap in laps:
             telem = cache.get_telemetry(year, gp, session, driver, lap)
             if telem:
                 cached_laps.append(lap)
-        
+
         if cached_laps:
             print(f"  ✓ {driver}: laps {cached_laps}")
         else:
@@ -1303,7 +1303,7 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
    ```python
    import sqlite3
    import tif1
-   
+
    cache = tif1.get_cache()
    conn = sqlite3.connect(cache.db_path)
    cursor = conn.cursor()
@@ -1353,7 +1353,7 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
    # Slow: multiple individual queries
    for driver, lap in driver_laps:
        telem = cache.get_telemetry(year, gp, session, driver, lap)
-   
+
    # Fast: single batch query
    batch = cache.get_telemetry_batch(year, gp, session, driver_laps)
    ```
@@ -1362,7 +1362,7 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
    ```python
    import sqlite3
    import tif1
-   
+
    cache = tif1.get_cache()
    conn = sqlite3.connect(cache.db_path)
    conn.execute("VACUUM")
@@ -1374,14 +1374,14 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
    ```python
    import time
    import tif1
-   
+
    cache = tif1.get_cache()
-   
+
    # Benchmark cache read
    start = time.perf_counter()
    data = cache.get("2024/Monaco_Grand_Prix/Race/drivers.json")
    elapsed = time.perf_counter() - start
-   
+
    print(f"Cache read took {elapsed*1000:.2f} ms")
    ```
 

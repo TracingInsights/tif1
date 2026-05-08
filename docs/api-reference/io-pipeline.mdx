@@ -17,8 +17,8 @@ keywords:
 ---
 
 <Info>
-  **Module Location**: `src/tif1/io_pipeline.py`  
-  **Source Implementation**: `src/tif1/core.py` (re-exported for public API)  
+  **Module Location**: `src/tif1/io_pipeline.py`
+  **Source Implementation**: `src/tif1/core.py` (re-exported for public API)
   **Dependencies**: pandas, polars (optional), pydantic (validation), orjson (JSON parsing)
 </Info>
 
@@ -32,7 +32,7 @@ The pipeline is designed with three primary goals:
 
 <Warning>
   **Internal API**: This module contains internal implementation details. The API is subject to change without notice. Most users should use the high-level `Session` API instead, which provides a stable interface and handles all pipeline operations automatically.
-  
+
   **Advanced Users Only**: Direct use of these functions is intended for:
   - Custom data processing pipelines
   - Performance optimization and profiling
@@ -71,7 +71,7 @@ graph TB
     H --> I[Final Laps DataFrame]
     E --> J[Final Session DataFrame]
     F --> K[Telemetry DataFrame]
-    
+
     style A fill:#e1f5ff,stroke:#0288d1,stroke-width:2px
     style B fill:#fff4e1,stroke:#f57c00,stroke-width:2px
     style G fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
@@ -160,8 +160,8 @@ The pipeline processes several types of JSON payloads, each with a distinct stru
 
 #### Lap Data Payload
 
-**Source Files**: `session_laptimes.json`, `{driver}_tel.json`  
-**Purpose**: Contains lap timing data, sector times, tire information, and track status  
+**Source Files**: `session_laptimes.json`, `{driver}_tel.json`
+**Purpose**: Contains lap timing data, sector times, tire information, and track status
 **Structure**: Dictionary of arrays (columnar format for efficient parsing)
 
 ```json
@@ -195,8 +195,8 @@ The pipeline processes several types of JSON payloads, each with a distinct stru
 
 #### Driver Metadata Payload
 
-**Source File**: `drivers.json`  
-**Purpose**: Contains driver information, team assignments, and visual metadata  
+**Source File**: `drivers.json`
+**Purpose**: Contains driver information, team assignments, and visual metadata
 **Structure**: Array of driver objects
 
 ```json
@@ -230,8 +230,8 @@ The pipeline processes several types of JSON payloads, each with a distinct stru
 
 #### Weather Data Payload
 
-**Source File**: `weather.json`  
-**Purpose**: Contains session weather conditions sampled at regular intervals  
+**Source File**: `weather.json`
+**Purpose**: Contains session weather conditions sampled at regular intervals
 **Structure**: Dictionary of arrays (time-series data)
 
 ```json
@@ -255,8 +255,8 @@ The pipeline processes several types of JSON payloads, each with a distinct stru
 
 #### Race Control Messages Payload
 
-**Source File**: `rcm.json`  
-**Purpose**: Contains race control messages, flags, and safety car deployments  
+**Source File**: `rcm.json`
+**Purpose**: Contains race control messages, flags, and safety car deployments
 **Structure**: Dictionary of arrays (event log)
 
 ```json
@@ -1089,7 +1089,7 @@ lap_data = {
 # Create DataFrame with pandas
 df_pandas = _create_lap_df(lap_data, "VER", "Red Bull Racing", "pandas")
 print(df_pandas.columns)
-# ['lap', 'time', 's1', 's2', 's3', 'compound', 'life', 'stint', 
+# ['lap', 'time', 's1', 's2', 's3', 'compound', 'life', 'stint',
 #  'pos', 'status', 'Driver', 'Team']
 
 # Create DataFrame with polars
@@ -1280,11 +1280,11 @@ def _create_session_df(data: dict[str, Any], rename_map: dict[str, str], lib: st
         frame = pl.DataFrame(data, strict=False)
     else:
         frame = pd.DataFrame(data, copy=False)
-    
+
     # Handle empty DataFrames
     if _is_empty_df(frame, lib):
         return _create_empty_df(lib)
-    
+
     # Apply column renaming
     return _rename_columns(frame, rename_map, lib)
 ```
@@ -1554,7 +1554,7 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "Stint",                   # Stint number (float, nullable)
     "PitOutTime",              # Pit out time (timedelta)
     "PitInTime",               # Pit in time (timedelta)
-    
+
     # Sector times
     "Sector1Time",             # Sector 1 time (timedelta)
     "Sector2Time",             # Sector 2 time (timedelta)
@@ -1562,19 +1562,19 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "Sector1SessionTime",      # Session time at S1 end (timedelta)
     "Sector2SessionTime",      # Session time at S2 end (timedelta)
     "Sector3SessionTime",      # Session time at S3 end (timedelta)
-    
+
     # Speed traps
     "SpeedI1",                 # Speed trap 1 (km/h)
     "SpeedI2",                 # Speed trap 2 (km/h)
     "SpeedFL",                 # Finish line speed (km/h)
     "SpeedST",                 # Speed trap (km/h)
-    
+
     # Tire information
     "IsPersonalBest",          # Personal best lap flag
     "Compound",                # Tire compound (category)
     "TyreLife",                # Tire age in laps
     "FreshTyre",               # Fresh tire flag
-    
+
     # Metadata
     "Team",                    # Team name (category)
     "LapStartTime",            # Lap start time (timedelta)
@@ -1585,7 +1585,7 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "DeletedReason",           # Deletion reason (string)
     "FastF1Generated",         # FastF1 generated flag
     "IsAccurate",              # Accuracy flag
-    
+
     # Weather data (per-lap)
     "WeatherTime",             # Weather sample time (timedelta)
     "AirTemp",                 # Air temperature (°C)
@@ -1595,7 +1595,7 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "TrackTemp",               # Track temperature (°C)
     "WindDirection",           # Wind direction (degrees)
     "WindSpeed",               # Wind speed (m/s)
-    
+
     # tif1-specific columns
     "LapTimeSeconds",          # Lap time in seconds (float)
     "QualifyingSession",       # Qualifying session (Q1/Q2/Q3)

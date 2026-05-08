@@ -96,55 +96,55 @@ def get_session(
 
 <ParamField path="year" type="int" required>
   Season year (2018-current). Must be within the supported range.
-  
+
   **Valid range**: 2018 to current season
-  
+
   **Example**: `2024`, `2025`
 </ParamField>
 
 <ParamField path="gp" type="str | int" required>
   Grand Prix identifier. Can be specified in multiple ways:
-  
+
   - **Full name**: `"Monaco Grand Prix"`, `"British Grand Prix"`
   - **Abbreviated name**: `"Monaco"`, `"Silverstone"` (uses fuzzy matching)
   - **Round number**: `6`, `12` (1-indexed, based on calendar order)
-  
+
   The function automatically resolves abbreviated names and round numbers to the official event name.
-  
+
   **Example**: `"Monaco Grand Prix"`, `"Monaco"`, `6`
 </ParamField>
 
 <ParamField path="session" type="str | int" required>
   Session identifier. Can be specified as:
-  
+
   - **Full name**: `"Practice 1"`, `"Qualifying"`, `"Race"`
   - **Abbreviated**: `"FP1"`, `"FP2"`, `"FP3"`, `"Q"`, `"S"` (Sprint), `"R"`
   - **Session number**: `1` (Practice 1), `2` (Practice 2), `3` (Practice 3), `4` (Qualifying), `5` (Race)
-  
+
   Session numbers are 1-indexed and follow the weekend schedule order.
-  
+
   **Example**: `"Qualifying"`, `"Q"`, `4`
 </ParamField>
 
 <ParamField path="enable_cache" type="bool | None" default="None">
   Enable or disable caching for this session.
-  
+
   - `True`: Enable caching (recommended for production)
   - `False`: Disable caching (useful for testing or forcing fresh data)
   - `None`: Use global config value (default behavior)
-  
+
   **Caching behavior**: When enabled, all fetched data (laps, telemetry, weather, messages) is stored in a local SQLite database. Subsequent access to the same data reads from cache instead of making network requests.
-  
+
   **Cache location**: `~/.tif1/cache/tif1_cache.db`
 </ParamField>
 
 <ParamField path="lib" type="Literal['pandas', 'polars'] | None" default="None">
   DataFrame library choice for data representation.
-  
+
   - `"pandas"`: Use pandas DataFrames (default, maximum compatibility)
   - `"polars"`: Use polars DataFrames (faster for large datasets, requires `polars` package)
   - `None`: Use global config value (defaults to `"pandas"`)
-  
+
   **Performance note**: Polars can be significantly faster for large datasets (10-100x for some operations), but requires the `polars` package to be installed. If polars is requested but not available, tif1 automatically falls back to pandas with a warning.
 </ParamField>
 
@@ -244,7 +244,7 @@ except NetworkError as e:
   ```python
   # ✅ Concise and readable
   session = tif1.get_session(2024, "Monaco", "Q")
-  
+
   # ❌ Verbose
   session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
   ```
@@ -281,11 +281,11 @@ Session(
 
 <Warning>
   **Direct Construction Not Recommended**: Use `get_session()` instead of constructing `Session` directly. The `get_session()` function handles name normalization, validation, and ensures the session exists before creating the object.
-  
+
   ```python
   # ✅ Recommended
   session = tif1.get_session(2024, "Monaco", "Race")
-  
+
   # ❌ Not recommended (no validation)
   session = Session(2024, "Monaco_Grand_Prix", "Race")
   ```
@@ -299,7 +299,7 @@ Session(
 
 <ParamField path="gp" type="str" required>
   URL-encoded Grand Prix name (e.g., `"Monaco_Grand_Prix"`). Spaces should be replaced with underscores or `%20`.
-  
+
   **Note**: `get_session()` handles this encoding automatically.
 </ParamField>
 

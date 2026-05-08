@@ -360,11 +360,11 @@ payload = {
             "events": ["Bahrain Grand Prix", "Belgian Grand Prix"],
             "sessions": {
                 "Bahrain Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ],
                 "Belgian Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ]
             }
@@ -413,7 +413,7 @@ except InvalidDataError as e:
     print(f"✗ Validation failed!")
     print(f"  Error: {e.message}")
     print(f"  Reason: {e.context.get('reason')}")
-    
+
     # You can also access the full context
     print(f"  Full context: {e.context}")
 
@@ -437,11 +437,11 @@ multi_year_payload = {
             "events": ["Bahrain Grand Prix", "Abu Dhabi Grand Prix"],
             "sessions": {
                 "Bahrain Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ],
                 "Abu Dhabi Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ]
             }
@@ -450,11 +450,11 @@ multi_year_payload = {
             "events": ["Bahrain Grand Prix", "Saudi Arabian Grand Prix"],
             "sessions": {
                 "Bahrain Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ],
                 "Saudi Arabian Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ]
             }
@@ -463,15 +463,15 @@ multi_year_payload = {
             "events": ["Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix"],
             "sessions": {
                 "Bahrain Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ],
                 "Saudi Arabian Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ],
                 "Australian Grand Prix": [
-                    "Practice 1", "Practice 2", "Practice 3", 
+                    "Practice 1", "Practice 2", "Practice 3",
                     "Qualifying", "Race"
                 ]
             }
@@ -588,7 +588,7 @@ from tif1.exceptions import InvalidDataError
 def load_and_validate_schedule(payload):
     """
     Attempt to validate a schedule payload with error recovery.
-    
+
     Returns:
         tuple: (success: bool, validated_payload or error_message)
     """
@@ -880,7 +880,7 @@ Sprint weekends have a different structure:
   **Sprint Format Evolution**: The sprint weekend format has evolved over the years:
   - **2021-2022**: Used "Sprint Qualifying" (later renamed to just "Sprint")
   - **2023+**: Introduced "Sprint Shootout" as a separate qualifying session for the Sprint race
-  
+
   tif1 handles these variations automatically through backward compatibility logic in the `Event.get_session_name()` method.
 </Info>
 
@@ -1171,10 +1171,10 @@ from tif1.exceptions import InvalidDataError
 def load_custom_schedule(file_path):
     """Load and validate a custom schedule file."""
     import json
-    
+
     with open(file_path) as f:
         payload = json.load(f)
-    
+
     # Validate immediately after loading
     try:
         validated = validate_schedule_payload(payload)
@@ -1249,13 +1249,13 @@ from tif1.exceptions import InvalidDataError
 
 def process_schedule_pipeline(raw_data):
     """Process schedule data with validation gates."""
-    
+
     # Stage 1: Parse raw data
     parsed = parse_raw_schedule(raw_data)
-    
+
     # Stage 2: Transform to internal format
     transformed = transform_to_internal_format(parsed)
-    
+
     # Stage 3: Validate (quality gate)
     try:
         validated = validate_schedule_payload(transformed)
@@ -1263,7 +1263,7 @@ def process_schedule_pipeline(raw_data):
         # Log validation failure and halt pipeline
         logger.error(f"Schedule validation failed: {e.message}")
         raise
-    
+
     # Stage 4: Cache and return (only if validation passed)
     cache_schedule(validated)
     return validated
@@ -1346,7 +1346,7 @@ except InvalidDataError as e:
     print(f"Message: {e.message}")
     print(f"Reason: {e.context.get('reason')}")
     print(f"Full Context: {e.context}")
-    
+
     # Check for specific error patterns
     if "schema version" in e.message.lower():
         print("→ Schema version issue detected")
@@ -1371,7 +1371,7 @@ def load_schedule_with_fallback(primary_payload, fallback_payload):
     except InvalidDataError as e:
         logger.warning(f"Primary payload validation failed: {e.message}")
         logger.info("Attempting fallback payload...")
-        
+
         try:
             return validate_schedule_payload(fallback_payload)
         except InvalidDataError as e2:
@@ -1421,14 +1421,14 @@ def validate_with_custom_errors(payload, context_info):
     except InvalidDataError as e:
         # Transform technical error into user-friendly message
         user_message = _create_user_friendly_message(e, context_info)
-        
+
         # Re-raise with custom message but preserve original error
         raise ValueError(user_message) from e
 
 def _create_user_friendly_message(error, context):
     """Convert technical validation error to user-friendly message."""
     reason = error.context.get("reason", "")
-    
+
     if "schema version" in reason.lower():
         return (
             f"The schedule file format is not supported. "
@@ -1493,16 +1493,16 @@ def debug_validate(payload):
     """Validate with detailed debugging output."""
     print("=== Payload Structure ===")
     print(json.dumps(payload, indent=2))
-    
+
     print("\n=== Validation Checks ===")
-    
+
     # Check 1: Type
     print(f"1. Payload type: {type(payload).__name__}")
     if not isinstance(payload, dict):
         print("   ✗ FAIL: Must be dict")
         return
     print("   ✓ PASS")
-    
+
     # Check 2: Schema version
     version = payload.get("schema_version")
     print(f"2. Schema version: {version}")
@@ -1510,7 +1510,7 @@ def debug_validate(payload):
         print(f"   ✗ FAIL: Must be 1, got {version}")
         return
     print("   ✓ PASS")
-    
+
     # Check 3: Years
     years = payload.get("years")
     print(f"3. Years type: {type(years).__name__}")
@@ -1518,24 +1518,24 @@ def debug_validate(payload):
         print("   ✗ FAIL: Must be dict")
         return
     print(f"   ✓ PASS ({len(years)} years)")
-    
+
     # Check 4: Each year
     for year_key, year_data in years.items():
         print(f"\n4. Year '{year_key}':")
         print(f"   - Key format: {'✓' if year_key.isdigit() else '✗'}")
         print(f"   - Value type: {type(year_data).__name__}")
-        
+
         if isinstance(year_data, dict):
             events = year_data.get("events", [])
             sessions = year_data.get("sessions", {})
             print(f"   - Events: {len(events)} items")
             print(f"   - Sessions: {len(sessions)} mappings")
-            
+
             # Check event-session consistency
             for event in events:
                 has_sessions = event in sessions
                 print(f"     • '{event}': {'✓' if has_sessions else '✗ MISSING SESSIONS'}")
-    
+
     print("\n=== Running Validation ===")
     try:
         validate_schedule_payload(payload)
@@ -1560,7 +1560,7 @@ def compare_payloads(test_payload, reference_payload):
         ignore_order=True,
         view='tree'
     )
-    
+
     if diff:
         print("=== Structural Differences ===")
         print(json.dumps(diff.to_dict(), indent=2))
@@ -1598,16 +1598,16 @@ def _load_schedule_payload():
     """Internal function that loads and validates schedule data."""
     # 1. Load vendored schedule files
     vendored_years = _load_vendored_f1schedule_years()
-    
+
     # 2. Construct payload
     payload = {
         "schema_version": 1,
         "years": vendored_years
     }
-    
+
     # 3. Validate before caching
     validated = validate_schedule_payload(payload)
-    
+
     # 4. Cache and return
     return validated
 ```
@@ -1773,13 +1773,13 @@ from tif1.exceptions import InvalidDataError
 def load_custom_schedule(file_path):
     """
     Load a custom schedule file and validate it.
-    
+
     Args:
         file_path: Path to JSON file containing schedule data
-        
+
     Returns:
         Validated schedule payload
-        
+
     Raises:
         InvalidDataError: If schedule data is invalid
         FileNotFoundError: If file doesn't exist
@@ -1788,13 +1788,13 @@ def load_custom_schedule(file_path):
     # Load JSON file
     with open(file_path, 'r', encoding='utf-8') as f:
         payload = json.load(f)
-    
+
     # Validate structure
     validated = validate_schedule_payload(payload)
-    
+
     print(f"✓ Loaded and validated schedule from {file_path}")
     print(f"  Years: {list(validated['years'].keys())}")
-    
+
     return validated
 
 # Usage
@@ -1820,10 +1820,10 @@ from tif1.schedule_schema import validate_schedule_payload
 def build_custom_schedule(years_data):
     """
     Build a schedule payload from structured data.
-    
+
     Args:
         years_data: Dict mapping years to (events, sessions) tuples
-        
+
     Returns:
         Validated schedule payload
     """
@@ -1831,13 +1831,13 @@ def build_custom_schedule(years_data):
         "schema_version": 1,
         "years": {}
     }
-    
+
     for year, (events, sessions) in years_data.items():
         payload["years"][str(year)] = {
             "events": events,
             "sessions": sessions
         }
-    
+
     # Validate before returning
     return validate_schedule_payload(payload)
 
@@ -1872,24 +1872,24 @@ from tif1.events import _load_schedule_payload
 def extend_schedule_with_custom_year(year, events, sessions):
     """
     Extend tif1's vendored schedule with a custom year.
-    
+
     Args:
         year: Year to add (int)
         events: List of event names
         sessions: Dict mapping event names to session lists
-        
+
     Returns:
         Extended and validated schedule payload
     """
     # Load existing schedule
     base_schedule = _load_schedule_payload()
-    
+
     # Add custom year
     base_schedule["years"][str(year)] = {
         "events": events,
         "sessions": sessions
     }
-    
+
     # Re-validate with new data
     return validate_schedule_payload(base_schedule)
 
@@ -1949,10 +1949,10 @@ def test_invalid_schedule_handling():
             }
         }
     }
-    
+
     with pytest.raises(InvalidDataError) as exc_info:
         validate_schedule_payload(invalid_payload)
-    
+
     assert "Invalid session list" in str(exc_info.value)
 ```
 
@@ -2051,7 +2051,7 @@ The conversion from raw to internal format happens in `_convert_f1schedule_year(
 def _convert_f1schedule_year(raw_year: dict, year: int) -> dict:
     """
     Convert raw f1schedule columnar format to internal event-centric format.
-    
+
     Process:
     1. Extract column data (event_name, round_number, sessions, etc.)
     2. Iterate through indices to build event list
@@ -2122,11 +2122,11 @@ def validate_schedule_payload(payload):
     # Check 1: Type
     if not isinstance(payload, dict):
         raise InvalidDataError(...)  # Stop here
-    
+
     # Check 2: Schema version
     if payload.get("schema_version") != 1:
         raise InvalidDataError(...)  # Stop here
-    
+
     # ... more checks
 ```
 
@@ -2167,11 +2167,11 @@ def validate_schedule_with_business_rules(payload):
     """
     # First, run standard validation
     validated = validate_schedule_payload(payload)
-    
+
     # Then, add custom rules
     for year_str, year_data in validated["years"].items():
         year = int(year_str)
-        
+
         # Rule 1: Modern seasons must have at least 15 events
         if year >= 2020:
             events = year_data.get("events", [])
@@ -2179,7 +2179,7 @@ def validate_schedule_with_business_rules(payload):
                 raise InvalidDataError(
                     reason=f"Year {year} has only {len(events)} events (minimum 15 required)"
                 )
-        
+
         # Rule 2: All events must have at least 3 sessions
         sessions = year_data.get("sessions", {})
         for event, session_list in sessions.items():
@@ -2187,14 +2187,14 @@ def validate_schedule_with_business_rules(payload):
                 raise InvalidDataError(
                     reason=f"Event '{event}' in {year} has only {len(session_list)} sessions"
                 )
-        
+
         # Rule 3: Race session must exist for all events
         for event, session_list in sessions.items():
             if "Race" not in session_list:
                 raise InvalidDataError(
                     reason=f"Event '{event}' in {year} missing 'Race' session"
                 )
-    
+
     return validated
 ```
 
@@ -2234,19 +2234,19 @@ from tif1.exceptions import InvalidDataError
 
 class ScheduleValidationPipeline:
     """Pipeline for multi-stage schedule validation."""
-    
+
     def __init__(self):
         self.validators = []
-    
+
     def add_validator(self, validator_func, name=None):
         """Add a validation function to the pipeline."""
         self.validators.append((name or validator_func.__name__, validator_func))
         return self
-    
+
     def validate(self, payload):
         """Run all validators in sequence."""
         current = payload
-        
+
         for name, validator in self.validators:
             try:
                 current = validator(current)
@@ -2254,7 +2254,7 @@ class ScheduleValidationPipeline:
             except InvalidDataError as e:
                 print(f"✗ {name} failed: {e.message}")
                 raise
-        
+
         return current
 
 # Usage
@@ -2282,50 +2282,50 @@ from tif1.exceptions import InvalidDataError
 def migrate_schedule_to_v1(payload):
     """
     Migrate schedule payload to schema version 1.
-    
+
     Handles:
     - Version 0 (hypothetical legacy format)
     - Version 1 (current format)
     - Version 2 (future format - downgrades to v1)
     """
     version = payload.get("schema_version")
-    
+
     if version == 1:
         # Already v1, just validate
         return validate_schedule_payload(payload)
-    
+
     elif version == 0:
         # Migrate from v0 to v1
         migrated = {
             "schema_version": 1,
             "years": {}
         }
-        
+
         # Migration logic here
         for year, data in payload.get("schedule", {}).items():
             migrated["years"][str(year)] = {
                 "events": data.get("event_list", []),
                 "sessions": data.get("session_map", {})
             }
-        
+
         return validate_schedule_payload(migrated)
-    
+
     elif version == 2:
         # Downgrade from v2 to v1 (strip v2-specific fields)
         downgraded = {
             "schema_version": 1,
             "years": {}
         }
-        
+
         for year, data in payload.get("years", {}).items():
             downgraded["years"][year] = {
                 "events": data.get("events", []),
                 "sessions": data.get("sessions", {}),
                 # Omit v2-specific fields like "circuits", "weather", etc.
             }
-        
+
         return validate_schedule_payload(downgraded)
-    
+
     else:
         raise InvalidDataError(
             reason=f"Cannot migrate from unsupported schema version: {version}"
@@ -2394,7 +2394,7 @@ try:
 except InvalidDataError as e:
     print(f"Error: {e.message}")
     print(f"Context: {e.context}")
-    
+
     # Inspect payload at failure point
     import json
     print("\nPayload structure:")
@@ -2447,7 +2447,7 @@ try:
     print("✓ Schedule validation successful!")
     print(f"  Years: {list(validated['years'].keys())}")
     print(f"  Events in 2021: {len(validated['years']['2021']['events'])}")
-    
+
     for event in validated['years']['2021']['events']:
         sessions = validated['years']['2021']['sessions'][event]
         print(f"  • {event}: {len(sessions)} sessions")
@@ -2471,50 +2471,50 @@ from tif1.exceptions import InvalidDataError
 def load_schedule_file(file_path: str | Path) -> dict:
     """
     Load and validate a schedule JSON file.
-    
+
     Args:
         file_path: Path to the JSON file
-        
+
     Returns:
         Validated schedule payload
-        
+
     Raises:
         FileNotFoundError: If file doesn't exist
         json.JSONDecodeError: If file contains invalid JSON
         InvalidDataError: If schedule structure is invalid
     """
     file_path = Path(file_path)
-    
+
     # Check file exists
     if not file_path.exists():
         raise FileNotFoundError(f"Schedule file not found: {file_path}")
-    
+
     # Load JSON
     print(f"Loading schedule from {file_path}...")
     with open(file_path, 'r', encoding='utf-8') as f:
         payload = json.load(f)
-    
+
     # Validate
     print("Validating schedule structure...")
     validated = validate_schedule_payload(payload)
-    
+
     # Report success
     years = list(validated['years'].keys())
     total_events = sum(
         len(validated['years'][year]['events'])
         for year in years
     )
-    
+
     print(f"✓ Schedule loaded successfully")
     print(f"  Years: {', '.join(years)}")
     print(f"  Total events: {total_events}")
-    
+
     return validated
 
 # Usage
 try:
     schedule = load_schedule_file("my_schedule.json")
-    
+
     # Use the validated schedule
     for year in schedule['years']:
         events = schedule['years'][year]['events']
@@ -2543,13 +2543,13 @@ from tif1.exceptions import InvalidDataError
 
 class ScheduleBuilder:
     """Helper class for building valid schedule payloads."""
-    
+
     def __init__(self):
         self.payload = {
             "schema_version": 1,
             "years": {}
         }
-    
+
     def add_year(self, year: int):
         """Add a year to the schedule."""
         self.payload["years"][str(year)] = {
@@ -2558,27 +2558,27 @@ class ScheduleBuilder:
             "metadata": {}
         }
         return self
-    
+
     def add_event(self, year: int, event_name: str, sessions: list[str],
                   metadata: dict | None = None):
         """Add an event to a specific year."""
         year_str = str(year)
-        
+
         if year_str not in self.payload["years"]:
             self.add_year(year)
-        
+
         # Add to events list
         self.payload["years"][year_str]["events"].append(event_name)
-        
+
         # Add sessions
         self.payload["years"][year_str]["sessions"][event_name] = sessions
-        
+
         # Add metadata if provided
         if metadata:
             self.payload["years"][year_str]["metadata"][event_name] = metadata
-        
+
         return self
-    
+
     def build(self):
         """Build and validate the schedule."""
         return validate_schedule_payload(self.payload)
@@ -2586,7 +2586,7 @@ class ScheduleBuilder:
 # Usage
 try:
     builder = ScheduleBuilder()
-    
+
     # Add 2021 season
     builder.add_event(
         year=2021,
@@ -2598,7 +2598,7 @@ try:
             "Country": "Bahrain"
         }
     )
-    
+
     builder.add_event(
         year=2021,
         event_name="Belgian Grand Prix",
@@ -2609,7 +2609,7 @@ try:
             "Country": "Belgium"
         }
     )
-    
+
     # Add 2022 season
     builder.add_event(
         year=2022,
@@ -2621,10 +2621,10 @@ try:
             "Country": "Bahrain"
         }
     )
-    
+
     # Build and validate
     schedule = builder.build()
-    
+
     print("✓ Schedule built successfully!")
     for year in schedule['years']:
         events = schedule['years'][year]['events']
@@ -2703,7 +2703,7 @@ for name, schedule in [("2021 Sprint", sprint_2021), ("2023 Sprint", sprint_2023
         year = list(validated['years'].keys())[0]
         event = validated['years'][year]['events'][0]
         sessions = validated['years'][year]['sessions'][event]
-        
+
         print(f"✓ {name} format validated")
         print(f"  Event: {event}")
         print(f"  Sessions: {', '.join(sessions)}")
@@ -2794,7 +2794,7 @@ def validate_with_detailed_error_handling(payload):
     """
     try:
         validated = validate_schedule_payload(payload)
-        
+
         # Success - report details
         years = list(validated['years'].keys())
         total_events = sum(
@@ -2806,42 +2806,42 @@ def validate_with_detailed_error_handling(payload):
             for year in years
             for session_list in validated['years'][year]['sessions'].values()
         )
-        
+
         print("✓ Validation successful!")
         print(f"  Years: {len(years)} ({', '.join(years)})")
         print(f"  Total events: {total_events}")
         print(f"  Total sessions: {total_sessions}")
-        
+
         return validated
-        
+
     except InvalidDataError as e:
         # Detailed error analysis
         reason = e.context.get('reason', '')
-        
+
         print("✗ Validation failed!")
         print(f"  Error: {e.message}")
         print(f"  Reason: {reason}")
-        
+
         # Provide specific guidance based on error type
         if "schema version" in reason.lower():
             print("\n  💡 Fix: Set 'schema_version' to 1")
             print("     Example: {'schema_version': 1, 'years': {...}}")
-        
+
         elif "year key" in reason.lower():
             print("\n  💡 Fix: Use numeric string for year keys")
             print("     Example: '2021' not 2021 or 'twenty-one'")
-        
+
         elif "events list" in reason.lower():
             print("\n  💡 Fix: Ensure 'events' is a list of non-empty strings")
             print("     Example: 'events': ['Bahrain Grand Prix', 'Belgian Grand Prix']")
-        
+
         elif "session list" in reason.lower():
             print("\n  💡 Fix: Ensure every event has a session list")
             print("     Example: 'sessions': {'Event Name': ['Practice 1', 'Race']}")
-        
+
         else:
             print("\n  💡 Check the payload structure against the schema")
-        
+
         return None
 
 # Test cases

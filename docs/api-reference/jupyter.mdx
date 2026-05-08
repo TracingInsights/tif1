@@ -316,7 +316,7 @@ import tif1
 def display_session_with_fastest_lap(session):
     """Custom display showing session info + fastest lap."""
     fastest = session.get_fastest_laps(by_driver=False).iloc[0]
-    
+
     session_html = display_session_info(session)
     fastest_html = f"""
     <div style="border: 1px solid #4CAF50; padding: 10px; margin-top: 10px; border-radius: 5px;">
@@ -326,7 +326,7 @@ def display_session_with_fastest_lap(session):
         <p><strong>Lap:</strong> {fastest['LapNumber']}</p>
     </div>
     """
-    
+
     display(HTML(session_html + fastest_html))
 
 # Usage
@@ -421,18 +421,18 @@ def load_session_with_progress(year, gp, session_type):
     """Load session with detailed progress updates."""
     display(HTML("<div id='progress'>⏳ Creating session...</div>"))
     session = tif1.get_session(year, gp, session_type)
-    
+
     clear_output(wait=True)
     display(HTML("<div id='progress'>⏳ Loading laps...</div>"))
     session.load(laps=True, telemetry=False)
-    
+
     clear_output(wait=True)
     display(HTML("<div id='progress'>⏳ Loading weather...</div>"))
     session.load(weather=True)
-    
+
     clear_output(wait=True)
     display(HTML(f"<div id='progress'>✅ Complete! Loaded {len(session.laps)} laps</div>"))
-    
+
     return session
 
 session = load_session_with_progress(2021, "Belgian Grand Prix", "Race")
@@ -459,7 +459,7 @@ print(f"\n📊 {len(drivers_df)} drivers in session:\n")
 for driver_code in drivers_df["Driver"][:5]:
     driver = session.get_driver(driver_code)
     display(driver)
-    
+
     # Show fastest lap for each driver
     fastest = driver.get_fastest_lap()
     if not fastest.empty:
@@ -597,17 +597,17 @@ def on_driver_change(change):
     """Update display when driver selection changes."""
     with output:
         output.clear_output()
-        
+
         driver_code = change['new']
         driver = session.get_driver(driver_code)
-        
+
         # Display driver info
         display(driver)
-        
+
         # Get and display statistics
         driver_laps = driver.laps
         fastest = driver.get_fastest_lap()
-        
+
         if not fastest.empty:
             stats_html = f"""
             <div style="border: 1px solid #ddd; padding: 10px; margin-top: 10px; border-radius: 5px;">
@@ -677,19 +677,19 @@ def on_plot_click(b):
     """Generate plot when button clicked."""
     with output:
         output.clear_output(wait=True)
-        
+
         selected_drivers = driver_selector.value
         metric = metric_selector.value
-        
+
         if not selected_drivers:
             display(HTML("<p>⚠️ Please select at least one driver</p>"))
             return
-        
+
         # Create plot
         fig, ax = plt.subplots(figsize=(14, 7))
         colors = get_driver_color_mapping(session)
         laps = session.laps
-        
+
         for driver in selected_drivers:
             driver_laps = laps[laps["Driver"] == driver]
             if metric in driver_laps.columns:
@@ -702,13 +702,13 @@ def on_plot_click(b):
                     marker='o',
                     markersize=4
                 )
-        
+
         ax.set_xlabel("Lap Number")
         ax.set_ylabel(metric)
         ax.set_title(f"{metric} Comparison - 2021 Belgian Grand Prix")
         ax.legend()
         ax.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         plt.show()
 
@@ -771,7 +771,7 @@ def display_memory_usage():
     """Display current memory usage."""
     process = psutil.Process(os.getpid())
     mem_mb = process.memory_info().rss / 1024 / 1024
-    
+
     html = f"""
     <div style="border-left: 3px solid #FF9800; padding-left: 10px; margin: 10px 0;">
         <strong>Memory Usage:</strong> {mem_mb:.2f} MB
