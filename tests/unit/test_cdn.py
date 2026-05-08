@@ -262,8 +262,9 @@ class TestCDNManagerInit:
     def test_empty_list_falls_back_to_defaults(self):
         with patch("tif1.config.get_config", return_value=_StubConfig([])):
             manager = CDNManager()
-        assert len(manager.sources) == 1
-        assert manager.sources[0].name == "jsDelivr"
+        assert len(manager.sources) == 2
+        assert manager.sources[0].name == "StaticDelivr"
+        assert manager.sources[1].name == "jsDelivr"
 
     def test_trailing_slash_stripped(self):
         with patch(
