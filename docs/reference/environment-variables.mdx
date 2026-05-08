@@ -47,7 +47,7 @@ export TIF1_LIB=polars
 
 <Info>
   Default: `pandas`
-  
+
   Options: `pandas`, `polars`
 </Info>
 
@@ -63,7 +63,7 @@ export TIF1_CDNS='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://c
 
 <Info>
   Default: StaticDelivr (primary), jsDelivr (fallback)
-  
+
   The system tries CDNs in order and automatically falls back on failures.
 </Info>
 
@@ -77,7 +77,7 @@ export TIF1_CDN_USE_MINIFICATION=true
 
 <Info>
   Default: `false`
-  
+
   When enabled, requests `.min.json` files which are 20-40% smaller.
 </Info>
 
@@ -91,7 +91,7 @@ export TIF1_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/TracingInsights"
 
 <Warning>
   Only change this if you're hosting your own data mirror. Never use `raw.githubusercontent.com` due to rate limits.
-  
+
   Consider using `TIF1_CDNS` for multi-CDN support with automatic fallback.
 </Warning>
 
@@ -129,7 +129,7 @@ export TIF1_RETRY_BACKOFF=2.0
 
 <Info>
   Default: `1.5`
-  
+
   Formula: `delay = base_delay * (backoff ^ attempt)`
 </Info>
 
@@ -171,7 +171,7 @@ export TIF1_LOG_LEVEL=DEBUG
 
 <Info>
   Default: `INFO`
-  
+
   Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 </Info>
 
@@ -199,7 +199,7 @@ export TIF1_ASYNC_WORKERS=20
 
 <Info>
   Default: `10`
-  
+
   Higher values = more parallelism but more memory usage
 </Info>
 
