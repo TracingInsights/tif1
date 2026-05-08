@@ -39,5 +39,5 @@ plt.suptitle(f"{session.event['EventName']} {session.event.year} - Throttle Map"
 plt.tight_layout()
 
 # Save
-plt.savefig("docs/assets/track_throttle_map.png", dpi=300, bbox_inches="tight")
+plt.savefig("assets/track_throttle_map.png", dpi=300, bbox_inches="tight")
 print("Generated track_throttle_map.png")

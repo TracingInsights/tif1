@@ -36,9 +36,17 @@ keywords:
   </Step>
   <Step title="Install Optional Extras">
     Enhance `tif1` with high-performance backends:
-    ```bash
-
-    ```
+    <CodeGroup>
+      ```bash pip
+      pip install tif1[polars]
+      ```
+      ```bash uv
+      uv add tif1[polars]
+      ```
+      ```bash poetry
+      poetry add tif1[polars]
+      ```
+    </CodeGroup>
   </Step>
   <Step title="Verify Installation">
     Run a quick check to ensure everything is working:

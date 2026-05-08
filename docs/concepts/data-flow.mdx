@@ -2510,7 +2510,7 @@ Choose the right backend for your use case to maximize performance.
 - You need compatibility with existing pandas code
 - You're using libraries that require pandas (matplotlib, seaborn, etc.)
 - You need mutable DataFrames (in-place operations)
-- Dataset is small (<10k rows)
+- Dataset is small (&lt;10k rows)
 - You need the full pandas ecosystem
 
 **Use Polars When:**
@@ -2730,7 +2730,7 @@ telemetries = session.get_fastest_laps_telemetry(by_driver=True)
 **Combined Impact:**
 - Cold start: ~3s
 - Warm start: ~30ms (100x faster)
-- Hot start: <1ms (3000x faster)
+- Hot start: &lt;1ms (3000x faster)
 - Memory usage: 50-70% reduction vs naive implementation
 
 ## Comprehensive Error Handling

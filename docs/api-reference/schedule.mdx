@@ -106,7 +106,7 @@ The schedule validation system sits at a critical junction in tif1's data pipeli
 
 2. **Single Validation Point**: All schedule data, regardless of source, passes through the same validation function, ensuring consistent quality standards.
 
-3. **Performance Optimization**: Validation is designed to be extremely fast (typically <1ms) and runs only once per session due to aggressive caching.
+3. **Performance Optimization**: Validation is designed to be extremely fast (typically &lt;1ms) and runs only once per session due to aggressive caching.
 
 4. **Detailed Error Reporting**: When validation fails, the system provides specific, actionable error messages that pinpoint exactly what went wrong and where.
 
@@ -131,7 +131,7 @@ The validation system checks multiple aspects of schedule data:
 The validation system is optimized for production use:
 
 - **Time Complexity**: O(n × m) where n = number of years, m = average events per year
-- **Typical Runtime**: <1ms for standard multi-year schedules (5-10 years)
+- **Typical Runtime**: &lt;1ms for standard multi-year schedules (5-10 years)
 - **Memory Overhead**: Minimal; validates in-place without copying data structures
 - **Caching Strategy**: Results cached via `@lru_cache`; validation runs once per Python session
 - **Scalability**: Handles schedules with 20+ events per year efficiently
@@ -2904,7 +2904,7 @@ The `schedule_schema` module provides the foundational validation layer for tif1
 - **Schema Version 1**: Currently the only supported version
 - **Event-Centric Structure**: Internal format optimized for fast event/session lookups
 - **Fail-Fast Validation**: Stops at first error with detailed error messages
-- **Performance Optimized**: Typically <1ms validation time, cached results
+- **Performance Optimized**: Typically &lt;1ms validation time, cached results
 
 ### When to Use
 

@@ -35,7 +35,7 @@ Real-world performance improvements with caching enabled:
 
 - **First access (cold cache)**: 2-3 seconds (network fetch + processing)
 - **Second access (warm cache)**: 20-100ms (disk read + decompression)
-- **Third access (hot cache)**: <1ms (memory read)
+- **Third access (hot cache)**: &lt;1ms (memory read)
 - **Overall speedup**: 100-3000x for cached data
 
 For a typical analysis session accessing 5-10 race sessions with multiple data types, caching reduces total load time from **30-60 seconds to under 1 second**.
@@ -2950,7 +2950,7 @@ config.cache_metrics_interval = 300  # Export metrics every 5 minutes
 
     - **Cache size**: Alert when approaching limits
     - **Hit rate**: Alert when below threshold (70%)
-    - **Disk space**: Alert when low (<10% free)
+    - **Disk space**: Alert when low (&lt;10% free)
     - **Integrity**: Alert on corruption
     - **Performance**: Track access latency
     - **Errors**: Monitor cache operation failures
@@ -3280,7 +3280,7 @@ print(f"Cache % of disk: {cache_size_mb / (disk.total / 1024**2) * 100:.2f}%")
 
 # Recommendations
 if disk.free / disk.total < 0.1:
-    print("\n⚠️  Disk space critical (<10% free)")
+    print("\n⚠️  Disk space critical (&lt;10% free)")
     print("\nImmediate actions:")
     print("1. Clear old cache entries:")
     print("   cache.clear_old(days=30)")
@@ -3305,7 +3305,7 @@ if disk.free / disk.total < 0.1:
         print(f"New free space: {disk.free / (1024**3):.2f} GB")
 
 elif disk.free / disk.total < 0.2:
-    print("\n⚠️  Disk space low (<20% free)")
+    print("\n⚠️  Disk space low (&lt;20% free)")
     print("\nRecommended actions:")
     print("1. Enable automatic cleanup:")
     print("   config.cache_auto_cleanup = True")
@@ -3654,9 +3654,9 @@ session = tif1.get_session(2025, "Monaco", "Race")
 ### Next Steps
 
 - **Learn More**: Read the [Cache API Reference](/api-reference/cache) for detailed API documentation
-- **Optimize Performance**: Follow the [Performance Guide](/guides/performance) for optimization tips
-- **Deploy to Production**: See [Deployment Guide](/guides/deployment) for production best practices
-- **Monitor Cache**: Set up [Monitoring](/guides/monitoring) to track cache health
+- **Optimize Performance**: Follow the [Best Practices Guide](/guides/best-practices) for optimization tips
+- **Deploy to Production**: See [Caching Strategy](/concepts/caching-strategy) for production best practices
+- **Monitor Cache**: Set up monitoring to track cache health
 - **Get Help**: Join our [Discord](https://discord.gg/tif1) or [GitHub Discussions](https://github.com/tracinginsights/tif1/discussions)
 
 ### Additional Resources
@@ -3666,7 +3666,7 @@ session = tif1.get_session(2025, "Monaco", "Race")
     Complete API reference for cache operations
   </Card>
 
-  <Card title="Performance Guide" href="/guides/performance" icon="gauge-high">
+  <Card title="Best Practices" href="/guides/best-practices" icon="gauge-high">
     Optimize cache for maximum performance
   </Card>
 
@@ -3674,15 +3674,15 @@ session = tif1.get_session(2025, "Monaco", "Race")
     Understand tif1 architecture and data flow
   </Card>
 
-  <Card title="Configuration" href="/guides/configuration" icon="gear">
+  <Card title="Configuration" href="/reference/environment-variables" icon="gear">
     Configure cache for your use case
   </Card>
 
-  <Card title="Deployment" href="/guides/deployment" icon="server">
-    Deploy tif1 with caching in production
+  <Card title="Error Handling" href="/guides/error-handling" icon="server">
+    Handle errors and exceptions properly
   </Card>
 
-  <Card title="Troubleshooting" href="/guides/troubleshooting" icon="circle-question">
+  <Card title="Troubleshooting" href="/reference/troubleshooting" icon="circle-question">
     Solve common cache issues
   </Card>
 </CardGroup>

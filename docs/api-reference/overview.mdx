@@ -385,7 +385,7 @@ session = tif1.get_session(
 
 # Load only lap times for quick analysis (fastest)
 # Useful for: lap time analysis, strategy analysis, position tracking
-# Typical load time: 500ms - 1s (cold), <5ms (warm)
+# Typical load time: 500ms - 1s (cold), &lt;5ms (warm)
 session = tif1.get_session(
     2021, "Belgian Grand Prix", "Race",
     laps=True,
@@ -470,7 +470,7 @@ session = tif1.get_session(
 - **`laps` (bool)**: Load lap timing data
   - Includes: lap times, sector times, tire compounds, tire life, positions, pit stops
   - Size: ~50-200 KB per session (compressed)
-  - Load time: ~200-500ms (cold), <5ms (warm)
+  - Load time: ~200-500ms (cold), &lt;5ms (warm)
   - Required for: almost all analysis workflows
 
 - **`telemetry` (bool)**: Load high-frequency telemetry
@@ -485,14 +485,14 @@ session = tif1.get_session(
   - Includes: air temp, track temp, humidity, pressure, wind speed/direction, rainfall
   - Sampling rate: ~1 sample per minute
   - Size: ~5-10 KB per session
-  - Load time: ~100-200ms (cold), <5ms (warm)
+  - Load time: ~100-200ms (cold), &lt;5ms (warm)
   - Required for: understanding tire performance, strategy decisions
   - Optional for: pure lap time analysis
 
 - **`messages` (bool)**: Load race control messages
   - Includes: flags (yellow, red, green), safety cars, penalties, DRS status
   - Size: ~10-50 KB per session
-  - Load time: ~100-200ms (cold), <5ms (warm)
+  - Load time: ~100-200ms (cold), &lt;5ms (warm)
   - Required for: understanding race incidents, strategy impacts
   - Optional for: qualifying analysis, practice analysis
 
@@ -580,7 +580,7 @@ except ValueError as e:
 
 2. **Use cache effectively**: Don't use `force_reload` unless necessary
    ```python
-   # Cache hit: <5ms, Cache miss: 2-5 seconds
+   # Cache hit: &lt;5ms, Cache miss: 2-5 seconds
    session = tif1.get_session(2021, "Monaco", "Race")  # Uses cache
    ```
 
@@ -735,11 +735,11 @@ print(f"  {sprint['Session5']} - {sprint['Session5Date']}")  # Race
 def print_season_calendar(year):
     events = tif1.get_events(year)
     print(f"\n{year} Formula 1 World Championship Calendar\n")
-    print(f"{'Round':<6} {'Date':<12} {'Event':<30} {'Location':<20} {'Format':<10}")
+    print(f"{'Round':&lt;6} {'Date':&lt;12} {'Event':&lt;30} {'Location':&lt;20} {'Format':&lt;10}")
     print("-" * 80)
     for _, event in events.iterrows():
-        print(f"{event['RoundNumber']:<6} {event['EventDate']:<12} "
-              f"{event['EventName']:<30} {event['Location']:<20} {event['EventFormat']:<10}")
+        print(f"{event['RoundNumber']:&lt;6} {event['EventDate']:&lt;12} "
+              f"{event['EventName']:&lt;30} {event['Location']:&lt;20} {event['EventFormat']:&lt;10}")
 
 print_season_calendar(2024)
 
@@ -767,7 +767,7 @@ for year in range(2018, 2025):
 **Performance Notes:**
 
 - Schedule data is embedded in the package (no network I/O)
-- Load time: <1ms (reading from JSON files)
+- Load time: &lt;1ms (reading from JSON files)
 - Data size: ~10-20 KB per year
 - No caching needed (always instant)
 

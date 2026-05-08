@@ -99,7 +99,7 @@ The CLI is designed for multiple use cases and user personas:
 The CLI is optimized for speed and efficiency:
 
 - **First Request**: 2-10 seconds (network fetch + cache write)
-- **Cached Requests**: <1 second (local SQLite read)
+- **Cached Requests**: &lt;1 second (local SQLite read)
 - **Cache Benefit**: 5-10x faster for repeated queries
 - **Memory Efficient**: Streams data without loading entire datasets
 - **Network Optimized**: Uses CDN for fast global access
@@ -1574,7 +1574,7 @@ tif1 drivers 2024 "Japanese Grand Prix" "Practice 1"
 - First run requires network fetch (shows progress indicator)
 - Subsequent runs use cached data (much faster)
 - Loading time depends on session data size and network speed
-- Typical load time: 1-5 seconds (first run), <1 second (cached)
+- Typical load time: 1-5 seconds (first run), &lt;1 second (cached)
 
 **Important Notes:**
 - Driver codes are standardized three-letter abbreviations (e.g., VER, HAM, LEC)
@@ -1711,7 +1711,7 @@ tif1 fastest 2024 "Japanese Grand Prix" "Practice 2" -d NOR
 
 **Performance Notes:**
 - Loads complete lap data for the session (may take 2-10 seconds first time)
-- Cached data makes subsequent runs much faster (<1 second)
+- Cached data makes subsequent runs much faster (&lt;1 second)
 - Processing time increases with number of laps in session
 - Qualifying sessions are typically faster to load than races
 
@@ -1842,7 +1842,7 @@ Cache size grows based on:
 
 **Performance Impact:**
 
-- **Cache hit**: Data loads in <1 second (from disk)
+- **Cache hit**: Data loads in &lt;1 second (from disk)
 - **Cache miss**: Data loads in 2-10 seconds (from network)
 - **Cache benefit**: 5-10x faster load times for cached data
 
@@ -1989,7 +1989,7 @@ The command deletes:
 
 After clearing cache:
 - **First data load**: 2-10 seconds (network fetch)
-- **Subsequent loads**: <1 second (cached)
+- **Subsequent loads**: &lt;1 second (cached)
 - **Cache rebuild**: Automatic as you use commands
 
 **Safety Notes:**
@@ -2720,7 +2720,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
 
    # Second run is fast (cached)
-   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # &lt;1 second
    ```
 
 2. **Monitor cache size**:
@@ -3454,7 +3454,7 @@ echo "No regressions found"
    tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # 5 seconds
 
    # Second run is fast (cached)
-   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # <1 second
+   tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"  # &lt;1 second
    ```
 
 2. **Monitor Cache Size**

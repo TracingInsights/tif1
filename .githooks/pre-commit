@@ -1,9 +1,69 @@
 #!/usr/bin/env bash
-# Pre-commit hook to run prek checks on staged files
+# Pre-commit hook to run ruff checks on staged files
 # Works on Linux, macOS, WSL, and Windows (Git Bash)
 
 set -e
 
+# Get the repository root directory
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Detect if we're being called from Windows to a WSL repo
+# Check for \\wsl.localhost\ or /mnt/wsl/ patterns
+if [[ "$REPO_ROOT" == *"wsl.localhost"* ]] || [[ "$REPO_ROOT" == *"\\wsl"* ]]; then
+    echo "🔄 Detected Windows → WSL commit, delegating to WSL..."
+    
+    # Extract WSL path - convert \\wsl.localhost\Ubuntu\path to /path
+    WSL_PATH=$(echo "$REPO_ROOT" | sed 's|.*wsl.localhost[/\\][^/\\]*||' | sed 's|\\|/|g')
+    
+    # Get staged Python files
+    STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
+    
+    if [ -z "$STAGED_FILES" ]; then
+        echo "No Python files staged for commit."
+        exit 0
+    fi
+    
+    echo "Running ruff checks on staged files..."
+    echo "Files to check:"
+    echo "$STAGED_FILES"
+    echo ""
+    
+    # Convert newline-separated files to space-separated for proper passing
+    STAGED_FILES_ARGS=$(echo "$STAGED_FILES" | tr '\n' ' ')
+    
+    # Execute in WSL - use full path to uv if it's in a standard location
+    # Try common locations: ~/.cargo/bin/uv, /usr/local/bin/uv, or just 'uv' in PATH
+    wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff check $STAGED_FILES_ARGS"
+    CHECK_EXIT=$?
+    
+    if [ $CHECK_EXIT -ne 0 ]; then
+        echo ""
+        echo "❌ Ruff check failed!"
+        echo "To fix issues, run in WSL terminal:"
+        echo "  uv run ruff check --fix $STAGED_FILES_ARGS"
+        echo ""
+        echo "To bypass (not recommended): git commit --no-verify"
+        exit 1
+    fi
+    
+    wsl.exe bash -l -c "cd '$WSL_PATH' && (command -v uv > /dev/null 2>&1 || export PATH=\"\$HOME/.cargo/bin:\$PATH\") && uv run ruff format --check $STAGED_FILES_ARGS"
+    FORMAT_EXIT=$?
+    
+    if [ $FORMAT_EXIT -ne 0 ]; then
+        echo ""
+        echo "❌ Ruff format check failed!"
+        echo "To fix formatting, run in WSL terminal:"
+        echo "  uv run ruff format $STAGED_FILES_ARGS"
+        echo ""
+        echo "To bypass (not recommended): git commit --no-verify"
+        exit 1
+    fi
+    
+    echo "✅ All ruff checks passed!"
+    exit 0
+fi
+
+# Native execution (Linux, macOS, or Git Bash on Windows)
 # Get list of staged Python files
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
 
@@ -12,43 +72,27 @@ if [ -z "$STAGED_FILES" ]; then
     exit 0
 fi
 
-echo "Running prek checks on staged files..."
+echo "Running ruff checks on staged files..."
 echo "Files to check:"
 echo "$STAGED_FILES"
 echo ""
-
-# Get the repository root directory
-REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Normalize path for different environments
 normalize_path() {
     local path="$1"
     
-    # Check if we're in WSL and path starts with \\wsl.localhost\
-    if [[ "$path" == \\\\wsl.localhost\\* ]]; then
-        # Convert \\wsl.localhost\Ubuntu\path\to\repo to /path/to/repo
-        path=$(echo "$path" | sed 's|\\\\wsl.localhost\\[^\\]*||' | sed 's|\\|/|g')
-    # Check if we're in Git Bash on Windows (path starts with /c/ or similar)
-    elif [[ "$path" =~ ^/[a-z]/ ]]; then
-        # Path is already in Unix format for Git Bash, keep it
-        path="$path"
+    # Check if path starts with /c/ or similar (Git Bash)
+    if [[ "$path" =~ ^/[a-z]/ ]]; then
+        echo "$path"
     # Check if path contains backslashes (Windows path)
     elif [[ "$path" == *\\* ]]; then
-        # Convert backslashes to forward slashes
-        path=$(echo "$path" | sed 's|\\|/|g')
+        echo "$path" | sed 's|\\|/|g'
+    else
+        echo "$path"
     fi
-    
-    echo "$path"
 }
 
 REPO_ROOT=$(normalize_path "$REPO_ROOT")
-
-# Check if uv is available
-if ! command -v uv >/dev/null 2>&1; then
-    echo "⚠️  Warning: uv command not found."
-    echo "Please ensure uv is installed and in your PATH."
-    exit 1
-fi
 
 # Change to repo root
 cd "$REPO_ROOT" || {
@@ -56,29 +100,26 @@ cd "$REPO_ROOT" || {
     exit 1
 }
 
-# Check if virtual environment exists
-if [ ! -d ".venv" ]; then
-    echo "⚠️  Virtual environment not found. Creating it..."
-    uv sync --all-extras || {
-        echo "❌ Failed to create virtual environment"
-        exit 1
-    }
+# Check if uv is available
+if ! command -v uv &> /dev/null; then
+    echo "⚠️  uv not found in PATH."
+    echo "Please install uv: https://docs.astral.sh/uv/getting-started/installation/"
+    exit 1
 fi
 
-# Run prek with explicit Python from venv to avoid path issues
-# Use --isolated to prevent uv from trying to modify the environment
-export UV_NO_SYNC=1
-uv run --isolated prek run --stage pre-commit
+# Run ruff check on staged files using uv run
+echo "🔍 Running ruff check..."
+uv run ruff check $STAGED_FILES
 
-PREK_EXIT_CODE=$?
+RUFF_CHECK_EXIT_CODE=$?
 
-if [ $PREK_EXIT_CODE -ne 0 ]; then
+if [ $RUFF_CHECK_EXIT_CODE -ne 0 ]; then
     echo ""
     echo "❌ Pre-commit hook failed!"
-    echo "Prek found issues in your staged files."
+    echo "Ruff found linting issues in your staged files."
     echo ""
-    echo "To fix issues, run from the repository root:"
-    echo "  uv run prek run"
+    echo "To fix issues automatically, run:"
+    echo "  uv run ruff check --fix $STAGED_FILES"
     echo ""
     echo "Then stage the fixed files and commit again."
     echo ""
@@ -87,5 +128,26 @@ if [ $PREK_EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ All prek checks passed!"
+# Run ruff format check on staged files
+echo "🎨 Running ruff format check..."
+uv run ruff format --check $STAGED_FILES
+
+RUFF_FORMAT_EXIT_CODE=$?
+
+if [ $RUFF_FORMAT_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ Pre-commit hook failed!"
+    echo "Ruff found formatting issues in your staged files."
+    echo ""
+    echo "To fix formatting, run:"
+    echo "  uv run ruff format $STAGED_FILES"
+    echo ""
+    echo "Then stage the fixed files and commit again."
+    echo ""
+    echo "To bypass this hook (not recommended), use:"
+    echo "  git commit --no-verify"
+    exit 1
+fi
+
+echo "✅ All ruff checks passed!"
 exit 0

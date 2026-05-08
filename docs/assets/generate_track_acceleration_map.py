@@ -45,5 +45,5 @@ plt.suptitle(f"{session.event['EventName']} {session.event.year} - Acceleration 
 plt.tight_layout()
 
 # Save
-plt.savefig("docs/assets/track_acceleration_map.png", dpi=300, bbox_inches="tight")
+plt.savefig("assets/track_acceleration_map.png", dpi=300, bbox_inches="tight")
 print("Generated track_acceleration_map.png")

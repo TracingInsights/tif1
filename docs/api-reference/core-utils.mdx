@@ -429,7 +429,7 @@ Deserialize JSON payload to Python object using accelerated orjson codec with au
 - **Time complexity**: O(n) where n is the payload size
 - **Memory overhead**: Minimal (orjson uses efficient allocation)
 - **Typical performance**:
-  - Small payloads (<1KB): ~10μs
+  - Small payloads (&lt;1KB): ~10μs
   - Medium payloads (100KB): ~2ms
   - Large payloads (10MB): ~180ms
 
@@ -557,7 +557,7 @@ Serialize Python object to JSON string using accelerated orjson codec with autom
 - **Time complexity**: O(n) where n is the data size
 - **Memory overhead**: Minimal (efficient string building)
 - **Typical performance**:
-  - Small objects (<1KB): ~5μs
+  - Small objects (&lt;1KB): ~5μs
   - Medium objects (100KB): ~1ms
   - Large objects (10MB): ~100ms
 
@@ -785,7 +785,7 @@ Validate that a year is within the supported range for F1 data. This function is
 
 **Performance:**
 - **Time complexity**: O(1) - simple integer comparison
-- **Typical execution**: <1μs
+- **Typical execution**: &lt;1μs
 
 **Example - Basic Validation:**
 ```python
@@ -851,7 +851,7 @@ Validate that a drivers list parameter is well-formed and contains valid driver 
 
 **Performance:**
 - **Time complexity**: O(n) where n is the number of drivers
-- **Typical execution**: <10μs for 20 drivers
+- **Typical execution**: &lt;10μs for 20 drivers
 
 **Example - Valid Driver Lists:**
 ```python
@@ -945,7 +945,7 @@ Validate that a lap number is a positive integer. Lap numbers in F1 start from 1
 
 **Performance:**
 - **Time complexity**: O(1) - simple type check and comparison
-- **Typical execution**: <1μs
+- **Typical execution**: &lt;1μs
 
 **Example - Valid Lap Numbers:**
 ```python
@@ -1032,7 +1032,7 @@ Validate that a string parameter is non-empty and properly formatted. This gener
 
 **Performance:**
 - **Time complexity**: O(n) where n is the string length (for whitespace check)
-- **Typical execution**: <5μs for typical parameter lengths
+- **Typical execution**: &lt;5μs for typical parameter lengths
 
 **Example - Valid String Parameters:**
 ```python
@@ -1126,7 +1126,7 @@ URL-encode a string component for safe use in CDN URLs. This function properly e
 - **Time complexity**: O(n) for first call, O(1) for cached calls
 - **Typical execution**:
   - First call: ~10μs
-  - Cached call: <1μs (cache lookup)
+  - Cached call: &lt;1μs (cache lookup)
 
 **Example - Basic URL Encoding:**
 ```python
@@ -1181,7 +1181,7 @@ result2 = _encode_url_component("Belgian Grand Prix")
 cached_call_time = time.perf_counter() - start
 
 print(f"First call:  {first_call_time * 1e6:.1f}μs")  # ~10μs
-print(f"Cached call: {cached_call_time * 1e6:.1f}μs")  # <1μs
+print(f"Cached call: {cached_call_time * 1e6:.1f}μs")  # &lt;1μs
 print(f"Speedup:     {first_call_time / cached_call_time:.0f}x")  # ~10-20x
 ```
 
@@ -1241,7 +1241,7 @@ The function uses a multi-layered approach to handle various DataFrame types:
 
 **Performance:**
 - **Time complexity**: O(1) - all checks are constant time
-- **Typical execution**: <1μs
+- **Typical execution**: &lt;1μs
 
 **Example - Basic Usage:**
 ```python
@@ -1326,7 +1326,7 @@ Create an empty DataFrame for the specified backend. This function provides a co
 
 **Performance:**
 - **Time complexity**: O(1) - creates empty structure
-- **Typical execution**: <10μs
+- **Typical execution**: &lt;10μs
 
 **Example - Basic Usage:**
 ```python
@@ -1571,7 +1571,7 @@ Rename DataFrame columns based on a mapping dictionary, with intelligent handlin
 **Performance:**
 - **Time complexity**: O(n) where n is the number of columns
 - **Memory overhead**: Minimal (column metadata only, no data copy)
-- **Typical execution**: <1ms for typical DataFrames
+- **Typical execution**: &lt;1ms for typical DataFrames
 
 **Example - Basic Column Renaming:**
 ```python
