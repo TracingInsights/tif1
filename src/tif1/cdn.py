@@ -23,6 +23,9 @@ class CDNSource:
     def format_url(self, year: int, gp: str, session: str, path: str) -> str:
         """Format URL for this CDN with optional minification support.
 
+        Both jsDelivr and StaticDelivr use the same URL format:
+        https://cdn.{service}.{com|net}/gh/user/repo@branch/path
+
         jsDelivr supports automatic minification by appending .min before the extension.
         This can reduce file sizes by 20-40% for JSON files.
         """
@@ -33,13 +36,14 @@ class CDNSource:
 
 
 class CDNManager:
-    """Manage multiple CDN sources with fallback."""
+    """Manage multiple CDN sources with fallback and rate limiting."""
 
     def __init__(self):
         from .config import get_config
 
         config = get_config()
         default_sources = [
+            "https://cdn.staticdelivr.com/gh/TracingInsights",
             "https://cdn.jsdelivr.net/gh/TracingInsights",
         ]
         configured_sources = config.get("cdns", default_sources) or default_sources
@@ -69,9 +73,15 @@ class CDNManager:
             logger.warning("No valid CDNs configured, using defaults")
             self.sources = [
                 CDNSource(
-                    name="jsDelivr",
+                    name="StaticDelivr",
                     base_url=default_sources[0],
                     priority=1,
+                    use_minification=use_minification,
+                ),
+                CDNSource(
+                    name="jsDelivr",
+                    base_url=default_sources[1],
+                    priority=2,
                     use_minification=use_minification,
                 ),
             ]
@@ -83,6 +93,8 @@ class CDNManager:
     def _name_for_url(base_url: str, index: int) -> str:
         if "jsdelivr" in base_url:
             return "jsDelivr"
+        if "staticdelivr" in base_url:
+            return "StaticDelivr"
         return f"CDN {index}"
 
     def add_source(self, source: CDNSource):
