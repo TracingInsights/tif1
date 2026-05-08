@@ -42,7 +42,7 @@ The events API empowers you to:
 
 The events module is built on several key design principles:
 
-1. **Performance-First**: Aggressive caching strategies ensure that schedule queries complete in <10ms after initial load. The module uses vendored JSON files for recent seasons and CDN fallback for historical data.
+1. **Performance-First**: Aggressive caching strategies ensure that schedule queries complete in &lt;10ms after initial load. The module uses vendored JSON files for recent seasons and CDN fallback for historical data.
 
 2. **Pandas Integration**: All data structures extend pandas DataFrame and Series, providing familiar interfaces while adding F1-specific methods. This enables seamless integration with the broader pandas ecosystem.
 
@@ -129,7 +129,7 @@ The function returns an `EventSchedule` object, which is a specialized pandas Da
 - **Caching**: Schedule data is cached in-memory after the first request. Subsequent calls for the same year return cached data instantly without network requests.
 - **Data Source**: Schedule data is fetched from the TracingInsights CDN (via jsdelivr) or loaded from vendored JSON files included with the package for recent seasons.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Use `get_event_schedule(year, include_testing=False)` if you want to exclude testing events.
-- **Performance**: This function is highly optimized and typically completes in <10ms for cached data or <200ms for initial CDN fetch.
+- **Performance**: This function is highly optimized and typically completes in &lt;10ms for cached data or &lt;200ms for initial CDN fetch.
 
 **Example Usage:**
 
@@ -738,7 +738,7 @@ The fuzzy matching algorithm uses Levenshtein distance and token-based matching 
 
 - **Match Scoring**: The fuzzy matcher assigns a similarity score to each event name. The event with the highest score above a threshold is returned. If no event scores above the threshold, `DataNotFoundError` is raised.
 
-- **Performance**: Fuzzy matching is more expensive than round number lookup but still completes in <5ms for cached schedules. The algorithm iterates through all events in the season (typically 20-23 events).
+- **Performance**: Fuzzy matching is more expensive than round number lookup but still completes in &lt;5ms for cached schedules. The algorithm iterates through all events in the season (typically 20-23 events).
 
 - **Caching**: Event objects are cached after creation. The fuzzy matching itself is not cached, so each call performs the matching algorithm, but the resulting Event object is reused.
 
@@ -901,7 +901,7 @@ The returned `EventSchedule` object is a specialized pandas DataFrame subclass t
 
 - **Timezone Handling**: Session dates include timezone information. Local times use the circuit's timezone (e.g., "Europe/Brussels" for Spa), while UTC times are timezone-aware UTC timestamps.
 
-- **Performance**: Initial load takes <200ms for CDN fetch or <10ms for vendored data. Cached access is <1ms.
+- **Performance**: Initial load takes &lt;200ms for CDN fetch or &lt;10ms for vendored data. Cached access is &lt;1ms.
 
 **Example Usage:**
 

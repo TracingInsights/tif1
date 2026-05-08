@@ -40,5 +40,5 @@ plt.suptitle(f"{session.event['EventName']} {session.event.year} - Brake Zones")
 plt.tight_layout()
 
 # Save
-plt.savefig("docs/assets/track_brake_zones.png", dpi=300, bbox_inches="tight")
+plt.savefig("assets/track_brake_zones.png", dpi=300, bbox_inches="tight")
 print("Generated track_brake_zones.png")

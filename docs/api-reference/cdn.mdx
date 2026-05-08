@@ -572,7 +572,7 @@ def create_cdn_dashboard():
 
     # Per-source details
     print(f"\nSource Details:")
-    print(f"{'Name':<20} {'Priority':<10} {'Failures':<10} {'Status':<15} {'Minification':<15}")
+    print(f"{'Name':&lt;20} {'Priority':&lt;10} {'Failures':&lt;10} {'Status':&lt;15} {'Minification':&lt;15}")
     print("-" * 70)
 
     for source in cdn.sources:
@@ -592,7 +592,7 @@ def create_cdn_dashboard():
 
         minification = "✓ Enabled" if source.use_minification else "✗ Disabled"
 
-        print(f"{source.name:<20} {source.priority:<10} {failures}/{cdn._max_failures:<7} {status:<15} {minification:<15}")
+        print(f"{source.name:&lt;20} {source.priority:&lt;10} {failures}/{cdn._max_failures:&lt;7} {status:&lt;15} {minification:&lt;15}")
 
     print("=" * 70)
 
@@ -845,7 +845,7 @@ cdn = get_cdn_manager()
 def monitor_failures():
     """Monitor failure counts for all sources."""
     print("CDN Failure Monitoring:")
-    print(f"{'Source':<20} {'Failures':<10} {'Status':<15}")
+    print(f"{'Source':&lt;20} {'Failures':&lt;10} {'Status':&lt;15}")
     print("-" * 45)
 
     for source in cdn.sources:
@@ -858,7 +858,7 @@ def monitor_failures():
         else:
             status = "🔴 Disabled"
 
-        print(f"{source.name:<20} {failures}/{cdn._max_failures:<7} {status:<15}")
+        print(f"{source.name:&lt;20} {failures}/{cdn._max_failures:&lt;7} {status:&lt;15}")
 
 # Initial state
 monitor_failures()
@@ -1110,7 +1110,7 @@ def monitor_cdn_health():
     print(f"Available Sources: {available_count}/{total_sources}")
 
     # Detailed source status
-    print(f"\n{'Source':<20} {'Priority':<10} {'Failures':<12} {'Status':<15}")
+    print(f"\n{'Source':&lt;20} {'Priority':&lt;10} {'Failures':&lt;12} {'Status':&lt;15}")
     print("-" * 70)
 
     for source in cdn.sources:
@@ -1131,7 +1131,7 @@ def monitor_cdn_health():
 
         failure_str = f"{failures}/{cdn._max_failures}"
 
-        print(f"{source.name:<20} {source.priority:<10} {failure_str:<12} {status:<15}")
+        print(f"{source.name:&lt;20} {source.priority:&lt;10} {failure_str:&lt;12} {status:&lt;15}")
 
     print("=" * 70)
 

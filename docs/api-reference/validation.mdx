@@ -30,7 +30,7 @@ The validation system detects and handles:
 - **Inconsistent Array Lengths**: Verifies all parallel arrays have matching lengths (critical for DataFrame construction)
 - **Invalid Enum Values**: Checks tire compounds, session types, and other categorical data against known valid values
 - **Null-like String Values**: Automatically converts "", "none", "null", "nan" to proper None values
-- **Out-of-Range Values**: Validates numeric constraints (e.g., RPM < 20,000, gear <= 8, stint >= 1)
+- **Out-of-Range Values**: Validates numeric constraints (e.g., RPM &lt; 20,000, gear &lt;= 8, stint &gt;= 1)
 - **Data Anomalies**: Detects missing laps, duplicate lap numbers, and statistical outliers
 - **Field Aliases**: Handles both verbose and abbreviated field names from different CDN formats
 

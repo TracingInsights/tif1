@@ -19,7 +19,7 @@ import tif1
 
 # Get the 2025 abu dhabi grand prix race session
 session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
-```python
+```
 
 ## 2. Access Lap Data
 
@@ -35,7 +35,7 @@ print(session.drivers_df[["Driver", "Team", "DriverNumber"]])
 # Get the top 5 fastest laps in the session
 fastest_5 = laps.nsmallest(5, "LapTime")
 print(fastest_5[["Driver", "LapTime", "Compound"]])
-```python
+```
 
 ## 3. analyze a specific driver
 
@@ -48,7 +48,7 @@ ver = session.get_driver("VER")
 # Get his fastest lap
 fastest_lap = ver.get_fastest_lap()
 print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0]:.3f}s")
-```python
+```
 
 ## 4. deep dive into telemetry
 
@@ -62,7 +62,7 @@ telemetry = lap_19.telemetry
 # Check his top speed on that lap
 top_speed = telemetry["Speed"].max()
 print(f"Top Speed on Lap 19: {top_speed} km/h")
-```python
+```
 
 ## 5. list available data
 
@@ -75,7 +75,7 @@ events = tif1.get_events(2025)
 # List all sessions for a GP
 sessions = tif1.get_sessions(2025, "British Grand Prix")
 # ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
-```python
+```
 
 ## Pro Tip: Speed it up!
 
@@ -90,7 +90,7 @@ async def main():
     print(f"Loaded {len(laps)} laps")
 
 asyncio.run(main())
-```python
+```
 
 <Card title="Learn More" icon="lightbulb" href="/tutorials/race-pace-analysis">
   Check out our tutorials for more advanced analysis examples.

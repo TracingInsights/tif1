@@ -291,7 +291,7 @@ def pick_drivers(identifiers: list[str | int | dict]) -> Laps
 - **`Laps`** object containing laps from all specified drivers. Returns empty Laps if no matching drivers found.
 
 **Behavior Details:**
-- Accepts mixed identifier types in the same list (e.g., ["VER", 44, {"driver": "LEC"}])
+- Accepts mixed identifier types in the same list (e.g., `["VER", 44, {"driver": "LEC"}]`)
 - Order of drivers in result matches original lap chronological order, not identifier order
 - Duplicate identifiers are automatically deduplicated
 - Returns empty Laps if no matching drivers found

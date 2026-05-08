@@ -125,7 +125,7 @@ Sector times and speed trap measurements provide detailed performance insights:
 - **SpeedST** (`float`): Speed at the designated speed trap location, in km/h. This is typically the fastest point on the circuit, usually on the main straight.
 
 <Note>
-  Sector times should sum to approximately the lap time, but small discrepancies (typically < 0.1s) can occur due to timing system precision and rounding. Speed trap data may be missing for some laps, especially during yellow flag periods or pit stops.
+  Sector times should sum to approximately the lap time, but small discrepancies (typically &lt; 0.1s) can occur due to timing system precision and rounding. Speed trap data may be missing for some laps, especially during yellow flag periods or pit stops.
 </Note>
 
 ### Driver and Team Columns
@@ -651,7 +651,7 @@ This function is highly optimized for performance:
 
 **Space Complexity:**
 - O(k) where k is the number of unique lap numbers
-- Typically k << n (e.g., 60 unique laps vs 1200 total lap records)
+- Typically k &lt;&lt; n (e.g., 60 unique laps vs 1200 total lap records)
 
 **Benchmark Results** (typical performance):
 - 1,000 rows: ~0.5 milliseconds

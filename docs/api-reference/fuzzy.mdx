@@ -242,7 +242,7 @@ def resolve_session_name(identifier: str) -> str:
 
 **Performance characteristics:**
 - O(1) dictionary lookup (hash table)
-- Typical execution: <0.1ms
+- Typical execution: &lt;0.1ms
 - Zero false positives or fuzzy matches
 - Deterministic and predictable
 
@@ -255,7 +255,7 @@ The hybrid approach (fuzzy for events, dictionary for sessions) was chosen based
 | **Variability** | High (24+ per year, changing names) | Low (8 fixed types) |
 | **User Input** | Diverse (location, circuit, country) | Standardized (FP1, Q, R) |
 | **Typo Tolerance** | Critical (long names, international) | Less critical (short abbreviations) |
-| **Performance** | 0.5-0.8ms acceptable | Must be <0.1ms (tight loops) |
+| **Performance** | 0.5-0.8ms acceptable | Must be &lt;0.1ms (tight loops) |
 | **Ambiguity** | Common (multiple "Grand Prix") | Rare (distinct abbreviations) |
 
 This architecture delivers optimal performance for both use cases while maintaining intuitive user experience.
@@ -630,7 +630,7 @@ for query in test_queries:
 #### Space Complexity
 
 - O(n×m) for the reference array and ratios matrix
-- Typical: <10KB for 24 events with 4 features each
+- Typical: &lt;10KB for 24 events with 4 features each
 
 #### Benchmark Results
 
@@ -2176,7 +2176,7 @@ The fuzzy matching system is designed for high performance, with careful attenti
 - Dictionary hash table lookup
 - Constant time regardless of number of sessions
 
-**Typical execution:** <0.05ms
+**Typical execution:** &lt;0.05ms
 
 ### Benchmark Results
 
@@ -3940,13 +3940,13 @@ The `tif1` fuzzy matching system is a sophisticated, high-performance solution f
 
 1. **Hybrid Algorithm**: Combines fast exact substring matching (0.2-0.3ms) with fuzzy Levenshtein distance matching (0.5-0.8ms)
 2. **Multi-Feature Matching**: Each event described by multiple features (location, country, official name, circuit) for maximum flexibility
-3. **Dictionary-Based Sessions**: Session names use O(1) dictionary lookup (<0.05ms) rather than fuzzy matching
+3. **Dictionary-Based Sessions**: Session names use O(1) dictionary lookup (&lt;0.05ms) rather than fuzzy matching
 4. **Transparent Results**: Returns both match result and exact/fuzzy flag for validation and logging
 
 ### Performance Characteristics
 
-- **Event matching**: 0.3-0.8ms typical, <1ms worst case
-- **Session matching**: <0.05ms (dictionary lookup)
+- **Event matching**: 0.3-0.8ms typical, &lt;1ms worst case
+- **Session matching**: &lt;0.05ms (dictionary lookup)
 - **Scalability**: Linear O(n) with number of events, handles 100+ events under 1ms
 - **Caching**: Event schedules cached, fuzzy results not cached (overhead > benefit)
 - **Optimization**: RapidFuzz provides 60-200x speedup over pure Python

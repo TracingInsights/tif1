@@ -651,7 +651,7 @@ Dictionary with the following metrics:
 - **90-100%**: Excellent - optimal connection reuse
 - **70-90%**: Good - most connections are reused
 - **50-70%**: Fair - some optimization possible
-- **<50%**: Poor - check pool configuration or request patterns
+- **&lt;50%**: Poor - check pool configuration or request patterns
 
 **Example:**
 ```python
@@ -777,7 +777,7 @@ This is the core async fetching function that powers all data loading in `tif1`.
 
 **Pipeline Stages:**
 
-1. **Cache Lookup**: Checks in-memory cache first (<1ms), then SQLite cache (~5-10ms)
+1. **Cache Lookup**: Checks in-memory cache first (&lt;1ms), then SQLite cache (~5-10ms)
 2. **Network Fetch**: Tries primary CDN (jsDelivr), falls back to secondary CDNs on failure
 3. **JSON Parsing**: Uses `orjson` for fast parsing (2-5x faster than stdlib), optional process pool for large payloads
 4. **Validation**: Optional Pydantic validation (non-strict mode allows partial data)
@@ -851,7 +851,7 @@ This is the core async fetching function that powers all data loading in `tif1`.
 
 **Performance Characteristics:**
 
-- **Cache Hit (Memory)**: <1ms - fastest path, data already in memory
+- **Cache Hit (Memory)**: &lt;1ms - fastest path, data already in memory
 - **Cache Hit (SQLite)**: ~5-10ms - fast path, data on disk
 - **Cache Miss (Single File)**: 100-300ms - network latency + parsing
 - **Cache Miss (100+ Files Parallel)**: 2-5 seconds - with connection reuse and HTTP/2 multiplexing
@@ -1011,7 +1011,7 @@ The function uses two strategies based on request count and concurrency limit:
 1. **Small Batches** (requests ≤ max_concurrent_requests):
    - Uses `asyncio.gather()` for maximum parallelism
    - All requests execute simultaneously without queuing
-   - Optimal for <20 files (driver lap data)
+   - Optimal for &lt;20 files (driver lap data)
 
 2. **Large Batches** (requests > max_concurrent_requests):
    - Uses semaphore-based rate limiting to prevent CDN throttling
@@ -1039,7 +1039,7 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
 - `use_cache` (bool): If True, read from cache before network fetch
   - Default: True
   - Applies to all requests in the batch
-  - Cache hits are nearly instant (<1ms memory, ~10ms SQLite)
+  - Cache hits are nearly instant (&lt;1ms memory, ~10ms SQLite)
 - `write_cache` (bool): If True, persist successful network responses to cache
   - Default: True
   - Applies to all requests in the batch
@@ -1076,7 +1076,7 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
 - **20 files, 20 concurrency**: ~1-2 seconds (network latency dominant)
 - **100 files, 20 concurrency**: ~5-8 seconds (queuing + network)
 - **100 files, 128 concurrency**: ~2-4 seconds (maximum parallelism, optimal for telemetry)
-- **Cache hits**: <100ms for entire batch (memory/SQLite)
+- **Cache hits**: &lt;100ms for entire batch (memory/SQLite)
 - **Connection reuse**: 90%+ reuse rate with proper pool configuration
 
 **Example - Load Multiple Drivers:**
@@ -2447,7 +2447,7 @@ config.set("memory_telemetry_cache_max_items", 512)
 **Symptoms:**
 - "Pool timeout" or "Max retries" errors
 - Automatic backoff delays (0.5-5s)
-- Low connection reuse rate (<70%)
+- Low connection reuse rate (&lt;70%)
 
 **Diagnosis:**
 
