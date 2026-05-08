@@ -1,0 +1,38 @@
+#!/bin/bash
+# Pre-commit hook to run prek checks on staged files
+
+# Get list of staged Python files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$')
+
+if [ -z "$STAGED_FILES" ]; then
+    echo "No Python files staged for commit."
+    exit 0
+fi
+
+echo "Running prek checks on staged files..."
+echo "Files to check:"
+echo "$STAGED_FILES"
+echo ""
+
+# Run prek on staged files
+python -m uv run prek run --show-diff-on-failure $STAGED_FILES
+
+PREK_EXIT_CODE=$?
+
+if [ $PREK_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ Pre-commit hook failed!"
+    echo "Prek found issues in your staged files."
+    echo ""
+    echo "To fix automatically, run:"
+    echo "  uv run prek run --fix $STAGED_FILES"
+    echo ""
+    echo "Then stage the fixed files and commit again."
+    echo ""
+    echo "To bypass this hook (not recommended), use:"
+    echo "  git commit --no-verify"
+    exit 1
+fi
+
+echo "✅ All prek checks passed!"
+exit 0
