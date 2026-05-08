@@ -1,8 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-commit hook to run prek checks on staged files
+# Works on Linux, macOS, WSL, and Windows (Git Bash)
+
+set -e
 
 # Get list of staged Python files
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$')
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py)$' || true)
 
 if [ -z "$STAGED_FILES" ]; then
     echo "No Python files staged for commit."
@@ -14,8 +17,58 @@ echo "Files to check:"
 echo "$STAGED_FILES"
 echo ""
 
-# Run prek on staged files
-python -m uv run prek run --show-diff-on-failure $STAGED_FILES
+# Get the repository root directory
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Normalize path for different environments
+normalize_path() {
+    local path="$1"
+    
+    # Check if we're in WSL and path starts with \\wsl.localhost\
+    if [[ "$path" == \\\\wsl.localhost\\* ]]; then
+        # Convert \\wsl.localhost\Ubuntu\path\to\repo to /path/to/repo
+        path=$(echo "$path" | sed 's|\\\\wsl.localhost\\[^\\]*||' | sed 's|\\|/|g')
+    # Check if we're in Git Bash on Windows (path starts with /c/ or similar)
+    elif [[ "$path" =~ ^/[a-z]/ ]]; then
+        # Path is already in Unix format for Git Bash, keep it
+        path="$path"
+    # Check if path contains backslashes (Windows path)
+    elif [[ "$path" == *\\* ]]; then
+        # Convert backslashes to forward slashes
+        path=$(echo "$path" | sed 's|\\|/|g')
+    fi
+    
+    echo "$path"
+}
+
+REPO_ROOT=$(normalize_path "$REPO_ROOT")
+
+# Check if uv is available
+if ! command -v uv >/dev/null 2>&1; then
+    echo "⚠️  Warning: uv command not found."
+    echo "Please ensure uv is installed and in your PATH."
+    exit 1
+fi
+
+# Change to repo root
+cd "$REPO_ROOT" || {
+    echo "❌ Failed to change to repository root: $REPO_ROOT"
+    exit 1
+}
+
+# Check if virtual environment exists
+if [ ! -d ".venv" ]; then
+    echo "⚠️  Virtual environment not found. Creating it..."
+    uv sync --all-extras || {
+        echo "❌ Failed to create virtual environment"
+        exit 1
+    }
+fi
+
+# Run prek with explicit Python from venv to avoid path issues
+# Use --isolated to prevent uv from trying to modify the environment
+export UV_NO_SYNC=1
+uv run --isolated prek run --stage pre-commit
 
 PREK_EXIT_CODE=$?
 
@@ -24,8 +77,8 @@ if [ $PREK_EXIT_CODE -ne 0 ]; then
     echo "❌ Pre-commit hook failed!"
     echo "Prek found issues in your staged files."
     echo ""
-    echo "To fix automatically, run:"
-    echo "  uv run prek run --fix $STAGED_FILES"
+    echo "To fix issues, run from the repository root:"
+    echo "  uv run prek run"
     echo ""
     echo "Then stage the fixed files and commit again."
     echo ""
