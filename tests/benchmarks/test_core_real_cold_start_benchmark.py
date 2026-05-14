@@ -34,6 +34,7 @@ _BASELINE_NO_CACHE_CONFIG = {
     "ultra_cold_start": False,
     "ultra_cold_background_cache_fill": False,
     "ultra_cold_skip_retries": False,
+    "max_concurrent_requests": 5,  # Limit concurrency to avoid CDN rate limits
 }
 
 _FASTEST_NO_CACHE_CONFIG = {
@@ -44,6 +45,7 @@ _FASTEST_NO_CACHE_CONFIG = {
     "ultra_cold_background_cache_fill": False,
     "ultra_cold_skip_retries": True,
     "prefetch_driver_laps_on_get_driver": True,
+    "max_concurrent_requests": 5,  # Limit concurrency to avoid CDN rate limits
 }
 
 
