@@ -23,8 +23,8 @@ class CDNSource:
     def format_url(self, year: int, gp: str, session: str, path: str) -> str:
         """Format URL for this CDN with optional minification support.
 
-        Both jsDelivr and StaticDelivr use the same URL format:
-        https://cdn.{service}.{com|net}/gh/user/repo@branch/path
+        jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
+        StaticDelivr format: https://cdn.staticdelivr.com/gh/user/repo/branch/path
 
         jsDelivr supports automatic minification by appending .min before the extension.
         This can reduce file sizes by 20-40% for JSON files.
@@ -32,6 +32,10 @@ class CDNSource:
         # jsDelivr minification: file.json -> file.min.json
         if self.use_minification and path.endswith(".json"):
             path = path.replace(".json", ".min.json")
+
+        # StaticDelivr uses /branch/ format, jsDelivr uses @branch format
+        if "staticdelivr" in self.base_url.lower():
+            return f"{self.base_url}/{year}/main/{gp}/{session}/{path}"
         return f"{self.base_url}/{year}@main/{gp}/{session}/{path}"
 
 

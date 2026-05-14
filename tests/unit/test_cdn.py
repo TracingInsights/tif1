@@ -60,6 +60,11 @@ class TestCDNSourceFormatUrl:
         url = source.format_url(2024, "Bahrain", "Race", "drivers.json")
         assert url == "https://cdn.jsdelivr.net/gh/Archive/2024@main/Bahrain/Race/drivers.json"
 
+    def test_staticdelivr_url(self):
+        source = CDNSource(name="StaticDelivr", base_url="https://cdn.staticdelivr.com/gh/Archive")
+        url = source.format_url(2024, "Bahrain", "Race", "drivers.json")
+        assert url == "https://cdn.staticdelivr.com/gh/Archive/2024/main/Bahrain/Race/drivers.json"
+
     def test_generic_url(self):
         source = CDNSource(name="Custom", base_url="https://my-cdn.example.com/data")
         url = source.format_url(2024, "Bahrain", "Race", "drivers.json")

@@ -18,7 +18,7 @@ Architecture:
 - `session.py` and `models.py` are thin re-export shims pointing into `core.py`.
 - `io_pipeline.py` re-exports internal helpers from `core.py` (_create_lap_df, _create_session_df, etc.).
 - HTTP via `http_session.py` (niquests session) + `async_fetch.py` (async parallel fetching with niquests).
-- Cache in `cache.py` (SQLite-backed); CDN fallback in `cdn.py` (jsdelivr only, never raw.githubusercontent.com).
+- Cache in `cache.py` (SQLite-backed); CDN fallback in `cdn.py` (StaticDelivr primary, jsDelivr fallback, never raw.githubusercontent.com).
 - Config in `config.py` (singleton Config class, env vars + `.tif1rc` file support).
 - Retry/circuit-breaker in `retry.py`; event schedule in `events.py` + `schedule_schema.py`.
 - Validation (pydantic) in `validation.py`; errors in `exceptions.py` (hierarchy rooted at `TIF1Error`).
@@ -32,12 +32,12 @@ Architecture:
 Key patterns:
 - Session.load() accepts `laps`, `telemetry`, `messages`, `weather` booleans to control what data gets fetched.
 - Data flows: CDN URL → async HTTP fetch → JSON parse → DataFrame construction → column rename/reorder → cache.
-- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via jsdelivr CDN.
+- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via StaticDelivr CDN (primary) with jsDelivr as fallback.
 - Exception hierarchy: TIF1Error → DataNotFoundError → {DriverNotFoundError, LapNotFoundError}; TIF1Error → {NetworkError, InvalidDataError, CacheError, SessionNotLoadedError}.
 - All exceptions accept `**context` kwargs for structured error info.
 
 Constraints:
-- Never use `https://raw.githubusercontent.com` CDN (rate limits). Use jsdelivr CDN only.
+- Never use `https://raw.githubusercontent.com` CDN (rate limits). Use StaticDelivr (primary) or jsDelivr (fallback) CDNs only.
 - Python >=3.10; use type hints everywhere; Google-style docstrings for public APIs.
 - Ruff ruleset (see pyproject.toml for full select/ignore); line length 100, double quotes, space indent.
 - Keep imports sorted (ruff/format), avoid unused imports, prefer explicit names.

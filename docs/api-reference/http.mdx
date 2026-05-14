@@ -102,8 +102,8 @@ Robust CDN management with automatic failover, health tracking, and optional min
 - **Multiple CDN Support**: Configure multiple CDN sources with priority ordering via `cdns` config array
 - **Automatic Failover**: Seamlessly switches to backup CDNs on failure without user intervention
 - **Health Tracking**: Tracks failure counts per CDN, automatically disables after 3 consecutive failures
-- **jsDelivr Optimization**: Primary CDN with optional minification support (20-40% size reduction for JSON files)
-- **URL Formatting**: Automatic URL construction for TracingInsights data repositories with format `{cdn_base}/{year}@main/{gp}/{session}/{path}`
+- **StaticDelivr Primary**: Primary CDN with jsDelivr as fallback for improved reliability
+- **URL Formatting**: Automatic URL construction for TracingInsights data repositories (StaticDelivr: `{cdn_base}/{year}/main/{gp}/{session}/{path}`, jsDelivr: `{cdn_base}/{year}@main/{gp}/{session}/{path}`)
 - **Dynamic Enable/Disable**: CDNs can be dynamically disabled based on error patterns (e.g., HTTP/2 multiplexing incompatibility after redirects)
 - **Minification Support**: Optional automatic minification for jsDelivr CDN (transforms `file.json` → `file.min.json`)
 - **Failure Recovery**: Automatic reset of failure counts on successful requests, allowing previously failed CDNs to recover
@@ -111,11 +111,14 @@ Robust CDN management with automatic failover, health tracking, and optional min
 
 **CDN Configuration:**
 
-The default CDN configuration uses jsDelivr as the primary source:
+The default CDN configuration uses StaticDelivr as the primary source with jsDelivr as fallback:
 
 ```json
 {
-  "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights"],
+  "cdns": [
+    "https://cdn.staticdelivr.com/gh/TracingInsights",
+    "https://cdn.jsdelivr.net/gh/TracingInsights"
+  ],
   "cdn_use_minification": false
 }
 ```
@@ -778,7 +781,7 @@ This is the core async fetching function that powers all data loading in `tif1`.
 **Pipeline Stages:**
 
 1. **Cache Lookup**: Checks in-memory cache first (&lt;1ms), then SQLite cache (~5-10ms)
-2. **Network Fetch**: Tries primary CDN (jsDelivr), falls back to secondary CDNs on failure
+2. **Network Fetch**: Tries primary CDN (StaticDelivr), falls back to secondary CDN (jsDelivr) on failure
 3. **JSON Parsing**: Uses `orjson` for fast parsing (2-5x faster than stdlib), optional process pool for large payloads
 4. **Validation**: Optional Pydantic validation (non-strict mode allows partial data)
 5. **Cache Write**: Persists to SQLite and updates in-memory cache for fast subsequent access
