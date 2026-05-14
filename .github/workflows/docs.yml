@@ -24,12 +24,14 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="$INPUT_VERSION"
             VERSION="${VERSION#v}"
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
