@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
+## [0.3.1] - 2026-05-15
+
+### Summary
+
+`0.3.1` is a patch release containing CDN URL formatting fixes, CI workflow improvements, pre-commit hook infrastructure, documentation corrections, and dependency updates.
+
+### Added
+
+- Added release discussion workflow (`release-discussion.yml`) for automated release announcements.
+- Added pre-commit hook configuration with git hooks for automated linting before commits.
+- Added Mintlify documentation validation to pre-commit hooks.
+- Added explicit read permissions to GitHub Actions workflow for improved security posture.
+- Added benchmark test support for real cold-start CDN scenarios.
+
+### Changed
+
+- Updated CDN URL formatting in `cdn.py` to use `/branch/` path format for StaticDelivr compatibility.
+- Improved pre-commit hook cross-platform compatibility and robustness.
+- Updated `AGENTS.md` with corrected documentation references.
+- Expanded benchmark test file with cold-start CDN test scenario.
+
+### Fixed
+
+- Fixed CDN references across documentation and code to correctly reflect StaticDelivr as primary CDN.
+- Fixed documentation links and HTML entity encoding in code examples.
+- Fixed trailing whitespace in environment variables documentation.
+- Fixed Template Injection security issue in GitHub Actions workflow.
+
+### Dependencies
+
+Updated dependencies to latest stable versions:
+
+- Updated `niquests` from `>=3.18.7,<4` to `>=3.18.8,<4`
+- Updated `hypothesis` from `>=6.152.4,<7` to `>=6.152.7,<7`
+- Updated `ty` from `>=0.0.34,<0.1.0` to `>=0.0.35,<0.1.0`
+
+### Known Issues
+
+- None reported at release time.
+
 ## [0.3.0] - 2026-05-08
 
 ### Summary

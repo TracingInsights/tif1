@@ -59,7 +59,7 @@ Use this checklist before creating a new release.
 
 ### Git
 - [ ] Changes committed
-- [ ] Version tag created: `v0.2.0`
+- [ ] Version tag created: `v0.3.1`
 - [ ] Tag pushed to GitHub
 - [ ] Branch is clean
 
@@ -116,6 +116,12 @@ If critical issues are found:
    - Provide workaround if available
 
 ## Version-Specific Notes
+
+### v0.3.1 (Patch Release)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.3.1"`
+- [ ] Verify CDN formatting fixes are working correctly
+- [ ] Check pre-commit hooks are functional
+- [ ] Confirm documentation links are correct
 
 ### v0.2.0 (Package Rename Release)
 - [ ] Verify PyPI/TestPyPI package name is `tif1`

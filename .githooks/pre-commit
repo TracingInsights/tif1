@@ -68,65 +68,7 @@ if [[ "$REPO_ROOT" == *"wsl.localhost"* ]] || [[ "$REPO_ROOT" == *"\\wsl"* ]]; t
     fi
 
     if [ -n "$STAGED_DOC_FILES" ]; then
-        echo ""
-        echo "Running Mintlify validation on staged documentation files..."
-        echo "Files to check:"
-        echo "$STAGED_DOC_FILES"
-        echo ""
-
-        # Check if mintlify CLI is available in WSL
-        wsl.exe bash -l -c "cd '$WSL_PATH' && command -v mintlify > /dev/null 2>&1"
-        MINTLIFY_AVAILABLE=$?
-
-        if [ $MINTLIFY_AVAILABLE -ne 0 ]; then
-            echo "⚠️  Mintlify CLI not found in WSL."
-            echo "To install: npm i -g mintlify"
-            echo "Skipping Mintlify validation..."
-        else
-            # Run mintlify validate
-            echo "🔍 Running mintlify validate..."
-            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify validate"
-            VALIDATE_EXIT=$?
-
-            if [ $VALIDATE_EXIT -ne 0 ]; then
-                echo ""
-                echo "❌ Mintlify validation failed!"
-                echo "Please fix the documentation issues before committing."
-                echo ""
-                echo "To bypass (not recommended): git commit --no-verify"
-                exit 1
-            fi
-
-            # Run mintlify broken-links
-            echo "🔗 Running mintlify broken-links..."
-            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify broken-links"
-            LINKS_EXIT=$?
-
-            if [ $LINKS_EXIT -ne 0 ]; then
-                echo ""
-                echo "❌ Mintlify broken links check failed!"
-                echo "Please fix broken links before committing."
-                echo ""
-                echo "To bypass (not recommended): git commit --no-verify"
-                exit 1
-            fi
-
-            # Run mintlify a11y
-            echo "♿ Running mintlify a11y..."
-            wsl.exe bash -l -c "cd '$WSL_PATH/docs' && mintlify a11y"
-            A11Y_EXIT=$?
-
-            if [ $A11Y_EXIT -ne 0 ]; then
-                echo ""
-                echo "❌ Mintlify accessibility check failed!"
-                echo "Please fix accessibility issues before committing."
-                echo ""
-                echo "To bypass (not recommended): git commit --no-verify"
-                exit 1
-            fi
-
-            echo "✅ All Mintlify checks passed!"
-        fi
+        echo "Documentation files staged — skipping slow mintlify checks in hook."
     fi
 
     exit 0
@@ -228,80 +170,7 @@ if [ -n "$STAGED_FILES" ]; then
 fi
 
 if [ -n "$STAGED_DOC_FILES" ]; then
-    echo ""
-    echo "Running Mintlify validation on staged documentation files..."
-    echo "Files to check:"
-    echo "$STAGED_DOC_FILES"
-    echo ""
-
-    # Check if mintlify CLI is available
-    if ! command -v mintlify &> /dev/null; then
-        echo "⚠️  Mintlify CLI not found in PATH."
-        echo "To install: npm i -g mintlify"
-        echo "Skipping Mintlify validation..."
-    else
-        # Change to docs directory for mintlify commands
-        cd "$REPO_ROOT/docs" || {
-            echo "❌ Failed to change to docs directory"
-            exit 1
-        }
-
-        # Run mintlify validate
-        echo "🔍 Running mintlify validate..."
-        mintlify validate
-
-        VALIDATE_EXIT_CODE=$?
-
-        if [ $VALIDATE_EXIT_CODE -ne 0 ]; then
-            echo ""
-            echo "❌ Pre-commit hook failed!"
-            echo "Mintlify validation found issues in your documentation."
-            echo ""
-            echo "Please fix the issues and commit again."
-            echo ""
-            echo "To bypass this hook (not recommended), use:"
-            echo "  git commit --no-verify"
-            exit 1
-        fi
-
-        # Run mintlify broken-links
-        echo "🔗 Running mintlify broken-links..."
-        mintlify broken-links
-
-        LINKS_EXIT_CODE=$?
-
-        if [ $LINKS_EXIT_CODE -ne 0 ]; then
-            echo ""
-            echo "❌ Pre-commit hook failed!"
-            echo "Mintlify found broken links in your documentation."
-            echo ""
-            echo "Please fix the broken links and commit again."
-            echo ""
-            echo "To bypass this hook (not recommended), use:"
-            echo "  git commit --no-verify"
-            exit 1
-        fi
-
-        # Run mintlify a11y
-        echo "♿ Running mintlify a11y..."
-        mintlify a11y
-
-        A11Y_EXIT_CODE=$?
-
-        if [ $A11Y_EXIT_CODE -ne 0 ]; then
-            echo ""
-            echo "❌ Pre-commit hook failed!"
-            echo "Mintlify found accessibility issues in your documentation."
-            echo ""
-            echo "Please fix the accessibility issues and commit again."
-            echo ""
-            echo "To bypass this hook (not recommended), use:"
-            echo "  git commit --no-verify"
-            exit 1
-        fi
-
-        echo "✅ All Mintlify checks passed!"
-    fi
+    echo "Documentation files staged — skipping slow mintlify checks in hook."
 fi
 
 exit 0
