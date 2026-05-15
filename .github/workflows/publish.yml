@@ -1,8 +1,6 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       environment:
@@ -18,6 +16,9 @@ permissions:
   contents: read
   id-token: write  # For trusted publishing
 
+env:
+  PYTHON_VERSION: "3.10"
+
 jobs:
   build:
     name: Build distribution
@@ -32,7 +33,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.10
+        run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -81,7 +82,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'pypi')
+    if: github.event.inputs.environment == 'pypi'
     needs: build
     runs-on: ubuntu-latest
     environment:
