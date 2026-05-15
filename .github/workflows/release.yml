@@ -60,7 +60,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
-            
+
             # Validate version format using Python (safer than bash regex)
             python3 << 'EOF'
           import re
@@ -74,7 +74,7 @@ jobs:
               sys.exit(1)
           print('✅ Version format valid:', version)
           EOF
-            
+
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
             echo "source=manual" >> "$GITHUB_OUTPUT"
