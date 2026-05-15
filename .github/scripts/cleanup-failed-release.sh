@@ -81,12 +81,12 @@ cleanup_local_tag() {
 revert_version_commit() {
     local target_commit="$1"
     local commit_description="$2"
-    
+
     echo "🔄 Reverting to $commit_description ($target_commit)..."
-    
+
     if git reset --hard "$target_commit"; then
         echo "✅ Successfully reset to $commit_description"
-        
+
         # Try to update remote
         if git push --force-with-lease origin HEAD; then
             echo "✅ Successfully updated remote branch"
@@ -105,17 +105,17 @@ revert_version_commit() {
 # Main cleanup logic
 main() {
     local cleanup_success=true
-    
+
     # Step 1: Clean up remote tag
     if ! cleanup_remote_tag; then
         cleanup_success=false
     fi
-    
+
     # Step 2: Clean up local tag
     if ! cleanup_local_tag; then
         cleanup_success=false
     fi
-    
+
     # Step 3: Revert version commit if we have precise commit hashes
     if [[ -n "$VERSION_COMMIT" && -n "$ORIGINAL_COMMIT" ]]; then
         # Verify commits exist
@@ -132,7 +132,7 @@ main() {
         local latest_commit_msg
         latest_commit_msg=$(git log -1 --pretty=format:"%s" HEAD 2>/dev/null || echo "")
         local expected_msg="chore: bump version to $VERSION"
-        
+
         if [[ "$latest_commit_msg" == "$expected_msg" ]]; then
             echo "🔄 Found version bump commit as latest commit, reverting..."
             if ! revert_version_commit "HEAD~1" "previous commit"; then
@@ -142,7 +142,7 @@ main() {
             echo "ℹ️  Latest commit is not a version bump, no revert needed"
         fi
     fi
-    
+
     # Summary
     if [[ "$cleanup_success" == "true" ]]; then
         echo "✅ Cleanup completed successfully"
@@ -151,7 +151,7 @@ main() {
         echo "⚠️  Cleanup completed with some issues"
         echo "ℹ️  Manual verification may be required before retry"
     fi
-    
+
     echo "❌ Release $VERSION failed. Please verify repository state before retrying."
 }
 

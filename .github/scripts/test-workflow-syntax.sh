@@ -12,7 +12,7 @@ ERRORS=0
 validate_yaml() {
     local file="$1"
     echo "  Checking $file..."
-    
+
     # Check if python can parse the YAML (basic syntax check)
     if python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null; then
         echo "    ✅ $file syntax OK"
@@ -21,21 +21,21 @@ validate_yaml() {
         ((ERRORS++))
         return 1
     fi
-    
+
     # Check for common issues
     if grep -q "actions/checkout@v6" "$file"; then
         echo "    ⚠️  Warning: $file uses checkout@v6, consider using @v4 for consistency"
     fi
-    
+
     if grep -q "python -c.*\$[A-Z_]*" "$file"; then
         echo "    ⚠️  Warning: $file may have shell variable interpolation issues in Python code"
     fi
-    
+
     # Check for missing timeouts in jobs
     if grep -q "runs-on:" "$file" && ! grep -q "timeout-minutes:" "$file"; then
         echo "    ⚠️  Warning: $file has jobs without timeout-minutes specified"
     fi
-    
+
     return 0
 }
 
