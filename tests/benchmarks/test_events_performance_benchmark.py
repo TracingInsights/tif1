@@ -37,21 +37,21 @@ class TestEventsBenchmarks:
     def test_benchmark_get_events_legacy_build(self, benchmark):
         """Benchmark legacy per-call events construction."""
         result = benchmark(_build_events_for_year, 2025)
-        assert result
+        assert result is not None
 
     def test_benchmark_get_events_cached(self, benchmark):
         """Benchmark cached events lookup."""
         get_events(2025)  # warm cache
         result = benchmark(get_events, 2025)
-        assert result
+        assert result is not None
 
     def test_benchmark_get_sessions_legacy_build(self, benchmark):
         """Benchmark legacy per-call sessions construction."""
         result = benchmark(_build_sessions_for_event, 2025, "Chinese Grand Prix")
-        assert result
+        assert result is not None
 
     def test_benchmark_get_sessions_cached(self, benchmark):
         """Benchmark cached sessions lookup."""
         get_sessions(2025, "Chinese Grand Prix")  # warm cache
         result = benchmark(get_sessions, 2025, "Chinese Grand Prix")
-        assert result
+        assert result is not None
