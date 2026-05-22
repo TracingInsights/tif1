@@ -5,6 +5,7 @@ A fast, canonical Formula 1 data library fetched from TracingInsights data https
 [![CI/CD](https://github.com/TracingInsights/tif1/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
 [![codecov](https://codecov.io/gh/TracingInsights/tif1/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
 [![PyPI version](https://badge.fury.io/py/tif1.svg)](https://badge.fury.io/py/tif1)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/TracingInsights/tif1?utm_source=badge)
 
 
 
