@@ -38,5 +38,5 @@ jobs:
       - name: Run benchmarks
         uses: CodSpeedHQ/action@3194d9a39c4d46684cb44bf7207fc56626aad8fd
         with:
-          mode: instrumentation,walltime,memory
+          mode: instrumentation,walltime
           run: python -m uv run pytest -o addopts='' tests/benchmarks/ --codspeed -n 0
