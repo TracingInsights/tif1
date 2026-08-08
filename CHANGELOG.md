@@ -6,6 +6,22 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-08
+
+### Summary
+
+`0.4.0` is a major release that introduces the native `tif1.charts` module (21 one-call chart functions), migrates the library to **pandas 3.0**, and raises the minimum supported Python version to **3.11**. The pandas 3.0 migration fixes a critical timedelta unit-resolution bug and removes deprecated `pd.concat(copy=False)` calls ahead of pandas 4.
+
+### Breaking Changes
+
+- **Python 3.10 support dropped** — minimum supported version is now **3.11** (required by pandas 3.0).
+- **pandas 2.x support dropped** — `tif1` now requires **pandas >=3.0.5,<4**.
+
+### Migration Notes
+
+- Upgrade to Python 3.11+ and pandas 3.0+ before installing `tif1` 0.4.0.
+- No public API changes; the pandas 3.0 `str`-dtype default is transparent to users (telemetry `Driver` is kept as `object` for FastF1 compatibility).
+
 ### Added
 
 - **Native chart functions** — new `tif1.charts` module with 21 one-call chart functions, also re-exported at the top level (`tif1.plot_<name>`):

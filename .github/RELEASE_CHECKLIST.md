@@ -59,7 +59,7 @@ Use this checklist before creating a new release.
 
 ### Git
 - [ ] Changes committed
-- [ ] Version tag created: `v0.3.1`
+- [ ] Version tag created: `v0.4.0`
 - [ ] Tag pushed to GitHub
 - [ ] Branch is clean
 
@@ -117,10 +117,11 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
-### v0.3.1 (Patch Release)
-- [ ] Validate `import tif1` and `tif1.__version__ == "0.3.1"`
-- [ ] Verify CDN formatting fixes are working correctly
-- [ ] Check pre-commit hooks are functional
+### v0.4.0 (Major Release)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.4.0"`
+- [ ] Confirm Python 3.11+ requirement is documented (3.10 support dropped)
+- [ ] Verify pandas 3.0 migration notes are accurate
+- [ ] Verify native chart functions work correctly
 - [ ] Confirm documentation links are correct
 
 ### v0.2.0 (Package Rename Release)
