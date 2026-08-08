@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed crash on 2026 lap data where missing values are encoded as the string `"None"` (e.g. in the `Deleted` column): `_apply_laps_dtypes` now normalizes null-like string sentinels before dtype coercion, so `astype("boolean")` no longer raises and bool columns no longer turn missing values into `True`.
+- Applied the same null-like string normalization to the polars laps path: `_create_lap_df` normalizes payload lists before DataFrame construction (so polars infers proper `Boolean`/`Float` dtypes instead of stringifying mixed columns), and `_process_lap_df` normalizes String columns as a defensive boundary.
+- Non-strict `validate_lap_data` now returns the normalized payload (null-like strings converted to `None`) even when validation fails, instead of returning raw un-normalized data.
+
 ## [0.3.1] - 2026-05-15
 
 ### Summary

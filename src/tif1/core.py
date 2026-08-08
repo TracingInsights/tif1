@@ -61,6 +61,7 @@ from .exceptions import (
 )
 from .http_session import get_session as get_http_session
 from .retry import retry_with_backoff
+from .validation import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
 pl = None
 POLARS_AVAILABLE: bool | None = None
@@ -1209,6 +1210,20 @@ def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFram
         normalized_data = {}
 
     if lib == "polars":
+        if normalized_data and any(
+            isinstance(v, list | tuple)
+            and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
+            for v in normalized_data.values()
+        ):
+            # Normalize null-like string sentinels (e.g. "None" in 2026 data) in
+            # the payload lists so polars infers proper dtypes (Boolean/Float)
+            # instead of stringifying mixed columns. Mirrors validate_lap_data.
+            # Exact-token probe first so clean payloads skip the strip/lowercase
+            # pass entirely (no string allocation on the hot path).
+            normalized_data = {
+                k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
+                for k, v in normalized_data.items()
+            }
         lap_df = pl.DataFrame(normalized_data, strict=False)  # type: ignore[union-attr]
         lap_df = lap_df.with_columns(
             [pl.lit(driver).alias(COL_DRIVER), pl.lit(team).alias(COL_TEAM)]  # type: ignore[union-attr]
@@ -1244,13 +1259,69 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     return result
 
 
+_NULL_LIKE_TOKEN_PROBE = _NULL_LIKE_STRINGS | {"None"}
+
+
+def _replace_null_like_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize null-like string sentinels (e.g. ``"None"``) to None in string columns.
+
+    Upstream encodes missing values as the literal string ``"None"`` in
+    some lap columns (e.g. ``Deleted``). Normalize before dtype coercion so
+    ``.astype("boolean")`` does not raise and bool columns do not silently
+    convert missing values to ``True``. No-op for clean data.
+    """
+    for col in df.columns:
+        series = df[col]
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+        # Cheap exact-token probe first (C-level, no string allocation).
+        if not series.isin(_NULL_LIKE_TOKEN_PROBE).any():
+            continue
+        lowered = series.astype("string").str.strip().str.lower()
+        df[col] = series.mask(lowered.isin(_NULL_LIKE_STRINGS), None)
+    return df
+
+
+def _replace_null_like_strings_pl(lap_df):
+    """Polars equivalent of :func:`_replace_null_like_strings` (String columns only).
+
+    Normalizes null-like string sentinels (e.g. ``"None"``) to null in String
+    columns. No-op for clean data. Columns already stringified by polars (e.g.
+    bools coerced to Utf8 when mixed with strings) cannot be re-typed here.
+    """
+    lap_df_pl = cast(Any, lap_df)
+    string_cols = [
+        c for c, t in zip(lap_df_pl.columns, lap_df_pl.dtypes) if t == cast(Any, pl).String
+    ]
+    if not string_cols:
+        return lap_df
+    hits = lap_df_pl.select(
+        [cast(Any, pl).col(c).is_in(_NULL_LIKE_TOKEN_PROBE).any().alias(c) for c in string_cols]
+    ).row(0)
+    dirty_cols = [c for c, hit in zip(string_cols, hits) if hit]
+    if not dirty_cols:
+        return lap_df
+    exprs = [
+        cast(Any, pl)
+        .when(cast(Any, pl).col(c).str.strip_chars().str.to_lowercase().is_in(_NULL_LIKE_STRINGS))
+        .then(None)
+        .otherwise(cast(Any, pl).col(c))
+        .alias(c)
+        for c in dirty_cols
+    ]
+    return lap_df_pl.with_columns(exprs)
+
+
 def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """Enforce _COLUMNS dtype contract on a pandas laps DataFrame.
 
     Columns already handled upstream (LapTime, Time, WeatherTime, LapTimeSeconds)
     are skipped here to avoid double-conversion. All others from _COLUMNS are
     coerced to their canonical dtype. Missing columns are silently ignored.
+    Null-like string sentinels (e.g. ``"None"``) are normalized first.
     """
+    df = _replace_null_like_strings(df)
+
     # ------------------------------------------------------------------
     # Timedelta columns: raw values are floats (seconds since session start)
     # ------------------------------------------------------------------
@@ -1374,6 +1445,8 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
     # Apply full _COLUMNS dtype contract for all remaining pandas columns
     if lib == "pandas":
         lap_df = _apply_laps_dtypes(lap_df)
+    if lib == "polars":
+        lap_df = _replace_null_like_strings_pl(lap_df)
     if lib == "polars" and COL_LAP_TIME in lap_df.columns:
         lap_df_pl = cast(Any, lap_df)
         lap_df = lap_df_pl.with_columns(

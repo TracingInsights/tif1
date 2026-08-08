@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from tif1.core import _process_lap_df
+from tif1.core import _create_lap_df, _process_lap_df
 
 # ---------------------------------------------------------------------------
 # Sample payload matching the user-provided laptimes.json (3 laps, "None" sentinels)
@@ -220,3 +220,131 @@ class TestLapsDtypes:
 
     def test_track_status_is_string(self, laps_df):
         assert laps_df["TrackStatus"].iloc[0] == "1"
+
+    # ------------------------------------------------------------------
+    # Null-like string sentinels (2026 season: "None" as missing value)
+    # ------------------------------------------------------------------
+
+    def test_deleted_none_string_sentinel_does_not_crash(self):
+        """ "None" strings in Deleted are normalized to NA instead of crashing astype('boolean')."""
+        raw = pd.DataFrame({**_RAW_PAYLOAD, "del": ["None", False, "None"]})
+        out = _process_lap_df(raw, "pandas")
+        assert out["Deleted"].dtype.name == "boolean"
+        assert pd.isna(out["Deleted"].iloc[0])
+        assert not out["Deleted"].iloc[1]
+        assert pd.isna(out["Deleted"].iloc[2])
+
+    def test_bool_column_none_string_sentinel_becomes_false_not_true(self):
+        """'None' sentinel in a bool column yields False, not a truthy cast of 'None'."""
+        raw = pd.DataFrame({**_RAW_PAYLOAD, "pb": ["None", True, "None"]})
+        out = _process_lap_df(raw, "pandas")
+        assert out["IsPersonalBest"].dtype == bool
+        assert not out["IsPersonalBest"].iloc[0]
+        assert out["IsPersonalBest"].iloc[1]
+        assert not out["IsPersonalBest"].iloc[2]
+
+    def test_string_dtype_sentinel_normalized_in_string_column(self):
+        """StringDtype input frames are normalized too (direct _process_lap_df calls)."""
+        raw = pd.DataFrame({**_RAW_PAYLOAD, "delR": ["None", "track limits", "None"]}).astype(
+            {"delR": "string"}
+        )
+        out = _process_lap_df(raw, "pandas")
+        assert pd.isna(out["DeletedReason"].iloc[0])
+        assert out["DeletedReason"].iloc[1] == "track limits"
+        assert pd.isna(out["DeletedReason"].iloc[2])
+
+    def test_clean_data_unchanged_by_sentinel_normalization(self, laps_df):
+        """Normalization is a strict no-op when no null-like strings are present."""
+        assert laps_df["Deleted"].dtype.name == "boolean"
+        assert list(laps_df["Deleted"]) == [False, False, False]
+        assert laps_df["IsPersonalBest"].dtype == bool
+
+    # ------------------------------------------------------------------
+    # Polars laps path (polars does not call _apply_laps_dtypes)
+    # ------------------------------------------------------------------
+
+    def test_polars_create_lap_df_infers_boolean_deleted(self):
+        """'None' sentinels are normalized pre-construction so polars infers Boolean."""
+        pl = pytest.importorskip("polars")
+        import tif1.core as core_module
+
+        core_module._ensure_polars_available()
+
+        lap_data = {
+            "time": [87.1, 88.2, 89.3],
+            "lap": [1, 2, 3],
+            "compound": ["HARD"] * 3,
+            "stint": [1, 1, 1],
+            "s1": [30.1, 30.2, 30.3],
+            "s2": [31.1, 31.2, 31.3],
+            "s3": [25.9, 26.0, 25.7],
+            "life": [1, 2, 3],
+            "pos": [1, 2, 3],
+            "status": ["1"] * 3,
+            "pb": [False, True, False],
+            "drv": ["VER"] * 3,
+            "dNum": ["1"] * 3,
+            "del": ["None", False, "None"],
+            "delR": [None, "track limits", None],
+        }
+        result = _create_lap_df(lap_data, "VER", "Red Bull", "polars")
+        assert result.schema["del"] == pl.Boolean
+        assert result["del"].to_list() == [None, False, None]
+
+    def test_polars_ultra_cold_payload_end_to_end(self):
+        """Raw 2026-style payload survives _create_lap_df + _process_lap_df cleanly."""
+        pl = pytest.importorskip("polars")
+        import tif1.core as core_module
+
+        core_module._ensure_polars_available()
+
+        lap_data = {
+            **_RAW_PAYLOAD,
+            "del": ["None", False, "None"],
+            "delR": ["None", "track limits", "None"],
+        }
+        raw = _create_lap_df(lap_data, "VER", "Red Bull", "polars")
+        out = _process_lap_df(raw, "polars")
+        assert out.schema["Deleted"] == pl.Boolean
+        assert out["Deleted"].to_list() == [None, False, None]
+        assert out.schema["DeletedReason"] == pl.String
+        assert out["DeletedReason"].to_list() == [None, "track limits", None]
+
+    def test_polars_direct_process_normalizes_string_sentinels(self):
+        """Direct _process_lap_df calls normalize String-column sentinels too."""
+        pl = pytest.importorskip("polars")
+
+        lap_df = pl.DataFrame(
+            {
+                "time": [87.1, 88.2],
+                "lap": [1, 2],
+                "compound": ["HARD", "HARD"],
+                "stint": [1, 1],
+                "s1": [30.1, 30.2],
+                "s2": [31.1, 31.2],
+                "s3": [25.9, 26.0],
+                "life": [1, 2],
+                "pos": [1, 2],
+                "status": ["1", "1"],
+                "pb": [False, True],
+                "drv": ["VER", "VER"],
+                "dNum": ["1", "1"],
+                "delR": ["None", "track limits"],
+            }
+        )
+        out = _process_lap_df(lap_df, "polars")
+        assert out["DeletedReason"].to_list() == [None, "track limits"]
+
+    def test_polars_clean_data_unchanged(self):
+        """Clean polars payloads keep their inferred dtypes (no-op normalization)."""
+        pl = pytest.importorskip("polars")
+        import tif1.core as core_module
+
+        core_module._ensure_polars_available()
+
+        raw = _create_lap_df(_RAW_PAYLOAD, "VER", "Red Bull", "polars")
+        out = _process_lap_df(raw, "polars")
+        assert out.schema["Deleted"] == pl.Boolean
+        assert out["Deleted"].to_list() == [False, False, False]
+        assert out.schema["Compound"] == pl.String
+        assert out.schema["LapTimeSeconds"] == pl.Float64

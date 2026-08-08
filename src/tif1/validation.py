@@ -568,15 +568,17 @@ def validate_lap_data(data: dict, strict: bool = False) -> dict:
     Raises:
         InvalidDataError: If strict=True and validation fails
     """
+    normalized_data = _normalize_lap_data(data)
     try:
-        normalized_data = _normalize_lap_data(data)
         validated = LapData.model_validate(normalized_data)
         return validated.model_dump()
     except Exception as e:
         if strict:
             raise InvalidDataError(reason=f"Lap data validation failed: {e}")
         logger.debug(f"Lap validation failed (non-strict): {e}")
-        return data
+        # Return the normalized payload so null-like strings (e.g. "None" in the
+        # 2026 season) never leak through to DataFrame construction unchanged.
+        return normalized_data
 
 
 def validate_telemetry_data(data: dict, strict: bool = False) -> dict:

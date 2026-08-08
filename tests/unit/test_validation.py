@@ -198,6 +198,27 @@ class TestValidation:
         assert validated["pos"][1] is None
         assert data == original
 
+    def test_validate_lap_data_non_strict_fallback_normalizes_none_strings(self):
+        """Non-strict lap validation still normalizes 'None' strings when validation fails."""
+        data = {
+            "time": [90.123],
+            "lap": [1.0, 2.0],  # Inconsistent lengths -> validation fails
+            "compound": ["SOFT", "SOFT"],
+            "stint": [1, 1],
+            "s1": [30.1, 29.9],
+            "s2": [35.2, 34.8],
+            "s3": [24.8, 24.7],
+            "life": [1, 2],
+            "pos": [1, 1],
+            "status": ["OK", "OK"],
+            "pb": [True, True],
+            "del": ["None", False],
+        }
+
+        fallback = validate_lap_data(data, strict=False)
+
+        assert fallback["del"] == [None, False]
+
     def test_validate_lap_data_coerces_none_strings_for_all_fields(self):
         """Converts null-like strings for every lap list field."""
         data = {
