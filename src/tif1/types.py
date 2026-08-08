@@ -1,10 +1,9 @@
 """Type stubs for tif1 with DataFrame column types."""
 
 import datetime
-from typing import Literal, Protocol, TypedDict, Union
+from typing import Literal, NotRequired, Protocol, TypedDict, Union
 
 import pandas as pd
-from typing_extensions import NotRequired
 
 try:
     import polars as pl

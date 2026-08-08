@@ -579,7 +579,7 @@ class TestConfigSetValidation:
         config.set("timeout", 45.0)
         result = config.get("timeout")
         # Should accept the float value
-        assert result in {45.0, 45}
+        assert result in {45.0}
 
     def test_very_large_timeout_value(self):
         """Test that extremely large timeout values are handled."""

@@ -33,7 +33,7 @@ Use this checklist before creating a new release.
 - [ ] Property-based tests pass
 - [ ] Benchmarks show no regression
 - [ ] Manual smoke test completed
-- [ ] Tested on Python 3.10, 3.11, 3.12, 3.13, 3.14
+- [ ] Tested on Python 3.11, 3.12, 3.13, 3.14
 
 ### Build & Package
 - [ ] Package builds successfully: `uv build`

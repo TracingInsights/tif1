@@ -674,7 +674,7 @@ class Telemetry(pd.DataFrame):
 
         Numeric values are interpreted as seconds for FastF1 compatibility.
         """
-        if pd.api.types.is_timedelta64_ns_dtype(values):
+        if pd.api.types.is_timedelta64_dtype(values):
             return values
         if pd.api.types.is_numeric_dtype(values):
             return _numeric_seconds_to_timedelta(values)
@@ -1244,7 +1244,14 @@ def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFram
 
 
 def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
-    """Convert numeric seconds to timedelta64[ns] without NaN cast warnings."""
+    """Convert numeric seconds to timedelta64[ns] without NaN cast warnings.
+
+    Input that is already a timedelta (any resolution, e.g. ``timedelta64[us]``
+    from pandas 3.0 unit inference) is returned unchanged - its integer values
+    are never reinterpreted as seconds.
+    """
+    if pd.api.types.is_timedelta64_dtype(values):
+        return cast(pd.Series, values)
     numeric_values = (
         cast(pd.Series, values)
         if pd.api.types.is_numeric_dtype(values)
@@ -1337,7 +1344,7 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         "LapStartTime",
     )
     for col in _TD_SECONDS_COLS:
-        if col in df.columns and not pd.api.types.is_timedelta64_ns_dtype(df[col]):
+        if col in df.columns and not pd.api.types.is_timedelta64_dtype(df[col]):
             df[col] = _numeric_seconds_to_timedelta(cast(pd.Series, df[col]))
 
     # ------------------------------------------------------------------
@@ -1420,7 +1427,7 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
     lap_df = _rename_columns(lap_df, LAP_RENAME_MAP, lib)
     if lib == "pandas" and COL_LAP_TIME in lap_df.columns:
         lap_time_series = cast(pd.Series, lap_df[COL_LAP_TIME])
-        if not pd.api.types.is_timedelta64_ns_dtype(lap_time_series):
+        if not pd.api.types.is_timedelta64_dtype(lap_time_series):
             numeric_lap_times = pd.to_numeric(lap_time_series, errors="coerce")
             parsed_lap_times = pd.to_timedelta(lap_time_series, errors="coerce")
             numeric_lap_timedeltas = _numeric_seconds_to_timedelta(numeric_lap_times)
@@ -1433,13 +1440,13 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
         )
     if lib == "pandas" and "Time" in lap_df.columns:
         time_series = cast(pd.Series, lap_df["Time"])
-        if not pd.api.types.is_timedelta64_ns_dtype(time_series):
+        if not pd.api.types.is_timedelta64_dtype(time_series):
             # Only convert if it's actually a Series (not already converted)
             if isinstance(time_series, pd.Series):
                 lap_df["Time"] = _numeric_seconds_to_timedelta(time_series)
     if lib == "pandas" and "WeatherTime" in lap_df.columns:
         weather_time_series = cast(pd.Series, lap_df["WeatherTime"])
-        if not pd.api.types.is_timedelta64_ns_dtype(weather_time_series):
+        if not pd.api.types.is_timedelta64_dtype(weather_time_series):
             if isinstance(weather_time_series, pd.Series):
                 lap_df["WeatherTime"] = _numeric_seconds_to_timedelta(weather_time_series)
     # Apply full _COLUMNS dtype contract for all remaining pandas columns
@@ -4122,7 +4129,9 @@ class Session:
         if self.lib == "polars":
             self._laps = pl.concat(laps_data, how="vertical_relaxed", rechunk=False)  # type: ignore[union-attr]
         else:
-            self._laps = pd.concat(laps_data, ignore_index=True, copy=False)
+            # copy=False is omitted: under pandas 3.0 Copy-on-Write, concat results
+            # already behave as copies and the copy keyword is deprecated.
+            self._laps = pd.concat(laps_data, ignore_index=True)
             # Remove duplicate columns if they exist (can happen if upstream data has Driver/Team)
             if isinstance(self._laps.columns, pd.Index) and self._laps.columns.duplicated().any():
                 # Keep only the first occurrence of each column name
@@ -5043,7 +5052,9 @@ class Session:
         return (
             pl.concat(tels, how="vertical_relaxed", rechunk=False)  # type: ignore[union-attr]
             if self.lib == "polars"
-            else pd.concat(tels, ignore_index=True, copy=False)
+            # copy=False is omitted: under pandas 3.0 Copy-on-Write, concat results
+            # already behave as copies and the copy keyword is deprecated.
+            else pd.concat(tels, ignore_index=True)
         )
 
     async def get_fastest_laps_tels_async(
@@ -5140,7 +5151,9 @@ class Session:
         return (
             pl.concat(tels, how="vertical_relaxed", rechunk=False)  # type: ignore[union-attr]
             if self.lib == "polars"
-            else pd.concat(tels, ignore_index=True, copy=False)
+            # copy=False is omitted: under pandas 3.0 Copy-on-Write, concat results
+            # already behave as copies and the copy keyword is deprecated.
+            else pd.concat(tels, ignore_index=True)
         )
 
     def _get_telemetry_df_for_ref(

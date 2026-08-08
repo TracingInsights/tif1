@@ -2,7 +2,7 @@
 
 import logging
 from collections import Counter
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from typing import Any, TypeVar
 
@@ -49,7 +49,7 @@ MIN_YEAR = 2018
 MAX_YEAR = 2100
 
 
-class TireCompound(str, Enum):
+class TireCompound(StrEnum):
     """Valid tire compounds."""
 
     SOFT = "SOFT"
@@ -61,7 +61,7 @@ class TireCompound(str, Enum):
     TEST_UNKNOWN = "TEST-UNKNOWN"
 
 
-class LapStatus(str, Enum):
+class LapStatus(StrEnum):
     """Valid lap status values."""
 
     VALID = "VALID"
@@ -70,7 +70,7 @@ class LapStatus(str, Enum):
     INLAP = "INLAP"
 
 
-class SessionType(str, Enum):
+class SessionType(StrEnum):
     """Valid session types."""
 
     PRACTICE_1 = "Practice 1"
@@ -83,7 +83,7 @@ class SessionType(str, Enum):
     RACE = "Race"
 
 
-class AnomalyType(str, Enum):
+class AnomalyType(StrEnum):
     """Types of data anomalies."""
 
     MISSING_LAPS = "missing_laps"

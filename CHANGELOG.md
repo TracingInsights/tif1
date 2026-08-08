@@ -28,6 +28,26 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 - Applied the same null-like string normalization to the polars laps path: `_create_lap_df` normalizes payload lists before DataFrame construction (so polars infers proper `Boolean`/`Float` dtypes instead of stringifying mixed columns), and `_process_lap_df` normalizes String columns as a defensive boundary.
 - Non-strict `validate_lap_data` now returns the normalized payload (null-like strings converted to `None`) even when validation fails, instead of returning raw un-normalized data.
 
+### Dependencies
+
+Updated all dependencies to their latest stable versions, one at a time, with breaking changes resolved:
+
+- **`pandas` 2.3.3 → 3.0.5** (major) and **`pandas-stubs` 2.3.3.260113 → 3.0.5.260730**: migrated the codebase for pandas 3.0 breaking changes:
+  - Timedelta unit inference (`timedelta64[us]` is now produced for sub-second inputs): all `is_timedelta64_ns_dtype` guards were widened to `is_timedelta64_dtype` and `_numeric_seconds_to_timedelta` no longer reinterprets already-timedelta columns, preventing a 1e6× lap-time scaling bug in `pick_fastest`/`slice_by_time`.
+  - `str` dtype is now the default for string columns: telemetry `Driver` is explicitly kept as `object` dtype for FastF1 compatibility, matching the laps dtype contract.
+- **Python minimum raised to 3.11** (required by pandas 3.0): updated `requires-python`, classifiers, CI matrix, ty config, and documentation.
+- `typer` 0.26.7 → 0.27.1 (metavar help-printing change only)
+- `niquests` 3.19.1 → 3.21.0
+- `matplotlib` 3.10.9 → 3.11.1
+- `polars` 1.41.2 → 1.43.2
+- `typing-extensions` 4.15.0 → 4.16.0
+- `pyarrow` 24.0.0 → 25.0.0
+- `hypothesis` 6.155.3 → 6.165.2
+- `prek` 0.4.5 → 0.4.12
+- `ty` 0.0.49 → 0.0.69
+- `ruff` 0.15.17 → 0.16.2 (new `PLR0917` rule added to the ignore list alongside the existing `PLR09xx` rules; fixed a `B033` duplicate set item in tests)
+- Transitive upgrades via lockfile: `numpy` 2.3.5 → 2.5.1, plus `certifi`, `charset-normalizer`, `idna`, `click`, `requests`, `pygments`, `pillow`, and others.
+
 ## [0.3.1] - 2026-05-15
 
 ### Summary

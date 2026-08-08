@@ -38,7 +38,7 @@ Key patterns:
 
 Constraints:
 - Never use `https://raw.githubusercontent.com` CDN (rate limits). Use StaticDelivr (primary) or jsDelivr (fallback) CDNs only.
-- Python >=3.10; use type hints everywhere; Google-style docstrings for public APIs.
+- Python >=3.11; use type hints everywhere; Google-style docstrings for public APIs.
 - Ruff ruleset (see pyproject.toml for full select/ignore); line length 100, double quotes, space indent.
 - Keep imports sorted (ruff/format), avoid unused imports, prefer explicit names.
 - Handle errors via custom exceptions in `exceptions.py`; never swallow network/data errors.

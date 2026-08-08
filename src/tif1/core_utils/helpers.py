@@ -136,8 +136,9 @@ def _filter_valid_laptimes(laps, lib: str):
             pl.col(COL_LAP_TIME).cast(pl.Float64, strict=False).alias(COL_LAP_TIME_SECONDS)
         ).filter(pl.col(COL_LAP_TIME_SECONDS).is_not_null())
 
-    # For pandas: check if already timedeltas
-    if pd.api.types.is_timedelta64_ns_dtype(laps[COL_LAP_TIME]):
+    # For pandas: check if already timedeltas (any resolution, e.g. timedelta64[us]
+    # with pandas 3.0 unit inference)
+    if pd.api.types.is_timedelta64_dtype(laps[COL_LAP_TIME]):
         valid = laps[laps[COL_LAP_TIME].notna()].copy()
         valid[COL_LAP_TIME_SECONDS] = (
             cast(pd.Series, valid[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
@@ -294,6 +295,9 @@ def _create_telemetry_df(tel_data: dict, driver: str, lap_num: int, lib: str) ->
             telemetry_df["DRS"] = telemetry_df["DRS"].astype("Int64")
 
         telemetry_df["Driver"] = driver
+        # Keep object dtype for FastF1 compatibility (pandas 3.0 infers str dtype
+        # by default for string columns; the laps contract uses object).
+        telemetry_df["Driver"] = telemetry_df["Driver"].astype(object)
         telemetry_df["LapNumber"] = lap_num
         telemetry_df["LapNumber"] = telemetry_df["LapNumber"].astype("Int64")
 
