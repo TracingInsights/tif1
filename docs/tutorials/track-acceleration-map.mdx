@@ -83,52 +83,39 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native chart accepts the shared filters plus a few chart-specific options. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
+
+```python
+import tif1
+
+# Custom colormap, saved directly to a file
+fig, ax = tif1.plot_track_acceleration_map(
+    2023, 'Suzuka', 'Q',
+    cmap='seismic',
+    save_path='track_acceleration_map.png',
+    dpi=300,
+)
+plt.show()
+```
+
+The default `cmap='RdBu_r'` matches the chart above.
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-import numpy as np
 
-# Load session
-session = tif1.get_session(2023, 'Suzuka', 'Q')
-fastest_lap = session.laps.pick_fastest()
-
-# Get telemetry
-telemetry = fastest_lap.get_car_data()
-
-# Calculate acceleration
-speed_ms = telemetry['Speed'] / 3.6
-time_s = telemetry['Time'].dt.total_seconds()
-lon_acc = np.gradient(speed_ms, time_s) / 9.81
-
-# Extract position
-x = telemetry['X']
-y = telemetry['Y']
-
-# Prepare segments
-points = np.array([x, y]).T.reshape(-1, 1, 2)
-segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-# Create plot
-fig, ax = plt.subplots(figsize=(12, 10))
-
-# Color-coded track
-norm = plt.Normalize(lon_acc.min(), lon_acc.max())
-lc = LineCollection(segments, cmap='RdBu_r', norm=norm, linewidth=4)
-lc.set_array(lon_acc)
-line = ax.add_collection(lc)
-
-# Colorbar
-cbar = plt.colorbar(line, ax=ax, label='Longitudinal Acceleration (g)')
-
-# Format
-ax.set_aspect('equal')
-ax.axis('off')
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Acceleration Map")
-plt.tight_layout()
+# One call: loads the session, computes acceleration, and draws the track map
+fig, ax = tif1.plot_track_acceleration_map(2023, 'Suzuka', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_track_acceleration_map(2023, 'Suzuka', 'Q', save_path='track_acceleration_map.png')
 ```
 
 ## Interpreting the colors
@@ -160,6 +147,8 @@ curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2)**1.5
 # Lateral acceleration
 lat_acc = (speed_ms**2 * curvature) / 9.81
 ```
+
+The [G-G diagram](/tutorials/gg-diagram) and [telemetry comparison](/tutorials/telemetry-comparison) tutorials use a numerically safer smooth-derivative approach for both acceleration components.
 
 ## Next steps
 

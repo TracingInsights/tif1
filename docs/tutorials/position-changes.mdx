@@ -84,38 +84,36 @@ From this visualization, you can identify:
 
 ## Advanced: Highlighting Specific Drivers
 
-To focus on specific drivers, you can filter the data before plotting:
+To focus on specific drivers, use the native function's shared filters instead of filtering manually:
 
 ```python
-# Focus on top 5 finishers
-final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
-top_5 = final_lap.sort_values("Position").head(5)["Driver"].tolist()
+import tif1
 
-fig, ax = plt.subplots(figsize=(10, 6))
-
-for drv in top_5:
-    drv_laps = laps[laps["Driver"] == drv]
-    abb = drv_laps["Driver"].iloc[0]
-    color = tif1.plotting.get_driver_color(abb, session=session)
-
-    ax.plot(
-        drv_laps["LapNumber"],
-        drv_laps["Position"],
-        label=abb,
-        color=color,
-        linewidth=2.5,
-        marker="o",
-        markersize=3
-    )
-
-ax.set_ylim([20.5, 0.5])
-ax.set_xlabel("Lap Number")
-ax.set_ylabel("Position")
-ax.set_title("Top 5 Finishers - Position Changes")
-ax.legend()
-ax.grid(True, alpha=0.3)
-plt.tight_layout()
+# Focus on the top 5 finishers
+fig, ax = tif1.plot_position_changes(2023, 1, "R", n_drivers=5)
 plt.show()
+
+# Or pick specific drivers
+fig, ax = tif1.plot_position_changes(2023, 1, "R", drivers=["VER", "LEC", "NOR"])
+plt.show()
+```
+
+Axis limits are derived from the data automatically, so the chart works for any grid size without hardcoded y-limits.
+
+## Complete example
+
+The whole workflow above is wrapped in a single native function:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# One call: loads the race and plots every driver's position lap by lap
+fig, ax = tif1.plot_position_changes(2023, 1, "R")
+plt.show()
+
+# Or save straight to a file
+# tif1.plot_position_changes(2023, 1, "R", save_path="race_position_changes.png")
 ```
 
 ## Conclusion

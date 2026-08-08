@@ -177,68 +177,36 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native function accepts the shared filters. `drivers` restricts the comparison; the default includes every driver in the session:
+
+```python
+import tif1
+
+# All drivers (default)
+fig, ax = tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q')
+plt.show()
+
+# Focus on selected drivers
+fig, ax = tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q', drivers=['VER', 'LEC', 'NOR'])
+plt.show()
+```
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
 
-# Setup
-tif1.plotting.setup_mpl(color_scheme='fastf1')
-session = tif1.get_session(2023, 'Monaco Grand Prix', 'Q')
-
-# Calculate metrics
-drivers = session.laps['Driver'].unique()
-downforce_data = []
-
-for driver in drivers:
-    try:
-        fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
-        telemetry = fastest_lap.get_car_data().add_distance()
-
-        max_speed = telemetry['Speed'].max()
-        lap_time = fastest_lap['LapTime'].total_seconds()
-        circuit_length = telemetry['Distance'].max()
-        avg_speed = (circuit_length / lap_time) * 3.6
-
-        downforce_metric = (avg_speed / max_speed) * 100
-
-        downforce_data.append({
-            'Driver': driver,
-            'Team': fastest_lap['Team'],
-            'Metric': downforce_metric
-        })
-    except Exception:
-        continue
-
-downforce_data.sort(key=lambda x: x['Metric'], reverse=True)
-
-# Map to minimum value to make differences more apparent
-min_metric = min(d['Metric'] for d in downforce_data)
-for d in downforce_data:
-    d['MetricDiff'] = d['Metric'] - min_metric
-
-# Plot
-fig, ax = plt.subplots(figsize=(12, 8))
-drivers_list = [d['Driver'] for d in downforce_data]
-metrics_diff = [d['MetricDiff'] for d in downforce_data]
-metrics_actual = [d['Metric'] for d in downforce_data]
-colors = [tif1.plotting.get_team_color(d['Team'], session) for d in downforce_data]
-
-ax.barh(drivers_list, metrics_diff, color=colors, alpha=0.8, edgecolor='white', linewidth=1)
-
-for i, (driver, metric) in enumerate(zip(drivers_list, metrics_actual)):
-    ax.text(metrics_diff[i] + 0.02, i, f'{metric:.2f}', va='center', fontsize=10, fontweight='bold')
-
-ax.set_xlabel('Downforce Level (relative difference)', fontsize=12, fontweight='bold')
-ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
-ax.set_title('Monaco GP Qualifying - Downforce Levels', fontsize=14, fontweight='bold')
-ax.invert_yaxis()
-ax.grid(axis='x', alpha=0.3, linestyle='--')
-ax.set_xlim(left=0)
-
-plt.tight_layout()
+# One call: loads qualifying and computes the downforce metric per driver
+fig, ax = tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q', save_path="downforce_levels.png")
 ```
 
 ## Next steps

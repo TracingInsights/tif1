@@ -183,67 +183,36 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native function accepts the shared filters. `drivers` restricts the comparison (default: every driver), and `throttle_threshold` sets what counts as full throttle (default 98, matching the metric above):
+
+```python
+import tif1
+
+# All drivers, default 98% threshold
+fig, ax = tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q')
+plt.show()
+
+# Stricter definition of full throttle
+fig, ax = tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q', throttle_threshold=99)
+plt.show()
+```
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
 
-# Setup
-tif1.plotting.setup_mpl(color_scheme='fastf1')
-session = tif1.get_session(2023, 'Bahrain Grand Prix', 'Q')
-
-# Calculate throttle distance
-drivers = session.laps['Driver'].unique()
-throttle_data = []
-
-for driver in drivers:
-    try:
-        fastest_lap = session.laps.pick_drivers(driver).pick_fastest()
-        telemetry = fastest_lap.get_car_data().add_distance()
-        telemetry['Distance_delta'] = telemetry['Distance'].diff()
-
-        circuit_length = telemetry['Distance'].max()
-        full_throttle = telemetry[telemetry['Throttle'] >= 98]
-        throttle_distance = full_throttle['Distance_delta'].sum()
-        throttle_percentage = (throttle_distance / circuit_length) * 100
-
-        throttle_data.append({
-            'Driver': driver,
-            'Team': fastest_lap['Team'],
-            'ThrottlePercentage': round(throttle_percentage, 2)
-        })
-    except Exception:
-        continue
-
-throttle_data.sort(key=lambda x: x['ThrottlePercentage'], reverse=True)
-
-# Map to minimum for visualization
-min_percentage = min(d['ThrottlePercentage'] for d in throttle_data)
-for d in throttle_data:
-    d['PercentageDiff'] = d['ThrottlePercentage'] - min_percentage
-
-# Plot
-fig, ax = plt.subplots(figsize=(12, 8))
-drivers_list = [d['Driver'] for d in throttle_data]
-percentages_diff = [d['PercentageDiff'] for d in throttle_data]
-percentages_actual = [d['ThrottlePercentage'] for d in throttle_data]
-colors = [tif1.plotting.get_team_color(d['Team'], session) for d in throttle_data]
-
-ax.barh(drivers_list, percentages_diff, color=colors, alpha=0.8, edgecolor='white', linewidth=1)
-
-for i, (driver, percentage) in enumerate(zip(drivers_list, percentages_actual)):
-    ax.text(percentages_diff[i] + 0.1, i, f'{percentage:.1f}%', va='center', fontsize=10, fontweight='bold')
-
-ax.set_xlabel('Distance at Full Throttle (relative difference)', fontsize=12, fontweight='bold')
-ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
-ax.set_title('Bahrain GP Qualifying - Full Throttle Distance', fontsize=14, fontweight='bold')
-ax.invert_yaxis()
-ax.grid(axis='x', alpha=0.3, linestyle='--')
-ax.set_xlim(left=0)
-
-plt.tight_layout()
+# One call: loads qualifying and computes the full throttle share per driver
+fig, ax = tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q', save_path="throttle_distance.png")
 ```
 
 ## Next steps

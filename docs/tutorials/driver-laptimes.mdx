@@ -106,99 +106,56 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Complete Example
+## Parameters
 
-Here's the full code in one block:
+The native function exposes the same filters as parameters. `drivers` selects whose laps to plot (a single driver for the view above, or several), `laptime_cutoff` removes slow laps, and `include_deleted` keeps deleted laps when `True`:
 
 ```python
 import tif1
-import seaborn as sns
+
+# Single-driver view (the default filters out deleted laps)
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", 'R', drivers=["ALO"])
+plt.show()
+
+# Keep deleted laps and relax the outlier cutoff
+fig, ax = tif1.plot_driver_laptimes(
+    2023, "Azerbaijan", 'R',
+    drivers=["ALO"],
+    include_deleted=True,
+    laptime_cutoff=1.10,
+)
+plt.show()
+```
+
+## Complete Example
+
+The whole workflow above is wrapped in a single native function:
+
+```python
+import tif1
 import matplotlib.pyplot as plt
 
-# Setup plotting
-tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
-
-# Load race session
-race = tif1.get_session(2023, "Azerbaijan", 'R')
-laps = race.laps
-
-# Get driver laps and filter
-driver_laps = laps[laps["Driver"] == "ALO"].copy()
-fastest_lap = driver_laps["LapTime"].min()
-driver_laps = driver_laps[driver_laps["LapTime"] < fastest_lap * 1.07]
-driver_laps = driver_laps[~driver_laps["Deleted"]].reset_index(drop=True)
-
-# Create scatter plot
-fig, ax = plt.subplots(figsize=(10, 8))
-
-sns.scatterplot(
-    data=driver_laps,
-    x="LapNumber",
-    y="LapTime",
-    ax=ax,
-    hue="Compound",
-    palette=tif1.plotting.get_compound_mapping(session=race),
-    s=80,
-    linewidth=0,
-    legend='auto'
-)
-
-# Enhance plot
-ax.set_xlabel("Lap Number", fontsize=12)
-ax.set_ylabel("Lap Time", fontsize=12)
-ax.invert_yaxis()
-plt.suptitle("Alonso Lap Times in the 2023 Azerbaijan Grand Prix",
-             fontsize=14, fontweight='bold')
-plt.grid(color='w', which='major', axis='both', alpha=0.3)
-sns.despine(left=True, bottom=True)
-
-plt.tight_layout()
+# One call: loads the race, filters the laps, and plots them by compound
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", 'R', drivers=["ALO"])
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_driver_laptimes(2023, "Azerbaijan", 'R', drivers=["ALO"], save_path="driver_laptimes_example.png")
 ```
 
 ## Analyzing Multiple Drivers
 
-You can extend this to compare multiple drivers side by side:
+To compare several drivers, pass them all in the `drivers` list. The native default is the top-3 finishers, so omitting `drivers` gives exactly the multi-driver view:
 
 ```python
-# Compare top 3 finishers
-final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
-top_3_drivers = final_lap.sort_values("Position").head(3)["Driver"].tolist()
+import tif1
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+# Top-3 finishers by default
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", 'R')
+plt.show()
 
-for idx, driver in enumerate(top_3_drivers):
-    ax = axes[idx]
-
-    # Filter driver laps
-    driver_laps = laps[laps["Driver"] == driver].copy()
-    fastest_lap = driver_laps["LapTime"].min()
-    driver_laps = driver_laps[driver_laps["LapTime"] < fastest_lap * 1.07]
-    driver_laps = driver_laps[~driver_laps["Deleted"]]
-
-    # Plot
-    sns.scatterplot(
-        data=driver_laps,
-        x="LapNumber",
-        y="LapTime",
-        ax=ax,
-        hue="Compound",
-        palette=tif1.plotting.get_compound_mapping(session=race),
-        s=60,
-        linewidth=0,
-        legend=(idx == 2)  # Only show legend on last plot
-    )
-
-    ax.set_xlabel("Lap Number")
-    ax.set_ylabel("Lap Time" if idx == 0 else "")
-    ax.set_title(f"{driver}", fontweight='bold')
-    ax.invert_yaxis()
-    ax.grid(color='w', which='major', axis='both', alpha=0.3)
-    sns.despine(left=True, bottom=True, ax=ax)
-
-plt.suptitle("Top 3 Finishers - Lap Time Comparison",
-             fontsize=16, fontweight='bold', y=1.02)
-plt.tight_layout()
+# Or choose your own set
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", 'R', drivers=["ALO", "VER", "PER"])
 plt.show()
 ```
 

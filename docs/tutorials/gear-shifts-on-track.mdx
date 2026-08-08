@@ -109,55 +109,39 @@ When examining gear shift patterns, look for:
 
 Different circuits have distinct gear usage profiles. Street circuits like Monaco use lower gears extensively, while high-speed tracks like Monza spend more time in top gears.
 
+## Parameters
+
+The native chart accepts the shared filters plus a few chart-specific options. Change the gear color scale with `cmap`, or write the figure straight to a file with `save_path`:
+
+```python
+import tif1
+
+# Custom colormap, saved directly to a file
+fig, ax = tif1.plot_gear_shifts(
+    2021, 'Austrian Grand Prix', 'Q',
+    cmap='tab20',
+    save_path='gear_shifts_on_track.png',
+    dpi=150,
+)
+plt.show()
+```
+
+The colorbar is scaled from the data (generalized from the fixed 8-gear example above), so it works for any gearbox.
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib import colormaps
-from matplotlib.collections import LineCollection
 
-# Setup
-tif1.plotting.setup_mpl(mpl_timedelta_support=False, color_scheme='fastf1')
-
-# Load session
-session = tif1.get_session(2021, 'Austrian Grand Prix', 'Q')
-
-# Get fastest lap and telemetry
-lap = session.laps.pick_fastest()
-tel = lap.get_telemetry()
-
-# Prepare data
-x = np.array(tel['X'].values)
-y = np.array(tel['Y'].values)
-points = np.array([x, y]).T.reshape(-1, 1, 2)
-segments = np.concatenate([points[:-1], points[1:]], axis=1)
-gear = tel['nGear'].to_numpy().astype(float)
-
-# Create line collection
-cmap = colormaps['Paired']
-lc_comp = LineCollection(segments, norm=plt.Normalize(1, cmap.N + 1), cmap=cmap)
-lc_comp.set_array(gear)
-lc_comp.set_linewidth(4)
-
-# Plot
-fig, ax = plt.subplots(figsize=(10, 8))
-ax.add_collection(lc_comp)
-ax.axis('equal')
-ax.tick_params(labelleft=False, left=False, labelbottom=False, bottom=False)
-
-plt.suptitle(
-    f"Fastest Lap Gear Shift Visualization\n"
-    f"{lap['Driver']} - {session.event['EventName']} {session.event.year}"
-)
-
-# Add colorbar
-cbar = plt.colorbar(mappable=lc_comp, label="Gear", boundaries=np.arange(1, 10))
-cbar.set_ticks(np.arange(1.5, 9.5))
-cbar.set_ticklabels(np.arange(1, 9))
-
+# One call: loads the session and colors the track by gear
+fig, ax = tif1.plot_gear_shifts(2021, 'Austrian Grand Prix', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_gear_shifts(2021, 'Austrian Grand Prix', 'Q', save_path='gear_shifts_on_track.png')
 ```
 
 ## Next steps

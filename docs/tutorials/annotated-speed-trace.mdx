@@ -108,90 +108,32 @@ For example, Turn 1 at Barcelona typically shows a sharp speed drop from ~310 km
 
 ## Comparing multiple drivers
 
-You can extend this to compare multiple drivers by plotting additional speed traces:
+The native [speed traces](/tutorials/speed-traces) chart overlays the fastest laps of several drivers on a shared distance axis:
 
 ```python
-# Get laps from two drivers
-lap1 = session.laps.pick_drivers('VER').pick_fastest()
-lap2 = session.laps.pick_drivers('HAM').pick_fastest()
+import tif1
 
-tel1 = lap1.get_car_data().add_distance()
-tel2 = lap2.get_car_data().add_distance()
-
-# Plot both with corner annotations
-fig, ax = plt.subplots(figsize=(12, 6))
-
-color1 = tif1.plotting.get_team_color(lap1['Team'], session=session)
-color2 = tif1.plotting.get_team_color(lap2['Team'], session=session)
-
-ax.plot(tel1['Distance'], tel1['Speed'], color=color1, label=lap1['Driver'], linewidth=2)
-ax.plot(tel2['Distance'], tel2['Speed'], color=color2, label=lap2['Driver'], linewidth=2)
-
-# Add corner markers
-v_min = min(tel1['Speed'].min(), tel2['Speed'].min())
-v_max = max(tel1['Speed'].max(), tel2['Speed'].max())
-ax.vlines(x=circuit_info.corners['Distance'], ymin=v_min-20, ymax=v_max+20,
-          linestyles='dotted', colors='grey', alpha=0.5)
-
-for _, corner in circuit_info.corners.iterrows():
-    txt = f"{corner['Number']}{corner['Letter']}"
-    ax.text(corner['Distance'], v_min-30, txt,
-            va='center_baseline', ha='center', size='small')
-
-ax.set_xlabel('Distance (m)')
-ax.set_ylabel('Speed (km/h)')
-ax.legend()
-ax.set_ylim([v_min - 40, v_max + 20])
-
+# Overlay the fastest laps of two drivers
+fig, ax = tif1.plot_speed_traces(2023, 'Spanish Grand Prix', 'Q', drivers=['VER', 'HAM'])
 plt.show()
 ```
 
+The [telemetry comparison](/tutorials/telemetry-comparison) chart goes further, adding acceleration and driver-action panels.
+
 ## Complete example
 
+The whole workflow above is wrapped in a single native function:
+
 ```python
-import matplotlib.pyplot as plt
 import tif1
+import matplotlib.pyplot as plt
 
-# Setup
-tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
-
-# Load session
-session = tif1.get_session(2021, 'Spanish Grand Prix', 'Q')
-
-# Get fastest lap and telemetry
-fastest_lap = session.laps.pick_fastest()
-car_data = fastest_lap.get_car_data().add_distance()
-
-# Get circuit info
-circuit_info = session.get_circuit_info()
-
-# Get team color
-team_color = tif1.plotting.get_team_color(fastest_lap['Team'], session=session)
-
-# Create plot
-fig, ax = plt.subplots(figsize=(12, 6))
-ax.plot(car_data['Distance'], car_data['Speed'],
-        color=team_color, label=fastest_lap['Driver'], linewidth=2)
-
-# Add corner annotations
-v_min = car_data['Speed'].min()
-v_max = car_data['Speed'].max()
-ax.vlines(x=circuit_info.corners['Distance'], ymin=v_min-20, ymax=v_max+20,
-          linestyles='dotted', colors='grey')
-
-for _, corner in circuit_info.corners.iterrows():
-    txt = f"{corner['Number']}{corner['Letter']}"
-    ax.text(corner['Distance'], v_min-30, txt,
-            va='center_baseline', ha='center', size='small')
-
-ax.set_xlabel('Distance (m)')
-ax.set_ylabel('Speed (km/h)')
-ax.legend()
-ax.set_ylim([v_min - 40, v_max + 20])
-
-plt.suptitle(f"Speed Trace with Corner Annotations\n"
-             f"{session.event['EventName']} {session.event.year} Qualifying")
+# One call: loads the session, fetches circuit info, and annotates the corners
+fig, ax = tif1.plot_annotated_speed_trace(2021, 'Spanish Grand Prix', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_annotated_speed_trace(2021, 'Spanish Grand Prix', 'Q', save_path='annotated_speed_trace.png')
 ```
 
 ## Next steps

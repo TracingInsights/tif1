@@ -174,64 +174,41 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native function exposes the same filters as parameters. `laptime_cutoff` fixes the color scale (fastest to `fastest * cutoff`), `include_deleted` and `include_pit_laps` keep those laps when `True`, and `cmap` / `xticklabels` control the styling:
+
+```python
+import tif1
+
+# Defaults match the chart above
+fig, ax = tif1.plot_laptime_heatmap(2023, 'Monaco Grand Prix', 'R')
+plt.show()
+
+# Custom color scale and tick spacing
+fig, ax = tif1.plot_laptime_heatmap(
+    2023, 'Monaco Grand Prix', 'R',
+    cmap='viridis',
+    xticklabels=3,
+    laptime_cutoff=1.10,
+)
+plt.show()
+```
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-# Setup
-tif1.plotting.setup_mpl(color_scheme='fastf1')
-session = tif1.get_session(2023, 'Monaco Grand Prix', 'R')
-laps = session.laps
-
-# Prepare data
-laps_clean = laps.copy()
-laps_clean['LapTimeSeconds'] = laps_clean['LapTime'].dt.total_seconds()
-laps_clean = laps_clean[~laps_clean['Deleted']]
-laps_clean = laps_clean[laps_clean['PitInTime'].isna()]
-laps_clean = laps_clean[laps_clean['PitOutTime'].isna()]
-
-fastest_lap = laps_clean['LapTimeSeconds'].min()
-laps_clean = laps_clean[laps_clean['LapTimeSeconds'] < fastest_lap * 1.07]
-
-# Create pivot table
-heatmap_data = laps_clean.pivot_table(
-    index='Driver',
-    columns='LapNumber',
-    values='LapTimeSeconds',
-    aggfunc='first'
-)
-
-driver_avg = heatmap_data.mean(axis=1).sort_values()
-heatmap_data = heatmap_data.loc[driver_avg.index]
-
-# Plot
-fig, ax = plt.subplots(figsize=(16, 10))
-
-sns.heatmap(
-    heatmap_data,
-    cmap='RdYlGn_r',
-    vmin=fastest_lap,
-    vmax=fastest_lap * 1.07,
-    cbar_kws={'label': 'Lap Time (seconds)', 'aspect': 40},
-    linewidths=0.5,
-    linecolor='#1a1a1a',
-    xticklabels=5,
-    ax=ax
-)
-
-ax.set_xlabel('Lap Number', fontsize=12, fontweight='bold')
-ax.set_ylabel('Driver', fontsize=12, fontweight='bold')
-ax.set_title('Monaco Grand Prix - Lap Time Heatmap',
-             fontsize=14, fontweight='bold', pad=20)
-
-plt.yticks(rotation=0, fontsize=10)
-plt.xticks(fontsize=10)
-
-plt.tight_layout()
+# One call: loads the race, pivots the data, and draws the heatmap
+fig, ax = tif1.plot_laptime_heatmap(2023, 'Monaco Grand Prix', 'R')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_laptime_heatmap(2023, 'Monaco Grand Prix', 'R', save_path="laptime_heatmap.png")
 ```
 
 ## Advanced variations

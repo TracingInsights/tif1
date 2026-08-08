@@ -242,6 +242,41 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native chart accepts the shared filters. Pick the drivers with the `drivers` list; the default is the top-3 finishers:
+
+```python
+import tif1
+
+# Compare any set of drivers
+fig, ax = tif1.plot_gg_diagram(
+    2024, "Monaco", "Q",
+    drivers=["VER", "LEC", "NOR"],
+    save_path="gg_diagram.png",
+    dpi=300,
+)
+plt.show()
+```
+
+## Complete example
+
+The whole workflow above (smooth derivatives, angle normalization, convex hull) is wrapped in a single native function:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# One call: loads the session, computes accelerations, and draws the envelope
+fig, ax = tif1.plot_gg_diagram(2024, "Monaco", "Q", drivers=["VER", "LEC", "NOR"])
+plt.show()
+
+# Or save straight to a file
+# tif1.plot_gg_diagram(2024, "Monaco", "Q", save_path="gg_diagram.png")
+```
+
+The `smooth_derivative` / `compute_accelerations` helpers above live in the library under `tif1.charts._acceleration` and are shared with the [telemetry comparison](/tutorials/telemetry-comparison) chart.
+
 ## Reading the diagram
 
 Key insights from a G-G diagram:

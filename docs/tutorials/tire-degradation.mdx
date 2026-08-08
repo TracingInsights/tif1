@@ -245,6 +245,48 @@ for compound in ["SOFT", "MEDIUM", "HARD"]:
             print(f"{compound}: No cliff detected")
 ```
 
+## Parameters
+
+The native function exposes the same controls as parameters. `compounds` picks which compounds to plot, `fuel_correction` sets the per-lap fuel gain, `min_laps` drops compounds with too few laps, and `smoothing_window` tunes the rolling median:
+
+```python
+import tif1
+
+# Defaults match the analysis above
+fig, ax = tif1.plot_tire_degradation(2024, "Hungarian Grand Prix", "Race")
+plt.show()
+
+# Custom tuning
+fig, ax = tif1.plot_tire_degradation(
+    2024, "Hungarian Grand Prix", "Race",
+    compounds=["SOFT", "MEDIUM"],
+    fuel_correction=0.025,
+    min_laps=8,
+    smoothing_window=7,
+)
+plt.show()
+```
+
+Compound colors come from `tif1.plotting.get_compound_mapping(session)` (season-aware), not hardcoded literals.
+
+## Complete example
+
+The whole workflow above (fuel correction, rolling median, cliff-friendly y-limits) is wrapped in a single native function:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# One call: loads the race and plots the degradation curves per compound
+fig, ax = tif1.plot_tire_degradation(2024, "Hungarian Grand Prix", "Race")
+plt.show()
+
+# Or save straight to a file
+# tif1.plot_tire_degradation(2024, "Hungarian Grand Prix", "Race", save_path="tire_degradation.png")
+```
+
+The `rolling_median` helper shown above lives in the library as `tif1.charts.performance.rolling_median`.
+
 ## Summary
 
 With `tif1`, you can:

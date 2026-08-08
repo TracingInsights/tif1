@@ -72,47 +72,39 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native chart accepts the shared filters plus a few chart-specific options. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
+
+```python
+import tif1
+
+# Custom colormap, saved directly to a file
+fig, ax = tif1.plot_track_brake_zones(
+    2023, 'Monza', 'Q',
+    cmap='coolwarm',
+    save_path='track_brake_zones.png',
+    dpi=300,
+)
+plt.show()
+```
+
+The default `cmap='RdYlGn_r'` with on/off colorbar ticks matches the chart above.
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-import numpy as np
 
-# Load session
-session = tif1.get_session(2023, 'Monza', 'Q')
-fastest_lap = session.laps.pick_fastest()
-
-# Get telemetry
-telemetry = fastest_lap.get_car_data()
-x = telemetry['X']
-y = telemetry['Y']
-brake = telemetry['Brake']
-
-# Prepare segments
-points = np.array([x, y]).T.reshape(-1, 1, 2)
-segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-# Create plot
-fig, ax = plt.subplots(figsize=(12, 10))
-
-# Color-coded track
-norm = plt.Normalize(0, 1)
-lc = LineCollection(segments, cmap='RdYlGn_r', norm=norm, linewidth=4)
-lc.set_array(brake)
-line = ax.add_collection(lc)
-
-# Colorbar
-cbar = plt.colorbar(line, ax=ax, label='Brake', ticks=[0, 1])
-cbar.ax.set_yticklabels(['Off', 'On'])
-
-# Format
-ax.set_aspect('equal')
-ax.axis('off')
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Brake Zones")
-plt.tight_layout()
+# One call: loads the session and highlights the braking zones
+fig, ax = tif1.plot_track_brake_zones(2023, 'Monza', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_track_brake_zones(2023, 'Monza', 'Q', save_path='track_brake_zones.png')
 ```
 
 ## Analyzing brake zones
@@ -125,18 +117,14 @@ Circuits like Monza have fewer but more intense braking zones, while Monaco has 
 
 ## Comparing drivers
 
-To compare braking points between drivers:
+The track map charts always use the session's fastest lap. For multi-driver comparisons, the telemetry charts accept a `drivers` list. For example, [speed traces](/tutorials/speed-traces) plots each driver's fastest-lap speed against distance:
 
 ```python
-# Get two laps
-lap1 = session.laps.pick_drivers('VER').pick_fastest()
-lap2 = session.laps.pick_drivers('HAM').pick_fastest()
+import tif1
 
-# Plot both on same figure
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-
-# Plot lap 1 on ax1, lap 2 on ax2
-# (use same code as above for each)
+# Compare the fastest laps of several drivers
+fig, ax = tif1.plot_speed_traces(2023, 'Spanish Grand Prix', 'Q', drivers=['VER', 'HAM'])
+plt.show()
 ```
 
 ## Next steps

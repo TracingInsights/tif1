@@ -152,6 +152,43 @@ plt.tight_layout()
 plt.show()
 ```
 
+## Parameters
+
+The native chart accepts the shared filters plus the analysed distance window. `distance_min` / `distance_max` bound the comparison to a section of the lap (the section shown above), and the default picks the top-2 finishers:
+
+```python
+import tif1
+
+# Compare two drivers over a distance window
+fig, ax = tif1.plot_telemetry_comparison(
+    2024, "Monaco", "Q",
+    drivers=["VER", "LEC"],
+    distance_min=500,
+    distance_max=2000,
+)
+plt.show()
+```
+
+Note that `ax` is a numpy array of the 4 panel axes, not a single axes.
+
+## Complete example
+
+The whole workflow above (acceleration math included) is wrapped in a single native function:
+
+```python
+import tif1
+import matplotlib.pyplot as plt
+
+# One call: loads the session, computes accelerations, and builds the 4 panels
+fig, ax = tif1.plot_telemetry_comparison(2024, "Monaco", "Q", drivers=["VER", "LEC"])
+plt.show()
+
+# Or save straight to a file
+# tif1.plot_telemetry_comparison(2024, "Monaco", "Q", save_path="telemetry_comparison.png")
+```
+
+The internal acceleration computation uses a numerically safer carry-forward outlier policy (instead of the `np.clip` shown above) so the envelopes stay faithful to the data.
+
 ## What to analyze
 
 - **Speed traces:** Who carries more speed through corners?

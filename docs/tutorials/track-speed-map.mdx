@@ -96,46 +96,39 @@ for _, corner in circuit_info.corners.iterrows():
             ha='center', va='center', fontsize=8, fontweight='bold')
 ```
 
+## Parameters
+
+The native chart accepts the shared filters and a few chart-specific options. The `cmap` parameter changes the color scale, and `save_path` writes the figure directly:
+
+```python
+import tif1
+
+# Custom colormap, saved straight to a file
+fig, ax = tif1.plot_track_speed_map(
+    2023, 'Monaco', 'Q',
+    cmap='viridis',
+    save_path='track_speed_map.png',
+    dpi=300,
+)
+plt.show()
+```
+
+The default `cmap='plasma'` matches the chart above.
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-import numpy as np
 
-# Load session
-session = tif1.get_session(2023, 'Monaco', 'Q')
-fastest_lap = session.laps.pick_fastest()
-
-# Get telemetry
-telemetry = fastest_lap.get_car_data()
-x = telemetry['X']
-y = telemetry['Y']
-speed = telemetry['Speed']
-
-# Prepare segments
-points = np.array([x, y]).T.reshape(-1, 1, 2)
-segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-# Create plot
-fig, ax = plt.subplots(figsize=(12, 10))
-
-# Color-coded track
-norm = plt.Normalize(speed.min(), speed.max())
-lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=4)
-lc.set_array(speed)
-line = ax.add_collection(lc)
-
-# Colorbar
-cbar = plt.colorbar(line, ax=ax, label='Speed (km/h)')
-
-# Format
-ax.set_aspect('equal')
-ax.axis('off')
-plt.suptitle(f"{session.event['EventName']} {session.event.year} - Speed Map")
-plt.tight_layout()
+# One call: loads the session and draws the speed-colored track map
+fig, ax = tif1.plot_track_speed_map(2023, 'Monaco', 'Q')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_track_speed_map(2023, 'Monaco', 'Q', save_path='track_speed_map.png')
 ```
 
 ## Interpreting the visualization

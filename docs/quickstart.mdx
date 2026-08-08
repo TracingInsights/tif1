@@ -77,6 +77,24 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 # ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
 ```
 
+## 6. visualize in one line
+
+Every chart in `tif1.charts` loads its own session and produces a complete figure in a single call. The functions are also re-exported at the top level.
+
+```python
+import matplotlib.pyplot as plt
+import tif1
+
+# One call: loads the session, computes team maxima, and plots
+fig, ax = tif1.plot_top_speeds(2025, "Abu Dhabi Grand Prix", "Qualifying")
+plt.show()
+
+# Or save straight to a file — all 21 charts work the same way
+tif1.plot_track_speed_map(2025, "Monaco Grand Prix", "Qualifying", save_path="speed_map.png")
+```
+
+See the [Charts API](/api-reference/charts) for the full list of chart functions and their shared filters (`drivers`, `teams`, `n_drivers`, `laptime_cutoff`, and more).
+
 ## Pro Tip: Speed it up!
 
 If you're loading data for the first time, use `laps_async()` to fetch all drivers' data simultaneously:
@@ -109,6 +127,9 @@ asyncio.run(main())
   </Card>
   <Card title="API Reference" href="/api-reference/core">
     Core API details
+  </Card>
+  <Card title="Charts API" href="/api-reference/charts">
+    21 one-call chart functions
   </Card>
   <Card title="Tutorials" href="/tutorials/race-analysis">
     Detailed tutorials

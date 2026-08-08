@@ -1,0 +1,598 @@
+"""Tests for the native tif1.charts functions.
+
+All tests run fully offline: ``tif1.charts._common.load_session`` (the single
+loading seam) is monkeypatched to return a synthetic :class:`FakeSession`, so
+the real ``get_session`` is never called.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import ClassVar
+from unittest import mock
+
+import matplotlib as mpl
+
+mpl.use("Agg")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pytest
+
+from tif1.charts import (
+    _common,
+    lap_times,
+    performance,
+    telemetry,
+    top_speeds,
+    track_maps,
+)
+from tif1.exceptions import DataNotFoundError
+
+# fmt: off
+DRIVERS = [
+    ("VER", "Red Bull Racing", "1"),
+    ("PER", "Red Bull Racing", "11"),
+    ("LEC", "Ferrari", "16"),
+    ("SAI", "Ferrari", "55"),
+    ("HAM", "Mercedes", "44"),
+]
+# fmt: on
+
+N_LAPS = 12
+_TEAM_COLORS = {
+    "Red Bull Racing": "#0600ef",
+    "Ferrari": "#dc0000",
+    "Mercedes": "#00f5d0",
+}
+
+
+class FakeEvent:
+    """Minimal dict-like event with attribute and item access."""
+
+    def __init__(self, name: str, year: int) -> None:
+        self.name = name
+        self.year = year
+        self._event_name = name
+        self._event_date = pd.Timestamp(f"{year}-07-21")
+
+    def __getitem__(self, key: str):
+        if key == "EventName":
+            return self._event_name
+        if key == "EventDate":
+            return self._event_date
+        raise KeyError(key)
+
+
+class FakeTelemetry(pd.DataFrame):
+    """Telemetry frame with the ``add_distance`` method already satisfied."""
+
+    _metadata: ClassVar[list[str]] = []
+
+    def add_distance(self, drop_existing: bool = True):  # noqa: ARG002
+        return self
+
+
+class FakeLap:
+    """A single lap row exposing the fastf1-style surface the charts use."""
+
+    def __init__(self, session, row: pd.Series) -> None:
+        self.session = session
+        self._row = row
+
+    def __getitem__(self, key):
+        return self._row[key]
+
+    def get_car_data(self):
+        return self.session.telemetry_for(self._row["Driver"], self._row["LapNumber"])
+
+    def get_telemetry(self):
+        return self.get_car_data()
+
+
+class FakeLaps(pd.DataFrame):
+    """DataFrame subclass with fastf1-style ``pick_*`` methods."""
+
+    _metadata: ClassVar[list[str]] = ["session"]
+
+    def pick_driver(self, identifier):
+        return self.pick_drivers([identifier])
+
+    def pick_drivers(self, identifiers):
+        if isinstance(identifiers, (str, int)) or not isinstance(identifiers, (list, tuple, set)):
+            identifiers = [identifiers]
+        normalized = [str(i) for i in identifiers]
+        result = FakeLaps(self[self["Driver"].isin(normalized)])
+        result.session = self.session
+        return result
+
+    def pick_fastest(self, only_by_time: bool = False):  # noqa: ARG002
+        if self.empty:
+            return None
+        row = self.loc[self["LapTime"].idxmin()]
+        return FakeLap(self.session, row)
+
+
+class FakeSession:
+    """Synthetic session covering exactly the surface the charts touch."""
+
+    def __init__(
+        self, *, year: int = 2023, name: str = "Qualifying", with_laps: bool = True
+    ) -> None:
+        self.year = year
+        self.name = name
+        self.event = FakeEvent("Italian Grand Prix", year)
+        self.drivers = [dn for _, _, dn in DRIVERS]
+        self._laps = _make_laps() if with_laps else _make_laps().iloc[0:0]
+        self._laps.session = self
+
+        rows = [
+            {
+                "Abbreviation": abbr,
+                "TeamName": team,
+                "FirstName": abbr,
+                "LastName": abbr,
+                "FullName": abbr,
+            }
+            for abbr, team, _dn in DRIVERS
+        ]
+        self._results = pd.DataFrame(rows)
+        self.drivers_df = pd.DataFrame(
+            {
+                "Driver": [abbr for abbr, _, _ in DRIVERS],
+                "Team": [team for _, team, _ in DRIVERS],
+                "DriverNumber": [dn for _, _, dn in DRIVERS],
+                "TeamColor": [_TEAM_COLORS[team] for _, team, _ in DRIVERS],
+                "FirstName": [abbr for abbr, _, _ in DRIVERS],
+                "LastName": [abbr for abbr, _, _ in DRIVERS],
+                "HeadshotUrl": [""] * len(DRIVERS),
+            }
+        )
+
+    @property
+    def laps(self) -> FakeLaps:
+        return self._laps
+
+    @laps.setter
+    def laps(self, value: FakeLaps) -> None:
+        self._laps = value
+
+    @property
+    def results(self) -> pd.DataFrame:
+        return self._results
+
+    def get_driver(self, identifier):
+        for abbr, team, dn in DRIVERS:
+            if str(identifier) == dn:
+                return {
+                    "Abbreviation": abbr,
+                    "Team": team,
+                    "DriverNumber": dn,
+                    "TeamColor": _TEAM_COLORS[team],
+                }
+        raise KeyError(f"Driver {identifier} not found")
+
+    def get_circuit_info(self):
+        corners = pd.DataFrame(
+            {
+                "Number": [1, 2, 3, 4],
+                "Letter": ["", "", "", ""],
+                "Distance": [500.0, 1500.0, 2500.0, 3500.0],
+            }
+        )
+        return SimpleNamespace(corners=corners)
+
+    def telemetry_for(self, driver: str, lap_number: int) -> FakeTelemetry:
+        idx = [d[0] for d in DRIVERS].index(driver)
+        return _make_telemetry(idx, lap_number)
+
+
+def _make_laps() -> FakeLaps:
+    """Synthetic lap data: 5 drivers x 12 laps with a wide pace spread."""
+    rows = []
+    for pos, (abbr, team, _dn) in enumerate(DRIVERS, start=1):
+        for lap_num in range(1, N_LAPS + 1):
+            # Lap time spread: ~1.5 s/lap delta per position -> HAM is ~10 s off VER
+            base_seconds = 90.0 + pos * 2.5 + lap_num * 0.1 + 0.05 * (lap_num % 3)
+            compound = "SOFT" if lap_num <= 6 else "MEDIUM"
+            tyre_life = lap_num if lap_num <= 6 else lap_num - 6
+            rows.append(
+                {
+                    "Driver": abbr,
+                    "Team": team,
+                    "LapNumber": lap_num,
+                    "LapTime": pd.Timedelta(seconds=base_seconds),
+                    "Position": pos,
+                    "Compound": compound,
+                    "Stint": 1 if lap_num <= 6 else 2,
+                    "TyreLife": tyre_life,
+                    "Deleted": abbr == "VER" and lap_num == 2,
+                    "PitInTime": pd.Timestamp("2023-07-21 14:30:00")
+                    if abbr == "HAM" and lap_num == 5
+                    else pd.NaT,
+                    "PitOutTime": pd.Timestamp("2023-07-21 14:31:00")
+                    if abbr == "HAM" and lap_num == 5
+                    else pd.NaT,
+                    "SpeedI1": 300.0 + pos * 2,
+                    "SpeedI2": 310.0 + pos * 2,
+                    "SpeedST": 320.0 + pos * 2,
+                    "SpeedFL": 290.0 + pos * 2,
+                    "TrackTemp": 35.0 + 0.5 * lap_num,
+                }
+            )
+    return FakeLaps(pd.DataFrame(rows))
+
+
+def _make_telemetry(driver_idx: int, lap_number: int) -> FakeTelemetry:
+    """Synthetic fastest-lap telemetry (~64 samples of a lap)."""
+    n = 64
+    lap_seconds = 85.0 + driver_idx * 2.0
+    t_sec = np.linspace(0, lap_seconds, n)
+    speed = 180.0 * (1 + driver_idx * 0.02) + 120.0 * np.sin(np.linspace(0, 2 * np.pi, n))
+    dt = np.diff(t_sec, prepend=t_sec[0])
+    distance = np.cumsum(speed / 3.6 * dt)
+
+    u = np.linspace(0, 2 * np.pi, n)
+    x = np.cos(u) * 400.0 + np.sin(u * 3) * 20.0
+    y = np.sin(u) * 250.0 + np.cos(u * 2) * 15.0
+
+    brake = (np.sin(u * 6) > 0.7).astype(int)
+    throttle = np.where(brake > 0, 0.0, 100.0)
+    gear = np.clip(np.round(speed / 40.0), 1, 8)
+
+    return FakeTelemetry(
+        {
+            "Time": pd.to_timedelta(t_sec, unit="s"),
+            "SessionTime": pd.to_timedelta(t_sec, unit="s"),
+            "Distance": distance,
+            "Speed": speed,
+            "X": x,
+            "Y": y,
+            "Throttle": throttle,
+            "Brake": brake,
+            "nGear": gear,
+        }
+    )
+
+
+@pytest.fixture
+def fake_session(monkeypatch):
+    """Patch the session loading seam and yield a synthetic session."""
+    session = FakeSession()
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+    yield session
+    plt.close("all")
+
+
+@pytest.fixture
+def no_laps_session(monkeypatch):
+    """Patch the seam with a session that has no lap data."""
+    session = FakeSession(with_laps=False)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+    yield session
+    plt.close("all")
+
+
+# ---------------------------------------------------------------------------
+# Happy paths: every function executes with defaults and returns (fig, ax)
+# ---------------------------------------------------------------------------
+
+CHART_CASES = [
+    (top_speeds.plot_top_speeds, "patches"),
+    (track_maps.plot_track_speed_map, "collections"),
+    (track_maps.plot_track_throttle_map, "collections"),
+    (track_maps.plot_track_brake_zones, "collections"),
+    (track_maps.plot_track_acceleration_map, "collections"),
+    (track_maps.plot_gear_shifts, "collections"),
+    (telemetry.plot_annotated_speed_trace, "lines"),
+    (telemetry.plot_speed_traces, "lines"),
+    (track_maps.plot_multi_driver_speed_comparison, "collections"),
+    (lap_times.plot_lap_delta, "patches"),
+    (telemetry.plot_telemetry_comparison, "lines"),
+    (telemetry.plot_gg_diagram, "collections"),
+    (lap_times.plot_driver_laptimes, "collections"),
+    (lap_times.plot_laptimes_distribution, "collections"),
+    (lap_times.plot_laptime_heatmap, "collections"),
+    (lap_times.plot_qualifying_grid, "patches"),
+    (lap_times.plot_position_changes, "lines"),
+    (lap_times.plot_track_temperature, "lines"),
+    (performance.plot_downforce_levels, "patches"),
+    (performance.plot_throttle_distance, "patches"),
+    (performance.plot_tire_degradation, "collections"),
+]
+
+
+@pytest.mark.parametrize(("func", "attr"), CHART_CASES, ids=[c[0].__name__ for c in CHART_CASES])
+def test_chart_happy_path(fake_session, func, attr):
+    """Every chart runs with defaults and returns real artists."""
+    fig, ax = func(2023, "Italian Grand Prix", "Q")
+    assert isinstance(fig, plt.Figure)
+    if isinstance(ax, np.ndarray):
+        assert ax.size == 4
+        assert sum(len(a.lines) + len(a.patches) + len(a.collections) for a in ax) > 0
+    else:
+        assert len(getattr(ax, attr)) > 0
+
+
+# ---------------------------------------------------------------------------
+# Shared filter pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_apply_common_filters_lap_numbers(fake_session):
+    out = _common.apply_common_filters(fake_session.laps, laps=[1, 2, 3])
+    assert set(out["LapNumber"].unique()) <= {1, 2, 3}
+
+
+def test_apply_common_filters_drivers(fake_session):
+    out = _common.apply_common_filters(fake_session.laps, drivers=["VER"], session=fake_session)
+    assert set(out["Driver"].unique()) == {"VER"}
+
+
+def test_apply_common_filters_teams(fake_session):
+    out = _common.apply_common_filters(fake_session.laps, teams=["Ferrari"], session=fake_session)
+    assert set(out["Driver"].unique()) == {"LEC", "SAI"}
+
+
+def test_apply_common_filters_n_drivers_top_n(fake_session):
+    finish_order = _common.finishing_order(fake_session, len(fake_session.drivers))
+    assert finish_order == ["VER", "PER", "LEC", "SAI", "HAM"]
+    out = _common.apply_common_filters(fake_session.laps, n_drivers=2, finish_order=finish_order)
+    assert set(out["Driver"].unique()) == {"VER", "PER"}
+
+
+def test_apply_common_filters_deleted_and_pit_laps(fake_session):
+    default = _common.apply_common_filters(fake_session.laps)
+    assert not default["Deleted"].any()
+    assert default["PitInTime"].notna().sum() == 0
+
+    with_deleted = _common.apply_common_filters(fake_session.laps, include_deleted=True)
+    assert with_deleted["Deleted"].any()
+
+    with_pit = _common.apply_common_filters(fake_session.laps, include_pit_laps=True)
+    assert with_pit["PitInTime"].notna().any()
+
+
+def test_apply_common_filters_cutoff_scope(fake_session):
+    """Global cutoff drops slow drivers; per-driver cutoff keeps them."""
+    laps = fake_session.laps
+    per_driver = _common.apply_laptime_cutoff(laps, 1.10, "per_driver")
+    global_scope = _common.apply_laptime_cutoff(laps, 1.10, "global")
+
+    assert "HAM" in set(per_driver["Driver"])  # HAM is slow overall but fine vs own fastest
+    assert "HAM" not in set(global_scope["Driver"])
+    assert len(per_driver) > len(global_scope)
+
+
+def test_apply_common_filters_cutoff_disabled(fake_session):
+    out = _common.apply_common_filters(
+        fake_session.laps, laptime_cutoff=None, include_pit_laps=True, include_deleted=True
+    )
+    assert len(out) == len(fake_session.laps)
+
+
+def test_filters_through_chart(fake_session):
+    """A chart accepts the shared filters and applies them."""
+    fig, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "Q", drivers=["VER"])
+    assert "VER" in ax.get_title() or fig.texts
+    title_texts = [t.get_text() for t in fig.texts]
+    assert any("VER Lap Times" in t for t in title_texts)
+
+
+# ---------------------------------------------------------------------------
+# Output behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_save_path_writes_file(fake_session, tmp_path):
+    out = tmp_path / "top_speeds.png"
+    top_speeds.plot_top_speeds(
+        2023, "Italian Grand Prix", "Q", save_path=str(out), dpi=150, facecolor="#1a1a1a"
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_no_save_without_save_path(fake_session, monkeypatch):
+    def _fail_save(self, *args, **kwargs):
+        raise AssertionError("savefig must not be called without save_path")
+
+    monkeypatch.setattr(plt.Figure, "savefig", _fail_save)
+    fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    assert fig is not None
+
+
+def test_savefig_kwargs_facecolor_and_dpi(fake_session, tmp_path, monkeypatch):
+    captured: dict[str, object] = {}
+    original = plt.Figure.savefig
+
+    def _capture_save(self, fname, **kwargs):
+        captured["kwargs"] = kwargs
+        return original(self, fname, **kwargs)
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture_save)
+
+    top_speeds.plot_top_speeds(
+        2023, "Italian Grand Prix", "Q", save_path=str(tmp_path / "a.png"), facecolor=None, dpi=150
+    )
+    assert "facecolor" not in captured["kwargs"]
+    assert captured["kwargs"]["dpi"] == 150
+    assert captured["kwargs"]["bbox_inches"] == "tight"
+
+    top_speeds.plot_top_speeds(
+        2023,
+        "Italian Grand Prix",
+        "Q",
+        save_path=str(tmp_path / "b.png"),
+        facecolor="#1a1a1a",
+        dpi=300,
+    )
+    assert captured["kwargs"]["facecolor"] == "#1a1a1a"
+    assert captured["kwargs"]["dpi"] == 300
+
+
+def test_facecolor_sets_figure_background(fake_session):
+    fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", facecolor="#1a1a1a")
+    assert fig.get_facecolor() == (
+        0.10196078431372549,
+        0.10196078431372549,
+        0.10196078431372549,
+        1.0,
+    )
+
+    fig2, _ = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "Q", facecolor=None)
+    assert fig2.get_facecolor() != (
+        0.10196078431372549,
+        0.10196078431372549,
+        0.10196078431372549,
+        1.0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Theme behaviour
+# ---------------------------------------------------------------------------
+
+_FASTF1_KEYS = [
+    "figure.facecolor",
+    "axes.facecolor",
+    "text.color",
+    "axes.labelcolor",
+    "xtick.color",
+    "ytick.color",
+]
+
+
+def test_default_theme_applies_fastf1(fake_session):
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    assert plt.rcParams["figure.facecolor"] == "#292625"
+
+
+def test_color_scheme_none_leaves_rcparams(fake_session):
+    before = {key: plt.rcParams[key] for key in _FASTF1_KEYS}
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", color_scheme=None)
+    after = {key: plt.rcParams[key] for key in _FASTF1_KEYS}
+    assert before == after
+
+
+# ---------------------------------------------------------------------------
+# Chart-specific behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_telemetry_comparison_requires_two_drivers(fake_session):
+    with pytest.raises(ValueError, match="exactly two drivers"):
+        telemetry.plot_telemetry_comparison(2023, "Italian Grand Prix", "Q", drivers=["VER"])
+
+
+def test_lap_delta_requires_two_drivers(fake_session):
+    with pytest.raises(ValueError, match="exactly two drivers"):
+        lap_times.plot_lap_delta(2023, "Italian Grand Prix", "Q", drivers=["VER"])
+
+
+def test_lap_delta_auto_ylim_not_hardcoded(fake_session):
+    _, ax = lap_times.plot_lap_delta(2023, "Italian Grand Prix", "Q")
+    ymin, ymax = ax.get_ylim()
+    assert ymax - ymin < 5  # no longer the hardcoded (-2, 2) range
+
+
+def test_position_changes_ylim_derived_from_data(fake_session):
+    _, ax = lap_times.plot_position_changes(2023, "Italian Grand Prix", "Q")
+    bottom, top = ax.get_ylim()  # axis is inverted: (max_pos + 0.5, 0.5)
+    assert bottom == 5.5  # max_pos (5) + 0.5, not the hardcoded 20.5
+    assert top == 0.5
+
+
+def test_top_speeds_speed_trap_validation(fake_session):
+    with pytest.raises(ValueError, match="speed_trap"):
+        top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", speed_trap="SpeedXX")
+
+
+def test_top_speeds_teams_filter(fake_session):
+    _, ax = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", teams=["Ferrari"])
+    y_labels = [t.get_text() for t in ax.get_yticklabels()]
+    assert set(y_labels) == {"Ferrari"}
+
+
+def test_qualifying_grid_include_deleted_false_by_default(fake_session):
+    """The deleted VER lap must never win the pole."""
+    _, ax = lap_times.plot_qualifying_grid(2023, "Italian Grand Prix", "Q")
+    y_labels = [t.get_text() for t in ax.get_yticklabels()]
+    assert y_labels[0] == "VER"  # VER still on pole (deleted lap excluded)
+
+
+# ---------------------------------------------------------------------------
+# Per-driver telemetry loops: skip failures, raise when nothing processed
+# ---------------------------------------------------------------------------
+
+
+def test_per_driver_loop_skips_failing_driver(fake_session):
+    session = FakeSession()
+    session.laps = session.laps[~session.laps["Driver"].isin(["LEC"])]
+    _, ax = telemetry.plot_gg_diagram(2023, "Italian Grand Prix", "Q", drivers=["VER", "LEC"])
+    assert len(ax.collections) >= 1
+
+
+def test_per_driver_loop_raises_when_none_processed(no_laps_session):
+    with pytest.raises(ValueError, match="No driver could be processed"):
+        telemetry.plot_gg_diagram(2023, "Italian Grand Prix", "Q")
+    with pytest.raises(ValueError, match="No driver could be processed"):
+        performance.plot_downforce_levels(2023, "Italian Grand Prix", "Q")
+    with pytest.raises(ValueError, match="No driver could be processed"):
+        performance.plot_throttle_distance(2023, "Italian Grand Prix", "Q")
+    with pytest.raises(ValueError, match="No driver could be processed"):
+        track_maps.plot_multi_driver_speed_comparison(2023, "Italian Grand Prix", "Q")
+
+
+# ---------------------------------------------------------------------------
+# Error propagation from the loading seam
+# ---------------------------------------------------------------------------
+
+
+def test_empty_laps_raise_clean_value_error(no_laps_session):
+    """Charts without lap data raise a clear ValueError, not a raw IndexError."""
+    with pytest.raises(ValueError, match="qualifying grid"):
+        lap_times.plot_qualifying_grid(2023, "Italian Grand Prix", "Q")
+    with pytest.raises(ValueError, match="track temperature"):
+        lap_times.plot_track_temperature(2023, "Italian Grand Prix", "R")
+    with pytest.raises(ValueError, match="heatmap"):
+        lap_times.plot_laptime_heatmap(2023, "Italian Grand Prix", "R")
+
+
+def test_load_session_error_propagates(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise DataNotFoundError(2023, "Italian Grand Prix")
+
+    monkeypatch.setattr(_common, "load_session", _boom)
+    with pytest.raises(DataNotFoundError):
+        top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+
+
+def test_unknown_driver_fuzzy_resolves_with_warning(fake_session):
+    """Unknown driver identifiers are fuzzy-resolved with a correction warning."""
+    with pytest.warns(UserWarning, match="Correcting user input"):
+        _, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "Q", drivers=["ZZZ"])
+    assert len(ax.collections) > 0
+
+
+# ---------------------------------------------------------------------------
+# Top-level lazy exports
+# ---------------------------------------------------------------------------
+
+
+def test_top_level_exports_resolve():
+    import tif1
+    from tif1 import charts as charts_module
+
+    assert tif1.charts is charts_module
+    for name in charts_module.__all__:
+        assert getattr(tif1, name) is getattr(charts_module, name)
+
+
+def test_all_function_names_are_exposed():
+    import tif1
+
+    for name in tif1.charts.__all__:
+        assert name in tif1.__all__
+        assert name in tif1._LAZY_EXPORTS

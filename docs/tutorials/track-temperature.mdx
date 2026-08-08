@@ -74,35 +74,38 @@ Track temperature patterns reveal important insights:
 - **Stable conditions:** Consistent temperature suggests predictable grip levels
 - **Temperature spikes:** May indicate changing weather or track conditions
 
+## Parameters
+
+The native function accepts the shared filters. With no `drivers`, it automatically uses the driver with the most recorded laps (exactly the logic above); pass a list to draw one line per driver:
+
+```python
+import tif1
+
+# Single line for the busiest driver (default)
+fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R')
+plt.show()
+
+# One line per selected driver
+fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R', drivers=['VER', 'LEC'])
+plt.show()
+```
+
+The session's weather data must be available (it is included in the laps by default).
+
 ## Complete example
+
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
 
-# Load session
-session = tif1.get_session(2023, 'Monaco', 'R')
-
-# Get laps from driver with most laps
-laps = session.laps
-driver_counts = laps.groupby('Driver')['LapNumber'].count()
-most_laps_driver = driver_counts.idxmax()
-driver_laps = laps.pick_drivers(most_laps_driver)
-
-# Create plot
-fig, ax = plt.subplots(figsize=(12, 6))
-ax.plot(driver_laps['LapNumber'], driver_laps['TrackTemp'],
-        color='#ff4444', linewidth=2.5, label='Track Temperature')
-
-ax.set_xlabel('Lap Number', fontsize=12)
-ax.set_ylabel('Track Temperature (°C)', fontsize=12)
-ax.legend(fontsize=11)
-ax.grid(alpha=0.3)
-
-plt.suptitle(f"Track Temperature - {session.event['EventName']} {session.event.year}",
-             fontsize=14, fontweight='bold')
-plt.tight_layout()
+# One call: loads the race and plots the track temperature across the laps
+fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_track_temperature(2023, 'Monaco', 'R', save_path="track_temperature.png")
 ```
 
 ## Adding air temperature

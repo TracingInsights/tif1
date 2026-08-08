@@ -130,75 +130,42 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Complete Example
+## Parameters
 
-Here's the full code in one block:
+The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default, matching the point finishers above), and `laptime_cutoff` controls the per-driver outlier removal:
 
 ```python
 import tif1
-import seaborn as sns
+
+# Top 10 point finishers (default)
+fig, ax = tif1.plot_laptimes_distribution(2023, "Azerbaijan", 'R')
+plt.show()
+
+# More drivers, relaxed outlier cutoff
+fig, ax = tif1.plot_laptimes_distribution(
+    2023, "Azerbaijan", 'R',
+    n_drivers=15,
+    laptime_cutoff=1.15,
+)
+plt.show()
+```
+
+Drivers are always ordered by finishing position, and deleted/pit laps are always excluded.
+
+## Complete Example
+
+The whole workflow above is wrapped in a single native function:
+
+```python
+import tif1
 import matplotlib.pyplot as plt
 
-# Setup plotting
-tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
-
-# Load race session
-race = tif1.get_session(2023, "Azerbaijan", 'R')
-laps = race.laps
-
-# Get point finishers and filter laps
-point_finishers = race.drivers[:10]
-driver_laps = laps[laps["Driver"].isin(point_finishers)].copy()
-
-# Filter out slow laps
-driver_laps = driver_laps[~driver_laps["Deleted"]]
-driver_laps = driver_laps[~driver_laps["PitOutTime"].notna()]
-driver_laps = driver_laps[~driver_laps["PitInTime"].notna()]
-
-def filter_quick_laps(group):
-    fastest = group["LapTime"].min()
-    return group[group["LapTime"] < fastest * 1.10]
-
-driver_laps = driver_laps.groupby("Driver", group_keys=False).apply(filter_quick_laps)
-driver_laps = driver_laps.reset_index(drop=True)
-
-# Get finishing order
-finishing_order = [race.get_driver(i)["Abbreviation"] for i in point_finishers]
-
-# Create visualization
-fig, ax = plt.subplots(figsize=(10, 5))
-
-driver_laps["LapTime(s)"] = driver_laps["LapTime"].dt.total_seconds()
-
-sns.violinplot(data=driver_laps,
-               x="Driver",
-               y="LapTime(s)",
-               hue="Driver",
-               inner=None,
-               density_norm="area",
-               order=finishing_order,
-               palette=tif1.plotting.get_driver_color_mapping(session=race),
-               legend=False
-               )
-
-sns.swarmplot(data=driver_laps,
-              x="Driver",
-              y="LapTime(s)",
-              order=finishing_order,
-              hue="Compound",
-              palette=tif1.plotting.get_compound_mapping(session=race),
-              hue_order=["SOFT", "MEDIUM", "HARD"],
-              linewidth=0,
-              size=4,
-              )
-
-ax.set_xlabel("Driver")
-ax.set_ylabel("Lap Time (s)")
-plt.suptitle("2023 Azerbaijan Grand Prix Lap Time Distributions")
-sns.despine(left=True, bottom=True)
-
-plt.tight_layout()
+# One call: loads the race, filters the laps, and draws violin + swarm plots
+fig, ax = tif1.plot_laptimes_distribution(2023, "Azerbaijan", 'R')
 plt.show()
+
+# Or save straight to a file
+# tif1.plot_laptimes_distribution(2023, "Azerbaijan", 'R', save_path="laptimes_distribution.png")
 ```
 
 ## Understanding the Visualization

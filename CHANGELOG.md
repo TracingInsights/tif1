@@ -6,6 +6,22 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Added
+
+- **Native chart functions** — new `tif1.charts` module with 21 one-call chart functions, also re-exported at the top level (`tif1.plot_<name>`):
+  - Track maps: `plot_track_speed_map`, `plot_track_throttle_map`, `plot_track_brake_zones`, `plot_track_acceleration_map`, `plot_gear_shifts`, `plot_multi_driver_speed_comparison`
+  - Telemetry: `plot_speed_traces`, `plot_annotated_speed_trace`, `plot_telemetry_comparison`, `plot_gg_diagram`
+  - Lap times: `plot_driver_laptimes`, `plot_laptimes_distribution`, `plot_laptime_heatmap`, `plot_qualifying_grid`, `plot_lap_delta`, `plot_position_changes`, `plot_track_temperature`
+  - Performance: `plot_downforce_levels`, `plot_throttle_distance`, `plot_tire_degradation`
+  - Top speeds: `plot_top_speeds`
+- Every chart takes `(year, event, session)`, loads its own data, and returns a `(fig, ax)` pair (`plot_telemetry_comparison` returns the 4 panel axes as a numpy array). Optional `save_path`, `dpi`, `figsize`, `facecolor`, `color_scheme`, `enable_cache`, and `lib` parameters are shared across all charts, plus the shared filters `drivers`, `teams`, `n_drivers`, `laps`, `laptime_cutoff`, `include_deleted`, and `include_pit_laps`.
+- Added `scipy>=1.14,<2` dependency (used by `plot_gg_diagram`'s convex-hull performance envelope).
+
+### Changed
+
+- Rewrote all 21 `docs/assets/generate_*.py` scripts as thin wrappers around the native chart functions; `generate_all_charts.py` now calls `tif1.charts` as the canonical "regenerate all docs charts" entrypoint (standalone-owned outputs like `race_position_changes.png` are no longer overwritten).
+- Updated 21 tutorials to teach the native chart API and added the `api-reference/charts` reference page.
+
 ### Fixed
 
 - Fixed crash on 2026 lap data where missing values are encoded as the string `"None"` (e.g. in the `Deleted` column): `_apply_laps_dtypes` now normalizes null-like string sentinels before dtype coercion, so `astype("boolean")` no longer raises and bool columns no longer turn missing values into `True`.

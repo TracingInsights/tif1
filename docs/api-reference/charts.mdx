@@ -1,0 +1,581 @@
+---
+title: "Charts API"
+icon: "chart-column"
+description: "21 native chart functions for Formula 1 visualization: track maps, speed traces, telemetry comparisons, lap time analysis, and performance metrics."
+keywords:
+  - "tif1"
+  - "charts"
+  - "visualization"
+  - "plot"
+  - "track map"
+  - "telemetry"
+  - "Formula 1"
+  - "F1 data"
+---
+
+## Overview
+
+The `tif1.charts` module provides 21 native chart functions for Formula 1 data visualization. Every function loads its own session data, so a single call produces a complete, publication-ready chart:
+
+```python
+import tif1
+
+tif1.plot_top_speeds(2023, "Italian Grand Prix", "Q", save_path="top_speeds.png")
+```
+
+All functions are available from both `tif1.charts` and the top-level `tif1` namespace (e.g. `tif1.charts.plot_top_speeds` and `tif1.plot_top_speeds` are the same function). They are loaded lazily, so importing `tif1` costs nothing extra.
+
+### Key features
+
+- **Self-loading**: each chart calls `tif1.get_session(year, event, session)` internally with `enable_cache` and `lib` passthrough
+- **Return `(fig, ax)`**: you can call `plt.show()`, save later, or further customize the figure; nothing is shown or written unless you ask
+- **Optional `save_path`**: pass a path to write the figure with `bbox_inches="tight"` at the requested `dpi`
+- **Shared filter vocabulary**: `drivers`, `teams`, `n_drivers`, `laptime_cutoff`, `include_deleted`, `include_pit_laps`, `laps` work consistently across charts
+- **Consistent styling**: charts apply the fastf1 theme by default; `color_scheme=None` leaves matplotlib's global state untouched
+- **pandas backend by default**: chart logic relies on pandas idioms; pass `lib="polars"` at your own risk
+
+## Quickstart
+
+```python
+import matplotlib.pyplot as plt
+import tif1
+
+# Save directly to a file
+tif1.plot_track_speed_map(2023, "Monaco", "Q", save_path="speed_map.png", dpi=300)
+
+# Or get the (fig, ax) pair and show it in a notebook
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=["ALO"])
+plt.show()
+```
+
+## Common signature
+
+Every chart follows the same shape. Only the parameters that apply to a chart are exposed; the output, theme, and session passthrough parameters are identical everywhere:
+
+```python
+def plot_<name>(
+    year: int,
+    event: str | int,
+    session: str | int,
+    *,
+    # output
+    save_path: str | None = None,
+    dpi: int = 150,
+    figsize: tuple[float, float] | None = None,
+    facecolor: str | None = "#1a1a1a",  # None keeps the theme/transparent background
+    # theme
+    color_scheme: str | None = "fastf1",
+    # get_session passthrough
+    enable_cache: bool | None = None,
+    lib: Literal["pandas", "polars"] = "pandas",
+    # shared filters (only those that apply)
+    drivers: list[str] | None = None,
+    teams: list[str] | None = None,
+    n_drivers: int | None = None,
+    laps: list[int] | None = None,
+    laptime_cutoff: float | None = 1.07,
+    include_deleted: bool = False,
+    include_pit_laps: bool = False,
+) -> tuple[Figure, Axes]:
+```
+
+### Output parameters
+
+- **`save_path`** (`str | None`, default: `None`) — write the figure to this path with `bbox_inches="tight"`. `None` writes nothing.
+- **`dpi`** (`int`, default: `150`) — resolution used when saving. Track maps, telemetry charts, heatmaps, and performance charts default to `300`.
+- **`figsize`** (`tuple[float, float] | None`) — override the chart's default figure size.
+- **`facecolor`** (`str | None`, default varies) — figure background. 8 charts default to `"#1a1a1a"` (dark), 13 default to `None` (keep the theme background). Pass `None` explicitly for a transparent/unchanged background.
+
+### Theme parameters
+
+- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. `None` skips the theme call entirely, leaving `matplotlib.rcParams` untouched.
+
+### Session passthrough
+
+- **`enable_cache`** (`bool | None`) — forwarded to `tif1.get_session`.
+- **`lib`** (`"pandas" | "polars"`, default: `"pandas"`) — forwarded to `tif1.get_session`.
+
+### Shared filters
+
+Applied in a deterministic order: lap numbers → drivers → teams → top-N by finishing position → deleted laps → pit laps → lap time cutoff.
+
+- **`drivers`** — restrict to these driver abbreviations (fuzzy-resolved with a warning on correction). Defaults are auto-selected per chart (top-2 or top-3 finishers).
+- **`teams`** — restrict to these team names (fuzzy-resolved).
+- **`n_drivers`** — keep only the top-N drivers by finishing position.
+- **`laps`** — restrict to specific lap numbers.
+- **`laptime_cutoff`** — drop laps slower than `fastest * cutoff`. Scope (per-driver vs global) follows the chart's semantics: per-driver for lap deltas, driver lap times, and distributions; global for heatmaps and tire degradation.
+- **`include_deleted`** — keep deleted laps when `True` (dropped by default).
+- **`include_pit_laps`** — keep pit laps when `True` (dropped by default).
+
+## Track maps
+
+The track maps draw the fastest lap's telemetry as a colored track line over the circuit layout.
+
+### `plot_track_speed_map`
+
+```python
+def plot_track_speed_map(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    cmap: str = "plasma",
+) -> tuple[Figure, Axes]
+```
+
+Colors the track by speed from the session's fastest lap.
+
+```python
+tif1.plot_track_speed_map(2023, "Monaco", "Q", save_path="speed_map.png")
+```
+
+### `plot_track_throttle_map`
+
+```python
+def plot_track_throttle_map(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    cmap: str = "RdYlGn",
+) -> tuple[Figure, Axes]
+```
+
+Colors the track by throttle position, with a fixed 0-100% color scale.
+
+```python
+tif1.plot_track_throttle_map(2023, "Silverstone", "Q", save_path="throttle_map.png")
+```
+
+### `plot_track_brake_zones`
+
+```python
+def plot_track_brake_zones(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    cmap: str = "RdYlGn_r",
+) -> tuple[Figure, Axes]
+```
+
+Highlights braking zones (on/off) around the circuit.
+
+```python
+tif1.plot_track_brake_zones(2023, "Monza", "Q", save_path="brake_zones.png")
+```
+
+### `plot_track_acceleration_map`
+
+```python
+def plot_track_acceleration_map(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    cmap: str = "RdBu_r",
+) -> tuple[Figure, Axes]
+```
+
+Colors the track by longitudinal acceleration in g, computed with `np.gradient` of speed over time.
+
+```python
+tif1.plot_track_acceleration_map(2023, "Suzuka", "Q", save_path="accel_map.png")
+```
+
+### `plot_gear_shifts`
+
+```python
+def plot_gear_shifts(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    cmap: str = "Paired",
+) -> tuple[Figure, Axes]
+```
+
+Colors the track by the gear used, with a gear colorbar scaled to the data.
+
+```python
+tif1.plot_gear_shifts(2021, "Austrian Grand Prix", "Q", save_path="gear_shifts.png")
+```
+
+### `plot_multi_driver_speed_comparison`
+
+```python
+def plot_multi_driver_speed_comparison(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    cmap: str = "plasma",
+) -> tuple[Figure, Axes]
+```
+
+Overlays the fastest-lap speed traces of several drivers on the track with a shared color scale, driver legend, and horizontal speed colorbar. Defaults to the top-3 finishers.
+
+```python
+tif1.plot_multi_driver_speed_comparison(
+    2023, "Bahrain Grand Prix", "Q",
+    drivers=["VER", "PER", "LEC"],
+    save_path="multi_driver_speed.png",
+)
+```
+
+## Telemetry
+
+### `plot_speed_traces`
+
+```python
+def plot_speed_traces(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Plots each driver's fastest-lap speed against distance. Defaults to the top-2 finishers.
+
+```python
+tif1.plot_speed_traces(2023, "Spanish Grand Prix", "Q", drivers=["VER", "HAM"])
+```
+
+### `plot_annotated_speed_trace`
+
+```python
+def plot_annotated_speed_trace(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+) -> tuple[Figure, Axes]
+```
+
+Draws the session's fastest-lap speed trace with vertical markers at each corner (requires `session.get_circuit_info()`).
+
+```python
+tif1.plot_annotated_speed_trace(2021, "Spanish Grand Prix", "Q", save_path="annotated.png")
+```
+
+### `plot_telemetry_comparison`
+
+```python
+def plot_telemetry_comparison(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    distance_min: float = 1000,
+    distance_max: float = 2500,
+) -> tuple[Figure, np.ndarray]
+```
+
+Compares two drivers across four synchronized panels: speed, longitudinal acceleration, lateral acceleration, and driver actions (brake / full throttle / lift). The returned `ax` is a numpy array of 4 axes, not a single axes.
+
+```python
+fig, axes = tif1.plot_telemetry_comparison(
+    2024, "Monaco Grand Prix", "Q",
+    drivers=["VER", "LEC"],
+    distance_min=500, distance_max=2000,
+)
+```
+
+### `plot_gg_diagram`
+
+```python
+def plot_gg_diagram(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Plots the G-G diagram (lateral vs longitudinal acceleration) per driver with a convex-hull performance envelope. Requires `scipy`. Defaults to the top-3 finishers.
+
+```python
+tif1.plot_gg_diagram(2024, "Monaco Grand Prix", "Q", drivers=["VER", "LEC", "NOR"])
+```
+
+## Lap times
+
+### `plot_driver_laptimes`
+
+```python
+def plot_driver_laptimes(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    laptime_cutoff: float | None = 1.07,
+    include_deleted: bool = False,
+) -> tuple[Figure, Axes]
+```
+
+Scatter of lap times per lap, colored by tire compound. Defaults to the top-3 finishers; pass `drivers=["ALO"]` for a single-driver view.
+
+```python
+tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=["ALO"])
+```
+
+### `plot_laptimes_distribution`
+
+```python
+def plot_laptimes_distribution(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    n_drivers: int = 10,
+    laptime_cutoff: float | None = 1.10,
+) -> tuple[Figure, Axes]
+```
+
+Violin + swarm plot of lap time distributions for the point finishers (top 10 by default). Deleted and pit laps are always excluded.
+
+```python
+tif1.plot_laptimes_distribution(2023, "Azerbaijan Grand Prix", "R")
+```
+
+### `plot_laptime_heatmap`
+
+```python
+def plot_laptime_heatmap(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    include_deleted: bool = False,
+    include_pit_laps: bool = False,
+    laptime_cutoff: float | None = 1.07,
+    cmap: str = "RdYlGn_r",
+    xticklabels: int | list[int] = 5,
+) -> tuple[Figure, Axes]
+```
+
+Driver-by-lap heatmap of lap times. The color scale is fixed from the fastest lap to `fastest * cutoff` so slow laps stand out.
+
+```python
+tif1.plot_laptime_heatmap(2023, "Monaco Grand Prix", "R")
+```
+
+### `plot_qualifying_grid`
+
+```python
+def plot_qualifying_grid(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    n_drivers: int | None = None,
+    include_deleted: bool = False,
+) -> tuple[Figure, Axes]
+```
+
+Horizontal bars of each driver's gap to pole. Deleted laps are excluded by default (a deleted lap can never win the pole).
+
+```python
+tif1.plot_qualifying_grid(2024, "Abu Dhabi Grand Prix", "Qualifying", n_drivers=10)
+```
+
+### `plot_lap_delta`
+
+```python
+def plot_lap_delta(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    laps: list[int] | None = None,
+    include_pit_laps: bool = False,
+    laptime_cutoff: float | None = None,
+    ylim: tuple[float, float] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Bars of the lap-by-lap time delta between two drivers. Negative bars mean the first driver was faster; bars are colored with the faster driver's team color. Defaults to the top-2 finishers; requires exactly two drivers.
+
+```python
+tif1.plot_lap_delta(2024, "Monaco Grand Prix", "R", drivers=["VER", "LEC"])
+```
+
+### `plot_position_changes`
+
+```python
+def plot_position_changes(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    n_drivers: int | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Line chart of each driver's race position per lap. Axis limits derive from the data, so it works for any grid size.
+
+```python
+tif1.plot_position_changes(2024, "Abu Dhabi Grand Prix", "Race", n_drivers=10)
+```
+
+### `plot_track_temperature`
+
+```python
+def plot_track_temperature(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Plots the track temperature across the race. When `drivers` is `None`, uses the driver with the most recorded laps; otherwise draws one line per driver. Requires the session's weather data.
+
+```python
+tif1.plot_track_temperature(2024, "Singapore Grand Prix", "Race")
+```
+
+## Performance
+
+### `plot_downforce_levels`
+
+```python
+def plot_downforce_levels(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Horizontal bars of a relative downforce metric (average speed / max speed x 100) per driver's fastest lap. Raises `ValueError` if no driver can be processed.
+
+```python
+tif1.plot_downforce_levels(2023, "Monaco Grand Prix", "Q")
+```
+
+### `plot_throttle_distance`
+
+```python
+def plot_throttle_distance(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    throttle_threshold: float = 98,
+) -> tuple[Figure, Axes]
+```
+
+Horizontal bars of the percentage of the fastest lap spent at (near) full throttle per driver.
+
+```python
+tif1.plot_throttle_distance(2023, "Bahrain Grand Prix", "Q")
+```
+
+### `plot_tire_degradation`
+
+```python
+def plot_tire_degradation(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    compounds: list[str] | None = None,
+    fuel_correction: float = 0.03,
+    min_laps: int = 10,
+    smoothing_window: int = 5,
+    laptime_cutoff: float | None = 1.07,
+) -> tuple[Figure, Axes]
+```
+
+Scatter of fuel-corrected lap times against tire life per compound, with rolling-median degradation lines. Lap 1 and slow laps are excluded; compounds with fewer than `min_laps` laps are skipped.
+
+```python
+tif1.plot_tire_degradation(2024, "Abu Dhabi Grand Prix", "Race")
+```
+
+## Top speeds
+
+### `plot_top_speeds`
+
+```python
+def plot_top_speeds(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 150,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    color_scheme: str | None = "fastf1",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    teams: list[str] | None = None,
+    speed_trap: str | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Horizontal bars of each team's maximum speed, measured as the gap from the slowest team. `speed_trap` is one of `"SpeedI1"`, `"SpeedI2"`, `"SpeedST"`, `"SpeedFL"`; when `None`, the trap with the highest readings is used automatically.
+
+```python
+tif1.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+```
+
+## Error handling
+
+Charts propagate the library's own exceptions (`DataNotFoundError`, `NetworkError`, `InvalidDataError`, and subclasses) without swallowing them. Two additional `ValueError`s are raised by design:
+
+- `plot_lap_delta` and `plot_telemetry_comparison` raise when fewer than two drivers can be resolved
+- `plot_downforce_levels`, `plot_throttle_distance`, `plot_gg_diagram`, and `plot_speed_traces` raise when no driver could be processed (never a silently empty chart)
+
+## Full list
+
+| Function | Category |
+| --- | --- |
+| `plot_top_speeds` | Top speeds |
+| `plot_track_speed_map` | Track maps |
+| `plot_track_throttle_map` | Track maps |
+| `plot_track_brake_zones` | Track maps |
+| `plot_track_acceleration_map` | Track maps |
+| `plot_gear_shifts` | Track maps |
+| `plot_multi_driver_speed_comparison` | Track maps |
+| `plot_speed_traces` | Telemetry |
+| `plot_annotated_speed_trace` | Telemetry |
+| `plot_telemetry_comparison` | Telemetry |
+| `plot_gg_diagram` | Telemetry |
+| `plot_driver_laptimes` | Lap times |
+| `plot_laptimes_distribution` | Lap times |
+| `plot_laptime_heatmap` | Lap times |
+| `plot_qualifying_grid` | Lap times |
+| `plot_lap_delta` | Lap times |
+| `plot_position_changes` | Lap times |
+| `plot_track_temperature` | Lap times |
+| `plot_downforce_levels` | Performance |
+| `plot_throttle_distance` | Performance |
+| `plot_tire_degradation` | Performance |
