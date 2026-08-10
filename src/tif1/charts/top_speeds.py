@@ -84,8 +84,13 @@ def plot_top_speeds(
         height=0.7,
     )
 
+    value_labels = []
     for i, (speed, diff) in enumerate(zip(max_speeds["MaxSpeed"], max_speeds["Diff"])):
-        ax.text(diff + 0.2, i, f"{int(speed)} km/h", va="center", fontsize=10, fontweight="bold")
+        value_labels.append(
+            ax.text(
+                diff + 0.2, i, f"{int(speed)} km/h", va="center", fontsize=10, fontweight="bold"
+            )
+        )
 
     ax.set_xlabel("Speed Difference (km/h)", fontsize=11)
     ax.set_title(
@@ -94,12 +99,26 @@ def plot_top_speeds(
         fontweight="bold",
         pad=20,
     )
+    # Tight y-limits around the rows: keeps the bars filling the axes no
+    # matter how many teams/drivers are selected.
+    _common.set_tight_barh_ylim(ax, len(max_speeds))
     ax.invert_yaxis()
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", alpha=0.3, linestyle="--")
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    # Branded footer + watermarks from the plot style (footer_y spacing key).
+    _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
+    # Value labels past the longest bar would float outside the axes box;
+    # expand the x-limit after layout so every label fits at any grid size.
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        label_fit=(ax, value_labels),
+    )
 
 
 def _team_color(team: str, sess) -> str:

@@ -133,9 +133,17 @@ def plot_downforce_levels(
     colors = [_team_color_for_driver(sess, d["Driver"]) for d in downforce_data]
 
     ax.barh(drivers_list, metrics_diff, color=colors, alpha=0.8, edgecolor="white", linewidth=1)
+    value_labels = []
     for i, metric in enumerate(metrics_actual):
-        ax.text(
-            metrics_diff[i] + 0.02, i, f"{metric:.2f}", va="center", fontsize=10, fontweight="bold"
+        value_labels.append(
+            ax.text(
+                metrics_diff[i] + 0.02,
+                i,
+                f"{metric:.2f}",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+            )
         )
 
     ax.set_xlabel("Downforce Level (relative difference)", fontsize=12, fontweight="bold")
@@ -147,19 +155,35 @@ def plot_downforce_levels(
         fontweight="bold",
         pad=20,
     )
+    # Tight y-limits around the rows: keeps the bars filling the axes no
+    # matter how many drivers are selected (15, 22, ...).
+    _common.set_tight_barh_ylim(ax, len(drivers_list))
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.set_xlim(left=0)
     fig.text(
         0.5,
-        0.02,
+        -0.115,
         "Higher values indicate more downforce setup (better cornering, lower top speeds)",
         ha="center",
         fontsize=9,
         style="italic",
         alpha=0.7,
+        transform=ax.transAxes,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    # Branded footer + watermarks from the plot style (footer_y spacing key).
+    _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
+    # Value labels past the longest bar would float outside the axes box when
+    # the value spread is small; expand the x-limit after layout so every label
+    # fits at any grid size (the launch chart's universal label-fit guarantee).
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        label_fit=(ax, value_labels),
+    )
 
 
 def plot_throttle_distance(
@@ -237,14 +261,17 @@ def plot_throttle_distance(
     colors = [_team_color_for_driver(sess, d["Driver"]) for d in throttle_data]
 
     ax.barh(drivers_list, percentages_diff, color=colors, alpha=0.8, edgecolor="white", linewidth=1)
+    value_labels = []
     for i, percentage in enumerate(percentages_actual):
-        ax.text(
-            percentages_diff[i] + 0.1,
-            i,
-            f"{percentage:.1f}%",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
+        value_labels.append(
+            ax.text(
+                percentages_diff[i] + 0.1,
+                i,
+                f"{percentage:.1f}%",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+            )
         )
 
     ax.set_xlabel("Distance at Full Throttle (relative difference)", fontsize=12, fontweight="bold")
@@ -256,19 +283,35 @@ def plot_throttle_distance(
         fontweight="bold",
         pad=20,
     )
+    # Tight y-limits around the rows: keeps the bars filling the axes no
+    # matter how many drivers are selected (15, 22, ...).
+    _common.set_tight_barh_ylim(ax, len(drivers_list))
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.set_xlim(left=0)
     fig.text(
         0.5,
-        0.02,
+        -0.115,
         "Higher values indicate more time at full throttle (power-limited tracks)",
         ha="center",
         fontsize=9,
         style="italic",
         alpha=0.7,
+        transform=ax.transAxes,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    # Branded footer + watermarks from the plot style (footer_y spacing key).
+    _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
+    # Value labels past the longest bar would float outside the axes box when
+    # the value spread is small; expand the x-limit after layout so every label
+    # fits at any grid size (the launch chart's universal label-fit guarantee).
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        label_fit=(ax, value_labels),
+    )
 
 
 def rolling_median(data: np.ndarray, window: int = 5) -> np.ndarray:
@@ -616,12 +659,7 @@ def plot_race_launch_ratings(
 
     df = pd.DataFrame(rated)
 
-    style_name = (
-        color_scheme if color_scheme in ("default-light", "default-dark") else "default-dark"
-    )
-    from tif1.plotting import get_plot_style
-
-    style = get_plot_style(style_name)
+    style = _common.resolve_plot_style(color_scheme)
     text_color = style["colors"]["text"]
     bar_label_color = style["colors"]["bar_label"]
     ytick_color = style["colors"]["ytick"]
@@ -634,8 +672,6 @@ def plot_race_launch_ratings(
     label_padding = style["spacing"]["label_padding"]
     title_size = style["fonts"]["title_size"]
     label_size = style["fonts"]["label_size"]
-    footer_size = style["fonts"]["footer_size"]
-    watermark_size = style["fonts"]["watermark_size"]
 
     from matplotlib import font_manager
 
@@ -647,7 +683,6 @@ def plot_race_launch_ratings(
     heading2_font = font_manager.FontProperties(
         fname=str(assets.font_path(style["fonts"]["heading2"]))
     )
-    logo_font = font_manager.FontProperties(fname=str(assets.font_path(style["fonts"]["logo"])))
 
     fig, ax = plt.subplots(figsize=figsize if figsize is not None else style["figure"]["size"])
     ax.patch.set_alpha(0)
@@ -664,7 +699,7 @@ def plot_race_launch_ratings(
         alpha=style["bar"]["alpha"],
         zorder=1000,
     )
-    ax.bar_label(
+    bar_labels = ax.bar_label(
         hbars,
         labels=[f"{value} ({round(time_val, 3)}s)" for value, time_val in zip(x, time_values)],
         padding=label_padding,
@@ -673,6 +708,10 @@ def plot_race_launch_ratings(
         fontproperties=heading_font,
     )
 
+    # Tight y-limits: without them the default 5% auto-margins leave a wide
+    # empty band below the last bar (matching the v2 script's ylim behaviour
+    # is not needed - it only wastes canvas space on a full-canvas export).
+    _common.set_tight_barh_ylim(ax, len(df))
     ax.invert_yaxis()
 
     fig.suptitle(
@@ -719,50 +758,8 @@ def plot_race_launch_ratings(
         ax.spines[spine].set_visible(False)
     ax.set_xticklabels([])
 
-    fig.text(
-        x=0.0,
-        y=0.14,
-        s=style["watermark"],
-        fontdict={"size": watermark_size},
-        alpha=0,
-        color=text_color,
-        zorder=10,
-        fontproperties=logo_font,
-        fontweight="bold",
-    )
-    fig.text(
-        x=0.9,
-        y=0.14,
-        s=style["watermark"],
-        fontdict={"size": watermark_size},
-        alpha=0,
-        color=text_color,
-        zorder=10,
-        fontproperties=logo_font,
-        fontweight="bold",
-    )
-    fig.text(
-        x=0.0,
-        y=0.96,
-        s=style["watermark"],
-        fontdict={"size": watermark_size},
-        alpha=0,
-        color=text_color,
-        zorder=10,
-        fontproperties=logo_font,
-        fontweight="bold",
-    )
-    fig.text(
-        x=0.5,
-        y=0.14,
-        s=style["footer"],
-        fontdict={"size": footer_size},
-        color=text_color,
-        zorder=10,
-        fontproperties=heading2_font,
-        fontweight="bold",
-        ha="center",
-    )
+    # Branded footer + watermarks from the plot style (footer_y spacing key).
+    _common.add_style_branding(fig, style)
 
     ax.axvline(x=0, color=grid_color, linewidth=1, linestyle="--")
     fig.subplots_adjust(
@@ -771,6 +768,14 @@ def plot_race_launch_ratings(
         top=style["spacing"]["subplot_top"],
         bottom=style["spacing"]["subplot_bottom"],
     )
+
+    # The right margin is intentionally slim (matches the v2 script's
+    # subplots_adjust), so bar labels rendered past the longest bar would
+    # otherwise be clipped at the figure edge. Expand the x-limit to a fixed
+    # point so every label sits inside the full-canvas export (styles whose
+    # labels already fit, e.g. default-light with negative label padding,
+    # are left untouched).
+    _common.fit_labels_inside_xlim(ax, bar_labels)
 
     # The v2 script exports the full canvas with its own subplot margins (no
     # tight_layout, no bbox cropping) - preserve that exact output.

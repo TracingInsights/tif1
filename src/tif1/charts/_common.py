@@ -17,14 +17,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SPEED_TRAP_COLUMNS",
+    "add_style_branding",
     "apply_laptime_cutoff",
     "driver_colors",
     "fastest_lap",
     "finalize_figure",
     "finishing_order",
+    "fit_labels_inside_xlim",
     "load_session",
     "resolve_drivers",
     "setup_theme",
+    "set_tight_barh_ylim",
     "team_colors",
     "track_segments",
 ]
@@ -79,6 +82,7 @@ def finalize_figure(
     facecolor: str | None,
     tight_layout: bool = True,
     bbox_inches: str | bool | None = "tight",
+    label_fit: tuple[Any, list[Any]] | None = None,
 ) -> tuple[Figure, Any]:
     """Single source of truth for layout + saving of a chart figure.
 
@@ -90,6 +94,13 @@ def finalize_figure(
     look with explicit ``subplots_adjust`` margins and a full-canvas export)
     can opt out with ``tight_layout=False, bbox_inches=None``.
 
+    ``label_fit`` runs :func:`fit_labels_inside_xlim` **after** the axes
+    geometry is final (post ``tight_layout``), so bar value labels measured
+    against the laid-out axes stay inside the x-limit regardless of the
+    active theme's font sizes. Callers that fit labels earlier (e.g. the
+    race-launch ratings chart, which skips ``tight_layout``) should not pass
+    it.
+
     Args:
         fig: The figure to finalize.
         ax: The chart axes (may be an ndarray of axes for multi-panel charts).
@@ -100,12 +111,17 @@ def finalize_figure(
         tight_layout: Run ``fig.tight_layout()`` before saving (default True).
         bbox_inches: Value passed to ``savefig`` as ``bbox_inches``; ``None``
             saves the full canvas (default ``"tight"``).
+        label_fit: Optional ``(axes, labels)`` pair passed to
+            :func:`fit_labels_inside_xlim` after layout completes.
 
     Returns:
         The ``(fig, ax)`` pair.
     """
     if tight_layout:
         fig.tight_layout()
+    if label_fit is not None:
+        fit_ax, labels = label_fit
+        fit_labels_inside_xlim(fit_ax, labels)
     if facecolor is not None:
         fig.set_facecolor(facecolor)
     if save_path is not None:
@@ -116,6 +132,195 @@ def finalize_figure(
             save_kwargs["facecolor"] = facecolor
         fig.savefig(save_path, **save_kwargs)
     return fig, ax
+
+
+def resolve_plot_style(color_scheme: str | None) -> dict[str, Any]:
+    """Resolve a plot style dict from a color scheme name.
+
+    ``"default-light"``/``"default-dark"`` map to themselves; any other
+    scheme (e.g. the ``"fastf1"`` charts' default) falls back to
+    ``"default-dark"``, matching the race-launch ratings chart's resolution
+    so every chart shares the same branded look.
+
+    Args:
+        color_scheme: A matplotlib theme name, or ``None``.
+
+    Returns:
+        A plot style dict from :func:`tif1.plotting.get_plot_style`.
+    """
+    from tif1.plotting import get_plot_style
+
+    style_name = (
+        color_scheme if color_scheme in ("default-light", "default-dark") else "default-dark"
+    )
+    return get_plot_style(style_name)
+
+
+def add_style_branding(fig: Any, style: dict[str, Any], *, ax: Any = None) -> None:
+    """Add the TracingInsights footer and watermarks from a plot style.
+
+    Reproduces the branded bottom band of the race-launch ratings chart
+    (:func:`tif1.charts.performance.plot_race_launch_ratings`): the
+    ``TRACINGINSIGHTS.COM`` footer is drawn centred with the style's heading2
+    font, and the ``@TracingInsights`` watermarks are placed at the same
+    baseline (bottom-left, bottom-right) plus the top-left corner - drawn
+    with ``alpha=0`` exactly like the v2 scripts (the original's watermark is
+    present but transparent). Font sizes are scaled by the figure height
+    relative to the 20-inch reference figure the styles were tuned for, so
+    the branding stays proportionally consistent on smaller charts.
+
+    Placement:
+        * ``ax`` is ``None`` (full-canvas charts like the race-launch
+          ratings): the footer sits at the style's ``spacing.footer_y``
+          figure fraction, inside the dedicated bottom margin.
+        * ``ax`` is given (tight-bbox charts): the footer is anchored below
+          the axes via ``ax.transAxes`` so it never collides with the
+          x-axis label, and the ``bbox_inches="tight"`` export crops it in.
+
+    Args:
+        fig: The figure to annotate.
+        style: A plot style dict (see :func:`resolve_plot_style`).
+        ax: Optional axes used to anchor the footer below the plot area.
+    """
+    from matplotlib import font_manager
+
+    from tif1 import assets
+
+    text_color = style["colors"]["text"]
+    footer_y = style["spacing"]["footer_y"]
+    watermark = style["watermark"]
+    footer = style["footer"]
+    logo_font = font_manager.FontProperties(
+        fname=str(assets.font_path(style["fonts"]["logo"]))
+    )
+    heading2_font = font_manager.FontProperties(
+        fname=str(assets.font_path(style["fonts"]["heading2"]))
+    )
+
+    # Scale relative to the 20-inch reference figure the styles were tuned
+    # for, so branding stays proportional on smaller charts.
+    height_in = float(fig.get_size_inches()[1])
+    scale = height_in / 20.0
+    watermark_size = style["fonts"]["watermark_size"] * scale
+    footer_size = style["fonts"]["footer_size"] * scale
+
+    if ax is not None:
+        # Below-axes anchor: the footer sits under the x-axis label, in the
+        # crop area that bbox_inches="tight" includes. (x labels sit at
+        # roughly -0.06 of the axes height; the footer goes further down.)
+        footer_transform = ax.transAxes
+        footer_y = -0.18
+    else:
+        footer_transform = None
+
+    # ``fig.text`` only falls back to the figure-fraction transform when the
+    # ``transform`` kwarg is absent; passing ``None`` leaves the text in raw
+    # pixel coordinates, clipping it at the bottom-left corner on full-canvas
+    # exports. Omit the kwarg entirely on the full-canvas path.
+    transform_kwargs: dict[str, Any] = (
+        {"transform": footer_transform} if footer_transform is not None else {}
+    )
+
+    for x in (0.0, 0.9):
+        fig.text(
+            x=x,
+            y=footer_y,
+            s=watermark,
+            fontdict={"size": watermark_size},
+            alpha=0,
+            color=text_color,
+            zorder=10,
+            fontproperties=logo_font,
+            fontweight="bold",
+            **transform_kwargs,
+        )
+    fig.text(
+        x=0.0,
+        y=0.96,
+        s=watermark,
+        fontdict={"size": watermark_size},
+        alpha=0,
+        color=text_color,
+        zorder=10,
+        fontproperties=logo_font,
+        fontweight="bold",
+    )
+    fig.text(
+        x=0.5,
+        y=footer_y,
+        s=footer,
+        fontdict={"size": footer_size},
+        color=text_color,
+        zorder=10,
+        fontproperties=heading2_font,
+        fontweight="bold",
+        ha="center",
+        **transform_kwargs,
+    )
+
+
+def set_tight_barh_ylim(ax: Any, n_bars: int) -> None:
+    """Tighten the y-limits of a horizontal bar chart around its rows.
+
+    Horizontal bar rows live at integer positions ``0..n_bars-1`` (default
+    bars of height 0.8 span ``-0.4..n_bars-0.6``). Without explicit limits,
+    matplotlib's default 5% auto-margins leave empty bands above the first
+    and below the last row - wasted space on full-canvas exports and
+    inconsistent proportions as the number of bars changes. Setting the
+    limits to ``(-0.5, n_bars - 0.5)`` hugs the rows with a small uniform
+    padding regardless of how many bars (15, 22, ...) are drawn.
+
+    Call **before** ``ax.invert_yaxis()`` so the limits are interpreted in
+    pre-inversion data coordinates (the inverted axis then spans the same
+    numeric range top-down).
+
+    Note:
+        Assumes the default 0.8 bar height. The launch chart's
+        ``default-light`` style (height 0.1, negative label padding) calls
+        this too; its wider rows are intentional, reproducing the v2
+        ``Fastest_Lap.py`` look.
+
+    Args:
+        ax: The axes to adjust.
+        n_bars: Number of horizontal bars (rows) on the axis.
+    """
+    ax.set_ylim(-0.5, n_bars - 0.5)
+
+
+def fit_labels_inside_xlim(ax: Any, labels: Any) -> None:
+    """Expand the x-limit until every bar label fits inside the canvas.
+
+    Bar labels are placed past the longest bar with a fixed point offset, so
+    on full-canvas exports (``bbox_inches=None``, no cropping) the trailing
+    labels can be clipped at the right edge. Widening the x-limit shrinks the
+    points-per-data-unit scale, which moves the measured label edge further
+    right in data units - so the limit is iterated to a fixed point (up to 8
+    passes, converging within ``1e-6``) until every label's window extent
+    sits inside the x-limit. A small 0.05 data-unit buffer is added only when
+    labels actually overflowed, leaving charts whose labels already fit
+    untouched. Works for any number of bars.
+
+    Args:
+        ax: The axes whose x-limit is expanded.
+        labels: The label text artists to measure (e.g. from ``bar_label``).
+    """
+    expanded = False
+    for _ in range(8):
+        ax.figure.canvas.draw()
+        rightmost = float(ax.get_xlim()[1])
+        for label in labels:
+            # renderer=None resolves the canvas renderer internally.
+            extent = label.get_window_extent()
+            data_x = float(ax.transData.inverted().transform((extent.x1, extent.y0))[0])
+            rightmost = max(rightmost, data_x)
+        if rightmost <= float(ax.get_xlim()[1]) + 1e-6:
+            break
+        ax.set_xlim(right=rightmost)
+        expanded = True
+    if expanded:
+        # Breathing room so renderer round-off can never push the widest
+        # label past the canvas edge.
+        ax.set_xlim(right=float(ax.get_xlim()[1]) + 0.05)
 
 
 def finishing_order(session: Any, n: int) -> list[str]:

@@ -373,6 +373,9 @@ def plot_qualifying_grid(
     )
     ax.set_yticks(fastest_laps.index)
     ax.set_yticklabels(fastest_laps["Driver"])
+    # Tight y-limits around the rows: keeps the bars filling the axes no
+    # matter how many drivers are selected (15, 22, ...).
+    _common.set_tight_barh_ylim(ax, len(fastest_laps))
     ax.invert_yaxis()
     ax.set_axisbelow(True)
     ax.xaxis.grid(True, which="major", linestyle="--", color="white", alpha=0.3, zorder=-1000)
@@ -391,6 +394,8 @@ def plot_qualifying_grid(
         fontsize=13,
         fontweight="bold",
     )
+    # Branded footer + watermarks from the plot style (footer_y spacing key).
+    _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
     return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
 
 
@@ -569,7 +574,21 @@ def plot_position_changes(
     ax.set_yticks([1, *range(5, max_pos + 1, 5)])
     ax.set_xlabel("Lap")
     ax.set_ylabel("Position")
-    ax.legend(bbox_to_anchor=(1.0, 1.02))
+    # Vertically centred legend next to the axes: a top-anchored legend grows
+    # downward with more entries and can span the whole figure on a 22-driver
+    # grid, and one column of 22 labels is taller than the default figure.
+    # Centring the anchor keeps it balanced; more than 10 entries wrap into
+    # two columns so the legend stays inside the canvas at any grid size. The
+    # explicit fontsize also shields it from themes with a large legend font
+    # rcParam (e.g. the default-* styles).
+    n_entries = len(laps["Driver"].unique())
+    ax.legend(
+        bbox_to_anchor=(1.02, 0.5),
+        loc="center left",
+        borderaxespad=0,
+        fontsize=11,
+        ncol=2 if n_entries > 10 else 1,
+    )
 
     return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
 
@@ -592,7 +611,9 @@ def plot_track_temperature(
 
     Requires the session's weather data. When ``drivers`` is ``None``, the
     driver with the most recorded laps is used; otherwise one line is drawn
-    per driver.
+    per driver. The legend is anchored outside the axes (vertically centred,
+    wrapping to two columns past 10 entries) so it never obscures the plot
+    lines at any grid size.
 
     Args:
         year: Season year (2018-current).
@@ -636,7 +657,20 @@ def plot_track_temperature(
 
     ax.set_xlabel("Lap Number", fontsize=12)
     ax.set_ylabel("Track Temperature (°C)", fontsize=12)
-    ax.legend(fontsize=11)
+    # Grid-size-adaptive legend: matplotlib's default "best" placement drops a
+    # 22-entry legend into the middle of the plot, obscuring the lines, and a
+    # top-anchored legend would grow downward past the canvas. Centring it
+    # beside the axes keeps it balanced at any grid size; more than 10 entries
+    # wrap into two columns so it always fits the figure height. The explicit
+    # fontsize also shields it from themes with a large legend font rcParam.
+    n_entries = len(drivers)
+    ax.legend(
+        bbox_to_anchor=(1.02, 0.5),
+        loc="center left",
+        borderaxespad=0,
+        fontsize=11,
+        ncol=2 if n_entries > 10 else 1,
+    )
     ax.grid(color="w", which="major", axis="both", alpha=0.3)
     fig.suptitle(
         f"Track Temperature - {sess.event['EventName']} {sess.event.year}",

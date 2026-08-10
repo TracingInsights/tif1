@@ -32,6 +32,7 @@ All functions are available from both `tif1.charts` and the top-level `tif1` nam
 - **Optional `save_path`**: pass a path to write the figure with `bbox_inches="tight"` at the requested `dpi`
 - **Shared filter vocabulary**: `drivers`, `teams`, `n_drivers`, `laptime_cutoff`, `include_deleted`, `include_pit_laps`, `laps` work consistently across charts
 - **Consistent styling**: charts apply the fastf1 theme by default; `color_scheme=None` leaves matplotlib's global state untouched
+- **Stable bar-chart layout**: horizontal bar charts guarantee tight y-limits at any driver count, and the full-canvas race-launch export keeps its bar labels in-canvas (see [bar-chart layout guarantees](/guides/data-visualization#bar-chart-layout-guarantees))
 - **pandas backend by default**: chart logic relies on pandas idioms; pass `lib="polars"` at your own risk
 
 ## Quickstart

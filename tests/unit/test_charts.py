@@ -45,6 +45,13 @@ _TEAM_COLORS = {
     "Red Bull Racing": "#0600ef",
     "Ferrari": "#dc0000",
     "Mercedes": "#00f5d0",
+    "McLaren": "#ff8700",
+    "Aston Martin": "#006f62",
+    "Alpine": "#0093cc",
+    "Williams": "#005aff",
+    "RB": "#6692ff",
+    "Kick Sauber": "#52e252",
+    "Haas": "#b6babd",
 }
 
 
@@ -295,6 +302,122 @@ def _make_launch_telemetry(driver_idx: int) -> FakeTelemetry:
     t_sec = np.linspace(0.0, 8.0, n)
     speed = np.linspace(0.0, 300.0, n) * (1 + driver_idx * 0.02)
     return FakeTelemetry({"Time": pd.to_timedelta(t_sec, unit="s"), "Speed": speed})
+
+
+#: Extra drivers used to exercise charts with bigger grids (15/22 drivers).
+_MORE_DRIVERS = [
+    ("RUS", "Mercedes", "63"),
+    ("NOR", "McLaren", "4"),
+    ("PIA", "McLaren", "81"),
+    ("ALO", "Aston Martin", "14"),
+    ("STR", "Aston Martin", "18"),
+    ("OCO", "Alpine", "31"),
+    ("GAS", "Alpine", "10"),
+    ("ALB", "Williams", "23"),
+    ("SAR", "Williams", "2"),
+    ("TSU", "RB", "22"),
+    ("RIC", "RB", "3"),
+    ("BOT", "Kick Sauber", "77"),
+    ("ZHO", "Kick Sauber", "24"),
+    ("HUL", "Haas", "27"),
+    ("MAG", "Haas", "20"),
+    ("LAW", "Red Bull Racing", "6"),
+    ("BEA", "Ferrari", "7"),
+]
+
+
+def _make_big_session(n_drivers: int, *, launch: bool = False):
+    """Build a FakeSession-like session with ``n_drivers`` (15 or 22).
+
+    Reuses the real :class:`FakeSession` machinery but with an extended
+    driver list, so charts that resolve drivers/teams/colors see the full
+    grid size. ``launch`` switches telemetry to the launch ramp so the
+    race-launch ratings chart can process every driver.
+    """
+
+    driver_list = DRIVERS + _MORE_DRIVERS[: n_drivers - len(DRIVERS)]
+
+    class BigSession(FakeSession):
+        pass
+
+    session = BigSession(year=2024)
+    laps_rows = []
+    for pos, (abbr, team, _dn) in enumerate(driver_list, start=1):
+        for lap_num in range(1, N_LAPS + 1):
+            base_seconds = 90.0 + pos * 2.5 + lap_num * 0.1 + 0.05 * (lap_num % 3)
+            compound = "SOFT" if lap_num <= 6 else "MEDIUM"
+            laps_rows.append(
+                {
+                    "Driver": abbr,
+                    "Team": team,
+                    "LapNumber": lap_num,
+                    "LapTime": pd.Timedelta(seconds=base_seconds),
+                    "Position": pos,
+                    "Compound": compound,
+                    "Stint": 1 if lap_num <= 6 else 2,
+                    "TyreLife": lap_num if lap_num <= 6 else lap_num - 6,
+                    "Deleted": False,
+                    "PitInTime": pd.NaT,
+                    "PitOutTime": pd.NaT,
+                    "SpeedI1": 300.0 + pos * 2,
+                    "SpeedI2": 310.0 + pos * 2,
+                    "SpeedST": 320.0 + pos * 2,
+                    "SpeedFL": 290.0 + pos * 2,
+                    "TrackTemp": 35.0 + 0.5 * lap_num,
+                }
+            )
+    laps = FakeLaps(pd.DataFrame(laps_rows))
+    laps.session = session
+    session._laps = laps
+
+    session._results = pd.DataFrame(
+        [
+            {
+                "Abbreviation": abbr,
+                "TeamName": team,
+                "FirstName": abbr,
+                "LastName": abbr,
+                "FullName": abbr,
+            }
+            for abbr, team, _dn in driver_list
+        ]
+    )
+    session.drivers_df = pd.DataFrame(
+        {
+            "Driver": [abbr for abbr, _, _ in driver_list],
+            "Team": [team for _, team, _ in driver_list],
+            "DriverNumber": [dn for _, _, dn in driver_list],
+            "TeamColor": [_TEAM_COLORS[team] for _, team, _ in driver_list],
+            "FirstName": [abbr for abbr, _, _ in driver_list],
+            "LastName": [abbr for abbr, _, _ in driver_list],
+            "HeadshotUrl": [""] * len(driver_list),
+        }
+    )
+    session.drivers = [dn for _, _, dn in driver_list]
+
+    def get_driver(identifier):
+        for abbr, team, dn in driver_list:
+            if str(identifier) == dn:
+                return {
+                    "Abbreviation": abbr,
+                    "Team": team,
+                    "DriverNumber": dn,
+                    "TeamColor": _TEAM_COLORS[team],
+                }
+        raise KeyError(f"Driver {identifier} not found")
+
+    session.get_driver = get_driver
+
+    order = [abbr for abbr, _, _ in driver_list]
+    if launch:
+        session.telemetry_for = lambda driver, lap: _make_launch_telemetry(  # noqa: ARG005
+            order.index(driver)
+        )
+    else:
+        session.telemetry_for = lambda driver, lap: _make_telemetry(
+            order.index(driver), lap
+        )
+    return session
 
 
 @pytest.fixture
@@ -696,6 +819,255 @@ def test_race_launch_ratings_save_path(launch_session, tmp_path):
     assert out.stat().st_size > 0
 
 
+def test_race_launch_ratings_bottom_space_is_compact(launch_session):
+    """The launch chart must not waste canvas space at the bottom.
+
+    The v2 script's 15% bottom subplot margin left a large empty band below
+    the footer on the full-canvas export. The default-* styles now use a slim
+    bottom margin with a matching footer position, and the y-limits are
+    tightened to the bar range so the bars span the axes.
+    """
+    fig, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    fig.canvas.draw()
+
+    # Axes bottom edge must sit low in the figure (small margin), not at 15%.
+    bounds = ax.get_position().bounds
+    assert bounds[1] < 0.08, f"axes bottom margin too large: {bounds[1]:.3f}"
+
+    # The suptitle must clear the axes top edge (no title/bar collision).
+    title_bottom = fig._suptitle.get_window_extent().y0
+    axes_top = ax.transAxes.transform((0, 1))[1]
+    assert title_bottom >= axes_top - 1e-6, "suptitle overlaps the axes"
+
+    # Tight y-limits: bars (0..n-1, height 0.8) should nearly fill the axes.
+    n = len(launch_session.drivers)
+    bottom, top = sorted(ax.get_ylim())
+    assert bottom <= -0.4 - 1e-9  # first bar's lower edge is at -0.4
+    assert top >= n - 1 + 0.4 - 1e-9  # last bar's upper edge is at n - 0.6
+    assert top - bottom < n + 1.5  # no big auto-margin beyond the bars
+
+
+def test_race_launch_ratings_labels_fit_inside_xlim(launch_session):
+    """Bar labels at the bar ends must stay inside the figure canvas.
+
+    The launch chart exports the full canvas (no bbox crop), so the x-limit
+    must be expanded to the widest bar-label extent - otherwise the trailing
+    rating labels get clipped at the right edge of the figure.
+    """
+    fig, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    fig.canvas.draw()
+    xlim_right = ax.get_xlim()[1]
+    for label in ax.texts:
+        extent = label.get_window_extent()
+        data_x = ax.transData.inverted().transform((extent.x1, extent.y0))[0]
+        assert data_x <= xlim_right, f"label {label.get_text()!r} overflows x-limit"
+
+
+@pytest.mark.parametrize("n_drivers", [15, 22])
+def test_bar_charts_ylim_scale_with_driver_count(n_drivers, monkeypatch):
+    """Every bar chart tightens its y-limits for any grid size.
+
+    The shared ``set_tight_barh_ylim`` helper must keep the bars filling the
+    axes whether 15 or 22 drivers are selected - no fixed 20-row assumption.
+    """
+    session = _make_big_session(n_drivers)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    for func in (
+        performance.plot_downforce_levels,
+        performance.plot_throttle_distance,
+        lap_times.plot_qualifying_grid,
+    ):
+        _, ax = func(2024, "Italian Grand Prix", "Q")
+        assert len(ax.patches) == n_drivers, f"{func.__name__} bars"
+        bottom, top = sorted(ax.get_ylim())
+        # Rows at 0..n-1 with height 0.8 span -0.4..n-0.6; the helper adds
+        # exactly 0.1 padding each side -> total span n (no auto-margins).
+        assert bottom <= -0.4 + 1e-9
+        assert top >= n_drivers - 1 + 0.4 - 1e-9
+        assert top - bottom < n_drivers + 0.5, "y-limits must hug the bars"
+        plt.close("all")
+
+
+@pytest.mark.parametrize("n_drivers", [15, 22])
+def test_bar_charts_value_labels_fit_inside_xlim(n_drivers, monkeypatch):
+    """Value labels on the bar charts must sit inside the x-limit at any grid size.
+
+    When the value spread is small (or identical, as with the synthetic
+    throttle data) the fixed label offset can push labels past the auto-scaled
+    x-limit, so they float outside the axes box on inline display. The shared
+    ``fit_labels_inside_xlim`` helper must expand the limit so every value
+    label stays inside the axes for 15 and 22 drivers alike.
+    """
+    session = _make_big_session(n_drivers)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    for func in (
+        performance.plot_downforce_levels,
+        performance.plot_throttle_distance,
+        top_speeds.plot_top_speeds,
+    ):
+        # default-dark is the harshest layout: its large fonts widen the value
+        # labels, and labels fitted before tight_layout overflow once the axes
+        # are resized for those fonts. Exercising it here makes the test
+        # deterministic regardless of what earlier tests left in rcParams.
+        fig, ax = func(2024, "Italian Grand Prix", "Q", color_scheme="default-dark")
+        fig.canvas.draw()
+        xlim_right = ax.get_xlim()[1]
+        for label in ax.texts:
+            if not (label.get_text() or "").strip():
+                continue
+            extent = label.get_window_extent()
+            data_x = ax.transData.inverted().transform((extent.x1, extent.y0))[0]
+            assert data_x <= xlim_right + 1e-6, (
+                f"{func.__name__} label {label.get_text()!r} overflows x-limit "
+                f"({data_x:.3f} > {xlim_right:.3f})"
+            )
+        plt.close("all")
+
+
+@pytest.mark.parametrize("n_drivers", [15, 22])
+def test_position_changes_legend_stays_in_canvas(n_drivers, monkeypatch):
+    """The position-changes legend must stay inside the figure at any grid size.
+
+    The legend is anchored beside the axes (outside the plot area); with a
+    top-anchored legend a 22-driver grid grew the legend down to the figure's
+    bottom edge. It must be vertically centred next to the axes and fully
+    inside the canvas for 15 and 22 drivers alike.
+    """
+    session = _make_big_session(n_drivers)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    fig, ax = lap_times.plot_position_changes(2024, "Italian Grand Prix", "R")
+    fig.canvas.draw()
+
+    assert len(ax.lines) == n_drivers
+    legend = ax.get_legend()
+    assert legend is not None
+    assert len(legend.get_texts()) == n_drivers
+
+    renderer = fig.canvas.get_renderer()
+    fb = fig.bbox
+    leg = legend.get_window_extent(renderer)
+    ax_ext = ax.get_window_extent(renderer)
+
+    # Legend fully inside the canvas (nothing clipped), with a margin from
+    # the top/bottom edges - the old top-anchored legend sat flush against
+    # the bottom edge (y0 = 2px) on a 22-driver grid.
+    assert leg.x0 >= fb.x0
+    assert leg.x1 <= fb.x1
+    assert leg.y0 >= fb.y0 + 5, f"legend flush against bottom edge (y0={leg.y0:.0f}px)"
+    assert leg.y1 <= fb.y1 - 5, f"legend flush against top edge (y1={leg.y1:.0f}px)"
+
+    # Legend clear of the plot area (no overlap with the lines).
+    overlap_w = max(0, min(leg.x1, ax_ext.x1) - max(leg.x0, ax_ext.x0))
+    assert overlap_w <= 1, f"legend overlaps the axes ({overlap_w:.1f}px)"
+
+    # Vertically centred next to the axes: the legend's centre aligns with
+    # the axes' centre regardless of the theme's figure margins.
+    leg_center = (leg.y0 + leg.y1) / 2
+    ax_center = (ax_ext.y0 + ax_ext.y1) / 2
+    assert abs(leg_center - ax_center) <= 30, (
+        f"legend not centred on the axes (offset {abs(leg_center - ax_center):.1f}px)"
+    )
+    plt.close("all")
+
+
+@pytest.mark.parametrize("n_drivers", [5, 15, 22])
+def test_track_temperature_legend_stays_in_canvas(n_drivers, monkeypatch):
+    """The track-temperature legend must not obscure the plot at any grid size.
+
+    With the default legend placement matplotlib drops a 22-entry legend into
+    the middle of the plot, covering the lines, and a top-anchored legend
+    would grow downward past the canvas. The legend must sit outside the axes
+    (beside the plot), be vertically centred on the axes, and stay fully
+    inside the figure for 5, 15 and 22 drivers alike.
+    """
+    session = _make_big_session(n_drivers)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+    drivers = list(session.laps["Driver"].unique())
+
+    fig, ax = lap_times.plot_track_temperature(
+        2024, "Italian Grand Prix", "R", drivers=drivers
+    )
+    fig.canvas.draw()
+
+    assert len(ax.lines) == n_drivers
+    legend = ax.get_legend()
+    assert legend is not None
+    assert len(legend.get_texts()) == n_drivers
+
+    renderer = fig.canvas.get_renderer()
+    fb = fig.bbox
+    leg = legend.get_window_extent(renderer)
+    ax_ext = ax.get_window_extent(renderer)
+
+    # Legend fully inside the canvas (nothing clipped).
+    assert leg.x0 >= fb.x0
+    assert leg.x1 <= fb.x1
+    assert leg.y0 >= fb.y0 - 1
+    assert leg.y1 <= fb.y1 + 1
+
+    # Legend must not overlap the plot area (sits beside the axes).
+    overlap_w = max(0, min(leg.x1, ax_ext.x1) - max(leg.x0, ax_ext.x0))
+    assert overlap_w <= 1, f"legend overlaps the axes ({overlap_w:.1f}px)"
+
+    # Vertically centred next to the axes.
+    leg_center = (leg.y0 + leg.y1) / 2
+    ax_center = (ax_ext.y0 + ax_ext.y1) / 2
+    assert abs(leg_center - ax_center) <= 30, (
+        f"legend not centred on the axes (offset {abs(leg_center - ax_center):.1f}px)"
+    )
+    plt.close("all")
+
+
+@pytest.mark.parametrize("n_drivers", [15, 22])
+def test_line_scatter_charts_render_at_any_grid_size(n_drivers, monkeypatch):
+    """Line/scatter charts render with full data at 15 and 22 drivers."""
+    session = _make_big_session(n_drivers)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    # lap delta: exactly two drivers even on a big grid.
+    _, ax = lap_times.plot_lap_delta(2024, "Italian Grand Prix", "Q")
+    assert len(ax.patches) >= 1
+    assert len(ax.get_legend().get_texts()) == 2
+    plt.close("all")
+
+    # tire degradation: aggregates all drivers' laps per compound.
+    _, ax = performance.plot_tire_degradation(
+        2024, "Italian Grand Prix", "R", min_laps=3, smoothing_window=3
+    )
+    assert len(ax.collections) >= 1
+    assert len(ax.lines) >= 1
+    plt.close("all")
+
+
+@pytest.mark.parametrize("n_drivers", [15, 22])
+def test_race_launch_ratings_any_driver_count(n_drivers, monkeypatch):
+    """The launch chart keeps its compact layout for 15 and 22 drivers."""
+    session = _make_big_session(n_drivers, launch=True)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    fig, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    fig.canvas.draw()
+
+    assert len(ax.patches) == n_drivers
+    # Labels must still fit inside the x-limit at any grid size.
+    xlim_right = ax.get_xlim()[1]
+    for label in ax.texts:
+        extent = label.get_window_extent()
+        data_x = ax.transData.inverted().transform((extent.x1, extent.y0))[0]
+        assert data_x <= xlim_right, f"label {label.get_text()!r} overflows x-limit"
+    # Bottom margin stays compact regardless of grid size.
+    bounds = ax.get_position().bounds
+    assert bounds[1] < 0.08
+    # Title still clears the axes top.
+    title_bottom = fig._suptitle.get_window_extent().y0
+    axes_top = ax.transAxes.transform((0, 1))[1]
+    assert title_bottom >= axes_top - 1e-6
+    plt.close("all")
+
+
 def test_race_launch_ratings_exports_full_canvas(launch_session, tmp_path, monkeypatch):
     """The launch chart mirrors the v2 script: no tight_layout, no bbox crop.
 
@@ -721,6 +1093,40 @@ def test_race_launch_ratings_exports_full_canvas(launch_session, tmp_path, monke
     assert captured["kwargs"]["dpi"] == 150
     assert "bbox_inches" not in captured["kwargs"]
     assert "facecolor" not in captured["kwargs"]
+
+
+def test_add_style_branding_footer_not_clipped_full_canvas():
+    """Full-canvas branding must use figure-fraction coordinates.
+
+    ``fig.text`` does not fall back to ``fig.transFigure`` when passed
+    ``transform=None`` explicitly - the text is left in raw pixel
+    coordinates and lands clipped at the bottom-left corner of full-canvas
+    exports (regression: the launch chart's footer rendered off-canvas).
+    The helper must omit the transform kwarg on the full-canvas path so the
+    footer sits centred at the style's ``footer_y`` figure fraction.
+    """
+    from tif1.plotting import get_plot_style
+
+    style = get_plot_style("default-dark")
+    fig = plt.figure(figsize=(20, 20))
+
+    _common.add_style_branding(fig, style)  # no ax -> full-canvas path
+
+    footers = [t for t in fig.texts if t.get_text() == style["footer"]]
+    assert footers, "footer text missing"
+    footer = footers[0]
+    # Must resolve through the figure transform, not raw pixel coordinates.
+    assert footer.get_transform() == fig.transFigure
+    assert footer.get_position() == (0.5, style["spacing"]["footer_y"])
+
+    # The footer must sit fully inside the canvas (x/y >= 0), not clipped.
+    fig.canvas.draw()
+    extent = footer.get_window_extent()
+    assert extent.x0 >= 0, f"footer clipped at left edge (x0={extent.x0:.1f})"
+    assert extent.x1 <= fig.bbox.width, "footer clipped at right edge"
+    assert extent.y0 >= 0, f"footer clipped at bottom edge (y0={extent.y0:.1f})"
+    assert extent.y1 <= fig.bbox.height, "footer clipped at top edge"
+    plt.close("all")
 
 
 def test_race_launch_ratings_rounding_matches_v2_pipeline(launch_session):

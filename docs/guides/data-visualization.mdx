@@ -59,7 +59,45 @@ plot_lap_times(
 )
 ```python
 
-## Matplotlib Integration
+## Bar-chart layout guarantees
+
+The native bar charts (`plot_race_launch_ratings`, `plot_downforce_levels`, `plot_throttle_distance`, `plot_top_speeds`, and `plot_qualifying_grid`) share layout guarantees that keep the chart clean at any grid size — whether you plot 5 drivers, 15, or the full 22-driver grid.
+
+### Tight y-limits at any driver count
+
+Each bar chart tightens its y-limits around the bar rows with `tif1.charts._common.set_tight_barh_ylim(ax, n_bars)`. Horizontal bar rows sit at integer positions `0..n_bars-1`, and the helper sets the limits to `(-0.5, n_bars - 0.5)`. Without it, matplotlib's default 5% auto-margins leave empty bands above the first and below the last bar, and the proportions shift as the number of drivers changes. With it, the same chart is equally compact for a 15-driver grid and the full 22-driver grid — the bars always fill the axes with the same small padding, and no fixed row count is assumed.
+
+### Bar labels always fit inside the canvas
+
+Charts that export with `bbox_inches="tight"` crop the canvas around their content, so bar labels are never clipped in the saved output. `plot_race_launch_ratings` is the exception: it exports the full canvas (no `bbox_inches` crop) to mirror the v2 script, so labels placed past the longest bar would be clipped at the right edge. It calls `tif1.charts._common.fit_labels_inside_xlim(ax, labels)`, which iterates the x-limit to a fixed point until every label's measured extent sits inside the axes — labels stay fully visible no matter how wide the longest bar is.
+
+The value-label bar charts (`plot_downforce_levels`, `plot_throttle_distance`, `plot_top_speeds`) apply the same guarantee for inline display, where no crop happens: `finalize_figure` accepts a `label_fit=(ax, labels)` pair and runs `fit_labels_inside_xlim` after `tight_layout`, so value labels stay inside the axes box at any grid size and under any theme's font sizes (labels fitted before layout can overflow once large fonts resize the axes).
+
+### Reuse the helpers in your own charts
+
+Both helpers are part of `tif1.charts._common`'s public API, so custom bar charts can opt in to the same guarantees:
+
+```python
+import matplotlib.pyplot as plt
+import tif1.charts._common as common
+
+fig, ax = plt.subplots(figsize=(12, 8))
+hbars = ax.barh(drivers, values, color=team_colors)
+labels = ax.bar_label(hbars, padding=8, color="white")
+
+# Bars fill the axes at any grid size
+common.set_tight_barh_ylim(ax, len(drivers))
+ax.invert_yaxis()
+
+# Labels stay inside the canvas
+common.fit_labels_inside_xlim(ax, labels)
+```For the branded footer, watermark, and `footer_y` placement used by the race-launch chart, see `tif1.charts._common.add_style_branding(fig, style)`.
+
+### Per-driver line chart legends stay beside the plot
+
+The multi-line charts that draw one line per driver (`plot_position_changes`, `plot_track_temperature`) anchor their legend outside the axes — vertically centred next to the plot — and wrap into two columns once the grid exceeds 10 entries. Matplotlib's default placement drops a 22-entry legend into the middle of the plot (obscuring the lines), and a top-anchored legend grows downward until it nearly spans the figure. The centred outside anchor keeps the legend balanced and clear of the lines at any grid size, from the 1-driver track-temperature default to the full 22-driver grid.
+
+## Matplotlib Integration
 
 For custom visualizations, use matplotlib directly.
 

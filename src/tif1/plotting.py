@@ -74,8 +74,12 @@ DEFAULT_PLOT_CONFIG = {
 #: (``#011627`` background, lime text, white bar/ytick labels, Coolvetica/Azonix/
 #: GreatVibes fonts, default-width bars, and a car-image threshold of 2.5 on the
 #: rating axis). ``bar.linewidth`` is ``None`` in the dark style, meaning
-#: matplotlib's default bar edge width. Subplot margins in both styles come from
-#: the v2 theming framework (``chart_themes.apply_to_figure``).
+#: matplotlib's default bar edge width. The left/right/top/bottom subplot margins
+#: follow the v2 theming framework (``chart_themes.apply_to_figure``), with one
+#: intentional deviation: the bottom margin is slimmed from the v2 scripts' 0.15
+#: to 0.06 and the top from 0.9 to 0.86, so the full-canvas launch-chart export
+#: keeps the footer near the edge and clears the suptitle (see
+#: ``tif1.charts.performance.plot_race_launch_ratings``).
 PLOT_STYLES: dict[str, dict[str, Any]] = {
     "default-light": {
         "name": "default-light",
@@ -110,8 +114,9 @@ PLOT_STYLES: dict[str, dict[str, Any]] = {
             "x_margin": 0.4,
             "subplot_left": 0.15,
             "subplot_right": 0.97,
-            "subplot_top": 0.9,
-            "subplot_bottom": 0.15,
+            "subplot_top": 0.86,
+            "subplot_bottom": 0.06,
+            "footer_y": 0.04,
         },
         "footer": "TRACINGINSIGHTS.COM",
         "watermark": "@TracingInsights",
@@ -148,8 +153,9 @@ PLOT_STYLES: dict[str, dict[str, Any]] = {
             "label_padding": 20,
             "subplot_left": 0.15,
             "subplot_right": 0.97,
-            "subplot_top": 0.9,
-            "subplot_bottom": 0.15,
+            "subplot_top": 0.86,
+            "subplot_bottom": 0.06,
+            "footer_y": 0.04,
         },
         "footer": "TRACINGINSIGHTS.COM",
         "watermark": "@TracingInsights",
