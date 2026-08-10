@@ -128,6 +128,15 @@ CREATE TABLE telemetry_cache (
 )
 ```
 
+**Default Cache Location**:
+The cache directory is OS-dependent and mirrors FastF1's platform layout, using `tif1` as the application directory:
+
+- Windows: `%LOCALAPPDATA%\Temp\tif1`
+- macOS: `~/Library/Caches/tif1`
+- Linux and other POSIX platforms (FreeBSD, etc.): `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`
+
+Override the default with the `TIF1_CACHE_DIR` environment variable or the `cache_dir` key in `.tif1rc`.
+
 ### 5. Validation Layer (`src/tif1/validation.py`)
 
 **Purpose**: Data integrity and type safety
@@ -272,7 +281,7 @@ Return Combined Data
 
 ### Environment Variables
 ```bash
-TIF1_CACHE_DIR=~/.tif1/cache    # Cache location
+TIF1_CACHE_DIR=/path/to/tif1-cache    # Override OS-specific cache location
 TIF1_LOG_LEVEL=INFO              # Logging level
 TIF1_TIMEOUT=30                  # Request timeout (seconds)
 TIF1_MAX_RETRIES=3               # Retry attempts

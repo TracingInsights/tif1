@@ -78,7 +78,7 @@ graph TD
 
 **SQLite Persistent Cache (`cache.py`)**
 - Disk-based cache using SQLite database
-- Location: `~/.tif1/cache/tif1_cache.db` (configurable via `TIF1_CACHE_DIR`)
+- Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
 - Stores compressed JSON representations
 - Schema: `(key TEXT PRIMARY KEY, value BLOB, timestamp REAL)`
 - Supports TTL-based expiration (default: 7 days)
@@ -259,7 +259,7 @@ The SQLite cache provides persistent storage that survives process restarts.
 **Technical Specifications:**
 - Implementation: SQLite3 with custom connection pooling
 - Storage: Disk-based database file
-- Location: `~/.tif1/cache/tif1_cache.db` (configurable via `TIF1_CACHE_DIR`)
+- Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
 - Data format: Compressed JSON (zlib compression, level 6)
 - Capacity: Unlimited (constrained by disk space)
 - Access time: 10-50ms (depends on disk I/O)
@@ -4524,7 +4524,7 @@ For questions, issues, or contributions, visit the [GitHub repository](https://g
 
 ```bash
 # Cache configuration
-export TIF1_CACHE_DIR="~/.tif1/cache"
+export TIF1_CACHE_DIR="/path/to/tif1-cache"
 export TIF1_CACHE_SIZE="1024"
 export TIF1_CACHE_TTL="604800"  # 7 days
 export TIF1_CACHE_ENABLED="true"

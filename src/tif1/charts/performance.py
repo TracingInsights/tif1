@@ -62,6 +62,7 @@ def plot_downforce_levels(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -79,7 +80,10 @@ def plot_downforce_levels(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -183,6 +187,11 @@ def plot_downforce_levels(
         dpi=dpi,
         facecolor=facecolor,
         label_fit=(ax, value_labels),
+        chart_name="downforce_levels",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
     )
 
 
@@ -192,6 +201,7 @@ def plot_throttle_distance(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -207,7 +217,10 @@ def plot_throttle_distance(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -311,6 +324,11 @@ def plot_throttle_distance(
         dpi=dpi,
         facecolor=facecolor,
         label_fit=(ax, value_labels),
+        chart_name="throttle_distance",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
     )
 
 
@@ -338,6 +356,7 @@ def plot_tire_degradation(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -360,7 +379,10 @@ def plot_tire_degradation(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(14, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -445,7 +467,18 @@ def plot_tire_degradation(
         y_max = clean_laps["FuelCorrectedTime"].quantile(0.99)
         ax.set_ylim(y_min - 0.5, y_max + 0.5)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="tire_degradation",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def _compound_colors(sess) -> dict[str, str]:
@@ -519,6 +552,7 @@ def plot_race_launch_ratings(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -547,7 +581,10 @@ def plot_race_launch_ratings(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"R"``, ``"Race"``, ``"SQ"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to the style's ``(20, 20)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -787,4 +824,9 @@ def plot_race_launch_ratings(
         facecolor=facecolor,
         tight_layout=False,
         bbox_inches=None,
+        chart_name="race_launch_ratings",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
     )

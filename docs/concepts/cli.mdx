@@ -305,7 +305,7 @@ tif1 cache-info
 
 **Sample Output:**
 ```
-Cache location: /home/user/.tif1/cache
+Cache location: /home/user/.cache/tif1
 Cache files: 3
 Total size: 145.67 MB
 ```
@@ -500,7 +500,7 @@ Key environment variables that affect CLI behavior:
 
 ```bash
 # Cache location
-export TIF1_CACHE_DIR="$HOME/.tif1/cache"
+export TIF1_CACHE_DIR="$HOME/tif1-cache"
 
 # Enable/disable caching
 export TIF1_ENABLE_CACHE=true
@@ -665,7 +665,7 @@ tif1 cache-info
 ### Cache Location
 
 - Default cache location varies by OS:
-  - **Linux**: `~/.cache/tif1` or `~/.tif1`
+  - **Linux/other POSIX**: `~/.cache/tif1` or `~/.tif1`
   - **macOS**: `~/Library/Caches/tif1`
   - **Windows**: `%LOCALAPPDATA%\Temp\tif1`
 - Override with `TIF1_CACHE_DIR` environment variable

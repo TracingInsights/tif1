@@ -769,10 +769,10 @@ time tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 
 Cache location is platform-specific:
 
-| Platform | Default Location | Environment Variable |
-|----------|------------------|---------------------|
-| **Linux** | `~/.cache/tif1` | `$XDG_CACHE_HOME/tif1` |
-| **macOS** | `~/Library/Caches/tif1` | `$HOME/Library/Caches/tif1` |
+| Platform | Default Location | Override Environment Variable |
+|----------|------------------|------------------------------|
+| **Linux** | `~/.cache/tif1` | `$TIF1_CACHE_DIR` |
+| **macOS** | `~/Library/Caches/tif1` | `$TIF1_CACHE_DIR` |
 | **Windows** | `%LOCALAPPDATA%\Temp\tif1` | `%TIF1_CACHE_DIR%` |
 
 **Custom Cache Location:**
@@ -1817,7 +1817,7 @@ Total size: 128.45 MB
 
 | Platform | Default Cache Location |
 |----------|------------------------|
-| **Linux** | `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist) |
+| **Linux/other POSIX** | `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist) |
 | **macOS** | `~/Library/Caches/tif1` |
 | **Windows** | `%LOCALAPPDATA%\Temp\tif1` |
 

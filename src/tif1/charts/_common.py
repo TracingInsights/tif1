@@ -7,6 +7,11 @@ pipeline (``_apply_common_filters``) are defined exactly once.
 
 from __future__ import annotations
 
+import logging
+import re
+import unicodedata
+from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -19,11 +24,14 @@ __all__ = [
     "SPEED_TRAP_COLUMNS",
     "add_style_branding",
     "apply_laptime_cutoff",
+    "build_save_path",
+    "configure_chart_saving",
     "driver_colors",
     "fastest_lap",
     "finalize_figure",
     "finishing_order",
     "fit_labels_inside_xlim",
+    "get_chart_save_config",
     "load_session",
     "resolve_drivers",
     "setup_theme",
@@ -31,6 +39,8 @@ __all__ = [
     "team_colors",
     "track_segments",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: The four speed trap columns available in lap data.
 SPEED_TRAP_COLUMNS = ("SpeedI1", "SpeedI2", "SpeedST", "SpeedFL")
@@ -73,6 +83,228 @@ def setup_theme(color_scheme: str | None) -> None:
         setup_mpl(color_scheme=color_scheme, mpl_timedelta_support=True)
 
 
+# ---------------------------------------------------------------------------
+# Automatic chart saving
+# ---------------------------------------------------------------------------
+
+#: Session identifiers -> filesystem folder slug (sanitized, lowercase).
+_SESSION_SLUGS: dict[str, str] = {
+    "fp1": "practice-1",
+    "practice 1": "practice-1",
+    "free practice 1": "practice-1",
+    "fp2": "practice-2",
+    "practice 2": "practice-2",
+    "free practice 2": "practice-2",
+    "fp3": "practice-3",
+    "practice 3": "practice-3",
+    "free practice 3": "practice-3",
+    "q": "qualifying",
+    "qualifying": "qualifying",
+    "qualification": "qualifying",
+    "sq": "sprint-qualifying",
+    "sprint qualifying": "sprint-qualifying",
+    "sprint shootout": "sprint-qualifying",
+    "s": "sprint",
+    "sprint": "sprint",
+    "sprint race": "sprint",
+    "r": "race",
+    "race": "race",
+}
+
+
+@dataclass
+class ChartSaveConfig:
+    """Configuration for automatic chart file naming and placement.
+
+    Attributes:
+        enabled: When ``True``, charts called without an explicit
+            ``save_path`` are written automatically.
+        output_dir: Root directory of the auto-save tree (relative or
+            absolute; ``~`` is expanded). Defaults to ``tracinginsights``.
+        format: File extension, e.g. ``"png"``, ``"svg"``, ``"pdf"``.
+        folder_template: Format string for the per-session sub-directory.
+            ``{year}``, ``{event}``, ``{session}`` and ``{chart}`` are
+            available; every value is sanitized (lowercase, hyphenated).
+        filename_template: Format string for the file name (without
+            extension), sharing the same placeholders as ``folder_template``.
+        overwrite: When ``False`` an unused ``_1``, ``_2``, ... suffix is
+            appended instead of overwriting an existing file.
+        dpi: Optional dpi override applied only to auto-saved files.
+    """
+
+    enabled: bool = False
+    output_dir: str | Path = "tracinginsights"
+    format: str = "png"
+    folder_template: str = "{year}/{event}/{session}"
+    filename_template: str = "{chart}"
+    overwrite: bool = True
+    dpi: int | None = None
+
+
+#: Module-level auto-save settings (see :func:`configure_chart_saving`).
+_CHART_SAVE_CONFIG = ChartSaveConfig()
+
+
+def get_chart_save_config() -> ChartSaveConfig:
+    """Return the current automatic chart-saving configuration.
+
+    Returns:
+        The live :class:`ChartSaveConfig` instance; update it via
+        :func:`configure_chart_saving` rather than mutating it in place.
+    """
+    return _CHART_SAVE_CONFIG
+
+
+def configure_chart_saving(**kwargs: Any) -> None:
+    """Configure automatic chart saving.
+
+    When enabled, every chart function called without an explicit
+    ``save_path`` writes its figure to
+    ``<output_dir>/<year>/<event>/<session>/<chart>.<format>`` using the
+    configured templates. Example::
+
+        from tif1 import configure_chart_saving, plot_top_speeds
+
+        configure_chart_saving(
+            enabled=True,
+            output_dir="tracinginsights",
+            folder_template="{year}/{event}/{session}",
+            filename_template="{chart}",
+            overwrite=True,
+            dpi=300,
+        )
+        plot_top_speeds(2024, "Italian Grand Prix", "Q")
+        # writes tracinginsights/2024/italian-grand-prix/qualifying/top_speeds.png
+
+    Every chart also accepts an ``auto_save`` keyword to override the global
+    setting for a single call (``True``/``False`` force it on/off, ``None``
+    follows the config).
+
+    Args:
+        **kwargs: Any :class:`ChartSaveConfig` attribute to update.
+
+    Raises:
+        ValueError: If an unknown option is passed.
+    """
+    config = get_chart_save_config()
+    valid = {field.name for field in fields(config)}
+    for key, value in kwargs.items():
+        if key not in valid:
+            raise ValueError(
+                f"Unknown chart saving option '{key}'. "
+                f"Valid options: {', '.join(sorted(valid))}"
+            )
+        if key in ("enabled", "overwrite") and not isinstance(value, bool):
+            raise ValueError(f"Chart saving option '{key}' must be a bool, got {type(value).__name__}")
+        if key == "format" and (not isinstance(value, str) or not value.strip()):
+            raise ValueError("Chart saving option 'format' must be a non-empty string")
+        if key in ("folder_template", "filename_template") and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(f"Chart saving option '{key}' must be a non-empty string")
+        setattr(config, key, value)
+
+
+def _slugify(value: Any) -> str:
+    """Filesystem-safe lowercase slug for a folder segment."""
+    text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    return text or "unknown"
+
+
+def _session_slug(session: Any) -> str:
+    """Slug for a session identifier, mapping known codes to full names."""
+    lookup = str(session).strip().casefold()
+    if lookup in _SESSION_SLUGS:
+        return _SESSION_SLUGS[lookup]
+    return _slugify(session)
+
+
+def _safe_stem(value: str) -> str:
+    """Sanitize a file stem (keeps underscores, drops path separators)."""
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    return value or "chart"
+
+
+def _chart_slug(chart_name: Any) -> str:
+    """Filesystem-safe lowercase identifier for a chart (keeps underscores)."""
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", str(chart_name)).strip("_").lower()
+    return _safe_stem(text)
+
+
+def _uniquify(directory: Path, filename: str) -> str:
+    """Return ``filename`` or a ``name_N`` variant that does not exist yet."""
+    candidate = directory / filename
+    if not candidate.exists():
+        return filename
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    index = 1
+    while (directory / f"{stem}_{index}{suffix}").exists():
+        index += 1
+    return f"{stem}_{index}{suffix}"
+
+
+def build_save_path(
+    chart_name: str | None,
+    year: int | None,
+    event: str | int | None,
+    session: str | int | None,
+    *,
+    config: ChartSaveConfig | None = None,
+    enabled: bool | None = None,
+) -> str | None:
+    """Resolve the automatic save path for a chart.
+
+    Returns ``None`` when auto-saving is disabled (or forced off via
+    ``enabled``) or the context is incomplete (no ``chart_name``/``year``).
+    The parent directory is **not** created here;
+    :func:`finalize_figure` creates it on save.
+
+    Args:
+        chart_name: Chart identifier, e.g. ``"top_speeds"``.
+        year: Season year used for the ``{year}`` placeholder.
+        event: Event (name or round) used for the ``{event}`` placeholder.
+        session: Session (name or code) used for the ``{session}``
+            placeholder; known codes (``Q``, ``R``, ``FP1``, ...) are mapped
+            to their full lowercase names.
+        config: Config to use; defaults to the global
+            :func:`get_chart_save_config`.
+        enabled: Override the config's ``enabled`` flag for this call
+            (``None`` follows the config).
+
+    Returns:
+        The output path, or ``None``.
+    """
+    cfg = config if config is not None else get_chart_save_config()
+    active = cfg.enabled if enabled is None else enabled
+    if not active or not chart_name or year is None:
+        return None
+
+    values = {
+        "year": _slugify(year),
+        "event": _slugify(event),
+        "session": _session_slug(session),
+        "chart": _chart_slug(chart_name),
+    }
+    try:
+        folder = cfg.folder_template.format(**values).strip("/")
+        stem = _safe_stem(cfg.filename_template.format(**values))
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid chart saving template (folder_template={cfg.folder_template!r}, "
+            f"filename_template={cfg.filename_template!r}): {exc}. "
+            f"Available placeholders: {{year}}, {{event}}, {{session}}, {{chart}}"
+        ) from exc
+    filename = f"{stem}.{str(cfg.format).lstrip('.')}"
+
+    base = Path(cfg.output_dir).expanduser()
+    directory = base / folder if folder else base
+    if not cfg.overwrite:
+        filename = _uniquify(directory, filename)
+    return str(directory / filename)
+
+
 def finalize_figure(
     fig: Figure,
     ax: Any,
@@ -83,6 +315,11 @@ def finalize_figure(
     tight_layout: bool = True,
     bbox_inches: str | bool | None = "tight",
     label_fit: tuple[Any, list[Any]] | None = None,
+    chart_name: str | None = None,
+    year: int | None = None,
+    event: str | int | None = None,
+    session: str | int | None = None,
+    auto_save: bool | None = None,
 ) -> tuple[Figure, Any]:
     """Single source of truth for layout + saving of a chart figure.
 
@@ -94,6 +331,11 @@ def finalize_figure(
     look with explicit ``subplots_adjust`` margins and a full-canvas export)
     can opt out with ``tight_layout=False, bbox_inches=None``.
 
+    When ``save_path`` is ``None`` and auto-saving is active (see
+    :func:`configure_chart_saving`), the figure is written automatically to
+    ``<output_dir>/<year>/<event>/<session>/<chart>.<format>`` — the parent
+    directory is created as needed, for auto-saved and explicit paths alike.
+
     ``label_fit`` runs :func:`fit_labels_inside_xlim` **after** the axes
     geometry is final (post ``tight_layout``), so bar value labels measured
     against the laid-out axes stay inside the x-limit regardless of the
@@ -104,7 +346,8 @@ def finalize_figure(
     Args:
         fig: The figure to finalize.
         ax: The chart axes (may be an ndarray of axes for multi-panel charts).
-        save_path: Output path, or ``None`` to only return the figure.
+        save_path: Output path, or ``None`` to auto-save (when enabled) or
+            only return the figure.
         dpi: Dots per inch used when saving.
         facecolor: Background color passed to ``savefig``; ``None`` leaves the
             background unchanged.
@@ -113,10 +356,30 @@ def finalize_figure(
             saves the full canvas (default ``"tight"``).
         label_fit: Optional ``(axes, labels)`` pair passed to
             :func:`fit_labels_inside_xlim` after layout completes.
+        chart_name: Chart identifier used for the ``{chart}`` placeholder
+            when auto-saving (e.g. ``"top_speeds"``).
+        year: Season year used for the ``{year}`` placeholder.
+        event: Event used for the ``{event}`` placeholder.
+        session: Session used for the ``{session}`` placeholder.
+        auto_save: Per-call override of the global auto-save setting; ``None``
+            follows :func:`configure_chart_saving`.
 
     Returns:
-        The ``(fig, ax)`` pair.
+        The ``(fig, ax)`` pair. When the figure is saved (explicitly or
+        automatically), ``fig._tif1_save_path`` holds the path that was
+        written.
     """
+    if save_path is None:
+        cfg = get_chart_save_config()
+        should_auto_save = cfg.enabled if auto_save is None else auto_save
+        if should_auto_save:
+            resolved = build_save_path(
+                chart_name, year, event, session, config=cfg, enabled=should_auto_save
+            )
+            if resolved is not None:
+                save_path = resolved
+                if cfg.dpi is not None:
+                    dpi = cfg.dpi
     if tight_layout:
         fig.tight_layout()
     if label_fit is not None:
@@ -125,12 +388,18 @@ def finalize_figure(
     if facecolor is not None:
         fig.set_facecolor(facecolor)
     if save_path is not None:
+        save_path = str(save_path)
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         save_kwargs: dict[str, Any] = {"dpi": dpi}
         if bbox_inches is not None:
             save_kwargs["bbox_inches"] = bbox_inches
         if facecolor is not None:
             save_kwargs["facecolor"] = facecolor
         fig.savefig(save_path, **save_kwargs)
+        # Where the figure was written; inspect ``fig._tif1_save_path`` after
+        # a chart call to discover auto-saved file locations.
+        setattr(fig, "_tif1_save_path", save_path)  # noqa: B010
+        logger.info("Saved chart to %s", save_path)
     return fig, ax
 
 

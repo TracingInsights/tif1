@@ -6,16 +6,120 @@ from pathlib import Path
 import pytest
 
 import tif1.config as config_module
-from tif1.config import _to_bool, _to_list
+from tif1.config import _default_cache_dir, _to_bool, _to_list
 
 
 def _write_config(path: Path, timeout: int) -> None:
     path.write_text(json.dumps({"timeout": timeout}), encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("win32", Path("AppData") / "Local" / "Temp" / "tif1"),
+        ("darwin", Path("Library") / "Caches" / "tif1"),
+    ],
+)
+def test_default_cache_dir_platform_paths(tmp_path, monkeypatch, platform, expected):
+    """Default cache paths match FastF1's Windows and macOS layout."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", platform)
+
+    if platform == "win32":
+        local_app_data = tmp_path / "local-app-data"
+        monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+        assert _default_cache_dir() == local_app_data / "Temp" / "tif1"
+    else:
+        assert _default_cache_dir() == home / expected
+
+
+def test_default_cache_dir_windows_fallback(tmp_path, monkeypatch):
+    """Windows uses the conventional LOCALAPPDATA fallback when unset."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert _default_cache_dir() == home / "AppData" / "Local" / "Temp" / "tif1"
+
+
+def test_default_cache_dir_linux_uses_existing_dot_cache(tmp_path, monkeypatch):
+    """Linux uses ~/.cache/tif1 when ~/.cache already exists."""
+    home = tmp_path / "home"
+    (home / ".cache").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", "linux")
+
+    assert _default_cache_dir() == home / ".cache" / "tif1"
+
+
+def test_default_cache_dir_linux_fallback(tmp_path, monkeypatch):
+    """Linux falls back to ~/.tif1 when ~/.cache does not exist."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", "linux")
+
+    assert _default_cache_dir() == home / ".tif1"
+
+
+def test_default_cache_dir_other_posix_uses_linux_layout(tmp_path, monkeypatch):
+    """FreeBSD and other POSIX platforms get the Linux-style cache layout."""
+    home = tmp_path / "home"
+    (home / ".cache").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", "freebsd")
+
+    assert _default_cache_dir() == home / ".cache" / "tif1"
+
+    (home / ".cache").rmdir()
+    assert _default_cache_dir() == home / ".tif1"
+
+
+def test_config_default_cache_dir_uses_platform_path(tmp_path, monkeypatch):
+    """Config uses the platform default instead of the legacy ~/.tif1/cache path."""
+    home = tmp_path / "home"
+    (home / ".cache").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(config_module.sys, "platform", "linux")
+
+    config = config_module.Config()
+    assert config.get("cache_dir") == str(home / ".cache" / "tif1")
+
+
+def test_cache_dir_environment_override_is_applied_once(tmp_path, monkeypatch):
+    """The cache environment variable overrides the platform default."""
+    cache_dir = tmp_path / "env-cache"
+    monkeypatch.setenv("TIF1_CACHE_DIR", str(cache_dir))
+
+    config = config_module.Config()
+    assert config.get("cache_dir") == str(cache_dir)
+
+
+def test_runtime_cache_dir_override_is_used_by_cache(tmp_path, monkeypatch):
+    """A runtime config override is honored after config initialization."""
+    monkeypatch.delenv("TIF1_CACHE_DIR", raising=False)
+    config = config_module.Config()
+    cache_dir = tmp_path / "runtime-cache"
+    config.set("cache_dir", str(cache_dir))
+
+    from tif1.cache import Cache
+
+    cache = Cache()
+    try:
+        assert cache.cache_dir == cache_dir
+    finally:
+        cache.close()
+
+
 @pytest.fixture(autouse=True)
 def reset_config_singleton(monkeypatch):
     config_module.Config._instance = None
+    monkeypatch.delenv("TIF1_CACHE_DIR", raising=False)
     monkeypatch.delenv("TIF1_CONFIG_FILE", raising=False)
     monkeypatch.delenv("TIF1_TRUST_CWD_CONFIG", raising=False)
     yield

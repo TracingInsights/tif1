@@ -23,6 +23,7 @@ def plot_top_speeds(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -38,7 +39,10 @@ def plot_top_speeds(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -118,6 +122,11 @@ def plot_top_speeds(
         dpi=dpi,
         facecolor=facecolor,
         label_fit=(ax, value_labels),
+        chart_name="top_speeds",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
     )
 
 

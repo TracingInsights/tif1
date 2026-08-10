@@ -3,9 +3,7 @@
 import asyncio
 import atexit
 import logging
-import os
 import sqlite3
-import sys
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -14,26 +12,6 @@ from typing import Any
 from .core_utils.json_utils import json_dumps, json_loads
 
 logger = logging.getLogger(__name__)
-
-
-def _default_cache_dir() -> Path:
-    """Return the OS-dependent default cache directory.
-
-    - Windows: ``%LOCALAPPDATA%/Temp/tif1``
-    - macOS:   ``~/Library/Caches/tif1``
-    - Linux:   ``~/.cache/tif1`` if ``~/.cache`` exists, else ``~/.tif1``
-    """
-    if sys.platform == "win32":
-        local = os.environ.get("LOCALAPPDATA")
-        if local:
-            return Path(local) / "Temp" / "tif1"
-        return Path.home() / "AppData" / "Local" / "Temp" / "tif1"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "tif1"
-    dot_cache = Path.home() / ".cache"
-    if dot_cache.is_dir():
-        return dot_cache / "tif1"
-    return Path.home() / ".tif1"
 
 
 TelemetryCacheKey = tuple[int, str, str, str, int]
@@ -49,15 +27,11 @@ class Cache:
             cache_dir: Cache directory path
         """
         if cache_dir is None:
-            env_cache_dir = os.getenv("TIF1_CACHE_DIR")
-            if env_cache_dir:
-                cache_dir = Path(env_cache_dir).expanduser()
-            else:
-                from .config import get_config
+            from .config import get_config
 
-                config = get_config()
-                configured_path = config.get("cache_dir", str(_default_cache_dir()))
-                cache_dir = Path(str(configured_path)).expanduser()
+            config = get_config()
+            configured_path = config.get("cache_dir")
+            cache_dir = Path(str(configured_path)).expanduser()
 
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)

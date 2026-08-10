@@ -67,10 +67,12 @@ You can configure `tif1` using environment variables. These are useful for CI/CD
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `TIF1_CACHE_DIR` | Path to the cache directory | `~/.tif1/cache` |
+| `TIF1_CACHE_DIR` | Path to the cache directory | OS-dependent (see below) |
 | `TIF1_LIB` | Default data lib (`pandas` or `polars`) | `pandas` |
 | `TIF1_ENABLE_CACHE` | Enable or disable caching (`true`/`false`) | `true` |
 | `TIF1_ULTRA_COLD_START` | Enable ultra-low latency mode | `false` |
+
+The default cache follows FastF1's platform layout, using `tif1` as the application directory: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). Set `TIF1_CACHE_DIR` or `cache_dir` in `.tif1rc` to override it.
 
 ### Config File (.tif1rc)
 For permanent settings, create a `.tif1rc` (JSON) file in your home directory:

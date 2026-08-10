@@ -22,7 +22,7 @@ export TIF1_CACHE_DIR="/path/to/cache"
 ```
 
 <Info>
-  Default: `~/.tif1/cache`
+  Default: Windows `%LOCALAPPDATA%/Temp/tif1`; macOS `~/Library/Caches/tif1`; Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`.
 </Info>
 
 ### TIF1_CACHE_ENABLED
@@ -268,7 +268,7 @@ Instead of environment variables, create a `.tif1rc` file in your home directory
 ```ini
 [cache]
 enabled = true
-directory = ~/.tif1/cache
+directory = <platform-specific default>
 memory_size = 100
 
 [network]

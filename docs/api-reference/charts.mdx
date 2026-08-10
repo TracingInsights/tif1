@@ -29,7 +29,7 @@ All functions are available from both `tif1.charts` and the top-level `tif1` nam
 
 - **Self-loading**: each chart calls `tif1.get_session(year, event, session)` internally with `enable_cache` and `lib` passthrough
 - **Return `(fig, ax)`**: you can call `plt.show()`, save later, or further customize the figure; nothing is shown or written unless you ask
-- **Optional `save_path`**: pass a path to write the figure with `bbox_inches="tight"` at the requested `dpi`
+- **Optional `save_path`**: pass a path to write the figure with `bbox_inches="tight"` at the requested `dpi`, or enable automatic saving to a `year/event/session` folder tree with `tif1.configure_chart_saving`
 - **Shared filter vocabulary**: `drivers`, `teams`, `n_drivers`, `laptime_cutoff`, `include_deleted`, `include_pit_laps`, `laps` work consistently across charts
 - **Consistent styling**: charts apply the fastf1 theme by default; `color_scheme=None` leaves matplotlib's global state untouched
 - **Stable bar-chart layout**: horizontal bar charts guarantee tight y-limits at any driver count, and the full-canvas race-launch export keeps its bar labels in-canvas (see [bar-chart layout guarantees](/guides/data-visualization#bar-chart-layout-guarantees))
@@ -49,6 +49,31 @@ fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=
 plt.show()
 ```
 
+## Automatic saving
+
+By default charts write nothing unless you pass `save_path`. To have every chart auto-named and saved into a `year/event/session` folder tree, enable automatic saving once:
+
+```python
+import tif1
+
+tif1.configure_chart_saving(
+    enabled=True,
+    output_dir="tracinginsights",  # default root
+    format="png",
+    folder_template="{year}/{event}/{session}",
+    filename_template="{chart}",
+    overwrite=True,
+    dpi=300,  # optional dpi override for auto-saved files
+)
+
+# writes tracinginsights/2024/italian-grand-prix/qualifying/top_speeds.png
+tif1.plot_top_speeds(2024, "Italian Grand Prix", "Q")
+```
+
+Folder and file names are sanitized (lowercase, hyphenated, non-ASCII folded), and known session codes are mapped to their full names (`Q` → `qualifying`, `R` → `race`, `FP1` → `practice-1`, `SQ` → `sprint-qualifying`). The templates support `{year}`, `{event}`, `{session}` and `{chart}` placeholders; with `overwrite=False` repeated saves get `_1`, `_2`, ... suffixes instead of clobbering files.
+
+Every chart also accepts an `auto_save` keyword to override the global setting for a single call — `auto_save=True` forces a save (even with the config disabled), `auto_save=False` suppresses it. Explicit `save_path` always takes precedence, and its parent directories are created automatically. After any save (explicit or automatic), the returned figure carries the written path in `fig._tif1_save_path`, so you can discover where an auto-saved chart landed.
+
 ## Common signature
 
 Every chart follows the same shape. Only the parameters that apply to a chart are exposed; the output, theme, and session passthrough parameters are identical everywhere:
@@ -61,6 +86,7 @@ def plot_<name>(
     *,
     # output
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",  # None keeps the theme/transparent background
@@ -82,7 +108,8 @@ def plot_<name>(
 
 ### Output parameters
 
-- **`save_path`** (`str | None`, default: `None`) — write the figure to this path with `bbox_inches="tight"`. `None` writes nothing.
+- **`save_path`** (`str | None`, default: `None`) — write the figure to this path with `bbox_inches="tight"`. `None` defers to automatic saving when enabled via `tif1.configure_chart_saving` (see [Automatic saving](#automatic-saving)); otherwise nothing is written.
+- **`auto_save`** (`bool | None`, default: `None`) — per-call override of the global auto-save setting (`True`/`False` force it on/off).
 - **`dpi`** (`int`, default: `150`) — resolution used when saving. Track maps, telemetry charts, heatmaps, and performance charts default to `300`.
 - **`figsize`** (`tuple[float, float] | None`) — override the chart's default figure size.
 - **`facecolor`** (`str | None`, default varies) — figure background. 8 charts default to `"#1a1a1a"` (dark), 13 default to `None` (keep the theme background). Pass `None` explicitly for a transparent/unchanged background.

@@ -351,15 +351,13 @@ The SQLite cache is implemented as a single-file database with optimized schema 
 
 ### Cache Location & Configuration
 
-Default cache location varies by platform:
+Default cache location follows FastF1's platform layout, using `tif1` as the application directory:
+
+- **Windows**: `%LOCALAPPDATA%/Temp/tif1`
+- **macOS**: `~/Library/Caches/tif1`
+- **Linux/other POSIX**: `~/.cache/tif1` when `~/.cache` exists; otherwise `~/.tif1`
 
 ```bash
-# Linux/macOS
-~/.tif1/cache/tif1_cache.db
-
-# Windows
-C:\Users\<username>\.tif1\cache\tif1_cache.db
-
 # Custom location
 export TIF1_CACHE_DIR="/custom/cache/path"
 ```
@@ -716,7 +714,7 @@ Performance impact of compression levels:
   <Accordion title="Cache Location">
     Choose cache location based on your deployment:
 
-    - **Local development**: Use default `~/.tif1/cache/`
+    - **Local development**: Use tif1's OS-dependent default cache directory
     - **Shared server**: Use shared directory (e.g., `/shared/cache/tif1/`)
     - **Docker**: Mount volume for persistence
     - **Cloud**: Use fast SSD storage (not network drives)
@@ -2708,14 +2706,14 @@ Replicate cache across servers or regions:
 
 ```bash
 # Server 1: Export cache
-tar -czf tif1_cache.tar.gz -C ~/.tif1/cache .
+tar -czf tif1_cache.tar.gz -C ~/.cache/tif1 .
 
 # Transfer to Server 2
 scp tif1_cache.tar.gz server2:/tmp/
 
 # Server 2: Import cache
-mkdir -p ~/.tif1/cache
-tar -xzf /tmp/tif1_cache.tar.gz -C ~/.tif1/cache
+mkdir -p ~/.cache/tif1
+tar -xzf /tmp/tif1_cache.tar.gz -C ~/.cache/tif1
 
 # Verify cache
 python -c "import tif1; print(tif1.get_cache().get_stats())"
@@ -2729,7 +2727,7 @@ Automated replication with rsync:
 
 PRIMARY="server1.example.com"
 REPLICAS=("server2.example.com" "server3.example.com")
-CACHE_DIR="~/.tif1/cache/"
+CACHE_DIR="~/.cache/tif1/"
 
 for replica in "${REPLICAS[@]}"; do
     echo "Syncing cache to $replica..."
@@ -3404,7 +3402,7 @@ if os.path.exists(wal_file) or os.path.exists(shm_file):
     **Cause**: Insufficient permissions on cache directory
 
     **Solutions**:
-    - Fix permissions: `chmod 755 ~/.tif1/cache`
+    - Fix permissions on the platform-specific cache directory (for example, `chmod 700 ~/.cache/tif1` on Linux)
     - Change cache directory: `config.cache_dir = "/writable/path"`
     - Run with appropriate user permissions
   </Accordion>
@@ -3578,7 +3576,7 @@ Follow these best practices for optimal cache performance and reliability.
     - Owner: read/write/execute (rwx)
     - Group: read/execute (r-x)
     - Others: none (---)
-    - Command: `chmod 750 ~/.tif1/cache`
+    - Command: `chmod 750 <cache-dir>`
   </Accordion>
 
   <Accordion title="Encryption at Rest">

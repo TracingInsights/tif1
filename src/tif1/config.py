@@ -3,10 +3,35 @@
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _default_cache_dir() -> Path:
+    """Return tif1's FastF1-compatible OS-dependent cache directory.
+
+    The platform-specific layout mirrors FastF1 while using ``tif1`` as the
+    application directory name:
+
+    - Windows: ``%LOCALAPPDATA%/Temp/tif1``
+    - macOS: ``~/Library/Caches/tif1``
+    - Linux and other POSIX platforms (FreeBSD, etc.): ``~/.cache/tif1``
+      if ``~/.cache`` exists, otherwise ``~/.tif1``
+    """
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return Path(local) / "Temp" / "tif1"
+        return Path.home() / "AppData" / "Local" / "Temp" / "tif1"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "tif1"
+    dot_cache = Path.home() / ".cache"
+    if dot_cache.exists():
+        return dot_cache / "tif1"
+    return Path.home() / ".tif1"
 
 
 def _to_bool(value: str) -> bool:
@@ -39,7 +64,7 @@ class Config:
 
         # Default configuration
         self._config = {
-            "cache_dir": str(Path.home() / ".tif1" / "cache"),
+            "cache_dir": str(_default_cache_dir()),
             "log_level": "WARNING",
             "timeout": 30,
             "max_retries": 3,

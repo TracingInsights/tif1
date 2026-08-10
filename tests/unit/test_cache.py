@@ -10,7 +10,10 @@ class TestCache:
     """Test Cache class."""
 
     def test_cache_init_default(self, tmp_path, monkeypatch):
-        """Test cache initialization with default path."""
+        """Test cache initialization with the configured environment path."""
+        from tif1.config import Config
+
+        monkeypatch.setattr(Config, "_instance", None)
         monkeypatch.setenv("TIF1_CACHE_DIR", str(tmp_path / ".tif1" / "cache"))
         cache = Cache()
         assert cache.cache_dir == tmp_path / ".tif1" / "cache"

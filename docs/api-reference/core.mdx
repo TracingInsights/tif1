@@ -135,7 +135,7 @@ def get_session(
 
   **Caching behavior**: When enabled, all fetched data (laps, telemetry, weather, messages) is stored in a local SQLite database. Subsequent access to the same data reads from cache instead of making network requests.
 
-  **Cache location**: `~/.tif1/cache/tif1_cache.db`
+  **Cache location**: tif1's OS-dependent cache directory (configurable via `TIF1_CACHE_DIR`)
 </ParamField>
 
 <ParamField path="lib" type="Literal['pandas', 'polars'] | None" default="None">

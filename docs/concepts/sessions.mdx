@@ -1005,7 +1005,7 @@ tif1 implements a **multi-tier caching system** for maximum performance:
 - Automatic and transparent
 
 #### 2. Persistent Cache (L2)
-- SQLite-based disk cache in `~/.tif1/cache/`
+- SQLite-based disk cache in tif1's OS-dependent cache directory (configurable via `TIF1_CACHE_DIR`)
 - Survives across Python sessions
 - Shared between all tif1 sessions
 - Configurable via `enable_cache` parameter
@@ -1605,7 +1605,7 @@ plt.show()
 
 **Solutions:**
 1. Verify caching is enabled: `session.enable_cache`
-2. Check cache directory exists: `~/.tif1/cache/`
+2. Check that the platform-specific cache directory exists
 3. Verify disk space is available
 4. Clear corrupted cache: `tif1.cache.clear()`
 

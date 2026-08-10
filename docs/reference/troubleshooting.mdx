@@ -90,11 +90,11 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 **Error:** `OperationalError: attempt to write a readonly database`
 
 **Solution:**
-Ensure `tif1` has write permissions to your home directory (default cache is `~/.tif1/cache`). On shared systems, the directory should ideally have `0o700` permissions.
+Ensure `tif1` can write to its cache directory. The default is Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, or Linux/other POSIX `~/.cache/tif1` (falling back to `~/.tif1`). On shared systems, the directory should ideally have `0o700` permissions.
 
 ```bash
-chmod 700 ~/.tif1
-```yaml
+chmod 700 ~/.cache/tif1
+```
 
 ### Corrupted Cache
 

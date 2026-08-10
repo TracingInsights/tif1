@@ -189,7 +189,7 @@ The configuration file must be valid JSON with a single object containing key-va
 {
   "lib": "polars",
   "enable_cache": true,
-  "cache_dir": "~/.tif1/cache",
+  "cache_dir": "<platform-specific default>",
   "timeout": 60,
   "max_workers": 50,
   "max_retries": 5,
@@ -393,7 +393,7 @@ export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
 # Core Settings
 export TIF1_LIB=pandas                    # or "polars"
 export TIF1_ENABLE_CACHE=true
-export TIF1_CACHE_DIR=~/.tif1/cache
+export TIF1_CACHE_DIR=/path/to/tif1-cache
 export TIF1_VALIDATE_DATA=false
 export TIF1_ULTRA_COLD_START=true
 export TIF1_OFFLINE_MODE=false
@@ -906,8 +906,8 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="cache_dir" type="str" default="~/.tif1/cache">
-  Path where the SQLite cache database is stored.
+<ResponseField name="cache_dir" type="str" default="OS-dependent">
+  Path where the SQLite cache database is stored. By default, tif1 follows FastF1's OS-specific layout: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`).
 
   ```python
   config.set("cache_dir", "/tmp/tif1-cache")
@@ -1394,7 +1394,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
 {
   "lib": "pandas",
   "enable_cache": true,
-  "cache_dir": "~/.tif1/cache",
+  "cache_dir": "<platform-specific default>",
   "timeout": 60,
   "max_retries": 5,
   "validate_data": false,
@@ -1937,7 +1937,7 @@ config.set("offline_mode", True)
 config.set("enable_cache", True)
 
 # Set cache location
-config.set("cache_dir", "~/.tif1/cache")
+config.set("cache_dir", "/tmp/tif1-cache")
 
 # Disable retries (no network anyway)
 config.set("max_retries", 0)
@@ -2515,7 +2515,7 @@ Legend: ↑ = Increases, ↓ = Decreases
 {
   "lib": "polars",
   "enable_cache": true,
-  "cache_dir": "~/.tif1/cache",
+  "cache_dir": "<platform-specific default>",
   "max_workers": 50,
   "timeout": 60
 }
@@ -2524,7 +2524,7 @@ Legend: ↑ = Increases, ↓ = Decreases
 **Complete Configuration (All Defaults):**
 ```json
 {
-  "cache_dir": "~/.tif1/cache",
+  "cache_dir": "<platform-specific default>",
   "log_level": "WARNING",
   "timeout": 30,
   "max_retries": 3,

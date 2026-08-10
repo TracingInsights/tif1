@@ -3,8 +3,11 @@
 Every chart takes ``(year, event, session)`` and returns a
 ``(fig, ax)`` pair. All functions are also re-exported at the top level of
 ``tif1`` (e.g. ``tif1.plot_top_speeds(...)``).
+
+Automatic chart saving is configured with :func:`configure_chart_saving`.
 """
 
+from ._common import configure_chart_saving, get_chart_save_config
 from .lap_times import (
     plot_driver_laptimes,
     plot_lap_delta,
@@ -37,6 +40,8 @@ from .track_maps import (
 )
 
 __all__ = [
+    "configure_chart_saving",
+    "get_chart_save_config",
     "plot_annotated_speed_trace",
     "plot_downforce_levels",
     "plot_driver_laptimes",

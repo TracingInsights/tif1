@@ -39,12 +39,8 @@ class Cache:
             return Path(cache_dir).expanduser()
         if cls._cache_dir is not None:
             return cls._cache_dir
-        configured = get_config().get("cache_dir", None)
-        if configured is not None:
-            return Path(str(configured)).expanduser()
-        from .cache import _default_cache_dir
-
-        return _default_cache_dir()
+        configured = get_config().get("cache_dir")
+        return Path(str(configured)).expanduser()
 
     @classmethod
     def enable_cache(

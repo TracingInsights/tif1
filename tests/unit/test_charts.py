@@ -433,6 +433,30 @@ def launch_session(monkeypatch):
     plt.close("all")
 
 
+@pytest.fixture(autouse=True)
+def _reset_chart_saving():
+    """Restore the global auto-save config to defaults so tests never leak state."""
+    _common.configure_chart_saving(
+        enabled=False,
+        output_dir="tracinginsights",
+        format="png",
+        folder_template="{year}/{event}/{session}",
+        filename_template="{chart}",
+        overwrite=True,
+        dpi=None,
+    )
+    yield
+    _common.configure_chart_saving(
+        enabled=False,
+        output_dir="tracinginsights",
+        format="png",
+        folder_template="{year}/{event}/{session}",
+        filename_template="{chart}",
+        overwrite=True,
+        dpi=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Happy paths: every function executes with defaults and returns (fig, ax)
 # ---------------------------------------------------------------------------
@@ -607,6 +631,141 @@ def test_facecolor_sets_figure_background(fake_session):
         0.10196078431372549,
         1.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Automatic chart saving
+# ---------------------------------------------------------------------------
+
+
+def test_auto_save_disabled_by_default(fake_session, tmp_path, monkeypatch):
+    """Charts do not write files until automatic saving is configured on."""
+    _common.configure_chart_saving(output_dir=str(tmp_path))
+    calls: list[str] = []
+    original = plt.Figure.savefig
+
+    def _capture(self, fname, **kwargs):
+        calls.append(str(fname))
+        return original(self, fname, **kwargs)
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture)
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    assert calls == []
+
+
+def test_auto_save_writes_structured_path(fake_session, tmp_path):
+    """Enabled auto-save writes <root>/<year>/<event>/<session>/<chart>.<fmt>."""
+    _common.configure_chart_saving(enabled=True, output_dir=str(tmp_path))
+    fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    out = tmp_path / "2023" / "italian-grand-prix" / "qualifying" / "top_speeds.png"
+    assert out.exists()
+    assert out.stat().st_size > 0
+    # The saved location is discoverable on the returned figure.
+    assert fig._tif1_save_path == str(out)
+
+
+def test_auto_save_maps_session_codes(fake_session, tmp_path):
+    """Session codes map to full lowercase folder names."""
+    _common.configure_chart_saving(enabled=True, output_dir=str(tmp_path))
+    top_speeds.plot_top_speeds(2024, "British Grand Prix", "R")
+    assert (tmp_path / "2024" / "british-grand-prix" / "race" / "top_speeds.png").exists()
+    lap_times.plot_driver_laptimes(2024, "British Grand Prix", "FP1")
+    assert (
+        tmp_path / "2024" / "british-grand-prix" / "practice-1" / "driver_laptimes.png"
+    ).exists()
+
+
+def test_auto_save_overwrite_false_appends_suffix(fake_session, tmp_path):
+    """With overwrite=False repeated saves get _1, _2, ... suffixes."""
+    _common.configure_chart_saving(enabled=True, output_dir=str(tmp_path), overwrite=False)
+    for _ in range(2):
+        top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    folder = tmp_path / "2023" / "italian-grand-prix" / "qualifying"
+    assert (folder / "top_speeds.png").exists()
+    assert (folder / "top_speeds_1.png").exists()
+
+
+def test_auto_save_custom_templates(fake_session, tmp_path):
+    """folder/filename templates are customizable."""
+    _common.configure_chart_saving(
+        enabled=True,
+        output_dir=str(tmp_path),
+        folder_template="{year}",
+        filename_template="{chart}_{session}",
+    )
+    top_speeds.plot_top_speeds(2024, "Italian Grand Prix", "Q")
+    assert (tmp_path / "2024" / "top_speeds_qualifying.png").exists()
+
+
+def test_auto_save_explicit_save_path_wins(fake_session, tmp_path, monkeypatch):
+    """An explicit save_path always takes precedence over auto_save=True."""
+    _common.configure_chart_saving(enabled=True, output_dir=str(tmp_path))
+    calls: list[str] = []
+    original = plt.Figure.savefig
+
+    def _capture(self, fname, **kwargs):
+        calls.append(str(fname))
+        return original(self, fname, **kwargs)
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture)
+    explicit = tmp_path / "explicit.png"
+    top_speeds.plot_top_speeds(
+        2023, "Italian Grand Prix", "Q", save_path=str(explicit), auto_save=True
+    )
+    assert calls == [str(explicit)]
+    assert explicit.exists()
+    assert not (tmp_path / "2023").exists()
+
+
+def test_auto_save_dpi_override(fake_session, tmp_path, monkeypatch):
+    """The config dpi overrides the chart's dpi for auto-saved files."""
+    captured: dict[str, object] = {}
+    original = plt.Figure.savefig
+
+    def _capture(self, fname, **kwargs):
+        captured["dpi"] = kwargs.get("dpi")
+        return original(self, fname, **kwargs)
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture)
+    _common.configure_chart_saving(enabled=True, output_dir=str(tmp_path), dpi=90)
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", dpi=150)
+    assert captured["dpi"] == 90
+
+
+def test_auto_save_flag_overrides_config(fake_session, tmp_path, monkeypatch):
+    """auto_save=True forces a save; auto_save=False suppresses it."""
+    _common.configure_chart_saving(enabled=False, output_dir=str(tmp_path))
+    calls: list[str] = []
+    original = plt.Figure.savefig
+
+    def _capture(self, fname, **kwargs):
+        calls.append(str(fname))
+        return original(self, fname, **kwargs)
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture)
+
+    # Config off, per-call on -> still saved into the configured tree.
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", auto_save=True)
+    assert len(calls) == 1
+    assert (tmp_path / "2023" / "italian-grand-prix" / "qualifying" / "top_speeds.png").exists()
+
+    # Config on, per-call off -> nothing written.
+    calls.clear()
+    _common.configure_chart_saving(enabled=True)
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", auto_save=False)
+    assert calls == []
+
+
+def test_configure_chart_saving_rejects_unknown_option():
+    with pytest.raises(ValueError, match="Unknown chart saving option"):
+        _common.configure_chart_saving(not_a_real_option=True)
+
+
+def test_build_save_path_slugification():
+    """Non-ASCII/spacey names slugify; SQ maps to sprint-qualifying."""
+    _common.configure_chart_saving(enabled=True, output_dir="plots")
+    path = _common.build_save_path("lap_delta", 2024, "São Paulo Grand Prix", "SQ")
+    assert path == "plots/2024/sao-paulo-grand-prix/sprint-qualifying/lap_delta.png"
 
 
 # ---------------------------------------------------------------------------

@@ -194,7 +194,7 @@ When you call `get_session()`, `tif1` orchestrates a complex series of operation
 
 3. **Cache Check (SQLite)**
    - Computes content-addressed cache key from (year, event, session, data types)
-   - Queries SQLite cache database (`~/.tif1/cache.db` by default)
+   - Queries the SQLite cache database in tif1's OS-dependent cache directory by default
    - Checks cache TTL (time-to-live) to determine if cached data is still fresh
    - If cache hit and data is fresh, deserializes DataFrames and returns immediately (microseconds)
    - If cache miss or stale data, proceeds to fetch from CDN

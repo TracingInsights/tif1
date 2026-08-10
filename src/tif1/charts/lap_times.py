@@ -56,6 +56,7 @@ def plot_driver_laptimes(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -72,7 +73,10 @@ def plot_driver_laptimes(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -124,7 +128,18 @@ def plot_driver_laptimes(
     ax.grid(color="w", which="major", axis="both", alpha=0.3)
     sns.despine(left=True, bottom=True)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="driver_laptimes",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_laptimes_distribution(
@@ -133,6 +148,7 @@ def plot_laptimes_distribution(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -151,7 +167,10 @@ def plot_laptimes_distribution(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 5)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -206,7 +225,18 @@ def plot_laptimes_distribution(
     fig.suptitle(f"{sess.event.year} {sess.event['EventName']} Lap Time Distributions")
     sns.despine(left=True, bottom=True)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="laptimes_distribution",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_laptime_heatmap(
@@ -215,6 +245,7 @@ def plot_laptime_heatmap(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -236,7 +267,10 @@ def plot_laptime_heatmap(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(16, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -299,7 +333,18 @@ def plot_laptime_heatmap(
     ax.tick_params(axis="y", rotation=0, labelsize=10)
     ax.tick_params(axis="x", labelsize=10)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="laptime_heatmap",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_qualifying_grid(
@@ -308,6 +353,7 @@ def plot_qualifying_grid(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -323,7 +369,10 @@ def plot_qualifying_grid(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -396,7 +445,18 @@ def plot_qualifying_grid(
     )
     # Branded footer + watermarks from the plot style (footer_y spacing key).
     _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="qualifying_grid",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_lap_delta(
@@ -405,6 +465,7 @@ def plot_lap_delta(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -427,7 +488,10 @@ def plot_lap_delta(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(14, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -512,7 +576,18 @@ def plot_lap_delta(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="lap_delta",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_position_changes(
@@ -521,6 +596,7 @@ def plot_position_changes(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -539,7 +615,10 @@ def plot_position_changes(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(8.0, 4.9)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -590,7 +669,18 @@ def plot_position_changes(
         ncol=2 if n_entries > 10 else 1,
     )
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="position_changes",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_track_temperature(
@@ -599,6 +689,7 @@ def plot_track_temperature(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -619,7 +710,10 @@ def plot_track_temperature(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -677,7 +771,18 @@ def plot_track_temperature(
         fontsize=14,
         fontweight="bold",
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="track_temperature",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def _compound_mapping(sess) -> dict[str, str]:

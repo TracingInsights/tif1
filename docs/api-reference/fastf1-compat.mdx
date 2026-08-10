@@ -65,7 +65,7 @@ Enable caching with fastf1-compatible API. This method initializes tif1's cachin
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `cache_dir` | `str \| Path \| None` | `None` | Directory path for cache storage. If `None`, uses the configured cache directory (default: `~/.tif1/cache` on Linux/macOS, `%LOCALAPPDATA%/Temp/tif1` on Windows) |
+| `cache_dir` | `str \| Path \| None` | `None` | Directory path for cache storage. If `None`, uses the configured cache directory (default: Windows `%LOCALAPPDATA%/Temp/tif1`; macOS `~/Library/Caches/tif1`; Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`) |
 | `ignore_version` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 handles cache versioning automatically through content-based keys |
 | `force_renew` | `bool` | `False` | If `True`, clears all existing cache data after enabling. Use `Cache.clear_cache()` for more control |
 | `use_requests_cache` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 uses SQLite-backed caching instead of requests-cache |
@@ -94,7 +94,7 @@ The cache directory is resolved in the following order of precedence:
 4. Platform-specific default:
    - **Windows**: `%LOCALAPPDATA%/Temp/tif1`
    - **macOS**: `~/Library/Caches/tif1`
-   - **Linux**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist)
+   - **Linux/other POSIX**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist)
 
 #### Examples
 

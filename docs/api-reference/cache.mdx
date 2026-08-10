@@ -61,7 +61,7 @@ print(f"Read-only mode: {cache.read_only}")
 
 **Configuration:**
 The cache behavior can be customized through environment variables:
-- `TIF1_CACHE_DIR`: Custom cache directory (default: `~/.tif1/cache`)
+- `TIF1_CACHE_DIR`: Custom cache directory (default: OS-dependent; see the platform defaults in the configuration reference)
 - `TIF1_CACHE_ENABLED`: Set to `"false"` to disable caching entirely
 - `TIF1_CACHE_READ_ONLY`: Set to `"true"` to prevent writing new cache entries
 
@@ -827,7 +827,7 @@ The `Cache` instance exposes several read-only attributes for inspecting cache c
 cache_dir: Path
 ```
 
-The directory where the cache database and related files are stored. This is typically `~/.tif1/cache` but can be customized via the `TIF1_CACHE_DIR` environment variable or `.tif1rc` configuration.
+The directory where the cache database and related files are stored. By default, tif1 follows FastF1's OS-specific layout: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). It can be customized via `TIF1_CACHE_DIR` or `.tif1rc`.
 
 **Example:**
 ```python
@@ -835,7 +835,7 @@ import tif1
 
 cache = tif1.get_cache()
 print(f"Cache directory: {cache.cache_dir}")
-# Output: Cache directory: /home/user/.tif1/cache
+# Output: Cache directory: /home/user/.cache/tif1
 ```
 
 ---
@@ -860,7 +860,7 @@ import tif1
 cache = tif1.get_cache()
 print(f"Database path: {cache.db_path}")
 print(f"Database size: {cache.db_path.stat().st_size / 1024 / 1024:.2f} MB")
-# Output: Database path: /home/user/.tif1/cache/cache.sqlite
+# Output: Database path: /home/user/.cache/tif1/cache.sqlite
 #         Database size: 245.67 MB
 ```
 
@@ -1296,7 +1296,7 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
 
 2. Delete the database file manually:
    ```bash
-   rm ~/.tif1/cache/cache.sqlite
+   rm ~/.cache/tif1/cache.sqlite
    ```
 
 3. Verify database integrity:

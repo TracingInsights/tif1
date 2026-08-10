@@ -62,7 +62,7 @@ No, tif1 doesn't require any API keys or authentication. All data is publicly av
 
 ### Where is data cached?
 
-By default, data is cached in `~/.tif1/cache/`. You can change this in your `.tif1rc` configuration file or via the `TIF1_CACHE_DIR` environment variable.
+By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). You can change this in `.tif1rc` or via `TIF1_CACHE_DIR`.
 
 ---
 

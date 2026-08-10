@@ -282,7 +282,7 @@ config.save(Path.home() / ".config" / "tif1" / "config.json")
 {
   "lib": "polars",
   "enable_cache": true,
-  "cache_dir": "~/.tif1/cache",
+  "cache_dir": "<platform-specific default>",
   "timeout": 60,
   "max_retries": 5,
   "validate_data": false,
@@ -303,7 +303,7 @@ Comprehensive reference of all configuration options:
 | :--- | :--- | :--- | :--- | :--- |
 | `lib` | `str` | `"pandas"` | DataFrame library: `"pandas"` or `"polars"` | Polars is 2-5x faster for large datasets |
 | `enable_cache` | `bool` | `True` | Enable multi-layer caching system | Disabling eliminates cache overhead but requires re-fetching |
-| `cache_dir` | `str` | `~/.tif1/cache` | SQLite cache database location | SSD recommended for best performance |
+| `cache_dir` | `str` | OS-dependent | SQLite cache database location | SSD recommended for best performance |
 | `timeout` | `int` | `30` | Network request timeout in seconds | Increase for slow connections |
 | `max_retries` | `int` | `3` | Maximum retry attempts for failed requests | More retries = better reliability, slower failures |
 | `validate_data` | `bool` | `True` | Enable Pydantic validation of JSON data | Disabling saves ~10-15% processing time |

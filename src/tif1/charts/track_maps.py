@@ -87,6 +87,7 @@ def plot_track_speed_map(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -101,7 +102,10 @@ def plot_track_speed_map(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -128,7 +132,18 @@ def plot_track_speed_map(
         title=f"{sess.event['EventName']} {sess.event.year} - Speed Map",
         figsize=figsize if figsize is not None else _DEFAULT_FIGSIZE,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="track_speed_map",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_track_throttle_map(
@@ -137,6 +152,7 @@ def plot_track_throttle_map(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -151,7 +167,10 @@ def plot_track_throttle_map(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -178,7 +197,18 @@ def plot_track_throttle_map(
         title=f"{sess.event['EventName']} {sess.event.year} - Throttle Map",
         figsize=figsize if figsize is not None else _DEFAULT_FIGSIZE,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="track_throttle_map",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_track_brake_zones(
@@ -187,6 +217,7 @@ def plot_track_brake_zones(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -201,7 +232,10 @@ def plot_track_brake_zones(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -230,7 +264,18 @@ def plot_track_brake_zones(
         cbar_ticks=[0, 1],
         cbar_ticklabels=["Off", "On"],
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="track_brake_zones",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_track_acceleration_map(
@@ -239,6 +284,7 @@ def plot_track_acceleration_map(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -255,7 +301,10 @@ def plot_track_acceleration_map(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -285,7 +334,18 @@ def plot_track_acceleration_map(
         title=f"{sess.event['EventName']} {sess.event.year} - Acceleration Map",
         figsize=figsize if figsize is not None else _DEFAULT_FIGSIZE,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="track_acceleration_map",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_gear_shifts(
@@ -294,6 +354,7 @@ def plot_gear_shifts(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -312,7 +373,10 @@ def plot_gear_shifts(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -356,7 +420,18 @@ def plot_gear_shifts(
     cbar.set_ticks(np.arange(1.5, max_gear + 1.5).tolist())
     cbar.set_ticklabels(np.arange(1, max_gear + 1).tolist())
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="gear_shifts",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_multi_driver_speed_comparison(
@@ -365,6 +440,7 @@ def plot_multi_driver_speed_comparison(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -384,7 +460,10 @@ def plot_multi_driver_speed_comparison(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 6.75)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -444,4 +523,15 @@ def plot_multi_driver_speed_comparison(
     legend.ax.xaxis.set_tick_params(color="white")
     plt.setp(plt.getp(legend.ax.axes, "xticklabels"), color="white")
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="multi_driver_speed_comparison",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )

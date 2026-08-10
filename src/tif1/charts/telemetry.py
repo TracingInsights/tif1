@@ -55,6 +55,7 @@ def plot_speed_traces(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -69,7 +70,10 @@ def plot_speed_traces(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -116,7 +120,18 @@ def plot_speed_traces(
         fontsize=14,
         fontweight="bold",
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="speed_traces",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_annotated_speed_trace(
@@ -125,6 +140,7 @@ def plot_annotated_speed_trace(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = "#1a1a1a",
@@ -138,7 +154,10 @@ def plot_annotated_speed_trace(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -191,7 +210,18 @@ def plot_annotated_speed_trace(
         fontsize=14,
         fontweight="bold",
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="annotated_speed_trace",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def _label_actions(tel: Any) -> Any:
@@ -220,6 +250,7 @@ def plot_telemetry_comparison(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -239,7 +270,10 @@ def plot_telemetry_comparison(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(16, 12)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -342,7 +376,18 @@ def plot_telemetry_comparison(
         fontsize=18,
         y=0.995,
     )
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="telemetry_comparison",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
 
 
 def plot_gg_diagram(
@@ -351,6 +396,7 @@ def plot_gg_diagram(
     session: str | int,
     *,
     save_path: str | None = None,
+    auto_save: bool | None = None,
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
@@ -368,7 +414,10 @@ def plot_gg_diagram(
         year: Season year (2018-current).
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
-        save_path: Optional output path; nothing is written when ``None``.
+        save_path: Explicit output path; ``None`` defers to automatic saving
+            when enabled via :func:`configure_chart_saving`.
+        auto_save: Override the global auto-save setting for this call
+            (``True``/``False`` force it on/off; ``None`` follows the config).
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 12)``.
         facecolor: Figure background; ``None`` keeps the theme background.
@@ -428,4 +477,15 @@ def plot_gg_diagram(
     ax.set_aspect("equal")
     ax.legend(loc="lower right", fontsize=12)
 
-    return _common.finalize_figure(fig, ax, save_path=save_path, dpi=dpi, facecolor=facecolor)
+    return _common.finalize_figure(
+        fig,
+        ax,
+        save_path=save_path,
+        dpi=dpi,
+        facecolor=facecolor,
+        chart_name="gg_diagram",
+        year=year,
+        event=event,
+        session=session,
+        auto_save=auto_save,
+    )
