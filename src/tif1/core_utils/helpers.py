@@ -279,35 +279,54 @@ def _create_telemetry_df(tel_data: dict, driver: str, lap_num: int, lib: str) ->
         if telemetry_df.empty:
             return None
 
-        # Apply dtype conversions for telemetry data
-        # Time: float seconds → timedelta64[ns]
-        if "Time" in telemetry_df.columns:
-            telemetry_df["Time"] = pd.to_timedelta(telemetry_df["Time"], unit="s")
-
-        # Brake: int (0/1) → bool
-        if "Brake" in telemetry_df.columns:
-            telemetry_df["Brake"] = telemetry_df["Brake"].astype(bool)
-
-        # nGear, DRS: int → Int64 (nullable)
-        if "nGear" in telemetry_df.columns:
-            telemetry_df["nGear"] = telemetry_df["nGear"].astype("Int64")
-        if "DRS" in telemetry_df.columns:
-            telemetry_df["DRS"] = telemetry_df["DRS"].astype("Int64")
-
         telemetry_df["Driver"] = driver
-        # Keep object dtype for FastF1 compatibility (pandas 3.0 infers str dtype
-        # by default for string columns; the laps contract uses object).
-        telemetry_df["Driver"] = telemetry_df["Driver"].astype(object)
         telemetry_df["LapNumber"] = lap_num
-        telemetry_df["LapNumber"] = telemetry_df["LapNumber"].astype("Int64")
-
-        for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
-            if col not in telemetry_df.columns:
-                telemetry_df[col] = pd.NA
-        return telemetry_df
+        return _apply_telemetry_dtypes(telemetry_df)
     except Exception as e:
         logger.warning(f"Failed to create telemetry DataFrame: {e}")
         return None
+
+
+def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
+    """Apply the canonical telemetry dtype conversions in a single pass.
+
+    Shared by :func:`_create_telemetry_df` (per-driver frames) and the
+    merged-dict telemetry assembly so the dtype rules cannot drift between
+    the two construction paths.
+
+    - ``Time``: float seconds → ``timedelta64[ns]``
+    - ``Brake``: int (0/1) → ``bool`` (skipped when missing values are present;
+      ``astype(bool)`` would coerce NaN → ``True``)
+    - ``nGear``/``DRS``: int → nullable ``Int64``
+    - Missing ``Time``/``Speed``/``nGear``/``X``/``Y``/``Z`` → ``pd.NA``
+    - ``Driver`` stays ``object`` (FastF1 compatibility), ``LapNumber`` → ``Int64``
+    """
+    # Time: float seconds → timedelta64[ns]
+    if "Time" in telemetry_df.columns:
+        telemetry_df["Time"] = pd.to_timedelta(telemetry_df["Time"], unit="s")
+
+    # Brake: int (0/1) → bool. Guarded: on a NaN-padded column astype(bool)
+    # would turn NaN → True, so leave the column untouched when nulls exist.
+    if "Brake" in telemetry_df.columns and not telemetry_df["Brake"].isna().any():
+        telemetry_df["Brake"] = telemetry_df["Brake"].astype(bool)
+
+    # nGear, DRS: int → Int64 (nullable)
+    if "nGear" in telemetry_df.columns:
+        telemetry_df["nGear"] = telemetry_df["nGear"].astype("Int64")
+    if "DRS" in telemetry_df.columns:
+        telemetry_df["DRS"] = telemetry_df["DRS"].astype("Int64")
+
+    # Keep object dtype for FastF1 compatibility (pandas 3.0 infers str dtype
+    # by default for string columns; the laps contract uses object).
+    if "Driver" in telemetry_df.columns:
+        telemetry_df["Driver"] = telemetry_df["Driver"].astype(object)
+    if "LapNumber" in telemetry_df.columns:
+        telemetry_df["LapNumber"] = telemetry_df["LapNumber"].astype("Int64")
+
+    for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
+        if col not in telemetry_df.columns:
+            telemetry_df[col] = pd.NA
+    return telemetry_df
 
 
 def _check_cached_telemetry(

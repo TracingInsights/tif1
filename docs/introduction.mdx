@@ -46,6 +46,20 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
   </Card>
 </CardGroup>
 
+## Why tif1 over fastf1?
+
+`fastf1` is an excellent library and the glue of the F1 data community. `tif1` started as a personal project with a different approach in a few areas you might also find handy:
+
+1. **Fetch only what you need.** No `session.load()`, no full-weekend downloads. Pull a single driver's single lap of telemetry in seconds — less time, less disk, less bandwidth.
+2. **No API rate limits.** The upstream API behind fastf1 (jolpica-f1) caps unauthenticated use at **500 requests/hour** (4 req/s burst). `tif1` serves static files from a free global CDN with no quotas, no keys, and no throttling.
+3. **Batteries included.** 21 optional one-call `plot_*()` chart helpers turn raw data into ready-made charts and analyses — `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
+4. **Works from any IP.** tif1's CDN works from home, cloud, CI, and notebooks alike, with no VPN or residential-IP requirements.
+5. **A few extras.** Mini-sector data, per-lap weather, and derived telemetry channels beyond fastf1's current scope.
+
+<Card title="Deep dive: the full comparison" icon="scale" href="/why-tif1">
+  Read the detailed "Why tif1 instead of fastf1?" page — including the verified 500 requests/hour rate-limit sources.
+</Card>
+
 ## Key Features
 
 - **Fast**: Multi-CDN access (StaticDelivr + jsDelivr) with automatic fallback and SQLite caching
@@ -99,6 +113,9 @@ graph TD
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Why tif1?" icon="scale" href="/why-tif1">
+    Why choose tif1 instead of fastf1?
+  </Card>
   <Card title="Installation" icon="download" href="/installation">
     Get tif1 installed on your system.
   </Card>
@@ -110,6 +127,9 @@ graph TD
   </Card>
   <Card title="Charts" icon="chart-column" href="/api-reference/charts">
     Visualize F1 data with 21 one-call chart functions.
+  </Card>
+  <Card title="Data Reference" icon="file-json" href="/reference/data-reference">
+    Every field in the raw TracingInsights data files, explained.
   </Card>
   <Card title="Migration Guide" icon="arrow-right-arrow-left" href="/migration-from-fastf1">
     Coming from fastf1? See what's different.
@@ -129,6 +149,9 @@ graph TD
 <CardGroup cols={2}>
   <Card title="Installation" href="/installation">
     Get tif1 installed
+  </Card>
+  <Card title="Why tif1?" href="/why-tif1">
+    Why tif1 instead of fastf1?
   </Card>
   <Card title="Quickstart" href="/quickstart">
     Load your first session

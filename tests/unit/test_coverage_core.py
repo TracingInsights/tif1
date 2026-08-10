@@ -1163,15 +1163,15 @@ class TestFindTelemetryDfForRef:
 
     def test_matching_ref_found(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        tel_df = pd.DataFrame({"Driver": ["VER"], "LapNumber": [5], "Speed": [100]})
-        tels = [tel_df]
+        tels = [("VER", 5, {"speed": [100.0]})]
         result = session._find_telemetry_df_for_ref(tels, ("VER", 5))
-        assert result is tel_df
+        assert result is not None
+        assert result["Driver"].iloc[0] == "VER"
+        assert int(result["LapNumber"].iloc[0]) == 5
 
     def test_no_matching_ref(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        tel_df = pd.DataFrame({"Driver": ["HAM"], "LapNumber": [3], "Speed": [100]})
-        tels = [tel_df]
+        tels = [("HAM", 3, {"speed": [100.0]})]
         result = session._find_telemetry_df_for_ref(tels, ("VER", 5))
         assert result is None
 
@@ -1186,16 +1186,15 @@ class TestHydrateFastestLapTelFromBatch:
 
     def test_tel_found_in_batch(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        tel_df = pd.DataFrame({"Driver": ["VER"], "LapNumber": [5], "Speed": [100]})
-        tels = [tel_df]
+        tels = [("VER", 5, {"speed": [100.0]})]
         session._hydrate_fastest_lap_tel_from_batch(tels, ("VER", 5))
         assert session._fastest_lap_tel_ref == ("VER", 5)
-        assert session._fastest_lap_tel_df is tel_df
+        assert session._fastest_lap_tel_df is not None
+        assert session._fastest_lap_tel_df["Driver"].iloc[0] == "VER"
 
     def test_tel_not_found_in_batch(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        tel_df = pd.DataFrame({"Driver": ["HAM"], "LapNumber": [3], "Speed": [100]})
-        tels = [tel_df]
+        tels = [("HAM", 3, {"speed": [100.0]})]
         session._hydrate_fastest_lap_tel_from_batch(tels, ("VER", 5))
         # Should not set anything when not found
         assert not hasattr(session, "_fastest_lap_tel_ref") or session._fastest_lap_tel_ref is None
@@ -1423,7 +1422,7 @@ class TestCoreHighYieldCoverage:
         session._fetch_telemetry_batch = lambda fl, skip_cache=False: (  # noqa: ARG005
             [],
             [],
-            [pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "Speed": [300.0]})],
+            [("VER", 1, {"speed": [300.0]})],
         )
         df = session.get_fastest_laps_tels(by_driver=True)
         assert not df.empty
@@ -1438,11 +1437,7 @@ class TestCoreHighYieldCoverage:
             )
             session._fetch_telemetry_batch_async = lambda fl, skip_cache=False: asyncio.sleep(  # noqa: ARG005
                 0,
-                result=(
-                    [],
-                    [],
-                    [pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "Speed": [300.0]})],
-                ),
+                result=([], [], [("VER", 1, {"speed": [300.0]})]),
             )
             return await session.get_fastest_laps_tels_async(by_driver=True)
 
@@ -1796,7 +1791,7 @@ class TestCoreCoverageSecondPass:
             [],
         )
         session._process_telemetry_results = lambda results, lap_info, tels, ultra_cold=False: [  # noqa: ARG005
-            pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "Speed": [300.0]})
+            ("VER", 1, {"speed": [300.0]})
         ]
 
         async def compat_fetch(requests, **kwargs):
@@ -1841,7 +1836,7 @@ class TestCoreCoverageSecondPass:
             )
 
         session.laps_async = laps_with_rows
-        cached_tel = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "Speed": [300.0]})
+        cached_tel = ("VER", 1, {"speed": [300.0]})
 
         async def fake_batch(refs, skip_cache=False):
             return [(2025, "Test GP", "Race", "HAM/2_tel.json")], [("HAM", 2)], [cached_tel]

@@ -37,6 +37,8 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 - Rewrote all 21 `docs/assets/generate_*.py` scripts as thin wrappers around the native chart functions; `generate_all_charts.py` now calls `tif1.charts` as the canonical "regenerate all docs charts" entrypoint (standalone-owned outputs like `race_position_changes.png` are no longer overwritten).
 - Updated 21 tutorials to teach the native chart API and added the `api-reference/charts` reference page.
+- **Performance: telemetry batch assembly via merged dict-of-lists** — `get_fastest_laps_tels` / `get_fastest_laps_tels_async` now assemble telemetry from raw payloads into a single DataFrame (one dtype-conversion pass) instead of building a per-driver DataFrame and calling `pd.concat`. Measured **~2.5-3x faster** on pandas 3.0 (and ~2x faster on pandas 2.3) with byte-identical output, mitigating the pandas 3.0 regression in repeated per-frame `pd.to_timedelta`/`astype` machinery. The polars backend keeps the per-driver `_create_telemetry_df` + `pl.concat` path unchanged.
+- **Performance: `Laps.telemetry` / `get_car_data` via merged dict-of-lists** — these accessors now collect raw telemetry payloads through a new `Session._get_telemetry_payload_for_ref` (payload-only version of the per-lap source chain) and build a single merged DataFrame instead of building a per-lap DataFrame and calling `pd.concat`. Measured **~2x faster** with identical output. Falls back to the legacy per-lap path for stand-in session objects and on malformed payloads; the polars backend is unaffected.
 
 ### Fixed
 
@@ -52,6 +54,8 @@ Updated all dependencies to their latest stable versions, one at a time, with br
   - Timedelta unit inference (`timedelta64[us]` is now produced for sub-second inputs): all `is_timedelta64_ns_dtype` guards were widened to `is_timedelta64_dtype` and `_numeric_seconds_to_timedelta` no longer reinterprets already-timedelta columns, preventing a 1e6× lap-time scaling bug in `pick_fastest`/`slice_by_time`.
   - `str` dtype is now the default for string columns: telemetry `Driver` is explicitly kept as `object` dtype for FastF1 compatibility, matching the laps dtype contract.
 - **Python minimum raised to 3.11** (required by pandas 3.0): updated `requires-python`, classifiers, CI matrix, ty config, and documentation.
+- **Fastest-lap selection optimized**: `_select_fastest_laps` now uses `sort_values + drop_duplicates` instead of `groupby(...).idxmin()` — measurably faster on both pandas 2.x and 3.x (pandas 3.0 made `groupby.idxmin` ~2× slower), recovering most of the pandas-3.0 regression in `get_fastest_laps(by_driver=True)`.
+- **Lap-table assembly optimized**: the pandas laps path now builds one DataFrame from a single merged dict-of-lists (`_merge_lap_payloads`) instead of concatenating per-driver frames with `pd.concat`, which regressed ~2× in pandas 3.0. Measured ~20× faster DataFrame assembly with identical output (verified against the concat path, including drivers with differing column sets).
 - `typer` 0.26.7 → 0.27.1 (metavar help-printing change only)
 - `niquests` 3.19.1 → 3.21.0
 - `matplotlib` 3.10.9 → 3.11.1
