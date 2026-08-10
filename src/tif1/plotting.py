@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import unicodedata
 import warnings
@@ -14,7 +15,12 @@ import matplotlib.pyplot as plt
 from matplotlib import cycler  # type: ignore[attr-defined]
 
 from tif1.fuzzy import fuzzy_matcher
-from tif1.plotting_constants import DEFAULT_COMPOUND_COLORS, YEAR_CONSTANTS
+from tif1.plotting_constants import (
+    DEFAULT_COMPOUND_COLORS,
+    TEAM_CODES,
+    TEAM_COLORS,
+    YEAR_CONSTANTS,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -61,6 +67,112 @@ DEFAULT_PLOT_CONFIG = {
     },
 }
 
+#: Registered named plot styles. ``default-light`` reproduces the TracingInsights
+#: v2 ``Fastest_Lap.py`` look (lightblue background, black text, Tenada headings,
+#: 20x20 figures at 300 dpi, tight bar rows with negative label padding), while
+#: ``default-dark`` reproduces the ``Race_Launch_Performance_Ratings.py`` look
+#: (``#011627`` background, lime text, white bar/ytick labels, Coolvetica/Azonix/
+#: GreatVibes fonts, default-width bars, and a car-image threshold of 2.5 on the
+#: rating axis). ``bar.linewidth`` is ``None`` in the dark style, meaning
+#: matplotlib's default bar edge width. Subplot margins in both styles come from
+#: the v2 theming framework (``chart_themes.apply_to_figure``).
+PLOT_STYLES: dict[str, dict[str, Any]] = {
+    "default-light": {
+        "name": "default-light",
+        "figure": {"size": (20, 20), "dpi": 300, "constrained_layout": True},
+        "fonts": {
+            "title_size": 48,
+            "label_size": 32,
+            "annotation_size": 25,
+            "footer_size": 50,
+            "watermark_size": 48,
+            "heading": "Tenada.ttf",
+            "heading2": "Tenada.ttf",
+            "logo": "Tenada.ttf",
+        },
+        "colors": {
+            "background": "lightblue",
+            "text": "black",
+            "grid": "black",
+            "bar_label": "black",
+            "ytick": "black",
+        },
+        "bar": {"height": 0.1, "alpha": 1.0, "linewidth": 0.1},
+        "images": {
+            "tyre_zoom": 0.07,
+            "tyre_x_offset": -190,
+            "car_zoom": 0.5,
+            "car_x_offset": -110,
+            "car_threshold": None,
+        },
+        "spacing": {
+            "label_padding": -330,
+            "x_margin": 0.4,
+            "subplot_left": 0.15,
+            "subplot_right": 0.97,
+            "subplot_top": 0.9,
+            "subplot_bottom": 0.15,
+        },
+        "footer": "TRACINGINSIGHTS.COM",
+        "watermark": "@TracingInsights",
+    },
+    "default-dark": {
+        "name": "default-dark",
+        "figure": {"size": (20, 20), "dpi": 300, "constrained_layout": False},
+        "fonts": {
+            "title_size": 48,
+            "label_size": 32,
+            "annotation_size": 25,
+            "footer_size": 50,
+            "watermark_size": 48,
+            "heading": "coolvetica rg.otf",
+            "heading2": "Azonix.otf",
+            "logo": "GreatVibes-Regular.ttf",
+        },
+        "colors": {
+            "background": "#011627",
+            "text": "lime",
+            "grid": "black",
+            "bar_label": "white",
+            "ytick": "white",
+        },
+        "bar": {"height": 0.8, "alpha": 1.0, "linewidth": None},
+        "images": {
+            "tyre_zoom": 0.07,
+            "tyre_x_offset": -150,
+            "car_zoom": 0.5,
+            "car_x_offset": -110,
+            "car_threshold": 2.5,
+        },
+        "spacing": {
+            "label_padding": 20,
+            "subplot_left": 0.15,
+            "subplot_right": 0.97,
+            "subplot_top": 0.9,
+            "subplot_bottom": 0.15,
+        },
+        "footer": "TRACINGINSIGHTS.COM",
+        "watermark": "@TracingInsights",
+    },
+}
+
+
+def get_plot_style(name: str = "default-light") -> dict[str, Any]:
+    """Get a registered plot style configuration.
+
+    Args:
+        name: Style name (``"default-light"`` or ``"default-dark"``).
+
+    Returns:
+        A deep copy of the style configuration dict.
+
+    Raises:
+        ValueError: If the style name is not registered.
+    """
+    if name not in PLOT_STYLES:
+        raise ValueError(f"Unknown plot style '{name}'. Available styles: {list(PLOT_STYLES)}")
+    return copy.deepcopy(PLOT_STYLES[name])
+
 
 @dataclass(slots=True)
 class _DriverInfo:
@@ -106,13 +218,18 @@ def setup_mpl(
         mpl_timedelta_support: Enable timedelta support. A positional string is
             also accepted for backwards compatibility and interpreted as
             ``color_scheme``.
-        color_scheme: Color scheme to use ('fastf1', 'light', or None)
+        color_scheme: Color scheme to use ('fastf1', 'light', 'default-light',
+            'default-dark', or None). 'default-light' reproduces the
+            TracingInsights v2 Fastest_Lap.py theme (lightblue background, black
+            text, 32pt labels, hidden top/right spines) and 'default-dark' is
+            its TracingInsights-brand dark counterpart (``#011627`` background,
+            lime text).
         misc_mpl_mods: Apply style-related matplotlib changes
         **kwargs: Additional configuration overrides
 
-    Supported kwargs for 'light' scheme:
-        - background: Background color (default: 'lightblue')
-        - text_color: Text color (default: 'black')
+    Supported kwargs for 'light' and 'default-*' schemes:
+        - background: Background color (default: 'lightblue' or '#011627')
+        - text_color: Text color (default: 'black' or 'lime')
     """
     if isinstance(mpl_timedelta_support, str):
         color_scheme = mpl_timedelta_support
@@ -130,6 +247,16 @@ def setup_mpl(
         _enable_light_color_scheme(
             background=kwargs.get("background", "lightblue"),
             text_color=kwargs.get("text_color", "black"),
+        )
+    elif color_scheme == "default-light":
+        _enable_default_color_scheme(
+            background=kwargs.get("background", "lightblue"),
+            text_color=kwargs.get("text_color", "black"),
+        )
+    elif color_scheme == "default-dark":
+        _enable_default_color_scheme(
+            background=kwargs.get("background", "#011627"),
+            text_color=kwargs.get("text_color", "lime"),
         )
 
 
@@ -256,6 +383,31 @@ def _enable_light_color_scheme(*, background: str, text_color: str) -> None:
     plt.rcParams["xtick.color"] = text_color
     plt.rcParams["ytick.color"] = text_color
     plt.rcParams["text.color"] = text_color
+
+
+def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
+    """Apply the TracingInsights v2 matplotlib theme (from ``Fastest_Lap.py``).
+
+    Reproduces ``utils.setup_plot_style`` from the v2 analysis scripts: it
+    layers the v2-specific settings (32pt labels, hidden top/right spines,
+    legend styling) on top of the base light theme.
+    """
+    _enable_light_color_scheme(background=background, text_color=text_color)
+
+    plt.rcParams["xtick.labelsize"] = 32
+    plt.rcParams["ytick.labelsize"] = 32
+    plt.rcParams["axes.spines.top"] = False
+    plt.rcParams["axes.spines.right"] = False
+    plt.rcParams["axes.spines.left"] = True
+    plt.rcParams["axes.spines.bottom"] = True
+    plt.rcParams["legend.frameon"] = True
+    plt.rcParams["legend.facecolor"] = background
+    plt.rcParams["legend.edgecolor"] = text_color
+    plt.rcParams["legend.fancybox"] = True
+    plt.rcParams["legend.fontsize"] = 32
+    plt.rcParams["axes.titlesize"] = 32
+    plt.rcParams["axes.labelsize"] = 32
+    plt.rcParams["ytick.major.size"] = 0
 
 
 def _enable_timple() -> None:
@@ -807,6 +959,106 @@ def get_team_name_by_driver(
 def _shorten_team_name(team: str) -> str:
     """Shorten team name for display."""
     return team.replace(" F1 Team", "").replace(" Racing", "").strip()
+
+
+def team_code_mapping(year: int) -> dict[str, str]:
+    """Get the mapping of timing-data team names to car image codes for a year.
+
+    Args:
+        year: Season year (2018-current).
+
+    Returns:
+        A copy of the ``{team name: car code}`` mapping, e.g.
+        ``{"Red Bull Racing": "RBR", ...}``.
+    """
+    return dict(TEAM_CODES.get(year, {}))
+
+
+def team_color_mapping(year: int) -> dict[str, str]:
+    """Get the TracingInsights v2 chart palette for a year.
+
+    This is the bright, tab10-style palette used by the v2 analysis scripts
+    (``utils.team_colors`` in ``Fastest_Lap.py``). It is separate from the
+    ``fastf1``/``official`` colormaps used by :func:`get_team_color`.
+
+    Args:
+        year: Season year (2018-current).
+
+    Returns:
+        A copy of the ``{team name: hex color}`` mapping, expanded with the
+        engine-suffix name variants from :func:`team_code_mapping` so that any
+        team name with a car code also has a colour.
+    """
+    colors = dict(TEAM_COLORS.get(year, {}))
+    if not colors:
+        return colors
+
+    # Canonical name -> colour first, then propagate to every variant name that
+    # shares the same car code (keeps team_color_mapping consistent with
+    # team_code_mapping for the same timing-data team names).
+    code_color: dict[str, str] = {}
+    for name, color in colors.items():
+        code = TEAM_CODES.get(year, {}).get(name)
+        if code is not None:
+            code_color[code] = color
+    for name, code in TEAM_CODES.get(year, {}).items():
+        if name not in colors and code in code_color:
+            colors[name] = code_color[code]
+    return colors
+
+
+def get_team_code(
+    identifier: str,
+    session: Any = None,
+    *,
+    year: int | None = None,
+    exact_match: bool = False,
+) -> str:
+    """Get the car image code (e.g. ``"RBR"``) for a team.
+
+    The code is resolved from the timing-data team name, using the session's
+    year when provided, otherwise the explicit ``year`` argument.
+
+    Args:
+        identifier: Team name or alias (e.g. ``"Red Bull"``).
+        session: Optional session used to resolve the team and its year.
+        year: Explicit season year; used when ``session`` is ``None``.
+        exact_match: Raise instead of fuzzy-matching unknown identifiers.
+
+    Returns:
+        The car image code for the team.
+
+    Raises:
+        ValueError: If neither ``session`` nor ``year`` resolves a season.
+        KeyError: If no code exists for the resolved team/year.
+    """
+    resolved_year = _get_session_year(session) if session is not None else year
+    if resolved_year is None:
+        if session is not None:
+            raise ValueError("get_team_code could not resolve a season year from the session")
+        raise ValueError("get_team_code requires a session or a year")
+
+    codes = TEAM_CODES.get(resolved_year, {})
+    if not codes:
+        raise KeyError(f"No team codes available for year {resolved_year}")
+
+    if session is not None:
+        team = _match_team(identifier, session, exact_match=exact_match)
+        candidates = [team.name, team.short_name, *sorted(team.aliases)]
+    else:
+        candidates = [identifier]
+
+    normalized_identifier = _normalize_identifier(identifier)
+    for candidate in candidates:
+        code = codes.get(candidate)
+        if code is not None:
+            return code
+
+    for name, code in codes.items():
+        if _normalize_identifier(name) == normalized_identifier:
+            return code
+
+    raise KeyError(f"No team code found for '{identifier}' in {resolved_year}")
 
 
 def list_driver_abbreviations(session: Any) -> list[str]:

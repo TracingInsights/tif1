@@ -14,7 +14,12 @@ from .lap_times import (
     plot_qualifying_grid,
     plot_track_temperature,
 )
-from .performance import plot_downforce_levels, plot_throttle_distance, plot_tire_degradation
+from .performance import (
+    plot_downforce_levels,
+    plot_race_launch_ratings,
+    plot_throttle_distance,
+    plot_tire_degradation,
+)
 from .telemetry import (
     plot_annotated_speed_trace,
     plot_gg_diagram,
@@ -43,6 +48,7 @@ __all__ = [
     "plot_multi_driver_speed_comparison",
     "plot_position_changes",
     "plot_qualifying_grid",
+    "plot_race_launch_ratings",
     "plot_speed_traces",
     "plot_telemetry_comparison",
     "plot_throttle_distance",

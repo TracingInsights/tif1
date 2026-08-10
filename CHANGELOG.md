@@ -6,6 +6,22 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Added
+
+- **New plot styles: `default-light` and `default-dark`** — `tif1.plotting` now ships two curated matplotlib themes that work with every chart's `color_scheme` parameter and with `setup_mpl(color_scheme=...)`:
+  - `default-light` is extracted from the v2 `Fastest_Lap.py` analysis script (lightblue background, black text, Tenada heading font, hidden top/right spines, 32pt ticks, 20×20 @ 300 dpi, bar height 0.1, tyre/car image offsets).
+  - `default-dark` is extracted from the v2 `Race_Launch_Performance_Ratings.py` script (TracingInsights dark brand `#011627` background, lime text, black grid, white bar/ytick labels, Coolvetica/Azonix/GreatVibes fonts, subplot margins, `car_threshold: 2.5`).
+  - New `get_plot_style(name)` registry returns deep copies of the style configs, and `get_team_code()` / `team_code_mapping()` / `team_color_mapping()` expose session/year-aware team lookups.
+- **Bundled chart assets** — new `tif1.assets` module ships car images for every team 2018–2026 (91 PNGs), 7 tyre compound images, and 4 brand fonts directly inside the package (no network access at plot time). Includes cached `load_car_image` / `load_tyre_image` loaders, path/discovery helpers, and matplotlib `AnnotationBbox` helpers (`add_car_images`, `add_tyre_images`, `add_car_at_position`, `add_tyre_at_position`) that mirror the v2 scripts' rendering.
+- **New native chart: `plot_race_launch_ratings`** — added to `tif1.charts` (and exported at the top level). It loads each driver's first race lap, interpolates 50/100/150/200 km/h crossing times from telemetry, derives 0–10 launch ratings, and renders a barh chart in the `default-dark` style with bundled car/tyre images and the 2.5 rating threshold.
+
+### Fixed
+
+- **`plot_race_launch_ratings` output now matches the v2 script pixel-for-pixel** (verified against `F1-analysis/v2/Race_Launch_Performance_Ratings.py` on 2024 Bahrain: identical 6000×6000 renders, mean-abs pixel diff 0.000):
+  - The chart now exports the full canvas exactly like the v2 script (no `tight_layout`, no `bbox_inches` cropping; the manual `subplots_adjust` margins are preserved). `charts._common.finalize_figure` gained optional `tight_layout`/`bbox_inches` kwargs (defaults unchanged for all other charts).
+  - Crossing times are rounded to 3 decimals **before** the 0-10 rating normalization (matching the script's `.round(3)` on each `Time_XX` column), removing 0.01 rating discrepancies.
+  - The driver sort replicates the script's exact pipeline (`groupby("Driver").first()` + pandas' default unstable `sort_values`), preserving its tie-breaking for identical ratings.
+
 ## [0.4.0] - 2026-08-08
 
 ### Summary

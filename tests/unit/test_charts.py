@@ -107,6 +107,17 @@ class FakeLaps(pd.DataFrame):
         result.session = self.session
         return result
 
+    def pick_lap(self, lap_number):
+        result = FakeLaps(self[self["LapNumber"] == lap_number])
+        result.session = self.session
+        return result
+
+    def get_car_data(self, **kwargs):  # noqa: ARG002
+        if self.empty:
+            return FakeTelemetry()
+        row = self.iloc[0]
+        return self.session.telemetry_for(row["Driver"], int(row["LapNumber"]))
+
     def pick_fastest(self, only_by_time: bool = False):  # noqa: ARG002
         if self.empty:
             return None
@@ -269,6 +280,31 @@ def fake_session(monkeypatch):
 def no_laps_session(monkeypatch):
     """Patch the seam with a session that has no lap data."""
     session = FakeSession(with_laps=False)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+    yield session
+    plt.close("all")
+
+
+def _make_launch_telemetry(driver_idx: int) -> FakeTelemetry:
+    """Telemetry with a monotonic launch ramp crossing 50/100/150/200 km/h.
+
+    Higher ``driver_idx`` means a slightly faster ramp, giving distinct
+    crossing times per driver so the 0-10 ratings differ.
+    """
+    n = 128
+    t_sec = np.linspace(0.0, 8.0, n)
+    speed = np.linspace(0.0, 300.0, n) * (1 + driver_idx * 0.02)
+    return FakeTelemetry({"Time": pd.to_timedelta(t_sec, unit="s"), "Speed": speed})
+
+
+@pytest.fixture
+def launch_session(monkeypatch):
+    """Patch the seam with a session whose telemetry ramps from 0 km/h."""
+    session = FakeSession(year=2024)
+    driver_order = [abbr for abbr, _team, _dn in DRIVERS]
+    session.telemetry_for = lambda driver, lap: _make_launch_telemetry(  # noqa: ARG005
+        driver_order.index(driver)
+    )
     monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
     yield session
     plt.close("all")
@@ -574,6 +610,183 @@ def test_unknown_driver_fuzzy_resolves_with_warning(fake_session):
     with pytest.warns(UserWarning, match="Correcting user input"):
         _, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "Q", drivers=["ZZZ"])
     assert len(ax.collections) > 0
+
+
+# ---------------------------------------------------------------------------
+# Race launch performance ratings
+# ---------------------------------------------------------------------------
+
+
+def test_race_launch_ratings_happy_path(launch_session):
+    """Default-dark chart renders one bar per driver with tyre and car images."""
+    fig, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    assert isinstance(fig, plt.Figure)
+    assert len(ax.patches) == len(DRIVERS)
+    # one tyre image per driver, plus cars hidden by the 2.5 threshold
+    assert len(ax.artists) >= len(DRIVERS)
+    assert len(ax.artists) < 2 * len(DRIVERS)
+    # default-dark theme applied
+    assert plt.rcParams["figure.facecolor"] == "#011627"
+    # title mentions the event
+    title_texts = " ".join(text.get_text() for text in fig.texts)
+    assert "Italian Grand Prix" in title_texts
+    assert "Lights out to 50 kmph" in title_texts
+
+
+def test_race_launch_ratings_rating_order(launch_session):
+    """Drivers are sorted by rating descending (fastest to 50 km/h first)."""
+    _, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    labels = [text.get_text() for text in ax.get_yticklabels()]
+    assert labels[0].startswith("1. HAM")
+    assert labels[-1].startswith("5. VER")
+
+
+def test_race_launch_ratings_speed_range(launch_session):
+    """Range ratings use the X-Y km/h window and title."""
+    fig, ax = performance.plot_race_launch_ratings(
+        2024, "Italian Grand Prix", "Q", speed_range=(100, 200)
+    )
+    assert len(ax.patches) == len(DRIVERS)
+    title_texts = " ".join(text.get_text() for text in fig.texts)
+    assert "100 to 200 kmph" in title_texts
+
+
+def test_race_launch_ratings_drivers_filter(launch_session):
+    """The drivers filter restricts which bars are drawn."""
+    _, ax = performance.plot_race_launch_ratings(
+        2024, "Italian Grand Prix", "Q", drivers=["HAM", "VER"]
+    )
+    assert len(ax.patches) == 2
+
+
+def test_race_launch_ratings_light_scheme(launch_session):
+    """A default-light color_scheme switches the theme and style config."""
+    _, ax = performance.plot_race_launch_ratings(
+        2024, "Italian Grand Prix", "Q", color_scheme="default-light"
+    )
+    assert plt.rcParams["figure.facecolor"] == "lightblue"
+    assert len(ax.patches) == len(DRIVERS)
+    # light style has no car threshold: every driver gets a car image
+    assert len(ax.artists) == 2 * len(DRIVERS)
+
+
+def test_race_launch_ratings_validation(launch_session):
+    """Invalid speed windows are rejected before loading any data."""
+    with pytest.raises(ValueError, match="speed_threshold"):
+        performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q", speed_threshold=75)
+    with pytest.raises(ValueError, match="speed_range"):
+        performance.plot_race_launch_ratings(
+            2024, "Italian Grand Prix", "Q", speed_range=(200, 100)
+        )
+
+
+def test_race_launch_ratings_no_data_raises(fake_session):
+    """A session whose telemetry never crosses 50 km/h yields no ratings."""
+    with pytest.raises(ValueError, match="No driver could be processed"):
+        performance.plot_race_launch_ratings(2023, "Italian Grand Prix", "Q")
+
+
+def test_race_launch_ratings_save_path(launch_session, tmp_path):
+    """save_path writes a file at the requested dpi."""
+    out = tmp_path / "launch.png"
+    performance.plot_race_launch_ratings(
+        2024, "Italian Grand Prix", "Q", save_path=str(out), dpi=150
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_race_launch_ratings_exports_full_canvas(launch_session, tmp_path, monkeypatch):
+    """The launch chart mirrors the v2 script: no tight_layout, no bbox crop.
+
+    This is required for pixel parity with Race_Launch_Performance_Ratings.py,
+    which saves the full 20x20in canvas with its own subplots_adjust margins.
+    """
+    captured: dict[str, object] = {}
+    original = plt.Figure.savefig
+
+    def _capture_save(self, fname, **kwargs):
+        captured["kwargs"] = kwargs
+        return original(self, fname, **kwargs)
+
+    def _fail_tight_layout(self):
+        raise AssertionError("tight_layout must not run for the launch chart")
+
+    monkeypatch.setattr(plt.Figure, "savefig", _capture_save)
+    monkeypatch.setattr(plt.Figure, "tight_layout", _fail_tight_layout)
+
+    performance.plot_race_launch_ratings(
+        2024, "Italian Grand Prix", "Q", save_path=str(tmp_path / "launch.png"), dpi=150
+    )
+    assert captured["kwargs"]["dpi"] == 150
+    assert "bbox_inches" not in captured["kwargs"]
+    assert "facecolor" not in captured["kwargs"]
+
+
+def test_race_launch_ratings_rounding_matches_v2_pipeline(launch_session):
+    """Ratings are computed from crossing times rounded to 3 decimals first.
+
+    The v2 script rounds each Time_XX column (``.round(3)``) before the 0-10
+    normalization; the native chart must do the same for identical ratings.
+    """
+    raw = [400.0 / (300.0 * (1 + i * 0.02)) for i in range(len(DRIVERS))]
+    rounded = [round(t, 3) for t in raw]
+    fastest, slowest = min(rounded), max(rounded)
+    expected = {
+        abbr: round(10 - (t - fastest) / (slowest - fastest) * 10, 2)
+        for abbr, t in zip([d[0] for d in DRIVERS], rounded)
+    }
+
+    _, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    bars = dict(
+        zip(
+            [t.get_text().split(". ")[1].strip() for t in ax.get_yticklabels()],
+            [round(p.get_width(), 2) for p in ax.patches],
+        )
+    )
+    for driver, rating in expected.items():
+        assert bars[driver] == rating
+
+
+def test_race_launch_ratings_tie_order_matches_v2_pipeline(launch_session):
+    """Identical ratings are ordered like the original (groupby + quicksort).
+
+    The v2 script sorts via ``groupby("Driver").first()`` (driver-alphabetical)
+    followed by pandas' default unstable ``sort_values`` (quicksort). Replicating
+    that keeps exact-tie ordering pixel-identical with the original output.
+    Note: this pins pandas' default quicksort tie behavior; if pandas changes
+    its default sort kind, the tie order will change together with the script.
+    """
+    session = launch_session
+    driver_order = [abbr for abbr, _team, _dn in DRIVERS]
+    # Give SAI and HAM identical ramps -> identical rating -> a tie.
+    session.telemetry_for = lambda driver, lap: _make_launch_telemetry(  # noqa: ARG005
+        4 if driver in ("HAM", "SAI") else driver_order.index(driver)
+    )
+
+    _, ax = performance.plot_race_launch_ratings(2024, "Italian Grand Prix", "Q")
+    rendered_order = [label.get_text().split(". ")[1].strip() for label in ax.get_yticklabels()]
+
+    # Expected order from the original pipeline applied to the same ratings.
+    crossing = {
+        abbr: round(400.0 / (300.0 * (1 + i * 0.02)), 3)
+        for abbr, i in zip(driver_order, range(len(driver_order)))
+    }
+    crossing["SAI"] = crossing["HAM"]  # identical ramp -> identical rating
+    times = list(crossing.values())
+    fastest, slowest = min(times), max(times)
+    ratings = {
+        abbr: round(10 - (t - fastest) / (slowest - fastest) * 10, 2)
+        for abbr, t in crossing.items()
+    }
+    frame = pd.DataFrame({"Driver": list(ratings), "Rating": list(ratings.values())})
+    expected_order = list(
+        frame.groupby("Driver")
+        .first()
+        .reset_index()
+        .sort_values(by="Rating", ascending=False)["Driver"]
+    )
+    assert rendered_order == expected_order
 
 
 # ---------------------------------------------------------------------------

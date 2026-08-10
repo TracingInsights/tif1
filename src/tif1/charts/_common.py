@@ -77,13 +77,18 @@ def finalize_figure(
     save_path: str | None,
     dpi: int,
     facecolor: str | None,
+    tight_layout: bool = True,
+    bbox_inches: str | bool | None = "tight",
 ) -> tuple[Figure, Any]:
     """Single source of truth for layout + saving of a chart figure.
 
-    Applies ``fig.tight_layout()``, optionally sets the figure background and
-    saves to ``save_path`` with ``bbox_inches="tight"``. ``facecolor`` is only
-    forwarded to :meth:`matplotlib.figure.Figure.savefig` when not ``None``,
-    preserving the original scripts' transparent/unset background behaviour.
+    By default applies ``fig.tight_layout()`` and saves to ``save_path`` with
+    ``bbox_inches="tight"``. ``facecolor`` is only forwarded to
+    :meth:`matplotlib.figure.Figure.savefig` when not ``None``, preserving the
+    original scripts' transparent/unset background behaviour. Charts that
+    manage their own layout (e.g. the v2 ``Race_Launch_Performance_Ratings``
+    look with explicit ``subplots_adjust`` margins and a full-canvas export)
+    can opt out with ``tight_layout=False, bbox_inches=None``.
 
     Args:
         fig: The figure to finalize.
@@ -92,15 +97,21 @@ def finalize_figure(
         dpi: Dots per inch used when saving.
         facecolor: Background color passed to ``savefig``; ``None`` leaves the
             background unchanged.
+        tight_layout: Run ``fig.tight_layout()`` before saving (default True).
+        bbox_inches: Value passed to ``savefig`` as ``bbox_inches``; ``None``
+            saves the full canvas (default ``"tight"``).
 
     Returns:
         The ``(fig, ax)`` pair.
     """
-    fig.tight_layout()
+    if tight_layout:
+        fig.tight_layout()
     if facecolor is not None:
         fig.set_facecolor(facecolor)
     if save_path is not None:
-        save_kwargs: dict[str, Any] = {"dpi": dpi, "bbox_inches": "tight"}
+        save_kwargs: dict[str, Any] = {"dpi": dpi}
+        if bbox_inches is not None:
+            save_kwargs["bbox_inches"] = bbox_inches
         if facecolor is not None:
             save_kwargs["facecolor"] = facecolor
         fig.savefig(save_path, **save_kwargs)

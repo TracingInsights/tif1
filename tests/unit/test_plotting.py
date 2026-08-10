@@ -376,6 +376,147 @@ def test_setup_mpl_fastf1_compatible_call_patterns():
     plotting.setup_mpl("fastf1")
 
 
+def test_setup_mpl_default_light_theme():
+    """Test the default-light (Fastest_Lap.py) matplotlib theme."""
+    plotting.setup_mpl(color_scheme="default-light", mpl_timedelta_support=False)
+    assert plt.rcParams["figure.facecolor"] == "lightblue"
+    assert plt.rcParams["axes.facecolor"] == "lightblue"
+    assert plt.rcParams["text.color"] == "black"
+    assert plt.rcParams["xtick.color"] == "black"
+    assert plt.rcParams["ytick.color"] == "black"
+    assert plt.rcParams["axes.spines.top"] is False
+    assert plt.rcParams["axes.spines.right"] is False
+    assert plt.rcParams["legend.frameon"] is True
+    assert plt.rcParams["ytick.major.size"] == 0
+
+
+def test_setup_mpl_default_dark_theme():
+    """Test the default-dark (TracingInsights brand) matplotlib theme."""
+    plotting.setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+    assert plt.rcParams["figure.facecolor"] == "#011627"
+    assert plt.rcParams["axes.facecolor"] == "#011627"
+    assert plt.rcParams["text.color"] == "lime"
+    assert plt.rcParams["xtick.color"] == "lime"
+
+
+def test_get_plot_style_light_matches_fastest_lap_constants():
+    """Test the default-light style config mirrors Fastest_Lap.py constants."""
+    style = plotting.get_plot_style("default-light")
+    assert style["colors"]["background"] == "lightblue"
+    assert style["colors"]["text"] == "black"
+    assert style["figure"] == {"size": (20, 20), "dpi": 300, "constrained_layout": True}
+    assert style["fonts"]["title_size"] == 48
+    assert style["fonts"]["label_size"] == 32
+    assert style["fonts"]["annotation_size"] == 25
+    assert style["fonts"]["heading"] == "Tenada.ttf"
+    assert style["fonts"]["footer_size"] == 50
+    assert style["bar"]["height"] == 0.1
+    assert style["images"]["car_zoom"] == 0.5
+    assert style["images"]["tyre_zoom"] == 0.07
+    assert style["images"]["tyre_x_offset"] == -190
+    assert style["images"]["car_threshold"] is None
+    assert style["spacing"]["label_padding"] == -330
+    assert style["spacing"]["x_margin"] == 0.4
+
+
+def test_get_plot_style_dark_matches_race_launch_script():
+    """Test the default-dark style mirrors Race_Launch_Performance_Ratings.py."""
+    style = plotting.get_plot_style("default-dark")
+    assert style["colors"]["background"] == "#011627"
+    assert style["colors"]["text"] == "lime"
+    assert style["colors"]["grid"] == "black"  # black axvline in the script
+    assert style["colors"]["bar_label"] == "white"
+    assert style["colors"]["ytick"] == "white"
+    assert style["fonts"]["heading"] == "coolvetica rg.otf"
+    assert style["fonts"]["heading2"] == "Azonix.otf"
+    assert style["fonts"]["logo"] == "GreatVibes-Regular.ttf"
+    assert style["fonts"]["footer_size"] == 50
+    assert style["fonts"]["watermark_size"] == 48
+    assert style["figure"] == {"size": (20, 20), "dpi": 300, "constrained_layout": False}
+    assert style["bar"] == {"height": 0.8, "alpha": 1.0, "linewidth": None}
+    assert style["images"]["tyre_x_offset"] == -150
+    assert style["images"]["car_threshold"] == 2.5
+    assert style["spacing"]["label_padding"] == 20
+    assert style["spacing"]["subplot_left"] == 0.15
+    assert style["spacing"]["subplot_right"] == 0.97
+    assert style["footer"] == "TRACINGINSIGHTS.COM"
+    assert style["watermark"] == "@TracingInsights"
+
+
+def test_get_plot_style_defaults_and_errors():
+    """Test get_plot_style defaults and unknown-style errors."""
+    assert plotting.get_plot_style()["name"] == "default-light"
+    with pytest.raises(ValueError, match="Unknown plot style"):
+        plotting.get_plot_style("nope")
+
+
+def test_get_plot_style_returns_copy():
+    """Test get_plot_style returns a mutable copy."""
+    style = plotting.get_plot_style("default-light")
+    style["colors"]["background"] = "red"
+    assert plotting.get_plot_style("default-light")["colors"]["background"] == "lightblue"
+
+
+def test_team_code_mapping():
+    """Test team code mapping for a year."""
+    mapping = plotting.team_code_mapping(2024)
+    assert mapping["Red Bull Racing"] == "RBR"
+    assert mapping["Ferrari"] == "FER"
+    assert mapping["Kick Sauber"] == "KS"
+    assert plotting.team_code_mapping(1999) == {}
+
+
+def test_team_color_mapping_v2_palette():
+    """Test the TracingInsights v2 palette used by Fastest_Lap.py."""
+    mapping = plotting.team_color_mapping(2024)
+    assert mapping["Red Bull Racing"] == "#ffe119"
+    assert mapping["Ferrari"] == "#e6194b"
+    assert mapping["Kick Sauber"] == "#00ff00"
+    assert plotting.team_color_mapping(1999) == {}
+
+
+def test_team_color_mapping_covers_code_variants():
+    """Every name with a car code also gets a colour (consistent mappings)."""
+    mapping_2024 = plotting.team_color_mapping(2024)
+    for name in plotting.team_code_mapping(2024):
+        assert name in mapping_2024, name
+    assert mapping_2024["Alfa Romeo Ferrari"] == "#00ff00"  # Kick Sauber (KS) variant
+    assert mapping_2024["Racing Bulls Honda RBPT"] == "#dcbeff"  # RB variant
+
+    mapping_2018 = plotting.team_color_mapping(2018)
+    assert mapping_2018["Scuderia Toro Rosso Honda"] == "#dcbeff"  # Toro Rosso (TR)
+
+
+def test_get_team_code_with_session():
+    """Test resolving car image codes from a session."""
+    session = MockSession(year=2024)
+    assert plotting.get_team_code("Red Bull Racing", session) == "RBR"
+    assert plotting.get_team_code("Red Bull", session) == "RBR"
+    assert plotting.get_team_code("Ferrari", session) == "FER"
+    assert plotting.get_team_code("Mercedes", session) == "MER"
+
+
+def test_get_team_code_with_year():
+    """Test resolving car image codes with an explicit year."""
+    assert plotting.get_team_code("Ferrari", year=2018) == "FER"
+    assert plotting.get_team_code("Force India", year=2018) == "FI"
+    assert plotting.get_team_code("AlphaTauri", year=2020) == "APT"
+    assert plotting.get_team_code("Kick Sauber", year=2024) == "KS"
+    assert plotting.get_team_code("Audi", year=2026) == "AUD"
+
+
+def test_get_team_code_errors():
+    """Test get_team_code validation errors."""
+    with pytest.raises(ValueError, match="requires a session or a year"):
+        plotting.get_team_code("Ferrari")
+
+    with pytest.raises(ValueError, match="could not resolve a season year"):
+        plotting.get_team_code("Ferrari", MockSession(year=None))
+
+    with pytest.raises(KeyError, match="No team code"):
+        plotting.get_team_code("Williams", year=1999)
+
+
 def test_setup_mpl_misc_mods_switch():
     """Test that misc_mpl_mods controls style changes."""
     original = plt.rcParams["axes.facecolor"]

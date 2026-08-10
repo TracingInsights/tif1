@@ -175,6 +175,9 @@ Configure matplotlib with Formula 1-optimized defaults including color schemes, 
 - **`color_scheme`** (`str | None`, default: `None`)
   Color scheme to apply. Valid values:
   - `"fastf1"` - Use FastF1's color palette
+  - `"light"` - tif1's simple light theme (lightblue background, black text)
+  - `"default-light"` - The TracingInsights v2 `Fastest_Lap.py` theme (lightblue background, black text, 32pt labels, hidden top/right spines)
+  - `"default-dark"` - The TracingInsights dark-brand counterpart (`#011627` background, lime text)
   - `"official"` - Use official F1 team colors
   - `None` - Use tif1's default color scheme
 
@@ -244,6 +247,89 @@ tif1.plotting.setup_mpl(
 - The function modifies global matplotlib settings via `matplotlib.rcParams`
 - Timedelta support is particularly useful for lap time comparisons and race pace analysis
 - The `misc_mpl_mods` parameter controls grid styling, tick formatting, and other visual enhancements
+
+## Named Plot Styles
+
+`tif1` ships two named plot styles that reproduce the TracingInsights v2 chart look: `default-light` is extracted from `Fastest_Lap.py` and `default-dark` from `Race_Launch_Performance_Ratings.py` in the analysis repo. Use `get_plot_style` to read the full configuration, or pass the name to `setup_mpl` / any chart's `color_scheme` argument.
+
+### `get_plot_style`
+
+```python
+def get_plot_style(name: str = "default-light") -> dict[str, Any]
+```
+
+Return a copy of a registered plot style configuration.
+
+| Style | Source script | Background | Text | Heading font |
+| --- | --- | --- | --- | --- |
+| `default-light` | `Fastest_Lap.py` | `lightblue` | `black` | `Tenada.ttf` |
+| `default-dark` | `Race_Launch_Performance_Ratings.py` | `#011627` | `lime` | `coolvetica rg.otf` |
+
+Each style config contains `figure` (size, dpi, `constrained_layout`), `fonts` (title/label/annotation/footer/watermark sizes and bundled font file names), `colors` (background, text, grid, bar-label and ytick colors), `bar`, `images` (tyre/car zoom, x-offsets, and the dark style's `car_threshold` of 2.5 — cars are only drawn when the x-value rating exceeds it), `spacing` (label padding and `subplots_adjust` margins), plus `footer`/`watermark` text — mirroring the constants in the v2 scripts.
+
+```python
+import tif1
+
+dark = tif1.plotting.get_plot_style("default-dark")
+print(dark["colors"])    # {'background': '#011627', 'text': 'lime', 'grid': 'black', 'bar_label': 'white', 'ytick': 'white'}
+print(dark["images"])    # {'tyre_zoom': 0.07, 'tyre_x_offset': -150, 'car_zoom': 0.5, 'car_x_offset': -110, 'car_threshold': 2.5}
+print(dark["spacing"])   # {'label_padding': 20, 'x_margin': 0.4, 'subplot_left': 0.15, ...}
+```
+
+```python
+import tif1
+
+style = tif1.plotting.get_plot_style("default-light")
+print(style["figure"])   # {'size': (20, 20), 'dpi': 300, 'constrained_layout': True}
+print(style["colors"])   # {'background': 'lightblue', 'text': 'black', 'grid': 'black'}
+
+tif1.plotting.setup_mpl(color_scheme="default-dark")
+```
+
+Any chart function also accepts the style name directly:
+
+```python
+tif1.plot_top_speeds(2024, "Monza", "Q", color_scheme="default-light")
+```
+
+## Bundled Plot Assets
+
+The `tif1.assets` module ships the car artwork (all years 2018-2026), tyre compound images, and fonts directly inside the package — no network requests at plot time. This is what the `default-light`/`default-dark` styles (and the v2 scripts) use for car/tyre images.
+
+### Car images
+
+```python
+from tif1 import assets, plotting
+
+# Team name -> car image code (e.g. "Red Bull Racing" -> "RBR")
+code = plotting.get_team_code("Red Bull Racing", year=2024)
+print(code)  # "RBR"
+
+# Load the artwork as an RGBA array (cached)
+img = assets.load_car_image(2024, code)
+
+# Annotate a barh chart with each team's car (Fastest_Lap-style)
+fig, ax = plt.subplots(figsize=(20, 20))
+ax.barh(df["Driver"], df["LapTimeDelta"], color=df["Team_color"], height=0.1)
+assets.add_car_images(ax, df, year=2024)
+assets.add_tyre_images(ax, df)
+```
+
+Key helpers:
+
+- `assets.available_car_years()` / `assets.available_team_codes(year)` — discover bundled artwork
+- `assets.car_image_path(year, code)` / `assets.tyre_image_path(compound)` / `assets.font_path(name)` — package paths
+- `assets.load_car_image(year, code)` / `assets.load_tyre_image(compound)` — cached RGBA arrays
+- `assets.add_car_images(ax, df, year, ...)` / `assets.add_tyre_images(ax, df, ...)` — Fastest_Lap-style `AnnotationBbox` helpers (with `zoom`, `x_offset`, and `threshold` options)
+- `assets.add_car_image_at_position(ax, x, y, year, code, ...)` / `assets.add_tyre_image_at_position(...)` — single-image placement
+- `plotting.get_team_code(identifier, session=None, *, year=None)` — resolve a timing-data team name to its car code (year-aware, session-aware, fuzzy-matched)
+
+```python
+# Team codes are year-aware, matching the artwork per season
+assert plotting.get_team_code("AlphaTauri", year=2020) == "APT"
+assert plotting.get_team_code("Kick Sauber", year=2024) == "KS"
+assert plotting.get_team_code("Audi", year=2026) == "AUD"
+```
 
 ## Season-Aware Color System
 

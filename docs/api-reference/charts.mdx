@@ -88,7 +88,7 @@ def plot_<name>(
 
 ### Theme parameters
 
-- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. `None` skips the theme call entirely, leaving `matplotlib.rcParams` untouched.
+- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. Supported values include `"fastf1"`, `"default-light"` and `"default-dark"` (the TracingInsights v2 Fastest_Lap-style themes, with bundled car/tyre images available via `tif1.assets`), plus `None` to skip the theme call entirely and leave `matplotlib.rcParams` untouched.
 
 ### Session passthrough
 
@@ -311,6 +311,43 @@ Plots the G-G diagram (lateral vs longitudinal acceleration) per driver with a c
 
 ```python
 tif1.plot_gg_diagram(2024, "Monaco Grand Prix", "Q", drivers=["VER", "LEC", "NOR"])
+```
+
+## Race launch
+
+### `plot_race_launch_ratings`
+
+```python
+def plot_race_launch_ratings(
+    year: int, event: str | int, session: str | int, *,
+    save_path: str | None = None, dpi: int = 300,
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
+    color_scheme: str | None = "default-dark",
+    enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
+    drivers: list[str] | None = None,
+    speed_threshold: int = 50,
+    speed_range: tuple[int, int] | None = None,
+) -> tuple[Figure, Axes]
+```
+
+Interpolates each driver's lap-1 telemetry to find the time to reach the 50/100/150/200 km/h marks, derives a 0-10 rating for the chosen speed window, and plots it as a horizontal bar chart in the `default-dark` style — `#011627` background, lime text, white labels, Coolvetica/Azonix/GreatVibes fonts, bundled tyre images, and bundled car images drawn only when the rating exceeds the style's `car_threshold` (2.5).
+
+```python
+tif1.plot_race_launch_ratings(2024, "Monaco Grand Prix", "R", speed_threshold=100)
+```
+
+Parameters:
+
+- **`speed_threshold`** (`int`, default: `50`) — one of 50, 100, 150, 200; the "lights out to X km/h" rating.
+- **`speed_range`** (`tuple[int, int] | None`) — optional `(start, end)` speed window for a range rating (e.g. `(50, 100)`); takes precedence over `speed_threshold`.
+- **`color_scheme`** (`str`, default: `"default-dark"`) — the chart's theme and visual config. Passing `"default-light"` switches to the light style (no car threshold, Tenada fonts); other schemes keep the dark visuals.
+
+```python
+tif1.plot_race_launch_ratings(
+    2024, "Silverstone", "R",
+    speed_range=(100, 200),
+    save_path="launch_ratings.png",
+)
 ```
 
 ## Lap times
