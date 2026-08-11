@@ -1,5 +1,6 @@
 """Fuzzing tests for malformed and corrupted data."""
 
+
 import json
 from unittest.mock import patch
 
@@ -7,11 +8,22 @@ import pandas as pd
 import pytest
 
 from tif1.core import Lap, Session
+from tif1.exceptions import InvalidDataError
+from tif1.payload_loader import InMemoryTransport
 
 
+def _delegate_fast_fetch(self, path):
+    """Route ``_fetch_from_cdn_fast`` through the patched regular fetch seam.
+
+    Tests patch only ``Session._fetch_from_cdn``; with the ultra-cold fast
+    path being the default, the fast delegate is explicitly redirected to the
+    same mock so both fetch seams hit the test double.
+    """
+    return self._fetch_from_cdn(path)
 class TestFuzzing:
     """Fuzzing tests with malformed data."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_malformed_json(self, mock_fetch):
         """Test handling of malformed JSON."""
@@ -21,25 +33,23 @@ class TestFuzzing:
         with pytest.raises(json.JSONDecodeError):
             session._fetch_json("test.json")
 
-    @patch("tif1.core.Session._fetch_from_cdn")
-    def test_non_dict_response(self, mock_fetch):
-        """Test handling of non-dict JSON response."""
-        mock_fetch.return_value = ["list", "not", "dict"]
-
+    def test_non_dict_response(self):
+        """Non-dict JSON responses are rejected by the payload pipeline."""
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        # This should still work as _fetch_from_cdn returns the data
-        data = session._fetch_json("test.json")
-        assert isinstance(data, list)
+        session._payload_loader.transport = InMemoryTransport(
+            {"test.json": ["list", "not", "dict"]}
+        )
+        with pytest.raises(InvalidDataError, match="Expected dict"):
+            session._fetch_json("test.json")
 
-    @patch("tif1.core.Session._fetch_from_cdn")
-    def test_null_response(self, mock_fetch):
-        """Test handling of null response."""
-        mock_fetch.return_value = None
-
+    def test_null_response(self):
+        """Null responses are rejected by the payload pipeline."""
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        data = session._fetch_json("test.json")
-        assert data is None
+        session._payload_loader.transport = InMemoryTransport({"test.json": None})
+        with pytest.raises(InvalidDataError, match="Expected dict"):
+            session._fetch_json("test.json")
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_empty_drivers_list(self, mock_fetch):
         """Test handling of empty drivers list."""
@@ -49,6 +59,7 @@ class TestFuzzing:
         drivers = session.drivers
         assert drivers == []
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_missing_drivers_key(self, mock_fetch):
         """Test handling of missing drivers key."""
@@ -58,6 +69,7 @@ class TestFuzzing:
         drivers = session.drivers
         assert drivers == []
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_corrupted_lap_data(self, mock_fetch):
         """Test handling of corrupted lap data."""
@@ -75,6 +87,7 @@ class TestFuzzing:
         laps = session.laps
         assert isinstance(laps, pd.DataFrame)
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_empty_telemetry(self, mock_fetch):
         """Test handling of empty telemetry data."""
@@ -85,6 +98,7 @@ class TestFuzzing:
         telemetry = lap.telemetry
         assert len(telemetry) == 0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_mismatched_array_lengths(self, mock_fetch):
         """Test handling of mismatched array lengths."""

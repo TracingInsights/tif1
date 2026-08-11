@@ -1,9 +1,10 @@
 """Additional coverage tests for core module."""
 
+
 import asyncio
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -12,7 +13,6 @@ import tif1.core as core_module
 from tif1.core import (
     Driver,
     LazyTelemetryDict,
-    LRUCache,
     Session,
     _coerce_lap_number,
     _coerce_lap_time,
@@ -28,58 +28,17 @@ from tif1.core import (
     config,
 )
 from tif1.exceptions import DataNotFoundError, InvalidDataError, NetworkError
+from tif1.payload_loader import InMemoryTransport
 
 
-class TestLRUCache:
-    """Test LRUCache class."""
+def _delegate_fast_fetch(self, path):
+    """Route ``_fetch_from_cdn_fast`` through the patched regular fetch seam.
 
-    def test_init(self):
-        cache = LRUCache(maxsize=5)
-        assert cache.maxsize == 5
-        assert len(cache.cache) == 0
-
-    def test_get_miss(self):
-        cache = LRUCache()
-        assert cache.get("missing") is None
-
-    def test_set_and_get(self):
-        cache = LRUCache()
-        cache.set("key1", "value1")
-        assert cache.get("key1") == "value1"
-
-    def test_eviction(self):
-        cache = LRUCache(maxsize=2)
-        cache.set("a", 1)
-        cache.set("b", 2)
-        cache.set("c", 3)
-        assert cache.get("a") is None
-        assert cache.get("b") == 2
-        assert cache.get("c") == 3
-
-    def test_move_to_end_on_get(self):
-        cache = LRUCache(maxsize=2)
-        cache.set("a", 1)
-        cache.set("b", 2)
-        cache.get("a")  # Move "a" to end
-        cache.set("c", 3)  # Should evict "b"
-        assert cache.get("a") == 1
-        assert cache.get("b") is None
-        assert cache.get("c") == 3
-
-    def test_update_existing_key(self):
-        cache = LRUCache(maxsize=2)
-        cache.set("a", 1)
-        cache.set("a", 2)
-        assert cache.get("a") == 2
-        assert len(cache.cache) == 1
-
-    def test_clear(self):
-        cache = LRUCache()
-        cache.set("a", 1)
-        cache.set("b", 2)
-        cache.clear()
-        assert cache.get("a") is None
-        assert cache.get("b") is None
+    Tests patch only ``Session._fetch_from_cdn``; with the ultra-cold fast
+    path being the default, the fast delegate is explicitly redirected to the
+    same mock so both fetch seams hit the test double.
+    """
+    return self._fetch_from_cdn(path)
 
 
 class TestValidateJsonPayload:
@@ -424,7 +383,7 @@ class TestClearLapCache:
     """Test clear_lap_cache."""
 
     def test_clears(self):
-        from tif1.core import _global_lap_cache, _global_lap_cache_polars
+        from tif1.cache import _global_lap_cache, _global_lap_cache_polars
 
         _global_lap_cache.set("test", "value")
         _global_lap_cache_polars.set("test", "value")
@@ -441,7 +400,7 @@ class TestBackendLapCacheIsolation:
     def test_laps_property_uses_backend_specific_cache_when_enabled(self):
         pl = pytest.importorskip("polars")
 
-        from tif1.core import _global_lap_cache, _global_lap_cache_polars
+        from tif1.cache import _global_lap_cache, _global_lap_cache_polars
 
         clear_lap_cache()
         try:
@@ -461,7 +420,7 @@ class TestBackendLapCacheIsolation:
             clear_lap_cache()
 
     def test_laps_property_skips_global_cache_when_disabled(self, monkeypatch):
-        from tif1.core import _global_lap_cache
+        from tif1.cache import _global_lap_cache
 
         clear_lap_cache()
         try:
@@ -556,12 +515,12 @@ class TestSessionInternalMethods:
     def test_mark_session_cache_populated(self):
         session = Session(2025, "Test GP", "Race", enable_cache=True)
         session._mark_session_cache_populated()
-        assert session._cache_has_session_data is True
+        assert session._memo.has_session_data is True
 
     def test_mark_session_cache_not_populated_when_disabled(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         session._mark_session_cache_populated()
-        assert session._cache_has_session_data is None
+        assert session._memo.has_session_data is None
 
     def test_build_driver_laptime_requests_empty_drivers(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
@@ -728,6 +687,7 @@ class TestDriverGetFastestLapTel:
 class TestDriverGetFastestLap:
     """Test Driver.get_fastest_lap with empty laps."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_empty_laps(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
@@ -738,6 +698,7 @@ class TestDriverGetFastestLap:
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_all_invalid_laps(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
@@ -978,152 +939,54 @@ class TestFetchJsonUnvalidated:
 
 
 class TestFetchFromCdnFast:
-    """Test _fetch_from_cdn_fast."""
+    """Test _fetch_from_cdn_fast through the payload loader HTTP seam."""
 
-    def test_successful_fetch(self, monkeypatch):
+    def test_successful_fetch(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return {"data": "value"}
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport({"test.json": {"data": "value"}})
 
         result = session._fetch_from_cdn_fast("test.json")
         assert result == {"data": "value"}
 
-    def test_404_raises_data_not_found(self, monkeypatch):
+    def test_404_raises_data_not_found(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 404
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport()
 
         with pytest.raises(DataNotFoundError):
             session._fetch_from_cdn_fast("test.json")
 
-    def test_non_dict_response_raises_invalid_data(self, monkeypatch):
+    def test_non_dict_response_raises_invalid_data(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return [1, 2, 3]
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport(
+            {"test.json": InvalidDataError(reason="Expected dict, got list")}
+        )
 
         with pytest.raises(InvalidDataError, match="Expected dict"):
             session._fetch_from_cdn_fast("test.json")
 
 
 class TestFetchFromCdn:
-    """Test _fetch_from_cdn with retry logic."""
+    """Test _fetch_from_cdn (with retry logic) through the payload loader HTTP seam."""
 
-    def test_successful_fetch_with_retry(self, monkeypatch):
+    def test_successful_fetch_with_retry(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return {"data": "value"}
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport({"test.json": {"data": "value"}})
 
         result = session._fetch_from_cdn("test.json")
         assert result == {"data": "value"}
 
-    def test_404_raises_data_not_found_with_retry(self, monkeypatch):
+    def test_404_raises_data_not_found_with_retry(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 404
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport()
 
         with pytest.raises(DataNotFoundError):
             session._fetch_from_cdn("test.json")
 
-    def test_non_dict_response_raises_invalid_data_with_retry(self, monkeypatch):
+    def test_non_dict_response_raises_invalid_data_with_retry(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return [1, 2, 3]
-
-            def raise_for_status(self):
-                pass
-
-        class FakeCdnManager:
-            def try_sources(self, _year, _gp, _session_name, _path, fetch_fn):
-                return fetch_fn("http://example.com/test.json")
-
-        def fake_get(url, timeout):
-            return FakeResponse()
-
-        monkeypatch.setattr("tif1.core.get_cdn_manager", lambda: FakeCdnManager())
-        monkeypatch.setattr("tif1.core._get_session", lambda: MagicMock(get=fake_get))
+        session._payload_loader.transport = InMemoryTransport(
+            {"test.json": InvalidDataError(reason="Expected dict, got list")}
+        )
 
         with pytest.raises(InvalidDataError, match="Expected dict"):
             session._fetch_from_cdn("test.json")
@@ -1274,8 +1137,7 @@ class TestCoreHighYieldCoverage:
         assert second == ("VER", 7)
 
         session._laps = None
-        session._fastest_lap_ref = None
-        session._fastest_lap_ref_driver_source_id = None
+        session._memo.set_fastest_lap_ref(None, source_kind="drivers", source_id=None)
         monkeypatch.setattr(
             session,
             "_load_drivers_for_fastest_lap_reference",
@@ -1364,13 +1226,13 @@ class TestCoreHighYieldCoverage:
         )
         assert any(item[0] == "VER" for item in writes if len(item) > 1)
 
-        session._telemetry_payloads = {
-            ("VER", 1): {"time": [0.0, 0.1], "speed": [300.0, 301.0]},
-            ("HAM", 2): {"time": [0.0], "speed": [290.0]},
-        }
+        session._memo.set(
+            "telemetry_payload", ("VER", 1), {"time": [0.0, 0.1], "speed": [300.0, 301.0]}
+        )
+        session._memo.set("telemetry_payload", ("HAM", 2), {"time": [0.0], "speed": [290.0]})
         session._precompute_telemetry_dfs()
-        assert ("VER", 1) in session._telemetry_df_cache
-        assert ("HAM", 2) in session._telemetry_df_cache
+        assert session._memo.contains("telemetry_df", ("VER", 1))
+        assert session._memo.contains("telemetry_df", ("HAM", 2))
 
         started = []
 

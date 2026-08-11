@@ -1,10 +1,12 @@
 """Tests for connection pool exhaustion handling."""
 
 from concurrent.futures import Future
+from types import MethodType
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tif1.cdn import CDNManager
 from tif1.exceptions import NetworkError
 
 
@@ -66,6 +68,9 @@ async def test_pool_exhaustion_retry_with_backoff():
         mock_cdn_source.name = "test-cdn"
         mock_cdn_source.format_url.return_value = "https://test.com/data.json"
         mock_cdn_manager.return_value.get_sources.return_value = [mock_cdn_source]
+        mock_cdn_manager.return_value.try_sources_async = MethodType(
+            CDNManager.try_sources_async, mock_cdn_manager.return_value
+        )
 
         # Mock circuit breaker
         mock_cb.return_value.check_and_update_state.return_value = (True, "closed")
@@ -169,6 +174,9 @@ async def test_pool_exhaustion_logged_as_warning():
         mock_cdn_source.name = "test-cdn"
         mock_cdn_source.format_url.return_value = "https://test.com/data.json"
         mock_cdn_manager.return_value.get_sources.return_value = [mock_cdn_source]
+        mock_cdn_manager.return_value.try_sources_async = MethodType(
+            CDNManager.try_sources_async, mock_cdn_manager.return_value
+        )
 
         mock_cb.return_value.check_and_update_state.return_value = (True, "closed")
 
@@ -242,6 +250,9 @@ async def test_pool_exhaustion_multiple_cdns():
         mock_cdn2.format_url.return_value = "https://cdn2.com/data.json"
 
         mock_cdn_manager.return_value.get_sources.return_value = [mock_cdn1, mock_cdn2]
+        mock_cdn_manager.return_value.try_sources_async = MethodType(
+            CDNManager.try_sources_async, mock_cdn_manager.return_value
+        )
 
         mock_cb.return_value.check_and_update_state.return_value = (True, "closed")
 
@@ -337,6 +348,9 @@ async def test_non_pool_errors_no_extra_backoff():
         mock_cdn2.format_url.return_value = "https://cdn2.com/data.json"
 
         mock_cdn_manager.return_value.get_sources.return_value = [mock_cdn1, mock_cdn2]
+        mock_cdn_manager.return_value.try_sources_async = MethodType(
+            CDNManager.try_sources_async, mock_cdn_manager.return_value
+        )
 
         mock_cb.return_value.check_and_update_state.return_value = (True, "closed")
 

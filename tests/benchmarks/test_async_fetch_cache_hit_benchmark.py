@@ -1,7 +1,6 @@
 """Benchmarks for async_fetch cache-hit path."""
 
 import asyncio
-import json
 
 import pytest
 
@@ -11,12 +10,8 @@ from tif1.cache import Cache
 
 
 def _memory_lookup(cache: Cache, cache_key: str):
-    json_data = None
-    with cache._memory_cache_lock:
-        json_data = cache._memory_cache.get(cache_key)
-        if json_data is not None:
-            cache._memory_cache.move_to_end(cache_key)
-    return json.loads(json_data) if json_data is not None else None
+    """Memory-tier fast path, as used by async_fetch.fetch_json_async."""
+    return cache._get_from_memory(cache_key)
 
 
 async def _legacy_fetch_cache_hit(cache: Cache, cache_key: str):

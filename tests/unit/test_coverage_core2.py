@@ -1,5 +1,6 @@
 """Additional core.py coverage tests - Session methods and Driver/Lap paths."""
 
+
 from unittest.mock import patch
 
 import pandas as pd
@@ -13,6 +14,16 @@ from tif1.core import (
     _validate_json_payload,
 )
 from tif1.exceptions import DataNotFoundError, InvalidDataError
+
+
+def _delegate_fast_fetch(self, path):
+    """Route ``_fetch_from_cdn_fast`` through the patched regular fetch seam.
+
+    Tests patch only ``Session._fetch_from_cdn``; with the ultra-cold fast
+    path being the default, the fast delegate is explicitly redirected to the
+    same mock so both fetch seams hit the test double.
+    """
+    return self._fetch_from_cdn(path)
 
 
 class TestEnsureNestedLoopSupport:
@@ -239,6 +250,7 @@ class TestValidateJsonPayloadDrivers:
 class TestSessionFetchJson:
     """Test Session._fetch_json with various scenarios."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_caches_result_in_local_payloads(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER"}]}
@@ -246,6 +258,7 @@ class TestSessionFetchJson:
         session._fetch_json("drivers.json")
         assert session._get_local_payload("drivers.json") is not None
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_uses_local_payload(self, mock_fetch):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
@@ -258,6 +271,7 @@ class TestSessionFetchJson:
 class TestSessionDriversProperty:
     """Test Session.drivers property edge cases."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_empty_list(self, mock_fetch):
         mock_fetch.return_value = {}
@@ -265,6 +279,7 @@ class TestSessionDriversProperty:
         drivers = session.drivers
         assert drivers == []
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_cached_on_second_access(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
@@ -280,6 +295,7 @@ class TestSessionDriversProperty:
 class TestSessionRaceControlAndWeather:
     """Test session-level race control and weather data accessors."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_race_control_messages_property(self, mock_fetch):
         mock_fetch.side_effect = lambda path: (
@@ -340,6 +356,7 @@ class TestSessionRaceControlAndWeather:
         assert result["Category"].iloc[0] == "Flag"
         assert result["RacingNumber"].iloc[1] == "43"
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_weather_property(self, mock_fetch):
         mock_fetch.side_effect = lambda path: (
@@ -373,6 +390,7 @@ class TestSessionLapsProperty:
     """Test Session.laps property."""
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property_caches_globally(self, mock_fetch, mock_async):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
@@ -389,6 +407,7 @@ class TestSessionGetFastestLapFromRaw:
     """Test _get_fastest_laps_from_raw."""
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fastest_laps_from_raw_by_driver(self, mock_fetch, mock_async):
         mock_fetch.return_value = {
@@ -406,6 +425,7 @@ class TestSessionGetFastestLapFromRaw:
         assert isinstance(result, pd.DataFrame)
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fastest_laps_from_raw_overall(self, mock_fetch, mock_async):
         mock_fetch.return_value = {
@@ -473,6 +493,7 @@ class TestSessionGetFastestLapTel:
     """Test get_fastest_lap_tel."""
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_returns_empty_when_no_drivers(self, mock_fetch, mock_async):
         mock_fetch.return_value = {"drivers": []}
@@ -486,9 +507,7 @@ class TestSessionGetFastestLapTel:
         cached_df = pd.DataFrame({"Speed": [100, 200]})
         session._fastest_lap_tel_ref = ("VER", 1)
         session._fastest_lap_tel_df = cached_df
-        session._fastest_lap_ref = ("VER", 1)
-        session._fastest_lap_ref_laps_source_id = None
-        session._fastest_lap_ref_driver_source_id = None
+        session._memo.set_fastest_lap_ref(("VER", 1), source_kind="drivers", source_id=None)
 
         with patch.object(session, "_get_fastest_lap_reference", return_value=("VER", 1)):
             result = session.get_fastest_lap_tel()
@@ -580,9 +599,21 @@ class TestDriverLapsProperty:
 class TestDriverLoadLaps:
     """Test Driver._load_laps."""
 
+    @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
-    def test_load_laps_standard(self, mock_fetch):
-        mock_fetch.return_value = {"time": [90.5], "lap": [1]}
+    def test_load_laps_standard(self, mock_fetch, mock_async):
+        laptime_payload = {"time": [90.5], "lap": [1]}
+        mock_fetch.return_value = laptime_payload
+
+        async def fake_fetch_multiple(requests, *_args, **_kwargs):
+            return [
+                None if request[3] == "session_laptimes.json" else laptime_payload
+                for request in requests
+            ]
+
+        mock_async.side_effect = fake_fetch_multiple
+
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         result = driver._load_laps()
@@ -592,6 +623,7 @@ class TestDriverLoadLaps:
 class TestLapFetchTelemetry:
     """Test Lap._fetch_telemetry."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_telemetry_standard(self, mock_fetch):
         mock_fetch.return_value = {"tel": {"speed": [100], "time": [0]}}
@@ -601,6 +633,7 @@ class TestLapFetchTelemetry:
         assert isinstance(result, dict)
         assert "speed" in result
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_telemetry_non_dict_tel(self, mock_fetch):
         mock_fetch.return_value = {"tel": "invalid"}
@@ -687,6 +720,7 @@ class TestGetFastestLapReference:
 class TestSessionDriversDf:
     """Test Session.drivers_df property with all columns."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_all_columns_present(self, mock_fetch):
         """Test that drivers_df returns all expected columns."""
@@ -718,6 +752,7 @@ class TestSessionDriversDf:
         ]
         assert list(df.columns) == expected_columns
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_column_values(self, mock_fetch):
         """Test that drivers_df correctly maps all column values."""
@@ -764,6 +799,7 @@ class TestSessionDriversDf:
         assert df.iloc[1]["TeamColor"] == "#6CD3BF"
         assert df.iloc[1]["HeadshotUrl"] == "https://example.com/ham.png"
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_all_fields(self, mock_fetch):
         """Test that drivers_df maps all fields from new schema."""
@@ -791,6 +827,7 @@ class TestSessionDriversDf:
         assert df.iloc[0]["TeamColor"] == "#F91536"
         assert df.iloc[0]["HeadshotUrl"] == "https://example.com/lec.png"
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_missing_optional_fields(self, mock_fetch):
         """Test that drivers_df handles missing optional fields gracefully."""
@@ -813,6 +850,7 @@ class TestSessionDriversDf:
         assert df.iloc[0]["TeamColor"] == ""
         assert df.iloc[0]["HeadshotUrl"] == ""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_empty_drivers_list(self, mock_fetch):
         """Test that drivers_df returns empty DataFrame with correct columns."""
@@ -832,6 +870,7 @@ class TestSessionDriversDf:
         ]
         assert list(df.columns) == expected_columns
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_no_drivers_key(self, mock_fetch):
         """Test that drivers_df handles missing drivers key."""
@@ -851,6 +890,7 @@ class TestSessionDriversDf:
         ]
         assert list(df.columns) == expected_columns
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_skips_invalid_entries(self, mock_fetch):
         """Test that drivers_df skips non-dict entries."""
@@ -870,6 +910,7 @@ class TestSessionDriversDf:
         assert df.iloc[0]["Driver"] == "VER"
         assert df.iloc[1]["Driver"] == "HAM"
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_df_multiple_drivers_complete(self, mock_fetch):
         """Test drivers_df with multiple drivers and all fields."""

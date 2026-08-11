@@ -124,6 +124,13 @@ def _assert_memory_within_limit(peak_memory: int, n_rows: int, bytes_per_row: in
         tolerance = 2.5  # Large datasets should be close to 2N
 
     max_allowed_memory = bytes_per_row * n_rows * tolerance
+    if n_rows < 500:
+        # A multiplicative tolerance cannot absorb the fixed tracemalloc / DataFrame
+        # block-manager overhead (a few hundred KB, pandas- and platform-version
+        # dependent), which dominates the 4N budget at tiny row counts. Add an
+        # explicit fixed-overhead allowance: still catches genuine copy blowups
+        # (which scale with copies, not rows) while ignoring version noise.
+        max_allowed_memory = max(max_allowed_memory, 512 * 1024)
     assert peak_memory <= max_allowed_memory, (
         f"Peak memory {peak_memory} exceeds {tolerance}N limit {max_allowed_memory} (n_rows={n_rows})"
     )

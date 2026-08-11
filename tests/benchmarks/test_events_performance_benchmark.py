@@ -43,7 +43,9 @@ class TestEventsBenchmarks:
         """Benchmark cached events lookup."""
         get_events(2025)  # warm cache
         result = benchmark(get_events, 2025)
-        assert result
+        # get_events returns an EventSchedule (a DataFrame subclass): truthiness
+        # of a DataFrame is ambiguous, so assert on emptiness explicitly.
+        assert not result.empty
 
     def test_benchmark_get_sessions_legacy_build(self, benchmark):
         """Benchmark legacy per-call sessions construction."""

@@ -1,8 +1,11 @@
 """Unit tests for HTTP session initialization and resource cleanup."""
 
+from types import MethodType
 from unittest.mock import Mock, patch
 
 import pytest
+
+from tif1.cdn import CDNManager
 
 
 def test_session_creation_releases_resources_on_failure():
@@ -223,6 +226,9 @@ def test_request_timeout_handling():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     mock_cdn.return_value = cdn_manager
 
                     with patch("tif1.retry.get_circuit_breaker") as mock_cb:
@@ -285,6 +291,9 @@ def test_retry_logic_with_exponential_backoff():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     mock_cdn.return_value = cdn_manager
 
                     with patch("tif1.retry.get_circuit_breaker") as mock_cb:
@@ -347,6 +356,9 @@ def test_circuit_breaker_integration_open_state():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     mock_cdn.return_value = cdn_manager
 
                     with patch("tif1.retry.get_circuit_breaker") as mock_cb:
@@ -403,6 +415,9 @@ def test_circuit_breaker_integration_half_open_state():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     cdn_manager.mark_success = Mock()
                     mock_cdn.return_value = cdn_manager
 
@@ -466,6 +481,9 @@ def test_circuit_breaker_records_failures():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     cdn_manager.mark_failure = Mock()
                     mock_cdn.return_value = cdn_manager
 
@@ -531,6 +549,9 @@ def test_http_error_status_codes_trigger_retry():
                         cdn_source.name = "test-cdn"
                         cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                         cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                        cdn_manager.try_sources_async = MethodType(
+                            CDNManager.try_sources_async, cdn_manager
+                        )
                         cdn_manager.mark_failure = Mock()
                         mock_cdn.return_value = cdn_manager
 
@@ -589,6 +610,9 @@ def test_connection_pool_exhaustion_handling():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     cdn_manager.mark_failure = Mock()
                     mock_cdn.return_value = cdn_manager
 
@@ -648,6 +672,9 @@ def test_successful_request_records_circuit_breaker_success():
                     cdn_source.name = "test-cdn"
                     cdn_source.format_url = Mock(return_value="https://test.com/data.json")
                     cdn_manager.get_sources = Mock(return_value=[cdn_source])
+                    cdn_manager.try_sources_async = MethodType(
+                        CDNManager.try_sources_async, cdn_manager
+                    )
                     cdn_manager.mark_success = Mock()
                     mock_cdn.return_value = cdn_manager
 

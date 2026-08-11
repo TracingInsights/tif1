@@ -85,7 +85,7 @@ def test_fetch_telemetry_batch_semantics_match_legacy(monkeypatch):
     cache = _StubCache(cached=cached_data)
     monkeypatch.setattr("tif1.core.get_cache", lambda: cache)
     # Mark cache as available so the new implementation will use it
-    session._cache_has_session_data = True
+    session._memo.has_session_data = True
 
     legacy_requests, legacy_lap_info, legacy_tels = _legacy_fetch_telemetry_batch(
         session, fastest_laps, cache

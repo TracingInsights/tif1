@@ -1,5 +1,6 @@
 """Unit tests for tif1 core functionality."""
 
+
 import asyncio
 from typing import ClassVar, cast
 from unittest.mock import patch
@@ -23,6 +24,16 @@ from tif1.exceptions import (
 )
 
 
+def _delegate_fast_fetch(self, path):
+    """Route ``_fetch_from_cdn_fast`` through the patched regular fetch seam.
+
+    Tests patch only ``Session._fetch_from_cdn``; with the ultra-cold fast
+    path being the default, the fast delegate is explicitly redirected to the
+    same mock so both fetch seams hit the test double.
+    """
+    return self._fetch_from_cdn(path)
+
+
 class TestSession:
     """Test Session class."""
 
@@ -33,6 +44,7 @@ class TestSession:
         assert "Abu%20Dhabi" in session.gp
         assert "Practice%201" in session.session
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_success(self, mock_fetch):
         """Test successful JSON fetch."""
@@ -42,6 +54,7 @@ class TestSession:
         data = session._fetch_json("drivers.json")
         assert isinstance(data, dict)
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_404(self, mock_fetch):
         """Test 404 error handling."""
@@ -63,6 +76,7 @@ class TestSession:
 class TestDriver:
     """Test Driver class."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_driver_init(self, mock_fetch):
         """Test driver initialization."""
@@ -155,6 +169,7 @@ class TestGetSession:
 class TestSessionAdvanced:
     """Advanced Session tests."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_network_error(self, mock_fetch):
         """Test network error handling with retries."""
@@ -164,6 +179,7 @@ class TestSessionAdvanced:
         with pytest.raises(NetworkError):
             session._fetch_json("test.json")
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_invalid_data(self, mock_fetch):
         """Test invalid data error."""
@@ -173,6 +189,7 @@ class TestSessionAdvanced:
         with pytest.raises(InvalidDataError):
             session._fetch_json("test.json")
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_property(self, mock_fetch):
         """Test drivers property."""
@@ -186,6 +203,7 @@ class TestSessionAdvanced:
         drivers2 = session.drivers
         assert drivers == drivers2
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_property_empty(self, mock_fetch):
         """Test drivers property with empty data."""
@@ -195,16 +213,31 @@ class TestSessionAdvanced:
         drivers = session.drivers
         assert len(drivers) == 0
 
+    @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
-    def test_laps_property_pandas(self, mock_fetch):
+    def test_laps_property_pandas(self, mock_fetch, mock_async):
         """Test laps property with pandas lib."""
+        laptime_payload = {
+            "time": [90.5],
+            "lap": [1],
+            "compound": ["SOFT"],
+            "status": ["Valid"],
+        }
 
         def side_effect(path):
             if "drivers.json" in path:
                 return {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
-            return {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]}
+            return laptime_payload
+
+        async def fake_fetch_multiple(requests, *_args, **_kwargs):
+            return [
+                None if request[3] == "session_laptimes.json" else laptime_payload
+                for request in requests
+            ]
 
         mock_fetch.side_effect = side_effect
+        mock_async.side_effect = fake_fetch_multiple
 
         session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
         laps = session.laps
@@ -213,6 +246,7 @@ class TestSessionAdvanced:
         assert "LapTime" in laps.columns
         assert "LapNumber" in laps.columns
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property_error_handling(self, mock_fetch):
         """Test laps property with error handling."""
@@ -231,6 +265,7 @@ class TestSessionAdvanced:
         assert isinstance(laps, pd.DataFrame)
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_async(self, mock_fetch, mock_fetch_async):
         """Test async laps loading."""
@@ -244,6 +279,7 @@ class TestSessionAdvanced:
         assert isinstance(laps, pd.DataFrame)
 
     @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_async_polars_relaxed_concat(self, mock_fetch, mock_fetch_async):
         """Polars laps async should tolerate mixed source dtypes across drivers."""
@@ -305,6 +341,7 @@ class TestSessionAdvanced:
         assert set(laps["Driver"]) == {"VER", "HAM"}
         assert mock_fetch_multiple.call_count == 1
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_fastest_laps_pandas(self, mock_fetch):
         """Test get_fastest_laps with pandas."""
@@ -329,6 +366,7 @@ class TestSessionAdvanced:
         fastest = session.get_fastest_laps(by_driver=True)
         assert len(fastest) == 0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_driver(self, mock_fetch):
         """Test get_driver method."""
@@ -474,8 +512,9 @@ class TestSessionAdvanced:
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
-        session._fastest_lap_ref = ("VER", 7)
-        session._fastest_lap_ref_driver_source_id = id(session._drivers)
+        session._memo.set_fastest_lap_ref(
+            ("VER", 7), source_kind="drivers", source_id=id(session._drivers)
+        )
 
         tel = asyncio.run(session.get_fastest_lap_tel_async())
 
@@ -513,6 +552,7 @@ class TestSessionAdvanced:
         assert int(tels.iloc[0]["LapNumber"]) == 2
         assert mock_fetch_multiple.call_count == 1
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_driver_not_found_when_drivers_not_preloaded(self, mock_fetch):
         """Test get_driver raises after lazy-loading drivers when code is missing."""
@@ -544,6 +584,7 @@ class TestSessionAdvanced:
 class TestDriverAdvanced:
     """Advanced Driver tests."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property(self, mock_fetch):
         """Test driver laps property."""
@@ -559,6 +600,7 @@ class TestDriverAdvanced:
         laps = driver.laps
         assert isinstance(laps, pd.DataFrame)
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property_reuses_loaded_session_laps(self, mock_fetch):
         """Driver.laps should reuse in-memory session laps when already available."""
@@ -581,6 +623,7 @@ class TestDriverAdvanced:
         assert not laps.empty
         assert set(laps["Driver"]) == {"VER"}
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property_error(self, mock_fetch):
         """Test driver laps property with error."""
@@ -598,6 +641,7 @@ class TestDriverAdvanced:
         assert isinstance(laps, pd.DataFrame)
         assert len(laps) == 0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_fastest_lap(self, mock_fetch):
         """Test driver get_fastest_lap."""
@@ -609,15 +653,26 @@ class TestDriverAdvanced:
         fastest = driver.get_fastest_lap()
         assert len(fastest) == 1
 
+    @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
-    def test_get_lap(self, mock_fetch):
+    def test_get_lap(self, mock_fetch, mock_async):
         """Test driver get_lap method."""
-        mock_fetch.return_value = {
+        laptime_payload = {
             "time": [90.5],
             "lap": [19],
             "compound": ["SOFT"],
             "status": ["Valid"],
         }
+        mock_fetch.return_value = laptime_payload
+
+        async def fake_fetch_multiple(requests, *_args, **_kwargs):
+            return [
+                None if request[3] == "session_laptimes.json" else laptime_payload
+                for request in requests
+            ]
+
+        mock_async.side_effect = fake_fetch_multiple
 
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         driver = Driver(session, "VER")
@@ -625,6 +680,7 @@ class TestDriverAdvanced:
         assert isinstance(lap, Lap)
         assert lap.lap_number == 19
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_lap_missing_raises_when_laps_loaded(self, mock_fetch):
         """Test get_lap raises when lap is not present in preloaded laps."""
@@ -636,6 +692,7 @@ class TestDriverAdvanced:
         with pytest.raises(LapNotFoundError):
             driver.get_lap(4)
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_get_lap_rebuilds_lookup_when_laps_replaced(self, mock_fetch):
         """Test get_lap lookup is rebuilt when _laps DataFrame is replaced."""
@@ -671,6 +728,7 @@ class TestDriverAdvanced:
 class TestLapAdvanced:
     """Advanced Lap tests."""
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_telemetry_property(self, mock_fetch):
         """Test lap telemetry property."""
@@ -710,6 +768,7 @@ class TestLapAdvanced:
         assert not telemetry.empty
         assert cache_probe.calls == 0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_telemetry_property_empty(self, mock_fetch):
         """Test lap telemetry property with empty data."""
@@ -720,6 +779,7 @@ class TestLapAdvanced:
         telemetry = lap.telemetry
         assert isinstance(telemetry, pd.DataFrame)
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_telemetry_property_error(self, mock_fetch):
         """Test lap telemetry property with error."""
@@ -744,6 +804,7 @@ class TestCircuitInfo:
         "Rotation": 1.0,
     }
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_basic(self, mock_fetch):
         """Corners DataFrame has correct columns, dtypes and rotation."""
@@ -768,6 +829,7 @@ class TestCircuitInfo:
         assert ci.corners["Number"].tolist() == [1, 2, 3]
         assert ci.rotation == 1.0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_none_values(self, mock_fetch):
         """'None' string sentinels are coerced to NaN for floats."""
@@ -792,6 +854,7 @@ class TestCircuitInfo:
         assert math.isnan(ci.corners["Distance"].iloc[1])
         assert ci.rotation == 0.0  # "None" → 0.0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_not_found(self, mock_fetch):
         """DataNotFoundError yields empty DataFrames and rotation=0.0."""
@@ -805,6 +868,7 @@ class TestCircuitInfo:
         assert list(ci.corners.columns) == ["X", "Y", "Number", "Letter", "Angle", "Distance"]
         assert ci.rotation == 0.0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_caching(self, mock_fetch):
         """get_circuit_info() returns cached result on second call."""
@@ -817,6 +881,7 @@ class TestCircuitInfo:
         assert ci1 is ci2  # same object
         assert mock_fetch.call_count == 1  # fetched only once
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_marshal_dfs_empty(self, mock_fetch):
         """marshal_lights and marshal_sectors are always empty with correct columns."""
@@ -838,6 +903,7 @@ class TestCircuitInfo:
         assert hasattr(tif1, "CircuitInfo")
         from tif1 import CircuitInfo  # noqa: F401
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_empty_payload(self, mock_fetch):
         """An empty dict payload returns empty corners with rotation=0.0."""
@@ -849,6 +915,7 @@ class TestCircuitInfo:
         assert len(ci.corners) == 0
         assert ci.rotation == 0.0
 
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_circuit_info_letter_column_empty_string(self, mock_fetch):
         """Letter column is always an empty string (not present in our data source)."""

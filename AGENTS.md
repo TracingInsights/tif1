@@ -14,11 +14,13 @@ Build/lint/test:
 
 Architecture:
 - Library source in `src/tif1/`; public API via lazy `__getattr__` exports in `__init__.py`.
-- `core.py` is the monolith (~4900 lines): Session class, data loading, lap/telemetry/weather/race-control parsing, driver model classes (Laps, Lap, Driver, Telemetry, SessionResults, CircuitInfo, DriverResult).
-- `session.py` and `models.py` are thin re-export shims pointing into `core.py`.
-- `io_pipeline.py` re-exports internal helpers from `core.py` (_create_lap_df, _create_session_df, etc.).
-- HTTP via `http_session.py` (niquests session) + `async_fetch.py` (async parallel fetching with niquests).
-- Cache in `cache.py` (SQLite-backed); CDN fallback in `cdn.py` (StaticDelivr primary, jsDelivr fallback, never raw.githubusercontent.com).
+- `core.py` is the monolith (~4200 lines): Session class, data loading, lap/telemetry/weather/race-control parsing; re-exports the model family for backward compatibility (`tif1.core.Laps` etc. are aliases of the `tif1.models` classes). Its fetch seams `Session._fetch_from_cdn(_fast)`/`_fetch_json(_unvalidated)` are thin delegates into `payload_loader.py`, kept as one override seam for older tests.
+- `models.py` is the canonical model module: `Laps`, `Lap`, `Telemetry`, `Driver`, `SessionResults`, `DriverResult`, `CircuitInfo`, `LazyTelemetryDict`, plus the `TelemetryProvider` protocol — the narrow (mostly private) session seam the models consume. `Session` satisfies it structurally; tests can use in-memory fakes. `models.py` must never import `core.py` at runtime (import cycle).
+- `session.py` is a thin re-export shim pointing into `core.py`.
+- `io_pipeline.py` and `lap_ops.py` were removed (pass-through shims); internal helpers live in `core.py`/`core_utils/`.
+- `payload_loader.py` is the single payload-loading pipeline: `PayloadLoader.get` (session memo -> SQLite cache -> fetch -> validate -> memo/cache write-back), `fetch_from_cdn(path, fast=)` (retry/backoff unless `fast`), async `get_many` (delegates to `fetch_multiple_async`), and `get_url` + thread-safe `get_url_loader()` for absolute-URL payloads (used by `events.py`). HTTP goes through injectable `HttpTransport` implementations (`NiquestsTransport` in production, `InMemoryTransport` in tests). Validation failures always raise — no patched-callable escape hatch (the old `__code__`-sniffing test-compat machinery was removed).
+- HTTP via `http_session.py` (niquests session) + `async_fetch.py` (async parallel fetching with niquests); sync and async payload entry points share the CDN fallback loops owned by `cdn.py` (`CDNManager.try_sources` / `try_sources_async`).
+- Cache in `cache.py` (all tiers: `LRUCache` (the single LRU impl), SQLite `Cache` with kind-based `get_entry`/`set_entry`/`invalidate`, process-global backend lap caches `get_backend_lap_cache`/`clear_lap_cache`, and the per-session `SessionMemo` tier held as `Session._memo`); CDN fallback in `cdn.py` (StaticDelivr primary, jsDelivr fallback, never raw.githubusercontent.com).
 - Config in `config.py` (singleton Config class, env vars + `.tif1rc` file support).
 - Retry/circuit-breaker in `retry.py`; event schedule in `events.py` + `schedule_schema.py`.
 - Validation (pydantic) in `validation.py`; errors in `exceptions.py` (hierarchy rooted at `TIF1Error`).

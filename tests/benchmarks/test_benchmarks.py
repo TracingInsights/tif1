@@ -40,7 +40,13 @@ class TestBenchmarks:
 
     def test_benchmark_session_laps_sync(self, benchmark, mock_session_data, mock_lap_data):
         """Benchmark synchronous lap loading."""
-        with patch("tif1.core.Session._fetch_from_cdn") as mock_fetch:
+        with (
+            patch("tif1.core.Session._fetch_from_cdn") as mock_fetch,
+            patch(
+                "tif1.core.Session._fetch_from_cdn_fast",
+                new=lambda self, path: Session._fetch_from_cdn(self, path),
+            ),
+        ):
             mock_fetch.return_value = mock_session_data
 
             with patch("tif1.core.fetch_multiple_async") as mock_async:
@@ -55,7 +61,13 @@ class TestBenchmarks:
 
     def test_benchmark_session_laps_async(self, benchmark, mock_session_data, mock_lap_data):
         """Benchmark asynchronous lap loading."""
-        with patch("tif1.core.Session._fetch_from_cdn") as mock_fetch:
+        with (
+            patch("tif1.core.Session._fetch_from_cdn") as mock_fetch,
+            patch(
+                "tif1.core.Session._fetch_from_cdn_fast",
+                new=lambda self, path: Session._fetch_from_cdn(self, path),
+            ),
+        ):
             mock_fetch.return_value = mock_session_data
 
             with patch("tif1.core.fetch_multiple_async") as mock_async:

@@ -416,88 +416,16 @@ async def fetch_json_async(
     use_jitter = config.get("retry_jitter", True)
     max_delay = config.get("max_retry_delay", 60.0)
 
-    # Fast path for zero-retry mode (ultra-cold start optimization)
-    if max_retries == 0:
-        cdn_sources = cdn_manager.get_sources()
-        if not cdn_sources:
-            raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+    async def _fetch_from_source(cdn_source, url: str, attempt_num: int) -> dict[str, Any]:
+        """Fetch, parse, validate, and cache one payload from a single CDN URL.
 
-        # Try first CDN only, no retries
-        cdn_source = cdn_sources[0]
+        Implements the per-source work for the CDN fallback loop owned by
+        :meth:`tif1.cdn.CDNManager.try_sources_async`: fatal errors
+        (DataNotFoundError, InvalidDataError) abort the loop, transport
+        errors fall through to the next source. Retry/backoff policy across
+        attempts stays here (circuit breaker, pool-exhaustion backoff).
+        """
         try:
-            url = cdn_source.format_url(year, gp, session, path)
-            response = await loop.run_in_executor(
-                executor, partial(session_client.get, url, timeout=timeout)
-            )
-
-            from .http_session import _track_request
-
-            _track_request(reused=True)
-
-            if response.status_code == 404:
-                raise DataNotFoundError(year=year, event=gp, session=session)
-
-            response.raise_for_status()
-
-            content = getattr(response, "content", None)
-            if isinstance(content, bytes | bytearray | memoryview):
-                data = json_loads(content)
-            else:
-                data = await loop.run_in_executor(executor, parse_response_json, response)
-
-            if not isinstance(data, dict):
-                raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
-
-            if validate_payload:
-                data = _validate_json_payload(path, data, config)
-
-            if write_cache and cache is not None:
-                await loop.run_in_executor(executor, cache.set, cache_key, data)
-
-            return data
-        except (DataNotFoundError, InvalidDataError):
-            raise
-        except Exception as e:
-            # Try remaining CDNs without delay
-            for cdn_source in cdn_sources[1:]:
-                try:
-                    url = cdn_source.format_url(year, gp, session, path)
-                    response = await loop.run_in_executor(
-                        executor, partial(session_client.get, url, timeout=timeout)
-                    )
-                    _track_request(reused=True)
-
-                    if response.status_code == 404:
-                        raise DataNotFoundError(year=year, event=gp, session=session)
-
-                    response.raise_for_status()
-
-                    content = getattr(response, "content", None)
-                    if isinstance(content, bytes | bytearray | memoryview):
-                        data = json_loads(content)
-                    else:
-                        data = await loop.run_in_executor(executor, parse_response_json, response)
-
-                    if not isinstance(data, dict):
-                        continue
-
-                    if validate_payload:
-                        data = _validate_json_payload(path, data, config)
-
-                    if write_cache and cache is not None:
-                        await loop.run_in_executor(executor, cache.set, cache_key, data)
-
-                    return data
-                except Exception:
-                    continue
-
-            raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None) from e
-
-    async def _try_cdn(cdn_source, attempt_num):
-        """Try fetching from a single CDN source."""
-        try:
-            url = cdn_source.format_url(year, gp, session, path)
-
             response = await loop.run_in_executor(
                 executor, partial(session_client.get, url, timeout=timeout)
             )
@@ -540,15 +468,13 @@ async def fetch_json_async(
             if write_cache and cache is not None:
                 await loop.run_in_executor(executor, cache.set, cache_key, data)
 
-            cdn_manager.mark_success(cdn_source.name)
             circuit_breaker.record_success()
 
             logger.debug(f"Fetched: {cache_key} from {cdn_source.name}")
-            return data, None
-
-        except (DataNotFoundError, InvalidDataError) as e:
-            # Fatal errors - don't retry
-            return None, e
+            return data
+        except (DataNotFoundError, InvalidDataError):
+            # Fatal errors - no fallback, no retry.
+            raise
         except (
             niquests.RequestException,
             niquests.exceptions.HTTPError,
@@ -565,28 +491,18 @@ async def fetch_json_async(
                     "Disabling CDN %s after multiplexing redirect incompatibility",
                     cdn_source.name,
                 )
-                return None, e
+                raise
 
-            # Check if this is a pool exhaustion error
-            is_pool_exhaustion = False
+            # Connection pool exhaustion gets an immediate per-attempt backoff.
             error_msg = str(e).lower()
             if any(
                 keyword in error_msg
                 for keyword in ["pool", "connection pool", "max retries", "pool timeout"]
             ):
-                is_pool_exhaustion = True
                 logger.warning(
                     f"Connection pool exhaustion detected for {cdn_source.name}: {e}. "
                     f"Will retry with backoff."
                 )
-
-            logger.warning(f"CDN {cdn_source.name} failed: {type(e).__name__}: {e}")
-
-            if not (hasattr(e, "response") and getattr(e.response, "status_code", None) == 404):
-                cdn_manager.mark_failure(cdn_source.name)
-
-            # For pool exhaustion, add immediate backoff
-            if is_pool_exhaustion:
                 pool_backoff_base = config.get("pool_exhaustion_backoff_base", 0.5)
                 pool_backoff_max = config.get("pool_exhaustion_backoff_max", 5.0)
                 pool_backoff_jitter = config.get("pool_exhaustion_backoff_jitter", 0.5)
@@ -596,46 +512,44 @@ async def fetch_json_async(
                 logger.debug(f"Pool exhaustion backoff: {pool_backoff:.2f}s")
                 await asyncio.sleep(pool_backoff)
 
-            return None, e
+            raise
 
-    last_error = None
+    # Zero-retry (ultra-cold) mode is a single attempt through the same loop.
+    attempts = max(1, max_retries)
+    jitter_max = config.get("retry_jitter_max", 1.0)
+    last_error: NetworkError | None = None
 
-    for attempt in range(max_retries):
+    for attempt in range(attempts):
         should_proceed, _cb_state = circuit_breaker.check_and_update_state()
         if not should_proceed:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
-        cdn_sources = cdn_manager.get_sources()
-        if not cdn_sources:
-            raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
-
-        had_retryable_error = False
-        for cdn_source in cdn_sources:
-            data, error = await _try_cdn(cdn_source, attempt)
-            if data is not None:
-                return data
-            if isinstance(error, DataNotFoundError | InvalidDataError):
-                # Fatal error - raise immediately
-                raise error
-            if error is not None:
-                last_error = error
-                had_retryable_error = True
-
-        if had_retryable_error:
+        try:
+            return await cdn_manager.try_sources_async(
+                year,
+                gp,
+                session,
+                path,
+                partial(_fetch_from_source, attempt_num=attempt),
+            )
+        except (DataNotFoundError, InvalidDataError):
+            # Fatal errors - raise immediately
+            raise
+        except NetworkError as e:
+            # Every CDN source failed this attempt; back off and retry.
+            last_error = e
             circuit_breaker.record_failure()
 
-        # All CDNs failed, retry with backoff
-        if attempt < max_retries - 1:
+        if attempt < attempts - 1:
             delay = min(backoff_factor**attempt, max_delay)
             if use_jitter:
-                jitter_max = config.get("retry_jitter_max", 1.0)
                 delay += random.uniform(0, jitter_max)
-            logger.warning(f"All CDNs failed, retry {attempt + 1}/{max_retries} after {delay:.2f}s")
+            logger.warning(f"All CDNs failed, retry {attempt + 1}/{attempts} after {delay:.2f}s")
             await asyncio.sleep(delay)
 
     raise NetworkError(
         url=f"{year}/{gp}/{session}/{path}",
-        status_code=getattr(getattr(last_error, "response", None), "status_code", None),
+        status_code=getattr(last_error, "status_code", None),
     )
 
 

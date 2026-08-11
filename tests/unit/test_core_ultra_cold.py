@@ -1,5 +1,6 @@
 """Tests for ultra-cold startup behavior in core Session."""
 
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -10,6 +11,14 @@ import tif1.core as core_module
 from tif1.core import Driver, Lap, Session
 
 
+def _delegate_fast_fetch(self, path):
+    """Route ``_fetch_from_cdn_fast`` through the patched regular fetch seam.
+
+    Tests patch only ``Session._fetch_from_cdn``; with the ultra-cold fast
+    path being the default, the fast delegate is explicitly redirected to the
+    same mock so both fetch seams hit the test double.
+    """
+    return self._fetch_from_cdn(path)
 class _StubCache:
     """In-memory cache stub with telemetry call tracking."""
 
@@ -58,8 +67,9 @@ def test_get_fastest_lap_tel_ultra_cold_skips_telemetry_cache_lookup(monkeypatch
     """Ultra-cold mode should skip sync telemetry cache read on critical path."""
     session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
     session._drivers = [{"driver": "VER", "team": "Red Bull"}]
-    session._fastest_lap_ref = ("VER", 5)
-    session._fastest_lap_ref_driver_source_id = id(session._drivers)
+    session._memo.set_fastest_lap_ref(
+        ("VER", 5), source_kind="drivers", source_id=id(session._drivers)
+    )
 
     cache = _StubCache()
     monkeypatch.setattr("tif1.core.get_cache", lambda: cache)
@@ -317,6 +327,7 @@ def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypat
     assert len(telemetry_payloads) == 2
 
 
+@patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
 @patch("tif1.core.Session._fetch_from_cdn")
 def test_driver_get_fastest_lap_tel_uses_prefetched_laptime_payload(mock_fetch, monkeypatch):
     """Driver fastest telemetry should reuse prefetched laptime payload without fallback path."""

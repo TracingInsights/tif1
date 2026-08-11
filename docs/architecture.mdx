@@ -34,10 +34,10 @@ graph TB
 
 - `tif1.session`: canonical session entrypoint (`Session`, `get_session`).
 - `tif1.models`: canonical dataframe-backed domain models (`Laps`, `Lap`, `Driver`, `Telemetry`).
-- `tif1.io_pipeline`: payload normalization helpers used by session loading paths.
-- `tif1.lap_ops`: lap-number/time coercion and lap-column helpers.
+- `tif1.core_utils`: payload normalization, lap-number/time coercion, and DataFrame helpers used by session loading paths.
 - `tif1.http_session`: sole owner of HTTP session lifecycle and connection metrics.
-- `tif1.async_fetch`: async fetch orchestration and executor lifecycle.
+- `tif1.payload_loader`: single payload-loading pipeline (memo → cache → CDN fetch → validate → write-back) behind an injectable `HttpTransport` seam (`NiquestsTransport` in production, `InMemoryTransport` in tests).
+- `tif1.async_fetch`: async fetch orchestration and executor lifecycle; shares the CDN fallback loops owned by `tif1.cdn` with the sync pipeline.
 - `tif1.cache`: SQLite + in-memory caching.
 - `tif1.events`: event/session lookup via packaged JSON schedules.
 - `tif1.schedule_schema`: schema validation for schedule assets.
@@ -83,7 +83,7 @@ sequenceDiagram
 
 1. `get_session(...)` resolves event/session aliases and creates a `Session`.
 2. `Session` methods load JSON payloads via CDN manager + shared HTTP session.
-3. `io_pipeline` helpers normalize payloads into lib dataframes.
+3. `core_utils` helpers normalize payloads into lib dataframes.
 4. `cache` stores/retrieves JSON payloads and telemetry batches.
 5. `models` expose dataframe-centric APIs for lap/driver/telemetry access.
 

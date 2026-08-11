@@ -93,7 +93,7 @@ __all__ = [
 
 _LAZY_EXPORTS = {
     "BackendType": ("tif1.types", "BackendType"),
-    "CircuitInfo": ("tif1.core", "CircuitInfo"),
+    "CircuitInfo": ("tif1.models", "CircuitInfo"),
     "CompoundType": ("tif1.types", "CompoundType"),
     "DriverInfoDict": ("tif1.types", "DriverInfoDict"),
     "LapDataDict": ("tif1.types", "LapDataDict"),

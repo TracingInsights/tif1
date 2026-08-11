@@ -1,11 +1,18 @@
-"""CDN fallback system with multiple sources."""
+"""CDN fallback system with multiple sources.
+
+The :class:`CDNManager` owns the source-ordering and fallback loop for both
+the sync pipeline (:meth:`CDNManager.try_sources`, used by
+``tif1.payload_loader.PayloadLoader``) and the async fan-out pipeline
+(:meth:`CDNManager.try_sources_async`, used by ``tif1.async_fetch``), so CDN
+fallback exists exactly once in the codebase.
+"""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .exceptions import DataNotFoundError, NetworkError
+from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +141,12 @@ class CDNManager:
     def try_sources(
         self, year: int, gp: str, session: str, path: str, fetch_func: Callable[[str], Any]
     ) -> Any:
-        """Try fetching from CDN sources with fallback."""
+        """Try fetching from CDN sources with fallback.
+
+        Fatal errors (:class:`DataNotFoundError`, :class:`InvalidDataError`)
+        propagate immediately; any other failure marks the source down and
+        falls through to the next one.
+        """
         sources = self.get_sources()
 
         if not sources:
@@ -149,12 +161,68 @@ class CDNManager:
                 result = fetch_func(url)
                 self.mark_success(source.name)
                 return result
-            except DataNotFoundError:
-                # 404 means data genuinely doesn't exist for the requested resource.
+            except (DataNotFoundError, InvalidDataError):
+                # 404 means data genuinely doesn't exist for the requested
+                # resource; invalid payloads will not improve on another CDN.
                 raise
             except Exception as e:
                 logger.warning(f"CDN {source.name} failed: {e}")
                 self.mark_failure(source.name)
+                last_exception = e
+
+        raise NetworkError(
+            url=f"{year}/{gp}/{session}/{path}",
+            status_code=getattr(getattr(last_exception, "response", None), "status_code", None),
+        )
+
+    async def try_sources_async(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        path: str,
+        fetch_func: Callable[[CDNSource, str], Awaitable[Any]],
+    ) -> Any:
+        """Async variant of :meth:`try_sources` for the fan-out pipeline.
+
+        Iterates enabled sources in priority order, awaiting ``fetch_func``
+        per source URL. Fatal errors (:class:`DataNotFoundError`,
+        :class:`InvalidDataError`) propagate immediately; other failures mark
+        the source down (skipped for HTTP-404 responses, mirroring the legacy
+        async behavior) and fall through to the next source. When every
+        source fails, raises :class:`NetworkError`.
+
+        Args:
+            year: Season year.
+            gp: Grand Prix identifier.
+            session: Session identifier.
+            path: Session-relative payload path.
+            fetch_func: Async callable taking ``(source, url)`` and returning
+                the parsed payload, raising on failure.
+        """
+        sources = self.get_sources()
+
+        if not sources:
+            raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+
+        last_exception = None
+
+        for source in sources:
+            try:
+                url = source.format_url(year, gp, session, path)
+                logger.debug(f"Trying CDN: {source.name} - {url}")
+                result = await fetch_func(source, url)
+                self.mark_success(source.name)
+                return result
+            except (DataNotFoundError, InvalidDataError):
+                raise
+            except Exception as e:
+                logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
+                if not (
+                    hasattr(e, "response")
+                    and getattr(e.response, "status_code", None) == 404
+                ):
+                    self.mark_failure(source.name)
                 last_exception = e
 
         raise NetworkError(

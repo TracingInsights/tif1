@@ -120,6 +120,7 @@ def _setup_workflow_mocks(monkeypatch) -> _InMemoryCache:
     monkeypatch.setattr("tif1.core.fetch_multiple_async", _fake_fetch_multiple_async)
     monkeypatch.setattr("tif1.core.Session._fetch_json", _fake_fetch_json)
     monkeypatch.setattr("tif1.core.Session._fetch_from_cdn", _fake_fetch_from_cdn)
+    monkeypatch.setattr("tif1.core.Session._fetch_from_cdn_fast", _fake_fetch_from_cdn)
     return cache
 
 

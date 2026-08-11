@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from tif1 import core
+from tif1 import core, models
 
 
 def _make_laps_df() -> core.Laps:
@@ -173,7 +173,9 @@ def test_lap_paths_and_fetch_telemetry(monkeypatch):
     )
 
     fake_cache = SimpleNamespace(set_telemetry=MagicMock())
-    monkeypatch.setattr(core, "get_cache", lambda: fake_cache)
+    # Lap._fetch_telemetry lives in tif1.models (candidate 3 seam), so the
+    # cache seam is patched there; core.Session code uses tif1.core.get_cache.
+    monkeypatch.setattr(models, "get_cache", lambda: fake_cache)
 
     lap = core.Lap({"Driver": "VER", "LapNumber": 5}, session=session)
     assert isinstance(lap.get_telemetry(), core.Telemetry)
@@ -538,7 +540,8 @@ def test_driver_and_lapinternal_paths(monkeypatch):
     fake_cache = SimpleNamespace(
         get_telemetry=lambda *_args: {"speed": [302.0]}, set_telemetry=MagicMock()
     )
-    monkeypatch.setattr(core, "get_cache", lambda: fake_cache)
+    # _LapInternal telemetry persistence lives in tif1.models (candidate 3 seam).
+    monkeypatch.setattr(models, "get_cache", lambda: fake_cache)
 
     li = core._LapInternal(cast(Any, inner_session), "VER", 10)
     tel = li.telemetry
@@ -577,9 +580,9 @@ def test_telemetry_failure_throttling_paths(monkeypatch):
     session._record_telemetry_failure("VER", 4, err)
     session._record_telemetry_failure("VER", 5, err)
 
-    assert session._telemetry_failure_counts["VER"] == 5
-    assert "VER" in session._telemetry_unavailable_drivers
-    assert "VER" in session._telemetry_failure_suppressed_drivers
+    assert session._memo.telemetry_failure_count("VER") == 5
+    assert session._memo.is_telemetry_unavailable("VER")
+    assert session._memo.is_failure_suppressed("VER")
     assert session._should_skip_telemetry_fetch("VER") is True
     assert session._should_skip_telemetry_fetch("HAM") is False
 

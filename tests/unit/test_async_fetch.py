@@ -1,7 +1,7 @@
 """Tests for async_fetch module."""
 
 import asyncio
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,10 +9,22 @@ import pytest
 import tif1.async_fetch as async_fetch_module
 import tif1.http_session as http_mod
 from tif1.async_fetch import fetch_json_async, fetch_multiple_async
+from tif1.cdn import CDNManager
 from tif1.exceptions import DataNotFoundError, NetworkError
 from tif1.http_session import _create_session
 from tif1.http_session import close_session as close_http_session
 from tif1.http_session import get_session as get_http_session_fn
+
+
+def _stub_cdn_manager(sources):
+    """CDN manager stub backed by the real CDNManager async fallback loop."""
+    manager = SimpleNamespace(
+        get_sources=MagicMock(return_value=sources),
+        mark_success=MagicMock(),
+        mark_failure=MagicMock(),
+    )
+    manager.try_sources_async = MethodType(CDNManager.try_sources_async, manager)
+    return manager
 
 
 @pytest.fixture(autouse=True)
@@ -704,8 +716,9 @@ class TestAsyncFetch:
         mock_cdn = SimpleNamespace(
             name="primary", format_url=MagicMock(return_value="https://cdn/a")
         )
-        mock_cdn_manager = SimpleNamespace(get_sources=MagicMock(return_value=[mock_cdn]))
+        mock_cdn_manager = _stub_cdn_manager([mock_cdn])
         mock_circuit_breaker = MagicMock()
+        mock_circuit_breaker.check_and_update_state.return_value = (True, "closed")
 
         with (
             patch("tif1.async_fetch.get_cache", return_value=mock_cache),
@@ -756,8 +769,9 @@ class TestAsyncFetch:
 
         cdn_a = SimpleNamespace(name="a", format_url=MagicMock(return_value="https://cdn/a"))
         cdn_b = SimpleNamespace(name="b", format_url=MagicMock(return_value="https://cdn/b"))
-        mock_cdn_manager = SimpleNamespace(get_sources=MagicMock(return_value=[cdn_a, cdn_b]))
+        mock_cdn_manager = _stub_cdn_manager([cdn_a, cdn_b])
         mock_circuit_breaker = MagicMock()
+        mock_circuit_breaker.check_and_update_state.return_value = (True, "closed")
 
         with (
             patch("tif1.async_fetch.get_cache", return_value=mock_cache),
@@ -787,8 +801,9 @@ class TestAsyncFetch:
         mock_session.get.side_effect = RuntimeError("down")
         cdn_a = SimpleNamespace(name="a", format_url=MagicMock(return_value="https://cdn/a"))
         cdn_b = SimpleNamespace(name="b", format_url=MagicMock(return_value="https://cdn/b"))
-        mock_cdn_manager = SimpleNamespace(get_sources=MagicMock(return_value=[cdn_a, cdn_b]))
+        mock_cdn_manager = _stub_cdn_manager([cdn_a, cdn_b])
         mock_circuit_breaker = MagicMock()
+        mock_circuit_breaker.check_and_update_state.return_value = (True, "closed")
 
         with (
             patch("tif1.async_fetch.get_cache", return_value=StubCache()),

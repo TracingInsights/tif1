@@ -83,14 +83,12 @@ def test_tif1_root_cache_export_and_fastf1_cache_modes(monkeypatch, tmp_path):
 
 
 def test_lazy_shim_modules_export_core_symbols():
-    from tif1 import core, io_pipeline, lap_ops, models, session
+    from tif1 import core, models, session
 
     assert session.Session is core.Session
     assert session.get_session is core.get_session
     assert models.Lap is core.Lap
     assert models.Laps is core.Laps
-    assert io_pipeline._create_lap_df is core._create_lap_df
-    assert lap_ops._coerce_lap_number is core._coerce_lap_number
 
 
 def test_tif1_lazy_module_attr_and_setup_logging():

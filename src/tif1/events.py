@@ -9,11 +9,10 @@ from functools import lru_cache
 from importlib.resources import files
 from typing import Any, ClassVar, Self, cast
 
-import niquests
 import pandas as pd
 
-from .exceptions import InvalidDataError
-from .http_session import get_session as get_http_session
+from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
+from .payload_loader import get_url_loader
 from .retry import retry_with_backoff
 from .schedule_schema import validate_schedule_payload
 
@@ -163,21 +162,14 @@ def _load_f1schedule_year_from_cdn(year: int) -> dict[str, Any] | None:
         max_retries=3,
         backoff_factor=1.5,
         jitter=True,
-        exceptions=(niquests.RequestException, InvalidDataError, TypeError, ValueError),
+        exceptions=(NetworkError, InvalidDataError, TypeError, ValueError),
     )
     def _fetch_payload() -> dict[str, Any] | None:
-        from .http_session import _track_request
-
         url = _F1SCHEDULE_CDN_TEMPLATE.format(year=year)
-        response = get_http_session().get(url, timeout=15)
-        _track_request(reused=True)
-        if response.status_code == 404:
+        try:
+            payload = get_url_loader().get_url(url, timeout=15)
+        except DataNotFoundError:
             return None
-        response.raise_for_status()
-
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise InvalidDataError(reason=f"Invalid CDN schedule payload for year={year}")
         return _convert_f1schedule_year(payload, year)
 
     try:
