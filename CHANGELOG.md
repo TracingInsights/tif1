@@ -6,8 +6,6 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
-### Added
-
 ## [0.5.0] - 2026-08-11
 
 ### Summary
