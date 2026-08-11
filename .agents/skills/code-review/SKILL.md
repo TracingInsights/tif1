@@ -107,4 +107,3 @@ of overall quality and the top 1–3 issues to address immediately.
 | High     | Likely bug or incorrect behaviour under normal use |
 | Medium   | Subtle risk or meaningful maintainability concern |
 | Low      | Best-practice deviation with minor practical impact |
-

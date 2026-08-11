@@ -291,5 +291,3 @@ Official FastF1 Documentation: https://docs.fastf1.dev/
 - Examples and tutorials
 - Data accuracy information
 - Troubleshooting guides
-
-
