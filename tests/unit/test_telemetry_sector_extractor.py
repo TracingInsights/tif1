@@ -21,6 +21,15 @@ SCRIPT_PATH = Path(__file__).parents[2] / "scripts" / "extract_telemetry_sectors
 #: guard). Resolved relative to the repo root so the tests are CWD-independent.
 HUNGARY_SOURCE = Path(__file__).parents[2] / "circuits" / "hungary.jpg"
 
+#: End-to-end tests that run the real extraction pipeline against the reviewed
+#: Hungary graphic. The fixture lives outside the repo (it is a sha256-guarded
+#: reviewed image, not a tracked file), so skip these tests when it is not
+#: present instead of failing CI on every checkout without it.
+REQUIRES_HUNGARY_SOURCE = pytest.mark.skipif(
+    not HUNGARY_SOURCE.is_file(),
+    reason="circuits/hungary.jpg reviewed fixture not present in this checkout",
+)
+
 
 @pytest.fixture(scope="module")
 def extractor() -> ModuleType:
@@ -192,6 +201,7 @@ def test_ocr_normalization_and_label_association(extractor: ModuleType) -> None:
     assert flags == []
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_source_metadata_and_output_do_not_modify_source(
     extractor: ModuleType, tmp_path: Path
 ) -> None:
@@ -219,6 +229,7 @@ def test_source_metadata_and_output_do_not_modify_source(
     assert hashlib.sha256(source.read_bytes()).hexdigest() == before
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_hungary_output_has_split_final_complex_and_manual_evidence(
     extractor: ModuleType, tmp_path: Path
 ) -> None:
@@ -250,6 +261,7 @@ def test_hungary_output_has_split_final_complex_and_manual_evidence(
     assert data["validation"]["errors"] == []
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_markdown_only_does_not_link_to_missing_artifacts(
     extractor: ModuleType, tmp_path: Path
 ) -> None:
@@ -267,6 +279,7 @@ def test_markdown_only_does_not_link_to_missing_artifacts(
     assert not (tmp_path / "hungary_annotated.png").exists()
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_compact_label_fallback_preserves_display_label(extractor: ModuleType) -> None:
     """The compact fallback for narrow intervals must keep the display_label.
 
@@ -338,6 +351,7 @@ def test_compact_label_fallback_preserves_display_label(extractor: ModuleType) -
         )
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_shared_guide_line_chain_split_persists_through_render(
     extractor: ModuleType, tmp_path: Path
 ) -> None:
@@ -505,6 +519,7 @@ def test_expand_brackets_with_subsections_creates_sub_intervals(extractor: Modul
     assert [item["display_label"] for item in expanded] == ["10.1", "10.2", "10.3"]
 
 
+@REQUIRES_HUNGARY_SOURCE
 def test_universal_sub_section_split_widens_each_bracket_intervals(
     extractor: ModuleType, tmp_path: Path
 ) -> None:
