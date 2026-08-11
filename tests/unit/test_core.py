@@ -1,7 +1,7 @@
 """Unit tests for tif1 core functionality."""
 
 import asyncio
-from typing import ClassVar
+from typing import ClassVar, cast
 from unittest.mock import patch
 
 import pandas as pd
@@ -660,12 +660,12 @@ class TestDriverAdvanced:
 
         first_driver = Driver(session, "VER")
         first_laps = first_driver.laps
-        assert first_laps["Team"].iloc[0] == "Alpha"
+        assert cast(pd.Series, first_laps["Team"]).iloc[0] == "Alpha"
 
         session._drivers = [{"driver": "VER", "team": "Beta"}]
         second_driver = Driver(session, "VER")
         second_laps = second_driver.laps
-        assert second_laps["Team"].iloc[0] == "Beta"
+        assert cast(pd.Series, second_laps["Team"]).iloc[0] == "Beta"
 
 
 class TestLapAdvanced:

@@ -191,11 +191,12 @@ def configure_chart_saving(**kwargs: Any) -> None:
     for key, value in kwargs.items():
         if key not in valid:
             raise ValueError(
-                f"Unknown chart saving option '{key}'. "
-                f"Valid options: {', '.join(sorted(valid))}"
+                f"Unknown chart saving option '{key}'. Valid options: {', '.join(sorted(valid))}"
             )
         if key in ("enabled", "overwrite") and not isinstance(value, bool):
-            raise ValueError(f"Chart saving option '{key}' must be a bool, got {type(value).__name__}")
+            raise ValueError(
+                f"Chart saving option '{key}' must be a bool, got {type(value).__name__}"
+            )
         if key == "format" and (not isinstance(value, str) or not value.strip()):
             raise ValueError("Chart saving option 'format' must be a non-empty string")
         if key in ("folder_template", "filename_template") and (
@@ -459,9 +460,7 @@ def add_style_branding(fig: Any, style: dict[str, Any], *, ax: Any = None) -> No
     footer_y = style["spacing"]["footer_y"]
     watermark = style["watermark"]
     footer = style["footer"]
-    logo_font = font_manager.FontProperties(
-        fname=str(assets.font_path(style["fonts"]["logo"]))
-    )
+    logo_font = font_manager.FontProperties(fname=str(assets.font_path(style["fonts"]["logo"])))
     heading2_font = font_manager.FontProperties(
         fname=str(assets.font_path(style["fonts"]["heading2"]))
     )

@@ -1,5 +1,7 @@
 """Tests for types module."""
 
+from datetime import timedelta
+
 from tif1.types import (
     BackendType,
     CompoundType,
@@ -19,7 +21,13 @@ class TestTypeDefinitions:
     """Test type definitions are importable and usable."""
 
     def test_lap_data_dict(self):
-        lap: LapDataDict = {"LapNumber": 1, "Driver": "VER", "Team": "Red Bull"}
+        lap: LapDataDict = {
+            "LapNumber": 1,
+            "Driver": "VER",
+            "Team": "Red Bull",
+            "DriverNumber": "1",
+            "Time": timedelta(seconds=0),
+        }
         assert lap["LapNumber"] == 1
         assert lap["Driver"] == "VER"
 
@@ -28,10 +36,12 @@ class TestTypeDefinitions:
             "LapNumber": 1,
             "Driver": "VER",
             "Team": "Red Bull",
-            "LapTime": 90.5,
-            "Sector1Time": 30.0,
-            "Sector2Time": 30.0,
-            "Sector3Time": 30.5,
+            "DriverNumber": "1",
+            "Time": timedelta(seconds=0),
+            "LapTime": timedelta(seconds=90.5),
+            "Sector1Time": timedelta(seconds=30.0),
+            "Sector2Time": timedelta(seconds=30.0),
+            "Sector3Time": timedelta(seconds=30.5),
             "Compound": "SOFT",
             "Stint": 1,
             "TyreLife": 5,
@@ -40,7 +50,7 @@ class TestTypeDefinitions:
             "IsPersonalBest": True,
             "QualifyingSession": "Q3",
         }
-        assert lap["LapTime"] == 90.5
+        assert lap["LapTime"] == timedelta(seconds=90.5)
 
     def test_telemetry_data_dict(self):
         tel: TelemetryDataDict = {"Time": 1.0}
@@ -68,12 +78,28 @@ class TestTypeDefinitions:
         assert tel["Speed"] == 300.0
 
     def test_driver_info_dict(self):
-        info: DriverInfoDict = {"driver": "VER", "team": "Red Bull"}
+        info: DriverInfoDict = {
+            "driver": "VER",
+            "team": "Red Bull",
+            "dn": "1",
+            "fn": "Max",
+            "ln": "Verstappen",
+            "tc": "#3671C6",
+            "url": "https://example.com/ver.png",
+        }
         assert info["driver"] == "VER"
 
     def test_driver_info_dict_with_number(self):
-        info: DriverInfoDict = {"driver": "VER", "team": "Red Bull", "number": 1}
-        assert info["number"] == 1
+        info: DriverInfoDict = {
+            "driver": "VER",
+            "team": "Red Bull",
+            "dn": "1",
+            "fn": "Max",
+            "ln": "Verstappen",
+            "tc": "#3671C6",
+            "url": "https://example.com/ver.png",
+        }
+        assert info["dn"] == "1"
 
     def test_driver_info_dict_with_extended_fields(self):
         info: DriverInfoDict = {
@@ -95,8 +121,12 @@ class TestTypeDefinitions:
         assert rcm["Category"] == "Track"
 
     def test_weather_data_dict(self):
-        weather: WeatherDataDict = {"Time": 10.0, "AirTemp": 25.0, "Rainfall": False}
-        assert weather["Time"] == 10.0
+        weather: WeatherDataDict = {
+            "Time": timedelta(seconds=10.0),
+            "AirTemp": 25.0,
+            "Rainfall": False,
+        }
+        assert weather["Time"] == timedelta(seconds=10.0)
         assert weather["AirTemp"] == 25.0
 
     def test_session_type_values(self):

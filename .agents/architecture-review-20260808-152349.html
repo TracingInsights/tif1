@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — tif1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 5; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .chip { @apply text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-300 bg-white; }
+      @media (prefers-reduced-motion: no-preference) {
+        .fadein { animation: fadein .5s ease both; }
+      }
+      @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-4">
+        <div class="flex items-baseline justify-between">
+          <h1 class="text-3xl font-serif font-semibold">Architecture review — <span class="text-slate-500">tif1</span></h1>
+          <span class="text-xs text-slate-500">2026-08-08</span>
+        </div>
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500">
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-3 border border-slate-900 bg-white"></span> module</span>
+          <span class="flex items-center gap-2"><svg width="18" height="8"><line x1="1" y1="4" x2="17" y2="4" stroke="#334155" stroke-width="1.5" class="seam"/></svg> seam</span>
+          <span class="flex items-center gap-2"><svg width="18" height="8"><line x1="1" y1="4" x2="17" y2="4" stroke="#dc2626" stroke-width="1.5"/></svg> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-3 rounded-sm deep"></span> deep module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span> strong</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500"></span> worth exploring</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-slate-400"></span> speculative</span>
+        </div>
+        <p class="text-sm text-slate-500 max-w-2xl">
+          The package has no <code class="font-mono text-xs">CONTEXT.md</code> and no ADRs; domain language is taken from
+          <code class="font-mono text-xs">AGENTS.md</code> and <code class="font-mono text-xs">project-architecture.md</code>.
+          Candidates are deepenings — refactors that turn shallow modules into deep ones.
+        </p>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ CARD 1 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">1. Collapse the session pipeline's three fetch stacks</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5">Strong</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">mock</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">
+            cdn.py:134-163 · async_fetch.py:341-639, 496-599 · core.py:1814-1826, 1970-2006, 2008-2052 · events.py:21-23, 161-187 · http_session.py:28-35, 167-186
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div class="text-xs uppercase tracking-wider text-red-700 font-semibold mb-2">Before — retry &amp; fallback written 3×, plus a foreign grammar</div>
+              <pre class="mermaid">
+                flowchart LR
+                  C1[Session self._fetch_from_cdn] --> T1[cdn.try_sources loop]
+                  C2[Session self._fetch_from_cdn_fast] --> T1
+                  C3[Session._fetch_one prefetch] --> T3[own per-source fallback, swallows errors]
+                  A[fetch_json_async] --> T2[own retry loop + own CDN fallback]
+                  A -. own lazy niquests import + own key format .-> X[(cache & session)]
+                  T1 --> D[CDN sources]
+                  T2 --> D
+                  T3 --> D
+                  E[events.py schedule fetch] --> T4[hardcoded jsDelivr URL for a foreign repo]
+                  T4 --> D
+                  classDef leak stroke:#dc2626,stroke-width:2px;
+                  class T2,T3,T4 leak
+              </pre>
+            </div>
+            <div class="flex items-center justify-center">
+              <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 w-full">
+                <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — one engine, adapters at the seam</p>
+                <div class="space-y-2">
+                  <div class="rounded border border-slate-300 bg-white text-[11px] px-2 py-1 font-mono text-slate-500">Laps / telemetry / weather / race control / schedule</div>
+                  <div class="pl-3 flex items-center"><svg width="100%" height="18"><line x1="0" y1="9" x2="100%" y2="9" class="seam" stroke="#334155" stroke-width="1.5"/></svg></div>
+                  <div class="deep rounded-lg text-white p-3">
+                    <p class="text-xs font-semibold tracking-wide">Session pipeline fetch engine</p>
+                    <p class="text-[10px] text-slate-300 mt-1 font-mono">retry · circuit breaker · CDN fallback · cache read/write · key format</p>
+                  </div>
+                  <div class="pl-3 flex items-center"><svg width="100%" height="18"><line x1="0" y1="9" x2="100%" y2="9" stroke="#334155" stroke-width="1.5" class="seam"/></svg></div>
+                  <div class="flex gap-2 text-[10px] font-mono text-slate-500">
+                    <span class="rounded border border-slate-300 bg-white px-2 py-1">sync adapter<br/><span class="text-slate-300">asyncio.run</span></span>
+                    <span class="rounded border border-slate-300 bg-white px-2 py-1">async engine<br/><span class="text-slate-300">native</span></span>
+                    <span class="rounded border border-slate-300 bg-white px-2 py-1">schedule adapter<br/><span class="text-slate-300">vendored file</span></span>
+                    <span class="rounded border border-slate-300 bg-white px-2 py-1">test adapter<br/><span class="text-slate-300">stubs today</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">Retry, circuit-breaking, CDN fallback and cache-key knowledge is copied into four modules — async_fetch, cdn (used by core only), core's prefetch, and events' schedule fetch, which appends a fourth, foreign URL grammar.</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Treat the async fetch as the one fetch engine behind a single seam; sync callers, prefetch, and the schedule fetch become adapters on it, and fallback, breaker and key format migrate behind the engine's interface.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">locality: one place to patch a retry bug, not four</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">events.py stops importing private http symbols</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">tests already stub one seam today</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">cache-key drift cured by construction</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">cdn.try_sources finds its only caller</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 2 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">2. Splice the sync/async twins in core</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5">Strong</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">in-process</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">
+            core.py: 3026-3076 ≡ 3234-3284 · 3723-3768 ≡ 3811-3856 (verbatim dead copies) ·
+            3078/3286 · 3631/3677 · 3770/3858 · 3928/3964 · 4000/4033 · 4435/4481 · 4509/4556 · 4834/4860 · 5005/5143 · 5331/5380 · 5452/5544 ·
+            575-603 ≡ 5976-6003 (identical telemetry fetch)
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-2">Before — 11 twin pairs, 2 dead copies</p>
+              <div class="space-y-1 text-[11px] font-mono">
+                <div class="flex justify-between rounded border border-slate-300 bg-white px-2 py-1"><span>_fetch_laptime_payloads</span><span>= <b>_…_async</b></span><span class="text-slate-300">51 extra lines ×2</span></div>
+                <div class="flex justify-between rounded border border-slate-300 bg-white px-2 py-1"><span>_get_fastest_laps_from_raw</span><span>= <b>_…_async</b></span></div>
+                <div class="flex justify-between rounded border border-slate-300 bg-white px-2 py-1"><span>_find_fastest_lap_reference…</span><span>= <b>_…_async</b></span></div>
+                <div class="flex justify-between rounded border border-red-200 bg-red-50 px-2 py-1"><span>_process_laptime_payload</span><span class="text-red-700">defined twice — first copy dead</span></div>
+                <div class="flex justify-between rounded border border-red-200 bg-red-50 px-2 py-1"><span>_process_fastest_lap_refs…</span><span class="text-red-700">defined twice — first copy dead</span></div>
+                <div class="flex justify-between rounded border border-red-200 bg-red-50 px-2 py-1"><span>Lap._fetch_telemetry ≡ _LapInternal._fetch_telemetry</span><span class="text-red-700">identical bodies</span></div>
+                <div class="text-slate-400 pt-1">… plus 6 more pairs (batch, tels, fastest-lap)</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — one engine, sync is a thin adapter</p>
+              <div class="flex items-center gap-2 justify-center py-6">
+                <div class="rounded border border-slate-300 bg-white px-3 py-2 text-[11px] font-mono text-slate-500">caller<br/>sync or async</div>
+                <span class="text-slate-300">→</span>
+                <div class="deep rounded-lg text-white px-4 py-3 text-xs font-mono">
+                  lap & telemetry engine<br/>
+                  <span class="text-slate-400 text-[10px]">one coroutine per concern<br/>sync entry = asyncio.run(…)</span>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500">Property tests (test_sync_async_equivalence.py) already pin sync ≡ async — they stay green throughout.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">Every concern in the lap and telemetry engines exists twice — sync and async — and two pairs are verbatim duplicates whose first copies are dead code; defects already diverged (e.g. the cache-flag bug at 4517 vs 4579).</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Keep one coroutine-based engine per concern; make sync entry points 1-2 line adapters over it (they already are, e.g. fetch_all_laps_telemetry). Delete the dead first copies outright.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">bugs can't diverge between twins</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">~700 duplicated lines collapse</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">tests assert once per behaviour</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">interface unchanged for users</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 3 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">3. Delete the pass-through shims</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5">Worth exploring</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">in-process</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">session.py (5 lines) · models.py (13) · io_pipeline.py (19) · lap_ops.py (10) · __init__.py:100-115 lazy map</div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-2">Before — four shallow re-export modules</p>
+              <div class="space-y-1 font-mono text-[11px]">
+                <div class="rounded border border-slate-300 bg-white px-2 py-1 flex justify-between"><span>session.py</span><span class="text-slate-300">“from .core import Session”</span></div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1 flex justify-between"><span>models.py</span><span class="text-slate-300">7 re-exports</span></div>
+                <div class="rounded border border-red-200 bg-red-50 px-2 py-1 flex justify-between"><span>io_pipeline.py</span><span class="text-red-700">re-exports _create_lap_df et al. — privates shipped public</span></div>
+                <div class="rounded border border-red-200 bg-red-50 px-2 py-1 flex justify-between"><span>lap_ops.py</span><span class="text-red-700">re-exports _coerce_*, _get_lap_column — privates shipped public</span></div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1 flex justify-between"><span>test suite</span><span class="text-slate-300">one identity assertion per shim</span></div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col items-center justify-center">
+              <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — the interface lives at the lazy exports</p>
+              <div class="deep rounded-lg text-white px-6 py-5 text-center">
+                <p class="text-xs font-semibold">tif1.__getattr__ / core</p>
+                <p class="text-[10px] text-slate-300 mt-1">one alias per public name · zero files · zero tests</p>
+              </div>
+              <p class="text-xs text-slate-500 mt-3 max-w-xs">Deletion test: complexity vanishes — it was never in the shims. They only add three import paths and two publicly-visible private symbols.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">Four tiny modules contribute zero behaviour: two of them move private core helpers into the public name space, and every one is deleted-and-nothing-happens by the deletion test.</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Keep exactly two compatibility import paths (session.py → Session for fastf1 users, models.py → classes), absorb their names straight into __init__'s lazy map, and drop io_pipeline.py / lap_ops.py entirely.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">privates stop looking public</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">interface shrinks, callers keep their import</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">one way to reach core, not four</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 4 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">4. One schema vocabulary, not four</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5">Worth exploring</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">in-process</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">
+            core_utils/constants.py:11-82 · validation.py:255-298, 362-371 · types.py:143-152 · events.py:27-36
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-2">Before — the same fact sits in 2-3 modules</p>
+              <div class="space-y-2 text-[11px] font-mono">
+                <div class="rounded border border-slate-300 bg-white px-2 py-1.5">
+                  raw key → canonical name <span class="text-red-600">×2</span><br/>
+                  <span class="chip">sesT→Time</span> <span class="chip">dNum→DriverNumber</span> <span class="chip">wAT→AirTemp</span>
+                  <p class="text-slate-400 mt-1">constants.LAP_RENAME_MAP + validation.LapData aliases</p>
+                </div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1.5">
+                  session-type vocabulary <span class="text-red-600">×3</span><br/>
+                  <span class="chip">Race</span> <span class="chip">Qualifying</span> <span class="chip">Sprint</span>
+                  <p class="text-slate-400 mt-1">types.SessionType literal · validation.SessionType enum · events._SESSION_TYPES</p>
+                </div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1.5">
+                  weather pascal-case map <span class="text-red-600">×2</span><br/>
+                  <span class="chip">AirTemp</span> <span class="chip">Humidity</span>
+                  <p class="text-slate-400 mt-1">constants.WEATHER_RENAME_MAP · validation.WeatherData._normalize_pascalcase_keys</p>
+                </div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1.5">
+                  year bounds <span class="text-red-600">×2</span><br/>
+                  <span class="chip">MIN_YEAR</span> <span class="chip">MAX_YEAR</span>
+                  <p class="text-slate-400 mt-1">constants · validation</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col items-center justify-center">
+              <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — constants owns the dictionary, modules consume it</p>
+              <div class="deep rounded-lg text-white px-6 py-4">
+                <p class="text-xs font-semibold">constants — the one schema sheet</p>
+                <p class="text-[10px] text-slate-300 mt-1 font-mono">maps · literals · year bounds · session types</p>
+              </div>
+              <div class="flex gap-2 mt-3 text-[10px] font-mono text-slate-500">
+                <span class="rounded border border-slate-300 bg-white px-2 py-1">validation.py<br/><span class="text-slate-300">consumes maps</span></span>
+                <span class="rounded border border-slate-300 bg-white px-2 py-1">types.py<br/><span class="text-slate-300">string-union alias</span></span>
+                <span class="rounded border border-slate-300 bg-white px-2 py-1">events.py<br/><span class="text-slate-300">casefold lookup</span></span>
+              </div>
+              <p class="text-xs text-slate-500 mt-3 max-w-xs">Change a CDN key once. The DataFrame layer and the validation layer read the same sheet, and it stops drifting.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">The same raw-key→canonical-name facts, session-type vocabulary and year bounds are hand-maintained in two to three modules, so they drift — and validation stays off by default (config flags default false) while the rename maps do the real lifting.</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Make core_utils/constants the single schema dictionary; validation.py builds its pydantic aliases from it, types.py derives its Literals from it, events.py consumes the same session-type table.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">locality: renames happen in one place</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">validation pays its own stripes</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">one table to migrate when CDN changes</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 5 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">5. The cache module owns its keys</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5">Worth exploring</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">local-substitutable</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">async_fetch.py:381, 389-391 · core.py:1957, 2060, 4104-4107 · cache.py:427, 263-373 · fastf1_compat.py:82-84, 103, 113, 249-251</div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-2">Before — key format hand-rolled three times, privates poked</p>
+              <div class="space-y-1 text-[11px] font-mono">
+                <div class="rounded border border-slate-300 bg-white px-2 py-1">async_fetch.py:381 <span class="chip">f"{year}/{gp}/{session}/{path}"</span></div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1">core.py:1957, 2060 <span class="chip">same string, re-typed</span></div>
+                <div class="rounded border border-slate-300 bg-white px-2 py-1">core.py:4107 <span class="chip">third format, laps in-memory</span></div>
+                <div class="rounded border border-red-200 bg-red-50 px-2 py-1 text-red-700">async_fetch calls cache._get_from_memory (private)</div>
+                <div class="rounded border border-red-200 bg-red-50 px-2 py-1 text-red-700">fastf1_compat reads cache_module._cache wholesale</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col items-center justify-center">
+              <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — key builder on the inside of the seam</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-3 w-full max-w-xs">
+                <div class="deep rounded text-white px-3 py-2 text-xs font-mono">cache.get(year, gp, session, path)<br/><span class="text-slate-400 text-[10px]">key built inside · memory + sqlite unified</span></div>
+                <div class="flex justify-around mt-2 text-[10px] font-mono text-slate-500">
+                  <span>core</span><span>async_fetch</span><span>compat</span>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 mt-3 max-w-xs">The key format becomes part of the cache module's interface — callers stop being able to get it wrong.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">The cache key is a serialized-format fact, but it lives in callers — three modules hand-type the same f-string, and two reach past the seam into private state to do their own lookups.</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Extend the cache module's interface with the structured key (or a make-key helper), let async_fetch and core hand it the four pieces, and retire the private _get_from_memory-style pokes.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">format fixed in exactly one implementation</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">callers lose an entire error-modes category</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">compat shim stops dual-writes</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 6 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-5 fadein">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-serif font-semibold">6. Schedule fetch joins the repo's engine</h2>
+            <div class="flex gap-2">
+              <span class="text-[10px] uppercase tracking-wider font-semibold rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">Speculative</span>
+              <span class="text-[10px] uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-300 px-2.5 py-0.5">mock</span>
+            </div>
+          </div>
+
+          <div class="text-sm font-mono text-slate-600 leading-6">events.py:21-23, 144-187, 202-206 · schedule_schema.py:10-54 · core_utils/resource_manager.py</div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-2">Before — a lone fetch outside every seam</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-3 text-[11px] font-mono text-slate-600 space-y-1">
+                <div>events.<b>_load_f1schedule_year_from_cdn</b></div>
+                <div class="pl-2 text-slate-400">hardcoded jsDelivr URL (other repo)<br/>get_http_session().get private-adjacent — no cache, no CDN manager, no breaker</div>
+                <div class="pl-2 text-red-600">imports http_session._track_request (private)</div>
+                <div class="mt-1">vendored schedule fallback: <span class="chip">f1schedule → resources</span></div>
+                <div class="mt-1 text-slate-400">validation: <span class="chip">schedule_schema.py</span> (its own schema)</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col items-center justify-center">
+              <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">After — two adapters at one seam</p>
+              <div class="space-y-2 text-center">
+                <div class="rounded border border-slate-300 bg-white px-3 py-2 text-[11px] font-mono text-slate-500">vendored schedule files</div>
+                <div class="text-slate-300">↓</div>
+                <div class="deep rounded-lg text-white px-6 py-3">
+                  <p class="text-xs font-semibold">schedule intake</p>
+                  <p class="text-[10px] text-slate-300 mt-1 font-mono">validate → normalize → Event/EventSchedule</p>
+                </div>
+                <div class="text-slate-300">↑</div>
+                <div class="rounded border border-slate-300 bg-white px-3 py-2 text-[11px] font-mono text-slate-500">CDN fetch adapter<br/><span class="text-slate-300">reserved count → cache, breaker, manager</span></div>
+              </div>
+              <p class="text-xs text-slate-500 mt-3 max-w-xs text-center">Two adapters today make this a real seam: vendored files in production, CDN as fallback.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Problem</p>
+              <p class="text-slate-700">The schedule is the only data that bypasses the pipeline: a foreign URL grammar, no cache, no CDN manager, a scratch retry and a private import from http_session's stats tracker.</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Solution</p>
+              <p class="text-slate-700">Keep the vendored schedule as the primary adapter, and run the CDN fallback through the same intake interface as everything else — schedule_schema stays the validator, events.py the transformer.</p>
+            </div>
+          </div>
+
+          <ul class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-600">
+            <li class="bg-slate-50 rounded px-2 py-1.5">one architecture for every fetch</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">private import goes away</li>
+            <li class="bg-slate-50 rounded px-2 py-1.5">schedule lookups can be cached</li>
+          </ul>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="rounded-xl deep text-white shadow-lg p-8">
+        <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">Top recommendation</p>
+        <h2 class="text-2xl font-serif font-semibold mb-3">Start with #2 — splice the sync/async twins</h2>
+        <p class="text-slate-300 max-w-3xl text-sm leading-relaxed">
+          It is pure in-process work behind the existing Session interface: no network semantics change, no seam moves, no schema decisions.
+          It deletes ~700 lines of drift including two dead verbatim copies, and the property suite
+          (<span class="font-mono text-xs">test_sync_async_equivalence.py</span>) already pins sync ≡ async at the exact interface in question — so the deepening is verified before and after.
+          Finishing it makes candidate 1 (one fetch engine) a rearrangement instead of a fishing expedition, because the same 11 pairs are the load-bearing walls of every fetch stack.
+        </p>
+        <a href="#candidates" class="inline-block mt-4 text-sm text-emerald-300 hover:text-emerald-200 underline underline-offset-2">All six candidates →</a>
+      </section>
+
+    </main>
+  </body>
+</html>

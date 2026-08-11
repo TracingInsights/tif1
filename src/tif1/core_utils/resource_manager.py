@@ -7,7 +7,7 @@ in error paths. Resources are tracked and cleaned up in reverse order of creatio
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Self
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class ResourceManager:
         else:
             logger.debug("All resources cleaned up successfully")
 
-    def __enter__(self) -> ResourceManager:
+    def __enter__(self) -> Self:
         """Enter context manager."""
         return self
 

@@ -137,13 +137,13 @@ def test_backend_conversion_error_paths(monkeypatch):
         to_pandas=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))  # noqa: ARG005
     )
     with pytest.raises(ValueError, match="Failed to convert polars DataFrame to pandas"):
-        conv.polars_to_pandas(bad_df)  # type: ignore[arg-type]
+        conv.polars_to_pandas(bad_df)  # type: ignore[ty:invalid-argument-type]
 
     with pytest.raises(ValueError, match="Invalid target_backend"):
         conv.convert_backend(dataframe, "duckdb")
 
     with pytest.raises(ValueError, match="Cannot convert"):
-        conv.convert_backend({"not": "df"}, "pandas")  # type: ignore[arg-type]
+        conv.convert_backend({"not": "df"}, "pandas")  # type: ignore[ty:invalid-argument-type]
 
 
 def test_json_utils_fallback_paths(monkeypatch):

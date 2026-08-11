@@ -1,3 +1,4 @@
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -30,9 +31,9 @@ def test_utils_coverage():
     dt = to_datetime("2025-01-01")
     assert isinstance(dt, pd.Timestamp)
 
-    l1 = pd.Series(dtype=object)
+    l1 = cast(Any, pd.Series(dtype=object))
     l1.get_telemetry = lambda: Telemetry()
-    l2 = pd.Series(dtype=object)
+    l2 = cast(Any, pd.Series(dtype=object))
     l2.get_telemetry = lambda: Telemetry()
 
     res, _, _ = delta_time(l1, l2)
@@ -53,6 +54,7 @@ def test_events_coverage():
     assert "EventName" in sched.columns
 
     ev2 = get_event(2024, "Monaco Grand Prix")
+    assert ev2 is not None
     assert ev2.EventName == "Monaco Grand Prix"
 
     ev2.get_session("Race")
@@ -210,8 +212,12 @@ def test_session_data_not_found():
     session._race_control_messages = None
     session._weather = None
 
-    assert session.race_control_messages.empty
-    assert session.weather.empty
+    rcm = session.race_control_messages
+    weather = session.weather
+    assert isinstance(rcm, pd.DataFrame)
+    assert isinstance(weather, pd.DataFrame)
+    assert rcm.empty
+    assert weather.empty
 
 
 def test_laps_pick_compounds():
@@ -257,7 +263,9 @@ def test_laps_pick_track_status_other():
 def test_session_get_fastest_laps_empty():
     session = get_session(2024, "Monaco", "Race")
     session._laps = Laps(pd.DataFrame(columns=["Driver", "LapTime", "IsAccurate"]))
-    assert session.get_fastest_laps().empty
+    fastest = session.get_fastest_laps()
+    assert isinstance(fastest, pd.DataFrame)
+    assert fastest.empty
 
 
 def test_lazy_telemetry_dict_key_error():

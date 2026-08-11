@@ -9,7 +9,7 @@ import pytest
 
 from tif1.core import Session
 from tif1.core_utils.constants import COL_DRIVER
-from tif1.core_utils.helpers import _check_cached_telemetry, _get_lap_number
+from tif1.core_utils.helpers import _get_lap_number
 
 
 class _StubCache:
@@ -40,7 +40,12 @@ def _build_fastest_laps(size: int = 5000) -> pd.DataFrame:
 
 
 def _legacy_fetch_telemetry_batch(session: Session, fastest_laps: pd.DataFrame, cache: _StubCache):
-    """Legacy implementation baseline for telemetry batch preparation."""
+    """Legacy implementation baseline for telemetry batch preparation.
+
+    Mirrors the production ``_fetch_telemetry_batch_from_refs`` contract:
+    cached hits are appended as ``(driver, lap_num, raw_payload)`` tuples, not
+    as materialized DataFrames (construction is deferred to assembly time).
+    """
     requests, lap_info, tels = [], [], []
 
     for _, row_data in fastest_laps.iterrows():
@@ -51,11 +56,9 @@ def _legacy_fetch_telemetry_batch(session: Session, fastest_laps: pd.DataFrame, 
         except ValueError:
             continue
 
-        cached_df = _check_cached_telemetry(
-            cache, session.year, session.gp, session.session, driver, lap_num, session.lib
-        )
-        if cached_df is not None:
-            tels.append(cached_df)
+        cached_tel = cache.get_telemetry(session.year, session.gp, session.session, driver, lap_num)
+        if cached_tel:
+            tels.append((driver, lap_num, cached_tel))
         else:
             requests.append(
                 (session.year, session.gp, session.session, f"{driver}/{lap_num}_tel.json")
@@ -92,9 +95,8 @@ def test_fetch_telemetry_batch_semantics_match_legacy(monkeypatch):
     assert requests == legacy_requests
     assert lap_info == legacy_lap_info
     assert len(tels) == len(legacy_tels)
-    assert [df["Driver"].iloc[0] for df in tels] == [df["Driver"].iloc[0] for df in legacy_tels]
-    assert [int(df["LapNumber"].iloc[0]) for df in tels] == [
-        int(df["LapNumber"].iloc[0]) for df in legacy_tels
+    assert [(driver, lap_num) for driver, lap_num, _ in tels] == [
+        (driver, lap_num) for driver, lap_num, _ in legacy_tels
     ]
 
 

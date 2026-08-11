@@ -8,11 +8,12 @@ import unicodedata
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import matplotlib as mpl
+import matplotlib.legend  # ensures mpl.legend submodule is imported
 import matplotlib.pyplot as plt
-from matplotlib import cycler  # type: ignore[attr-defined]
+from matplotlib import cycler  # type: ignore[ty:unresolved-import]
 
 from tif1.fuzzy import fuzzy_matcher
 from tif1.plotting_constants import (
@@ -1183,7 +1184,7 @@ def get_driver_style(
     if isinstance(style, (list, tuple)) and style and all(isinstance(item, dict) for item in style):
         driver_index = _get_driver_index_in_team(driver_abbr, session)
         if driver_index < len(style):
-            custom_style = dict(style[driver_index])  # type: ignore[arg-type]
+            custom_style = cast(dict[str, Any], style[driver_index]).copy()
             _replace_auto_colors(custom_style, driver_color, additional_color_kws)
             return custom_style
         raise ValueError(
@@ -1252,7 +1253,7 @@ def _replace_auto_colors(
 def add_sorted_driver_legend(ax: Axes, session: Any, *args: Any, **kwargs: Any) -> Legend:
     """Add legend with drivers grouped by team and sorted."""
     try:
-        ret = mpl.legend._parse_legend_args([ax], *args, **kwargs)  # type: ignore[attr-defined]
+        ret = mpl.legend._parse_legend_args([ax], *args, **kwargs)  # type: ignore[ty:unresolved-attribute]
         if len(ret) == 3:
             handles, labels, kwargs = ret
             extra_args: list[Any] = []

@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -91,7 +91,7 @@ def _summarize_profile(profile: cProfile.Profile, top_n: int = 8) -> list[str]:
     stats = pstats.Stats(profile)
     tif1_rows: list[tuple[float, float, int, str, int, str]] = []
 
-    for stat_key, stat_values in stats.stats.items():
+    for stat_key, stat_values in cast(Any, stats).stats.items():
         filename, line_no, func_name = stat_key
         normalized_filename = filename.replace("\\", "/")
         if "/src/tif1/" not in normalized_filename:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pandas as pd
+
 import tif1.core as core_module
 from tif1.core import Driver, Lap, Session
 
@@ -71,6 +73,7 @@ def test_get_fastest_lap_tel_ultra_cold_skips_telemetry_cache_lookup(monkeypatch
     finally:
         core_module.config.set("ultra_cold_background_cache_fill", previous_backfill)
 
+    assert isinstance(tel, pd.DataFrame)
     assert not tel.empty
     assert tel["Driver"].iloc[0] == "VER"
     assert int(tel["LapNumber"].iloc[0]) == 5
@@ -141,6 +144,7 @@ def test_get_fastest_lap_tel_auto_cold_start_uses_unvalidated_path(monkeypatch):
         core_module.config.set("ultra_cold_start", previous_ultra)
         core_module.config.set("ultra_cold_background_cache_fill", previous_backfill)
 
+    assert isinstance(tel, pd.DataFrame)
     assert not tel.empty
     assert tel["Driver"].iloc[0] == "VER"
     assert int(tel["LapNumber"].iloc[0]) == 7
@@ -241,6 +245,7 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
         core_module.config.set("ultra_cold_start", previous_ultra)
         core_module.config.set("ultra_cold_background_cache_fill", previous_backfill)
 
+    assert isinstance(tels, pd.DataFrame)
     assert not tels.empty
     assert tels["Driver"].iloc[0] == "VER"
     assert set(tels["Driver"]) == {"VER", "HAM"}
@@ -302,6 +307,7 @@ def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypat
         core_module.config.set("ultra_cold_start", previous_ultra)
         core_module.config.set("ultra_cold_background_cache_fill", previous_backfill)
 
+    assert isinstance(tels, pd.DataFrame)
     assert not tels.empty
     telemetry_backfill_calls = [
         call for call in backfill_mock.call_args_list if call.kwargs.get("telemetry_payloads")
@@ -336,6 +342,7 @@ def test_driver_get_fastest_lap_tel_uses_prefetched_laptime_payload(mock_fetch, 
 
     tel = driver.get_fastest_lap_tel()
 
+    assert isinstance(tel, pd.DataFrame)
     assert not tel.empty
     assert tel["Driver"].iloc[0] == "VER"
     assert int(tel["LapNumber"].iloc[0]) == 11

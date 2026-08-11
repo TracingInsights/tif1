@@ -4,6 +4,8 @@ Uses the sample _tel.json payload from the user spec (with "None" sentinels
 already normalised to Python None, as the validation layer does).
 """
 
+from typing import cast
+
 import pandas as pd
 import pytest
 
@@ -43,7 +45,7 @@ def tel_df() -> pd.DataFrame:
     """Return a processed telemetry DataFrame from the sample payload."""
     result = _create_telemetry_df(_RAW_TEL, _DRIVER, _LAP_NUM, "pandas")
     assert result is not None, "_create_telemetry_df returned None for valid payload"
-    return result
+    return cast(pd.DataFrame, result)
 
 
 class TestTelemetryDtypes:
@@ -167,7 +169,7 @@ class TestTelemetryDtypesWithNoneValues:
             "drs": [0, None, 0],
         }
         result = _create_telemetry_df(payload, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert result["nGear"].dtype.name == "Int64"
         assert result["DRS"].dtype.name == "Int64"
         assert pd.isna(result["nGear"].iloc[1])
@@ -179,7 +181,7 @@ class TestTelemetryDtypesWithNoneValues:
             "speed": [222.0, 223.0, 224.0],
         }
         result = _create_telemetry_df(payload, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert pd.api.types.is_timedelta64_ns_dtype(result["Time"])
         assert pd.isna(result["Time"].iloc[1])
 
@@ -189,7 +191,7 @@ class TestTelemetryDtypesWithNoneValues:
             "rpm": [11000.0, None, 10800.0],
         }
         result = _create_telemetry_df(payload, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert result["Speed"].dtype == "float64"
         assert result["RPM"].dtype == "float64"
         assert pd.isna(result["Speed"].iloc[1])
@@ -203,6 +205,6 @@ class TestTelemetryDtypesWithNoneValues:
             "DistanceToDriverAhead": [46.4],
         }
         result = _create_telemetry_df(payload, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert result["DriverAhead"].dtype == object
         assert pd.isna(result["DriverAhead"].iloc[0])

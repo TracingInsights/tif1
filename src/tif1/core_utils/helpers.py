@@ -42,7 +42,7 @@ def _ensure_polars_available() -> bool:
 
         POLARS_AVAILABLE = True
     except ImportError:
-        pl = None  # type: ignore[assignment]
+        pl = None  # type: ignore[ty:invalid-assignment]
         POLARS_AVAILABLE = False
     return POLARS_AVAILABLE
 
@@ -213,9 +213,13 @@ def _apply_categorical(df, cols: list, lib: str):
     return df
 
 
-def _get_lap_number(row: dict) -> int:
-    """Safely extract lap number from row."""
-    lap_num = row.get("LapNumber") or row.get("lap")
+def _get_lap_number(row: dict | pd.Series) -> int:
+    """Safely extract lap number from row (dict or pandas Series)."""
+    lap_num = row.get("LapNumber")
+    if lap_num is None:
+        # Only fall through on a missing/None LapNumber — a falsy value like
+        # 0 is still a real (if unusual) lap number, not a missing key.
+        lap_num = row.get("lap")
     if lap_num is None:
         raise ValueError("No lap number found in row")
     try:
@@ -224,7 +228,9 @@ def _get_lap_number(row: dict) -> int:
         raise ValueError(f"Invalid lap number: {lap_num}") from e
 
 
-def _create_telemetry_df(tel_data: dict, driver: str, lap_num: int, lib: str) -> DataFrame | None:
+def _create_telemetry_df(
+    tel_data: dict | None, driver: str, lap_num: int, lib: str
+) -> DataFrame | None:
     """Create telemetry DataFrame with driver and lap metadata (zero-copy optimized).
 
     Returns:
@@ -300,7 +306,12 @@ def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
     - ``nGear``/``DRS``: int → nullable ``Int64``
     - Missing ``Time``/``Speed``/``nGear``/``X``/``Y``/``Z`` → ``pd.NA``
     - ``Driver`` stays ``object`` (FastF1 compatibility), ``LapNumber`` → ``Int64``
+
+    This helper is pandas-only: it is called from the pandas construction paths
+    in :func:`_create_telemetry_df` and the merged-dict assembly.
     """
+    telemetry_df = cast(pd.DataFrame, telemetry_df)
+
     # Time: float seconds → timedelta64[ns]
     if "Time" in telemetry_df.columns:
         telemetry_df["Time"] = pd.to_timedelta(telemetry_df["Time"], unit="s")

@@ -42,6 +42,22 @@ class TestCache:
         assert cache.cache_dir == custom_dir
         assert cache.cache_dir.exists()
 
+    def test_cache_init_none_config_falls_back_to_default(self, tmp_path, monkeypatch):
+        """A None cache_dir config (e.g. "cache_dir": null in .tif1rc) must not
+        become a literal "./None" directory via str(None)."""
+        from tif1.config import Config
+
+        monkeypatch.setattr(Config, "_instance", None)
+        monkeypatch.delenv("TIF1_CACHE_DIR", raising=False)
+        fake_default = tmp_path / "default-cache"
+        monkeypatch.setattr("tif1.config._default_cache_dir", lambda: fake_default)
+        config = Config()
+        config.set("cache_dir", None)
+
+        cache = Cache()
+        assert cache.cache_dir == fake_default
+        assert cache.cache_dir.name != "None"
+
     def test_cache_set_get(self, tmp_path):
         """Test setting and getting cache data."""
         cache = Cache(tmp_path)
@@ -295,8 +311,10 @@ class TestHasSessionData:
         cache = Cache(tmp_path)
         cache.set("2025/Bahrain/Race/drivers.json", {"drivers": []})
         # Clear SQLite to ensure it's the memory cache hit path
-        cache.conn.execute("DELETE FROM cache")
-        cache.conn.commit()
+        conn = cache.conn
+        assert conn is not None
+        conn.execute("DELETE FROM cache")
+        conn.commit()
         assert cache.has_session_data(2025, "Bahrain", "Race") is True
 
 

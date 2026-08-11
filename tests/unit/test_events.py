@@ -333,64 +333,91 @@ class TestGetEventByName:
 class TestEventSessionName:
     """Test FastF1-compatible Event session name lookup."""
 
+    def test_event_pandas_reconstruction_preserves_identity(self):
+        """Pandas operations must not re-fetch or lose event identity metadata."""
+        event = get_event(2024, 1)
+        assert event is not None
+
+        copied = event.copy()
+        sliced = event.iloc[:1]
+
+        assert type(copied).__name__ == "Event"
+        assert copied.year == event.year
+        assert copied._event_name == event._event_name
+        assert type(sliced).__name__ == "Event"
+        assert sliced.year == event.year
+        assert sliced._event_name == event._event_name
+
     def test_get_session_name_by_number(self):
         event = get_event(2024, 1)
+        assert event is not None
         assert event.get_session_name(1) == "Practice 1"
         assert event.get_session_name(5) == "Race"
 
     def test_get_session_name_by_abbreviation(self):
         event = get_event(2024, 1)
+        assert event is not None
         assert event.get_session_name("FP1") == "Practice 1"
         assert event.get_session_name("Q") == "Qualifying"
         assert event.get_session_name("R") == "Race"
 
     def test_get_session_name_case_insensitive(self):
         event = get_event(2024, 1)
+        assert event is not None
         assert event.get_session_name("practice 1") == "Practice 1"
         assert event.get_session_name("QUALIFYING") == "Qualifying"
         assert event.get_session_name("race") == "Race"
 
     def test_get_session_name_sprint_compatibility_alias(self):
         event = get_event(2021, "British Grand Prix")
+        assert event is not None
         assert event.get_session_name("SQ") == "Sprint"
 
     def test_get_session_name_invalid_number(self):
         event = get_event(2024, 1)
+        assert event is not None
         with pytest.raises(ValueError, match="Invalid session type"):
             event.get_session_name(99)
 
     def test_get_session_name_unavailable_type(self):
         event = get_event(2024, 1)
+        assert event is not None
         with pytest.raises(ValueError, match="does not exist for this event"):
             event.get_session_name("S")
 
     def test_get_session_resolves_identifier(self):
         event = get_event(2024, 1)
+        assert event is not None
         session = event.get_session("race")
         assert session.session == "Race"
 
     def test_get_race_method(self):
         event = get_event(2024, 1)
+        assert event is not None
         session = event.get_race()
         assert session.session == "Race"
 
     def test_get_qualifying_method(self):
         event = get_event(2024, 1)
+        assert event is not None
         session = event.get_qualifying()
         assert session.session == "Qualifying"
 
     def test_get_practice_method(self):
         event = get_event(2024, 1)
+        assert event is not None
         session = event.get_practice(1)
         assert unquote(str(session.session)) == "Practice 1"
 
     def test_get_practice_invalid_number(self):
         event = get_event(2024, 1)
+        assert event is not None
         with pytest.raises(ValueError, match="Invalid session type"):
             event.get_practice(99)
 
     def test_get_sprint_methods_for_2024_sprint_weekend(self):
         event = get_event(2024, "Miami Grand Prix")
+        assert event is not None
         sprint = event.get_sprint()
         sprint_qualifying = event.get_sprint_qualifying()
         assert sprint.session == "Sprint"
@@ -398,11 +425,13 @@ class TestEventSessionName:
 
     def test_get_sprint_shootout_method(self):
         event = get_event(2023, "Austrian Grand Prix")
+        assert event is not None
         session = event.get_sprint_shootout()
         assert unquote(str(session.session)) == "Sprint Shootout"
 
     def test_get_session_date_local_and_utc(self):
         event = get_event(2024, 1)
+        assert event is not None
         local_date = event.get_session_date("Q")
         utc_date = event.get_session_date("Q", utc=True)
 
@@ -411,6 +440,7 @@ class TestEventSessionName:
 
     def test_get_session_date_by_number(self):
         event = get_event(2024, 1)
+        assert event is not None
         assert event.get_session_date(5, utc=True) == pd.Timestamp(event["Session5DateUtc"])
 
     def test_get_session_date_missing_local_timestamp(self):

@@ -8,7 +8,7 @@ the real ``get_session`` is never called.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 from unittest import mock
 
 import matplotlib as mpl
@@ -102,6 +102,7 @@ class FakeLaps(pd.DataFrame):
     """DataFrame subclass with fastf1-style ``pick_*`` methods."""
 
     _metadata: ClassVar[list[str]] = ["session"]
+    session: Any
 
     def pick_driver(self, identifier):
         return self.pick_drivers([identifier])
@@ -129,15 +130,23 @@ class FakeLaps(pd.DataFrame):
         if self.empty:
             return None
         row = self.loc[self["LapTime"].idxmin()]
-        return FakeLap(self.session, row)
+        return FakeLap(self.session, cast(pd.Series, row))
 
 
 class FakeSession:
     """Synthetic session covering exactly the surface the charts touch."""
 
     def __init__(
-        self, *, year: int = 2023, name: str = "Qualifying", with_laps: bool = True
+        self,
+        *,
+        year: int = 2023,
+        name: str = "Qualifying",
+        with_laps: bool = True,
+        driver_list: list[tuple[str, str, str]] | None = None,
+        launch: bool = False,
     ) -> None:
+        self._driver_list = DRIVERS if driver_list is None else driver_list
+        self._launch = launch
         self.year = year
         self.name = name
         self.event = FakeEvent("Italian Grand Prix", year)
@@ -181,7 +190,7 @@ class FakeSession:
         return self._results
 
     def get_driver(self, identifier):
-        for abbr, team, dn in DRIVERS:
+        for abbr, team, dn in self._driver_list:
             if str(identifier) == dn:
                 return {
                     "Abbreviation": abbr,
@@ -202,7 +211,9 @@ class FakeSession:
         return SimpleNamespace(corners=corners)
 
     def telemetry_for(self, driver: str, lap_number: int) -> FakeTelemetry:
-        idx = [d[0] for d in DRIVERS].index(driver)
+        idx = [d[0] for d in self._driver_list].index(driver)
+        if self._launch:
+            return _make_launch_telemetry(idx)
         return _make_telemetry(idx, lap_number)
 
 
@@ -340,7 +351,7 @@ def _make_big_session(n_drivers: int, *, launch: bool = False):
     class BigSession(FakeSession):
         pass
 
-    session = BigSession(year=2024)
+    session = BigSession(year=2024, driver_list=driver_list, launch=launch)
     laps_rows = []
     for pos, (abbr, team, _dn) in enumerate(driver_list, start=1):
         for lap_num in range(1, N_LAPS + 1):
@@ -395,39 +406,13 @@ def _make_big_session(n_drivers: int, *, launch: bool = False):
     )
     session.drivers = [dn for _, _, dn in driver_list]
 
-    def get_driver(identifier):
-        for abbr, team, dn in driver_list:
-            if str(identifier) == dn:
-                return {
-                    "Abbreviation": abbr,
-                    "Team": team,
-                    "DriverNumber": dn,
-                    "TeamColor": _TEAM_COLORS[team],
-                }
-        raise KeyError(f"Driver {identifier} not found")
-
-    session.get_driver = get_driver
-
-    order = [abbr for abbr, _, _ in driver_list]
-    if launch:
-        session.telemetry_for = lambda driver, lap: _make_launch_telemetry(  # noqa: ARG005
-            order.index(driver)
-        )
-    else:
-        session.telemetry_for = lambda driver, lap: _make_telemetry(
-            order.index(driver), lap
-        )
     return session
 
 
 @pytest.fixture
 def launch_session(monkeypatch):
     """Patch the seam with a session whose telemetry ramps from 0 km/h."""
-    session = FakeSession(year=2024)
-    driver_order = [abbr for abbr, _team, _dn in DRIVERS]
-    session.telemetry_for = lambda driver, lap: _make_launch_telemetry(  # noqa: ARG005
-        driver_order.index(driver)
-    )
+    session = FakeSession(year=2024, launch=True)
     monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
     yield session
     plt.close("all")
@@ -587,7 +572,7 @@ def test_no_save_without_save_path(fake_session, monkeypatch):
 
 
 def test_savefig_kwargs_facecolor_and_dpi(fake_session, tmp_path, monkeypatch):
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
     original = plt.Figure.savefig
 
     def _capture_save(self, fname, **kwargs):
@@ -661,7 +646,7 @@ def test_auto_save_writes_structured_path(fake_session, tmp_path):
     assert out.exists()
     assert out.stat().st_size > 0
     # The saved location is discoverable on the returned figure.
-    assert fig._tif1_save_path == str(out)
+    assert cast(Any, fig)._tif1_save_path == str(out)
 
 
 def test_auto_save_maps_session_codes(fake_session, tmp_path):
@@ -719,7 +704,7 @@ def test_auto_save_explicit_save_path_wins(fake_session, tmp_path, monkeypatch):
 
 def test_auto_save_dpi_override(fake_session, tmp_path, monkeypatch):
     """The config dpi overrides the chart's dpi for auto-saved files."""
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
     original = plt.Figure.savefig
 
     def _capture(self, fname, **kwargs):
@@ -788,9 +773,10 @@ def test_default_theme_applies_fastf1(fake_session):
 
 
 def test_color_scheme_none_leaves_rcparams(fake_session):
-    before = {key: plt.rcParams[key] for key in _FASTF1_KEYS}
+    rc = cast(Any, plt.rcParams)
+    before = {key: rc[key] for key in _FASTF1_KEYS}
     top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", color_scheme=None)
-    after = {key: plt.rcParams[key] for key in _FASTF1_KEYS}
+    after = {key: rc[key] for key in _FASTF1_KEYS}
     assert before == after
 
 
@@ -994,7 +980,7 @@ def test_race_launch_ratings_bottom_space_is_compact(launch_session):
     assert bounds[1] < 0.08, f"axes bottom margin too large: {bounds[1]:.3f}"
 
     # The suptitle must clear the axes top edge (no title/bar collision).
-    title_bottom = fig._suptitle.get_window_extent().y0
+    title_bottom = cast(Any, fig)._suptitle.get_window_extent().y0
     axes_top = ax.transAxes.transform((0, 1))[1]
     assert title_bottom >= axes_top - 1e-6, "suptitle overlaps the axes"
 
@@ -1105,7 +1091,7 @@ def test_position_changes_legend_stays_in_canvas(n_drivers, monkeypatch):
     assert legend is not None
     assert len(legend.get_texts()) == n_drivers
 
-    renderer = fig.canvas.get_renderer()
+    renderer = cast(Any, fig.canvas).get_renderer()
     fb = fig.bbox
     leg = legend.get_window_extent(renderer)
     ax_ext = ax.get_window_extent(renderer)
@@ -1146,9 +1132,7 @@ def test_track_temperature_legend_stays_in_canvas(n_drivers, monkeypatch):
     monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
     drivers = list(session.laps["Driver"].unique())
 
-    fig, ax = lap_times.plot_track_temperature(
-        2024, "Italian Grand Prix", "R", drivers=drivers
-    )
+    fig, ax = lap_times.plot_track_temperature(2024, "Italian Grand Prix", "R", drivers=drivers)
     fig.canvas.draw()
 
     assert len(ax.lines) == n_drivers
@@ -1156,7 +1140,7 @@ def test_track_temperature_legend_stays_in_canvas(n_drivers, monkeypatch):
     assert legend is not None
     assert len(legend.get_texts()) == n_drivers
 
-    renderer = fig.canvas.get_renderer()
+    renderer = cast(Any, fig.canvas).get_renderer()
     fb = fig.bbox
     leg = legend.get_window_extent(renderer)
     ax_ext = ax.get_window_extent(renderer)
@@ -1189,7 +1173,9 @@ def test_line_scatter_charts_render_at_any_grid_size(n_drivers, monkeypatch):
     # lap delta: exactly two drivers even on a big grid.
     _, ax = lap_times.plot_lap_delta(2024, "Italian Grand Prix", "Q")
     assert len(ax.patches) >= 1
-    assert len(ax.get_legend().get_texts()) == 2
+    lap_delta_legend = ax.get_legend()
+    assert lap_delta_legend is not None
+    assert len(lap_delta_legend.get_texts()) == 2
     plt.close("all")
 
     # tire degradation: aggregates all drivers' laps per compound.
@@ -1221,7 +1207,7 @@ def test_race_launch_ratings_any_driver_count(n_drivers, monkeypatch):
     bounds = ax.get_position().bounds
     assert bounds[1] < 0.08
     # Title still clears the axes top.
-    title_bottom = fig._suptitle.get_window_extent().y0
+    title_bottom = cast(Any, fig)._suptitle.get_window_extent().y0
     axes_top = ax.transAxes.transform((0, 1))[1]
     assert title_bottom >= axes_top - 1e-6
     plt.close("all")
@@ -1233,7 +1219,7 @@ def test_race_launch_ratings_exports_full_canvas(launch_session, tmp_path, monke
     This is required for pixel parity with Race_Launch_Performance_Ratings.py,
     which saves the full 20x20in canvas with its own subplots_adjust margins.
     """
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
     original = plt.Figure.savefig
 
     def _capture_save(self, fname, **kwargs):
@@ -1306,7 +1292,7 @@ def test_race_launch_ratings_rounding_matches_v2_pipeline(launch_session):
     bars = dict(
         zip(
             [t.get_text().split(". ")[1].strip() for t in ax.get_yticklabels()],
-            [round(p.get_width(), 2) for p in ax.patches],
+            [round(p.get_width(), 2) for p in cast(Any, ax).patches],
         )
     )
     for driver, rating in expected.items():

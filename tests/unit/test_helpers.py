@@ -57,7 +57,7 @@ class TestValidateDriversList:
 
     def test_not_a_list(self):
         with pytest.raises(TypeError, match="must be a list"):
-            _validate_drivers_list("VER")  # type: ignore[arg-type]
+            _validate_drivers_list("VER")  # type: ignore[ty:invalid-argument-type]
 
     def test_empty_list(self):
         with pytest.raises(ValueError, match="cannot be empty"):
@@ -69,7 +69,7 @@ class TestValidateDriversList:
 
     def test_list_with_non_string(self):
         with pytest.raises(ValueError, match="non-empty strings"):
-            _validate_drivers_list(["VER", 123])  # type: ignore[list-item]
+            _validate_drivers_list(["VER", 123])  # type: ignore[ty:invalid-argument-type]
 
 
 class TestValidateLapNumber:
@@ -80,7 +80,7 @@ class TestValidateLapNumber:
 
     def test_not_int(self):
         with pytest.raises(TypeError, match="must be an integer"):
-            _validate_lap_number(1.5)  # type: ignore[arg-type]
+            _validate_lap_number(1.5)  # type: ignore[ty:invalid-argument-type]
 
     def test_zero(self):
         with pytest.raises(ValueError, match="must be positive"):
@@ -99,7 +99,7 @@ class TestValidateStringParam:
 
     def test_not_a_string(self):
         with pytest.raises(TypeError, match="must be a string"):
-            _validate_string_param(123, "param")  # type: ignore[arg-type]
+            _validate_string_param(123, "param")  # type: ignore[ty:invalid-argument-type]
 
     def test_empty_string(self):
         with pytest.raises(ValueError, match="cannot be empty"):
@@ -271,6 +271,12 @@ class TestGetLapNumber:
     def test_lap_key(self):
         assert _get_lap_number({"lap": "10"}) == 10
 
+    def test_falsy_zero_lap_number_is_not_treated_as_missing(self):
+        assert _get_lap_number({"LapNumber": 0}) == 0
+
+    def test_none_lap_number_falls_back_to_lap_key(self):
+        assert _get_lap_number({"LapNumber": None, "lap": 7}) == 7
+
     def test_none_value(self):
         with pytest.raises(ValueError, match="No lap number found"):
             _get_lap_number({})
@@ -303,7 +309,7 @@ class TestCreateTelemetryDf:
             "data_key": ["k1", "k2"],
         }
         result = _create_telemetry_df(tel_data, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert "DriverAhead" in result.columns
         assert "DistanceToDriverAhead" in result.columns
         assert "DataKey" in result.columns
@@ -321,7 +327,7 @@ class TestCreateTelemetryDf:
 
     def test_mismatched_lengths_are_normalized(self):
         result = _create_telemetry_df({"a": [1], "b": [1, 2]}, "VER", 1, "pandas")
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert len(result) == 2
         assert result["a"].iloc[0] == 1
         assert pd.isna(result["a"].iloc[1])

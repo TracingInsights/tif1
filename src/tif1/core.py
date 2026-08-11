@@ -8,7 +8,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Self, cast
 
 import niquests
 import numpy as np
@@ -65,7 +65,7 @@ from .http_session import get_session as get_http_session
 from .retry import retry_with_backoff
 from .validation import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
-pl = None
+pl: Any = None
 POLARS_AVAILABLE: bool | None = None
 
 logger = logging.getLogger(__name__)
@@ -283,6 +283,10 @@ class Laps(pd.DataFrame):
 
     _metadata: ClassVar[list[str]] = ["session"]
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow DataFrame-style subclass construction without re-implementing __new__."""
+        return super().__new__(cls)
+
     def __init__(self, data=None, *args, session=None, **kwargs):
         cast(Any, super()).__init__(data, *args, **kwargs)
         self.session = session
@@ -452,7 +456,7 @@ class Laps(pd.DataFrame):
             # explicit qualifying session markers are unavailable.
             return self.copy(), self.copy(), self.copy()
 
-        normalized = cast(pd.Series, qualifying_sessions).astype("string").str.upper().str.strip()
+        normalized = qualifying_sessions.astype("string").str.upper().str.strip()
         session_suffix = normalized.str.extract(r"([123])$", expand=False)
         if not bool(session_suffix.notna().any()):
             return self.copy(), self.copy(), self.copy()
@@ -584,7 +588,7 @@ class Laps(pd.DataFrame):
 
             yield _IterLapResult(index, non_null_lap)
 
-    def reset_index(self, drop=False, **kwargs):  # type: ignore[override]
+    def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
         """Reset index and drop level_0 column if created."""
         result = cast(Any, super()).reset_index(drop=drop, **kwargs)
         # Remove level_0 column if it was created
@@ -598,6 +602,10 @@ class Lap(pd.Series):
 
     _metadata: ClassVar[list[str]] = ["session"]
     session: Any
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow Series-style subclass construction without re-implementing __new__."""
+        return cast(Self, super().__new__(cls))
 
     def __init__(self, data=None, *args, **kwargs):
         session = kwargs.pop("session", None)
@@ -688,6 +696,10 @@ class Telemetry(pd.DataFrame):
 
     _metadata: ClassVar[list[str]] = ["session", "driver"]
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow DataFrame-style subclass construction without re-implementing __new__."""
+        return super().__new__(cls)
+
     def __init__(self, data=None, *args, session=None, driver=None, **kwargs):
         cast(Any, super()).__init__(data, *args, **kwargs)
         self.session = session
@@ -709,7 +721,7 @@ class Telemetry(pd.DataFrame):
             return self.driver
         if "Driver" not in self.columns:
             return None
-        drivers = cast(pd.Series, self["Driver"]).dropna().unique()
+        drivers = self["Driver"].dropna().unique()
         if len(drivers) != 1:
             return None
         driver = drivers[0]
@@ -720,11 +732,7 @@ class Telemetry(pd.DataFrame):
         if "LapNumber" not in self.columns:
             return []
         lap_numbers = (
-            pd.to_numeric(cast(pd.Series, self["LapNumber"]), errors="coerce")
-            .dropna()
-            .astype(int)
-            .unique()
-            .tolist()
+            pd.to_numeric(self["LapNumber"], errors="coerce").dropna().astype(int).unique().tolist()
         )
         return sorted(lap_numbers)
 
@@ -827,9 +835,9 @@ class Telemetry(pd.DataFrame):
 
     def calculate_driver_ahead(self, return_reference: bool = False):
         if "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns:
-            driver_ahead = cast(pd.Series, self["DriverAhead"]).to_numpy(copy=True)
+            driver_ahead = self["DriverAhead"].to_numpy(copy=True)
             distance_to_driver_ahead = pd.to_numeric(
-                cast(pd.Series, self["DistanceToDriverAhead"]), errors="coerce"
+                self["DistanceToDriverAhead"], errors="coerce"
             ).to_numpy(copy=True)
             if return_reference:
                 return driver_ahead, distance_to_driver_ahead, self
@@ -864,7 +872,7 @@ class Telemetry(pd.DataFrame):
             tel["TrackStatus"] = "1"
         return self._wrap(tel)
 
-    def slice_by_mask(self, mask, pad: int = 0, pad_side: str = "both"):
+    def slice_by_mask(self, mask, pad: int | float = 0, pad_side: str = "both"):
         mask_array = np.asarray(mask, dtype=bool).copy()
         if mask_array.shape[0] != len(self):
             raise ValueError("Mask length must match telemetry length.")
@@ -887,7 +895,7 @@ class Telemetry(pd.DataFrame):
         self,
         start_time,
         end_time,
-        pad: int = 0,
+        pad: int | float = 0,
         pad_side: str = "both",
         interpolate_edges: bool = False,
     ):
@@ -901,7 +909,7 @@ class Telemetry(pd.DataFrame):
         if pd.isna(start) or pd.isna(end):
             return self._wrap(self.iloc[0:0].copy())
 
-        ref_time = self._coerce_timedelta_series(cast(pd.Series, self[time_ref_col]))
+        ref_time = self._coerce_timedelta_series(self[time_ref_col])
         selection_mask = (ref_time >= start) & (ref_time <= end)
         data_slice = self.slice_by_mask(selection_mask.to_numpy(copy=False), pad, pad_side)
 
@@ -987,7 +995,7 @@ class Telemetry(pd.DataFrame):
     def slice_by_lap(
         self,
         ref_laps,
-        pad: int = 0,
+        pad: int | float = 0,
         pad_side: str = "both",
         interpolate_edges: bool = False,
     ):
@@ -1014,7 +1022,7 @@ class Telemetry(pd.DataFrame):
         if not lap_numbers:
             return self._wrap(self.iloc[0:0].copy())
 
-        lap_mask = cast(pd.Series, self["LapNumber"]).isin(lap_numbers).to_numpy(copy=False)
+        lap_mask = self["LapNumber"].isin(lap_numbers).to_numpy(copy=False)
         return self.slice_by_mask(lap_mask, pad=pad, pad_side=pad_side)
 
     def merge_channels(self, other, **kwargs):
@@ -1059,6 +1067,10 @@ class SessionResults(pd.DataFrame):
 
     _metadata: ClassVar[list[str]] = ["session"]
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow DataFrame-style subclass construction without re-implementing __new__."""
+        return super().__new__(cls)
+
     def __init__(self, data=None, *args, session=None, **kwargs):
         cast(Any, super()).__init__(data, *args, **kwargs)
         self.session = session
@@ -1076,6 +1088,10 @@ class DriverResult(pd.Series):
     """Driver and result information for a single driver."""
 
     _metadata: ClassVar[list[str]] = ["session"]
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow Series-style subclass construction without re-implementing __new__."""
+        return cast(Self, super().__new__(cls))
 
     def __init__(self, data=None, *args, session=None, **kwargs):
         cast(Any, super()).__init__(data, *args, **kwargs)
@@ -1367,7 +1383,7 @@ def _telemetry_frame_from_merged(merged: dict) -> pd.DataFrame:
     """
     if not merged:
         return pd.DataFrame()
-    return _apply_telemetry_dtypes(pd.DataFrame(merged, copy=False))
+    return cast(pd.DataFrame, _apply_telemetry_dtypes(pd.DataFrame(merged, copy=False)))
 
 
 def _merge_telemetry_payloads(
@@ -1452,9 +1468,9 @@ def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFram
                 k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
                 for k, v in normalized_data.items()
             }
-        lap_df = pl.DataFrame(normalized_data, strict=False)  # type: ignore[union-attr]
+        lap_df = pl.DataFrame(normalized_data, strict=False)
         lap_df = lap_df.with_columns(
-            [pl.lit(driver).alias(COL_DRIVER), pl.lit(team).alias(COL_TEAM)]  # type: ignore[union-attr]
+            [pl.lit(driver).alias(COL_DRIVER), pl.lit(team).alias(COL_TEAM)]
         )
     else:
         lap_df = pd.DataFrame(normalized_data, copy=False)
@@ -1479,11 +1495,9 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     are never reinterpreted as seconds.
     """
     if pd.api.types.is_timedelta64_dtype(values):
-        return cast(pd.Series, values)
+        return values
     numeric_values = (
-        cast(pd.Series, values)
-        if pd.api.types.is_numeric_dtype(values)
-        else pd.to_numeric(values, errors="coerce")
+        values if pd.api.types.is_numeric_dtype(values) else pd.to_numeric(values, errors="coerce")
     )
     valid_mask = numeric_values.notna()
     result = pd.Series(pd.NaT, index=numeric_values.index, dtype="timedelta64[ns]")
@@ -1525,22 +1539,19 @@ def _replace_null_like_strings_pl(lap_df):
     bools coerced to Utf8 when mixed with strings) cannot be re-typed here.
     """
     lap_df_pl = cast(Any, lap_df)
-    string_cols = [
-        c for c, t in zip(lap_df_pl.columns, lap_df_pl.dtypes) if t == cast(Any, pl).String
-    ]
+    string_cols = [c for c, t in zip(lap_df_pl.columns, lap_df_pl.dtypes) if t == pl.String]
     if not string_cols:
         return lap_df
     hits = lap_df_pl.select(
-        [cast(Any, pl).col(c).is_in(_NULL_LIKE_TOKEN_PROBE).any().alias(c) for c in string_cols]
+        [pl.col(c).is_in(_NULL_LIKE_TOKEN_PROBE).any().alias(c) for c in string_cols]
     ).row(0)
     dirty_cols = [c for c, hit in zip(string_cols, hits) if hit]
     if not dirty_cols:
         return lap_df
     exprs = [
-        cast(Any, pl)
-        .when(cast(Any, pl).col(c).str.strip_chars().str.to_lowercase().is_in(_NULL_LIKE_STRINGS))
+        pl.when(pl.col(c).str.strip_chars().str.to_lowercase().is_in(_NULL_LIKE_STRINGS))
         .then(None)
-        .otherwise(cast(Any, pl).col(c))
+        .otherwise(pl.col(c))
         .alias(c)
         for c in dirty_cols
     ]
@@ -1573,7 +1584,7 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     )
     for col in _TD_SECONDS_COLS:
         if col in df.columns and not pd.api.types.is_timedelta64_dtype(df[col]):
-            df[col] = _numeric_seconds_to_timedelta(cast(pd.Series, df[col]))
+            df[col] = _numeric_seconds_to_timedelta(df[col])
 
     # ------------------------------------------------------------------
     # Datetime column: LapStartDate arrives as ISO-8601 strings
@@ -1685,10 +1696,7 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
     if lib == "polars" and COL_LAP_TIME in lap_df.columns:
         lap_df_pl = cast(Any, lap_df)
         lap_df = lap_df_pl.with_columns(
-            cast(Any, pl)
-            .col(COL_LAP_TIME)
-            .cast(cast(Any, pl).Float64, strict=False)
-            .alias(COL_LAP_TIME_SECONDS)
+            pl.col(COL_LAP_TIME).cast(pl.Float64, strict=False).alias(COL_LAP_TIME_SECONDS)
         )
     if lib == "polars" and not bool(config.get("polars_lap_categorical", False)):
         lap_df = _reorder_laps_columns(lap_df, lib)
@@ -1701,7 +1709,7 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
 def _create_session_df(data: dict[str, Any], rename_map: dict[str, str], lib: str) -> DataFrame:
     """Create a session-level DataFrame from a payload dict and rename columns (zero-copy optimized)."""
     if lib == "polars":
-        frame = pl.DataFrame(data, strict=False)  # type: ignore[union-attr]
+        frame = pl.DataFrame(data, strict=False)
     else:
         # Use copy=False to avoid unnecessary data duplication
         frame = pd.DataFrame(data, copy=False)
@@ -1940,7 +1948,7 @@ class Session:
             self._local_json_payloads[path] = data
 
     def _remember_telemetry_payload(
-        self, driver: str, lap_num: int, tel_payload: dict[str, Any]
+        self, driver: str, lap_num: int, tel_payload: dict[str, Any] | None
     ) -> None:
         """Memoize telemetry payloads fetched in this session."""
         if isinstance(tel_payload, dict) and tel_payload:
@@ -2422,28 +2430,30 @@ class Session:
             >>> car_data = session.car_data
             >>> print(car_data[["Driver", "Speed", "X", "Y"]].head())
         """
-        if self._car_data is None:
+        car_data = self._car_data
+        if car_data is None:
             # Fetch telemetry for all drivers
             laps = self.laps
             if _is_empty_df(laps, self.lib):
-                self._car_data = _create_empty_df(self.lib)
+                car_data = _create_empty_df(self.lib)
             else:
                 # Collect telemetry from all laps
                 all_telemetry = []
                 for driver in laps["Driver"].unique():
-                    driver_laps = laps[laps["Driver"] == driver]  # type: ignore[call-overload]
+                    driver_laps = laps[laps["Driver"] == driver]  # type: ignore[ty:invalid-argument-type]
                     tel = driver_laps.telemetry
                     if not _is_empty_df(tel, self.lib):
                         all_telemetry.append(tel)
 
                 if all_telemetry:
                     if self.lib == "polars":
-                        self._car_data = pl.concat(all_telemetry, how="vertical")  # type: ignore[union-attr]
+                        car_data = pl.concat(all_telemetry, how="vertical")
                     else:
-                        self._car_data = pd.concat(all_telemetry, ignore_index=True)
+                        car_data = cast(DataFrame, pd.concat(all_telemetry, ignore_index=True))
                 else:
-                    self._car_data = _create_empty_df(self.lib)
-        return self._car_data
+                    car_data = _create_empty_df(self.lib)
+            self._car_data = car_data
+        return cast(DataFrame, car_data)
 
     @property
     def pos_data(self) -> DataFrame:
@@ -2747,9 +2757,7 @@ class Session:
                         weather_pd = cast(pd.DataFrame, self._weather)
                         # Time: seconds float → timedelta
                         if "Time" in weather_pd.columns:
-                            weather_pd["Time"] = _numeric_seconds_to_timedelta(
-                                cast(pd.Series, weather_pd["Time"])
-                            )
+                            weather_pd["Time"] = _numeric_seconds_to_timedelta(weather_pd["Time"])
                         # Float columns
                         for _col in ("AirTemp", "Humidity", "Pressure", "TrackTemp", "WindSpeed"):
                             if _col in weather_pd.columns:
@@ -3837,7 +3845,7 @@ class Session:
             return _create_empty_df(self.lib)
 
         fastest_df = (
-            pl.DataFrame(fastest_rows, strict=False)  # type: ignore[union-attr]
+            pl.DataFrame(fastest_rows, strict=False)
             if self.lib == "polars"
             else pd.DataFrame(fastest_rows, copy=False)
         )
@@ -3883,7 +3891,7 @@ class Session:
             return _create_empty_df(self.lib)
 
         fastest_df = (
-            pl.DataFrame(fastest_rows, strict=False)  # type: ignore[union-attr]
+            pl.DataFrame(fastest_rows, strict=False)
             if self.lib == "polars"
             else pd.DataFrame(fastest_rows, copy=False)
         )
@@ -4355,7 +4363,7 @@ class Session:
                 logger.info(f"No valid lap data: {self.year}/{self.gp}")
                 return _create_empty_df(self.lib)
 
-            self._laps = pl.concat(laps_data, how="vertical_relaxed", rechunk=False)  # type: ignore[union-attr]
+            self._laps = pl.concat(laps_data, how="vertical_relaxed", rechunk=False)
         else:
             # Build one DataFrame from a single merged dict-of-lists instead of
             # pd.concat of per-driver frames: concat regressed ~2x in pandas 3.0
@@ -4546,7 +4554,7 @@ class Session:
                 driver=driver_code, year=self.year, event=self.gp, session=self.session
             )
 
-        return Driver(self, driver_code, prefetched_lap_data=prefetched_laps)  # type: ignore[return-value]
+        return Driver(self, driver_code, prefetched_lap_data=prefetched_laps)
 
     def _lap_time_sort_column(self, laps) -> str:
         """Resolve the numeric lap-time sort column for fastest-lap operations."""
@@ -4570,7 +4578,7 @@ class Session:
         if drivers:
             if self.lib == "polars":
                 laps_pl = cast(Any, laps)
-                laps = laps_pl.filter(pl.col(COL_DRIVER).is_in(drivers))  # type: ignore[union-attr]
+                laps = laps_pl.filter(pl.col(COL_DRIVER).is_in(drivers))
             else:
                 laps_pd = cast(pd.DataFrame, laps)
                 driver_list_str = ", ".join(f"'{d}'" for d in drivers)
@@ -4585,7 +4593,7 @@ class Session:
         sort_col = self._lap_time_sort_column(valid)
         if self.lib == "polars":
             return (
-                valid.group_by(COL_DRIVER).agg(pl.all().sort_by(sort_col).first()).sort(sort_col)  # type: ignore[union-attr]
+                valid.group_by(COL_DRIVER).agg(pl.all().sort_by(sort_col).first()).sort(sort_col)
                 if by_driver
                 else valid.sort(sort_col).head(1)
             )
@@ -5167,7 +5175,7 @@ class Session:
                     frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
-            return pl.concat(frames, how="vertical_relaxed", rechunk=False)  # type: ignore[union-attr]
+            return pl.concat(frames, how="vertical_relaxed", rechunk=False)
 
         try:
             merged_df = _telemetry_frame_from_merged(_merge_telemetry_payloads(tels))
@@ -5182,7 +5190,8 @@ class Session:
                     frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
-            return pd.concat(frames, ignore_index=True)
+            frames_pd = [cast(pd.DataFrame, frame) for frame in frames]
+            return pd.concat(frames_pd, ignore_index=True)
         return merged_df if not merged_df.empty else _create_empty_df(self.lib)
 
     def get_fastest_laps_tels(
@@ -5674,7 +5683,7 @@ class Session:
                 if driver and lap_num is not None:
                     lap_refs.append((str(driver), int(lap_num)))
         else:
-            for _, row in laps.iterrows():  # type: ignore[union-attr]
+            for _, row in laps.iterrows():  # type: ignore[ty:unresolved-attribute]
                 driver = row.get("Driver")
                 lap_num = row.get("LapNumber")
                 if pd.notna(driver) and pd.notna(lap_num):
@@ -5765,17 +5774,13 @@ class Driver(pd.Series):
         laps: DataFrame with driver's laps
     """
 
-    _metadata: ClassVar[list[str]] = [
-        "session",
-        "driver",
-        "_prefetched_lap_data",
-        "_laps",
-        "_lap_numbers",
-        "_lap_numbers_df_id",
-        "_lap_index_map",
-        "_lap_index_map_df_id",
-        "_lap_index_map_df_ref",
-    ]
+    # Only identity/configuration fields propagate through pandas' finalize
+    # hook. Derived lookup caches must remain local to each reconstructed object.
+    _metadata: ClassVar[list[str]] = ["session", "driver", "_prefetched_lap_data"]
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow Series-style subclass construction without re-implementing __new__."""
+        return cast(Self, super().__new__(cls))
 
     def __init__(
         self, session: Session, driver: str, prefetched_lap_data: dict[str, Any] | None = None
@@ -5812,9 +5817,26 @@ class Driver(pd.Series):
         self._lap_index_map_df_id: int | None = None
         self._lap_index_map_df_ref: pd.DataFrame | None = None
 
+    def _reconstruct(self, data=None, *args, **kwargs):
+        """Reconstruct a Driver Series without invoking its domain constructor."""
+        result = object.__new__(type(self))
+        cast(Any, pd.Series).__init__(result, data, *args, **kwargs)
+        result.session = self.session
+        result.driver = self.driver
+        result._prefetched_lap_data = self._prefetched_lap_data
+        # Derived lookup state belongs to the source frame and must not be
+        # shared with a reconstructed Series.
+        result._laps = None
+        result._lap_numbers = None
+        result._lap_numbers_df_id = None
+        result._lap_index_map = None
+        result._lap_index_map_df_id = None
+        result._lap_index_map_df_ref = None
+        return result
+
     @property
     def _constructor(self):
-        return Driver
+        return self._reconstruct
 
     @property
     def laps(self) -> DataFrame:
@@ -5834,7 +5856,7 @@ class Driver(pd.Series):
                     if self.session.lib == "polars":
                         session_laps_pl = cast(Any, self.session._laps)
                         # Polars uses lazy evaluation - already optimal
-                        driver_laps = session_laps_pl.filter(pl.col(COL_DRIVER) == self.driver)  # type: ignore[union-attr]
+                        driver_laps = session_laps_pl.filter(pl.col(COL_DRIVER) == self.driver)
                     else:
                         session_laps_pd = cast(pd.DataFrame, self.session._laps)
                         # Use query() for in-place filtering (avoids copy)
@@ -5999,7 +6021,7 @@ class Driver(pd.Series):
         # Fallback for Polars
         if self.session.lib == "polars":
             laps_pl = cast(Any, laps)
-            lap_row = laps_pl.filter(pl.col(COL_LAP_NUMBER) == lap_number)  # type: ignore[union-attr]
+            lap_row = laps_pl.filter(pl.col(COL_LAP_NUMBER) == lap_number)
             if lap_row.height == 0:
                 raise LapNotFoundError(
                     lap_number=lap_number,

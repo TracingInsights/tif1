@@ -12,6 +12,7 @@ import statistics
 import time
 from io import StringIO
 from pathlib import Path
+from typing import cast
 
 import nest_asyncio2
 
@@ -393,10 +394,12 @@ def main():
         for step, avg in sorted(step_avgs.items(), key=lambda x: x[1], reverse=True):
             print(f"  {avg:8.4f}s  {step}")
 
-    if summary["async"]["mean"] and summary["sync"]["mean"]:
-        faster = "async" if summary["async"]["mean"] < summary["sync"]["mean"] else "sync"
+    async_mean = cast(float, summary["async"]["mean"])
+    sync_mean = cast(float, summary["sync"]["mean"])
+    if async_mean and sync_mean:
+        faster = "async" if async_mean < sync_mean else "sync"
         slower = "sync" if faster == "async" else "async"
-        speedup = summary[slower]["mean"] / summary[faster]["mean"]
+        speedup = cast(float, summary[slower]["mean"]) / cast(float, summary[faster]["mean"])
         print(f"\n{faster.upper()} is {speedup:.2f}x faster than {slower.upper()} on average.")
 
     # ── Save results ───────────────────────────────────────────────────────────

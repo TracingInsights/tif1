@@ -340,7 +340,7 @@ if __name__ == "__main__":
     print("\n✅ Chart generation complete!")
     print("Generated charts:")
     for _, _func, _, kwargs in NATIVE_CHARTS:
-        print(f"  - {Path(kwargs['save_path']).name}")
+        print(f"  - {Path(str(kwargs['save_path'])).name}")
     print("  - race_tire_strategy.png")
     print("  - race_pace_boxplot.png")
     print("  - weather_temperature_impact.png")

@@ -16,13 +16,13 @@ try:
 
     POLARS_AVAILABLE = True
 except ImportError:
-    pl = None
+    pl = None  # type: ignore[ty:invalid-assignment]
     POLARS_AVAILABLE = False
 
 from tif1.core_utils.backend_conversion import pandas_to_polars, polars_to_pandas
 
 
-def _estimate_row_memory(data: dict[str, list], lib: str) -> int:
+def _estimate_row_memory(data: dict[str, Any], lib: str) -> int:
     """Estimate memory per row for a given data structure.
 
     Args:

@@ -37,7 +37,9 @@ def _legacy_cache_set(cache: Cache, key: str, data: dict) -> None:
     """Legacy cache write implementation baseline."""
     json_data = _legacy_serialize_json(data)
     with cache._sqlite_lock:
-        cache.conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json_data))
+        conn = cache.conn
+        assert conn is not None
+        conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json_data))
         cache._pending_writes += 1
         cache._commit_if_needed()
 
@@ -46,7 +48,9 @@ def _optimized_cache_set(cache: Cache, key: str, data: dict) -> None:
     """Optimized cache write implementation."""
     json_data = _candidate_serialize_json(data)
     with cache._sqlite_lock:
-        cache.conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json_data))
+        conn = cache.conn
+        assert conn is not None
+        conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json_data))
         cache._pending_writes += 1
         cache._commit_if_needed()
 

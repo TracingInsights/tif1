@@ -636,6 +636,7 @@ class TestSessionGetFastestLapsWithLoadedLaps:
             }
         )
         fastest = session.get_fastest_laps(by_driver=False)
+        assert isinstance(fastest, pd.DataFrame)
         assert len(fastest) == 1
         assert fastest.iloc[0]["LapTime"] == pd.to_timedelta(89.0, unit="s")
         assert fastest.iloc[0]["LapTimeSeconds"] == 89.0

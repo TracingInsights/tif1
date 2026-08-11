@@ -316,6 +316,27 @@ class TestConfigGetValidation:
         assert "~" not in result
         assert "my_cache" in result
 
+    def test_cache_dir_none_falls_back_to_default(self):
+        """None cache_dir must not reach Path(str(None)) — no literal "None" dir."""
+        config = config_module.Config()
+        config.set("cache_dir", None)
+        assert config.get("cache_dir") == str(_default_cache_dir())
+
+    def test_cache_dir_none_returns_explicit_default_when_given(self):
+        config = config_module.Config()
+        config.set("cache_dir", None)
+        assert config.get("cache_dir", "fallback") == "fallback"
+
+    def test_cache_dir_invalid_type_falls_back_to_default(self):
+        config = config_module.Config()
+        config.set("cache_dir", 123)
+        assert config.get("cache_dir") == str(_default_cache_dir())
+
+    def test_cache_dir_accepts_path_objects(self, tmp_path):
+        config = config_module.Config()
+        config.set("cache_dir", tmp_path / "path_obj_cache")
+        assert config.get("cache_dir") == str(tmp_path / "path_obj_cache")
+
     def test_numeric_keys_cover_all_branches(self):
         config = config_module.Config()
         numeric_keys = [

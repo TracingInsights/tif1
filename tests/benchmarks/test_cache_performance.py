@@ -9,6 +9,7 @@ This module validates that cache performance improvements meet targets:
 
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -75,7 +76,7 @@ class CachePerformanceMetrics:
 
 
 @pytest.fixture
-def temp_cache(tmp_path: Path) -> Cache:
+def temp_cache(tmp_path: Path) -> Iterator[Cache]:
     """Create a temporary cache for testing."""
     cache = Cache(cache_dir=tmp_path / "cache")
     yield cache

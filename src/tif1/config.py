@@ -297,8 +297,15 @@ class Config:
                 logger.warning(f"Invalid lib={value}, using default={default}")
                 return default
 
-        if key == "cache_dir" and isinstance(value, str):
-            return str(Path(value).expanduser())
+        if key == "cache_dir":
+            # None (e.g. "cache_dir": null in .tif1rc) or non-path values must
+            # never reach Path(str(...)) — str(None) would create a literal
+            # "./None" cache directory. Fall back to the platform default.
+            if isinstance(value, str | Path):
+                return str(Path(value).expanduser())
+            if value is not None:
+                logger.warning(f"Invalid cache_dir={value}, using default")
+            return default if default is not None else str(_default_cache_dir())
 
         if key == "cdns":
             if not isinstance(value, list):

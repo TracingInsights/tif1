@@ -1,5 +1,6 @@
 """Tests for async_fetch module."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -651,7 +652,7 @@ class TestAsyncFetch:
         with patch("tif1.async_fetch.fetch_json_async") as mock_fetch:
             mock_fetch.side_effect = [
                 {"laps": [1, 2, 3]},
-                DataNotFoundError("Not found"),
+                DataNotFoundError("Not found"),  # type: ignore[ty:invalid-argument-type]
             ]
 
             results = await fetch_multiple_async(requests)
@@ -659,6 +660,37 @@ class TestAsyncFetch:
             assert len(results) == 2
             assert results[0] == {"laps": [1, 2, 3]}
             assert results[1] is None
+
+    async def test_fetch_multiple_async_propagates_cancelled_child(self):
+        """A cancelled child request must not be converted into a successful None."""
+        requests = [(2025, "Test%20GP", "Race", "VER/laptimes.json")]
+
+        with patch("tif1.async_fetch.fetch_json_async", side_effect=asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
+                await fetch_multiple_async(requests)
+
+    async def test_fetch_multiple_async_propagates_outer_cancellation(self):
+        """Cancelling the batch task must cancel its in-flight child requests."""
+
+        child_started = asyncio.Event()
+        child_finished = asyncio.Event()
+
+        async def slow_fetch(*_args, **_kwargs):
+            child_started.set()
+            try:
+                await asyncio.sleep(10)
+            finally:
+                child_finished.set()
+            return {"ok": True}
+
+        requests = [(2025, "Test%20GP", "Race", "VER/laptimes.json")]
+        with patch("tif1.async_fetch.fetch_json_async", side_effect=slow_fetch):
+            task = asyncio.create_task(fetch_multiple_async(requests))
+            await child_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert child_finished.is_set()
 
     async def test_fetch_json_async_zero_retry_uses_first_cdn(self):
         """Zero-retry mode should fetch from first CDN and skip retry loop."""

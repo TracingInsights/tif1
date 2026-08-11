@@ -711,6 +711,10 @@ async def fetch_multiple_async(
             if not isinstance(result, DataNotFoundError):
                 logger.warning(f"Failed to fetch {req}: {type(result).__name__}: {result}")
             processed.append(None)
+        elif isinstance(result, BaseException):
+            # Cancellation and process-level control exceptions are not request
+            # failures. Never turn them into a successful-looking None result.
+            raise result
         else:
             processed.append(result)
 

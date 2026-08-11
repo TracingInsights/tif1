@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import cast
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -255,7 +256,7 @@ def test_get_driver_style_validation():
         plotting.get_driver_style("VER", ["linewidth"], session)
 
     with pytest.raises(ValueError, match="invalid format"):
-        plotting.get_driver_style("VER", [1, 2], session)
+        plotting.get_driver_style("VER", [1, 2], session)  # type: ignore[ty:invalid-argument-type]
 
     with pytest.raises(ValueError, match="contain enough variants"):
         plotting.get_driver_style("PER", [{"color": "auto"}], session)
@@ -573,7 +574,7 @@ def test_setup_mpl_enables_timple_when_available(monkeypatch):
 
     assert calls["converter"] == "concise"
     assert calls["enabled"] is True
-    assert "formats" in calls["formatter_args"]
+    assert "formats" in cast(dict, calls["formatter_args"])
 
 
 def test_add_sorted_driver_legend_groups_by_team():

@@ -1,5 +1,7 @@
 """Benchmarks for Driver.get_lap lookup performance."""
 
+from typing import cast
+
 import pandas as pd
 import pytest
 
@@ -27,9 +29,13 @@ def _build_lookup_numbers(count: int = 2_000, max_lap: int = 10_000) -> list[int
 
 def _legacy_get_lap(driver: Driver, lap_number: int) -> Lap:
     laps = driver._laps
-    if laps is not None and not laps.empty:
-        lap_col = "LapNumber" if "LapNumber" in laps.columns else "lap"
-        lap_exists = lap_number in laps[lap_col].values if lap_col in laps.columns else False
+    if laps is None:
+        # Return empty Lap if no laps data
+        return Lap({}, session=driver.session)
+    laps_pd = cast(pd.DataFrame, laps)
+    if not laps_pd.empty:
+        lap_col = "LapNumber" if "LapNumber" in laps_pd.columns else "lap"
+        lap_exists = lap_number in laps_pd[lap_col].values if lap_col in laps_pd.columns else False
         if not lap_exists:
             raise LapNotFoundError(
                 lap_number=lap_number,
@@ -39,9 +45,8 @@ def _legacy_get_lap(driver: Driver, lap_number: int) -> Lap:
                 session=driver.session.session,
             )
         # Extract the lap row from the DataFrame
-        lap_row = laps[laps[lap_col] == lap_number].iloc[0]
+        lap_row = laps_pd[laps_pd[lap_col] == lap_number].iloc[0]
         return Lap(lap_row, session=driver.session)
-    # Return empty Lap if no laps data
     return Lap({}, session=driver.session)
 
 

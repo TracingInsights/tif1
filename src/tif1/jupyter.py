@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Union, cast
 try:
     import pandas as pd
 except ImportError:  # pragma: no cover - pandas is required in runtime deps
-    pd = None  # type: ignore[assignment]
+    pd = None  # type: ignore[ty:invalid-assignment]
 
 if TYPE_CHECKING:
     import polars as pl
@@ -156,7 +156,7 @@ def display_dataframe_summary(df: Union["pd.DataFrame", "pl.DataFrame"]) -> str:
     is_pandas = pd is not None and isinstance(df, pd.DataFrame)
 
     if is_pandas:
-        df_pd = cast(pd.DataFrame, df)
+        df_pd = df
         rows, cols = df_pd.shape
         memory = df_pd.memory_usage(deep=True).sum() / 1024 / 1024
     else:
@@ -182,9 +182,9 @@ def enable_jupyter_display():
         from tif1.core import Driver, Lap, Session
 
         # Add _repr_html_ methods
-        Session._repr_html_ = lambda self: display_session_info(self)  # type: ignore[attr-defined]
-        Driver._repr_html_ = lambda self: display_driver_info(self)  # type: ignore[attr-defined]
-        Lap._repr_html_ = lambda self: display_lap_info(self)  # type: ignore[attr-defined]
+        Session._repr_html_ = lambda self: display_session_info(self)  # type: ignore[ty:unresolved-attribute]
+        Driver._repr_html_ = lambda self: display_driver_info(self)  # type: ignore[ty:unresolved-attribute]
+        Lap._repr_html_ = lambda self: display_lap_info(self)  # type: ignore[ty:unresolved-attribute]
 
         logger.info("Jupyter display enabled")
     except Exception as e:

@@ -86,7 +86,7 @@ class TestValidateJsonPayload:
     """Test _validate_json_payload."""
 
     def test_non_dict_data_passes_through(self):
-        result = _validate_json_payload("some.json", [1, 2, 3])
+        result = _validate_json_payload("some.json", [1, 2, 3])  # type: ignore[ty:invalid-argument-type]
         assert result == [1, 2, 3]
 
     def test_unmatched_path_passes_through(self):
@@ -136,7 +136,7 @@ class TestExtractDriverCodes:
 
     def test_invalid_entries(self):
         drivers = [{"driver": "VER"}, "invalid", {"driver": 123}, {"team": "Red Bull"}]
-        assert _extract_driver_codes(drivers) == {"VER"}
+        assert _extract_driver_codes(drivers) == {"VER"}  # type: ignore[ty:invalid-argument-type]
 
 
 class TestExtractDriverInfoMap:
@@ -156,7 +156,7 @@ class TestExtractDriverInfoMap:
 
     def test_skips_non_dict(self):
         drivers = [{"driver": "VER"}, "invalid"]
-        result = _extract_driver_info_map(drivers)
+        result = _extract_driver_info_map(drivers)  # type: ignore[ty:invalid-argument-type]
         assert len(result) == 1
 
 
@@ -249,6 +249,7 @@ class TestProcessLapDf:
             }
         )
         result = _process_lap_df(lap_dataframe, "pandas")
+        assert isinstance(result, pd.DataFrame)
         assert "LapTime" in result.columns
         assert "LapNumber" in result.columns
         assert "Compound" in result.columns
@@ -363,11 +364,11 @@ class TestResolveSessionOptions:
         assert lib == "pandas"
 
     def test_invalid_backend_falls_back(self):
-        _, lib = _resolve_session_options(None, "invalid", log_warnings=False)
+        _, lib = _resolve_session_options(None, "invalid", log_warnings=False)  # type: ignore[ty:invalid-argument-type]
         assert lib == "pandas"
 
     def test_invalid_enable_cache_falls_back(self):
-        cache, _ = _resolve_session_options("not_bool", None, log_warnings=False)
+        cache, _ = _resolve_session_options("not_bool", None, log_warnings=False)  # type: ignore[ty:invalid-argument-type]
         assert cache is True
 
     def test_polars_recheck_after_prior_failure(self, monkeypatch):
@@ -411,6 +412,7 @@ class TestTimedeltaCoercion:
         )
 
         result = _process_lap_df(lap_df, "pandas")
+        assert isinstance(result, pd.DataFrame)
         assert pd.api.types.is_timedelta64_ns_dtype(result["LapTime"])
         assert pd.api.types.is_timedelta64_ns_dtype(result["Time"])
         assert pd.api.types.is_timedelta64_ns_dtype(result["WeatherTime"])
@@ -475,8 +477,9 @@ class TestBackendLapCacheIsolation:
             monkeypatch.setattr(Session, "laps_async", fake_laps_async)
             result = session.laps
 
+            assert isinstance(result, pd.DataFrame)
             assert result.shape == fetched_laps.shape
-            assert (result["LapNumber"].values == fetched_laps["LapNumber"].values).all()
+            assert result["LapNumber"].tolist() == fetched_laps["LapNumber"].tolist()
             assert result is not cached_laps
         finally:
             clear_lap_cache()
@@ -679,6 +682,7 @@ class TestSessionGetFastestLapsWithDrivers:
             }
         )
         fastest = session.get_fastest_laps(by_driver=True, drivers=["VER"])
+        assert isinstance(fastest, pd.DataFrame)
         assert len(fastest) == 1
         assert fastest.iloc[0]["Driver"] == "VER"
 
@@ -697,7 +701,7 @@ class TestSessionGetFastestLapsWithDrivers:
     def test_invalid_drivers_param_raises(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         with pytest.raises(TypeError):
-            session.get_fastest_laps(drivers="VER")
+            session.get_fastest_laps(drivers="VER")  # type: ignore[ty:invalid-argument-type]
 
     def test_empty_drivers_list_raises(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
@@ -866,7 +870,7 @@ class TestScheduleBackgroundCacheFill:
         session = Session(2025, "Test GP", "Race", enable_cache=True)
         json_payloads = [("drivers.json", [1, 2, 3])]  # Non-dict
 
-        session._schedule_background_cache_fill(json_payloads=json_payloads)
+        session._schedule_background_cache_fill(json_payloads=json_payloads)  # type: ignore[ty:invalid-argument-type]
         time.sleep(0.1)
 
     def test_background_cache_fill_exception_handling(self, monkeypatch):
@@ -1165,7 +1169,7 @@ class TestFindTelemetryDfForRef:
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         tels = [("VER", 5, {"speed": [100.0]})]
         result = session._find_telemetry_df_for_ref(tels, ("VER", 5))
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
         assert result["Driver"].iloc[0] == "VER"
         assert int(result["LapNumber"].iloc[0]) == 5
 
@@ -1189,8 +1193,9 @@ class TestHydrateFastestLapTelFromBatch:
         tels = [("VER", 5, {"speed": [100.0]})]
         session._hydrate_fastest_lap_tel_from_batch(tels, ("VER", 5))
         assert session._fastest_lap_tel_ref == ("VER", 5)
-        assert session._fastest_lap_tel_df is not None
-        assert session._fastest_lap_tel_df["Driver"].iloc[0] == "VER"
+        fastest_tel_df = session._fastest_lap_tel_df
+        assert isinstance(fastest_tel_df, pd.DataFrame)
+        assert fastest_tel_df["Driver"].iloc[0] == "VER"
 
     def test_tel_not_found_in_batch(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False)
@@ -1295,7 +1300,7 @@ class TestCoreHighYieldCoverage:
 
     def test_fetch_telemetry_batch_from_refs_sync_and_async(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True)
-        session._session_cache_available = lambda: True
+        session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
         session._remember_telemetry_payload("VER", 1, {"speed": [300.0]})
         remembered = []
         monkeypatch.setattr(
@@ -1342,10 +1347,10 @@ class TestCoreHighYieldCoverage:
         assert refs == [("VER", 1), ("HAM", 2)]
 
         writes = []
-        session._remember_telemetry_payload = lambda d, lap_num, payload: writes.append(
+        session._remember_telemetry_payload = lambda d, lap_num, payload: writes.append(  # type: ignore[ty:invalid-assignment]
             (d, lap_num, payload)
         )
-        session._mark_session_cache_populated = lambda: writes.append(("marked",))
+        session._mark_session_cache_populated = lambda: writes.append(("marked",))  # type: ignore[ty:invalid-assignment]
 
         class FakeCache:
             def set_telemetry(self, *_args, **_kwargs):
@@ -1382,7 +1387,7 @@ class TestCoreHighYieldCoverage:
         session._telemetry_background_prefetch_started = False
         session._telemetry_bulk_prefetch_done = False
         session._telemetry_bulk_prefetch_attempted = False
-        session._resolve_telemetry_ultra_cold_mode = lambda _: False
+        session._resolve_telemetry_ultra_cold_mode = lambda _: False  # type: ignore[ty:invalid-assignment]
         session._maybe_start_background_telemetry_prefetch()
         assert started
 
@@ -1398,9 +1403,9 @@ class TestCoreHighYieldCoverage:
         assert len(requests) == 1
         assert lap_info == [("VER", 1)]
 
-        session._should_backfill_ultra_cold_cache = lambda enabled: enabled
+        session._should_backfill_ultra_cold_cache = lambda enabled: enabled  # type: ignore[ty:invalid-assignment]
         scheduled = []
-        session._schedule_background_cache_fill = lambda **k: scheduled.append(k)
+        session._schedule_background_cache_fill = lambda **k: scheduled.append(k)  # type: ignore[ty:invalid-assignment]
         out = session._process_telemetry_results(
             [{"tel": {"speed": [300.0]}}, {"tel": {}}],
             [("VER", 1), ("HAM", 2)],
@@ -1410,32 +1415,33 @@ class TestCoreHighYieldCoverage:
         assert len(out) == 1
         assert scheduled
 
-        session._resolve_ultra_cold_mode = lambda _: False
-        session._session_cache_available = lambda: True
-        session._is_fastest_lap_tel_cold_start = lambda: False
-        session._get_fastest_laps_from_raw = (
+        session._resolve_ultra_cold_mode = lambda _: False  # type: ignore[ty:invalid-assignment]
+        session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
+        session._is_fastest_lap_tel_cold_start = lambda: False  # type: ignore[ty:invalid-assignment]
+        session._get_fastest_laps_from_raw = (  # type: ignore[ty:invalid-assignment]
             lambda _drivers=None, _ultra_cold=False, _by_driver=True: pd.DataFrame()
         )
-        session.get_fastest_laps = lambda by_driver=True, drivers=None: pd.DataFrame(  # noqa: ARG005
+        session.get_fastest_laps = lambda by_driver=True, drivers=None: pd.DataFrame(  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
             {"Driver": ["VER"], "LapNumber": [1], "LapTime": [89.0]}
         )
-        session._fetch_telemetry_batch = lambda fl, skip_cache=False: (  # noqa: ARG005
+        session._fetch_telemetry_batch = lambda fl, skip_cache=False: (  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
             [],
             [],
             [("VER", 1, {"speed": [300.0]})],
         )
         df = session.get_fastest_laps_tels(by_driver=True)
+        assert isinstance(df, pd.DataFrame)
         assert not df.empty
 
         async def _run_async():
-            session._get_fastest_lap_refs_from_raw_async = (
+            session._get_fastest_lap_refs_from_raw_async = (  # type: ignore[ty:invalid-assignment]
                 lambda drivers=None, ultra_cold=False: asyncio.sleep(0, result=[])  # noqa: ARG005
             )
-            session.get_fastest_laps_async = lambda by_driver=True, drivers=None: asyncio.sleep(  # noqa: ARG005
+            session.get_fastest_laps_async = lambda by_driver=True, drivers=None: asyncio.sleep(  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
                 0,
                 result=pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "LapTime": [89.0]}),
             )
-            session._fetch_telemetry_batch_async = lambda fl, skip_cache=False: asyncio.sleep(  # noqa: ARG005
+            session._fetch_telemetry_batch_async = lambda fl, skip_cache=False: asyncio.sleep(  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
                 0,
                 result=([], [], [("VER", 1, {"speed": [300.0]})]),
             )
@@ -1499,31 +1505,37 @@ class TestCoreHighYieldCoverage:
 
     def test_race_control_weather_and_track_status_branches(self):
         session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
-        session._prefetch_session_tables = lambda: None
-        session._load_session_table = lambda _path, _rename: pd.DataFrame(
+        session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        session._load_session_table = lambda _path, _rename: pd.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": ["2025-06-29T12:20:01.000000000"], "Status": ["GREEN"]}
         )
         rcm = session.race_control_messages
+        assert isinstance(rcm, pd.DataFrame)
         assert not rcm.empty
         assert rcm["Time"].dtype == "datetime64[ns]"
         assert session.session_status is rcm
 
         weather_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
-        weather_session._prefetch_session_tables = lambda: None
-        weather_session._load_session_table = lambda _path, _rename: pd.DataFrame(
+        weather_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        weather_session._load_session_table = lambda _path, _rename: pd.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": [12.5], "AirTemp": [24.0]}
         )
         weather = weather_session.weather
+        assert isinstance(weather, pd.DataFrame)
         assert weather["Time"].dtype.kind == "m"
         assert weather_session.weather_data is weather
 
         err_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
-        err_session._prefetch_session_tables = lambda: None
-        err_session._load_session_table = lambda path, _rename: (_ for _ in ()).throw(
+        err_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        err_session._load_session_table = lambda path, _rename: (_ for _ in ()).throw(  # type: ignore[ty:invalid-assignment]
             NetworkError(url=path)
         )
-        assert err_session.race_control_messages.empty
-        assert err_session.weather.empty
+        err_rcm = err_session.race_control_messages
+        err_weather = err_session.weather
+        assert isinstance(err_rcm, pd.DataFrame)
+        assert err_rcm.empty
+        assert isinstance(err_weather, pd.DataFrame)
+        assert err_weather.empty
 
         session._laps = pd.DataFrame({"Driver": ["VER"], "TrackStatus": ["14"], "LapNumber": [1]})
         assert list(session.track_status) == ["14"]
@@ -1536,8 +1548,8 @@ class TestCoreHighYieldCoverage:
     def test_prefetch_driver_lookup_and_laps_branches(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
         session._drivers = None
-        session._resolve_ultra_cold_mode = lambda _: False
-        session._session_cache_available = lambda: True
+        session._resolve_ultra_cold_mode = lambda _: False  # type: ignore[ty:invalid-assignment]
+        session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
 
         async def fake_fetch(requests, **kwargs):
             return [
@@ -1599,6 +1611,7 @@ class TestCoreCoverageSecondPass:
         )
 
         sync_df = session._get_fastest_laps_from_raw(by_driver=True, ultra_cold=True)
+        assert isinstance(sync_df, pd.DataFrame)
         assert not sync_df.empty
         assert "Driver" in sync_df.columns
 
@@ -1608,6 +1621,7 @@ class TestCoreCoverageSecondPass:
         async_df = asyncio.run(
             session._get_fastest_laps_from_raw_async(by_driver=True, ultra_cold=True)
         )
+        assert isinstance(async_df, pd.DataFrame)
         assert not async_df.empty
 
         async_overall = asyncio.run(
@@ -1683,6 +1697,7 @@ class TestCoreCoverageSecondPass:
         empty_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
         empty_session._drivers = []
         out = asyncio.run(empty_session.laps_async())
+        assert isinstance(out, pd.DataFrame)
         assert out.empty
 
         no_req_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
@@ -1693,14 +1708,15 @@ class TestCoreCoverageSecondPass:
             lambda driver_pool=None: [],  # noqa: ARG005
         )
         no_req_out = asyncio.run(no_req_session.laps_async())
+        assert isinstance(no_req_out, pd.DataFrame)
         assert no_req_out.empty
 
     def test_get_telemetry_df_for_ref_branches(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
-        session._session_cache_available = lambda: True
-        session._should_skip_telemetry_fetch = lambda _driver: False
-        session._prefetch_all_loaded_laps_telemetry = lambda ultra_cold=False: None  # noqa: ARG005
-        session._fetch_json = lambda path: {}  # noqa: ARG005
+        session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
+        session._should_skip_telemetry_fetch = lambda _driver: False  # type: ignore[ty:invalid-assignment]
+        session._prefetch_all_loaded_laps_telemetry = lambda ultra_cold=False: None  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
+        session._fetch_json = lambda path: {}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
 
         class FakeCache:
             def get_telemetry(self, year, gp, session_name, driver, lap_num):  # noqa: ARG002
@@ -1714,54 +1730,63 @@ class TestCoreCoverageSecondPass:
         monkeypatch.setattr("tif1.core.get_cache", lambda: FakeCache())
 
         tel_df = session._get_telemetry_df_for_ref("VER", 1, ultra_cold=False)
+        assert isinstance(tel_df, pd.DataFrame)
         assert tel_df.empty
 
         session._remember_telemetry_payload("VER", 2, {"speed": [300.0]})
         tel2 = session._get_telemetry_df_for_ref("VER", 2, ultra_cold=False)
+        assert isinstance(tel2, pd.DataFrame)
         assert not tel2.empty
         ham_df = session._get_telemetry_df_for_ref("HAM", 3, ultra_cold=False)
+        assert isinstance(ham_df, pd.DataFrame)
         assert not ham_df.empty
 
-        session._should_skip_telemetry_fetch = lambda _driver: True
+        session._should_skip_telemetry_fetch = lambda _driver: True  # type: ignore[ty:invalid-assignment]
         skipped = session._get_telemetry_df_for_ref("ALO", 4, ultra_cold=False)
+        assert isinstance(skipped, pd.DataFrame)
         assert skipped.empty
 
-        session._should_skip_telemetry_fetch = lambda _driver: False
-        session._fetch_json = lambda path: {"tel": {"speed": [301.0]}}  # noqa: ARG005
+        session._should_skip_telemetry_fetch = lambda _driver: False  # type: ignore[ty:invalid-assignment]
+        session._fetch_json = lambda path: {"tel": {"speed": [301.0]}}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         fetched = session._get_telemetry_df_for_ref("NOR", 5, ultra_cold=False)
+        assert isinstance(fetched, pd.DataFrame)
         assert not fetched.empty
 
         scheduled: list[dict] = []
-        session._fetch_json_unvalidated = lambda path: {"tel": {"speed": [302.0]}}  # noqa: ARG005
-        session._should_backfill_ultra_cold_cache = lambda enabled: enabled
-        session._schedule_background_cache_fill = lambda **kwargs: scheduled.append(kwargs)
+        session._fetch_json_unvalidated = lambda path: {"tel": {"speed": [302.0]}}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
+        session._should_backfill_ultra_cold_cache = lambda enabled: enabled  # type: ignore[ty:invalid-assignment]
+        session._schedule_background_cache_fill = lambda **kwargs: scheduled.append(kwargs)  # type: ignore[ty:invalid-assignment]
         ultra = session._get_telemetry_df_for_ref("PIA", 6, ultra_cold=True)
+        assert isinstance(ultra, pd.DataFrame)
         assert not ultra.empty
         assert scheduled
 
-        session._fetch_json = lambda path: {}  # noqa: ARG005
+        session._fetch_json = lambda path: {}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         empty_payload = session._get_telemetry_df_for_ref("SAI", 7, ultra_cold=False)
+        assert isinstance(empty_payload, pd.DataFrame)
         assert empty_payload.empty
 
     def test_get_fastest_lap_tel_branches(self):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
-        session._resolve_ultra_cold_mode = lambda value: bool(value)
-        session._session_cache_available = lambda: False
-        session._is_fastest_lap_tel_cold_start = lambda: True
+        session._resolve_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
+        session._session_cache_available = lambda: False  # type: ignore[ty:invalid-assignment]
+        session._is_fastest_lap_tel_cold_start = lambda: True  # type: ignore[ty:invalid-assignment]
 
-        session._get_fastest_lap_reference = lambda ultra_cold=False: None  # noqa: ARG005
+        session._get_fastest_lap_reference = lambda ultra_cold=False: None  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         empty_first = session.get_fastest_lap_tel()
+        assert isinstance(empty_first, pd.DataFrame)
         assert empty_first.empty
         assert session._fastest_lap_tel_ref is None
 
-        session._get_fastest_lap_reference = lambda ultra_cold=False: ("VER", 1)  # noqa: ARG005
-        session._get_telemetry_df_for_ref = lambda driver, lap_num, ultra_cold=False: pd.DataFrame()  # noqa: ARG005
+        session._get_fastest_lap_reference = lambda ultra_cold=False: ("VER", 1)  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
+        session._get_telemetry_df_for_ref = lambda driver, lap_num, ultra_cold=False: pd.DataFrame()  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         empty_ref = session.get_fastest_lap_tel()
+        assert isinstance(empty_ref, pd.DataFrame)
         assert empty_ref.empty
         assert session._fastest_lap_tel_ref is None
 
         non_empty = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "Speed": [300.0]})
-        session._get_telemetry_df_for_ref = (
+        session._get_telemetry_df_for_ref = (  # type: ignore[ty:invalid-assignment]
             lambda driver, lap_num, ultra_cold=False: non_empty  # noqa: ARG005
         )
         first = session.get_fastest_lap_tel()
@@ -1770,27 +1795,28 @@ class TestCoreCoverageSecondPass:
 
     def test_get_fastest_lap_tel_async_branches(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
-        session._resolve_ultra_cold_mode = lambda value: bool(value)
-        session._session_cache_available = lambda: False
-        session._is_fastest_lap_tel_cold_start = lambda: True
+        session._resolve_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
+        session._session_cache_available = lambda: False  # type: ignore[ty:invalid-assignment]
+        session._is_fastest_lap_tel_cold_start = lambda: True  # type: ignore[ty:invalid-assignment]
 
         async def no_ref(ultra_cold=False):
             return None
 
-        session._get_fastest_lap_reference_async = no_ref
+        session._get_fastest_lap_reference_async = no_ref  # type: ignore[ty:invalid-assignment]
         first_empty = asyncio.run(session.get_fastest_lap_tel_async())
+        assert isinstance(first_empty, pd.DataFrame)
         assert first_empty.empty
 
         async def with_ref(ultra_cold=False):
             return ("VER", 1)
 
-        session._get_fastest_lap_reference_async = with_ref
-        session._fetch_telemetry_batch_from_refs = lambda refs, skip_cache=False: (  # noqa: ARG005
+        session._get_fastest_lap_reference_async = with_ref  # type: ignore[ty:invalid-assignment]
+        session._fetch_telemetry_batch_from_refs = lambda refs, skip_cache=False: (  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
             [(2025, "Test GP", "Race", "VER/1_tel.json")],
             [("VER", 1)],
             [],
         )
-        session._process_telemetry_results = lambda results, lap_info, tels, ultra_cold=False: [  # noqa: ARG005
+        session._process_telemetry_results = lambda results, lap_info, tels, ultra_cold=False: [  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
             ("VER", 1, {"speed": [300.0]})
         ]
 
@@ -1801,12 +1827,13 @@ class TestCoreCoverageSecondPass:
 
         monkeypatch.setattr("tif1.core.fetch_multiple_async", compat_fetch)
         async_tel = asyncio.run(session.get_fastest_lap_tel_async())
+        assert isinstance(async_tel, pd.DataFrame)
         assert not async_tel.empty
 
         async def failing_fetch(requests, **kwargs):
             raise RuntimeError("boom")
 
-        session._fetch_telemetry_batch_from_refs = lambda refs, skip_cache=False: (  # noqa: ARG005
+        session._fetch_telemetry_batch_from_refs = lambda refs, skip_cache=False: (  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
             [(2025, "Test GP", "Race", "VER/1_tel.json")],
             [("VER", 1)],
             [],
@@ -1819,12 +1846,12 @@ class TestCoreCoverageSecondPass:
 
     def test_fetch_all_laps_telemetry_async_paths(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
-        session._resolve_telemetry_ultra_cold_mode = lambda value: bool(value)
+        session._resolve_telemetry_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
 
         async def empty_laps():
             return pd.DataFrame()
 
-        session.laps_async = empty_laps
+        session.laps_async = empty_laps  # type: ignore[ty:invalid-assignment]
         assert asyncio.run(session.fetch_all_laps_telemetry_async()) == {}
 
         async def laps_with_rows():
@@ -1835,15 +1862,15 @@ class TestCoreCoverageSecondPass:
                 }
             )
 
-        session.laps_async = laps_with_rows
+        session.laps_async = laps_with_rows  # type: ignore[ty:invalid-assignment]
         cached_tel = ("VER", 1, {"speed": [300.0]})
 
         async def fake_batch(refs, skip_cache=False):
             return [(2025, "Test GP", "Race", "HAM/2_tel.json")], [("HAM", 2)], [cached_tel]
 
-        session._fetch_telemetry_batch_from_refs_async = fake_batch
+        session._fetch_telemetry_batch_from_refs_async = fake_batch  # type: ignore[ty:invalid-assignment]
         remembered: list[tuple[str, int]] = []
-        session._remember_telemetry_payload = lambda driver, lap_num, _payload: remembered.append(
+        session._remember_telemetry_payload = lambda driver, lap_num, _payload: remembered.append(  # type: ignore[ty:invalid-assignment]
             (driver, lap_num)
         )
 

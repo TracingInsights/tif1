@@ -44,7 +44,7 @@ class TestConfigurationErrorRecovery:
         # Attempt to set invalid value - should raise ConfigurationError
         # Note: This test assumes ConfigurationError exists (from task 2.3.2)
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("timeout", invalid_timeout)
@@ -86,7 +86,7 @@ class TestConfigurationErrorRecovery:
 
         # Attempt to set invalid value
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("lib", invalid_backend)
@@ -123,7 +123,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("circuit_breaker_threshold") == valid_threshold
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("circuit_breaker_threshold", invalid_threshold)
@@ -153,7 +153,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("max_retries") == valid_max_retries
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("max_retries", invalid_max_retries)
@@ -185,7 +185,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("retry_backoff_factor") == valid_backoff
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("retry_backoff_factor", invalid_backoff)
@@ -213,7 +213,7 @@ class TestConfigurationErrorRecovery:
         invalid_values = [-1, 0, -100, -500, -1000]
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             for invalid_value in invalid_values:
                 with pytest.raises(ConfigurationError):
@@ -244,7 +244,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("max_workers") == 10
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             # Invalid value (should fail and preserve 10)
             with pytest.raises(ConfigurationError):
@@ -283,7 +283,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("cache_commit_interval") == valid_cache_interval
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             with pytest.raises(ConfigurationError):
                 config.set("cache_commit_interval", invalid_cache_interval)
@@ -308,7 +308,7 @@ class TestConfigurationErrorRecovery:
         assert config.get("timeout") == 30
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             # Try to set string value (wrong type)
             with pytest.raises(ConfigurationError):
@@ -343,7 +343,9 @@ class TestConfigurationErrorRecovery:
         # Check if ConfigurationError exists
         has_config_error = False
         try:
-            from tif1.exceptions import ConfigurationError  # noqa: F401
+            from tif1.exceptions import (
+                ConfigurationError,  # type: ignore[ty:unresolved-import]  # noqa: F401
+            )
 
             has_config_error = True
         except ImportError:
@@ -351,7 +353,7 @@ class TestConfigurationErrorRecovery:
 
         def try_invalid_set(value: int):
             if has_config_error:
-                from tif1.exceptions import ConfigurationError
+                from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
                 try:
                     config.set("max_workers", value)
@@ -414,7 +416,7 @@ class TestConfigurationErrorRecovery:
         assert config.get(param) == valid_value
 
         try:
-            from tif1.exceptions import ConfigurationError
+            from tif1.exceptions import ConfigurationError  # type: ignore[ty:unresolved-import]
 
             # Attempt invalid value
             with pytest.raises(ConfigurationError):

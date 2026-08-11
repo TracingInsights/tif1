@@ -14,7 +14,7 @@ try:
     HAS_PARQUET = True
 except ImportError:
     try:
-        import fastparquet  # noqa: F401
+        import fastparquet  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         HAS_PARQUET = True
     except ImportError:

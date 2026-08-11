@@ -118,6 +118,7 @@ def test_get_fastest_laps_cold_path_matches_legacy(monkeypatch):
     optimized = session.get_fastest_laps(by_driver=True)
     legacy = _legacy_get_fastest_laps_by_driver()
 
+    assert isinstance(optimized, pd.DataFrame)
     assert not optimized.empty
     assert _normalize_fastest(optimized) == _normalize_fastest(legacy)
     assert session._laps is None
@@ -161,6 +162,7 @@ def test_get_fastest_laps_ultra_cold_disables_cache_io(monkeypatch):
         core_module.config.set("ultra_cold_start", previous_ultra_cold)
         core_module.config.set("ultra_cold_background_cache_fill", previous_backfill)
 
+    assert isinstance(fastest, pd.DataFrame)
     assert not fastest.empty
     assert fetch_kwargs.get("use_cache") is False
     assert fetch_kwargs.get("write_cache") is False

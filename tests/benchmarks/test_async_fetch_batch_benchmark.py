@@ -58,7 +58,10 @@ async def _legacy_fetch_multiple_async(
     tasks = [fetch_with_semaphore(req) for req in requests]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    processed = []
+    # Mirrors the pre-fix production loop: Exception results become None, and
+    # BaseException results (e.g. CancelledError) fall through to `else` and are
+    # wrongly appended as successful payloads.
+    processed: list[Any] = []  # legacy behavior could append exception objects
     for req, result in zip(requests, results):
         if isinstance(result, Exception):
             if not isinstance(result, DataNotFoundError):
@@ -90,6 +93,8 @@ async def _candidate_fetch_multiple_async(
         tasks = [fetch_with_semaphore(req) for req in requests]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    # Mirrors the current production loop, including re-raising BaseException
+    # results (cancellation/process control) instead of converting to None.
     processed = []
     for req, result in zip(requests, results):
         if isinstance(result, Exception):
@@ -98,6 +103,8 @@ async def _candidate_fetch_multiple_async(
                     f"Failed to fetch {req}: {type(result).__name__}: {result}"
                 )
             processed.append(None)
+        elif isinstance(result, BaseException):
+            raise result
         else:
             processed.append(result)
 

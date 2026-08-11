@@ -7,7 +7,7 @@ import logging
 import re
 from functools import lru_cache
 from importlib.resources import files
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Self, cast
 
 import niquests
 import pandas as pd
@@ -249,8 +249,13 @@ def get_sessions(year: int, event: str) -> list[str]:
 
 
 class Event(pd.Series):
+    _metadata: ClassVar[list[str]] = ["_year", "_event_name"]
     _year: int
     _event_name: str
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
+        """Allow Series-style subclass construction without re-implementing __new__."""
+        return cast(Self, super().__new__(cls))
 
     def __init__(self, year: int, name: str, metadata: dict | None = None):
         from datetime import datetime, timedelta
@@ -293,9 +298,21 @@ class Event(pd.Series):
                 else:
                     data[key] = value
 
-        super().__init__(data=data, name=data.get("RoundNumber", 0))  # type: ignore[call-arg]
+        super().__init__(data=data, name=data.get("RoundNumber", 0))  # type: ignore[ty:unknown-argument]
         self._year = year
         self._event_name = name
+
+    def _reconstruct(self, data=None, *args, **kwargs):
+        """Reconstruct an Event Series without invoking schedule lookup."""
+        result = object.__new__(type(self))
+        cast(Any, pd.Series).__init__(result, data, *args, **kwargs)
+        result._year = self._year
+        result._event_name = self._event_name
+        return result
+
+    @property
+    def _constructor(self):
+        return self._reconstruct
 
     @staticmethod
     def _derive_location(name: str) -> str:

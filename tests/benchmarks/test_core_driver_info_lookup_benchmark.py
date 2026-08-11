@@ -22,7 +22,7 @@ def _legacy_get_driver_info(session: Session, driver_code: str) -> dict:
     return next(
         (
             driver_info
-            for driver_info in session._drivers
+            for driver_info in session._drivers or []
             if driver_info.get("driver") == driver_code
         ),
         {"driver": driver_code, "team": ""},

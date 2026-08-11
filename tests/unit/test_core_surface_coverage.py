@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -113,6 +114,7 @@ def test_process_lap_df_preserves_validated_qualifying_session_field():
 
     processed = core._process_lap_df(lap_df, "pandas")
 
+    assert isinstance(processed, pd.DataFrame)
     assert processed["QualifyingSession"].tolist() == ["SQ2"]
 
 
@@ -322,6 +324,70 @@ def test_telemetry_slice_by_lap_multiple_drivers_raises():
         tel.slice_by_lap(ref_laps)
 
 
+def test_pandas_subclass_reconstruction_preserves_metadata():
+    """Pandas operations must not invoke domain constructors or lose metadata."""
+    session = SimpleNamespace(name="session")
+
+    laps = core.Laps({"Driver": ["VER", "HAM"]}, session=session)
+    laps_slice = laps.iloc[:1]
+    assert isinstance(laps_slice, core.Laps)
+    assert laps_slice.session is session
+    assert isinstance(laps.iloc[0], core.Lap)
+    assert laps.iloc[0].session is session
+
+    lap = core.Lap({"Driver": "VER", "LapNumber": 1}, session=session)
+    lap_copy = lap.copy()
+    assert isinstance(lap_copy, core.Lap)
+    assert lap_copy.session is session
+
+    telemetry = core.Telemetry({"Speed": [100, 110]}, session=session, driver="VER")
+    telemetry_slice = telemetry.iloc[:1]
+    assert isinstance(telemetry_slice, core.Telemetry)
+    assert telemetry_slice.session is session
+    assert telemetry_slice.driver == "VER"
+
+    results = core.SessionResults({"Abbreviation": ["VER"]}, session=session)
+    result = results.iloc[0]
+    assert isinstance(result, core.DriverResult)
+    assert result.session is session
+
+    driver_result = core.DriverResult({"Status": "Finished"}, session=session)
+    assert isinstance(driver_result.copy(), core.DriverResult)
+    assert driver_result.copy().session is session
+
+
+def test_driver_reconstruction_preserves_identity_without_sharing_caches(monkeypatch):
+    """Driver pandas operations preserve identity and reset derived lookup state."""
+    session = SimpleNamespace(
+        _get_driver_info=lambda _driver: {
+            "dn": "1",
+            "fn": "Max",
+            "ln": "Verstappen",
+            "team": "Red Bull",
+            "tc": "#3671C6",
+        }
+    )
+    driver = core.Driver(cast(Any, session), "VER")
+    driver._laps = pd.DataFrame({"LapNumber": [1]})
+    driver._lap_numbers = {1}
+    driver._lap_numbers_df_id = 12345
+    driver._lap_index_map = {1: 0}
+    driver._lap_index_map_df_id = 12345
+    driver._lap_index_map_df_ref = driver._laps
+
+    reconstructed = driver.copy()
+
+    assert isinstance(reconstructed, core.Driver)
+    assert reconstructed.session is session
+    assert reconstructed.driver == "VER"
+    assert reconstructed._laps is None
+    assert reconstructed._lap_numbers is None
+    assert reconstructed._lap_numbers_df_id is None
+    assert reconstructed._lap_index_map is None
+    assert reconstructed._lap_index_map_df_id is None
+    assert reconstructed._lap_index_map_df_ref is None
+
+
 def test_results_circuit_and_name_resolution_helpers(monkeypatch):
     driver_result = core.DriverResult({"Status": "Finished"})
     assert driver_result.dnf is False
@@ -375,7 +441,7 @@ def test_results_circuit_and_name_resolution_helpers(monkeypatch):
     )
     monkeypatch.setattr(core, "Session", lambda *args: ("session", args))
     created = core.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
-    assert created[0] == "session"
+    assert cast(tuple, created)[0] == "session"
 
     monkeypatch.setattr(core, "_resolve_session_name", lambda _y, _gp, _s: "Race")
     with pytest.raises(ValueError, match="does not exist"):
@@ -437,7 +503,7 @@ def test_driver_and_lapinternal_paths(monkeypatch):
         ),
     )
 
-    driver = core.Driver(session, "VER")
+    driver = core.Driver(cast(Any, session), "VER")
     laps = driver.laps
     assert len(laps) == 2
     lap = driver.get_lap(1)
@@ -474,7 +540,7 @@ def test_driver_and_lapinternal_paths(monkeypatch):
     )
     monkeypatch.setattr(core, "get_cache", lambda: fake_cache)
 
-    li = core._LapInternal(inner_session, "VER", 10)
+    li = core._LapInternal(cast(Any, inner_session), "VER", 10)
     tel = li.telemetry
     assert len(tel) == 1
 
@@ -482,16 +548,20 @@ def test_driver_and_lapinternal_paths(monkeypatch):
     skip_session = SimpleNamespace(**inner_session.__dict__)
     skip_session._session_cache_available = lambda: False
     skip_session._should_skip_telemetry_fetch = lambda d: True  # noqa: ARG005
-    li_skip = core._LapInternal(skip_session, "VER", 11)
-    assert li_skip.telemetry.empty
+    li_skip = core._LapInternal(cast(Any, skip_session), "VER", 11)
+    li_skip_tel = li_skip.telemetry
+    assert isinstance(li_skip_tel, pd.DataFrame)
+    assert li_skip_tel.empty
 
     # Error branch records telemetry failure
     err_session = SimpleNamespace(**inner_session.__dict__)
     err_session._fetch_json = lambda p: (_ for _ in ()).throw(core.NetworkError(url="x"))  # noqa: ARG005
     err_session._session_cache_available = lambda: False
     err_session._should_skip_telemetry_fetch = lambda d: False  # noqa: ARG005
-    li_err = core._LapInternal(err_session, "VER", 12)
-    assert li_err.telemetry.empty
+    li_err = core._LapInternal(cast(Any, err_session), "VER", 12)
+    li_err_tel = li_err.telemetry
+    assert isinstance(li_err_tel, pd.DataFrame)
+    assert li_err_tel.empty
     assert rec.called
 
 
@@ -525,7 +595,7 @@ def test_ultra_cold_resolution_and_driver_load_warm_path(monkeypatch):
             return self._drivers
 
     session = SessionWithDrivers(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
-    session._session_cache_available = lambda: False
+    session._session_cache_available = lambda: False  # type: ignore[ty:invalid-assignment]
 
     assert session._resolve_telemetry_ultra_cold_mode(False) is True
 
@@ -540,7 +610,7 @@ def test_ultra_cold_resolution_and_driver_load_warm_path(monkeypatch):
             return self._drivers
 
     fallback = SessionWithFallbackDrivers(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
-    fallback._fetch_json_unvalidated = lambda path: (_ for _ in ()).throw(
+    fallback._fetch_json_unvalidated = lambda path: (_ for _ in ()).throw(  # type: ignore[ty:invalid-assignment]
         core.NetworkError(url=path)
     )
     fallback_drivers, fallback_payloads = fallback._load_drivers_for_fastest_lap_reference(

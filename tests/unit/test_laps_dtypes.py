@@ -1,5 +1,7 @@
 """Tests that _process_lap_df enforces the _COLUMNS dtype contract on a pandas laps DataFrame."""
 
+from typing import cast
+
 import pandas as pd
 import pytest
 
@@ -62,7 +64,7 @@ _RAW_PAYLOAD = {
 def laps_df() -> pd.DataFrame:
     """Return a processed laps DataFrame from the sample payload."""
     raw = pd.DataFrame(_RAW_PAYLOAD)
-    return _process_lap_df(raw, "pandas")
+    return cast(pd.DataFrame, _process_lap_df(raw, "pandas"))
 
 
 class TestLapsDtypes:
@@ -229,6 +231,7 @@ class TestLapsDtypes:
         """ "None" strings in Deleted are normalized to NA instead of crashing astype('boolean')."""
         raw = pd.DataFrame({**_RAW_PAYLOAD, "del": ["None", False, "None"]})
         out = _process_lap_df(raw, "pandas")
+        assert isinstance(out, pd.DataFrame)
         assert out["Deleted"].dtype.name == "boolean"
         assert pd.isna(out["Deleted"].iloc[0])
         assert not out["Deleted"].iloc[1]
@@ -238,6 +241,7 @@ class TestLapsDtypes:
         """'None' sentinel in a bool column yields False, not a truthy cast of 'None'."""
         raw = pd.DataFrame({**_RAW_PAYLOAD, "pb": ["None", True, "None"]})
         out = _process_lap_df(raw, "pandas")
+        assert isinstance(out, pd.DataFrame)
         assert out["IsPersonalBest"].dtype == bool
         assert not out["IsPersonalBest"].iloc[0]
         assert out["IsPersonalBest"].iloc[1]
@@ -249,6 +253,7 @@ class TestLapsDtypes:
             {"delR": "string"}
         )
         out = _process_lap_df(raw, "pandas")
+        assert isinstance(out, pd.DataFrame)
         assert pd.isna(out["DeletedReason"].iloc[0])
         assert out["DeletedReason"].iloc[1] == "track limits"
         assert pd.isna(out["DeletedReason"].iloc[2])
