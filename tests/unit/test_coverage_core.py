@@ -1,6 +1,5 @@
 """Additional coverage tests for core module."""
 
-
 import asyncio
 import sys
 from types import SimpleNamespace

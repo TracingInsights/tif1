@@ -8,12 +8,26 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ### Added
 
+## [0.5.0] - 2026-08-11
+
+### Summary
+
+`0.5.0` ships bundled chart assets (car/tyre images, brand fonts), two new curated plot styles (`default-light`, `default-dark`), and a new `plot_race_launch_ratings` native chart. It also includes the `tif1.assets` module for offline asset loading and rendering, plus pixel-perfect matching with the reference v2 analysis scripts.
+
+### Added
+
 - **New plot styles: `default-light` and `default-dark`** — `tif1.plotting` now ships two curated matplotlib themes that work with every chart's `color_scheme` parameter and with `setup_mpl(color_scheme=...)`:
   - `default-light` is extracted from the v2 `Fastest_Lap.py` analysis script (lightblue background, black text, Tenada heading font, hidden top/right spines, 32pt ticks, 20×20 @ 300 dpi, bar height 0.1, tyre/car image offsets).
   - `default-dark` is extracted from the v2 `Race_Launch_Performance_Ratings.py` script (TracingInsights dark brand `#011627` background, lime text, black grid, white bar/ytick labels, Coolvetica/Azonix/GreatVibes fonts, subplot margins, `car_threshold: 2.5`).
   - New `get_plot_style(name)` registry returns deep copies of the style configs, and `get_team_code()` / `team_code_mapping()` / `team_color_mapping()` expose session/year-aware team lookups.
 - **Bundled chart assets** — new `tif1.assets` module ships car images for every team 2018–2026 (91 PNGs), 7 tyre compound images, and 4 brand fonts directly inside the package (no network access at plot time). Includes cached `load_car_image` / `load_tyre_image` loaders, path/discovery helpers, and matplotlib `AnnotationBbox` helpers (`add_car_images`, `add_tyre_images`, `add_car_at_position`, `add_tyre_at_position`) that mirror the v2 scripts' rendering.
 - **New native chart: `plot_race_launch_ratings`** — added to `tif1.charts` (and exported at the top level). It loads each driver's first race lap, interpolates 50/100/150/200 km/h crossing times from telemetry, derives 0–10 launch ratings, and renders a barh chart in the `default-dark` style with bundled car/tyre images and the 2.5 rating threshold.
+
+### Changed
+
+- **Performance: telemetry sector extraction** — new `extract_telemetry_sectors` utility splits telemetry into per-sector snapshots for downstream analysis.
+- **Documentation restructuring** — reorganized docs navigation, removed deprecated `io-pipeline` and `lap-operations` reference pages, added `data-reference` and `why-tif1` pages.
+- **Cache directory handling** — improved cache path resolution and configuration.
 
 ### Fixed
 

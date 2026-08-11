@@ -89,9 +89,7 @@ class NiquestsTransport:
         try:
             response.raise_for_status()
         except niquests.RequestException as e:
-            raise NetworkError(
-                url=url, status_code=getattr(response, "status_code", None)
-            ) from e
+            raise NetworkError(url=url, status_code=getattr(response, "status_code", None)) from e
 
         data = parse_response_json(response)
         if not isinstance(data, dict):

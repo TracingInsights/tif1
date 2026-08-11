@@ -1,6 +1,5 @@
 """Additional core.py coverage tests - Session methods and Driver/Lap paths."""
 
-
 from unittest.mock import patch
 
 import pandas as pd

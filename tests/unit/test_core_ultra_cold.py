@@ -1,6 +1,5 @@
 """Tests for ultra-cold startup behavior in core Session."""
 
-
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -19,6 +18,8 @@ def _delegate_fast_fetch(self, path):
     same mock so both fetch seams hit the test double.
     """
     return self._fetch_from_cdn(path)
+
+
 class _StubCache:
     """In-memory cache stub with telemetry call tracking."""
 

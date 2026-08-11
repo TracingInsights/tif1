@@ -64,9 +64,7 @@ class TestPayloadLoaderGet:
 
     def test_fetches_through_transport_and_memoizes(self):
         # "VER/laptimes.json" contains "/", so the SessionMemo retains it.
-        loader = _make_loader(
-            transport=InMemoryTransport({"VER/laptimes.json": {"data": "value"}})
-        )
+        loader = _make_loader(transport=InMemoryTransport({"VER/laptimes.json": {"data": "value"}}))
         first = loader.get("VER/laptimes.json")
         assert first == {"data": "value"}
         # Second call must be served from the payload memo (no new HTTP hit).
@@ -143,9 +141,7 @@ class TestPayloadLoaderFetchFromCdn:
 
     def test_all_sources_down_raises_network_error(self):
         loader = _make_loader(
-            transport=InMemoryTransport(
-                {"test.json": NetworkError(url="x", status_code=None)}
-            )
+            transport=InMemoryTransport({"test.json": NetworkError(url="x", status_code=None)})
         )
         with pytest.raises(NetworkError, match="Network request failed"):
             loader.fetch_from_cdn("test.json", fast=True)
@@ -172,9 +168,7 @@ class TestPayloadLoaderGetMany:
             seen["kwargs"] = kwargs
             return payloads
 
-        monkeypatch.setattr(
-            "tif1.async_fetch.fetch_multiple_async", fake_fetch_multiple
-        )
+        monkeypatch.setattr("tif1.async_fetch.fetch_multiple_async", fake_fetch_multiple)
         results = asyncio.run(
             loader.get_many(
                 ["VER/laptimes.json", "HAM/laptimes.json"],
@@ -196,9 +190,7 @@ class TestPayloadLoaderGetMany:
         async def fake_fetch_multiple(requests, **_kwargs):
             return [None for _ in requests]
 
-        monkeypatch.setattr(
-            "tif1.async_fetch.fetch_multiple_async", fake_fetch_multiple
-        )
+        monkeypatch.setattr("tif1.async_fetch.fetch_multiple_async", fake_fetch_multiple)
         results = asyncio.run(loader.get_many(["bad.json"], max_retries=1))
         assert results == [None]
 

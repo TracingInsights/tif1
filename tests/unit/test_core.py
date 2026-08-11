@@ -1,6 +1,5 @@
 """Unit tests for tif1 core functionality."""
 
-
 import asyncio
 from typing import ClassVar, cast
 from unittest.mock import patch

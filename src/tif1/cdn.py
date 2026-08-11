@@ -218,10 +218,7 @@ class CDNManager:
                 raise
             except Exception as e:
                 logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
-                if not (
-                    hasattr(e, "response")
-                    and getattr(e.response, "status_code", None) == 404
-                ):
+                if not (hasattr(e, "response") and getattr(e.response, "status_code", None) == 404):
                     self.mark_failure(source.name)
                 last_exception = e
 

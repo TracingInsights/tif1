@@ -1,6 +1,5 @@
 """Fuzzing tests for malformed and corrupted data."""
 
-
 import json
 from unittest.mock import patch
 
@@ -20,6 +19,8 @@ def _delegate_fast_fetch(self, path):
     same mock so both fetch seams hit the test double.
     """
     return self._fetch_from_cdn(path)
+
+
 class TestFuzzing:
     """Fuzzing tests with malformed data."""
 
