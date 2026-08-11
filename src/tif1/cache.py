@@ -19,6 +19,8 @@ what is cached where:
   and per-driver telemetry failure tracking.
 """
 
+from __future__ import annotations
+
 import asyncio
 import atexit
 import logging
