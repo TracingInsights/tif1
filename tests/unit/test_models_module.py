@@ -7,6 +7,7 @@ only through the narrow :class:`tif1.models.TelemetryProvider` protocol.
 
 from __future__ import annotations
 
+import importlib
 import sys
 import typing
 
@@ -54,17 +55,30 @@ def test_core_reexports_model_identity() -> None:
 
 def test_models_module_does_not_import_core() -> None:
     """models.py must never import tif1.core at runtime (import-cycle guard)."""
-    for mod_name in list(sys.modules):
-        if mod_name == "tif1" or mod_name.startswith("tif1."):
+    # Snapshot the already-imported tif1 modules so they can be restored
+    # afterwards. Re-importing swaps module *objects*; leaving the fresh
+    # modules in sys.modules would break every later test that patches
+    # ``tif1.core`` attributes (they bind the stale objects from collection).
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "tif1" or name.startswith("tif1.")
+    }
+    try:
+        for mod_name in saved_modules:
             del sys.modules[mod_name]
 
-    import tif1.models
+        importlib.import_module("tif1.models")
 
-    assert "tif1.core" not in sys.modules, "tif1.models must not import tif1.core at runtime"
-
-    # Restore a fully-imported package for subsequent tests in this process.
-    import tif1
-    import tif1.core  # noqa: F401
+        assert "tif1.core" not in sys.modules, "tif1.models must not import tif1.core at runtime"
+    finally:
+        # Drop the fresh module objects and restore the original ones so the
+        # rest of the test process sees the exact same modules it imported at
+        # collection time.
+        for mod_name in list(sys.modules):
+            if mod_name == "tif1" or mod_name.startswith("tif1."):
+                del sys.modules[mod_name]
+        sys.modules.update(saved_modules)
 
 
 def test_circuit_info_lazy_export_targets_models() -> None:
