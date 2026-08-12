@@ -6,6 +6,31 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-12
+
+### Summary
+
+`0.5.1` is a patch release focused on documentation cleanup, test reliability, and removing unused repository scripts. No public API changes.
+
+### Changed
+
+- Streamlined documentation by removing references to the machine-readable `data_dictionary.json` and `telemetry.schema.json` from `README.md`, `DATA_REFERENCE.md`, and `docs/reference/data-reference.mdx`.
+- Minor docs/branding consistency updates (`docs/docs.json`, guides, and related pages).
+- Added `from __future__ import annotations` in `cache.py` for clearer type hints.
+
+### Fixed
+
+- Hardened `test_models_module_does_not_import_core` so it dynamically reloads `tif1.models` without polluting `sys.modules` for later tests (prevents import-cycle false positives/side effects).
+- Updated cold-path fastest-lap tests to use current event/session naming (`Pre-Season Testing` / `Practice 1`).
+
+### Removed
+
+- Deleted unused repository scripts and baselines (`scripts/baseline_benchmark.py`, `scripts/download_assets.sh`, `scripts/extract_telemetry_sectors.py`, and related baseline results). These were not part of the published package.
+
+### Known Issues
+
+- None reported at release time.
+
 ## [0.5.0] - 2026-08-11
 
 ### Summary
