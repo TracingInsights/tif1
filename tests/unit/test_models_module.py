@@ -8,6 +8,7 @@ only through the narrow :class:`tif1.models.TelemetryProvider` protocol.
 from __future__ import annotations
 
 import sys
+import typing
 
 import pytest
 
@@ -80,17 +81,25 @@ def test_session_satisfies_telemetry_provider_protocol() -> None:
     from tif1.core import Session
 
     session = Session(2021, "Bahrain Grand Prix", "FP1", enable_cache=False)
-    assert isinstance(session, models.TelemetryProvider)
 
     # Every protocol member must be backed by a real attribute on Session.
-    # (__protocol_attrs__ is a public typing API on Python 3.12+. Methods and
-    # properties resolve on the class without firing lazy fetches; plain data
-    # members like ``_laps`` live in the instance ``__dict__``.)
+    # isinstance() against a runtime_checkable protocol performs hasattr() on
+    # the *instance*, which fires lazy-loading property getters (e.g.
+    # ``_drivers_data``) that fetch payloads over the network — so conformance
+    # is asserted structurally on the class instead: methods and properties
+    # resolve on the class without running getters, and plain data members
+    # (``year``, ``_laps``, ...) live in the instance ``__dict__``.
     protocol_attrs = getattr(models.TelemetryProvider, "__protocol_attrs__", None)
-    if protocol_attrs is not None:
-        for member in protocol_attrs:
-            present = hasattr(Session, member) or member in session.__dict__
-            assert present, f"Session is missing protocol member {member!r}"
+    if protocol_attrs is None:
+        # Python 3.11 computes the member set on the fly (private typing API).
+        get_protocol_attrs = getattr(typing, "_get_protocol_attrs", None)
+        protocol_attrs = (
+            get_protocol_attrs(models.TelemetryProvider) if get_protocol_attrs else set()
+        )
+    assert protocol_attrs, "expected a runtime_checkable protocol exposing its members"
+    for member in protocol_attrs:
+        present = hasattr(Session, member) or member in session.__dict__
+        assert present, f"Session is missing protocol member {member!r}"
 
 
 def test_telemetry_provider_rejects_non_conforming_objects() -> None:
