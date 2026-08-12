@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Create a GitHub discussion for a new release.
-This script is called from the release-discussion.yml workflow.
+This script is called from the publish.yml workflow (create-github-release job).
+
+Expects RELEASE_BODY (inline body) or RELEASE_BODY_FILE (path to a body file).
 """
 
 import json
@@ -31,6 +33,30 @@ def graphql(query: str, variables: dict) -> dict:
     return data["data"]
 
 
+def existing_discussion_url(owner: str, repo: str, title: str) -> str | None:
+    """Return the URL of an existing discussion with the given title, if any.
+
+    Used to keep discussion creation idempotent so a re-run of the release job
+    never posts a duplicate announcement.
+    """
+    data = graphql(
+        """
+        query($owner: String!, $repo: String!) {
+          repository(owner: $owner, name: $repo) {
+            discussions(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
+              nodes { title url }
+            }
+          }
+        }
+        """,
+        {"owner": owner, "repo": repo},
+    )
+    for node in data["repository"]["discussions"]["nodes"]:
+        if node["title"] == title:
+            return node["url"]
+    return None
+
+
 def pick_category(cats):
     """Pick the best discussion category for announcements."""
     for c in cats:
@@ -49,7 +75,12 @@ def main():
     repo = os.environ["REPO_NAME"]
     tag = os.environ["RELEASE_TAG"]
     name = os.environ["RELEASE_NAME"] or tag
-    body_raw = os.environ["RELEASE_BODY"]
+    body_file = os.environ.get("RELEASE_BODY_FILE")
+    if body_file:
+        with open(body_file, encoding="utf-8") as fh:
+            body_raw = fh.read()
+    else:
+        body_raw = os.environ["RELEASE_BODY"]
     release_url = os.environ["RELEASE_URL"]
     is_prerelease = os.environ["IS_PRERELEASE"].lower() == "true"
 
@@ -126,8 +157,14 @@ pip install --upgrade tif1
 *This discussion was automatically created when **{tag}** was published.*
 """
 
-    # Create the discussion
+    # Create the discussion, skipping if one already exists for this release
+    # (keeps re-runs of the publish workflow idempotent).
     title = f"🚀 {name}" if name != tag else f"🚀 Release {tag}"
+
+    url = existing_discussion_url(owner, repo, title)
+    if url is not None:
+        print(f"Discussion {title!r} already exists; skipping creation: {url}")
+        return
 
     result = graphql(
         """

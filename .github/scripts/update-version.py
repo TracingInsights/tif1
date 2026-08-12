@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Version update script for pyproject.toml
-Usage: python update-version.py <new_version>
+Version update script for pyproject.toml.
+
+Local maintainer helper only — not referenced by any workflow (releases read
+the version from pyproject.toml directly in publish.yml).
+
+Usage: python .github/scripts/update-version.py <new_version>
 """
 
 import hashlib

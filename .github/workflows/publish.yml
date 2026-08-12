@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
 
@@ -73,10 +73,14 @@ jobs:
           path: dist/
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: false
 
       - name: Publish to TestPyPI
-        run: uv publish --publish-url https://test.pypi.org/legacy/
+        # --check-url makes re-runs idempotent: files already on the index are
+        # skipped instead of failing the upload.
+        run: uv publish --publish-url https://test.pypi.org/legacy/ --check-url https://test.pypi.org/project/tif1/
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
@@ -97,9 +101,116 @@ jobs:
           path: dist/
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: false
 
       - name: Publish to PyPI
-        run: uv publish
+        # --check-url makes re-runs idempotent: files already on the index are
+        # skipped instead of failing the upload. This lets the job (and the
+        # dependent create-github-release job) succeed when re-running for a
+        # version that is already published.
+        run: uv publish --check-url https://pypi.org/project/tif1/
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  create-github-release:
+    name: Create GitHub release and discussion
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'pypi'
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      discussions: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "([^"]+)".*/\1/')
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::Could not extract version from pyproject.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - "$VERSION" <<'EOF' > notes.md
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(rf"^## \[{re.escape(version)}\] - [^\n]*\n(.*?)(?=^## \[|\Z)", text, re.M | re.S)
+          sys.stdout.write(match.group(1).strip() if match else "")
+          EOF
+          if [[ ! -s notes.md ]]; then
+            echo "No CHANGELOG entry for $VERSION; generating notes from git history."
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+            if [[ -n "$LAST_TAG" ]]; then
+              git log --oneline "$LAST_TAG..HEAD" > notes.md
+            else
+              git log --oneline > notes.md
+            fi
+          fi
+
+      - name: Create and push tag
+        run: |
+          TAG=${{ steps.version.outputs.tag }}
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1 || \
+             git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG."
+          fi
+
+      - name: Create GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          IS_PRERELEASE=false
+          if [[ "$VERSION" == *a* || "$VERSION" == *b* || "$VERSION" == *rc* || "$VERSION" == *dev* ]]; then
+            IS_PRERELEASE=true
+          fi
+          CREATED=false
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping creation."
+          else
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              gh release create "$TAG" --title "tif1 $VERSION" --notes-file notes.md --prerelease
+            else
+              gh release create "$TAG" --title "tif1 $VERSION" --notes-file notes.md
+            fi
+            CREATED=true
+          fi
+          echo "created=$CREATED" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Open release discussion
+        # Always run (job-level `if` gates on pypi dispatch): the script checks
+        # for an existing discussion for this release and skips if found, so
+        # re-runs stay idempotent and a failed first attempt can be retried.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_NAME: tif1 ${{ steps.version.outputs.version }}
+          RELEASE_BODY_FILE: notes.md
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: python3 .github/scripts/create-release-discussion.py

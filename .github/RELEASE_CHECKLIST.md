@@ -44,6 +44,20 @@ Use this checklist before creating a new release.
 
 ## Release Process
 
+Releases are published by dispatching the **Publish to PyPI** workflow
+(`.github/workflows/publish.yml`) manually:
+
+1. Bump `version` in `pyproject.toml` and add a `CHANGELOG.md` entry.
+2. Dispatch `publish.yml` with `environment: testpypi` to validate.
+3. Dispatch `publish.yml` with `environment: pypi`.
+
+The `pypi` dispatch publishes to PyPI, then automatically creates the git tag,
+the GitHub release (notes pulled from `CHANGELOG.md`), and a release discussion
+in the Announcements category. All steps are idempotent: re-running the dispatch
+for an already-published version skips the uploads and backfills any missing
+tag/release/discussion, so the checklist steps below only verify the workflow's
+output.
+
 ### TestPyPI (Recommended First)
 - [ ] Published to TestPyPI
 - [ ] Installed from TestPyPI successfully
@@ -59,14 +73,13 @@ Use this checklist before creating a new release.
 
 ### Git
 - [ ] Changes committed
-- [ ] Version tag created: `v0.4.0`
-- [ ] Tag pushed to GitHub
+- [ ] Version tag created and pushed by the `publish.yml` workflow (e.g., `v0.5.1`)
 - [ ] Branch is clean
 
 ### GitHub
-- [ ] GitHub release created
-- [ ] Release notes added
-- [ ] Changelog linked
+- [ ] GitHub release created by the `publish.yml` workflow
+- [ ] Release notes populated from `CHANGELOG.md`
+- [ ] Release discussion opened in the Announcements category
 - [ ] Assets uploaded (if any)
 
 ## Post-Release
