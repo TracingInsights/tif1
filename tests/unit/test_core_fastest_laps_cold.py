@@ -113,7 +113,7 @@ def _setup_fastest_mocks(monkeypatch) -> None:
 def test_get_fastest_laps_cold_path_matches_legacy(monkeypatch):
     """Cold-path fastest-lap selection should match legacy full-laps behavior."""
     _setup_fastest_mocks(monkeypatch)
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Practice 1", enable_cache=True, lib="pandas")
 
     optimized = session.get_fastest_laps(by_driver=True)
     legacy = _legacy_get_fastest_laps_by_driver()
@@ -127,7 +127,7 @@ def test_get_fastest_laps_cold_path_matches_legacy(monkeypatch):
 def test_get_fastest_laps_cold_path_respects_driver_filter(monkeypatch):
     """Cold-path should preserve driver filtering semantics."""
     _setup_fastest_mocks(monkeypatch)
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Practice 1", enable_cache=True, lib="pandas")
 
     filtered = session.get_fastest_laps(by_driver=True, drivers=["D01", "D04", "MISSING"])
     assert set(filtered["Driver"]) == {"D01", "D04"}
@@ -149,7 +149,7 @@ def test_get_fastest_laps_ultra_cold_disables_cache_io(monkeypatch):
     monkeypatch.setattr("tif1.core.Session._fetch_json", _fake_fetch_json)
     monkeypatch.setattr("tif1.core.Session._fetch_json_unvalidated", _fake_fetch_json)
 
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Practice 1", enable_cache=True, lib="pandas")
 
     previous_ultra_cold = core_module.config.get("ultra_cold_start", False)
     previous_backfill = core_module.config.get("ultra_cold_background_cache_fill", False)
