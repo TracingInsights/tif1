@@ -32,6 +32,7 @@ class CDNSource:
 
         jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
         StaticDelivr format: https://cdn.staticdelivr.com/gh/user/repo/branch/path
+        Hugging Face bucket format: https://huggingface.co/buckets/user/bucket/resolve/path
 
         jsDelivr supports automatic minification by appending .min before the extension.
         This can reduce file sizes by 20-40% for JSON files.
@@ -40,8 +41,13 @@ class CDNSource:
         if self.use_minification and path.endswith(".json"):
             path = path.replace(".json", ".min.json")
 
+        lowered = self.base_url.lower()
+        # Hugging Face buckets mirror the GitHub repos without a branch segment;
+        # files are served through the /resolve/ endpoint.
+        if "huggingface" in lowered:
+            return f"{self.base_url}/{year}/resolve/{gp}/{session}/{path}"
         # StaticDelivr uses /branch/ format, jsDelivr uses @branch format
-        if "staticdelivr" in self.base_url.lower():
+        if "staticdelivr" in lowered:
             return f"{self.base_url}/{year}/main/{gp}/{session}/{path}"
         return f"{self.base_url}/{year}@main/{gp}/{session}/{path}"
 
@@ -56,6 +62,7 @@ class CDNManager:
         default_sources = [
             "https://cdn.staticdelivr.com/gh/TracingInsights",
             "https://cdn.jsdelivr.net/gh/TracingInsights",
+            "https://huggingface.co/buckets/tracinginsights",
         ]
         configured_sources = config.get("cdns", default_sources) or default_sources
         use_minification = config.get("cdn_use_minification", False)
@@ -71,12 +78,15 @@ class CDNManager:
             name = self._name_for_url(base_url, i)
             if any(s.name == name for s in self.sources):
                 name = f"{name} {i}"
+            # Hugging Face does not minify; a .min.json request would 404 and
+            # DataNotFoundError aborts the fallback chain, so never minify there.
+            source_minification = use_minification and "huggingface" not in base_url.lower()
             self.sources.append(
                 CDNSource(
                     name=name,
                     base_url=base_url.rstrip("/"),
                     priority=i,
-                    use_minification=use_minification,
+                    use_minification=source_minification,
                 )
             )
 
@@ -95,6 +105,12 @@ class CDNManager:
                     priority=2,
                     use_minification=use_minification,
                 ),
+                CDNSource(
+                    name="HuggingFace",
+                    base_url=default_sources[2],
+                    priority=3,
+                    use_minification=False,
+                ),
             ]
 
         self._failure_counts = {source.name: 0 for source in self.sources}
@@ -106,6 +122,8 @@ class CDNManager:
             return "jsDelivr"
         if "staticdelivr" in base_url:
             return "StaticDelivr"
+        if "huggingface" in base_url:
+            return "HuggingFace"
         return f"CDN {index}"
 
     def add_source(self, source: CDNSource):

@@ -6,6 +6,35 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-26
+
+### Summary
+
+`0.6.0` adds Hugging Face storage buckets as a third, last-resort CDN source. The fetch chain is now StaticDelivr (primary) → jsDelivr (fallback) → Hugging Face buckets (backup), keeping data available when the GitHub-backed CDNs are down. No public API changes.
+
+### Added
+
+- **Hugging Face buckets as backup CDN source** — `cdn.py` now defaults to three sources in priority order:
+  - StaticDelivr: `https://cdn.staticdelivr.com/gh/TracingInsights` (`{year}/main/{gp}/{session}/{path}`)
+  - jsDelivr: `https://cdn.jsdelivr.net/gh/TracingInsights` (`{year}@main/{gp}/{session}/{path}`)
+  - Hugging Face: `https://huggingface.co/buckets/tracinginsights` (`{year}/resolve/{gp}/{session}/{path}`)
+- The Hugging Face buckets mirror the TracingInsights GitHub data repos (`TracingInsights/{year}`, seasons 2018–2026) with an identical directory layout, served through the `/resolve/` endpoint with no branch segment.
+- `CDNManager._name_for_url()` identifies Hugging Face URLs as `"HuggingFace"`; both sync (`try_sources`) and async (`try_sources_async`) fallback loops transparently include it.
+
+### Changed
+
+- Default `cdns` config value now lists all three sources; existing custom `cdns` configurations are unaffected.
+- Minification (`cdn_use_minification`) is never applied to Hugging Face sources — they do not serve `.min.json`, and a 404 would otherwise abort the fallback chain as a fatal `DataNotFoundError`.
+- Documentation updated across `README.md`, `AGENTS.md`, and the docs site (`cdn.mdx`, `http.mdx`, `data-flow.mdx`, `utilities.mdx`, `environment-variables.mdx`) to describe the three-source chain.
+
+### Fixed
+
+- Repaired duplicate node IDs and conflicting style declarations in the data-flow architecture mermaid diagram (`docs/concepts/data-flow.mdx`).
+
+### Known Issues
+
+- None reported at release time.
+
 ## [0.5.1] - 2026-08-12
 
 ### Summary

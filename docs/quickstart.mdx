@@ -47,7 +47,7 @@ ver = session.get_driver("VER")
 
 # Get his fastest lap
 fastest_lap = ver.get_fastest_lap()
-print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0]:.3f}s")
+print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0].total_seconds():.3f}s")
 ```
 
 ## 4. deep dive into telemetry

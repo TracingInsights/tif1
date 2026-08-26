@@ -290,7 +290,9 @@ config.save(Path.home() / ".config" / "tif1" / "config.json")
   "circuit_breaker_threshold": 10,
   "circuit_breaker_timeout": 120,
   "cdns": [
-    "https://cdn.jsdelivr.net/gh/TracingInsights"
+    "https://cdn.staticdelivr.com/gh/TracingInsights",
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://huggingface.co/buckets/tracinginsights"
   ]
 }
 ```
@@ -310,7 +312,7 @@ Comprehensive reference of all configuration options:
 | `ultra_cold_start` | `bool` | `False` | Skip loading full session data, fetch on-demand | Dramatically faster for single lap queries |
 | `circuit_breaker_threshold` | `int` | `5` | Failures before circuit breaker opens | Lower = faster failure detection |
 | `circuit_breaker_timeout` | `int` | `60` | Circuit breaker reset timeout in seconds | Time to wait before retrying failed service |
-| `cdns` | `list[str]` | `["https://cdn.jsdelivr.net/gh/TracingInsights"]` | List of CDN base URLs for fallback | Multiple CDNs improve reliability |
+| `cdns` | `list[str]` | `["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]` | List of CDN base URLs for fallback | Multiple CDNs improve reliability |
 | `cdn_use_minification` | `bool` | `False` | Use minified JSON files from CDN | Reduces bandwidth by 20-40% |
 
 ### Environment Variable Configuration

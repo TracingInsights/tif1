@@ -101,6 +101,7 @@ class Config:
             "cdns": [
                 "https://cdn.staticdelivr.com/gh/TracingInsights",
                 "https://cdn.jsdelivr.net/gh/TracingInsights",
+                "https://huggingface.co/buckets/tracinginsights",
             ],
             "cdn_use_minification": False,
             "validate_data": False,

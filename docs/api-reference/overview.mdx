@@ -143,7 +143,7 @@ telemetry = driver.get_fastest_lap_tel()
 print(f"Max speed: {telemetry['Speed'].max():.1f} km/h")  # e.g., 332.5 km/h
 print(f"Max RPM: {telemetry['RPM'].max():.0f}")  # e.g., 12500 RPM
 print(f"Data points: {len(telemetry)}")  # ~300-500 samples per lap
-print(f"Sampling rate: {len(telemetry) / driver.get_fastest_lap()['LapTime'].iloc[0]:.1f} Hz")
+print(f"Sampling rate: {len(telemetry) / driver.get_fastest_lap()['LapTime'].iloc[0].total_seconds():.1f} Hz")
 
 # Analyze tire strategy across the race
 for stint_num, stint in enumerate(driver.get_stint_data(), 1):
@@ -1006,11 +1006,11 @@ print(f"Team: {driver.team}")
 # Lap analysis
 laps = driver.laps
 print(f"Laps completed: {len(laps)}")
-print(f"Average lap time: {laps['LapTime'].mean():.3f}s")
+print(f"Average lap time: {laps['LapTime'].mean().total_seconds():.3f}s")
 
 # Get fastest lap
 fastest = driver.get_fastest_lap()
-print(f"Fastest lap: {fastest['LapTime'].iloc[0]:.3f}s")
+print(f"Fastest lap: {fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 print(f"Lap number: {fastest['LapNumber'].iloc[0]}")
 print(f"Tire compound: {fastest['Compound'].iloc[0]}")
 
@@ -1261,7 +1261,7 @@ print(f"Laps completed: {len(ver_laps)}")
 
 # Get fastest lap
 fastest = ver.get_fastest_lap()
-print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+print(f"Fastest: {fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 
 # Get telemetry
 tel = ver.get_fastest_lap_tel()

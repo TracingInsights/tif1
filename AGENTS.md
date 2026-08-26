@@ -20,7 +20,7 @@ Architecture:
 - `io_pipeline.py` and `lap_ops.py` were removed (pass-through shims); internal helpers live in `core.py`/`core_utils/`.
 - `payload_loader.py` is the single payload-loading pipeline: `PayloadLoader.get` (session memo -> SQLite cache -> fetch -> validate -> memo/cache write-back), `fetch_from_cdn(path, fast=)` (retry/backoff unless `fast`), async `get_many` (delegates to `fetch_multiple_async`), and `get_url` + thread-safe `get_url_loader()` for absolute-URL payloads (used by `events.py`). HTTP goes through injectable `HttpTransport` implementations (`NiquestsTransport` in production, `InMemoryTransport` in tests). Validation failures always raise — no patched-callable escape hatch (the old `__code__`-sniffing test-compat machinery was removed).
 - HTTP via `http_session.py` (niquests session) + `async_fetch.py` (async parallel fetching with niquests); sync and async payload entry points share the CDN fallback loops owned by `cdn.py` (`CDNManager.try_sources` / `try_sources_async`).
-- Cache in `cache.py` (all tiers: `LRUCache` (the single LRU impl), SQLite `Cache` with kind-based `get_entry`/`set_entry`/`invalidate`, process-global backend lap caches `get_backend_lap_cache`/`clear_lap_cache`, and the per-session `SessionMemo` tier held as `Session._memo`); CDN fallback in `cdn.py` (StaticDelivr primary, jsDelivr fallback, never raw.githubusercontent.com).
+- Cache in `cache.py` (all tiers: `LRUCache` (the single LRU impl), SQLite `Cache` with kind-based `get_entry`/`set_entry`/`invalidate`, process-global backend lap caches `get_backend_lap_cache`/`clear_lap_cache`, and the per-session `SessionMemo` tier held as `Session._memo`); CDN fallback in `cdn.py` (StaticDelivr primary, jsDelivr fallback, Hugging Face buckets as last-resort backup, never raw.githubusercontent.com).
 - Config in `config.py` (singleton Config class, env vars + `.tif1rc` file support).
 - Retry/circuit-breaker in `retry.py`; event schedule in `events.py` + `schedule_schema.py`.
 - Validation (pydantic) in `validation.py`; errors in `exceptions.py` (hierarchy rooted at `TIF1Error`).
@@ -34,12 +34,12 @@ Architecture:
 Key patterns:
 - Session.load() accepts `laps`, `telemetry`, `messages`, `weather` booleans to control what data gets fetched.
 - Data flows: CDN URL → async HTTP fetch → JSON parse → DataFrame construction → column rename/reorder → cache.
-- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via StaticDelivr CDN (primary) with jsDelivr as fallback.
+- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via StaticDelivr CDN (primary) with jsDelivr as fallback and Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}`, same repo layout via `/resolve/`) as a last-resort backup.
 - Exception hierarchy: TIF1Error → DataNotFoundError → {DriverNotFoundError, LapNotFoundError}; TIF1Error → {NetworkError, InvalidDataError, CacheError, SessionNotLoadedError}.
 - All exceptions accept `**context` kwargs for structured error info.
 
 Constraints:
-- Never use `https://raw.githubusercontent.com` CDN (rate limits). Use StaticDelivr (primary) or jsDelivr (fallback) CDNs only.
+- Never use `https://raw.githubusercontent.com` CDN (rate limits). Use StaticDelivr (primary), jsDelivr (fallback), or Hugging Face buckets (last resort) only.
 - Python >=3.11; use type hints everywhere; Google-style docstrings for public APIs.
 - Ruff ruleset (see pyproject.toml for full select/ignore); line length 100, double quotes, space indent.
 - Keep imports sorted (ruff/format), avoid unused imports, prefer explicit names.

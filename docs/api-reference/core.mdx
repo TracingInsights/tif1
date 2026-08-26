@@ -906,7 +906,7 @@ Get this driver's fastest lap as a single-row DataFrame.
 **Example:**
 ```python
 fastest = ver.get_fastest_lap()
-print(f"Fastest: {fastest['LapTime'].iloc[0]:.3f}s")
+print(f"Fastest: {fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 print(f"Compound: {fastest['Compound'].iloc[0]}")
 ```
 

@@ -138,7 +138,7 @@ The CDN manager uses a singleton pattern to ensure consistent state across your 
 The CDN system works seamlessly behind the scenes—you typically don't need to interact with it directly:
 
 - **Automatic initialization**: CDN manager is created on first use
-- **Zero-configuration default**: Works out-of-the-box with jsDelivr CDN
+- **Zero-configuration default**: Works out-of-the-box with the StaticDelivr → jsDelivr → Hugging Face chain
 - **Session API integration**: `Session.load()` automatically uses CDN system
 - **Error handling**: Network errors are caught and trigger automatic fallback
 - **Logging**: Debug-level logs show which CDN source is being used
@@ -319,14 +319,14 @@ Most users never need to interact with the CDN API directly—it works transpare
 </Warning>
 
 <Info>
-  The default CDN source is **jsDelivr** (`https://cdn.jsdelivr.net/gh/TracingInsights`), which provides:
+  The default configuration uses three sources tried in priority order — **StaticDelivr** (primary), **jsDelivr** (fallback), and **Hugging Face buckets** (`https://huggingface.co/buckets/tracinginsights`, last resort):
 
   - **Excellent global performance**: 800+ CDN locations worldwide
   - **Unlimited bandwidth**: No rate limits or bandwidth caps
   - **Automatic caching**: Intelligent cache invalidation and purging
   - **HTTP/2 and HTTP/3 support**: Modern protocols for faster transfers
-  - **Minification support**: Automatic `.min.json` serving
-  - **99.9% uptime SLA**: Enterprise-grade reliability
+  - **Minification support**: Automatic `.min.json` serving on jsDelivr
+  - **Hugging Face backup**: Mirrors of the TracingInsights data repos that stay available when GitHub-sourced CDNs are down
 
   For most users, the default configuration is optimal and requires no changes.
 </Info>
@@ -645,20 +645,20 @@ The CDN manager is automatically initialized when you call `get_cdn_manager()` f
 5. **Assign priorities**: Sources are assigned priorities based on their order (1, 2, 3, ...)
 6. **Initialize health tracking**: Sets up `_failure_counts` dictionary with all sources at 0 failures
 7. **Sort by priority**: Orders sources so highest-priority (lowest number) is tried first
-8. **Fallback to defaults**: If no valid sources found, uses jsDelivr as default
+8. **Fallback to defaults**: If no valid sources found, uses StaticDelivr, jsDelivr, and Hugging Face buckets as defaults
 
 **Configuration Sources (in order of precedence):**
 
 1. **Environment variable**: `TIF1_CDNS` (comma-separated list of HTTPS URLs)
 2. **Config file**: `~/.tif1rc` in home directory or current directory (if `TIF1_TRUST_CWD_CONFIG=true`)
-3. **Default**: `https://cdn.jsdelivr.net/gh/TracingInsights` (jsDelivr CDN)
+3. **Default**: `https://cdn.staticdelivr.com/gh/TracingInsights`, `https://cdn.jsdelivr.net/gh/TracingInsights`, and `https://huggingface.co/buckets/tracinginsights` (in priority order)
 
 **Validation Rules:**
 
 - URLs must start with `https://` (HTTP is rejected for security)
 - URLs containing `raw.githubusercontent.com` are rejected (rate limits)
 - Invalid URLs are logged as warnings and skipped
-- If all URLs are invalid, falls back to default jsDelivr CDN
+- If all URLs are invalid, falls back to the default StaticDelivr → jsDelivr → Hugging Face chain
 
 **Example: Initialization via Environment Variable**
 

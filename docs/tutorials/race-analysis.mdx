@@ -352,9 +352,9 @@ pit_stops_df = analyze_pit_stops(laps)
 if len(pit_stops_df) > 0:
     print("\nPit Stop Summary:")
     print(f"Total pit stops: {len(pit_stops_df)}")
-    print(f"Average duration: {pit_stops_df['Duration'].mean():.2f}s")
-    print(f"Fastest stop: {pit_stops_df['Duration'].min():.2f}s")
-    print(f"Slowest stop: {pit_stops_df['Duration'].max():.2f}s")
+    print(f"Average duration: {pit_stops_df['Duration'].mean().total_seconds():.2f}s")
+    print(f"Fastest stop: {pit_stops_df['Duration'].min().total_seconds():.2f}s")
+    print(f"Slowest stop: {pit_stops_df['Duration'].max().total_seconds():.2f}s")
 
     # Plot pit stop timing
     fig, ax = plt.subplots(figsize=(14, 8))

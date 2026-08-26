@@ -43,22 +43,24 @@ graph TD
     L -->|Success| M[JSON Data]
     L -->|Failure| N{Try jsDelivr}
     N -->|Success| M
-    N -->|Failure| O[Fail]
-    M --> P[orjson Parser]
-    N --> O[Schema Validator]
-    O --> P[DataFrame Constructor]
-    P --> Q[Column Transformer]
-    Q --> R[Data Enrichment]
-    R --> S[Type Optimization]
-    S --> T[Save to SQLite]
-    T --> U[Save to Memory]
-    U --> D
+    N -->|Failure| V{Try Hugging Face}
+    V -->|Success| M
+    V -->|Failure| W[Fail]
+    M --> P[Schema Validator]
+    P --> Q[orjson Parser]
+    Q --> R[DataFrame Constructor]
+    R --> S[Column Transformer]
+    S --> T[Data Enrichment]
+    T --> U[Type Optimization]
+    U --> X[Save to SQLite]
+    X --> Y[Save to Memory]
+    Y --> D
 
     style C fill:#90EE90
     style E fill:#FFD700
     style K fill:#87CEEB
-    style P fill:#FFA07A
-    style P fill:#DDA0DD
+    style Q fill:#FFA07A
+    style R fill:#DDA0DD
 ```
 
 ### Component Responsibilities
@@ -88,6 +90,7 @@ graph TD
 - Manages multiple CDN sources with automatic fallback
 - Primary: StaticDelivr CDN (`cdn.staticdelivr.com/gh/TracingInsights/{year}/main`)
 - Fallback: jsDelivr CDN (`cdn.jsdelivr.net/gh/TracingInsights/{year}@main`)
+- Backup: Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}/resolve`)
 - Tracks failure counts per CDN source
 - Automatically disables failing sources after 3 consecutive failures
 - Handles URL encoding and path construction
@@ -448,6 +451,12 @@ When data isn't found in either cache tier, tif1 fetches from the CDN using a so
 - Average latency: 50-200ms (depending on location)
 - Used when StaticDelivr fails or is unavailable
 
+**Backup Source: Hugging Face Buckets**
+- URL Pattern: `https://huggingface.co/buckets/tracinginsights/{year}/resolve/{path}`
+- Mirrors the TracingInsights GitHub data repos with the same layout (no branch segment)
+- Pre-warmed CDN edge locations in the US and EU
+- Used when both StaticDelivr and jsDelivr fail or are unavailable
+
 **Forbidden Source: raw.githubusercontent.com**
 - Never used due to strict rate limits (10 requests/hour)
 - Will cause `NetworkError` if all other sources fail
@@ -504,11 +513,22 @@ async def fetch_with_fallback(url_path):
     except Exception as e:
         logger.warning(f"jsDelivr failed: {e}")
 
+    # Attempt 3: Hugging Face bucket (backup)
+    try:
+        hf_url = f"https://huggingface.co/buckets/tracinginsights/{year}/resolve/{url_path}"
+        response = await http_client.get(hf_url, timeout=30)
+        if response.status_code == 200:
+            logger.info(f"Hugging Face success: {url_path}")
+            return response.content
+        logger.warning(f"Hugging Face returned {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Hugging Face failed: {e}")
+
     # All sources failed
     raise tif1.NetworkError(
         f"Failed to fetch {url_path} from all CDN sources",
         url=url_path,
-        attempts=2
+        attempts=3
     )
 ```
 

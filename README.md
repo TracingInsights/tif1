@@ -45,7 +45,7 @@ and answers excessive traffic with `HTTP 429 Too Many Requests` ("Request was th
 
 Apps that loop over many sessions in a single run — a whole season, an entire grid, backtesting, live dashboards — can approach these ceilings quickly. It's a real consideration in production, and one of the reasons I built `tif1` for my own app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
 
-`tif1` has **no API-side rate limits**. It reads public static files from a free, global CDN network (StaticDelivr primary, jsDelivr fallback) with automatic failover, retries, and a circuit breaker — no API keys, no quotas, no IP-based throttling.
+`tif1` has **no API-side rate limits**. It reads public static files from a free, global CDN network (StaticDelivr primary, jsDelivr fallback, Hugging Face bucket backup) with automatic failover, retries, and a circuit breaker — no API keys, no quotas, no IP-based throttling.
 
 Sources: [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
 
@@ -77,7 +77,7 @@ From track maps, speed traces, and telemetry comparisons to tire degradation, qu
 
 The official F1 live-timing endpoints that `fastf1` uses are known to block VPNs, cloud/data-center IPs, and some hosting providers, which can make fastf1 tricky to run on servers. `tif1` avoids that class of problem by serving data from static CDN files.
 
-`tif1` serves its data from free global CDNs used by millions of sites (StaticDelivr + jsDelivr hosting the TracingInsights data repos), so it works from **any** network — home, office, cloud, CI runners, notebooks — with no IP restrictions and no proxies.
+`tif1` serves its data from free global CDNs used by millions of sites (StaticDelivr + jsDelivr hosting the TracingInsights data repos, with Hugging Face buckets as a backup), so it works from **any** network — home, office, cloud, CI runners, notebooks — with no IP restrictions and no proxies.
 
 ### 5. Extra data — mini sectors and more
 
@@ -141,7 +141,7 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 
 ## Features
 
-- **Fast**: Multi-CDN access via StaticDelivr (primary) and jsDelivr (fallback) with automatic failover and SQLite caching
+- **Fast**: Multi-CDN access via StaticDelivr (primary), jsDelivr (fallback), and Hugging Face buckets (backup) with automatic failover and SQLite caching
 - No need to session.load() - only the required data is fetched when necessary. You can just get the telemetry data of any specific lap within seconds.
 - **Canonical**: Focused tif1 API surface
 - **Complete**: Lap times, sectors, telemetry, tire compounds, and more
@@ -174,7 +174,8 @@ import tif1
 #   "backend": "polars",
 #   "cdns": [
 #     "https://cdn.staticdelivr.com/gh/TracingInsights",
-#     "https://cdn.jsdelivr.net/gh/TracingInsights"
+#     "https://cdn.jsdelivr.net/gh/TracingInsights",
+#     "https://huggingface.co/buckets/tracinginsights"
 #   ],
 #   "cdn_use_minification": false
 # }

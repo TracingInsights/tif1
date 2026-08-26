@@ -58,11 +58,11 @@ export TIF1_LIB=polars
 Configure multiple CDN sources for data fetching with automatic fallback.
 
 ```bash
-export TIF1_CDNS='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights"]'
+export TIF1_CDNS='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]'
 ```
 
 <Info>
-  Default: StaticDelivr (primary), jsDelivr (fallback)
+  Default: StaticDelivr (primary), jsDelivr (fallback), Hugging Face buckets (last resort)
 
   The system tries CDNs in order and automatically falls back on failures.
 </Info>
@@ -272,7 +272,7 @@ directory = <platform-specific default>
 memory_size = 100
 
 [network]
-cdns = ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights"]
+cdns = ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]
 cdn_use_minification = false
 request_timeout = 10
 max_retries = 3
@@ -314,7 +314,8 @@ config.log_level = "DEBUG"
 # Configure multiple CDNs
 config.cdns = [
     "https://cdn.staticdelivr.com/gh/TracingInsights",
-    "https://cdn.jsdelivr.net/gh/TracingInsights"
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://huggingface.co/buckets/tracinginsights"
 ]
 config.cdn_use_minification = True
 

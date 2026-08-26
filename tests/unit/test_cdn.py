@@ -9,12 +9,15 @@ from tif1.exceptions import DataNotFoundError, NetworkError
 
 
 class _StubConfig:
-    def __init__(self, cdns):
+    def __init__(self, cdns, cdn_use_minification=False):
         self._cdns = cdns
+        self._use_minification = cdn_use_minification
 
     def get(self, key, default=None):
         if key == "cdns":
             return self._cdns
+        if key == "cdn_use_minification":
+            return self._use_minification
         return default
 
 
@@ -65,6 +68,16 @@ class TestCDNSourceFormatUrl:
         url = source.format_url(2024, "Bahrain", "Race", "drivers.json")
         assert url == "https://cdn.staticdelivr.com/gh/Archive/2024/main/Bahrain/Race/drivers.json"
 
+    def test_huggingface_url(self):
+        source = CDNSource(
+            name="HuggingFace", base_url="https://huggingface.co/buckets/tracinginsights"
+        )
+        url = source.format_url(2024, "Bahrain", "Race", "drivers.json")
+        assert (
+            url
+            == "https://huggingface.co/buckets/tracinginsights/2024/resolve/Bahrain/Race/drivers.json"
+        )
+
     def test_generic_url(self):
         source = CDNSource(name="Custom", base_url="https://my-cdn.example.com/data")
         url = source.format_url(2024, "Bahrain", "Race", "drivers.json")
@@ -76,6 +89,12 @@ class TestCDNManagerNameForUrl:
 
     def test_jsdelivr(self):
         assert CDNManager._name_for_url("https://cdn.jsdelivr.net/gh/Foo", 1) == "jsDelivr"
+
+    def test_huggingface(self):
+        assert (
+            CDNManager._name_for_url("https://huggingface.co/buckets/tracinginsights", 3)
+            == "HuggingFace"
+        )
 
     def test_generic(self):
         assert CDNManager._name_for_url("https://example.com/cdn", 3) == "CDN 3"
@@ -267,9 +286,24 @@ class TestCDNManagerInit:
     def test_empty_list_falls_back_to_defaults(self):
         with patch("tif1.config.get_config", return_value=_StubConfig([])):
             manager = CDNManager()
-        assert len(manager.sources) == 2
+        assert len(manager.sources) == 3
         assert manager.sources[0].name == "StaticDelivr"
         assert manager.sources[1].name == "jsDelivr"
+        assert manager.sources[2].name == "HuggingFace"
+
+    def test_default_sources_include_huggingface_after_jsdelivr(self):
+        manager = CDNManager()
+        names = [s.name for s in sorted(manager.sources, key=lambda s: s.priority)]
+        assert names.index("StaticDelivr") < names.index("jsDelivr") < names.index("HuggingFace")
+
+    def test_huggingface_never_minifies_even_when_configured(self):
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig([], cdn_use_minification=True),
+        ):
+            manager = CDNManager()
+        hf = next(s for s in manager.sources if s.name == "HuggingFace")
+        assert hf.use_minification is False
 
     def test_trailing_slash_stripped(self):
         with patch(

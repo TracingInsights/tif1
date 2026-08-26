@@ -143,9 +143,9 @@ if weather["Rainfall"].any():
     dry_laps = laps[laps["Wet"] == False]
     wet_laps = laps[laps["Wet"] == True]
 
-    print(f"Dry avg: {dry_laps['LapTime'].mean():.3f}s")
-    print(f"Wet avg: {wet_laps['LapTime'].mean():.3f}s")
-    print(f"Difference: {wet_laps['LapTime'].mean() - dry_laps['LapTime'].mean():.3f}s")
+    print(f"Dry avg: {dry_laps['LapTime'].mean().total_seconds():.3f}s")
+    print(f"Wet avg: {wet_laps['LapTime'].mean().total_seconds():.3f}s")
+    print(f"Difference: {(wet_laps['LapTime'].mean() - dry_laps['LapTime'].mean()).total_seconds():.3f}s")
 
     # Visualize
     plt.figure(figsize=(12, 6))

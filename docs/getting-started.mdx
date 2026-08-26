@@ -111,8 +111,8 @@ lec = session.get_driver("LEC")
 ver_fastest = ver.get_fastest_lap()
 lec_fastest = lec.get_fastest_lap()
 
-print(f"VER: {ver_fastest['LapTime'].iloc[0]:.3f}s")
-print(f"LEC: {lec_fastest['LapTime'].iloc[0]:.3f}s")
+print(f"VER: {ver_fastest['LapTime'].iloc[0].total_seconds():.3f}s")
+print(f"LEC: {lec_fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 ```
 
 ### Step 5: analyze telemetry
