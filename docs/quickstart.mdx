@@ -1,7 +1,7 @@
 ---
 title: "Quickstart"
 icon: "rocket"
-description: "Start analyzing F1 data in less than 30 seconds"
+description: "Analyze F1 data in less than 30 seconds"
 keywords:
   - "tif1 quickstart"
   - "F1 data quick start"
@@ -12,7 +12,7 @@ keywords:
 
 ## 1. Load a Session
 
-A session is the entry point for all data in `tif1`. You specify the year, the Grand Prix, and the session type.
+A session is the entry point for all data in `tif1`. Specify the year, the Grand Prix, and the session type.
 
 ```python
 import tif1
@@ -23,7 +23,7 @@ session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
 
 ## 2. Access Lap Data
 
-The first time you access `.laps`, `tif1` fetches the data in parallel. Subsequent calls are instant due to the caching layer.
+The first access to `.laps` starts a parallel fetch. Subsequent calls read from the cache.
 
 ```python
 # Load all laps
@@ -37,9 +37,9 @@ fastest_5 = laps.nsmallest(5, "LapTime")
 print(fastest_5[["Driver", "LapTime", "Compound"]])
 ```
 
-## 3. analyze a specific driver
+## 3. Analyze a Specific Driver
 
-You can easily drill down into data for a specific driver using their 3-letter code.
+Examine the data for one driver with the 3-letter driver code.
 
 ```python
 # Get driver data for Max Verstappen
@@ -50,9 +50,9 @@ fastest_lap = ver.get_fastest_lap()
 print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0].total_seconds():.3f}s")
 ```
 
-## 4. deep dive into telemetry
+## 4. Examine Telemetry
 
-Telemetry provides high-frequency data (Speed, RPM, Throttle, etc.) for every moment of a lap.
+Telemetry gives high-frequency data (Speed, RPM, Throttle, etc.) for every moment of a lap.
 
 ```python
 # Get telemetry for lap 19
@@ -64,9 +64,9 @@ top_speed = telemetry["Speed"].max()
 print(f"Top Speed on Lap 19: {top_speed} km/h")
 ```
 
-## 5. list available data
+## 5. List the Available Data
 
-Not sure what events or sessions are available? Use the helper functions.
+Use the helper functions to list the available events and sessions.
 
 ```python
 # List all GPs in 2025
@@ -77,9 +77,9 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 # ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
 ```
 
-## 6. visualize in one line
+## 6. Create a Chart in One Call
 
-Every chart in `tif1.charts` loads its own session and produces a complete figure in a single call. The functions are also re-exported at the top level.
+Every chart function in `tif1.charts` loads its own session. It produces a complete figure in one call. The functions are also re-exported at the top level.
 
 ```python
 import matplotlib.pyplot as plt
@@ -93,11 +93,11 @@ plt.show()
 tif1.plot_track_speed_map(2025, "Monaco Grand Prix", "Qualifying", save_path="speed_map.png")
 ```
 
-See the [Charts API](/api-reference/charts) for the full list of chart functions and their shared filters (`drivers`, `teams`, `n_drivers`, `laptime_cutoff`, and more).
+See the [Charts API](/api-reference/charts) for all chart functions and their shared filters.
 
-## Pro Tip: Speed it up!
+## Speed Up the First Load
 
-If you're loading data for the first time, use `laps_async()` to fetch all drivers' data simultaneously:
+For a first load, use `laps_async()` to fetch the data for all drivers in parallel:
 
 ```python
 import asyncio
@@ -111,7 +111,7 @@ asyncio.run(main())
 ```
 
 <Card title="Learn More" icon="lightbulb" href="/tutorials/race-pace-analysis">
-  Check out our tutorials for more advanced analysis examples.
+  Read the tutorials for advanced analysis examples.
 </Card>
 
 ---
@@ -120,18 +120,18 @@ asyncio.run(main())
 
 <CardGroup cols={2}>
   <Card title="Getting Started" href="/getting-started">
-    Comprehensive guide
+    Comprehensive guide.
   </Card>
   <Card title="Examples" href="/examples">
-    More code examples
+    More code examples.
   </Card>
   <Card title="API Reference" href="/api-reference/core">
-    Core API details
+    Core API details.
   </Card>
   <Card title="Charts API" href="/api-reference/charts">
-    22 one-call chart functions
+    22 one-call chart functions.
   </Card>
   <Card title="Tutorials" href="/tutorials/race-analysis">
-    Detailed tutorials
+    Detailed tutorials.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
 title: "Introduction"
 icon: "flag-checkered"
-description: "A faster alternative to fastf1 with the same bindings"
+description: "tif1 is a fast alternative to fastf1 with the same API bindings"
 keywords:
   - "tif1"
   - "Formula 1 data"
@@ -12,52 +12,44 @@ keywords:
   - "Python F1 library"
 ---
 
-<img
-  className="block dark:hidden"
-  src="/logo/light.svg"
-  alt="tif1 - High-performance Formula 1 data analysis library for Python"
-/>
-<img
-  className="hidden dark:block"
-  src="/logo/dark.svg"
-  alt="tif1 - High-performance Formula 1 data analysis library for Python"
-/>
+<img className="block dark:hidden" src="/logo/light.svg" alt="tif1 logo" />
+<img className="hidden dark:block" src="/logo/dark.svg" alt="tif1 logo" />
 
 # Welcome to tif1
 
-`tif1` is a high-performance Python library designed for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from the TracingInsights (2018-current).
+`tif1` is a high-performance Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current).
 
-Built as a faster alternative to `fastf1`, it maintains API compatibility while introducing massive performance improvements through asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
+`tif1` is a faster alternative to `fastf1` with the same API bindings. The speed increase comes from asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
 
 ## Why tif1?
 
 <CardGroup cols={2}>
-  <Card title="Blazing Fast" icon="bolt">
-    Parallel async loading: more than 3x faster than sequential fetching (benchmark-validated), with HTTP/2 multiplexing.
+  <Card title="Fast" icon="bolt">
+    Parallel loading is more than 3x faster than sequential fetching (benchmark-validated). It uses HTTP/2 multiplexing.
   </Card>
   <Card title="API Compatible" icon="code">
-    Same bindings as `fastf1`, making migration a breeze.
+    The bindings match `fastf1`. Migration needs few code changes.
   </Card>
   <Card title="Flexible Backends" icon="database">
-    Choose between **Pandas** for compatibility or **Polars** for 2x faster processing.
+    Choose **Pandas** for compatibility, or **Polars** for about 2x faster processing.
   </Card>
-  <Card title="Advanced Caching" icon="shield-check">
-    Multi-layer caching using in-memory LRU and SQLite for persistent storage.
+  <Card title="Multi-tier Caching" icon="shield-check">
+    Two cache tiers: an in-memory LRU cache and a SQLite cache for persistent storage.
   </Card>
 </CardGroup>
 
 ## Why tif1 over fastf1?
 
-`fastf1` is an excellent library and the glue of the F1 data community. `tif1` started as a personal project with a different approach in a few areas you might also find handy:
+`fastf1` is an established library at the center of the F1 data community. `tif1` started as a personal project with a different approach in a few areas:
 
-1. **Fetch only what you need.** No `session.load()`, no full-weekend downloads. Pull a single driver's single lap of telemetry in seconds — less time, less disk, less bandwidth.
-2. **No API rate limits.** The upstream API behind fastf1 (jolpica-f1) caps unauthenticated use at **500 requests/hour** (4 req/s burst). `tif1` serves static files from a free global CDN with no quotas, no keys, and no throttling.
-3. **Batteries included.** 22 optional one-call `plot_*()` chart helpers turn raw data into ready-made charts and analyses — `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
-4. **Works from any IP.** tif1's CDN works from home, cloud, CI, and notebooks alike, with no VPN or residential-IP requirements.
-5. **A few extras.** Mini-sector data, per-lap weather, and derived telemetry channels beyond fastf1's current scope.
+1. **Fetch only the necessary data.** Do not use `session.load()` and do not download a full weekend. Pull one lap of telemetry for one driver in seconds. This costs less time, disk, and bandwidth.
+2. **No API rate limits.** The upstream API behind fastf1 (jolpica-f1) caps unauthenticated use at **500 requests/hour** (4 req/s burst). The `tif1` CDN serves static files with no quotas, no keys, and no throttling.
+3. **Charts included.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
+4. **Works from any IP address.** The `tif1` CDN works from home, cloud, CI, and notebook environments. It needs no VPN and no residential IP address.
+5. **More data.** Mini-sector data, per-lap weather, and derived telemetry channels beyond the current `fastf1` scope.
 
-<Card title="Deep dive: the full comparison" icon="scale" href="/why-tif1">
-  Read the detailed "Why tif1 instead of fastf1?" page — including the verified 500 requests/hour rate-limit sources.
+<Card title="Full comparison" icon="scale" href="/why-tif1">
+  Read the "Why tif1 instead of fastf1?" page. It includes the verified 500 requests/hour rate-limit sources.
 </Card>
 
 ## Key Features
@@ -81,11 +73,11 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 | Load 20 Drivers Telemetry | ~11.2s | ~0.4s | **28x** (author-measured; not reproduced by the benchmark suite) |
 | Hot Cache Load | ~1.0s | ~0.05s | **20x** (author-measured; not reproduced by the benchmark suite) |
 
-Benchmark-suite-validated results (2026-09-02, `uv run pytest tests/benchmarks/ -m benchmark`): parallel fetch is more than 3x faster than sequential fetch; the cache-hit read path is about 20x faster than the legacy path (109 ms to 5.3 ms median); the fastest-laps cold path is about 2.4x faster than the legacy path. Numbers vary by machine and network. Run the benchmark suite to reproduce them.
+Benchmark-suite-validated results (2026-09-02, `uv run pytest tests/benchmarks/ -m benchmark`): parallel fetch is more than 3x faster than sequential fetch. The cache-hit read path is about 20x faster than the legacy path (109 ms to 5.3 ms median). The fastest-laps cold path is about 2.4x faster than the legacy path. Numbers vary by machine and network. Run the benchmark suite to reproduce them.
 
 ## Core Architecture
 
-`tif1` uses a modern networking stack with multi-CDN support and a multi-tiered caching strategy to ensure you spend less time waiting for data and more time analyzing it.
+`tif1` uses a modern networking stack with multi-CDN support and a multi-tier cache. This design decreases the time spent waiting for data.
 
 ```mermaid
 graph TD
@@ -119,10 +111,10 @@ graph TD
     Why choose tif1 instead of fastf1?
   </Card>
   <Card title="Installation" icon="download" href="/installation">
-    Get tif1 installed on your system.
+    Install tif1 and verify the installation.
   </Card>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Load your first session in under 30 seconds.
+    Load a first session in less than 30 seconds.
   </Card>
   <Card title="Examples" icon="code" href="/examples">
     Common patterns and code examples.
@@ -131,13 +123,13 @@ graph TD
     Visualize F1 data with 22 one-call chart functions.
   </Card>
   <Card title="Data Reference" icon="file-json" href="/reference/data-reference">
-    Every field in the raw TracingInsights data files, explained.
+    Every field in the raw TracingInsights data files, with explanations.
   </Card>
   <Card title="Migration Guide" icon="arrow-right-arrow-left" href="/migration-from-fastf1">
-    Coming from fastf1? See what's different.
+    Coming from fastf1? See the differences.
   </Card>
   <Card title="API Reference" icon="book" href="/api-reference/overview">
-    Explore the full power of the tif1 API.
+    Explore the complete tif1 API.
   </Card>
   <Card title="Tutorials" icon="graduation-cap" href="/tutorials/race-pace-analysis">
     Learn with detailed analysis examples.
@@ -150,13 +142,13 @@ graph TD
 
 <CardGroup cols={2}>
   <Card title="Installation" href="/installation">
-    Get tif1 installed
+    Install tif1
   </Card>
   <Card title="Why tif1?" href="/why-tif1">
     Why tif1 instead of fastf1?
   </Card>
   <Card title="Quickstart" href="/quickstart">
-    Load your first session
+    Load a first session
   </Card>
   <Card title="API Reference" href="/api-reference/overview">
     Explore the API
