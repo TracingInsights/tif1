@@ -1460,7 +1460,7 @@ All HTTP requests include automatic retry with exponential backoff and CDN fallb
 - Zero-retry mode: Ultra-fast cold start optimization (tries all CDNs once, no delays)
 
 **Example retry behavior:**
-```
+```text
 Attempt 1: Immediate (CDN 1)
 Attempt 1 failed: Try CDN 2, CDN 3...
 Attempt 2: Wait ~2 seconds, retry all CDNs
@@ -1931,7 +1931,7 @@ HTTP/2 multiplexing is one of the most impactful optimizations in `tif1`. Unders
 
 HTTP/2 allows multiple requests to share a single TCP connection:
 
-```
+```text
 HTTP/1.1 (6 connections):
 Connection 1: [Request 1] → [Response 1]
 Connection 2: [Request 2] → [Response 2]
@@ -1988,7 +1988,7 @@ asyncio.run(measure_multiplexing())
 
 Some CDNs have issues with HTTP/2 multiplexing after redirects. If you see errors like:
 
-```
+```python
 MultiplexingError: non-multiplexed response after a redirect
 ```
 
@@ -2009,7 +2009,7 @@ The circuit breaker prevents cascading failures by blocking requests during sust
 
 **State Machine:**
 
-```
+```python
 CLOSED (normal operation)
   ↓ (5 consecutive failures)
 OPEN (blocking requests)

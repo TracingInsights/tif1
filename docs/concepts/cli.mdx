@@ -78,7 +78,7 @@ tif1 events 2018
 ```
 
 **Sample Output:**
-```
+```text
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Event                         ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -130,7 +130,7 @@ tif1 sessions 2024 "São Paulo Grand Prix"
 ```
 
 **Sample Output:**
-```
+```text
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session            ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━┩
@@ -182,7 +182,7 @@ tif1 drivers 2024 "British Grand Prix" Race
 ```
 
 **Sample Output:**
-```
+```text
 Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
 
 ┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -250,7 +250,7 @@ tif1 fastest 2024 "Italian Grand Prix" Race
 ```
 
 **Sample Output (All Drivers):**
-```
+```text
 Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
 
 ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
@@ -265,7 +265,7 @@ Loading session... ━━━━━━━━━━━━━━━━━━━━�
 ```
 
 **Sample Output (Single Driver):**
-```
+```text
 Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
 
 VER fastest lap: 82.456s
@@ -304,7 +304,7 @@ tif1 cache-info
 ```
 
 **Sample Output:**
-```
+```text
 Cache location: /home/user/.cache/tif1
 Cache files: 3
 Total size: 145.67 MB
@@ -363,18 +363,18 @@ tif1 cache-clear -y
 ```
 
 **Sample Output (With Confirmation):**
-```
+```text
 Are you sure you want to clear the cache? [y/N]: y
 Cache cleared successfully!
 ```
 
 **Sample Output (Without Confirmation):**
-```
+```text
 Cache cleared successfully!
 ```
 
 **Sample Output (Cancelled):**
-```
+```text
 Cache clear cancelled
 ```
 
@@ -411,7 +411,7 @@ tif1 version
 ```
 
 **Sample Output:**
-```
+```text
 tif1 version 0.1.0
 ```
 
@@ -460,7 +460,7 @@ tif1 debug 2024 "British Grand Prix" Race
 ```
 
 **Sample Output:**
-```
+```text
 2025-04-18 10:30:15 - tif1.cache - DEBUG - Cache miss: 2025/Abu Dhabi Grand Prix/Practice 1/laps
 2025-04-18 10:30:15 - tif1.http_session - DEBUG - GET https://cdn.jsdelivr.net/gh/TracingInsights/2025/...
 2025-04-18 10:30:16 - tif1.core - DEBUG - Parsing lap data: 342 laps

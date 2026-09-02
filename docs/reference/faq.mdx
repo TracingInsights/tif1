@@ -13,13 +13,13 @@ keywords:
 
 ### What is tif1?
 
-tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current, with 4-5x faster loading than alternatives.
+tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current, with parallel async loading (more than 3x faster than sequential fetching in the benchmark suite).
 
 ### How is tif1 different from fastf1?
 
 tif1 is designed as a faster alternative to fastf1 with API compatibility. Key differences:
 
-- **Speed**: 4-5x faster data loading with async/HTTP/2
+- **Speed**: Parallel data loading with async/HTTP/2 (3x+ vs sequential, benchmark-validated)
 - **Backends**: Supports both pandas and polars
 - **Caching**: SQLite + memory LRU vs file-based pickle
 - **Data Source**: TracingInsights CDN vs Ergast + Live Timing
@@ -70,7 +70,7 @@ By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALA
 
 ### Why is my first load slow?
 
-The first time you access a session, tif1 needs to download data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for 4-5x faster initial loads.
+The first time you access a session, tif1 needs to download data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for parallel initial loads (3x+ vs sequential in the benchmark suite).
 
 ### How do I load data faster?
 
@@ -121,7 +121,7 @@ Yes, you can specify different backends for different sessions:
 ```python
 session1 = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
 session2 = tif1.get_session(2025, "Monza", "Race", lib="polars")
-```yaml
+```
 
 ---
 
@@ -132,7 +132,7 @@ session2 = tif1.get_session(2025, "Monza", "Race", lib="polars")
 Possible causes:
 - Internet connection issues
 - CDN is temporarily down (rare)
-- Firewall blocking jsDelivr
+- Firewall blocking the CDN hosts (StaticDelivr, jsDelivr, Hugging Face)
 
 Try:
 1. Check your internet connection
@@ -164,7 +164,7 @@ No, tif1 uses lazy loading. Data is automatically fetched when you access it:
 ```python
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps  # Data fetched here
-```yaml
+```
 
 However, you can use `session.load()` for explicit control over what data to fetch.
 
@@ -173,9 +173,9 @@ However, you can use `session.load()` for explicit control over what data to fet
 Use the optimized batch method:
 
 ```python
-# 28x faster than sequential loading
+# Parallel loading - faster than sequential (3x+ in benchmarks)
 tels = session.get_fastest_laps_tels(by_driver=True)
-```yaml
+```
 
 ### Can I filter by lap number?
 
@@ -187,20 +187,21 @@ lap_10 = laps[laps["LapNumber"] == 10]
 
 # Polars
 lap_10 = laps.filter(pl.col("LapNumber") == 10)
-```python ### How do I get weather data?
+```
+### How do I get weather data?
 
 Weather is automatically included in the laps DataFrame:
 
 ```python
 laps = session.laps
 print(laps[["LapNumber", "Driver", "AirTemp", "TrackTemp"]])
-```yaml
+```
 
 Or access it directly:
 
 ```python
 weather = session.weather
-```bash
+```
 
 ---
 
@@ -245,7 +246,7 @@ laps.to_csv("data.csv")
 laps.to_parquet("data.parquet")
 laps.to_json("data.json")
 laps.to_sql("laps", connection)
-```yaml
+```
 
 ### Can I use tif1 with Jupyter?
 
@@ -257,7 +258,7 @@ Yes, tif1 uses asyncio internally and provides async methods:
 
 ```python
 laps = await session.laps_async()
-```yaml
+```
 
 ---
 

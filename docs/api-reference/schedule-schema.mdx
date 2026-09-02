@@ -1,0 +1,115 @@
+---
+title: "Schedule Schema API"
+icon: "calendar-check"
+description: "Shape validation for packaged Formula 1 schedule payloads in tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+  - "schedule"
+  - "schema"
+  - "validation"
+  - "events"
+---
+
+The `schedule_schema` module validates the shape of packaged F1 schedule payloads. It contains one function, `validate_schedule_payload`. The `tif1.events` module calls it on the schedule payload built from the packaged schedule files before any event data is read from that payload.
+
+## Overview
+
+A schedule payload is a dict with this shape:
+
+```python
+{
+    "schema_version": 1,
+    "years": {
+        "2025": {
+            "events": ["Australian Grand Prix", "..."],
+            "sessions": {
+                "Australian Grand Prix": ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"],
+            },
+            "metadata": {"Australian Grand Prix": {"RoundNumber": 1, "...": "..."}},
+        },
+    },
+}
+```
+
+The `metadata` key holds per-event metadata. The validator does not check its contents.
+
+## validate_schedule_payload
+
+```python
+validate_schedule_payload(payload: Any) -> dict[str, Any]
+```
+
+Validate the shape of a schedule payload. The checks are plain type checks; this module does not use pydantic.
+
+<ResponseField name="payload" type="Any" required>
+Decoded JSON payload to validate.
+</ResponseField>
+
+Returns the validated payload, unchanged.
+
+The function checks, in this order:
+
+1. `payload` is a dict.
+2. `payload["schema_version"]` equals `1`.
+3. `payload["years"]` is a dict.
+4. Every key in `years` is a string of digits, for example `"2025"`.
+5. Every value in `years` is a dict.
+6. For every year: `events` is a list of strings.
+7. For every year: `sessions` is a dict.
+8. For every event name in `events`: `sessions[event_name]` is a list of strings.
+
+The first failed check raises `InvalidDataError` with a `reason` string that names the problem and, where possible, the year and event involved. The module raises no other exception type.
+
+### Example
+
+This example runs offline.
+
+```python
+from tif1.exceptions import InvalidDataError
+from tif1.schedule_schema import validate_schedule_payload
+
+payload = {
+    "schema_version": 1,
+    "years": {
+        "2025": {
+            "events": ["Australian Grand Prix"],
+            "sessions": {"Australian Grand Prix": ["Practice 1", "Race"]},
+        }
+    },
+}
+
+validate_schedule_payload(payload)  # returns the payload
+
+bad = {"schema_version": 2, "years": {}}
+validate_schedule_payload(bad)
+# InvalidDataError: Unsupported schedule schema version: 2
+```
+
+### Error messages
+
+Each failed check has its own reason string:
+
+| Failed check | Reason string |
+| :--- | :--- |
+| Payload is not a dict | `Schedule payload must be an object` |
+| Wrong schema version | `Unsupported schedule schema version: {version}` |
+| `years` missing or not a dict | `Schedule payload missing 'years' object` |
+| Year key not digit string | `Invalid year key: {year!r}` |
+| Year payload not a dict | `Year payload must be object for year={year}` |
+| `events` not list of strings | `Invalid events list for year={year}` |
+| `sessions` not a dict | `Invalid sessions map for year={year}` |
+| Session list not list of strings | `Invalid session list for year={year} event={event_name!r}` |
+
+## Where tif1 uses it
+
+`tif1.events` loads the packaged schedule files from `tif1/data/schedules/f1schedule/schedule_{year}.json`, converts each year to the shape above, and validates the combined payload with `validate_schedule_payload`. A validation failure stops event and schedule lookups before they read malformed data.
+
+## Related APIs
+
+- **[Events API](/api-reference/events)**: the event schedule built on this validator
+- **[Schedule API](/api-reference/schedule)**: schedule data access
+- **[Validation API](/api-reference/validation)**: pydantic validators for session payloads
+- **[Exceptions API](/api-reference/exceptions)**: `InvalidDataError` and the exception hierarchy

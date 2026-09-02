@@ -31,7 +31,7 @@ graph TD
     style NetworkError fill:#ff6b6b
     style DriverNotFoundError fill:#ffa94d
     style LapNotFoundError fill:#ffa94d
-```python
+```
 
 ## Common Exceptions
 
@@ -48,7 +48,7 @@ try:
 except DataNotFoundError as e:
     print(f"Data not found: {e}")
     print(f"Context: {e.context}")  # Additional error details
-```python
+```
 
 **Common causes:**
 - Misspelled event name
@@ -61,7 +61,7 @@ except DataNotFoundError as e:
 events = tif1.get_events(2025)
 if "Monaco Grand Prix" in events:
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
-```python
+```
 
 ### DriverNotFoundError
 
@@ -74,15 +74,16 @@ try:
     driver = session.get_driver("XXX")
 except DriverNotFoundError as e:
     print(f"Driver not found: {e}")
-```python
+```
 
 **Solution:**
 ```python
 # Check available drivers first
-available_drivers = [d["driver"] for d in session.drivers]
+# session.drivers lists driver numbers; drivers_df lists their abbreviations
+available_drivers = session.drivers_df["Driver"].tolist()
 if "VER" in available_drivers:
     driver = session.get_driver("VER")
-```python
+```
 
 ### NetworkError
 
@@ -100,11 +101,11 @@ except NetworkError as e:
     cb = tif1.get_circuit_breaker()
     if cb.state == "open":
         print("Circuit breaker is open, too many failures")
-```python
+```
 
 **Solutions:**
 - Check internet connection
-- Verify jsDelivr CDN is accessible
+- Verify the CDN sources (StaticDelivr, jsDelivr, Hugging Face) are accessible
 - Reset circuit breaker if needed
 - Enable debug logging to see which CDN failed
 
@@ -121,7 +122,7 @@ except InvalidDataError as e:
     print(f"Invalid data: {e}")
     # Clear cache and retry
     tif1.get_cache().clear()
-```python
+```
 
 ### CacheError
 
@@ -136,7 +137,8 @@ try:
 except CacheError as e:
     print(f"Cache error: {e}")
     # Check permissions
-```text ## Error handling patterns
+```
+## Error handling patterns
 
 ### Graceful Degradation
 
@@ -158,7 +160,7 @@ def safe_load_session(year, gp, session_type):
 session = safe_load_session(2025, "Monaco Grand Prix", "Race")
 if session:
     laps = session.laps
-```python
+```
 
 ### Retry Logic
 
@@ -179,7 +181,7 @@ def load_with_retry(year, gp, session_type, max_retries=3):
             wait_time = 2 ** attempt
             print(f"Retry {attempt + 1}/{max_retries} in {wait_time}s...")
             time.sleep(wait_time)
-```python
+```
 
 ### Batch Processing
 
@@ -214,7 +216,7 @@ def process_season(year):
 # Use it
 results, errors = process_season(2024)
 print(f"Processed {len(results)} events, {len(errors)} errors")
-```python
+```
 
 ### Context Managers
 
@@ -250,7 +252,7 @@ class SessionContext:
 with SessionContext(2025, "Monaco Grand Prix", "Race") as session:
     if session:
         laps = session.laps
-```python
+```
 
 ## Debugging Errors
 
@@ -267,7 +269,7 @@ tif1.setup_logging(logging.DEBUG)
 
 # Now all operations show detailed logs
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
-```python
+```
 
 ### Inspect error context
 
@@ -280,7 +282,7 @@ except tif1.DataNotFoundError as e:
     print(f"Error: {e}")
     print(f"Context: {e.context}")
     # Context might include: year, gp, session, attempted_urls, etc.
-```python
+```
 
 ### Check circuit breaker
 
@@ -289,13 +291,13 @@ Monitor network health.
 ```python
 cb = tif1.get_circuit_breaker()
 print(f"State: {cb.state}")
-print(f"Failures: {cb.failure_count}")
+print(f"Failures: {cb.failures}")
 print(f"Last failure: {cb.last_failure_time}")
 
 # Reset if needed
 if cb.state == "open":
     tif1.reset_circuit_breaker()
-```yaml
+```
 
 ## Best Practices
 
@@ -306,7 +308,8 @@ if cb.state == "open":
     events = tif1.get_events(2025)
     if "Monaco Grand Prix" in events:
         session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
-    ```python </Step>
+    ```
+</Step>
   <Step title="Use Specific Exceptions">
     Catch specific exceptions rather than broad `Exception`.
     ```python
@@ -318,7 +321,7 @@ if cb.state == "open":
     except tif1.NetworkError:
         # Handle network issues
         pass
-```python
+```
   </Step>
   <Step title="Log Errors">
     Always log errors for debugging.
@@ -330,7 +333,7 @@ if cb.state == "open":
         session = tif1.get_session(2025, "Monaco", "Race")
     except Exception as e:
         logger.error(f"Failed to load session: {e}", exc_info=True)
-```python
+```
   </Step>
   <Step title="Fail Fast">
     Don't continue processing if critical data is missing.
@@ -338,7 +341,7 @@ if cb.state == "open":
     session = tif1.get_session(2025, "Monaco", "Race")
     if session is None:
         raise ValueError("Cannot proceed without session data")
-```python
+```
   </Step>
 </Steps>
 
@@ -368,7 +371,7 @@ def check_tif1_health():
         return True, "Healthy"
     except Exception as e:
         return False, str(e)
-```python
+```
 
 ### Monitoring
 
@@ -405,7 +408,7 @@ class TIF1Monitor:
             "avg_load_time": sum(self.timings) / len(self.timings) if self.timings else 0,
             "max_load_time": max(self.timings) if self.timings else 0
         }
-```python
+```
 
 ## Summary
 

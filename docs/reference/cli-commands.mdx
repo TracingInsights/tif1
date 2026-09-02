@@ -17,7 +17,7 @@ The CLI is included with tif1. Verify installation:
 
 ```bash
 tif1 --version
-```python
+```
 
 ## Global Options
 
@@ -25,7 +25,7 @@ These options work with all commands.
 
 ```bash
 tif1 [OPTIONS] COMMAND [ARGS]
-```yaml
+```
 
 | Option | Description |
 | :--- | :--- |
@@ -43,13 +43,13 @@ List all events (Grand Prix) for a given year.
 
 ```bash
 tif1 events [YEAR]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 events 2025
-```yaml
+```
   </Tab>
   <Tab title="Output">
 ```python
@@ -60,7 +60,7 @@ tif1 events [YEAR]
     3. Australian Grand Prix
     4. Japanese Grand Prix
     ...
-```yaml
+```
   </Tab>
 </Tabs>
 
@@ -77,13 +77,14 @@ List available sessions for a specific event.
 
 ```bash
 tif1 sessions [YEAR] [EVENT]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 sessions 2025 "Monaco Grand Prix"
-    ```python </Tab>
+    ```
+</Tab>
   <Tab title="Output">
 ```yaml
     Available Sessions:
@@ -92,7 +93,7 @@ tif1 sessions [YEAR] [EVENT]
     - Practice 3
     - Qualifying
     - Race
-```python
+```
   </Tab>
 </Tabs>
 
@@ -102,13 +103,13 @@ Fetch and display lap data.
 
 ```bash
 tif1 laps [YEAR] [EVENT] [SESSION]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 laps 2025 "Monaco Grand Prix" "Race"
-```bash
+```
   </Tab>
   <Tab title="Output">
 ```yaml
@@ -119,7 +120,7 @@ tif1 laps [YEAR] [EVENT] [SESSION]
     2. LEC - 1:12.567
     3. HAM - 1:12.789
     ...
-```bash
+```
   </Tab>
 </Tabs>
 
@@ -143,7 +144,7 @@ tif1 laps 2025 "Monaco" "Race" --export laps.csv
 
 # Show top 10 fastest laps
 tif1 laps 2025 "Monaco" "Race" --fastest --limit 10
-```python
+```
 
 ### telemetry
 
@@ -151,11 +152,12 @@ Fetch telemetry data for a specific lap.
 
 ```bash
 tif1 telemetry [YEAR] [EVENT] [SESSION] [DRIVER] [LAP_NUMBER]
-```python <Tabs>
+```
+<Tabs>
   <Tab title="Example">
     ```bash
     tif1 telemetry 2025 "Silverstone" "Race" VER 15
-```python
+```
   </Tab>
   <Tab title="Output">
 ```bash
@@ -166,7 +168,7 @@ tif1 telemetry [YEAR] [EVENT] [SESSION] [DRIVER] [LAP_NUMBER]
     Avg Speed: 215 km/h
 
     Samples: 349 data points
-```bash
+```
   </Tab>
 </Tabs>
 
@@ -189,7 +191,7 @@ tif1 telemetry 2025 "Silverstone" "Race" VER 15 --plot
 
 # Show specific columns
 tif1 telemetry 2025 "Silverstone" "Race" VER 15 --columns "Speed,Throttle,Brake"
-```python
+```
 
 ### drivers
 
@@ -197,13 +199,13 @@ List drivers in a session.
 
 ```bash
 tif1 drivers [YEAR] [EVENT] [SESSION]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 drivers 2025 "Monaco" "Race"
-```python
+```
   </Tab>
   <Tab title="Output">
 ```python
@@ -213,7 +215,8 @@ tif1 drivers [YEAR] [EVENT] [SESSION]
     HAM - Lewis Hamilton (Mercedes) #44
     LEC - Charles Leclerc (Ferrari) #16
     ...
-    ```python </Tab>
+    ```
+</Tab>
 </Tabs>
 
 **Options:**
@@ -229,13 +232,13 @@ Display weather data for a session.
 
 ```bash
 tif1 weather [YEAR] [EVENT] [SESSION]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 weather 2025 "Singapore" "Race"
-```yaml
+```
   </Tab>
   <Tab title="Output">
 ```yaml
@@ -246,7 +249,7 @@ tif1 weather [YEAR] [EVENT] [SESSION]
     Humidity: 75-82%
     Rainfall: Yes (Lap 15-23)
     Wind: 5-8 m/s from NE
-```bash
+```
   </Tab>
 </Tabs>
 
@@ -263,13 +266,13 @@ Compare lap times between drivers.
 
 ```bash
 tif1 compare [YEAR] [EVENT] [SESSION] [DRIVER1] [DRIVER2]
-```python
+```
 
 <Tabs>
   <Tab title="Example">
     ```bash
     tif1 compare 2025 "Monaco" "Qualifying" VER LEC
-```yaml
+```
   </Tab>
   <Tab title="Output">
 ```yaml
@@ -283,7 +286,8 @@ tif1 compare [YEAR] [EVENT] [SESSION] [DRIVER1] [DRIVER2]
     S1: VER +0.045s
     S2: LEC -0.012s
     S3: VER +0.189s
-    ```python </Tab>
+    ```
+</Tab>
 </Tabs>
 
 **Options:**
@@ -300,7 +304,7 @@ Manage the local cache.
 
 ```bash
 tif1 cache [COMMAND]
-```yaml
+```
 
 **Subcommands:**
 
@@ -322,7 +326,7 @@ tif1 cache clear
 
 # Show cache size
 tif1 cache size
-```yaml
+```
 
 ### config
 
@@ -330,7 +334,7 @@ Display or modify configuration.
 
 ```bash
 tif1 config [COMMAND]
-```yaml
+```
 
 **Subcommands:**
 
@@ -355,7 +359,7 @@ tif1 config get cache_dir
 
 # Reset to defaults
 tif1 config reset
-```bash
+```
 
 ## Output Formats
 
@@ -365,19 +369,19 @@ Most commands support multiple output formats.
 
 ```bash
 tif1 laps 2025 "Monaco" "Race" --driver VER --export laps.json
-```bash
+```
 
 ### CSV
 
 ```bash
 tif1 laps 2025 "Monaco" "Race" --export laps.csv
-```bash
+```
 
 ### Parquet
 
 ```bash
 tif1 laps 2025 "Monaco" "Race" --export laps.parquet
-```bash
+```
 
 ## Piping and Scripting
 
@@ -397,7 +401,8 @@ if tif1 sessions 2025 "Monaco" | grep -q "Race"; then
   echo "Race data available"
   tif1 laps 2025 "Monaco" "Race" --export race_data.csv
 fi
-```python ## Environment Variables
+```
+## Environment Variables
 
 The CLI respects all tif1 environment variables.
 
@@ -413,7 +418,7 @@ tif1 laps 2025 "Monaco" "Race"
 # Enable debug logging
 export TIF1_LOG_LEVEL=DEBUG
 tif1 laps 2025 "Monaco" "Race"
-```python
+```
 
 ## Shell Completion
 
@@ -423,17 +428,17 @@ Enable tab completion for your shell.
   <Tab title="Bash">
     ```bash
     eval "$(_TIF1_COMPLETE=bash_source tif1)" >> ~/.bashrc
-```python
+```
   </Tab>
   <Tab title="Zsh">
     ```bash
     eval "$(_TIF1_COMPLETE=zsh_source tif1)" >> ~/.zshrc
-```python
+```
   </Tab>
   <Tab title="Fish">
     ```bash
     _TIF1_COMPLETE=fish_source tif1 > ~/.config/fish/completions/tif1.fish
-```bash
+```
   </Tab>
 </Tabs>
 
@@ -453,7 +458,7 @@ The CLI provides clear error messages and exit codes.
 # Check exit code
 tif1 laps 2025 "InvalidGP" "Race"
 echo $?  # Will be 2 (data not found)
-```bash
+```
 
 ## Best Practices
 

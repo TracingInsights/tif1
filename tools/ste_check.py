@@ -12,6 +12,7 @@ Usage:
     python3 tools/ste_check.py docs/
     python3 tools/ste_check.py docs/ --strict
     python3 tools/ste_check.py docs/ --json
+    python3 tools/ste_check.py docs/ --baseline tools/ste_baseline.json
 """
 
 from __future__ import annotations
@@ -257,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("path", type=Path, help="docs directory or a single file")
     parser.add_argument("--strict", action="store_true", help="exit 1 on any violation")
     parser.add_argument("--json", action="store_true", help="print JSON instead of text")
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        help="JSON baseline file; exit 1 when violations exceed the baseline count",
+    )
     args = parser.parse_args(argv)
 
     root = args.path
@@ -310,6 +316,23 @@ def main(argv: list[str] | None = None) -> int:
                     break
             if shown >= 30:
                 break
+
+    if args.baseline:
+        try:
+            baseline_violations = json.loads(args.baseline.read_text(encoding="utf-8"))[
+                "violations"
+            ]
+        except (OSError, json.JSONDecodeError, KeyError):
+            print(f"error: cannot read baseline {args.baseline}", file=sys.stderr)
+            return 2
+        verdict = (
+            "ok"
+            if total_violations <= baseline_violations
+            else f"REGRESSION: {total_violations} > baseline {baseline_violations}"
+        )
+        print(f"baseline check: {verdict}")
+        if total_violations > baseline_violations:
+            return 1
 
     return 1 if args.strict and total_violations else 0
 

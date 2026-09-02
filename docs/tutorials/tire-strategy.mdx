@@ -43,10 +43,10 @@ A "Gantt-style" chart is the best way to visualize when drivers swapped tires.
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(12, 8))
-drivers = session.drivers[:10] # Top 10 drivers
+# session.drivers returns driver numbers; translate them to abbreviations
+drivers = [session.get_driver(i)["Abbreviation"] for i in session.drivers[:10]]  # Top 10 drivers
 
-for i, driver_info in enumerate(drivers):
-    driver = driver_info["driver"]
+for i, driver in enumerate(drivers):
     driver_laps = laps[laps["Driver"] == driver]
 
     for stint in driver_laps["Stint"].unique():
@@ -78,10 +78,12 @@ Tire degradation is the increase in lap time as the tires wear out. We can calcu
 ver_stint_2 = laps[(laps["Driver"] == "VER") & (laps["Stint"] == 2)]
 
 # Simple linear regression to find degradation rate
+# scipy needs numeric values, so convert the timedelta lap times to seconds
 from scipy import stats
+lap_seconds = ver_stint_2["LapTime"].dt.total_seconds()
 slope, intercept, r_value, p_value, std_err = stats.linregress(
     ver_stint_2["TyreLife"],
-    ver_stint_2["LapTime"]
+    lap_seconds
 )
 
 print(f"Degradation Rate: {slope:.4f} seconds per lap")

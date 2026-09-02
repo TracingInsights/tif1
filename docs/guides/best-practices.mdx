@@ -27,7 +27,7 @@ graph TD
     CheckData -->|Yes| LoadFast[Load from Cache<br/>~100ms]
     CheckData -->|No| AsyncLoad{Use<br/>Async?}
 
-    AsyncLoad -->|Yes| ParallelFetch[Parallel Fetch<br/>4-5x faster]
+    AsyncLoad -->|Yes| ParallelFetch[Parallel Fetch<br/>3x+ faster]
     AsyncLoad -->|No| SequentialFetch[Sequential Fetch<br/>slower]
 
     ParallelFetch --> ProcessData[Process Data]
@@ -79,7 +79,7 @@ Never fetch telemetry in a loop. Use batch methods instead.
 
 <CodeGroup>
 ```python Good - Batch Fetching
-# 28x faster - fetches all in parallel
+# Parallel fetch - validated at 3x+ vs sequential
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 tels = session.get_fastest_laps_tels(by_driver=True)
 
@@ -94,7 +94,7 @@ for driver in tels["Driver"].unique():
 for driver in session.drivers:
     driver_obj = session.get_driver(driver)
     fastest = driver_obj.get_fastest_lap()
-    tel = driver_obj.get_lap(fastest["LapNumber"].iloc[0]).telemetry
+    tel = driver_obj.get_lap(int(fastest["LapNumber"].iloc[0])).telemetry
     analyze_telemetry(tel)
 ```
 </CodeGroup>
@@ -104,6 +104,8 @@ for driver in session.drivers:
 Use polars for large datasets and performance-critical code.
 
 ```python
+import tif1
+
 # For large datasets or batch processing
 session = tif1.get_session(
     2021,
@@ -152,7 +154,8 @@ def analyze_session(session: Session) -> dict[str, float]:
 
 session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 metrics = analyze_session(session)
-``` ### Handle errors gracefully
+```
+### Handle errors gracefully
 
 Always handle tif1 exceptions appropriately.
 
@@ -189,8 +192,13 @@ session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 
 # Good - automatic cleanup
+# index=False skips the row labels; the Laps reset_index override does not
+# support the in-place reset_index that pandas to_sql uses for the index
 with sqlite3.connect("f1_data.db") as conn:
-    laps.to_sql("laps", conn, if_exists="replace")
+    # SQLite column names are case-insensitive, so drop the duplicate
+    # "Team"/"team" and "Driver"/"drv" source columns before writing
+    laps_sql = laps.loc[:, ~laps.columns.str.lower().duplicated()]
+    laps_sql.to_sql("laps", conn, if_exists="replace", index=False)
 ```
 
 ---
@@ -296,7 +304,8 @@ def process_season(year: int):
         except Exception as e:
             print(f"Failed to process {event}: {e}")
             continue
-``` ### Use circuit breaker awareness
+```
+### Use circuit breaker awareness
 
 Check circuit breaker status for long-running jobs.
 
@@ -467,7 +476,7 @@ def calculate_tire_degradation(laps, compound="SOFT"):
     )
 
     return slope
-``` ---
+```
 
 ## Summary Checklist
 
@@ -514,9 +523,6 @@ def calculate_tire_degradation(laps, compound="SOFT"):
   </Card>
   <Card title="Error Handling" href="/guides/error-handling">
     Handle errors
-  </Card>
-  <Card title="Production Deployment" href="/guides/production-deployment">
-    Deploy to production
   </Card>
   <Card title="Common Use Cases" href="/guides/common-use-cases">
     Handle big data

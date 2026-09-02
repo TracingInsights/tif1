@@ -22,8 +22,8 @@ The `fastf1_compat` module provides a comprehensive compatibility layer for appl
 
 <Note>
   **Performance benefit**: While maintaining API compatibility, tif1 delivers significant performance improvements:
-  - **2-5x faster** cold starts (first-time data loads)
-  - **10-20x faster** warm starts (cached data)
+  - **Faster cold starts** (first-time data loads) through lazy, file-level fetching
+  - **Fast warm starts** (cached data) through the memory and SQLite cache tiers
   - **Async-first architecture** for parallel data fetching
   - **HTTP/2 multiplexing** for efficient network usage
   - **SQLite-backed caching** with in-memory LRU layer
@@ -300,7 +300,7 @@ Consider clearing the cache in these scenarios:
 
 ```python
 def set_log_level(level: int = logging.WARNING) -> None
-```python
+```
 
 Set the logging level for tif1 logger.
 
@@ -317,7 +317,8 @@ tif1.set_log_level(logging.DEBUG)
 
 # Disable most logging
 tif1.set_log_level(logging.ERROR)
-```python **Migration from fastf1:**
+```
+**Migration from fastf1:**
 ```python
 # fastf1 code
 import fastf1
@@ -328,7 +329,7 @@ fastf1.set_log_level(logging.DEBUG)
 import tif1
 import logging
 tif1.set_log_level(logging.DEBUG)
-```python
+```
 
 ---
 
@@ -356,7 +357,7 @@ fastest = ver.pick_fastest()
 # Get telemetry
 tel = fastest.get_telemetry()
 print(f"Max speed: {tel['Speed'].max()}")
-```python
+```
 
 **Migrated tif1 code (minimal changes):**
 ```python
@@ -378,7 +379,7 @@ fastest = ver.pick_fastest()
 # Get telemetry (identical API)
 tel = fastest.get_telemetry()
 print(f"Max speed: {tel['Speed'].max()}")
-```python
+```
 
 ---
 

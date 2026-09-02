@@ -79,7 +79,7 @@ laps = session.laps
 ```
 
 **Debug Output Example:**
-```
+```text
 2024-03-15 14:23:45 - tif1.core - DEBUG - Loading session: 2021/Belgian_Grand_Prix/Race
 2024-03-15 14:23:45 - tif1.cache - DEBUG - Checking cache for 2021/Belgian_Grand_Prix/Race/drivers.json
 2024-03-15 14:23:45 - tif1.cache - DEBUG - Cache hit for drivers.json
@@ -1149,7 +1149,7 @@ The circuit breaker is a critical reliability component that prevents your appli
 3. **Half-Open** (Testing): Limited requests allowed to test if service recovered
 
 **State Transitions:**
-```
+```text
 Closed --[threshold failures]--> Open
 Open --[timeout elapsed]--> Half-Open
 Half-Open --[success]--> Closed

@@ -174,7 +174,7 @@ tif1 version
 ```
 
 **Expected output:**
-```
+```text
 tif1 version 0.2.0
 ```
 
@@ -308,7 +308,7 @@ tif1 cache-clear --yes
 
 F1 data in tif1 follows a clear hierarchy:
 
-```
+```python
 Season (Year)
   └── Event (Grand Prix)
       └── Session (Practice, Qualifying, Race)
@@ -709,7 +709,7 @@ The CLI implements intelligent caching to optimize performance and reduce networ
 
 **Cache Architecture:**
 
-```
+```text
 User Request
     ↓
 Cache Check (SQLite)
@@ -723,7 +723,7 @@ Cache Check (SQLite)
 When you request data for the first time:
 
 1. **Cache Lookup**: CLI checks local SQLite cache
-2. **Network Fetch**: Data is downloaded from CDN (jsdelivr)
+2. **Network Fetch**: Data is downloaded from the CDN (StaticDelivr primary; jsDelivr and Hugging Face fallbacks)
 3. **JSON Parsing**: Raw JSON is parsed into structured data
 4. **DataFrame Creation**: Data is converted to pandas/polars DataFrame
 5. **Cache Write**: Processed data is stored in cache
@@ -864,7 +864,7 @@ The CLI uses Rich library for beautiful, colorful terminal output with professio
 
 **Table Example:**
 
-```
+```text
          Monaco Grand Prix 2025 - Qualifying
 ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Pos ┃ Driver ┃ Team               ┃ Time      ┃
@@ -880,7 +880,7 @@ Total: 20 drivers
 
 Long-running operations show progress:
 
-```
+```text
 [cyan]Loading session...[/cyan]
 ```
 
@@ -1324,7 +1324,7 @@ tif1 events 2025
 ```
 
 **Sample Output:**
-```
+```text
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Event                         ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -1416,7 +1416,7 @@ tif1 sessions 2025 "Monaco Grand Prix"
 ```
 
 **Sample Output:**
-```
+```text
          Monaco Grand Prix 2025
 ┏━━━┳━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session           ┃
@@ -1435,7 +1435,7 @@ tif1 sessions 2025 "São Paulo Grand Prix"
 ```
 
 **Sample Output (Sprint Weekend):**
-```
+```text
       São Paulo Grand Prix 2025
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ Session             ┃
@@ -1521,7 +1521,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race"
 ```
 
 **Sample Output:**
-```
+```text
 [Loading session...]
 
     Monaco Grand Prix 2025 - Race
@@ -1645,7 +1645,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 ```
 
 **Sample Output (All Drivers):**
-```
+```text
 [Loading session...]
 
   Fastest Laps - Monaco Grand Prix 2025 - Qualifying
@@ -1681,7 +1681,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
 ```
 
 **Sample Output (Single Driver):**
-```
+```text
 [Loading session...]
 
 VER fastest lap: 70.123s
@@ -1786,21 +1786,21 @@ tif1 cache-info
 ```
 
 **Sample Output (Linux/macOS):**
-```
+```text
 Cache location: /home/user/.cache/tif1
 Cache files: 3
 Total size: 245.67 MB
 ```
 
 **Sample Output (Windows):**
-```
+```text
 Cache location: C:\Users\user\AppData\Local\Temp\tif1
 Cache files: 5
 Total size: 512.34 MB
 ```
 
 **Sample Output (macOS):**
-```
+```text
 Cache location: /Users/user/Library/Caches/tif1
 Cache files: 2
 Total size: 128.45 MB
@@ -1907,14 +1907,14 @@ tif1 cache-clear
 ```
 
 **Sample Output:**
-```
+```text
 Are you sure you want to clear the cache? [y/N]: y
 Cache cleared successfully!
 ```
 
 If you answer 'n' or press Enter (default is No):
 
-```
+```text
 Are you sure you want to clear the cache? [y/N]: n
 Cache clear cancelled
 ```
@@ -1928,7 +1928,7 @@ tif1 cache-clear --yes
 ```
 
 **Sample Output:**
-```
+```text
 Cache cleared successfully!
 ```
 
@@ -2041,7 +2041,7 @@ tif1 version
 ```
 
 **Sample Output:**
-```
+```text
 tif1 version 0.2.0
 ```
 
@@ -2154,7 +2154,7 @@ tif1 debug 2025 "Monaco Grand Prix" "Race"
 ```
 
 **Sample Output:**
-```
+```text
 [DEBUG] Loading session Monaco Grand Prix 2025 - Race
 [DEBUG] Checking cache for session data...
 [DEBUG] Cache miss - fetching from CDN
@@ -2187,7 +2187,7 @@ tif1 debug 2024 "Japanese Grand Prix" "Practice 1"
 ```
 
 **Sample Output (Cache Hit):**
-```
+```text
 [DEBUG] Loading session Japanese Grand Prix 2024 - Practice 1
 [DEBUG] Checking cache for session data...
 [DEBUG] Cache hit! Loading from local cache

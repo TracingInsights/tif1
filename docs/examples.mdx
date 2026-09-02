@@ -84,7 +84,7 @@ import tif1
 
 async def load_session_data():
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
-    # 4-5x faster than synchronous loading
+    # Faster than synchronous loading (3x+ in benchmarks)
     laps = await session.laps_async()
     return laps
 
@@ -95,14 +95,14 @@ laps = asyncio.run(load_session_data())
 
 ```python
 # Use polars for 2x faster processing
-session = tif1.get_session(
+session_pl = tif1.get_session(
     2025,
     "Las Vegas Grand Prix",
     "Race",
     lib="polars"
 )
 
-laps = session.laps  # Returns polars DataFrame
+laps_pl = session_pl.laps  # Returns polars DataFrame
 ```
 
 ## Configuration
@@ -114,8 +114,11 @@ print(f"Max retries: {config.get('max_retries')}")
 
 # Update configuration
 config.set("validate_data", True)
-config.set("lib", "polars")
 config.save()
+
+# Switch the default backend globally (persists via config.save();
+# pass lib="polars" to get_session for a one-off switch instead)
+config.set("lib", "pandas")
 ```
 
 ## Cache Management
@@ -227,8 +230,8 @@ ver_laps = laps[laps["Driver"] == "VER"]
 ham_laps = laps[laps["Driver"] == "HAM"]
 
 # Calculate average lap time
-ver_avg = ver_laps["LapTime"].mean()
-ham_avg = ham_laps["LapTime"].mean()
+ver_avg = ver_laps["LapTime"].mean().total_seconds()
+ham_avg = ham_laps["LapTime"].mean().total_seconds()
 
 print(f"VER avg: {ver_avg:.3f}s")
 print(f"HAM avg: {ham_avg:.3f}s")
@@ -312,7 +315,7 @@ for driver in soft_laps["Driver"].unique():
     if len(driver_laps) > 5:
         slope, intercept, r_value, _, _ = stats.linregress(
             driver_laps["TyreLife"],
-            driver_laps["LapTime"]
+            driver_laps["LapTime"].dt.total_seconds()
         )
         print(f"{driver}: {slope:.3f}s/lap degradation (R²={r_value**2:.3f})")
 ```
@@ -364,7 +367,7 @@ best_laps = best_laps.sort_values("LapTime")
 
 print("Qualifying results:")
 for i, (_, lap) in enumerate(best_laps.iterrows(), 1):
-    print(f"{i}. {lap['Driver']}: {lap['LapTime']:.3f}s ({lap['Compound']})")
+    print(f"{i}. {lap['Driver']}: {lap['LapTime'].total_seconds():.3f}s ({lap['Compound']})")
 ```
 
 ## Data Export
@@ -377,6 +380,8 @@ laps.to_csv("race_laps.csv", index=False)
 laps.to_parquet("race_laps.parquet")
 
 # Export to Excel
+import pandas as pd
+
 with pd.ExcelWriter("race_analysis.xlsx") as writer:
     laps.to_excel(writer, sheet_name="Laps", index=False)
     session.weather.to_excel(writer, sheet_name="Weather", index=False)

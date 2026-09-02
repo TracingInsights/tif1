@@ -896,6 +896,51 @@ else:
 
 ---
 
+## Module-Level Cache API
+
+Besides the `Cache` class, `tif1.cache` exposes the building blocks of the memory tiers.
+
+### `LRUCache`
+
+```python
+def __init__(maxsize: int = 1024, *, lock: threading.Lock | None = None)
+```
+
+Thread-safe bounded LRU cache. It is the single LRU implementation backing the `Cache` in-memory tiers and the process-global backend lap caches. Reads support a lock-free fast path (`get(key, ordered=False)`); writes refresh LRU order and evict oldest-first at `maxsize`.
+
+**Methods:** `get(key, *, ordered=True)`, `set(key, value)`, `clear()`, `pop(key, default=None)`, plus `in`, `len()`, and iteration support.
+
+### `get_backend_lap_cache`
+
+```python
+def get_backend_lap_cache(lib: Literal["pandas", "polars"]) -> LRUCache
+```
+
+Return the process-global lap cache for the given backend, keyed by `"{year}_{gp}_{session}_laps"`. One cache per backend; shared across sessions in the same process.
+
+### `clear_lap_cache`
+
+```python
+def clear_lap_cache() -> None
+```
+
+Clear both process-global backend lap caches (pandas and polars).
+
+### `Cache.get_entry` / `Cache.set_entry`
+
+```python
+def get_entry(kind: CacheKind, key: Any) -> Any | None
+def set_entry(kind: CacheKind, key: Any, value: Any) -> None
+```
+
+Kind-based access to the in-memory tiers: `"json"` (path-keyed payloads), `"telemetry_payload"` (raw `(driver, lap)` payloads), and `"telemetry_df"` (materialized telemetry DataFrames). `get()`/`set()` on `Cache` are the string-keyed convenience wrappers over these.
+
+### `SessionMemo`
+
+Per-session memo tier held as `Session._memo`. It consolidates the session-scoped caches behind the same kind-based interface, and additionally owns the fastest-lap-reference memo, the persistent-cache probe result (`has_session_data`), and per-driver telemetry failure tracking. Not internally synchronized; the owning session's access patterns are effectively single-threaded per event loop.
+
+---
+
 ## Cache Statistics and Monitoring
 
 While the `Cache` class doesn't expose built-in statistics methods, you can query the SQLite database directly for monitoring purposes.

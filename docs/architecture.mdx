@@ -23,8 +23,8 @@ graph TB
     Cache --> |Miss| SQLite[SQLite Cache]
     SQLite --> |Miss| CDN[CDN Manager]
     CDN --> HTTP[HTTP/2 Session]
-    HTTP --> JS[jsDelivr CDN]
-    JS --> Data[JSON Data]
+    HTTP --> SRC[CDN Sources: StaticDelivr / jsDelivr / HuggingFace]
+    SRC --> Data[JSON Data]
     Data --> Pipeline[I/O Pipeline]
     Pipeline --> DF[DataFrame]
     DF --> User
@@ -59,7 +59,7 @@ sequenceDiagram
     alt Cache Hit
         Cache-->>Session: Return cached DataFrame
     else Cache Miss
-        Session->>CDN: Fetch JSON from jsdelivr
+        Session->>CDN: Fetch JSON from CDN sources (StaticDelivr, jsDelivr, Hugging Face)
         CDN-->>Session: Return JSON payload
         Session->>Pipeline: Transform JSON
         Pipeline-->>Session: Return DataFrame
@@ -72,7 +72,7 @@ sequenceDiagram
 
 ### Data transformation steps
 
-1. **CDN Fetch**: Parallel HTTP/2 requests to jsdelivr CDN
+1. **CDN Fetch**: Parallel HTTP/2 requests to the CDN source chain (StaticDelivr primary, jsDelivr and Hugging Face fallbacks)
 2. **JSON Parse**: Fast parsing with orjson
 3. **DataFrame Construction**: Column mapping and type conversion
 4. **Enrichment**: Add weather data, calculate derived fields

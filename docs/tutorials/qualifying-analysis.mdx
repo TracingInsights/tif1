@@ -37,8 +37,9 @@ Modern F1 qualifying has three segments:
 - Q3: Top 10 drivers fight for pole
 
 ```python
-# Check which laps belong to which session
-print(laps["Session"].value_counts())
+# Check which laps belong to which qualifying segment
+# The laps DataFrame stores the segment in the "QualifyingSession" column
+print(laps["QualifyingSession"].value_counts())
 ```
 
 ## Finding fastest laps per driver
@@ -64,12 +65,16 @@ Create a visual representation of the qualifying results.
 # Get top 10 for pole position battle
 top_10 = fastest_laps_sorted.head(10)
 
+# Look up team colors from the drivers table
+team_colors = session.drivers_df.set_index("Driver")["TeamColor"]
+colors = [f"#{team_colors.get(driver, '808080')}" for driver in top_10["Driver"]]
+
+# Matplotlib needs numeric values, so convert the timedelta lap times to seconds
+lap_seconds = top_10["LapTime"].dt.total_seconds()
+
 # Create bar chart
 plt.figure(figsize=(12, 6))
-colors = [f"#{row['TeamColor']}" if pd.notna(row['TeamColor']) else "#808080"
-          for _, row in top_10.iterrows()]
-
-plt.barh(top_10["Driver"], top_10["LapTime"], color=colors)
+plt.barh(top_10["Driver"], lap_seconds, color=colors)
 plt.xlabel("Lap Time (s)")
 plt.ylabel("Driver")
 plt.title("Qualifying Results - Top 10")
@@ -83,13 +88,19 @@ plt.show()
 Analyze how drivers improved from Q1 to Q3.
 
 ```python
-# Get fastest lap per driver per session segment
-progression = laps.groupby(["Driver", "Session"])["LapTime"].min().reset_index()
+# Get fastest lap per driver per qualifying segment
+# Wrap in pd.DataFrame: groupby on the Laps subclass drops the key column names
+progression = (
+    pd.DataFrame(laps)
+    .groupby(["Driver", "QualifyingSession"])
+    .agg(LapTime=("LapTime", "min"))
+    .reset_index()
+)
 
 # Pivot to show progression
 progression_pivot = progression.pivot(
     index="Driver",
-    columns="Session",
+    columns="QualifyingSession",
     values="LapTime"
 )
 
@@ -109,14 +120,15 @@ Show how drivers improved through the sessions.
 
 ```python
 # Filter drivers who made it to Q3
-q3_drivers = progression[progression["Session"] == "Q3"]["Driver"].unique()
+q3_drivers = progression[progression["QualifyingSession"] == "Q3"]["Driver"].unique()
 q3_progression = progression[progression["Driver"].isin(q3_drivers)]
 
-# Plot progression
+# Plot progression (convert timedelta to seconds for matplotlib)
 plt.figure(figsize=(14, 8))
 for driver in q3_drivers[:10]:  # Top 10 only
     driver_data = q3_progression[q3_progression["Driver"] == driver]
-    plt.plot(driver_data["Session"], driver_data["LapTime"],
+    plt.plot(driver_data["QualifyingSession"],
+             driver_data["LapTime"].dt.total_seconds(),
              marker="o", label=driver)
 
 plt.xlabel("Session")
@@ -134,7 +146,7 @@ See which compounds drivers used for their fastest laps.
 
 ```python
 # Compound usage in Q3
-q3_laps = laps[laps["Session"] == "Q3"]
+q3_laps = laps[laps["QualifyingSession"] == "Q3"]
 compound_usage = q3_laps.groupby(["Driver", "Compound"]).size().reset_index(name="Count")
 
 print(compound_usage)
@@ -161,14 +173,14 @@ pole_driver = fastest_laps_sorted["Driver"].iloc[0]
 fastest_laps_sorted["GapToPole"] = fastest_laps_sorted["LapTime"] - pole_time
 
 # Display
-print(f"Pole Position: {pole_driver} - {pole_time:.3f}s")
+print(f"Pole Position: {pole_driver} - {pole_time.total_seconds():.3f}s")
 print("\nGap to Pole:")
 print(fastest_laps_sorted[["Driver", "LapTime", "GapToPole"]].head(10))
 
-# Visualize
+# Visualize (convert the timedelta gaps to seconds for matplotlib)
 plt.figure(figsize=(12, 6))
 top_10_gap = fastest_laps_sorted.head(10)
-plt.bar(top_10_gap["Driver"], top_10_gap["GapToPole"])
+plt.bar(top_10_gap["Driver"], top_10_gap["GapToPole"].dt.total_seconds())
 plt.xlabel("Driver")
 plt.ylabel("Gap to Pole (s)")
 plt.title(f"Gap to Pole Position ({pole_driver})")
@@ -215,10 +227,10 @@ p2_fastest = session.get_driver(p2_driver).get_fastest_lap()
 
 # Get telemetry
 p1_tel = session.get_driver(p1_driver).get_lap(
-    p1_fastest["LapNumber"].iloc[0]
+    int(p1_fastest["LapNumber"].iloc[0])
 ).telemetry
 p2_tel = session.get_driver(p2_driver).get_lap(
-    p2_fastest["LapNumber"].iloc[0]
+    int(p2_fastest["LapNumber"].iloc[0])
 ).telemetry
 
 # Plot speed comparison
@@ -263,7 +275,7 @@ plt.show()
 
 Measure driver consistency across all qualifying laps.
 
-```
+```python
 # Calculate standard deviation of lap times per driver
 consistency = laps.groupby("Driver")["LapTime"].agg(["mean", "std", "count"])
 consistency = consistency[consistency["count"] >= 3]  # At least 3 laps
@@ -313,7 +325,7 @@ def analyze_qualifying(year, gp):
 
 # Use it
 results = analyze_qualifying(2025, "Monaco Grand Prix")
-print(f"Pole: {results['pole_position']} - {results['pole_time']:.3f}s")
+print(f"Pole: {results['pole_position']} - {results['pole_time'].total_seconds():.3f}s")
 print(f"Total laps: {results['total_laps']}, Deleted: {results['deleted_laps']}")
 ```
 

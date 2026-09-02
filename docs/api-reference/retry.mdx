@@ -1485,7 +1485,7 @@ reset_circuit_breaker()
 
 ```python
 config.set("circuit_breaker_threshold", 10)  # More tolerant
-```python
+```
 
 4. **Add jitter to retries**: Prevents thundering herd problem.
 
@@ -1493,14 +1493,14 @@ config.set("circuit_breaker_threshold", 10)  # More tolerant
 @retry_with_backoff(jitter=True)
 def fetch_data():
     pass
-```python
+```
 
 5. **Log retry attempts**: Helps diagnose network issues.
 
 ```python
 import logging
 logging.basicConfig(level=logging.WARNING)
-```python
+```
 
 6. **Catch specific exceptions**: Don't retry on client errors (4xx).
 
@@ -1508,7 +1508,7 @@ logging.basicConfig(level=logging.WARNING)
 @retry_with_backoff(exceptions=(NetworkError,))
 def fetch_data():
     pass
-```python
+```
 
 7. **Implement fallbacks**: Use cached data when circuit breaker opens.
 

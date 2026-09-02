@@ -107,8 +107,9 @@ Visualize speed, accelerations, and driver inputs.
 
 ```python
 # Get team colors
-team_d1 = laps_d1.reset_index().loc[0, "Team"]
-team_d2 = laps_d2.reset_index().loc[0, "Team"]
+# pick_fastest() returns a single-row Series (a Lap), so read the column directly
+team_d1 = laps_d1["Team"]
+team_d2 = laps_d2["Team"]
 color_d1 = get_team_color(team_d1, session)
 color_d2 = get_team_color(team_d2, session)
 

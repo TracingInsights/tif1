@@ -155,7 +155,7 @@ Invalid values trigger warnings in the logs and return the default value instead
 The `.tif1rc` configuration file is a JSON file that stores persistent configuration settings. The library searches for this file in multiple locations with a specific precedence order.
 
 **Default Location:**
-```
+```text
 ~/.tif1rc
 ```
 
@@ -433,7 +433,7 @@ export TIF1_MEMORY_CACHE_MAX_ITEMS=1024
 export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=2048
 
 # CDN Configuration
-export TIF1_CDNS=https://cdn.jsdelivr.net/gh/TracingInsights
+export TIF1_CDNS=https://cdn.staticdelivr.com/gh/TracingInsights,https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingface.co/buckets/tracinginsights
 export TIF1_CDN_USE_MINIFICATION=false
 
 # Validation
@@ -1150,11 +1150,11 @@ config.set("pool_connections", 1024)
 
 <Accordion title="CDN Configuration">
 
-<ResponseField name="cdns" type="list[str]" default='["https://cdn.jsdelivr.net/gh/TracingInsights"]'>
-  List of CDN URLs to use for data fetching. Must be HTTPS URLs.
+<ResponseField name="cdns" type="list[str]" default='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]'>
+  List of CDN URLs to use for data fetching, in priority order (StaticDelivr primary, jsDelivr fallback, Hugging Face buckets backup). Must be HTTPS URLs.
 
   ```python
-  config.set("cdns", ["https://cdn.jsdelivr.net/gh/TracingInsights"])
+  config.set("cdns", ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"])
   ```
 </ResponseField>
 
@@ -2555,7 +2555,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "pool_exhaustion_backoff_jitter": 0.01,
   "http_multiplexed": true,
   "http_disable_http3": false,
-  "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights"],
+  "cdns": ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"],
   "cdn_use_minification": false,
   "validate_data": false,
   "validate_lap_times": false,

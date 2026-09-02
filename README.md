@@ -49,7 +49,7 @@ Apps that loop over many sessions in a single run — a whole season, an entire 
 
 Sources: [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
 
-### 3. Batteries included — 21 one-call chart functions
+### 3. Batteries included — 22 one-call chart functions
 
 If you enjoy hand-building charts, fastf1 gives you all the pieces to do so. `tif1` additionally ships **21 ready-made chart functions** that load the data, run the analysis, and plot in a single call:
 

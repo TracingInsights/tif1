@@ -21,7 +21,7 @@ keywords:
 DuckDB is an optional dependency for advanced analytics. You must install it separately:
 ```bash
 pip install duckdb
-```python
+```
 
 ---
 
@@ -43,7 +43,7 @@ events = tif1.get_events(2025)
 
 # Check available sessions for that event
 sessions = tif1.get_sessions(2025, "British Grand Prix")
-```python
+```
 
 ### NetworkError
 
@@ -54,12 +54,12 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
    ```python
    import tif1, logging
    tif1.setup_logging(logging.DEBUG)
-```bash
+```
 2. **Reset Circuit Breaker:** If you've had many failures, the breaker might be open.
    ```python
    tif1.reset_circuit_breaker()
-```yaml
-3. **Check CDN Status:** Our primary CDN is StaticDelivr with jsDelivr as fallback. Ensure your network doesn't block them.
+```
+3. **Check CDN Status:** Our primary CDN is StaticDelivr, with jsDelivr and Hugging Face buckets as fallbacks. Ensure your network doesn't block them.
 
 ---
 
@@ -104,7 +104,7 @@ chmod 700 ~/.cache/tif1
 Wipe the local cache and re-download the data.
 ```python
 tif1.get_cache().clear()
-```yaml
+```
 
 ---
 

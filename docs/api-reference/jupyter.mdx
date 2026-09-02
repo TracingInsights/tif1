@@ -815,7 +815,7 @@ enable_jupyter_display()
 # Check if in notebook
 from tif1.jupyter import _is_notebook
 print(_is_notebook())  # Should be True
-```python
+```
 
 ### HTML Display Issues
 
@@ -825,7 +825,8 @@ If HTML displays are broken:
 # Fall back to repr
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 print(repr(session))
-``` ### Memory Issues
+```
+### Memory Issues
 
 For large datasets in notebooks:
 

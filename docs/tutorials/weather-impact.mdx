@@ -17,6 +17,7 @@ Weather data is automatically included in lap data and available separately.
 
 ```python
 import tif1
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -52,17 +53,20 @@ clean_laps = laps[
     (laps["LapTime"] < laps["LapTime"].min() * 1.07) &
     (laps["PitInTime"].isna()) &
     (laps["LapNumber"] > 1)
-]
+].copy()
+
+# Matplotlib and numpy need numeric values, so convert the timedelta lap times to seconds
+clean_laps["LapTimeSeconds"] = clean_laps["LapTime"].dt.total_seconds()
 
 # Plot track temp vs lap time
 plt.figure(figsize=(12, 6))
-plt.scatter(clean_laps["TrackTemp"], clean_laps["LapTime"], alpha=0.3)
+plt.scatter(clean_laps["TrackTemp"], clean_laps["LapTimeSeconds"], alpha=0.3)
 plt.xlabel("Track Temperature (°C)")
 plt.ylabel("Lap Time (s)")
 plt.title("Track Temperature Impact on Lap Times")
 
 # Add trend line
-z = np.polyfit(clean_laps["TrackTemp"], clean_laps["LapTime"], 1)
+z = np.polyfit(clean_laps["TrackTemp"], clean_laps["LapTimeSeconds"], 1)
 p = np.poly1d(z)
 plt.plot(clean_laps["TrackTemp"], p(clean_laps["TrackTemp"]),
          "r--", linewidth=2, label=f"Trend: {z[0]:.3f}s/°C")
@@ -134,10 +138,11 @@ Analyze performance in wet conditions.
 if weather["Rainfall"].any():
     # Find when rain started
     rain_start = weather[weather["Rainfall"] == True]["Time"].min()
-    print(f"Rain started at: {rain_start / 60:.1f} minutes")
+    print(f"Rain started at: {rain_start.total_seconds() / 60:.1f} minutes")
 
     # Mark laps as wet or dry
-    laps["Wet"] = laps["SessionTime"] >= rain_start
+    # The laps DataFrame stores the session time at lap completion in "Time"
+    laps["Wet"] = laps["Time"] >= rain_start
 
     # Compare dry vs wet lap times
     dry_laps = laps[laps["Wet"] == False]
@@ -147,13 +152,15 @@ if weather["Rainfall"].any():
     print(f"Wet avg: {wet_laps['LapTime'].mean().total_seconds():.3f}s")
     print(f"Difference: {(wet_laps['LapTime'].mean() - dry_laps['LapTime'].mean()).total_seconds():.3f}s")
 
-    # Visualize
+    # Visualize (matplotlib needs seconds, not timedelta)
     plt.figure(figsize=(12, 6))
-    plt.scatter(dry_laps["LapNumber"], dry_laps["LapTime"],
+    plt.scatter(dry_laps["LapNumber"], dry_laps["LapTime"].dt.total_seconds(),
                 label="Dry", alpha=0.5, color="orange")
-    plt.scatter(wet_laps["LapNumber"], wet_laps["LapTime"],
+    plt.scatter(wet_laps["LapNumber"], wet_laps["LapTime"].dt.total_seconds(),
                 label="Wet", alpha=0.5, color="blue")
-    plt.axvline(x=rain_start / 60, color="red", linestyle="--",
+    # Mark the first lap completed after the rain started
+    rain_lap = laps[laps["Wet"]]["LapNumber"].min()
+    plt.axvline(x=rain_lap, color="red", linestyle="--",
                 label="Rain Start")
     plt.xlabel("Lap Number")
     plt.ylabel("Lap Time (s)")
@@ -172,7 +179,10 @@ See how different compounds perform at different temperatures.
 clean_laps = laps[
     (laps["LapTime"] < laps["LapTime"].min() * 1.07) &
     (laps["PitInTime"].isna())
-]
+].copy()
+
+# Convert the timedelta lap times to seconds for numeric analysis
+clean_laps["LapTimeSeconds"] = clean_laps["LapTime"].dt.total_seconds()
 
 # Group by compound and temperature range
 clean_laps["TempRange"] = pd.cut(
@@ -182,13 +192,19 @@ clean_laps["TempRange"] = pd.cut(
 )
 
 # Compare compounds
-compound_temp = clean_laps.groupby(["Compound", "TempRange"])["LapTime"].mean().reset_index()
+# Wrap in pd.DataFrame: groupby on the Laps subclass drops the key column names
+compound_temp = (
+    pd.DataFrame(clean_laps)
+    .groupby(["Compound", "TempRange"])["LapTimeSeconds"]
+    .mean()
+    .reset_index()
+)
 
 # Visualize
 plt.figure(figsize=(12, 6))
 for compound in ["SOFT", "MEDIUM", "HARD"]:
     data = compound_temp[compound_temp["Compound"] == compound]
-    plt.plot(data["TempRange"], data["LapTime"],
+    plt.plot(data["TempRange"], data["LapTimeSeconds"],
              marker="o", label=compound, linewidth=2)
 
 plt.xlabel("Track Temperature Range")
@@ -276,12 +292,17 @@ plt.show()
 
 Normalize lap times for weather conditions.
 
+<Note>
+This section requires the optional machine-learning library. Install it with `pip install scikit-learn`.
+</Note>
+
 ```python
 from sklearn.linear_model import LinearRegression
 
 # Train model to predict lap time from weather
+# scikit-learn needs numeric values, so use the lap time in seconds
 X = clean_laps[["TrackTemp", "Humidity", "WindSpeed"]]
-y = clean_laps["LapTime"]
+y = clean_laps["LapTimeSeconds"]
 
 model = LinearRegression()
 model.fit(X, y)
@@ -290,7 +311,7 @@ model.fit(X, y)
 clean_laps["ExpectedLapTime"] = model.predict(X)
 
 # Calculate weather-adjusted performance
-clean_laps["WeatherAdjusted"] = clean_laps["LapTime"] - clean_laps["ExpectedLapTime"]
+clean_laps["WeatherAdjusted"] = clean_laps["LapTimeSeconds"] - clean_laps["ExpectedLapTime"]
 
 # Find best performers (accounting for weather)
 adjusted_performance = clean_laps.groupby("Driver")["WeatherAdjusted"].mean().sort_values()

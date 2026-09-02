@@ -1,0 +1,67 @@
+---
+title: "Session API"
+icon: "flag"
+description: "The canonical import surface for Session and get_session in tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+  - "session"
+  - "Session"
+  - "get_session"
+  - "import"
+---
+
+The `tif1.session` module is the canonical import surface for the session API. It is a thin re-export shim: it imports `Session` and `get_session` from `tif1.core` and exports them again. The module contains no code of its own.
+
+## Overview
+
+```python
+from .core import Session, get_session
+
+__all__ = ["Session", "get_session"]
+```
+
+Import `Session` and `get_session` from `tif1.session` or from `tif1` directly. Both import paths resolve to the same objects defined in `tif1.core`:
+
+```python
+from tif1.session import Session, get_session
+
+# Equivalent:
+from tif1 import Session, get_session
+```
+
+The shim exists to keep `tif1.session` a stable import path while the implementation lives in `tif1.core`.
+
+## Usage
+
+Construct a `Session` with a year, a Grand Prix, and a session name:
+
+```python
+from tif1.session import Session
+
+session = Session(2025, "Abu Dhabi Grand Prix", "Race")
+```
+
+Or use the factory function, which also validates that the session exists in the event schedule:
+
+```python
+from tif1.session import get_session
+
+session = get_session(2025, "Abu Dhabi Grand Prix", "Race")
+session.load(laps=True, telemetry=True, messages=True, weather=True)
+```
+
+The `session.load()` call requires network access on a cold cache.
+
+## Full Reference
+
+`Session` and `get_session` are documented on the Core API page. That page covers the constructor parameters (`year`, `gp`, `session`, `enable_cache`, `lib`) and the `load()` data toggles. It also covers lazy attributes such as `laps`, `telemetry`, `weather`, and `results`, and the supported year range.
+
+## Related APIs
+
+- **[Core API](/api-reference/core)**: full `Session` and `get_session` reference
+- **[Models API](/api-reference/models)**: the data classes a session returns
+- **[Events API](/api-reference/events)**: the event schedule used to resolve Grand Prix and session names
+- **[Payload Loader API](/api-reference/payload-loader)**: the pipeline a session uses to fetch payloads

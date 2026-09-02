@@ -95,6 +95,7 @@ Optional JSON minification reduces file sizes by 20-40% by removing whitespace a
 - jsDelivr CDN automatically serves minified versions when available
 - Minification is transparent—parsed data is identical to non-minified versions
 - Can be enabled globally via config or per-source
+- Hugging Face bucket sources never use minification: they do not serve `.min.json`, and a 404 there would abort the fallback chain with a fatal `DataNotFoundError`
 
 **Performance impact:**
 - **Telemetry data**: ~35-40% size reduction (highly structured, repetitive data)
@@ -182,7 +183,7 @@ class CDNManager:
 - Validate source URLs (HTTPS only, block raw.githubusercontent.com)
 - Track health via failure counters (circuit breaker pattern)
 - Provide available sources via `get_sources()` (filters disabled/failed sources)
-- Implement fallback logic via `try_sources()` (tries sources in priority order)
+- Implement fallback logic via `try_sources()` (tries sources in priority order); async fetchers use the async counterpart `try_sources_async(year, gp, session, path, fetch_func)`, which walks the same source chain with awaitable fetch functions
 - Manage source lifecycle (add, enable, disable, reset)
 
 #### 3. Global Singleton
@@ -206,7 +207,7 @@ def get_cdn_manager() -> CDNManager:
 
 Here's how a typical data fetch flows through the CDN system:
 
-```
+```text
 1. Application calls Session.load()
    ↓
 2. Session requests data (e.g., laps.json) from HTTP layer
@@ -2045,7 +2046,7 @@ Format a complete CDN URL for a specific resource with optional minification sup
 - Complete CDN URL string
 
 **URL Format:**
-```
+```text
 {base_url}/{year}@main/{gp}/{session}/{path}
 ```
 

@@ -218,8 +218,8 @@ plt.show()
 Focus on a subset of drivers for detailed comparison:
 
 ```python
-# Select top 5 finishers
-top_drivers = session.drivers[:5]
+# Select the 5 fastest drivers by average lap time
+top_drivers = driver_avg.index[:5]
 laps_top = laps_clean[laps_clean['Driver'].isin(top_drivers)]
 
 heatmap_top = laps_top.pivot_table(

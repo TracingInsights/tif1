@@ -3385,6 +3385,29 @@ plt.show()
 
 ---
 
+## LazyTelemetryDict
+
+```python
+class LazyTelemetryDict(dict)
+```
+
+Lazy-loading dictionary that fetches telemetry data per driver on demand. Constructed with the owning session (any `TelemetryProvider`); indexing by driver code fetches and caches that driver's telemetry on first access.
+
+```python
+telemetry_by_driver = session.telemetry  # LazyTelemetryDict
+ver_tel = telemetry_by_driver["VER"]     # fetches on first access
+```
+
+## TelemetryProvider
+
+```python
+class TelemetryProvider(Protocol)
+```
+
+The narrow session interface consumed by the model family (`laps`, `weather_data`, `get_fastest_laps_tels`). `tif1.core.Session` satisfies the protocol structurally as the production adapter; tests can provide lightweight in-memory implementations instead. Decorated with `typing.runtime_checkable` so structural conformance can be asserted with `isinstance`.
+
+---
+
 ## Type Hints
 
 All models support type hints for better IDE integration.

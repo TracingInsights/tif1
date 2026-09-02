@@ -51,7 +51,7 @@ print(f"\nRace Winner: {winner['Driver']} ({winner['Team']})")
 
 # Fastest lap
 fastest = laps.loc[laps["LapTime"].idxmin()]
-print(f"Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime']:.3f}s")
+print(f"Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime'].total_seconds():.3f}s")
 ```
 
 ## 2. Position Changes
@@ -127,15 +127,16 @@ clean_laps = clean_race_laps(laps)
 final_positions = laps[laps["LapNumber"] == laps["LapNumber"].max()].sort_values("Position")
 top_5_drivers = final_positions.head(5)["Driver"].tolist()
 
-# Box plot of lap times
+# Box plot of lap times (matplotlib needs numeric values, so convert to seconds)
 fig, ax = plt.subplots(figsize=(12, 6))
-top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)]
+top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)].copy()
+top_5_laps["LapTimeSeconds"] = top_5_laps["LapTime"].dt.total_seconds()
 
 colors_list = [tif1.plotting.get_driver_color(d, session=session) for d in top_5_drivers]
 
 bp = ax.boxplot(
-    [top_5_laps[top_5_laps["Driver"] == d]["LapTime"] for d in top_5_drivers],
-    labels=top_5_drivers,
+    [top_5_laps[top_5_laps["Driver"] == d]["LapTimeSeconds"] for d in top_5_drivers],
+    tick_labels=top_5_drivers,
     patch_artist=True,
     showmeans=True
 )
@@ -230,11 +231,12 @@ def analyze_stint_degradation(laps, driver, stint):
     if len(stint_laps) < 3:
         return None
 
-    # Linear regression
+    # Linear regression (scipy needs numeric values, so convert to seconds)
     from scipy import stats
+    lap_seconds = stint_laps["LapTime"].dt.total_seconds()
     slope, intercept, r_value, _, _ = stats.linregress(
         stint_laps["TyreLife"],
-        stint_laps["LapTime"]
+        lap_seconds
     )
 
     return {
@@ -280,11 +282,12 @@ def calculate_gap_to_leader(laps):
         if len(leader) == 0:
             continue
 
-        leader_time = leader["SessionTime"].iloc[0]
+        # The laps DataFrame stores the session time at lap completion in "Time"
+        leader_time = leader["Time"].iloc[0]
 
-        # Calculate gaps
+        # Calculate gaps (store as seconds for plotting)
         for _, row in lap_data.iterrows():
-            gap = row["SessionTime"] - leader_time
+            gap = (row["Time"] - leader_time).total_seconds()
             gaps.append({
                 "LapNumber": lap_num,
                 "Driver": row["Driver"],
@@ -402,10 +405,11 @@ def compare_race_pace(laps, drivers, compound="MEDIUM"):
         if len(driver_laps) == 0:
             continue
 
-        # Plot lap times vs tire life
+        # Plot lap times vs tire life (matplotlib needs seconds, not timedelta)
+        lap_seconds = driver_laps["LapTime"].dt.total_seconds()
         ax.scatter(
             driver_laps["TyreLife"],
-            driver_laps["LapTime"],
+            lap_seconds,
             color=colors.get(driver, "#ffffff"),
             label=driver,
             alpha=0.6,
@@ -417,7 +421,7 @@ def compare_race_pace(laps, drivers, compound="MEDIUM"):
             from scipy import stats
             slope, intercept, _, _, _ = stats.linregress(
                 driver_laps["TyreLife"],
-                driver_laps["LapTime"]
+                lap_seconds
             )
             x_trend = range(int(driver_laps["TyreLife"].min()), int(driver_laps["TyreLife"].max()) + 1)
             y_trend = [slope * x + intercept for x in x_trend]
@@ -452,7 +456,7 @@ def generate_race_report(session, laps):
 
     # Fastest lap
     fastest = laps.loc[laps["LapTime"].idxmin()]
-    print(f"⚡ Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime']:.3f}s")
+    print(f"⚡ Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime'].total_seconds():.3f}s")
 
     # Race statistics
     print(f"\n📊 Race Statistics:")

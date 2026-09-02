@@ -1,0 +1,359 @@
+---
+title: "Payload Loader API"
+icon: "package"
+description: "The payload-loading pipeline of tif1: transports, memo and cache tiers, CDN fallback, retry, and validation"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+  - "payload loader"
+  - "HTTP transport"
+  - "cache"
+  - "validation"
+  - "CDN"
+  - "retry"
+---
+
+The `payload_loader` module is the single owner of the payload pipeline. One JSON payload moves through this order: session memo, persistent cache, CDN fetch, validation, then memo and cache write-back. `Session` and the async fetch layer route their fetches through this module.
+
+## Overview
+
+The module contains one protocol, two transport implementations, one loader class, and one factory function:
+
+- `HttpTransport` — the HTTP seam, defined as a `typing.Protocol`.
+- `NiquestsTransport` — the production transport, built on the shared niquests session.
+- `InMemoryTransport` — a test transport that serves payloads from an in-memory mapping.
+- `PayloadLoader` — the two-method interface (`get` for one path, `get_many` for async fan-out) that hides the whole pipeline.
+- `get_url_loader()` — a thread-safe factory for the shared loader used for absolute-URL payloads.
+
+`Session` constructs one `PayloadLoader` per session and injects its own memo, cache callables, and overridable fetch delegates (`Session._fetch_from_cdn` and `Session._fetch_from_cdn_fast`). CDN source ordering and fallback live in `tif1.cdn.CDNManager`, not in this module. The loader supplies only the per-URL fetch callable built on the transport.
+
+Validation failures always raise. There is no patched-callable escape hatch.
+
+```python
+from tif1.payload_loader import (
+    HttpTransport,
+    InMemoryTransport,
+    NiquestsTransport,
+    PayloadLoader,
+    get_url_loader,
+)
+```
+
+## HttpTransport
+
+`HttpTransport` is a runtime-checkable `typing.Protocol`. Implementations fetch one URL and return the parsed JSON object.
+
+```python
+class HttpTransport(Protocol):
+    def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]: ...
+```
+
+Implementations must raise these exceptions:
+
+- `DataNotFoundError` — the resource does not exist (HTTP 404).
+- `NetworkError` — the request failed at the transport level.
+- `InvalidDataError` — the response body was not a JSON object.
+
+Write a custom transport to route fetches through a proxy, a recording layer, or a local fixture set.
+
+## NiquestsTransport
+
+`NiquestsTransport` is the production transport. It sends every request through the pooled niquests session owned by `tif1.http_session`.
+
+```python
+from tif1.payload_loader import NiquestsTransport
+
+transport = NiquestsTransport()
+data = transport.get_json("https://example.com/payload.json", timeout=10.0)
+```
+
+### Methods
+
+#### `get_json`
+
+```python
+get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
+```
+
+Fetch `url` with the pooled niquests session and parse the JSON body.
+
+<ResponseField name="url" type="str" required>
+Absolute URL to fetch.
+</ResponseField>
+
+<ResponseField name="timeout" type="float | None" default="None">
+Request timeout in seconds. When `None`, the transport reads the `timeout` value from the configuration. The configuration default is 30.
+</ResponseField>
+
+Behavior:
+
+- A transport-level failure raises `NetworkError` with the URL and no status code.
+- HTTP 404 raises `DataNotFoundError` with the URL.
+- Any other HTTP error status raises `NetworkError` with the URL and the status code.
+- A response body that decodes to a non-dict JSON value raises `InvalidDataError`.
+
+## InMemoryTransport
+
+`InMemoryTransport` serves payloads from an in-memory mapping. Use it in tests to run the full pipeline without network access. Every requested URL is recorded in the `calls` attribute.
+
+```python
+from tif1.payload_loader import InMemoryTransport
+
+transport = InMemoryTransport({"drivers.json": {"drivers": []}})
+data = transport.get_json("https://cdn.example.com/2025/main/GP/R/drivers.json")
+```
+
+### Constructor
+
+```python
+InMemoryTransport(self, payloads: Mapping[str, Any] | None = None, *, default: Any = <unset>)
+```
+
+<ResponseField name="payloads" type="Mapping[str, Any] | None" default="None">
+Mapping of URL fragment to payload. A fragment can be a path, a full URL, or any substring of a URL. A value can be a dict, any other payload value, an `Exception` class or instance to raise, or a callable. A callable takes the URL and returns any of those value types.
+</ResponseField>
+
+<ResponseField name="default" type="Any" default="sentinel">
+Fallback entry used when no mapping matches. When unset, an unmatched URL raises `DataNotFoundError`.
+</ResponseField>
+
+Matching prefers an exact URL match, then the longest fragment contained in the requested URL.
+
+### Methods
+
+#### `add`
+
+```python
+add(self, key: str, value: Any) -> None
+```
+
+Register a payload for a URL fragment, or replace the payload registered for that fragment.
+
+#### `get_json`
+
+```python
+get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
+```
+
+Resolve `url` against the in-memory mapping and record `url` in `calls`. Raises `DataNotFoundError` when no mapping matched and no default was provided. Raises the matched exception when the matched entry specifies one.
+
+## PayloadLoader
+
+`PayloadLoader` owns the pipeline order: memo, cache, CDN fetch, validation, write-back. The loader is parameterized by session coordinates (`year`, `gp`, `session`) that build cache keys and CDN URLs. All storage and the fetch step are injectable as callables.
+
+### Constructor
+
+```python
+PayloadLoader(
+    self,
+    year: int | None = None,
+    gp: str | None = None,
+    session: str | None = None,
+    *,
+    transport: HttpTransport | None = None,
+    cdn_manager: CDNManager | None = None,
+    memo: SessionMemo | None = None,
+    enable_cache: bool = True,
+    fetch: Callable[..., Any] | None = None,
+    memo_get: Callable[[str], dict[str, Any] | None] | None = None,
+    memo_set: Callable[[str, dict[str, Any]], None] | None = None,
+    cache_get: Callable[[str], Any | None] | None = None,
+    cache_set: Callable[[str, dict[str, Any]], None] | None = None,
+) -> None
+```
+
+<ResponseField name="year" type="int | None" default="None">
+Season year. `None` is valid only for absolute-URL loaders.
+</ResponseField>
+
+<ResponseField name="gp" type="str | None" default="None">
+Grand Prix identifier, URL-encoded.
+</ResponseField>
+
+<ResponseField name="session" type="str | None" default="None">
+Session identifier, URL-encoded.
+</ResponseField>
+
+<ResponseField name="transport" type="HttpTransport | None" default="None">
+HTTP seam implementation. Defaults to `NiquestsTransport()`.
+</ResponseField>
+
+<ResponseField name="cdn_manager" type="CDNManager | None" default="None">
+CDN fallback manager. Defaults to the process-global `tif1.cdn.get_cdn_manager()` instance, resolved at call time. Also settable through the `cdn_manager` property.
+</ResponseField>
+
+<ResponseField name="memo" type="SessionMemo | None" default="None">
+Per-session memo tier used by the default memo callables.
+</ResponseField>
+
+<ResponseField name="enable_cache" type="bool" default="True">
+Gate for the default persistent-cache callables.
+</ResponseField>
+
+<ResponseField name="fetch" type="Callable[..., Any] | None" default="None">
+Override for the fetch step, with signature `fetch(path, *, fast: bool)`. Defaults to `PayloadLoader.fetch_from_cdn`.
+</ResponseField>
+
+<ResponseField name="memo_get" type="Callable[[str], dict[str, Any] | None] | None" default="None">
+Override for the memo read, `path -> dict or None`.
+</ResponseField>
+
+<ResponseField name="memo_set" type="Callable[[str, dict[str, Any]], None] | None" default="None">
+Override for the memo write, `(path, dict)`.
+</ResponseField>
+
+<ResponseField name="cache_get" type="Callable[[str], Any | None] | None" default="None">
+Override for the persistent-cache read, `cache key -> data or None`.
+</ResponseField>
+
+<ResponseField name="cache_set" type="Callable[[str, dict[str, Any]], None] | None" default="None">
+Override for the persistent-cache write, `(cache key, dict)`.
+</ResponseField>
+
+### Methods
+
+#### `get`
+
+```python
+get(
+    self,
+    path: str,
+    *,
+    validate: bool = True,
+    use_cache: bool = True,
+    write_cache: bool = True,
+    fast: bool = False,
+) -> dict[str, Any]
+```
+
+Fetch one session-relative JSON payload through the full pipeline. The order is: session memo, persistent cache, CDN fetch, validation, memo and cache write-back.
+
+<ResponseField name="path" type="str" required>
+Session-relative payload path, for example `"drivers.json"`.
+</ResponseField>
+
+<ResponseField name="validate" type="bool" default="True">
+Run payload validation before returning. Validation is path-based and pydantic-backed; it is gated by the `validate_data`, `validate_lap_times`, and `validate_telemetry` configuration values.
+</ResponseField>
+
+<ResponseField name="use_cache" type="bool" default="True">
+Read the persistent cache before a network fetch.
+</ResponseField>
+
+<ResponseField name="write_cache" type="bool" default="True">
+Write fetched payloads to the persistent cache.
+</ResponseField>
+
+<ResponseField name="fast" type="bool" default="False">
+Skip per-source retry and backoff delays on the CDN fetch.
+</ResponseField>
+
+Raises `DataNotFoundError` when the payload does not exist, `InvalidDataError` when the payload is not a JSON object or failed validation, and `NetworkError` when all CDN sources failed. Validation failures always raise.
+
+A payload found in the memo or cache returns without a network request. A cached dict is also written to the memo.
+
+#### `fetch_from_cdn`
+
+```python
+fetch_from_cdn(self, path: str, *, fast: bool = False) -> dict[str, Any]
+```
+
+Fetch a payload over HTTP with CDN fallback. CDN source ordering and fallback live in `CDNManager.try_sources`; this method only builds the per-URL fetch callable on the configured transport. When `fast` is `False`, the fetch callable is wrapped in `retry_with_backoff` using the `max_retries`, `retry_backoff_factor`, and `retry_jitter` configuration values. When `fast` is `True`, the zero-retry path is used.
+
+Raises `DataNotFoundError` when the payload does not exist (HTTP 404) and `NetworkError` when every CDN source failed.
+
+#### `get_url`
+
+```python
+get_url(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
+```
+
+Fetch a JSON object from an absolute URL. This method bypasses the memo, the cache, and CDN fallback; it calls the transport directly. Use it for resources outside the per-session CDN layout. The `timeout` default comes from the configuration.
+
+#### `get_many`
+
+```python
+async get_many(
+    self,
+    paths: list[str],
+    *,
+    use_cache: bool = True,
+    write_cache: bool = True,
+    validate: bool = True,
+    max_retries: int | None = None,
+    timeout: int | None = None,
+    max_concurrent_requests: int | None = None,
+) -> list[dict[str, Any] | None]
+```
+
+Fetch many session-relative payloads concurrently. This coroutine delegates to `tif1.async_fetch.fetch_multiple_async`. Every keyword argument defaults to the configured value when `None`. The returned list has one entry per requested path; a failed fetch produces `None` at its position.
+
+#### `cache_key`
+
+```python
+cache_key(self, path: str) -> str
+```
+
+Build the persistent-cache key for a session-relative path. The key format is `"{year}/{gp}/{session}/{path}"`.
+
+#### `cdn_manager`
+
+```python
+cdn_manager(self) -> CDNManager   # property, settable
+```
+
+The CDN manager used for fallback. When no manager was injected, the property returns the process-global instance from `tif1.cdn.get_cdn_manager()`.
+
+## get_url_loader
+
+```python
+get_url_loader() -> PayloadLoader
+```
+
+Return the shared `PayloadLoader` for absolute-URL payloads. The loader is created on first call under a lock, so the function is safe to call from multiple threads. `tif1.events` uses this loader to fetch f1schedule year payloads from their CDN URLs.
+
+## Examples
+
+### Offline pipeline run with InMemoryTransport
+
+This example runs the full `get` pipeline without network access. The `enable_cache=False` argument keeps the run off the persistent cache. Validation is disabled because the fixture payload is not a real `drivers.json` document.
+
+```python
+from tif1.payload_loader import InMemoryTransport, PayloadLoader
+
+transport = InMemoryTransport({"drivers.json": {"drivers": []}})
+loader = PayloadLoader(
+    2025,
+    "Abu%20Dhabi%20Grand%20Prix",
+    "Race",
+    transport=transport,
+    enable_cache=False,
+)
+
+data = loader.get("drivers.json", validate=False)
+data = loader.get("drivers.json", validate=False)  # served from the memo
+
+print(transport.calls[0])
+# https://cdn.staticdelivr.com/gh/TracingInsights/2025/main/Abu%20Dhabi%20Grand%20Prix/Race/drivers.json
+```
+
+### Absolute-URL fetch
+
+This example requires network access.
+
+```python
+from tif1.payload_loader import get_url_loader
+
+data = get_url_loader().get_url("https://example.com/data.json", timeout=15.0)
+```
+
+## Related APIs
+
+- **[Core API](/api-reference/core)**: `Session` and its overridable `_fetch_from_cdn` delegates
+- **[CDN API](/api-reference/cdn)**: `CDNManager` source ordering and fallback
+- **[Cache API](/api-reference/cache)**: `SessionMemo` and the persistent SQLite cache
+- **[Async Fetch API](/api-reference/async-fetch)**: `fetch_multiple_async` used by `get_many`
+- **[Config API](/api-reference/config)**: timeout and retry configuration values
+- **[Validation API](/api-reference/validation)**: the pydantic validators used by the pipeline

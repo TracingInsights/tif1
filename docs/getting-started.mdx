@@ -64,7 +64,7 @@ import tif1
 # Load the 2025 monaco grand prix race
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 
-print(f"Loaded session: {session.event} {session.session_type}")
+print(f"Loaded session: {session.event['EventName']} {session.name}")
 ```
 
 <Note>
@@ -81,7 +81,7 @@ print(drivers[["Driver", "Team", "DriverNumber"]])
 ```
 
 Output:
-```
+```text
   Driver                Team  DriverNumber
 0    VER  Red Bull Racing            33
 1    HAM         Mercedes            44
@@ -122,7 +122,7 @@ print(f"LEC: {lec_fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 ver_lap = ver.get_fastest_lap()
 lap_number = ver_lap["LapNumber"].iloc[0]
 
-lap = ver.get_lap(lap_number)
+lap = ver.get_lap(int(lap_number))
 telemetry = lap.telemetry
 
 # Analyze speed
@@ -197,7 +197,7 @@ if weather["Rainfall"].any():
 
 ### Use async for cold cache
 
-When loading data for the first time, use async for 4-5x speedup:
+When loading data for the first time, use async for parallel fetching (more than 3x faster than sequential in the benchmark suite):
 
 ```python
 import asyncio
@@ -217,7 +217,7 @@ Never fetch telemetry in a loop:
 
 <CodeGroup>
 ```python Good - Batch Fetching
-# Fetch all telemetry in parallel (28x faster)
+# Fetch all telemetry in parallel (validated at 3x+ vs sequential)
 tels = session.get_fastest_laps_tels(by_driver=True)
 
 for driver, tel in tels.items():
@@ -237,14 +237,14 @@ for driver_code in session.drivers:
 
 ```python
 # Use polars lib for 2x faster processing
-session = tif1.get_session(
+session_pl = tif1.get_session(
     2025,
     "Monaco",
     "Race",
     lib="polars"
 )
 
-laps = session.laps  # Returns polars DataFrame
+laps_pl = session_pl.laps  # Returns polars DataFrame
 ```
 
 ## Visualization
@@ -259,7 +259,7 @@ laps = session.laps
 ver_laps = laps[laps["Driver"] == "VER"]
 
 plt.figure(figsize=(12, 6))
-plt.plot(ver_laps["LapNumber"], ver_laps["LapTime"], marker="o")
+plt.plot(ver_laps["LapNumber"], ver_laps["LapTime"].dt.total_seconds(), marker="o")
 plt.xlabel("Lap Number")
 plt.ylabel("Lap Time (s)")
 plt.title("VER Lap Times - Monaco 2025")

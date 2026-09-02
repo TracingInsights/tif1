@@ -43,7 +43,7 @@ print(strategy)
 # Find optimal strategy
 best_strategy = strategy.groupby("Compound")["AvgLapTime"].mean()
 print(f"\nAverage pace by compound:\n{best_strategy}")
-```python
+```
 
 ## Qualifying Performance
 
@@ -85,8 +85,8 @@ quali_results = analyze_qualifying(2025, "Silverstone")
 
 print("Qualifying Results:")
 for i, (driver, data) in enumerate(quali_results, 1):
-    print(f"{i}. {driver}: {data['best_time']:.3f}s ({data['laps']} laps)")
-```python
+    print(f"{i}. {driver}: {data['best_time'].total_seconds():.3f}s ({data['laps']} laps)")
+```
 
 ## Telemetry Comparison
 
@@ -105,8 +105,8 @@ def compare_telemetry(session, driver1: str, driver2: str):
     lap2 = d2.get_fastest_lap()
 
     # Get telemetry
-    tel1 = d1.get_lap(lap1["LapNumber"].iloc[0]).telemetry
-    tel2 = d2.get_lap(lap2["LapNumber"].iloc[0]).telemetry
+    tel1 = d1.get_lap(int(lap1["LapNumber"].iloc[0])).telemetry
+    tel2 = d2.get_lap(int(lap2["LapNumber"].iloc[0])).telemetry
 
     # Plot comparison
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
@@ -141,7 +141,7 @@ def compare_telemetry(session, driver1: str, driver2: str):
 # Compare VER vs LEC
 session = tif1.get_session(2025, "Monaco", "Qualifying")
 compare_telemetry(session, "VER", "LEC")
-```python
+```
 
 ## Tire degradation model
 
@@ -170,10 +170,10 @@ def model_tire_degradation(session, compound: str = "SOFT"):
         if len(driver_laps) < 5:
             continue
 
-        # Linear regression
+        # Linear regression (scipy needs numeric values, so convert to seconds)
         slope, intercept, r_value, p_value, std_err = stats.linregress(
             driver_laps["TyreLife"],
-            driver_laps["LapTime"]
+            driver_laps["LapTime"].dt.total_seconds()
         )
 
         results[driver] = {
@@ -193,7 +193,7 @@ print("Tire Degradation Analysis (SOFT compound):")
 for driver, data in sorted(degradation.items(), key=lambda x: x[1]["degradation_rate"]):
     print(f"{driver}: {data['degradation_rate']:.3f}s/lap "
           f"(R²={data['r_squared']:.3f}, n={data['samples']})")
-```python
+```
 
 ## Weather impact analysis
 
@@ -236,7 +236,7 @@ weather_impact = analyze_weather_impact(session)
 print("Weather Impact on Lap Times:")
 for factor, correlation in weather_impact.items():
     print(f"{factor}: {correlation:.3f}")
-```python
+```
 
 ## Season championship tracker
 
@@ -291,7 +291,7 @@ standings = calculate_championship_standings(2025, up_to_event="Monaco")
 print("Championship Standings:")
 for i, (driver, points) in enumerate(standings, 1):
     print(f"{i}. {driver}: {points} points")
-```python
+```
 
 ## Overtaking Analysis
 
@@ -307,7 +307,7 @@ def analyze_overtakes(session):
     # Sort by lap number
     laps_sorted = laps.sort_values(["LapNumber", "Position"])
 
-    for lap_num in range(2, laps["LapNumber"].max() + 1):
+    for lap_num in range(2, int(laps["LapNumber"].max()) + 1):
         prev_lap = laps_sorted[laps_sorted["LapNumber"] == lap_num - 1]
         curr_lap = laps_sorted[laps_sorted["LapNumber"] == lap_num]
 
@@ -340,7 +340,7 @@ overtakes = analyze_overtakes(session)
 print(f"Total overtakes: {len(overtakes)}")
 print("\nTop overtakers:")
 print(overtakes.groupby("driver")["positions_gained"].sum().sort_values(ascending=False))
-```python
+```
 
 ## Consistency Analysis
 
@@ -366,8 +366,8 @@ def analyze_consistency(session, min_laps: int = 10):
         if len(driver_laps) < min_laps:
             continue
 
-        # Calculate metrics
-        lap_times = driver_laps["LapTime"]
+        # Calculate metrics (seconds keep mean, std, and range plain floats)
+        lap_times = driver_laps["LapTime"].dt.total_seconds()
 
         consistency[driver] = {
             "mean": lap_times.mean(),
@@ -392,7 +392,8 @@ for driver, metrics in consistency:
           f"Std={metrics['std']:.3f}s, "
           f"Range={metrics['range']:.3f}s "
           f"({metrics['laps']} laps)")
-```python ## Fuel effect analysis
+```
+## Fuel effect analysis
 
 Estimate fuel effect on lap times.
 
@@ -424,7 +425,7 @@ def estimate_fuel_effect(session):
             # Slope represents combined fuel + tire effect
             slope, intercept, r_value, _, _ = stats.linregress(
                 stint_laps["LapNumber"],
-                stint_laps["LapTime"]
+                stint_laps["LapTime"].dt.total_seconds()
             )
 
             key = f"{driver}_S{stint}"
@@ -448,7 +449,7 @@ for key, data in sorted(fuel_effect.items(), key=lambda x: x[1]["fuel_tire_effec
     print(f"{data['driver']} Stint {data['stint']}: "
           f"{data['fuel_tire_effect']:.3f}s/lap "
           f"(R²={data['r_squared']:.3f})")
-```python
+```
 
 ## Best Practices
 

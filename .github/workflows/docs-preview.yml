@@ -41,6 +41,13 @@ jobs:
           fi
           echo "docs.json is valid"
 
+      - name: STE house-style regression gate
+        run: |
+          # Fails only when violations grow beyond the recorded baseline
+          # (tools/ste_baseline.json). Regenerate the baseline when the count
+          # intentionally drops: python3 tools/ste_check.py docs/ --json > tools/ste_baseline.json
+          python3 tools/ste_check.py docs/ --baseline tools/ste_baseline.json
+
       - name: Comment on PR
         uses: actions/github-script@v9
         with:

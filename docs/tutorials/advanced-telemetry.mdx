@@ -26,7 +26,7 @@ import numpy as np
 session = tif1.get_session(2025, "Monza Grand Prix", "Qualifying")
 ver = session.get_driver("VER")
 fastest_lap = ver.get_fastest_lap()
-telemetry = ver.get_lap(fastest_lap["LapNumber"].iloc[0]).telemetry
+telemetry = ver.get_lap(int(fastest_lap["LapNumber"].iloc[0])).telemetry
 
 # Plot longitudinal acceleration
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
@@ -105,8 +105,8 @@ ham = session.get_driver("HAM")
 ver_fastest = ver.get_fastest_lap()
 ham_fastest = ham.get_fastest_lap()
 
-ver_tel = ver.get_lap(ver_fastest["LapNumber"].iloc[0]).telemetry
-ham_tel = ham.get_lap(ham_fastest["LapNumber"].iloc[0]).telemetry
+ver_tel = ver.get_lap(int(ver_fastest["LapNumber"].iloc[0])).telemetry
+ham_tel = ham.get_lap(int(ham_fastest["LapNumber"].iloc[0])).telemetry
 
 # Create figure
 fig, ax = plt.subplots(figsize=(12, 12))
@@ -214,7 +214,7 @@ ax.fill_between(
 overlap_regions = ver_tel[overlap]
 ax.scatter(
     overlap_regions["Distance"],
-    50,
+    [50] * len(overlap_regions),
     color="orange",
     s=10,
     label="Overlap",
