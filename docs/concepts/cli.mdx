@@ -1,7 +1,7 @@
 ---
 title: "CLI Tool"
 icon: "terminal"
-description: "Comprehensive command-line interface for tif1 - Fast F1 data access from your terminal"
+description: "Command-line interface that gives access to Formula 1 data from the terminal"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,24 +14,24 @@ keywords:
 
 ## Overview
 
-The tif1 CLI provides a powerful command-line interface for accessing Formula 1 data directly from your terminal. Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/), it offers beautiful, formatted output with progress indicators and interactive tables.
+The tif1 CLI gives access to Formula 1 data from the terminal. The CLI is built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/). It prints formatted output with progress indicators and tables.
 
 The CLI is designed for:
 - **Quick data exploration** - Browse events, sessions, and drivers without writing code
 - **Performance testing** - Benchmark data loading and cache performance
-- **Cache management** - Inspect and manage your local data cache
+- **Cache management** - Inspect and manage the local data cache
 - **Debugging** - Enable detailed logging to troubleshoot issues
 - **Scripting** - Integrate F1 data into shell scripts and automation workflows
 
 ## Installation
 
-The CLI is automatically installed when you install tif1:
+The tif1 package installs the CLI automatically:
 
 ```bash
 pip install tif1
 ```
 
-After installation, the `tif1` command will be available in your terminal. Verify the installation:
+After installation, the `tif1` command is available in the terminal. Verify the installation:
 
 ```bash
 tif1 version
@@ -227,7 +227,7 @@ tif1 fastest <year> <event> <session> [OPTIONS]
 
 **Output:**
 - **All drivers mode**: Sorted table of fastest laps with position, driver, team, and time
-- **Single driver mode**: Driver's fastest lap time
+- **Single driver mode**: The fastest lap time of the driver
 - Progress indicator during data loading
 
 **Examples:**
@@ -281,7 +281,7 @@ VER fastest lap: 82.456s
 
 ### `cache-info` - Show Cache Information
 
-Display detailed information about your local tif1 cache, including location, file count, and total size.
+Display detailed information about the local tif1 cache: location, file count, and total size.
 
 **Syntax:**
 ```bash
@@ -318,7 +318,7 @@ Total size: 145.67 MB
 
 **Cache Details:**
 
-The tif1 cache uses SQLite with Write-Ahead Logging (WAL) for optimal performance:
+The tif1 cache uses SQLite with Write-Ahead Logging (WAL):
 - **Main cache database**: `cache.sqlite` - Stores session data, lap data, and metadata
 - **WAL files**: `cache.sqlite-wal` and `cache.sqlite-shm` - Transaction logs for concurrent access
 - **In-memory cache**: LRU caches for frequently accessed data (not shown in file count)
@@ -384,13 +384,13 @@ Cache clear cancelled
 - Troubleshoot cache corruption issues
 - Reset cache during development/testing
 
-**Warning:** Clearing the cache will require re-downloading all data on next access, which may take time depending on your network speed and the amount of data requested.
+**Warning:** Clearing the cache removes all local data. The next access downloads all data again. The download time depends on the network speed and the amount of data requested.
 
 ---
 
 ### `version` - Show Version Information
 
-Display the currently installed version of tif1.
+Display the installed version of tif1.
 
 **Syntax:**
 ```bash
@@ -492,7 +492,7 @@ Laps: 342
 
 ## Configuration
 
-The CLI respects all tif1 configuration options set via environment variables or the `.tif1rc` configuration file.
+The CLI reads all tif1 configuration options from environment variables and from the `.tif1rc` configuration file.
 
 ### Environment Variables
 
@@ -523,7 +523,7 @@ export TIF1_LOG_LEVEL=WARNING
 
 ### Configuration File
 
-Create a `.tif1rc` file in your home directory for persistent configuration:
+Create a `.tif1rc` file in the home directory for persistent configuration:
 
 ```json
 {
@@ -644,21 +644,21 @@ tif1 cache-info
 ### Event and Session Names
 
 - Use quotes for multi-word names: `"Abu Dhabi Grand Prix"`
-- Single-word events don't need quotes: `Monaco`
+- Single-word event names do not need quotes: `Monaco`
 - Session names are case-sensitive: `Qualifying` not `qualifying`
 - Use `tif1 events` and `tif1 sessions` to find exact names
 
 ### Performance Optimization
 
-- The first data access will be slower (cold cache)
+- The first data access is slower (cold cache)
 - Subsequent accesses are much faster (warm cache)
 - Use `cache-clear` sparingly to maintain performance
 - Enable debug mode to identify performance bottlenecks
 
 ### Error Handling
 
-- If a command fails, try with `debug` mode for detailed error information
-- Check your internet connection for network-related errors
+- If a command fails, use the `debug` command for detailed error information
+- Check the internet connection for network-related errors
 - Verify event and session names are correct
 - Ensure the year is within the supported range (2018-current)
 
@@ -668,8 +668,8 @@ tif1 cache-info
   - **Linux/other POSIX**: `~/.cache/tif1` or `~/.tif1`
   - **macOS**: `~/Library/Caches/tif1`
   - **Windows**: `%LOCALAPPDATA%\Temp\tif1`
-- Override with `TIF1_CACHE_DIR` environment variable
-- Cache permissions are restricted to user-only (0o700)
+- Override the location with the `TIF1_CACHE_DIR` environment variable
+- Cache permissions are restricted to the user (0o700)
 
 ---
 
@@ -677,7 +677,7 @@ tif1 cache-info
 
 ### Command Not Found
 
-If `tif1` command is not found after installation:
+If the `tif1` command is not found after installation:
 
 ```bash
 # Verify installation
@@ -692,7 +692,7 @@ pip install --force-reinstall tif1
 
 ### Network Errors
 
-If you encounter network errors:
+If network errors occur:
 
 ```bash
 # Check with debug mode
@@ -708,7 +708,7 @@ tif1 drivers 2025 Monaco Race
 
 ### Cache Issues
 
-If you suspect cache corruption:
+If the cache is corrupt:
 
 ```bash
 # Clear cache and retry

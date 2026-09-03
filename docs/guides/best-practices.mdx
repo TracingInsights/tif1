@@ -1,7 +1,7 @@
 ---
 title: "Best Practices"
 icon: "star"
-description: "Recommended patterns and practices for using tif1 effectively"
+description: "Apply recommended tif1 patterns for performance, reliability, and code quality"
 keywords:
   - "best practices"
   - "F1 data best practices"
@@ -10,7 +10,7 @@ keywords:
   - "coding patterns"
 ---
 
-Follow these best practices to get the most out of tif1 in terms of performance, reliability, and code quality.
+Follow these practices for the best performance, reliability, and code quality.
 
 ## Performance best practices
 
@@ -54,7 +54,7 @@ graph TD
 
 ### Use selective data loading
 
-Control what data gets fetched to optimize performance. Only load what you need.
+Control what data gets fetched to optimize performance. Load only the necessary data.
 
 <CodeGroup>
 ```python Good - Selective Loading
@@ -284,7 +284,7 @@ laps["DeltaToFastest"] = deltas
 
 ### Check data availability first
 
-Before processing multiple sessions, check what's available.
+Before processing multiple sessions, check the data that is available.
 
 ```python
 def process_season(year: int):
@@ -408,7 +408,7 @@ Cache.clear_cache()  # Clears active cache
 
 ### Mock network calls in tests
 
-Don't hit the real CDN in unit tests.
+Do not hit the real CDN in unit tests.
 
 ```python
 import pytest
@@ -445,9 +445,9 @@ def test_lap_filtering():
 
 ## Documentation best practices
 
-### Document your analysis
+### Document the analysis
 
-Add docstrings and comments to your analysis code.
+Add docstrings and comments to the analysis code.
 
 ```python
 def calculate_tire_degradation(laps, compound="SOFT"):
@@ -518,13 +518,13 @@ def calculate_tire_degradation(laps, compound="SOFT"):
 ## Related Pages
 
 <CardGroup cols={2}>
-  <Card title="Performance" href="/guides/best-practices">
-    Optimization guide
+<Card title="Performance" href="/guides/best-practices">
+    Optimization guide.
   </Card>
   <Card title="Error Handling" href="/guides/error-handling">
-    Handle errors
+    Handle errors.
   </Card>
   <Card title="Common Use Cases" href="/guides/common-use-cases">
-    Handle big data
+    Handle large datasets.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
 title: "Contributing"
 icon: "code-pull-request"
-description: "Guidelines for developing and contributing to tif1"
+description: "Set up a development environment and contribute to tif1"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -9,7 +9,7 @@ keywords:
   - "documentation"
 ---
 
-Thank you for your interest in contributing to `tif1`! This guide will help you set up your environment and understand our development workflow.
+This guide explains how to set up a development environment and how to submit changes to `tif1`.
 
 ## Development Setup
 
@@ -26,13 +26,13 @@ Thank you for your interest in contributing to `tif1`! This guide will help you 
     ```
   </Step>
   <Step title="Install dependencies">
-    Use `uv` to create a virtual environment and install all development extras:
+    Use `uv` to create a virtual environment and install all development extras.
     ```bash
     uv sync --all-extras
     ```
   </Step>
   <Step title="Install git hooks with prek">
-    Enable automated linting and formatting before every commit:
+    Enable automated linting and formatting before every commit.
     ```bash
     uv run prek install
     ```
@@ -43,7 +43,7 @@ Thank you for your interest in contributing to `tif1`! This guide will help you 
 
 ## Testing Workflow
 
-We use `pytest` for our test suite, with `xdist` for parallel execution.
+The test suite uses `pytest`, with `xdist` for parallel execution.
 
 ### Running Tests
 <CodeGroup>
@@ -65,7 +65,7 @@ uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark
 </CodeGroup>
 
 ### Code Coverage
-To run tests with coverage reporting:
+Run the tests with coverage reporting:
 ```bash
 uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html
 ```
@@ -74,14 +74,14 @@ uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --c
 
 ## Code Quality
 
-Before submitting a PR, ensure your code passes all quality checks.
+Make sure that the code passes all quality checks before a pull request is submitted.
 
-- **Linting & Formatting:** We use `ruff`.
+- **Linting & Formatting:** The project uses `ruff`.
   ```bash
   uv run ruff check src/ tests/
   uv run ruff format src/ tests/
   ```
-- **Type Checking:** We use `pyright` (via `ty`).
+- **Type Checking:** The project uses `pyright` (via `ty`).
   ```bash
   uv run ty check src/tif1
   ```
@@ -94,7 +94,7 @@ Before submitting a PR, ensure your code passes all quality checks.
 
 ## Documentation
 
-Our documentation is built with **Mintlify**.
+The documentation is built with **Mintlify**.
 
 ### Local Development
 To preview the documentation locally:
@@ -103,18 +103,18 @@ To preview the documentation locally:
 
 ### Guidelines
 - Use **Google-style** docstrings for all public functions.
-- Update `mint.json` if you add new pages.
-- Use Mintlify components (`<Steps>`, `<Card>`, `<CodeGroup>`) to keep pages engaging.
+- Update `mint.json` when a new page is added.
+- Use Mintlify components (`<Steps>`, `<Card>`, `<CodeGroup>`) to structure the pages.
 
 ---
 
-## Pull request process
+## Pull Request Process
 
 1. **Create a branch:** `git checkout -b feat/your-awesome-feature`
-2. **Implement & Test:** Ensure coverage doesn't drop.
-3. **Commit:** Use [Conventional Commits](https://www.conventionalcommits.org/) (e.g., `feat:`, `fix:`, `docs:`, `perf:`).
-4. **Push & Open PR:** Provide a clear description of what changed and why.
+2. **Implement & Test:** Make sure that the coverage does not drop.
+3. **Commit:** Use [Conventional Commits](https://www.conventionalcommits.org/), for example `feat:`, `fix:`, `docs:`, `perf:`.
+4. **Push & Open PR:** Describe the changes and the reason for them.
 
 <Tip>
-  Check the **CHANGELOG.md** and add a summary of your changes there as well.
+  Check **CHANGELOG.md** and add a summary of the changes there as well.
 </Tip>

@@ -1,7 +1,7 @@
 ---
 title: "Data Schema Reference"
 icon: "table"
-description: "Complete reference for all data columns, units, and formulas"
+description: "Reference for every data column, unit, and formula in tif1"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -9,14 +9,14 @@ keywords:
   - "documentation"
 ---
 
-`tif1` provides data in a structured format consistent with `fastf1`. Below is the exhaustive reference for every column in the main DataFrames.
+`tif1` provides data in a structured format consistent with `fastf1`. This page lists every column in the main DataFrames.
 
 <Note>
-  `tif1` uses **PascalCase** for all column names in Lap and Telemetry DataFrames (e.g., `LapTime`, `Speed`).
+  `tif1` uses **PascalCase** for all column names in Lap and Telemetry DataFrames, for example `LapTime` and `Speed`.
 </Note>
 
 <Info>
-  This page documents the DataFrame columns you work with in tif1. They are built from raw JSON files stored in the TracingInsights data repos, which use short abbreviated keys (e.g. `s1`, `vi1`, `wWS`). Every raw field is documented field-by-field in the [Data Reference](/reference/data-reference).
+  This page documents the DataFrame columns that tif1 provides. tif1 builds these DataFrames from raw JSON files in the TracingInsights data repos. The repos store the data under short abbreviated keys: `s1`, `vi1`, `wWS`. Every raw field is documented in the [Data Reference](/reference/data-reference).
 </Info>
 
 ## ⏱️ Lap Data (`session.laps`)
@@ -32,7 +32,7 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | `LapStartTime` | `float` | Seconds | Time when the lap started relative to session start. |
 | `LapStartDate` | `str` | ISO8601 | Absolute calendar timestamp when the lap started. |
 
-### Sectors & speed traps
+### Sectors & Speed Traps
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
 | `Sector1Time` | `float` | Seconds | Time taken to complete Sector 1. |

@@ -1,7 +1,7 @@
-﻿---
+---
 title: "FAQ"
 icon: "circle-question"
-description: "Frequently asked questions about tif1"
+description: "Answers to frequently asked questions about tif1"
 keywords:
   - "FAQ"
   - "frequently asked questions"
@@ -13,7 +13,7 @@ keywords:
 
 ### What is tif1?
 
-tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current, with parallel async loading (more than 3x faster than sequential fetching in the benchmark suite).
+tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current. Parallel async loading is more than 3x faster than sequential fetching in the benchmark suite.
 
 ### How is tif1 different from fastf1?
 
@@ -27,7 +27,7 @@ tif1 is designed as a faster alternative to fastf1 with API compatibility. Key d
 
 ### Is tif1 free to use?
 
-Yes, tif1 is open source under the MIT License. You can use it freely for personal, academic, or commercial projects.
+Yes, tif1 is open source under the MIT License. Use it freely for personal, academic, or commercial projects.
 
 ### What data is available?
 
@@ -58,11 +58,11 @@ Python 3.11 or higher is required.
 
 ### Do I need an API key?
 
-No, tif1 doesn't require any API keys or authentication. All data is publicly available via the TracingInsights CDN.
+No, tif1 does not require any API keys or authentication. All data is publicly available via the TracingInsights CDN.
 
 ### Where is data cached?
 
-By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). You can change this in `.tif1rc` or via `TIF1_CACHE_DIR`.
+By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). Change this location in the `.tif1rc` file or with `TIF1_CACHE_DIR`.
 
 ---
 
@@ -70,7 +70,7 @@ By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALA
 
 ### Why is my first load slow?
 
-The first time you access a session, tif1 needs to download data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for parallel initial loads (3x+ vs sequential in the benchmark suite).
+The first access to a session downloads data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for parallel initial loads (3x+ vs sequential in the benchmark suite).
 
 ### How do I load data faster?
 
@@ -92,8 +92,8 @@ Data is typically available 30 minutes after a session ends. This is slightly lo
 Common causes:
 - Event name is misspelled (use `get_events()` to check)
 - Session name is misspelled (use `get_sessions()` to check)
-- Data hasn't been published yet (check if session ended recently)
-- Session didn't take place (cancelled/postponed)
+- The data has not been published yet (check whether the session ended recently)
+- The session did not take place (cancelled or postponed)
 
 ---
 
@@ -116,7 +116,7 @@ Polars is written in Rust and uses:
 
 ### Can I use multiple backends in one script?
 
-Yes, you can specify different backends for different sessions:
+Yes, each session can use a different backend:
 
 ```python
 session1 = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
@@ -127,7 +127,7 @@ session2 = tif1.get_session(2025, "Monza", "Race", lib="polars")
 
 ## Errors & Troubleshooting
 
-### I'm getting NetworkError
+### I Get a NetworkError
 
 Possible causes:
 - Internet connection issues
@@ -135,11 +135,11 @@ Possible causes:
 - Firewall blocking the CDN hosts (StaticDelivr, jsDelivr, Hugging Face)
 
 Try:
-1. Check your internet connection
+1. Check the internet connection
 2. Reset the circuit breaker: `tif1.reset_circuit_breaker()`
 3. Enable debug logging: `tif1.setup_logging(logging.DEBUG)`
 
-### Cache is corrupted
+### The Cache Is Corrupted
 
 Clear the cache and re-download:
 
@@ -147,9 +147,9 @@ Clear the cache and re-download:
 tif1.get_cache().clear()
 ```
 
-### Column names don't match fastf1
+### Column Names Do Not Match fastf1
 
-tif1 uses PascalCase for all columns (e.g., `LapTime`, not `time`). This is intentional for consistency. Use the exact column names shown in the data schema reference.
+tif1 uses PascalCase for all columns, for example `LapTime` instead of `time`. This is intentional for consistency. Use the exact column names shown in the data schema reference.
 
 
 
@@ -159,14 +159,14 @@ tif1 uses PascalCase for all columns (e.g., `LapTime`, not `time`). This is inte
 
 ### Do I need to call session.load()?
 
-No, tif1 uses lazy loading. Data is automatically fetched when you access it:
+No, tif1 uses lazy loading. Data is fetched automatically at first access:
 
 ```python
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps  # Data fetched here
 ```
 
-However, you can use `session.load()` for explicit control over what data to fetch.
+For explicit control over the data that is fetched, use `session.load()`.
 
 ### How do I get telemetry for all drivers?
 
@@ -440,7 +440,7 @@ for driver in ["VER", "HAM"]:
 
 ### How do I analyze sector times?
 
-Sector analysis helps identify where time is gained or lost:
+Sector analysis shows where time is gained or lost:
 
 ```python
 import tif1
@@ -471,7 +471,7 @@ print(f"Fastest S3: {fastest_laps.loc[fastest_laps['Sector3Time'].idxmin(), 'Dri
 
 ### How do I use tif1 with Streamlit?
 
-tif1 works seamlessly with Streamlit for interactive dashboards:
+tif1 works with Streamlit for interactive dashboards:
 
 ```python
 import streamlit as st
@@ -545,7 +545,7 @@ print(season_results)
 
 ### How do I create custom visualizations?
 
-tif1 provides plotting utilities, but you can create custom visualizations:
+tif1 provides plotting utilities, and custom visualizations are also possible:
 
 ```python
 import tif1
@@ -579,7 +579,7 @@ Contributions are welcome! See the [Contributing Guide](/reference/contributing)
 
 ### I found a bug, what should I do?
 
-1. Check if it's already reported in [GitHub Issues](https://github.com/TracingInsights/tif1/issues)
+1. Check whether the bug is already reported in [GitHub Issues](https://github.com/TracingInsights/tif1/issues)
 2. If not, create a new issue with:
    - Minimal reproducible example
    - Error message and traceback
@@ -599,7 +599,7 @@ Yes, feature requests are welcome! Open an issue on GitHub with:
 
 ### What license is tif1 under?
 
-MIT License - you can use it freely in any project.
+MIT License. Use it freely in any project.
 
 ### Can I use tif1 commercially?
 
@@ -615,12 +615,12 @@ The underlying F1 data is owned by Formula 1. tif1 provides access to publicly a
 
 <CardGroup cols={2}>
   <Card title="Troubleshooting" href="/reference/troubleshooting">
-    Solve issues
+    Solve issues.
   </Card>
   <Card title="Getting Started" href="/getting-started">
-    Usage guide
+    Usage guide.
   </Card>
   <Card title="Best Practices" href="/guides/best-practices">
-    Recommended patterns
+    Recommended patterns.
   </Card>
 </CardGroup>
