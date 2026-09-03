@@ -1,7 +1,7 @@
-﻿---
+---
 title: "CLI Reference"
 icon: "terminal"
-description: "Complete command-line interface reference for tif1 - comprehensive guide to all CLI commands, options, workflows, and best practices"
+description: "Command-line interface reference for tif1 - all CLI commands, options, workflows, and best practices"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -18,19 +18,19 @@ keywords:
 
 # CLI Reference
 
-The `tif1` CLI provides a powerful, feature-rich, and production-ready command-line interface for exploring Formula 1 data directly from your terminal. Built with [Typer](https://typer.tiangolo.com/) for robust argument parsing and [Rich](https://rich.readthedocs.io/) for beautiful, colorful terminal output with tables and progress indicators, the CLI brings the full power of tif1 to your command line with zero configuration required.
+The `tif1` CLI provides a command-line interface for exploring Formula 1 data from the terminal. It is built with [Typer](https://typer.tiangolo.com/) for argument parsing. It uses [Rich](https://rich.readthedocs.io/) for colorful terminal output with tables and progress indicators. The CLI requires no configuration.
 
 ## What is the tif1 CLI?
 
-The tif1 CLI is a comprehensive command-line tool that provides instant access to Formula 1 data without writing a single line of Python code. It's designed for data analysts, F1 enthusiasts, developers, and anyone who wants to explore F1 data quickly and efficiently from their terminal.
+The tif1 CLI is a command-line tool. It gives access to Formula 1 data without writing Python code. It is designed for data analysts, F1 enthusiasts, and developers. It serves anyone who wants to explore F1 data from the terminal.
 
 **Key Features:**
 
 - **Zero Configuration**: Works out of the box after installation
-- **Rich Terminal Output**: Beautiful tables with color-coded data and Unicode borders
-- **Intelligent Caching**: Automatic caching with SQLite for blazing-fast repeated queries
+- **Rich Terminal Output**: Color-coded tables with Unicode borders
+- **Automatic Caching**: SQLite cache speeds up repeated queries
 - **Progress Indicators**: Real-time feedback during data loading operations
-- **Comprehensive Error Handling**: Clear, actionable error messages
+- **Error Handling**: Clear, actionable error messages
 - **Cross-Platform**: Works on Linux, macOS, and Windows
 - **Scriptable**: Perfect for automation, CI/CD pipelines, and shell scripts
 - **Performance Optimized**: Built for speed with efficient data processing
@@ -50,7 +50,7 @@ The CLI is designed for multiple use cases and user personas:
 
 2. **Debugging & Development**
    - Test data availability and verify API responses
-   - Troubleshoot issues with comprehensive debug logging
+   - Troubleshoot issues with debug logging
    - Validate data integrity and completeness
    - Identify network issues, cache problems, or data inconsistencies
 
@@ -109,7 +109,7 @@ The CLI is optimized for speed and efficiency:
 
 ## Installation
 
-The CLI is automatically included when you install tif1. No additional dependencies, configuration files, or setup steps are required - it just works out of the box.
+The CLI is automatically included with a tif1 installation. No additional dependencies, configuration files, or setup steps are required. It works out of the box.
 
 ### Standard Installation
 
@@ -119,7 +119,7 @@ Install tif1 using pip (Python 3.11 or higher required):
 pip install tif1
 ```
 
-After installation, the `tif1` command will be available globally in your terminal. The CLI uses the same Python environment as your tif1 installation, ensuring consistency between CLI and programmatic usage.
+After installation, the `tif1` command is available globally in the terminal. The CLI uses the same Python environment as the tif1 installation. This ensures consistency between CLI and programmatic usage.
 
 ### Installation Methods
 
@@ -242,9 +242,9 @@ rmdir /s "%LOCALAPPDATA%\Temp\tif1"  # Windows
 
 ## Getting Started
 
-### Your First Commands
+### First Commands
 
-Let's walk through a complete workflow from discovering events to analyzing lap times:
+Walk through a complete workflow from discovering events to analyzing lap times:
 
 **Step 1: Discover Available Events**
 
@@ -254,7 +254,7 @@ Start by listing all events in a season to see what data is available:
 tif1 events 2025
 ```
 
-This shows all Grand Prix events for 2025. Note the exact event names - you'll need them for subsequent commands.
+This shows all Grand Prix events for 2025. Note the exact event names - subsequent commands need them.
 
 **Step 2: Check Event Sessions**
 
@@ -274,7 +274,7 @@ See which drivers participated in a specific session:
 tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
 ```
 
-This loads the session data and displays all drivers with their teams. The first time you run this, it will fetch data from the network (2-10 seconds). Subsequent runs will be much faster thanks to caching.
+This loads the session data and displays all drivers with their teams. On the first run, the command fetches data from the network (2-10 seconds). Subsequent runs are much faster because data is cached.
 
 **Step 4: Analyze Lap Times**
 
@@ -292,7 +292,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" --driver VER
 
 **Step 5: Manage Cache**
 
-Check your cache size and location:
+Check the cache size and location:
 
 ```bash
 tif1 cache-info
@@ -422,9 +422,9 @@ tif1 [COMMAND] [ARGUMENTS] [OPTIONS]
 
 All commands follow a consistent, predictable pattern:
 
-- **COMMAND**: The action to perform (e.g., `events`, `sessions`, `drivers`, `fastest`)
-- **ARGUMENTS**: Required positional arguments in a specific order (e.g., year, event name, session name)
-- **OPTIONS**: Optional flags that modify behavior (e.g., `--driver`, `--yes`, `-d`)
+- **COMMAND**: The action to perform (for example, `events`, `sessions`, `drivers`, `fastest`)
+- **ARGUMENTS**: Required positional arguments in a specific order (for example, year, event name, session name)
+- **OPTIONS**: Optional flags that modify behavior (for example, `--driver`, `--yes`, `-d`)
 
 ### Command Structure
 
@@ -457,15 +457,15 @@ The help output shows:
 
 ### Command Naming Conventions
 
-- Commands use lowercase with hyphens for multi-word names (e.g., `cache-info`, `cache-clear`)
-- Arguments use natural language names (e.g., `year`, `event`, `session`)
+- Commands use lowercase with hyphens for multi-word names (for example, `cache-info`, `cache-clear`)
+- Arguments use natural language names (for example, `year`, `event`, `session`)
 - Options use double dashes for long form (`--driver`) and single dash for short form (`-d`)
 
 ---
 
 ## Core Concepts
 
-Understanding these core concepts will help you use the CLI effectively and avoid common pitfalls.
+Understanding these core concepts helps with effective CLI use and helps avoid common pitfalls.
 
 ### Event Names
 
@@ -684,7 +684,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying" -d Ver
 
 **Historical Driver Codes:**
 
-Driver codes can change between seasons if a driver switches teams or if there's a code conflict:
+Driver codes can change between seasons if a driver switches teams or if there is a code conflict:
 
 ```bash
 # Check historical driver codes
@@ -705,7 +705,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Practice 1"
 
 ### Data Loading & Caching
 
-The CLI implements intelligent caching to optimize performance and reduce network requests.
+The CLI implements caching to optimize performance and reduce network requests.
 
 **Cache Architecture:**
 
@@ -720,7 +720,7 @@ Cache Check (SQLite)
 
 **First Request (Cache Miss):**
 
-When you request data for the first time:
+When data is requested for the first time:
 
 1. **Cache Lookup**: CLI checks local SQLite cache
 2. **Network Fetch**: Data is downloaded from the CDN (StaticDelivr primary; jsDelivr and Hugging Face fallbacks)
@@ -738,7 +738,7 @@ When you request data for the first time:
 
 **Subsequent Requests (Cache Hit):**
 
-When you request the same data again:
+When the same data is requested again:
 
 1. **Cache Lookup**: CLI checks local SQLite cache
 2. **Cache Read**: Data is loaded from disk
@@ -843,7 +843,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 
 ### Output Formatting
 
-The CLI uses Rich library for beautiful, colorful terminal output with professional formatting.
+The CLI uses the Rich library for colorful terminal output with structured formatting.
 
 **Table Components:**
 
@@ -929,7 +929,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | awk '{print $1, $2}'
 
 ## Error Handling & Troubleshooting
 
-The CLI provides clear, actionable error messages to help you quickly identify and resolve issues.
+The CLI provides clear, actionable error messages. These messages help with quick identification and resolution of issues.
 
 ### Common Error Messages
 
@@ -940,7 +940,7 @@ $ tif1 sessions 2025 "Monaco GP"
 Error: Event 'Monaco GP' not found for year 2025
 ```
 
-**Cause**: Event name doesn't match exactly
+**Cause**: Event name does not match exactly
 **Solution**: Use `tif1 events 2025` to find the exact event name
 
 **2. Session Not Found**
@@ -950,7 +950,7 @@ $ tif1 drivers 2025 "Monaco Grand Prix" "FP1"
 Error: Session 'FP1' not found for Monaco Grand Prix 2025
 ```
 
-**Cause**: Session name doesn't match exactly
+**Cause**: Session name does not match exactly
 **Solution**: Use `tif1 sessions 2025 "Monaco Grand Prix"` to find exact session names
 
 **3. Driver Not Found**
@@ -960,7 +960,7 @@ $ tif1 fastest 2025 "Monaco Grand Prix" "Race" --driver ABC
 Error: Driver 'ABC' not found in session
 ```
 
-**Cause**: Invalid driver code or driver didn't participate
+**Cause**: Invalid driver code or driver did not participate
 **Solution**: Use `tif1 drivers 2025 "Monaco Grand Prix" "Race"` to see available drivers
 
 **4. Network Timeout**
@@ -995,7 +995,7 @@ $ tif1 fastest 2026 "Monaco Grand Prix" "Race"
 Error: Data not available for Monaco Grand Prix 2026
 ```
 
-**Cause**: Event hasn't occurred yet or data not published
+**Cause**: Event has not occurred yet or data not published.
 **Solution**: Check if event has taken place and data is available
 
 ### Troubleshooting Workflow
@@ -1307,13 +1307,13 @@ tif1 events YEAR
 
 The `events` command retrieves and displays the complete race calendar for a given season. This includes all Grand Prix events scheduled for that year, displayed in chronological order with their official event names.
 
-The data is sourced from tif1's embedded schedule data, which includes historical seasons from 2018 onwards and current/future seasons as they become available.
+The data is sourced from tif1's embedded schedule data. It includes historical seasons from 2018 onwards. It also includes current and future seasons as they become available.
 
 **Output Format:**
 
 The command displays a formatted table with:
 - **#**: Sequential event number (1-based index)
-- **Event**: Official event name (e.g., "Monaco Grand Prix", "British Grand Prix")
+- **Event**: Official event name (for example, "Monaco Grand Prix", "British Grand Prix")
 - **Total count**: Summary line showing total number of events
 
 **Examples:**
@@ -1392,7 +1392,7 @@ tif1 sessions YEAR EVENT
 
 **Description:**
 
-The `sessions` command retrieves all practice, qualifying, sprint, and race sessions for a specific Grand Prix event. Different events may have different session structures (e.g., sprint weekends have different formats).
+The `sessions` command retrieves all practice, qualifying, sprint, and race sessions for a specific Grand Prix event. Different events may have different session structures (for example, sprint weekends have different formats).
 
 Typical session types include:
 - **Practice 1, 2, 3**: Free practice sessions (FP1, FP2, FP3)
@@ -1509,8 +1509,8 @@ The command shows a progress indicator while loading session data from the netwo
 **Output Format:**
 
 The command displays a formatted table with:
-- **Driver**: Three-letter driver code (e.g., VER, HAM, LEC)
-- **Team**: Full team name (e.g., Red Bull Racing, Mercedes, Ferrari)
+- **Driver**: Three-letter driver code (for example, VER, HAM, LEC)
+- **Team**: Full team name (for example, Red Bull Racing, Mercedes, Ferrari)
 - **Total count**: Summary line showing total number of drivers
 
 **Examples:**
@@ -1577,9 +1577,9 @@ tif1 drivers 2024 "Japanese Grand Prix" "Practice 1"
 - Typical load time: 1-5 seconds (first run), &lt;1 second (cached)
 
 **Important Notes:**
-- Driver codes are standardized three-letter abbreviations (e.g., VER, HAM, LEC)
+- Driver codes are standardized three-letter abbreviations (for example, VER, HAM, LEC)
 - Team names reflect the official team name at the time of the event
-- Not all drivers may have complete data in all sessions (e.g., DNS, DNF)
+- Not all drivers may have complete data in all sessions (for example, DNS, DNF)
 - Use exact driver codes from this output in subsequent commands
 
 **Common Patterns:**
@@ -1769,7 +1769,7 @@ None
 
 **Description:**
 
-The `cache-info` command provides a summary of your local tif1 cache, which stores downloaded F1 data to speed up subsequent requests. This is useful for monitoring cache growth, troubleshooting storage issues, and understanding cache behavior.
+The `cache-info` command provides a summary of the local tif1 cache. The cache stores downloaded F1 data to speed up subsequent requests. This is useful for monitoring cache growth, troubleshooting storage issues, and understanding cache behavior.
 
 **Output Format:**
 
@@ -1838,7 +1838,7 @@ Cache size grows based on:
   - Fresh install: ~0 MB
   - Light usage (few sessions): 50-200 MB
   - Moderate usage (multiple seasons): 200-500 MB
-  - Heavy usage (extensive analysis): 500+ MB
+  - Heavy usage (long analysis sessions): 500+ MB
 
 **Performance Impact:**
 
@@ -1848,7 +1848,7 @@ Cache size grows based on:
 
 **Custom Cache Location:**
 
-You can override the default cache location using the `TIF1_CACHE_DIR` environment variable:
+The default cache location can be overridden using the `TIF1_CACHE_DIR` environment variable:
 
 ```bash
 # Set custom cache location
@@ -1888,15 +1888,15 @@ tif1 cache-clear [OPTIONS]
 
 **Description:**
 
-The `cache-clear` command removes all cached Formula 1 data from your local cache database. This is useful when:
+The `cache-clear` command removes all cached Formula 1 data from the local cache database. This is useful when:
 
 - **Freeing disk space**: Cache has grown too large
 - **Forcing fresh data**: Suspect cached data is stale or corrupted
 - **Troubleshooting**: Debugging cache-related issues
 - **Testing**: Measuring cold-start performance
-- **Data updates**: Ensuring you get the latest data from the CDN
+- **Data updates**: Ensuring the latest data comes from the CDN
 
-**Important**: Clearing the cache means all subsequent data requests will need to fetch from the network, which will be slower until the cache is rebuilt.
+**Important**: Clearing the cache means all subsequent data requests need a network fetch. These requests are slower until the cache is rebuilt.
 
 **Interactive Mode** (default):
 
@@ -1912,7 +1912,7 @@ Are you sure you want to clear the cache? [y/N]: y
 Cache cleared successfully!
 ```
 
-If you answer 'n' or press Enter (default is No):
+If the answer is 'n' or Enter is pressed (default is No):
 
 ```text
 Are you sure you want to clear the cache? [y/N]: n
@@ -1979,7 +1979,7 @@ The command deletes:
 - All cached driver information
 - SQLite database tables (structure is preserved, data is removed)
 
-**What Doesn't Get Cleared:**
+**What Does not Get Cleared:**
 
 - Cache directory itself (remains for future use)
 - Configuration files (`.tif1rc`)
@@ -1990,13 +1990,13 @@ The command deletes:
 After clearing cache:
 - **First data load**: 2-10 seconds (network fetch)
 - **Subsequent loads**: &lt;1 second (cached)
-- **Cache rebuild**: Automatic as you use commands
+- **Cache rebuild**: Automatic as commands are used
 
 **Safety Notes:**
 
 - **No data loss**: Only cached data is removed; original data remains on CDN
-- **Reversible**: Cache rebuilds automatically as you use the CLI
-- **No configuration changes**: Your settings remain intact
+- **Reversible**: Cache rebuilds automatically as the CLI is used
+- **No configuration changes**: Configuration settings remain intact
 - **Safe to interrupt**: Can be cancelled with Ctrl+C before confirmation
 
 **Exit Codes:**
@@ -2027,12 +2027,12 @@ None
 
 **Description:**
 
-The `version` command displays the currently installed version of tif1. This is useful for:
+The `version` command displays the now installed version of tif1. This is useful for:
 
-- **Troubleshooting**: Verify which version you're running when reporting issues
-- **Compatibility**: Check if you have the required version for specific features
+- **Troubleshooting**: Verify the running version when reporting issues
+- **Compatibility**: Check whether the installed version has specific features
 - **Updates**: Confirm successful upgrade after running `pip install --upgrade tif1`
-- **Documentation**: Ensure documentation matches your installed version
+- **Documentation**: Ensure documentation matches the installed version
 
 **Examples:**
 
@@ -2132,7 +2132,7 @@ tif1 debug YEAR EVENT SESSION
 
 The `debug` command loads a session with verbose debug logging enabled, providing detailed information about the data loading process. This is invaluable for:
 
-- **Troubleshooting**: Diagnose why data isn't loading correctly
+- **Troubleshooting**: Diagnose why data is not loading correctly
 - **Performance Analysis**: See timing for each loading step
 - **Network Issues**: Identify connection problems or timeouts
 - **Cache Behavior**: Verify cache hits/misses
@@ -2335,7 +2335,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race"
 tif1 fastest 2025 "Monaco Grand Prix" "Race"
 ```
 
-This workflow helps you:
+This workflow helps with the following:
 - Discover available data without guessing event/session names
 - Verify data exists before writing Python code
 - Understand the data structure and hierarchy
@@ -2661,7 +2661,7 @@ parallel tif1 sessions 2025 {} ::: "Monaco Grand Prix" "British Grand Prix" "Ita
 
 ### JSON Output (Future Enhancement)
 
-While not currently supported, you can parse table output:
+While not now supported, table output can be parsed:
 
 ```bash
 # Extract structured data from tables
@@ -2686,7 +2686,7 @@ tif1 drivers 2025 "Monaco Grand Prix" "Race" | \
    tif1 sessions 2025 Monaco Grand Prix
    ```
 
-2. **Use tab completion** (if your shell supports it):
+2. **Use tab completion** (if the shell supports it):
    ```bash
    tif1 ev<TAB>        # Completes to: tif1 events
    tif1 cache-<TAB>    # Shows: cache-info, cache-clear
@@ -2960,7 +2960,7 @@ tif1 fastest 2025 "Monaco Grand Prix" "Qualifying"
 
 ### Configuration File
 
-While the CLI primarily uses environment variables, you can create a shell configuration file for persistent settings:
+While the CLI primarily uses environment variables, a shell configuration file can hold persistent settings:
 
 **Linux/macOS (~/.tif1rc):**
 
@@ -3054,7 +3054,7 @@ tif1 cache-info
 
 **3. Selective Data Loading**
 
-Only load data you need:
+Only load the data that is needed:
 
 ```bash
 # Load specific driver data (faster)
@@ -3088,7 +3088,7 @@ done <<< "$EVENTS"
 
 **1. jq (JSON Processing)**
 
-While CLI doesn't output JSON directly, you can convert:
+While CLI does not output JSON directly, table output can be converted:
 
 ```bash
 # Extract driver codes to JSON array
@@ -3439,7 +3439,7 @@ echo "No regressions found"
    tif1 cache-clear -y
    ```
 
-5. **Leverage Tab Completion**
+5. **Use Tab Completion**
    ```bash
    # If your shell supports it
    tif1 ev<TAB>        # Completes to: tif1 events
@@ -3611,7 +3611,7 @@ echo "No regressions found"
    tif1 cache-clear -y
    ```
 
-4. **Document Your Workflows**
+4. **Document the Workflows**
    ```bash
    # Add comments to scripts
    # This script analyzes Monaco qualifying data
@@ -3628,7 +3628,7 @@ echo "No regressions found"
 A: Yes, tif1 CLI is completely free and open-source.
 
 **Q: Do I need an API key?**
-A: No, tif1 CLI doesn't require any API keys or authentication.
+A: No, tif1 CLI does not require any API keys or authentication.
 
 **Q: What data is available?**
 A: Historical F1 data from 2018 onwards, including lap times, telemetry, weather, and race control messages.
@@ -3665,7 +3665,7 @@ A: The driver may not have participated in that session (DNS, DNF, or reserve dr
 A: Data source and processing may differ slightly from official FIA timing.
 
 **Q: Can I get telemetry data via CLI?**
-A: Currently, the CLI focuses on lap times and driver info. Use the Python API for telemetry.
+A: Now, the CLI focuses on lap times and driver info. Use the Python API for telemetry.
 
 **Q: How accurate is the data?**
 A: Data is sourced from official timing systems and is generally very accurate.
@@ -3673,13 +3673,13 @@ A: Data is sourced from official timing systems and is generally very accurate.
 ### Troubleshooting Questions
 
 **Q: Command not found error?**
-A: Ensure tif1 is installed and Python Scripts directory is in your PATH.
+A: Ensure tif1 is installed and the Python Scripts directory is in the PATH.
 
 **Q: Permission denied error?**
 A: Check cache directory permissions or use a custom cache location.
 
 **Q: Network timeout error?**
-A: Increase timeout with `TIF1_TIMEOUT=60` or check your internet connection.
+A: Increase timeout with `TIF1_TIMEOUT=60` or check the internet connection.
 
 **Q: Cache corruption error?**
 A: Clear cache with `tif1 cache-clear -y` and try again.
@@ -3718,13 +3718,13 @@ A: Clear cache with `tif1 cache-clear -y` and try again.
 
 ## Contributing
 
-We welcome contributions to improve the CLI! Here's how you can help:
+Contributions to improve the CLI are welcome. These are the ways to help:
 
 ### Reporting Issues
 
 1. Check existing issues on GitHub
 2. Provide detailed error messages and steps to reproduce
-3. Include your OS, Python version, and tif1 version
+3. Include the OS, Python version, and tif1 version
 4. Use `tif1 debug` output when relevant
 
 ### Suggesting Features
@@ -3737,7 +3737,7 @@ We welcome contributions to improve the CLI! Here's how you can help:
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes with tests
+3. Make the changes with tests
 4. Submit a pull request
 
 ### Documentation

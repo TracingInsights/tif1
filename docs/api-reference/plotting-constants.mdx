@@ -14,7 +14,7 @@ keywords:
   - "colormap"
 ---
 
-The `plotting_constants` module holds the plotting color data: historically accurate team colors and tyre compound colors for each F1 season from 2018 onwards. The `tif1.plotting` module reads these mappings when it resolves colors and car image codes. The module contains data only; it defines no functions.
+The `plotting_constants` module holds the plotting color data. It contains historically accurate team colors and tyre compound colors for each F1 season from 2018 onwards. The `tif1.plotting` module reads these mappings when it resolves colors and car image codes. The module contains data only; it defines no functions.
 
 ## Overview
 
@@ -110,7 +110,7 @@ The 2026 mapping adds the new teams `Audi` (`#9a9a9a`) and `Cadillac` (`#C5A253`
 
 ## TEAM_CODES
 
-`TEAM_CODES` maps a season year to a mapping of timing-data team names to the short car image codes used by the bundled car artwork in `tif1.assets`. Names with engine suffixes map to the same code, so every team name variant that appears in lap data resolves to the correct artwork.
+`TEAM_CODES` maps a season year to a mapping of timing-data team names to short car image codes. The bundled car artwork in `tif1.assets` uses these codes. Names with engine suffixes map to the same code. Each team name variant in lap data resolves to the correct artwork.
 
 Example entries for 2024:
 
@@ -129,8 +129,8 @@ Example entries for 2024:
 - `get_compound_color(compound, session=None)` and `get_compound_mapping(session=None)` read the compound colors for the session year. An unknown year falls back to `DEFAULT_COMPOUND_COLORS`. An unknown compound resolves to the `UNKNOWN` color.
 - `get_team_color(identifier, session, *, colormap="default", exact_match=False)` and `get_driver_color(...)` resolve team profiles built from `YEAR_CONSTANTS` for the session year. They require a session.
 - `team_code_mapping(year)` returns a copy of `TEAM_CODES[year]`.
-- `team_color_mapping(year)` returns a copy of `TEAM_COLORS[year]`, expanded so that every team name with a car code in `TEAM_CODES` also has a color.
-- `get_team_code(identifier, session=None, *, year=None, exact_match=False)` resolves a team name to its car image code, using the session year when a session is given, otherwise the explicit `year`.
+- `team_color_mapping(year)` returns a copy of `TEAM_COLORS[year]`. The copy has a color for every team name with a car code in `TEAM_CODES`.
+- `get_team_code(identifier, session=None, *, year=None, exact_match=False)` resolves a team name to its car image code. It uses the session year when a session is given, and the explicit `year` otherwise.
 
 ## Overrides
 

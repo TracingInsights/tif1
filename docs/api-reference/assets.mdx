@@ -15,7 +15,7 @@ keywords:
   - "offline"
 ---
 
-The `assets` module ships chart artwork inside the package: car images per team per season (2018 to 2026), tyre compound images, and brand fonts. Plots render this artwork fully offline, without a network fetch at plot time. The `tif1.assets` directory tree holds the files; this module provides path helpers, cached loaders, and matplotlib annotation helpers.
+The `assets` module ships chart artwork inside the package. The artwork covers car images per team per season (2018 to 2026), tyre compound images, and brand fonts. Plots render this artwork fully offline, without a network fetch at plot time. The `tif1.assets` directory tree holds the files; this module provides path helpers, cached loaders, and matplotlib annotation helpers.
 
 ## Overview
 
@@ -91,7 +91,7 @@ Return the bundled path of a font file, for example `font_path("Azonix.otf")`. P
 load_car_image(year: int, team_code: str) -> np.ndarray
 ```
 
-Load a bundled car image as an RGBA numpy array. The result is cached with `functools.cache`, so repeated calls for the same year and code return the same array without disk reads.
+Load a bundled car image as an RGBA numpy array. The result is cached with `functools.cache`. Repeated calls for the same year and code return the same array without disk reads.
 
 ### `load_tyre_image`
 

@@ -15,14 +15,14 @@ keywords:
 
 # Jupyter Notebook Integration
 
-`tif1` provides comprehensive Jupyter notebook integration with rich HTML displays, automatic environment detection, and interactive utilities designed specifically for Formula 1 data analysis. The library automatically enhances your notebook experience with formatted displays for Session, Driver, and Lap objects, making data exploration intuitive and visually appealing.
+`tif1` provides Jupyter notebook integration with rich HTML displays, automatic environment detection, and interactive utilities for Formula 1 data analysis. The library shows formatted displays for Session, Driver, and Lap objects in the notebook.
 
 ## Overview
 
 The Jupyter integration module (`tif1.jupyter`) provides:
 
 - **Automatic Environment Detection**: Detects when running in Jupyter and enables rich displays automatically
-- **Rich HTML Representations**: Beautiful, formatted displays for all major tif1 objects
+- **Rich HTML Representations**: Formatted displays for all major tif1 objects
 - **DataFrame Summaries**: Enhanced DataFrame displays with memory usage and shape information
 - **Zero Configuration**: Works out of the box with no setup required
 - **Fallback Support**: Gracefully degrades to standard repr() when not in Jupyter
@@ -32,11 +32,11 @@ The Jupyter integration module (`tif1.jupyter`) provides:
 
 ## Automatic Activation
 
-The Jupyter integration activates automatically when you import `tif1` in a Jupyter environment. The library uses intelligent detection to identify Jupyter notebooks, JupyterLab, and IPython kernels.
+The Jupyter integration activates automatically when `tif1` is imported in a Jupyter environment. The library detects Jupyter notebooks, JupyterLab, and IPython kernels.
 
 ### How It Works
 
-When you import `tif1`, the library:
+When `tif1` is imported, the library:
 
 1. **Detects the Environment**: Checks if IPython is available and if an IPython kernel is running
 2. **Enables Rich Displays**: Automatically patches Session, Driver, and Lap classes with `_repr_html_()` methods
@@ -55,10 +55,10 @@ session  # Displays rich HTML representation automatically
 
 The `_is_notebook()` function performs the following checks:
 
-- Attempts to import `IPython` module
+- Tries to import the `IPython` module
 - Retrieves the current IPython instance via `get_ipython()`
 - Checks for `IPKernelApp` in the shell configuration (indicates Jupyter kernel)
-- Returns `True` only if all checks pass, ensuring we're in a genuine Jupyter environment
+- Returns `True` only if all checks pass, which confirms a genuine Jupyter environment
 
 This approach ensures compatibility with:
 - Jupyter Notebook (classic interface)
@@ -72,18 +72,18 @@ This approach ensures compatibility with:
 
 ## Rich HTML Displays
 
-All major tif1 objects provide rich HTML representations that display automatically when you evaluate them in a Jupyter cell. These displays are styled with borders, colors, and structured tables for maximum readability.
+All major tif1 objects provide rich HTML representations that display automatically in a Jupyter cell. These displays are styled with borders, colors, and structured tables.
 
 ### Session Display
 
-The Session object displays comprehensive information about the loaded F1 session, including year, Grand Prix name, session type, backend library, and driver count.
+The Session object displays information about the loaded F1 session: year, Grand Prix name, session type, backend, and driver count.
 
 **Display Features:**
 - 🏎️ Emoji icon for quick visual identification
 - Bordered container with light gray background
 - Structured table layout with key-value pairs
 - URL-decoded Grand Prix and session names (handles special characters)
-- Dynamic driver count (shows "Not loaded" if drivers haven't been fetched yet)
+- Dynamic driver count (shows "Not loaded" if drivers have not been fetched yet)
 - Backend library indicator (pandas or polars)
 
 ```python
@@ -121,7 +121,7 @@ session
 
 ### Driver Display
 
-The Driver object displays information about a specific driver within a session, including their driver code, session context, and data loading status.
+The Driver object displays information about one driver in a session: driver code, session context, and data loading status.
 
 **Display Features:**
 - 👤 Emoji icon for driver identification
@@ -226,11 +226,11 @@ laps  # Shows summary + standard DataFrame display
 
 ## Manual Control and Advanced Usage
 
-While the Jupyter integration activates automatically, you can manually control and customize the display behavior for advanced use cases.
+The Jupyter integration activates automatically. Control and customize the display behavior manually for advanced use cases.
 
 ### Manual Activation
 
-If you need to manually enable Jupyter displays (e.g., after importing tif1 before IPython was available), use the `enable_jupyter_display()` function:
+Manually enable Jupyter displays with the `enable_jupyter_display()` function when needed (for example, after importing tif1 before IPython was available):
 
 ```python
 from tif1.jupyter import enable_jupyter_display
@@ -243,7 +243,7 @@ enable_jupyter_display()
 - Imports Session, Driver, and Lap classes from `tif1.core`
 - Patches each class with a `_repr_html_()` method
 - Logs activation status to the logger
-- Handles errors gracefully if classes can't be imported
+- Handles errors gracefully if classes cannot be imported
 
 **When to Use:**
 - Dynamic module loading scenarios
@@ -253,7 +253,7 @@ enable_jupyter_display()
 
 ### Environment Detection
 
-Check if your code is running in a Jupyter environment:
+Check if the code runs in a Jupyter environment:
 
 ```python
 from tif1.jupyter import _is_notebook
@@ -270,7 +270,7 @@ else:
 - Custom display implementations
 - Testing different output formats
 
-**Note**: The function name starts with underscore (`_is_notebook`) indicating it's an internal API, but it's stable and safe to use.
+**Note**: The function name starts with an underscore (`_is_notebook`). This marks an internal API, but the function is stable and safe to use.
 
 ### Programmatic HTML Generation
 
@@ -336,7 +336,7 @@ display_session_with_fastest_lap(session)
 
 ### Disabling Rich Displays
 
-If you prefer standard text output even in Jupyter:
+Use standard text output in Jupyter when preferred:
 
 ```python
 # Remove _repr_html_ methods
@@ -805,7 +805,7 @@ display_memory_usage()
 
 ### Display Not Working
 
-If rich displays aren't showing:
+If rich displays are not showing:
 
 ```python
 # Manually enable

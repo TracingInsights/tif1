@@ -1,7 +1,7 @@
 ---
 title: "Data Types & Type Hints"
 icon: "code"
-description: "Comprehensive guide to type definitions, schemas, and type hints in tif1"
+description: "Type definitions, schemas, and type hints in tif1"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -15,7 +15,7 @@ keywords:
 
 ## Overview
 
-`tif1` is built with type safety as a first-class citizen. Every public API, function, method, and data structure includes comprehensive type hints that enable static type checkers (mypy, pyright, pytype) to catch errors before runtime. This design philosophy provides multiple benefits:
+`tif1` is built with type safety as a core design goal. Every public API, function, method, and data structure includes type hints. These hints enable static type checkers (mypy, pyright, pytype) to catch errors before runtime. This design provides multiple benefits:
 
 - **Compile-time error detection**: Catch type mismatches, invalid parameters, and API misuse before running code
 - **Enhanced IDE support**: Get accurate autocomplete, inline documentation, parameter hints, and refactoring tools
@@ -23,9 +23,9 @@ keywords:
 - **Safer refactoring**: Change code with confidence knowing type checkers will catch breaking changes
 - **Better developer experience**: Spend less time debugging runtime errors and more time building features
 
-This comprehensive guide covers all type definitions available in `tif1`, organized into the following sections:
+This guide covers all type definitions in `tif1`, organized into the following sections:
 
-### What You'll Learn
+### What This Guide Covers
 
 1. **Literal Type Aliases** - Constrained string values for session types, tire compounds, backends, and track status
 2. **TypedDict Schemas** - Structured definitions for DataFrame row data (laps, telemetry, weather, race control)
@@ -78,7 +78,7 @@ from tif1.types import (
 
 ## Literal Type Aliases
 
-Literal types are one of Python's most powerful type system features. They restrict values to a specific, finite set of allowed strings, providing compile-time validation and excellent autocomplete support in IDEs. Unlike plain `str` types, Literal types give you:
+Literal types are a key Python type system feature. They restrict values to a specific, finite set of allowed strings. This provides compile-time validation and autocomplete support in IDEs. Unlike plain `str` types, Literal types provide:
 
 - **Exhaustive checking**: Type checkers can verify all possible values are handled
 - **Autocomplete**: IDEs show exactly which values are valid
@@ -289,7 +289,7 @@ except ValueError as e:
 
 ### `SessionType`
 
-The `SessionType` literal defines all valid Formula 1 session types across different weekend formats. Formula 1 has evolved its weekend structure over the years, introducing sprint races and varying qualifying formats. This type ensures you only reference sessions that actually exist in the F1 calendar.
+The `SessionType` literal defines all valid Formula 1 session types across different weekend formats. Formula 1 has evolved its weekend structure over the years, introducing sprint races and varying qualifying formats. This type ensures that only sessions present in the F1 calendar can be referenced.
 
 ```python
 SessionType = Literal[
@@ -306,7 +306,7 @@ SessionType = Literal[
 
 #### F1 Weekend Format Evolution
 
-Formula 1 weekend formats have changed significantly, especially with the introduction of sprint races:
+Formula 1 weekend formats have changed over time, especially with the introduction of sprint races:
 
 **Standard Race Weekend (Traditional Format)**
 
@@ -980,7 +980,7 @@ TrackStatusType = Literal[
 - `"4"`: Safety Car deployed
   - Physical pace car on track
   - All cars bunch up behind safety car
-  - Significantly slower lap times
+  - Slower lap times
   - Used for major incidents or debris
   - Pit stops often strategic during SC
 
@@ -1201,12 +1201,12 @@ if impact['sc_slowdown']:
 
 ## TypedDict Schemas
 
-TypedDict is a Python feature that provides type hints for dictionary structures. Unlike regular dictionaries, TypedDict allows you to specify:
+TypedDict is a Python feature that provides type hints for dictionary structures. Unlike regular dictionaries, TypedDict allows the exact structure to be specified:
 - Exact keys that must or may exist
 - Type of value for each key
 - Which fields are required vs optional
 
-`tif1` uses TypedDict extensively to define the structure of DataFrame row data. This provides:
+`tif1` uses TypedDict to define the structure of DataFrame row data. This provides:
 - **Type safety**: IDEs and type checkers know what fields exist
 - **Autocomplete**: Get field suggestions when accessing row data
 - **Documentation**: The type itself documents the data structure
@@ -1216,7 +1216,7 @@ All TypedDict schemas use `NotRequired` for optional fields, making it explicit 
 
 ### `LapDataDict`
 
-The `LapDataDict` TypedDict defines the complete structure of lap timing data in DataFrames. This is the most comprehensive data structure in `tif1`, containing timing, speed, tire, weather, and metadata for each lap.
+The `LapDataDict` TypedDict defines the complete structure of lap timing data in DataFrames. This is the largest data structure in `tif1`, containing timing, speed, tire, weather, and metadata for each lap.
 
 ```python
 class LapDataDict(TypedDict):
@@ -1456,7 +1456,7 @@ if len(weather_laps) > 0:
 
 #### Complete Lap Analysis Example
 
-Comprehensive example using all field categories:
+Complete example using all field categories:
 
 ```python
 import tif1
@@ -2114,7 +2114,7 @@ def process_lap(lap: dict) -> dict:
 
 ### 5. Enable Strict Type Checking
 
-Use mypy or pyright in your development workflow:
+Use mypy or pyright in the development workflow:
 
 ```bash
 # Add to pyproject.toml
@@ -2195,7 +2195,7 @@ if driver is not None:  # Type checker knows driver is not None here
     laps = driver.laps
 ```
 
-### 8. Leverage Type Guards
+### 8. Use Type Guards
 
 Use type guards for runtime type checking:
 
@@ -2327,7 +2327,7 @@ for session_type, session_data in analysis.items():
 
 ## Summary
 
-This comprehensive guide covered all type definitions in `tif1`:
+This guide covered all type definitions in `tif1`:
 
 ### Key Takeaways
 
@@ -2341,7 +2341,7 @@ This comprehensive guide covered all type definitions in `tif1`:
 
 5. **Type Checking Tools** (mypy, pyright) catch errors before runtime and integrate with modern IDEs
 
-6. **Best Practices** include always using type hints, leveraging Union types, importing from tif1.types, and enabling strict type checking
+6. **Best Practices** include always using type hints, using Union types, importing from tif1.types, and enabling strict type checking
 
 ### Benefits of Type Safety in tif1
 
@@ -2354,9 +2354,9 @@ This comprehensive guide covered all type definitions in `tif1`:
 
 ### Next Steps
 
-1. **Enable Type Checking**: Add mypy or pyright to your project
-2. **Add Type Hints**: Annotate your tif1 code with proper types
-3. **Use IDE Features**: Leverage autocomplete and inline documentation
+1. **Enable Type Checking**: Add mypy or pyright to the project
+2. **Add Type Hints**: Annotate tif1 code with proper types
+3. **Use IDE Features**: Use autocomplete and inline documentation
 4. **Write Type-Safe Code**: Follow the best practices outlined above
 5. **Contribute**: Help improve tif1's type definitions
 

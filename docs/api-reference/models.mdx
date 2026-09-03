@@ -1,7 +1,7 @@
 ---
 title: "Models"
 icon: "box"
-description: "Comprehensive guide to Laps, Lap, Driver, Telemetry, SessionResults, DriverResult, and CircuitInfo classes"
+description: "Laps, Lap, Driver, Telemetry, SessionResults, DriverResult, and CircuitInfo classes"
 keywords:
   - "data models"
   - "Laps model"
@@ -17,11 +17,11 @@ keywords:
 
 # Models API Reference
 
-The models module provides a comprehensive, object-oriented interface for working with Formula 1 data. These classes extend pandas DataFrame and Series objects with domain-specific methods tailored for F1 analysis, making it intuitive to filter, analyze, and visualize racing data with minimal code.
+The models module provides an object-oriented interface for working with Formula 1 data. These classes extend pandas DataFrame and Series objects with domain-specific methods for F1 analysis. Filter, analyze, and visualize racing data with few lines of code.
 
 ## Overview
 
-All model classes in tif1 are built on top of pandas data structures, providing familiar DataFrame and Series interfaces while adding specialized methods for F1 data manipulation. This design philosophy allows you to leverage the full power of pandas operations alongside tif1-specific functionality, creating a seamless development experience.
+All model classes in tif1 are built on top of pandas data structures. They provide familiar DataFrame and Series interfaces plus specialized methods for F1 data manipulation. This design allows pandas operations alongside tif1-specific functionality.
 
 ### Key Features
 
@@ -50,11 +50,11 @@ The tif1 models form a logical hierarchy that mirrors the structure of F1 data:
 
 The models are designed with the following principles:
 
-1. **Intuitive Access Patterns**: Natural property access (e.g., `lap.telemetry`, `driver.laps`)
+1. **Simple Access Patterns**: Natural property access (for example, `lap.telemetry`, `driver.laps`)
 2. **Consistent Filtering**: All filtering methods follow the `pick_*` naming convention
 3. **Graceful Degradation**: Methods return empty DataFrames instead of raising exceptions when data is unavailable
-4. **Session Context**: All models maintain a reference to their parent session for seamless data access
-5. **Performance First**: Optimized for speed with vectorized operations and intelligent caching
+4. **Session Context**: All models maintain a reference to their parent session for direct data access
+5. **Performance First**: Optimized for speed with vectorized operations and caching
 
 ---
 
@@ -72,7 +72,7 @@ The `Laps` class represents a collection of lap timing data and is the primary i
 
 ### Common Access Patterns
 
-The `Laps` class can be accessed through multiple pathways depending on your analysis needs:
+The `Laps` class can be accessed through multiple pathways, depending on the analysis needs:
 
 ```python
 # All laps from all drivers in a session
@@ -90,12 +90,12 @@ fast_soft_laps = session.laps.pick_driver("VER").pick_tyre("SOFT").pick_quicklap
 
 ### Data Structure
 
-Each row in a `Laps` DataFrame represents a single lap with comprehensive timing and metadata. The DataFrame contains the following column categories:
+Each row in a `Laps` DataFrame represents a single lap with complete timing and metadata. The DataFrame contains the following column categories:
 
 #### Core Identity Columns
-- **`Driver`** (str): 3-letter driver code (e.g., "VER", "HAM", "LEC")
-- **`DriverNumber`** (str): Car racing number (e.g., "1", "44", "16")
-- **`Team`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes")
+- **`Driver`** (str): 3-letter driver code (for example, "VER", "HAM", "LEC")
+- **`DriverNumber`** (str): Car racing number (for example, "1", "44", "16")
+- **`Team`** (str): Full team name (for example, "Red Bull Racing", "Mercedes")
 - **`LapNumber`** (float): Sequential lap number within the session
 
 #### Timing Columns (timedelta64[ns])
@@ -145,7 +145,7 @@ When weather data is available, each lap includes:
 - **`Pressure`** (float): Atmospheric pressure in mbar
 - **`WindSpeed`** (float): Wind speed in km/h
 - **`WindDirection`** (int): Wind direction in degrees
-- **`Rainfall`** (bool): Whether it's raining
+- **`Rainfall`** (bool): Whether it is raining
 
 ### Properties
 
@@ -163,7 +163,7 @@ When weather data is available, each lap includes:
 
 ### Core Filtering Methods
 
-The Laps class provides a comprehensive set of filtering methods that can be chained together for complex queries. All filtering methods return new Laps objects, preserving the original data (immutable operations). These methods are optimized for performance using pandas' vectorized operations.
+The Laps class provides a complete set of filtering methods that can be chained together for complex queries. All filtering methods return new Laps objects, preserving the original data (immutable operations). These methods are optimized for performance using pandas' vectorized operations.
 
 #### `pick_driver(identifier)`
 
@@ -176,8 +176,8 @@ def pick_driver(identifier: str | int | dict) -> Laps
 **Parameters:**
 
 - **`identifier`**: Can be one of several formats for maximum flexibility:
-  - **`str`**: 3-letter driver code (e.g., "VER", "HAM", "LEC") - most common usage
-  - **`int`**: Driver racing number (e.g., 1, 44, 16)
+  - **`str`**: 3-letter driver code (for example, "VER", "HAM", "LEC") - most common usage
+  - **`int`**: Driver racing number (for example, 1, 44, 16)
   - **`dict`**: Dictionary containing driver info with keys like "driver", "dn", "RacingNumber", "Abbreviation"
   - **Object**: Any object with a `driver` or `Abbreviation` attribute
 
@@ -291,7 +291,7 @@ def pick_drivers(identifiers: list[str | int | dict]) -> Laps
 - **`Laps`** object containing laps from all specified drivers. Returns empty Laps if no matching drivers found.
 
 **Behavior Details:**
-- Accepts mixed identifier types in the same list (e.g., `["VER", 44, {"driver": "LEC"}]`)
+- Accepts mixed identifier types in the same list (for example, `["VER", 44, {"driver": "LEC"}]`)
 - Order of drivers in result matches original lap chronological order, not identifier order
 - Duplicate identifiers are automatically deduplicated
 - Returns empty Laps if no matching drivers found
@@ -393,7 +393,7 @@ def pick_fastest(only_by_time: bool = False) -> Lap | None
 
 **Parameters:**
 
-- **`only_by_time`** (bool, default=False): Reserved for future use. Currently has no effect. In FastF1, this parameter controls whether to consider only lap time or also track status. In tif1, only lap time is considered.
+- **`only_by_time`** (bool, default=False): Reserved for future use. Now has no effect. In FastF1, this parameter controls whether to consider only lap time or also track status. In tif1, only lap time is considered.
 
 **Returns:**
 - **`Lap`** object representing the fastest lap, or **`None`** if no valid laps found
@@ -696,14 +696,14 @@ def pick_laps(laps: int | list | slice) -> Laps
 - **`laps`**: Can be:
   - **`int`**: Single lap number
   - **`list[int]`**: Multiple specific lap numbers
-  - **`slice`**: Range of laps (e.g., `slice(10, 20)` for laps 10-20 inclusive)
+  - **`slice`**: Range of laps (for example, `slice(10, 20)` for laps 10-20 inclusive)
 
 **Returns:**
 - **`Laps`** object containing only the specified lap(s)
 
 **Behavior Details:**
 - Lap numbers are 1-indexed (first lap is lap 1)
-- Returns empty Laps if lap number doesn't exist
+- Returns empty Laps if lap number does not exist
 - `pick_lap` is a convenience wrapper for `pick_laps` with a single lap
 - Slice ranges are inclusive on both ends
 - Preserves all driver data (returns laps from all drivers at that lap number)
@@ -776,7 +776,7 @@ def pick_teams(names: list[str]) -> Laps
 
 **Parameters:**
 
-- **`name`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes", "Ferrari")
+- **`name`** (str): Full team name (for example, "Red Bull Racing", "Mercedes", "Ferrari")
 - **`names`** (list[str]): List of team names for `pick_teams`
 
 **Returns:**
@@ -897,7 +897,7 @@ def pick_box_laps(which: str = "both") -> Laps
 - `pick_wo_box()` returns laps without any pit activity (neither PitInTime nor PitOutTime)
 - `pick_box_laps()` returns laps with pit activity
 - Useful for excluding slow pit laps from pace analysis
-- Returns empty Laps if columns don't exist
+- Returns empty Laps if columns do not exist
 
 **Example Usage:**
 
@@ -945,14 +945,14 @@ def pick_accurate() -> Laps
 ```
 
 **Returns:**
-- **`pick_not_deleted()`**: Laps that weren't deleted by race control
+- **`pick_not_deleted()`**: Laps that were not deleted by race control
 - **`pick_accurate()`**: Laps with accurate timing data
 
 **Behavior Details:**
 - `pick_not_deleted()` filters out laps where `Deleted == True`
 - `pick_accurate()` filters for laps where `IsAccurate == True`
 - Often used together for high-quality data analysis
-- Returns all laps if the respective column doesn't exist
+- Returns all laps if the respective column does not exist
 
 **Example Usage:**
 
@@ -994,7 +994,7 @@ if "Deleted" in laps.columns:
 
 #### `get_telemetry()` / `telemetry` property
 
-Access high-frequency telemetry data for the laps in the collection. This is one of the most powerful features of tif1, enabling detailed analysis of driver inputs and car behavior.
+Access high-frequency telemetry data for the laps in the collection. This feature enables detailed analysis of driver inputs and car behavior.
 
 ```python
 def get_telemetry() -> Telemetry
@@ -1192,7 +1192,7 @@ if not weather.empty:
 
 #### `iterlaps(require=None)`
 
-Iterate over laps with optional required columns. This is the recommended way to iterate over laps when you need to process each lap individually.
+Iterate over laps with optional required columns. This is the recommended way to process each lap individually.
 
 ```python
 def iterlaps(require: list[str] | None = None) -> Generator[_IterLapResult, None, None]
@@ -1211,7 +1211,7 @@ def iterlaps(require: list[str] | None = None) -> Generator[_IterLapResult, None
 - Skips laps with null values in required columns
 - Removes null columns from each lap before yielding
 - Preserves session context in yielded Lap objects
-- Raises `KeyError` if a required column doesn't exist in the DataFrame
+- Raises `KeyError` if a required column does not exist in the DataFrame
 
 **Example Usage:**
 
@@ -1270,7 +1270,7 @@ for lap_result in laps.iterlaps(require=["LapTime", "Compound"]):
 
 #### `split_qualifying_sessions()`
 
-Split qualifying laps into Q1, Q2, and Q3 sessions. Note: tif1 doesn't split by session internally, so this returns copies for FastF1 compatibility.
+Split qualifying laps into Q1, Q2, and Q3 sessions. Note: tif1 does not split by session internally, so this returns copies for FastF1 compatibility.
 
 ```python
 def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
@@ -1283,7 +1283,7 @@ def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
 - Returns three Laps objects representing Q1, Q2, and Q3
 - In tif1, this returns copies of the same data for compatibility
 - Each returned Laps object preserves session context
-- If `QualifyingSession` column exists, attempts to split by that column
+- If the `QualifyingSession` column exists, splits by that column
 
 **Example Usage:**
 
@@ -1317,7 +1317,7 @@ print(f"Eliminated in Q2: {eliminated_q2}")
 
 ### DataFrame Operations
 
-The `Laps` class inherits all pandas DataFrame operations, so you can use standard pandas methods:
+The `Laps` class inherits all pandas DataFrame operations, so standard pandas methods work:
 
 ```python
 # Standard pandas operations
@@ -1345,7 +1345,7 @@ laps["LapTimeMinutes"] = laps["LapTimeSeconds"] / 60
 # (Note: use join() or merge() methods to preserve Laps type)
 ```
 
-**Important:** When using pandas operations that return DataFrames, the result may be a plain pandas DataFrame rather than a Laps object. Use the tif1-specific methods (pick_*) to maintain the Laps type and session context.
+**Important:** When pandas operations return DataFrames, the result may be a plain pandas DataFrame rather than a Laps object. Use the tif1-specific methods (pick_*) to maintain the Laps type and session context.
 
 ---
 
@@ -1353,7 +1353,7 @@ laps["LapTimeMinutes"] = laps["LapTimeSeconds"] / 60
 
 ## Lap
 
-The `Lap` class represents a single lap with comprehensive timing data and access to high-frequency telemetry. It inherits from `pandas.Series`, making it a row-like object with named fields that can be accessed like a dictionary or via attribute access.
+The `Lap` class represents a single lap with timing data and access to high-frequency telemetry. It inherits from `pandas.Series`. The result is a row-like object with named fields, accessed like a dictionary or via attribute access.
 
 ### Class Overview
 
@@ -1377,7 +1377,7 @@ for lap_result in laps.iterlaps():
 
 ### Data Structure
 
-A `Lap` object is a pandas Series containing all the lap data columns described in the Laps section. You can access any column value using dictionary-style or attribute-style access:
+A `Lap` object is a pandas Series containing all the lap data columns described in the Laps section. Access any column value with dictionary-style or attribute-style access:
 
 ```python
 lap = driver.get_lap(19)
@@ -1426,7 +1426,7 @@ tyre_life = lap.get("TyreLife", 0)
   High-frequency telemetry data for this lap. This property provides lazy-loaded access to detailed sensor data including speed, throttle, brake, gear, DRS, and position information.
 
   **Behavior:**
-  - Loaded lazily on first access (not fetched until you access this property)
+  - Loaded lazily on first access (not fetched until this property is accessed)
   - Cached after first load for performance
   - Returns empty Telemetry DataFrame if data not found or unavailable
   - Automatically handles network requests and caching
@@ -1600,7 +1600,7 @@ telemetry = lap.telemetry
 
 #### `get_weather_data()`
 
-Get weather data for this lap. Currently returns an empty Series as lap-specific weather data is included in the lap's columns.
+Get weather data for this lap. Now returns an empty Series as lap-specific weather data is included in the lap's columns.
 
 ```python
 def get_weather_data() -> Series
@@ -1742,7 +1742,7 @@ for lap_result in driver_laps.iterlaps():
 
 ## Driver
 
-The `Driver` class represents a driver's participation in a session, providing access to their metadata, all their laps, and convenience methods for analyzing their performance. It inherits from `pandas.Series`, making it a dictionary-like object with driver information.
+The `Driver` class represents a driver's participation in a session. It provides access to the driver's metadata, laps, and analysis methods. It inherits from `pandas.Series`, making it a dictionary-like object with driver information.
 
 ### Class Overview
 
@@ -1767,13 +1767,13 @@ A `Driver` object is a pandas Series containing driver metadata. The data is sto
 
 **Available Fields (in Series data):**
 
-- **`DriverNumber`** (str): Racing number (e.g., "1", "44", "16")
-- **`Abbreviation`** (str): 3-letter driver code (e.g., "VER", "HAM", "LEC")
-- **`TeamName`** (str): Full team name (e.g., "Red Bull Racing", "Mercedes")
-- **`TeamColor`** (str): Team color hex code (e.g., "#3671C6")
-- **`FirstName`** (str): Driver's first name (e.g., "Max", "Lewis")
-- **`LastName`** (str): Driver's last name (e.g., "Verstappen", "Hamilton")
-- **`FullName`** (str): Driver's full name (e.g., "Max Verstappen")
+- **`DriverNumber`** (str): Racing number (for example, "1", "44", "16")
+- **`Abbreviation`** (str): 3-letter driver code (for example, "VER", "HAM", "LEC")
+- **`TeamName`** (str): Full team name (for example, "Red Bull Racing", "Mercedes")
+- **`TeamColor`** (str): Team color hex code (for example, "#3671C6")
+- **`FirstName`** (str): Driver's first name (for example, "Max", "Lewis")
+- **`LastName`** (str): Driver's last name (for example, "Verstappen", "Hamilton")
+- **`FullName`** (str): Driver's full name (for example, "Max Verstappen")
 - **`HeadshotUrl`** (str): URL to driver headshot image
 
 **Access Examples:**
@@ -1795,7 +1795,7 @@ if "HeadshotUrl" in driver:
 ### Properties
 
 <ResponseField name="driver" type="str">
-  The 3-letter driver code (e.g., "VER", "HAM", "LEC"). This is stored as an attribute (not in the Series data) and provides quick access to the driver identifier.
+  The 3-letter driver code (for example, "VER", "HAM", "LEC"). This is stored as an attribute (not in the Series data) and provides quick access to the driver identifier.
 
   **Usage:**
   ```python
@@ -1833,7 +1833,7 @@ if "HeadshotUrl" in driver:
   **Type:** Returns `Laps` (pandas backend) or `DataFrame` (polars backend)
 
   **Behavior:**
-  - Loaded lazily on first access (not fetched until you access this property)
+  - Loaded lazily on first access (not fetched until this property is accessed)
   - Cached after first load for performance
   - Returns empty DataFrame if no laps found
   - Automatically filters session laps to this driver
@@ -1907,7 +1907,7 @@ def get_lap(lap_number: int) -> Lap
 - **`Lap`** object for the specified lap
 
 **Raises:**
-- **`LapNotFoundError`**: If the lap doesn't exist for this driver
+- **`LapNotFoundError`**: If the lap does not exist for this driver
 - **`ValueError`**: If lap_number is invalid (negative, zero, or not an integer)
 
 **Behavior Details:**
@@ -1920,7 +1920,7 @@ def get_lap(lap_number: int) -> Lap
 **Performance Characteristics:**
 - Time Complexity: O(1) after first call (builds index map on first access)
 - Space Complexity: O(n) for index map where n is number of laps
-- Subsequent calls are extremely fast (dictionary lookup)
+- Subsequent calls are fast (dictionary lookup)
 
 **Example Usage:**
 
@@ -2286,7 +2286,7 @@ for driver_code in drivers:
 
 ## Telemetry
 
-The `Telemetry` class represents high-frequency data recorded throughout a lap or multiple laps. It inherits from `pandas.DataFrame` with additional slicing and analysis methods specifically designed for telemetry data. This is one of the most powerful classes in tif1, enabling detailed analysis of driver inputs, car behavior, and racing lines.
+The `Telemetry` class represents high-frequency data recorded throughout a lap or multiple laps. It inherits from `pandas.DataFrame` with additional slicing and analysis methods specifically designed for telemetry data. This class enables detailed analysis of driver inputs, car behavior, and racing lines.
 
 ### Class Overview
 
@@ -2318,7 +2318,7 @@ tel = driver.get_fastest_lap_tel()
 </ResponseField>
 
 <ResponseField name="driver" type="str">
-  Driver code for this telemetry data (e.g., "VER", "HAM"). May be None if telemetry is from multiple drivers.
+  Driver code for this telemetry data (for example, "VER", "HAM"). May be None if telemetry is from multiple drivers.
 </ResponseField>
 
 ### Available Columns
@@ -2405,7 +2405,7 @@ def slice_by_time(
 - Time values can be provided as timedelta, float (seconds), or int (seconds)
 - Automatically adjusts Time column to be zero-based relative to start_time
 - Padding adds extra samples for context
-- Returns empty Telemetry if time window doesn't exist
+- Returns empty Telemetry if time window does not exist
 
 **Example Usage:**
 
@@ -2484,7 +2484,7 @@ multi_lap_tel = session_tel.slice_by_lap(laps_10_to_15)
 
 #### `slice_by_mask(mask, pad=0, pad_side="both")`
 
-Slice telemetry using a boolean mask. Powerful for custom filtering based on any condition.
+Slice telemetry using a boolean mask. Useful for custom filtering based on any condition.
 
 ```python
 def slice_by_mask(mask, pad: int = 0, pad_side: str = "both") -> Telemetry
@@ -2500,7 +2500,7 @@ def slice_by_mask(mask, pad: int = 0, pad_side: str = "both") -> Telemetry
 - **`Telemetry`** DataFrame containing only masked samples
 
 **Raises:**
-- **`ValueError`**: If mask length doesn't match telemetry length
+- **`ValueError`**: If mask length does not match telemetry length
 
 **Example Usage:**
 
@@ -2609,7 +2609,7 @@ def calculate_driver_ahead(return_reference: bool = False) -> tuple
 - **`calculate_driver_ahead()`**: Tuple of (driver_ahead_array, distance_array) or (driver_ahead, distance, reference_tel)
 
 **Behavior Details:**
-- Currently returns placeholder data (not fully implemented in tif1)
+- Now returns placeholder data (not fully implemented in tif1)
 - Provided for FastF1 compatibility
 - Future versions will include actual driver-ahead calculations
 
@@ -2699,7 +2699,7 @@ def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
 ```
 
 **Parameters:**
-- **`rule`** (str, default="1S"): Resampling frequency (e.g., "1S" = 1 second, "100ms" = 100 milliseconds)
+- **`rule`** (str, default="1S"): Resampling frequency (for example, "1S" = 1 second, "100ms" = 100 milliseconds)
 - **`**kwargs`**: Additional arguments (for compatibility)
 
 **Returns:**
@@ -3185,7 +3185,7 @@ if circuit is not None and fastest_lap is not None:
 
 ## Complete Usage Examples
 
-### Example 1: Comprehensive Race Analysis
+### Example 1: Complete Race Analysis
 
 ```python
 import tif1
@@ -3465,7 +3465,7 @@ Use these classes to write clean, maintainable F1 analysis code.
 
 ## Type Hints and IDE Support
 
-All models support comprehensive type hints for better IDE integration, autocomplete, and type checking. This makes development faster and reduces errors.
+All models support full type hints for better IDE integration, autocomplete, and type checking. This makes development faster and reduces errors.
 
 ### Type Annotations
 
@@ -3595,11 +3595,11 @@ except LapNotFoundError as e:
 
 ## Summary
 
-The models module provides a comprehensive, intuitive API for F1 data analysis:
+The models module provides a complete, simple API for F1 data analysis:
 
 ### Key Takeaways
 
-1. **Laps**: Primary interface for lap timing data with powerful filtering methods
+1. **Laps**: Primary interface for lap timing data with flexible filtering methods
 2. **Lap**: Single lap with telemetry access and timing information
 3. **Driver**: Driver metadata with access to all their laps
 4. **Telemetry**: High-frequency sensor data with slicing and analysis methods
@@ -3614,7 +3614,7 @@ The models module provides a comprehensive, intuitive API for F1 data analysis:
 - **Type Safety**: Full type hints for IDE support
 - **FastF1 Compatible**: Easy migration from FastF1
 - **Pandas-Based**: Familiar DataFrame/Series interface
-- **Performance Optimized**: Vectorized operations and intelligent caching
+- **Performance Optimized**: Vectorized operations and caching
 
 ---
 
@@ -3622,15 +3622,15 @@ The models module provides a comprehensive, intuitive API for F1 data analysis:
 
 <CardGroup cols={2}>
   <Card title="Core API" href="/api-reference/core" icon="code">
-    Session and data loading methods
+    Session and data loading methods.
   </Card>
   <Card title="Types" href="/api-reference/types" icon="brackets-curly">
-    Type definitions and schemas
+    Type definitions and schemas.
   </Card>
   <Card title="Data Schema" href="/reference/data-schema" icon="table">
-    Complete data structure reference
+    Complete data structure reference.
   </Card>
   <Card title="Examples" href="/examples" icon="lightbulb">
-    Real-world usage examples
+    Real-world usage examples.
   </Card>
 </CardGroup>

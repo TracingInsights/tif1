@@ -14,16 +14,16 @@ keywords:
 ---
 
 <Info>
-  The `async_fetch` module is the performance-critical foundation of tif1's data fetching infrastructure. It provides enterprise-grade async HTTP capabilities with HTTP/2 multiplexing, intelligent retry logic, circuit breaker protection, and multi-CDN fallback.
+  The `async_fetch` module is the core of the tif1 data fetching infrastructure. It provides async HTTP capabilities with HTTP/2 multiplexing, retry logic, circuit breaker protection, and multi-CDN fallback.
 </Info>
 
 ## Overview
 
 The async fetch system is built on `niquests` (a modern, actively-maintained fork of `requests`) and provides:
 
-- **HTTP/2 Multiplexing**: Single TCP connection for multiple parallel requests, dramatically reducing latency
-- **Connection Pooling**: Intelligent connection reuse with configurable pool sizing and keep-alive
-- **Parallel JSON Parsing**: Offloads JSON parsing to thread pools (or optional process pools) to avoid blocking the async event loop
+- **HTTP/2 Multiplexing**: Single TCP connection for multiple parallel requests, which reduces latency
+- **Connection Pooling**: Connection reuse with configurable pool sizing and keep-alive
+- **Parallel JSON Parsing**: Offloads JSON parsing to thread pools to avoid blocking the async event loop
 - **Rate Limiting**: Semaphore-based concurrency control to prevent CDN overload
 - **Automatic Retries**: Exponential backoff with jitter and circuit breaker protection
 - **Multi-CDN Fallback**: Automatic failover across multiple CDN sources (StaticDelivr, jsDelivr, Hugging Face buckets, custom CDNs)
@@ -32,7 +32,7 @@ The async fetch system is built on `niquests` (a modern, actively-maintained for
 - **Resource Management**: Automatic cleanup of connections, thread pools, and process pools
 
 <Note>
-  Most users don't need to interact with this module directly. The `Session` class handles async fetching automatically through methods like `laps_async()`, `get_fastest_laps_tels_async()`, and `load()`. This documentation is for advanced users who need fine-grained control over fetching behavior or want to understand the performance characteristics.
+  Most users do not need to interact with this module directly. The `Session` class handles async fetching automatically through methods like `laps_async()`, `get_fastest_laps_tels_async()`, and `load()`. This documentation is for advanced users who need fine-grained control over fetching behavior or want to understand the performance characteristics.
 </Note>
 
 ## Architecture
@@ -92,15 +92,15 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 #### Parameters
 
 <ParamField path="year" type="int" required>
-  Season year (e.g., 2025, 2024). Must be a valid F1 season year with available data.
+  Season year (for example, 2025, 2024). Must be a valid F1 season year with available data.
 </ParamField>
 
 <ParamField path="gp" type="str" required>
-  Grand Prix name (e.g., "Monaco Grand Prix", "Bahrain Grand Prix"). Must match the exact event name in the schedule data.
+  Grand Prix name (for example, "Monaco Grand Prix", "Bahrain Grand Prix"). Must match the exact event name in the schedule data.
 </ParamField>
 
 <ParamField path="session" type="str" required>
-  Session name (e.g., "Race", "Qualifying", "Practice 1", "Sprint"). Must match the exact session name in the schedule data.
+  Session name (for example, "Race", "Qualifying", "Practice 1", "Sprint"). Must match the exact session name in the schedule data.
 </ParamField>
 
 <ParamField path="path" type="str" required>
@@ -109,14 +109,14 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
   - `"drivers.json"` - Driver metadata (names, numbers, teams)
   - `"weather.json"` - Weather data throughout the session
   - `"rcm.json"` - Race control messages (flags, safety car, etc.)
-  - `"laps/VER.json"` - Lap times for a specific driver (e.g., Verstappen)
+  - `"laps/VER.json"` - Lap times for a specific driver (for example, Verstappen)
   - `"telemetry/VER_1_tel.json"` - Telemetry for driver VER, lap 1
 </ParamField>
 
 <ParamField path="max_retries" type="int | None" default="None">
-  Maximum retry attempts for failed requests. If `None`, uses global config value (default: 3).
+  Maximum number of retries for failed requests. If `None`, uses global config value (default: 3).
 
-  - Set to `0` for ultra-cold start optimization (no retries, fastest possible fetch)
+  - Set to `0` to disable retries for the fastest cold-start fetch
   - Set to `3-5` for production use (balance between reliability and latency)
   - Set to `10+` for unreliable networks (maximum reliability)
 
@@ -182,7 +182,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 </ResponseField>
 
 <ResponseField name="DataNotFoundError" type="exception">
-  Raised when the requested data doesn't exist (HTTP 404). Context includes:
+  Raised when the requested data does not exist (HTTP 404). Context includes:
   - `year`: Season year
   - `event`: Grand Prix name
   - `session`: Session name
@@ -340,7 +340,7 @@ async def fetch_multiple_async(
 ) -> list[dict[str, Any] | None]
 ```
 
-Fetch multiple JSON files in parallel with optimized concurrency control and graceful error handling. This is the workhorse function for bulk data loading operations like fetching all driver laps or all telemetry files for a session.
+Fetch multiple JSON files in parallel with optimized concurrency control and graceful error handling. This is the primary function for bulk data loading operations. Use it to fetch all driver laps or all telemetry files for a session.
 
 #### Parameters
 
@@ -372,9 +372,9 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 </ParamField>
 
 <ParamField path="max_retries" type="int | None" default="None">
-  Maximum retry attempts per request. If `None`, uses global config value (default: 3).
+  Maximum number of retries per request. If `None`, uses global config value (default: 3).
 
-  **Note**: Each request retries independently. A failed request doesn't block other requests.
+  **Note**: Each request retries independently. A failed request does not block other requests.
 </ParamField>
 
 <ParamField path="timeout" type="int | None" default="None">
@@ -388,9 +388,9 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
   - `10-20`: Conservative, good for shared networks or rate-limited CDNs
   - `20-50`: Balanced, good for most use cases
   - `50-100`: Aggressive, good for dedicated networks and high-throughput scenarios
-  - `100+`: Ultra-aggressive, only for specialized scenarios (e.g., telemetry prefetching with `telemetry_prefetch_max_concurrent_requests`)
+  - `100+`: Ultra-aggressive, only for specialized scenarios (for example, telemetry prefetching with `telemetry_prefetch_max_concurrent_requests`)
 
-  **Note**: Higher concurrency doesn't always mean faster. The optimal value depends on network bandwidth, CDN rate limits, and CPU capacity for JSON parsing.
+  **Note**: Higher concurrency does not always mean faster. The optimal value depends on network bandwidth, CDN rate limits, and CPU capacity for JSON parsing.
 </ParamField>
 
 #### Returns
@@ -400,7 +400,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 
   **Graceful degradation**: Failed requests return `None` and are logged as warnings. The function never raises exceptions - it always returns a list of the same length as the input.
 
-  **Special case**: `DataNotFoundError` (404) is silently converted to `None` without logging a warning, since missing data is often expected (e.g., driver didn't participate in session).
+  **Special case**: `DataNotFoundError` (404) is converted to `None` without logging a warning. Missing data is often expected (for example, driver did not participate in session).
 </ResponseField>
 
 #### Error Handling
@@ -412,7 +412,7 @@ Unlike `fetch_json_async`, this function **does not raise exceptions**. All erro
 - **InvalidDataError**: Logged as warning, returns `None` for that request
 - **Other exceptions**: Logged as warning, returns `None` for that request
 
-This design allows partial success - if 18 out of 20 requests succeed, you get 18 valid results and 2 `None` values.
+This design allows partial success. When 18 of 20 requests succeed, the result contains 18 valid values and 2 `None` values.
 
 #### Examples
 
@@ -549,7 +549,7 @@ asyncio.run(fetch_fresh_data())
 - **All cache hits**: ~1-10ms total (parallel cache reads)
 - **All cache misses (20 requests)**: ~200-400ms (HTTP/2 multiplexing + parallel parsing)
 - **All cache misses (100 requests, 50 concurrent)**: ~1-2s (batched with semaphore)
-- **Mixed hits/misses**: Proportional to miss rate (cache hits don't consume concurrency slots)
+- **Mixed hits/misses**: Proportional to miss rate (cache hits do not consume concurrency slots)
 
 **Scaling behavior**:
 - Linear scaling up to `max_concurrent_requests` limit
@@ -685,7 +685,7 @@ asyncio.run(rate_limited_operations())
 </CodeGroup>
 
 <Note>
-  This is a utility function for custom concurrency control. Most users should use `fetch_multiple_async()` which handles rate limiting automatically. Use this function only when you need fine-grained control over concurrency or are building custom async workflows.
+  This is a utility function for custom concurrency control. Most users should use `fetch_multiple_async()`, which handles rate limiting automatically. Use this function only for fine-grained concurrency control or custom async workflows.
 </Note>
 
 #### When to Use
@@ -693,7 +693,7 @@ asyncio.run(rate_limited_operations())
 - **Custom async workflows**: Building specialized data fetching pipelines
 - **Shared concurrency limits**: Coordinating multiple async operations with a single semaphore
 - **Fine-grained control**: Need precise control over concurrency beyond what `fetch_multiple_async` provides
-- **Integration**: Integrating tif1 fetching with other async operations in your application
+- **Integration**: Integrating tif1 fetching with other async operations in the application
 
 #### When NOT to Use
 
@@ -712,7 +712,7 @@ The async fetch system manages several types of resources that need proper clean
 - **Process Pool Executor**: Optional worker processes for CPU-intensive JSON parsing
 - **Circuit Breaker**: Failure tracking state for preventing cascading failures
 
-All resources are automatically cleaned up via `atexit` handlers when the Python process exits. For long-running applications or when you need explicit control, use the functions below.
+All resources are cleaned up via `atexit` handlers when the Python process exits. For long-running applications, or for explicit control, use the functions below.
 
 ### `cleanup_resources`
 
@@ -733,10 +733,10 @@ Clean up all async resources including HTTP sessions, thread pools, and process 
 
 #### When to Call
 
-- **Application shutdown**: Call before your application exits
+- **Application shutdown**: Call before the application exits
 - **Test teardown**: Call in test cleanup to prevent resource leaks
-- **Long-running processes**: Call periodically if you're creating/destroying many sessions
-- **Resource constraints**: Call when you need to free up connections or memory
+- **Long-running processes**: Call periodically when many sessions are created and destroyed
+- **Resource constraints**: Call to release connections or memory
 
 #### Examples
 
@@ -798,7 +798,7 @@ with tif1_context() as tif1:
 </CodeGroup>
 
 <Warning>
-  After calling `cleanup_resources()`, the next async fetch operation will recreate all resources. This is safe but incurs initialization overhead (~10-50ms). Don't call this in hot paths or between individual requests.
+  After calling `cleanup_resources()`, the next async fetch operation will recreate all resources. This is safe but incurs initialization overhead (~10-50ms). Do not call this in hot paths or between individual requests.
 </Warning>
 
 ---
@@ -813,8 +813,8 @@ Close the shared niquests HTTP session and release all connections. The session 
 
 #### When to Use
 
-- **Explicit connection management**: When you need to force connection closure
-- **Network changes**: After network configuration changes (e.g., VPN connect/disconnect)
+- **Explicit connection management**: To force connection closure
+- **Network changes**: After network configuration changes (for example, VPN connect/disconnect)
 - **Testing**: To reset connection state between tests
 - **Resource constraints**: To free up connection pool resources
 
@@ -834,7 +834,7 @@ Shut down the thread pool executor used for async operations. Waits for all pend
 
 #### When to Use
 
-- **Thread pool management**: When you need to control thread pool lifecycle
+- **Thread pool management**: To control the thread pool lifecycle
 - **Resource constraints**: To free up thread resources
 - **Testing**: To reset executor state between tests
 
@@ -981,11 +981,11 @@ data = await fetch_json_async(
 ## Implementation Details
 
 <Accordion title="HTTP/2 Multiplexing">
-  The async fetch system uses niquests with HTTP/2 support, allowing multiple requests to share a single TCP connection. This dramatically reduces latency for parallel requests.
+  The async fetch system uses niquests with HTTP/2 support, allowing multiple requests to share a single TCP connection. This reduces latency for parallel requests.
 </Accordion>
 
 <Accordion title="JSON Parsing Strategy">
-  JSON parsing is offloaded to a thread pool executor (or optional process pool for non-telemetry data) to avoid blocking the async event loop. The system uses `orjson` for fast parsing and can parse multiple responses in parallel. Telemetry payloads use thread-based parsing to avoid cross-process IPC overhead.
+  JSON parsing is offloaded to a thread pool executor to avoid blocking the async event loop. A process pool is optional for non-telemetry data. The system uses `orjson` for fast parsing and can parse multiple responses in parallel. Telemetry payloads use thread-based parsing to avoid cross-process IPC overhead.
 </Accordion>
 
 <Accordion title="Rate Limiting">

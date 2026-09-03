@@ -15,28 +15,28 @@ keywords:
 
 ## Overview
 
-The `tif1.plotting` module provides a comprehensive, production-ready suite of plotting utilities specifically designed for Formula 1 data visualization. It maintains 100% API compatibility with FastF1's plotting interface while introducing significant performance optimizations, enhanced error handling, and additional features for advanced visualization workflows.
+The `tif1.plotting` module provides a suite of plotting utilities designed for Formula 1 data visualization. It maintains 100% API compatibility with the FastF1 plotting interface. It adds performance optimizations, stricter error handling, and additional features for advanced visualization workflows.
 
-This module serves as the primary interface for all color management, style generation, and metadata lookups required for creating professional-quality F1 visualizations. Whether you're building race pace comparisons, tire strategy analyses, or driver performance dashboards, the plotting module provides the foundational tools to ensure visual consistency and historical accuracy.
+This module is the primary interface for color management, style generation, and metadata lookups for F1 visualizations. Race pace comparisons, tire strategy analyses, and driver performance dashboards all use these tools. The tools ensure visual consistency and historical accuracy.
 
 ### Key Features
 
-- **Session-Aware Lookups**: All team and driver metadata queries are backed by actual session data loaded from the TracingInsights API, ensuring accuracy and consistency across different seasons and race weekends. The module automatically extracts driver lineups, team affiliations, and metadata from session results, eliminating the need for manual data entry or external configuration files.
+- **Session-Aware Lookups**: All team and driver metadata queries use session data loaded from the TracingInsights API. This ensures accuracy across seasons and race weekends. The module extracts driver lineups, team affiliations, and metadata from session results. No manual data entry or external configuration files are needed.
 
-- **Season-Aware Colors**: Automatic compound color palette selection based on the session year. The module intelligently switches between the 2018 hypersoft era (7 dry compounds with distinct colors) and the 2019+ simplified system (3 dry compounds with standardized pink/yellow/white colors), ensuring historical accuracy in visualizations.
+- **Season-Aware Colors**: Compound color palette selection is based on the session year. The module switches between the 2018 hypersoft era and the 2019+ system. The 2018 era has 7 dry compounds with distinct colors. The 2019+ system has 3 dry compounds with pink/yellow/white colors. This ensures historical accuracy in visualizations.
 
 - **Multiple Color Schemes**: Support for three distinct color palettes:
-  - `default`: tif1's optimized color scheme (currently aliased to `fastf1`)
+  - `default`: tif1's optimized color scheme (now aliased to `fastf1`)
   - `fastf1`: FastF1-compatible colors for drop-in replacement scenarios
   - `official`: Official F1 team colors extracted from liveries and branding guidelines
 
-- **Timedelta Support**: Optional matplotlib timedelta plotting via the `timple` library, enabling native rendering of lap times, sector times, and time deltas on matplotlib axes without manual conversion to seconds or string formatting.
+- **Timedelta Support**: Optional matplotlib timedelta plotting via the `timple` library. It renders lap times, sector times, and time deltas natively on matplotlib axes. No manual conversion to seconds or string formatting is needed.
 
-- **Fuzzy Matching**: Intelligent identifier resolution with Levenshtein distance-based matching and user warnings for near-matches. Accepts team names, short names, driver abbreviations, full names, and common aliases (e.g., "redbull", "RBR", "Red Bull Racing" all resolve to the same team).
+- **Fuzzy Matching**: Identifier resolution with Levenshtein distance-based matching and warnings for near-matches. Accepts team names, short names, driver abbreviations, full names, and aliases. For example, "redbull", "RBR", and "Red Bull Racing" all resolve to the same team.
 
-- **Type Safety**: Full type hints and runtime validation for all public APIs, ensuring IDE autocomplete support and early error detection during development.
+- **Type Safety**: Full type hints and runtime validation for all public APIs. This gives IDE autocomplete support and early error detection during development.
 
-- **Caching and Performance**: Session-specific driver/team mappings are cached in memory, eliminating redundant DataFrame iterations and providing O(1) lookup performance for repeated color queries.
+- **Caching and Performance**: Session-specific driver/team mappings are cached in memory. This eliminates redundant DataFrame iterations and gives O(1) lookup performance for repeated color queries.
 
 ### Error Handling Philosophy
 
@@ -44,25 +44,25 @@ The plotting module follows strict, fail-fast error handling principles designed
 
 - **Exact-match failures** raise `KeyError` with descriptive messages indicating which identifier could not be resolved and what session data was available
 - **Invalid colormap values** raise `ValueError` immediately with a list of valid options
-- **Fuzzy lookup corrections** emit `UserWarning` messages but continue execution, allowing users to see when their input was auto-corrected (e.g., "redbull" → "Red Bull Racing")
-- **Missing session context** raises `ValueError` for functions that require session data (all team/driver color lookups), preventing silent fallback to incorrect default values
+- **Fuzzy lookup corrections** emit `UserWarning` messages but continue execution. The warning shows when input was auto-corrected (for example, "redbull" → "Red Bull Racing")
+- **Missing session context** raises `ValueError` for functions that require session data (all team/driver color lookups). This prevents silent fallback to incorrect default values
 
-This approach ensures that visualization code fails fast with clear error messages rather than silently producing incorrect results, which is critical for data integrity in analytical workflows.
+This approach makes visualization code fail fast with clear error messages. Silent incorrect results are avoided, which protects data integrity in analytical workflows.
 
 ## FastF1 Compatibility
 
-The `tif1.plotting` module provides 100% API compatibility with FastF1's plotting helpers, allowing you to migrate existing visualization code with zero or minimal changes. All function signatures, parameter names, return types, and behavioral semantics match the FastF1 specification, ensuring that existing scripts, notebooks, and applications can transition seamlessly.
+The `tif1.plotting` module provides 100% API compatibility with the FastF1 plotting helpers. Existing visualization code migrates with zero or minimal changes. All function signatures, parameter names, return types, and behavioral semantics match the FastF1 specification. Existing scripts, notebooks, and applications can transition directly.
 
 ### Design Philosophy
 
-The compatibility layer is not a simple wrapper—it's a ground-up reimplementation that maintains identical external behavior while introducing internal optimizations:
+The compatibility layer is not a wrapper. It is a reimplementation that maintains identical external behavior with internal optimizations:
 
 - **Signature Compatibility**: All functions accept the same parameters in the same order, with identical default values
 - **Return Type Compatibility**: Functions return the same data types (strings, lists, dictionaries) with the same structure
 - **Error Compatibility**: Exceptions are raised in the same scenarios with similar error messages
 - **Behavioral Compatibility**: Fuzzy matching, color resolution, and style generation follow FastF1's algorithms
 
-The primary differences are internal: tif1 uses cached session mappings for O(1) lookups, validates inputs more strictly, and provides more detailed error messages when operations fail.
+The primary differences are internal. tif1 uses cached session mappings for O(1) lookups. tif1 validates inputs more strictly and gives more detailed error messages when operations fail.
 
 ### Complete API Surface
 
@@ -84,7 +84,7 @@ The module exposes 25 public functions organized into six functional categories:
 #### Driver Colors and Metadata (8 functions)
 
 - **`get_driver_color`** - Retrieve driver color (inherits from team color, following FastF1's model where teammates share colors)
-- **`get_driver_abbreviation`** - Get three-letter driver code (e.g., "VER", "HAM", "LEC")
+- **`get_driver_abbreviation`** - Get three-letter driver code (for example, "VER", "HAM", "LEC")
 - **`get_driver_name`** - Get full driver name from any identifier
 - **`get_driver_style`** - Generate complete matplotlib style dictionary with color, linestyle, marker, and custom properties
 - **`get_driver_abbreviations_by_team`** - List driver codes for a specific team
@@ -113,7 +113,7 @@ The module exposes 25 public functions organized into six functional categories:
 
 ### Migration from FastF1
 
-Migrating from FastF1 to tif1 is typically a one-line change in your import statements. The module is designed as a drop-in replacement:
+Migrating from FastF1 to tif1 is typically a one-line change in the import statements. The module is designed as a drop-in replacement:
 
 ```python
 # Before (FastF1)
@@ -139,7 +139,7 @@ The behavior and output will be identical in most cases, with tif1 providing:
 
 - **Performance improvements**: Cached session mappings eliminate redundant DataFrame iterations
 - **Stricter validation**: Invalid inputs are caught earlier with more descriptive error messages
-- **Enhanced fuzzy matching**: More intelligent identifier resolution with better warning messages
+- **Enhanced fuzzy matching**: Improved identifier resolution with better warning messages
 - **Additional features**: Extra utility functions like `apply_plot_style`, `load_custom_font`, and `get_plot_config`
 
 ### Compatibility Notes
@@ -148,7 +148,7 @@ There are a few minor behavioral differences to be aware of:
 
 1. **Error messages**: tif1 provides more detailed error messages with context about what went wrong and what data was available
 2. **Warnings**: Fuzzy matching warnings include the original query and the resolved value for transparency
-3. **Session requirement**: tif1 strictly enforces the session parameter for team/driver lookups (raises `ValueError` if `None`), while FastF1 may silently return empty strings
+3. **Session requirement**: tif1 strictly enforces the session parameter for team/driver lookups and raises `ValueError` if `None`. FastF1 may silently return empty strings
 4. **Colormap validation**: tif1 validates colormap values immediately and raises `ValueError` for invalid options, preventing silent fallback to defaults
 
 ## Matplotlib Setup
@@ -243,14 +243,14 @@ tif1.plotting.setup_mpl(
 
 #### Notes
 
-- Call `setup_mpl()` once at the start of your script, before creating any plots
+- Call `setup_mpl()` once at the start of the script, before creating any plots
 - The function modifies global matplotlib settings via `matplotlib.rcParams`
 - Timedelta support is particularly useful for lap time comparisons and race pace analysis
 - The `misc_mpl_mods` parameter controls grid styling, tick formatting, and other visual enhancements
 
 ## Named Plot Styles
 
-`tif1` ships two named plot styles that reproduce the TracingInsights v2 chart look: `default-light` is extracted from `Fastest_Lap.py` and `default-dark` from `Race_Launch_Performance_Ratings.py` in the analysis repo. Use `get_plot_style` to read the full configuration, or pass the name to `setup_mpl` / any chart's `color_scheme` argument.
+`tif1` ships two named plot styles that reproduce the TracingInsights v2 chart look. `default-light` is extracted from `Fastest_Lap.py`; `default-dark` comes from `Race_Launch_Performance_Ratings.py` in the analysis repo. Use `get_plot_style` to read the full configuration, or pass the name to `setup_mpl` / any chart's `color_scheme` argument.
 
 ### `get_plot_style`
 
@@ -265,7 +265,7 @@ Return a copy of a registered plot style configuration.
 | `default-light` | `Fastest_Lap.py` | `lightblue` | `black` | `Tenada.ttf` |
 | `default-dark` | `Race_Launch_Performance_Ratings.py` | `#011627` | `lime` | `coolvetica rg.otf` |
 
-Each style config contains `figure` (size, dpi, `constrained_layout`), `fonts` (title/label/annotation/footer/watermark sizes and bundled font file names), `colors` (background, text, grid, bar-label and ytick colors), `bar`, `images` (tyre/car zoom, x-offsets, and the dark style's `car_threshold` of 2.5 — cars are only drawn when the x-value rating exceeds it), `spacing` (label padding and `subplots_adjust` margins), plus `footer`/`watermark` text — mirroring the constants in the v2 scripts.
+Each style config contains `figure` (size, dpi, `constrained_layout`) and `fonts` (title/label/annotation/footer/watermark sizes and bundled font file names). It also contains `colors` (background, text, grid, bar-label and ytick colors), `bar`, and `spacing` (label padding and `subplots_adjust` margins). The `images` section holds tyre/car zoom, x-offsets, and the dark style's `car_threshold` of 2.5. Cars are only drawn when the x-value rating exceeds it. `footer`/`watermark` text completes the config, which mirrors the constants in the v2 scripts.
 
 ```python
 import tif1
@@ -294,7 +294,7 @@ tif1.plot_top_speeds(2024, "Monza", "Q", color_scheme="default-light")
 
 ## Bundled Plot Assets
 
-The `tif1.assets` module ships the car artwork (all years 2018-2026), tyre compound images, and fonts directly inside the package — no network requests at plot time. This is what the `default-light`/`default-dark` styles (and the v2 scripts) use for car/tyre images.
+The `tif1.assets` module ships the car artwork (all years 2018-2026), tyre compound images, and fonts inside the package. No network requests occur at plot time. The `default-light`/`default-dark` styles (and the v2 scripts) use these assets for car/tyre images.
 
 ### Car images
 
@@ -333,11 +333,11 @@ assert plotting.get_team_code("Audi", year=2026) == "AUD"
 
 ## Season-Aware Color System
 
-The plotting module implements an intelligent, season-aware color system that automatically adapts to the tire compound regulations and team liveries of different Formula 1 seasons.
+The plotting module implements a season-aware color system. It adapts to the tire compound regulations and team liveries of different Formula 1 seasons.
 
 ### Historical Context
 
-Formula 1's tire compound naming and color system has evolved significantly:
+Formula 1 tire compound naming and the color system have changed over the years:
 
 - **2018**: Complex system with seven compounds (HYPERSOFT, ULTRASOFT, SUPERSOFT, SOFT, MEDIUM, HARD, SUPERHARD), each with distinct colors
 - **2019-present**: Simplified three-compound system (SOFT, MEDIUM, HARD) with consistent pink/yellow/white colors, plus INTERMEDIATE and WET
@@ -389,7 +389,7 @@ Retrieve the color hex code for a team based on the selected colormap.
 
 #### Returns
 
-- **`str`**: Hex color code (e.g., `"#0600ef"` for Red Bull Racing)
+- **`str`**: Hex color code (for example, `"#0600ef"` for Red Bull Racing)
 
 #### Raises
 
@@ -476,7 +476,7 @@ Retrieve the color hex code for a tire compound, with automatic season-aware pal
 
 #### Returns
 
-- **`str`**: Hex color code for the compound (e.g., `"#ff0080"` for HYPERSOFT in 2018)
+- **`str`**: Hex color code for the compound (for example, `"#ff0080"` for HYPERSOFT in 2018)
 
 #### Raises
 
@@ -639,13 +639,13 @@ plt.show()
 
 ## Driver Colors and Metadata
 
-The driver color and metadata functions provide comprehensive access to driver information extracted from session data. All functions support fuzzy matching by default and can resolve drivers from abbreviations, full names, first names, or last names.
+The driver color and metadata functions give complete access to driver information extracted from session data. All functions support fuzzy matching by default and can resolve drivers from abbreviations, full names, first names, or last names.
 
 ### Color Model
 
-Following FastF1's current model, **both drivers from the same team share the same team color**. This design decision reflects modern F1 broadcasting conventions where teams are identified by a single color, with drivers differentiated by other visual properties (linestyles, markers, helmet designs).
+Following the FastF1 model, **both drivers from the same team share the same team color**. This design follows modern F1 broadcasting conventions. Teams are identified by a single color. Drivers are differentiated by other visual properties (linestyles, markers, helmet designs).
 
-To distinguish between teammates in visualizations, use the `get_driver_style` function which automatically assigns different linestyles and markers based on grid position within the team.
+To distinguish between teammates in visualizations, use the `get_driver_style` function. It assigns different linestyles and markers based on grid position within the team.
 
 ### `get_driver_color`
 
@@ -687,7 +687,7 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
 
 #### Returns
 
-- **`str`**: Hex color code (e.g., `"#0600ef"` for Red Bull drivers in the fastf1 colormap)
+- **`str`**: Hex color code (for example, `"#0600ef"` for Red Bull drivers in the fastf1 colormap)
 
 #### Raises
 
@@ -699,7 +699,7 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
 1. **Driver Resolution**: The function first resolves the identifier to a driver using the session's driver/team mapping
 2. **Team Lookup**: Once the driver is identified, their team affiliation is retrieved
 3. **Color Selection**: The team's color is returned based on the selected colormap
-4. **Fuzzy Matching**: If exact match fails, Levenshtein distance is used to find the closest match, with a warning emitted if the match is not exact
+4. **Fuzzy Matching**: If exact match fails, Levenshtein distance finds the closest match. A warning is emitted if the match is not exact
 
 #### Examples
 
@@ -837,9 +837,9 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
 - **`style`** (`str | Sequence[str] | Sequence[dict[str, Any]]`, required)
   Style specification. Three formats are supported:
 
-  1. **Single string**: A single style property name (e.g., `"color"`, `"linestyle"`, `"marker"`)
-  2. **List of strings**: Multiple style property names (e.g., `["color", "linestyle", "marker"]`)
-  3. **List of dictionaries**: Custom style dictionaries per driver, indexed by team position (e.g., `[{"color": "auto", "linewidth": 2}, {"color": "auto", "linewidth": 3}]`)
+  1. **Single string**: A single style property name (for example, `"color"`, `"linestyle"`, `"marker"`)
+  2. **List of strings**: Multiple style property names (for example, `["color", "linestyle", "marker"]`)
+  3. **List of dictionaries**: Custom style dictionaries per driver, indexed by team position (for example, `[{"color": "auto", "linewidth": 2}, {"color": "auto", "linewidth": 3}]`)
 
   Valid style property names:
   - `"color"` - Driver/team color
@@ -870,12 +870,12 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
 
 #### Behavior Details
 
-**Team Position Rotation**: Drivers within the same team are assigned different linestyles and markers based on their grid position (order in session results). The first driver (typically the one who qualified higher) gets the first style in the rotation, the second driver gets the second style, etc.
+**Team Position Rotation**: Drivers within the same team are assigned different linestyles and markers. The assignment is based on grid position (order in session results). The first driver (typically the one who qualified higher) gets the first style in the rotation. The second driver gets the second style, and so on.
 
 **Linestyle Rotation**: `["solid", "dashed", "dashdot", "dotted"]`
 **Marker Rotation**: `["x", "o", "^", "D"]`
 
-**Auto Color Replacement**: When using custom style dictionaries (format 3), any property with value `"auto"` is automatically replaced with the driver's team color. This allows you to define custom styles while still respecting team colors.
+**Auto Color Replacement**: In custom style dictionaries (format 3), a property with value `"auto"` becomes the driver's team color. This allows custom styles that still respect team colors.
 
 #### Examples
 
@@ -1018,7 +1018,7 @@ def get_driver_abbreviation(
 ) -> str
 ```
 
-Get the three-letter driver abbreviation (e.g., "VER", "HAM", "LEC") from any driver identifier.
+Get the three-letter driver abbreviation (for example, "VER", "HAM", "LEC") from any driver identifier.
 
 #### Parameters
 
@@ -1028,7 +1028,7 @@ Get the three-letter driver abbreviation (e.g., "VER", "HAM", "LEC") from any dr
 
 #### Returns
 
-- **`str`**: Three-letter driver abbreviation (e.g., `"VER"`)
+- **`str`**: Three-letter driver abbreviation (for example, `"VER"`)
 
 #### Examples
 
@@ -1070,7 +1070,7 @@ Get the full driver name from any driver identifier.
 
 #### Returns
 
-- **`str`**: Full driver name (e.g., `"Max Verstappen"`)
+- **`str`**: Full driver name (for example, `"Max Verstappen"`)
 
 #### Examples
 
@@ -1232,7 +1232,7 @@ def get_driver_color_mapping(
 ) -> dict[str, str]
 ```
 
-Get a complete mapping from driver abbreviations to color hex codes for all drivers in a session. This is useful for batch operations where you need to look up colors for multiple drivers efficiently.
+Get a complete mapping from driver abbreviations to color hex codes for all drivers in a session. This is useful for batch operations that look up colors for multiple drivers efficiently.
 
 #### Parameters
 

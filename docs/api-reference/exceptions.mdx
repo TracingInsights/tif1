@@ -1,7 +1,7 @@
 ---
 title: "Exceptions"
 icon: "circle-exclamation"
-description: "Comprehensive guide to error handling and exception hierarchy in tif1"
+description: "Error handling and the exception hierarchy in tif1"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,23 +14,23 @@ keywords:
 
 ## Overview
 
-`tif1` implements a comprehensive, structured exception hierarchy designed to provide maximum clarity and debuggability when errors occur. Every exception in the library inherits from the base `TIF1Error` class and includes rich contextual information to help you understand exactly what went wrong and why.
+`tif1` implements a structured exception hierarchy designed for clarity and debuggability when errors occur. Every exception in the library inherits from the base `TIF1Error` class. Each exception includes contextual information that shows what went wrong and why.
 
 The exception system is designed with several key principles:
 
 - **Structured Context**: Every exception carries a `context` dictionary with relevant metadata (year, event, driver, URL, etc.)
-- **Clear Hierarchy**: Exceptions are organized in a logical tree structure, allowing you to catch errors at the appropriate level of specificity
+- **Clear Hierarchy**: Exceptions are organized in a logical tree structure. Catch errors at the appropriate level of specificity
 - **Actionable Messages**: Error messages are automatically constructed with relevant details to aid debugging
 - **Type Safety**: All exceptions are properly typed for IDE autocomplete and type checking
 - **Graceful Degradation**: The design encourages handling errors gracefully rather than crashing
 
-This guide covers every exception type in detail, including when they're raised, what context they provide, and how to handle them effectively.
+This guide covers every exception type in detail. It explains when each exception is raised, what context it provides, and how to handle it.
 
 ---
 
 ## Exception Hierarchy
 
-The exception hierarchy is designed to allow you to catch errors at different levels of specificity. You can catch broad categories (like `TIF1Error` for any library error) or specific exceptions (like `DriverNotFoundError` for missing drivers).
+The exception hierarchy allows errors to be caught at different levels of specificity. Catch broad categories (like `TIF1Error` for any library error) or specific exceptions (like `DriverNotFoundError` for missing drivers).
 
 ```python
 TIF1Error (base exception for all tif1 errors)
@@ -79,7 +79,7 @@ except tif1.TIF1Error:
 
 ### `TIF1Error`
 
-The root exception class for all tif1 errors. Every exception in the library inherits from this class, making it easy to catch all tif1-specific errors with a single except clause.
+The root exception class for all tif1 errors. Every exception in the library inherits from this class. A single except clause on `TIF1Error` catches all tif1-specific errors.
 
 **Signature:**
 ```python
@@ -98,7 +98,7 @@ class TIF1Error(Exception):
 
 **When Raised:**
 - Never raised directly; always use a more specific subclass
-- Used as a catch-all when you want to handle any tif1 error
+- Used as a catch-all to handle any tif1 error
 
 **Example - Basic Usage:**
 ```python
@@ -171,7 +171,7 @@ if session is None:
 
 ### `DataNotFoundError`
 
-Raised when requested F1 data is not available in the CDN or cache. This is one of the most common exceptions you'll encounter, typically occurring when requesting data for sessions that haven't happened yet, or for historical sessions where data was never collected.
+Raised when requested F1 data is not available in the CDN or cache. This is one of the most common exceptions. It typically occurs when requesting data for sessions that have not happened yet. It also occurs for historical sessions where data was never collected.
 
 **Signature:**
 ```python
@@ -186,21 +186,21 @@ class DataNotFoundError(TIF1Error):
 ```
 
 **Context Keys:**
-- `year` (int | None): The requested year (e.g., 2024)
-- `event` (str | None): The requested event/Grand Prix name (e.g., "Monaco Grand Prix")
-- `session` (str | None): The requested session type (e.g., "Race", "Qualifying", "FP1")
+- `year` (int | None): The requested year (for example, 2024)
+- `event` (str | None): The requested event/Grand Prix name (for example, "Monaco Grand Prix")
+- `session` (str | None): The requested session type (for example, "Race", "Qualifying", "FP1")
 - Additional context from `**context` kwargs
 
 **When Raised:**
-- HTTP 404 responses from the CDN (data file doesn't exist)
-- Requesting future sessions that haven't occurred yet
+- HTTP 404 responses from the CDN (data file does not exist)
+- Requesting future sessions that have not occurred yet
 - Requesting historical data that was never collected or published
-- Requesting data for cancelled sessions (e.g., 2020 Australian GP)
+- Requesting data for cancelled sessions (for example, 2020 Australian GP)
 - Invalid year/event/session combinations
 
 **Common Scenarios:**
 
-1. **Future Sessions**: Requesting data for races that haven't happened yet
+1. **Future Sessions**: Requesting data for races that have not happened yet
 2. **Historical Gaps**: Some older seasons have incomplete data coverage
 3. **Cancelled Events**: Sessions that were scheduled but cancelled
 4. **Invalid Combinations**: Requesting "Sprint" for a non-sprint weekend
@@ -305,7 +305,7 @@ for failure in failed:
 
 ### `DriverNotFoundError`
 
-Raised when attempting to access a driver that doesn't exist in the session. This is a subclass of `DataNotFoundError` and typically occurs due to typos in driver codes or requesting drivers who didn't participate in the session.
+Raised when attempting to access a driver that does not exist in the session. This is a subclass of `DataNotFoundError`. It typically occurs due to typos in driver codes. It also occurs when requesting drivers who did not participate in the session.
 
 **Signature:**
 ```python
@@ -314,15 +314,15 @@ class DriverNotFoundError(DataNotFoundError):
 ```
 
 **Context Keys:**
-- `driver` (str): The requested driver code (e.g., "VER", "HAM")
+- `driver` (str): The requested driver code (for example, "VER", "HAM")
 - `year` (int | None): Session year (if provided in context)
 - `event` (str | None): Event name (if provided in context)
 - `session` (str | None): Session name (if provided in context)
 
 **When Raised:**
 - Calling `session.get_driver("XXX")` with an invalid driver code
-- Driver code typos (e.g., "VET" instead of "VER")
-- Requesting a driver who didn't participate in that specific session
+- Driver code typos (for example, "VET" instead of "VER")
+- Requesting a driver who did not participate in that specific session
 - Driver retired/withdrew before the session
 
 **Common Causes:**
@@ -462,7 +462,7 @@ print(analysis)
 
 --- ### `LapNotFoundError`
 
-Raised when attempting to access a specific lap number that doesn't exist for a driver. This is a subclass of `DataNotFoundError` and typically occurs when requesting lap numbers beyond what the driver completed, or when requesting laps that were invalidated or deleted.
+Raised when attempting to access a specific lap number that does not exist for a driver. This is a subclass of `DataNotFoundError`. It typically occurs when requesting lap numbers beyond what the driver completed. It also occurs when requesting laps that were invalidated or deleted.
 
 **Signature:**
 ```python
@@ -476,8 +476,8 @@ class LapNotFoundError(DataNotFoundError):
 ```
 
 **Context Keys:**
-- `lap_number` (int | None): The requested lap number (e.g., 1, 50, 999)
-- `driver` (str | None): The driver code for whom the lap was requested (e.g., "VER", "HAM")
+- `lap_number` (int | None): The requested lap number (for example, 1, 50, 999)
+- `driver` (str | None): The driver code for whom the lap was requested (for example, "VER", "HAM")
 - Additional context from `**context` kwargs
 
 **When Raised:**
@@ -485,7 +485,7 @@ class LapNotFoundError(DataNotFoundError):
 - Requesting lap 0 or negative lap numbers
 - Requesting laps that were deleted due to track limits violations
 - Requesting laps from drivers who retired early in the session
-- Accessing laps before the driver started (e.g., lap 1 when driver started from pit lane on lap 2)
+- Accessing laps before the driver started (for example, lap 1 when driver started from pit lane on lap 2)
 
 **Common Scenarios:**
 
@@ -664,9 +664,9 @@ for driver_code in session.drivers:
 
 ### `NetworkError`
 
-Raised when HTTP network requests fail after all retry attempts and CDN fallback mechanisms have been exhausted. This exception indicates a persistent network connectivity issue, server unavailability, or infrastructure problem that prevents data retrieval.
+Raised when HTTP network requests fail after all retries and CDN fallback mechanisms are exhausted. This exception indicates a persistent network connectivity issue, server unavailability, or infrastructure problem. Such problems prevent data retrieval.
 
-The library implements sophisticated retry logic with exponential backoff and circuit breaker patterns before raising this exception, so when you see `NetworkError`, it typically means the problem is serious and persistent.
+The library implements retry logic with exponential backoff and circuit breaker patterns before raising this exception. A `NetworkError` typically means the problem is serious and persistent.
 
 **Signature:**
 ```python
@@ -680,12 +680,12 @@ class NetworkError(TIF1Error):
 ```
 
 **Context Keys:**
-- `url` (str | None): The full URL that failed (e.g., "https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
-- `status_code` (int | None): HTTP status code if the server responded (e.g., 500, 502, 503, 504)
+- `url` (str | None): The full URL that failed (for example, "https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
+- `status_code` (int | None): HTTP status code if the server responded (for example, 500, 502, 503, 504)
 - Additional context from `**context` kwargs (may include retry count, timeout info, etc.)
 
 **When Raised:**
-- All retry attempts exhausted (typically 3-5 retries with exponential backoff)
+- All retries exhausted (typically 3-5 retries with exponential backoff)
 - CDN fallback mechanisms failed
 - HTTP 5xx server errors (500, 502, 503, 504) persisting after retries
 - Connection timeouts exceeding configured thresholds
@@ -1010,9 +1010,9 @@ session = load_session_with_monitoring(2024, "Monaco", "Race")
 
 ### `InvalidDataError`
 
-Raised when fetched data is invalid, corrupted, malformed, or fails validation checks. This exception indicates that while the network request succeeded and data was retrieved, the data itself doesn't meet the expected format, schema, or quality standards required by the library.
+Raised when fetched data is invalid, corrupted, malformed, or fails validation checks. This exception indicates that the network request succeeded and data was retrieved. The data itself does not meet the format, schema, or quality standards required by the library.
 
-This is distinct from `DataNotFoundError` (data doesn't exist) and `NetworkError` (couldn't retrieve data) - `InvalidDataError` means the data was retrieved but is unusable.
+This is distinct from `DataNotFoundError` (data does not exist) and `NetworkError` (could not retrieve data). `InvalidDataError` means the data was retrieved but is unusable.
 
 **Signature:**
 ```python
@@ -1040,7 +1040,7 @@ class InvalidDataError(TIF1Error):
 1. **Malformed JSON**: CDN served corrupted or incomplete JSON
 2. **Schema Changes**: Data structure changed but library not updated
 3. **Missing Fields**: Required columns or fields absent from data
-4. **Type Errors**: Data types don't match expected schema
+4. **Type Errors**: Data types do not match expected schema
 5. **Validation Failures**: Data values outside acceptable ranges
 6. **Encoding Issues**: Character encoding problems in text fields
 
@@ -1395,7 +1395,7 @@ print(json.dumps(report, indent=2))
 
 Raised when cache operations fail, typically due to SQLite database errors, filesystem issues, or resource constraints. The library uses an SQLite-backed cache to store fetched data locally, and this exception indicates problems with that caching layer.
 
-Cache errors are generally non-fatal for data retrieval (the library can fall back to fetching from CDN), but they may impact performance and offline capabilities.
+Cache errors are generally non-fatal for data retrieval. The library can fall back to fetching from CDN. Cache errors may impact performance and offline capabilities.
 
 **Signature:**
 ```python
@@ -1413,7 +1413,7 @@ class CacheError(TIF1Error):
 - Cache database schema migration failures
 - Concurrent access conflicts (multiple processes)
 - Filesystem errors (read-only filesystem, etc.)
-- Cache directory doesn't exist and can't be created
+- Cache directory does not exist and cannot be created
 - Database connection failures
 - Transaction rollback errors
 
@@ -1782,7 +1782,7 @@ cache = configure_cache(
 
 Raised when attempting to access session data or attributes before the session has been properly loaded. This exception enforces the library's data loading contract, ensuring that users explicitly load data before accessing it.
 
-The library uses lazy loading patterns for performance, meaning session objects can be created without immediately fetching all data. This exception occurs when you try to access data that requires an explicit load operation.
+The library uses lazy loading patterns for performance, meaning session objects can be created without immediately fetching all data. This exception occurs on access to data that requires an explicit load operation.
 
 **Signature:**
 ```python
@@ -1798,11 +1798,11 @@ class SessionNotLoadedError(TIF1Error):
 - Accessing `session.telemetry` before loading telemetry data
 - Accessing driver-specific data before session initialization completes
 - Calling methods that require loaded data on an unloaded session
-- Accessing internal data structures (e.g., `_laps_df`) before population
+- Accessing internal data structures (for example, `_laps_df`) before population
 
 **Common Scenarios:**
 
-1. **Forgot to Load**: Created session but didn't call load methods
+1. **Forgot to Load**: Created session but did not call load methods
 2. **Partial Loading**: Loaded some data but not the specific data needed
 3. **Lazy Loading**: Accessing properties that trigger lazy loading failures
 4. **Internal Access**: Directly accessing private attributes before initialization
@@ -2159,7 +2159,7 @@ checker.print_status()
 
 ## Error Handling Patterns
 
-This section provides comprehensive, production-ready patterns for handling tif1 exceptions in real-world applications. These patterns demonstrate best practices for robustness, maintainability, and user experience.
+This section provides patterns for handling tif1 exceptions in real-world applications. These patterns demonstrate best practices for reliability, maintainability, and user experience.
 
 ### Basic Try-Catch Pattern
 
@@ -2224,7 +2224,7 @@ except tif1.LapNotFoundError as e:
 
 ### Retry with Exponential Backoff Pattern
 
-Implement sophisticated retry logic for transient network errors.
+Implement retry logic for transient network errors.
 
 ```python
 import tif1
@@ -2528,7 +2528,7 @@ session = load_session_with_fallbacks(2024, "Monaco", "Race")
 
 ### Context-Aware Error Handling Pattern
 
-Extract and use structured context for intelligent error handling.
+Extract and use structured context for error handling.
 
 ```python
 import tif1
@@ -2701,7 +2701,7 @@ print(f"\nError Summary: {summary}")
 
 ## Best Practices
 
-Comprehensive guidelines for robust error handling in production applications using tif1.
+Guidelines for reliable error handling in production applications using tif1.
 
 ### 1. Catch Specific Exceptions First
 
@@ -2775,7 +2775,7 @@ except tif1.TIF1Error as e:
 
 Always log errors or provide user feedback. Silent failures make debugging impossible.
 
-**Why:** Silent failures hide problems and make debugging extremely difficult.
+**Why:** Silent failures hide problems and make debugging difficult.
 
 ```python
 import tif1
@@ -2812,7 +2812,7 @@ def safe_get_session(year, gp, session_name):
 
 Network errors are often transient. Implement retry logic with exponential backoff.
 
-**Why:** Temporary network issues shouldn't cause permanent failures.
+**Why:** Temporary network issues should not cause permanent failures.
 
 ```python
 import tif1
@@ -3202,7 +3202,7 @@ def test_graceful_degradation():
 
 ### Summary Checklist
 
-When handling tif1 exceptions, ensure you:
+When handling tif1 exceptions:
 
 - ✓ Catch specific exceptions before general ones
 - ✓ Use and log the `context` dictionary

@@ -250,7 +250,7 @@ Write fetched payloads to the persistent cache.
 Skip per-source retry and backoff delays on the CDN fetch.
 </ResponseField>
 
-Raises `DataNotFoundError` when the payload does not exist, `InvalidDataError` when the payload is not a JSON object or failed validation, and `NetworkError` when all CDN sources failed. Validation failures always raise.
+Raises `DataNotFoundError` when the payload does not exist. Raises `InvalidDataError` when the payload is not a JSON object or failed validation. Raises `NetworkError` when all CDN sources failed. Validation failures always raise.
 
 A payload found in the memo or cache returns without a network request. A cached dict is also written to the memo.
 

@@ -17,14 +17,14 @@ keywords:
 ---
 
 <Note>
-  The `core_utils` package provides the foundational utilities that power `tif1`'s high-performance data processing pipeline. While these are primarily internal APIs, they expose powerful capabilities for advanced users who need fine-grained control over data transformations, backend conversions, and performance optimization.
+  The `core_utils` package provides the foundational utilities that power `tif1`'s high-performance data processing pipeline. While these are primarily internal APIs, they expose capabilities for advanced users. Advanced users gain fine-grained control over data transformations, backend conversions, and performance optimization.
 
-  This module is the performance engine of `tif1`, implementing zero-copy operations, optimized JSON parsing, and intelligent DataFrame transformations that enable the library to process millions of rows of telemetry data with minimal overhead.
+  This module is the performance engine of `tif1`. It implements zero-copy operations, optimized JSON parsing, and DataFrame transformations. These features let the library process millions of telemetry rows with minimal overhead.
 </Note>
 
 ## Overview
 
-The core utilities package (`tif1.core_utils`) is organized into five specialized modules, each addressing a critical aspect of the library's performance and functionality:
+The core utilities package (`tif1.core_utils`) is organized into five specialized modules. Each module addresses a critical aspect of the library's performance and functionality:
 
 1. **Backend Conversion** (`backend_conversion.py`) - Zero-copy DataFrame conversion between pandas and polars using Apache Arrow
 2. **JSON Utilities** (`json_utils.py`) - High-performance JSON parsing with orjson, providing 2-3x faster deserialization
@@ -36,9 +36,9 @@ These utilities enable `tif1` to achieve its performance goals while maintaining
 
 - **Zero-copy operations** wherever possible to minimize memory overhead
 - **Lazy evaluation** and deferred imports to reduce startup time
-- **Type safety** with comprehensive validation and error handling
+- **Type safety** with full validation and error handling
 - **Performance-first** design with optimized hot paths
-- **Backend agnostic** APIs that work seamlessly with pandas or polars
+- **Backend agnostic** APIs that support both pandas and polars
 
 ### Module Import Structure
 
@@ -96,21 +96,21 @@ The core_utils module is designed with performance as the primary concern. Every
 
 - **Minimal memory allocations**: Reuse buffers, avoid unnecessary copies
 - **Cache-friendly access patterns**: Sequential reads, predictable branches
-- **SIMD-friendly operations**: Leverage NumPy/Arrow vectorization
+- **SIMD-friendly operations**: Use NumPy/Arrow vectorization
 - **Lazy computation**: Defer work until absolutely necessary
 - **Zero-copy semantics**: Share memory between backends via Arrow
 
-**Real-world impact**: These optimizations enable `tif1` to load and process a full race weekend (3 practice sessions, qualifying, race) with telemetry for all 20 drivers in under 5 seconds on modern hardware.
+**Real-world impact**: These optimizations enable `tif1` to load and process a full race weekend with telemetry for all 20 drivers. A full weekend covers 3 practice sessions, qualifying, and the race. The load completes in under 5 seconds on modern hardware.
 
 ---
 
 ## Backend Conversion
 
-The backend conversion module provides zero-copy DataFrame transformations between pandas and polars using Apache Arrow as the interchange format. This enables seamless switching between backends without the performance penalty of traditional serialization/deserialization.
+The backend conversion module provides zero-copy DataFrame transformations between pandas and polars using Apache Arrow as the interchange format. This enables switching between backends without the performance penalty of traditional serialization/deserialization.
 
 ### Architecture
 
-The conversion system leverages:
+The conversion system uses:
 - **Apache Arrow** as the zero-copy interchange format
 - **PyArrow extension arrays** for pandas to maintain Arrow memory layout
 - **Lazy polars imports** to avoid dependency requirements when not needed
@@ -130,7 +130,7 @@ Convert a pandas DataFrame to polars using zero-copy Arrow conversion. This func
 
 **Parameters:**
 - `df` (`pd.DataFrame`): pandas DataFrame to convert. Can contain any pandas-supported dtype including nullable types, categoricals, and datetime types.
-- `rechunk` (`bool`, optional): Whether to rechunk the resulting polars DataFrame for optimal memory layout. Default is `False` to preserve zero-copy semantics. Set to `True` if you plan to perform many operations on the polars DataFrame and want contiguous memory.
+- `rechunk` (`bool`, optional): Whether to rechunk the resulting polars DataFrame for optimal memory layout. Default is `False` to preserve zero-copy semantics. Set to `True` to perform many operations on the polars DataFrame with contiguous memory.
 
 **Returns:**
 - `pl.DataFrame`: polars DataFrame with equivalent data and schema
@@ -191,7 +191,7 @@ print(f"Converted 10M rows in {time.time() - start:.3f}s")  # ~0.1s
 ```
 
 <Tip>
-  Use `rechunk=False` (default) when you need to convert data quickly and will only perform a few operations. Use `rechunk=True` when you plan to perform many polars operations and want optimal performance.
+  Use `rechunk=False` (default) for quick conversions with only a few operations. Use `rechunk=True` for workloads with many polars operations.
 </Tip>
 
 ---
@@ -272,7 +272,7 @@ print(df_pandas["sector_times"].iloc[0])  # [28.1, 35.2, 26.8]
 ```
 
 <Warning>
-  When `use_pyarrow=True`, the resulting pandas DataFrame uses PyArrow extension arrays. Some legacy pandas operations may not support these arrays. If you encounter compatibility issues, set `use_pyarrow=False` to use native pandas dtypes.
+  When `use_pyarrow=True`, the resulting pandas DataFrame uses PyArrow extension arrays. Some legacy pandas operations may not support these arrays. If compatibility issues occur, set `use_pyarrow=False` to use native pandas dtypes.
 </Warning>
 
 ---
@@ -286,7 +286,7 @@ def convert_backend(
 ) -> DataFrame
 ```
 
-Intelligently convert a DataFrame to the target backend (pandas or polars) using zero-copy conversion when possible. This is the high-level API that automatically detects the source backend and performs the appropriate conversion.
+Convert a DataFrame to the target backend (pandas or polars) using zero-copy conversion when possible. This is the high-level API that automatically detects the source backend and performs the appropriate conversion.
 
 **Parameters:**
 - `df` (`DataFrame`): DataFrame to convert. Can be either `pd.DataFrame` or `pl.DataFrame`.
@@ -369,7 +369,7 @@ except ImportError as e:
 
 ## JSON Utilities
 
-The JSON utilities module provides high-performance JSON parsing and serialization using orjson, a fast, correct JSON library for Python written in Rust. This module is critical for `tif1`'s performance as it handles parsing of large JSON payloads from the CDN containing lap data, telemetry, and race control messages.
+The JSON utilities module provides high-performance JSON parsing and serialization. It uses orjson, a fast, correct JSON library for Python written in Rust. This module is critical for `tif1`'s performance because it parses large JSON payloads from the CDN. These payloads contain lap data, telemetry, and race control messages.
 
 ### Why orjson?
 
@@ -551,7 +551,7 @@ Serialize Python object to JSON string using accelerated orjson codec with autom
 - `str`: JSON string representation of the data
 
 **Raises:**
-- `TypeError`: If the data contains non-serializable types (e.g., custom classes without `__dict__`)
+- `TypeError`: If the data contains non-serializable types (for example, custom classes without `__dict__`)
 
 **Performance Characteristics:**
 - **Time complexity**: O(n) where n is the data size
@@ -736,7 +736,7 @@ for lap in lap_data["laps"]:
 1. **Use bytes when possible**: Pass `response.content` to `json_loads` instead of `response.text`
 2. **Prefer parse_response_json**: Use `parse_response_json()` for HTTP responses
 3. **Trust the fallback**: The automatic fallback to stdlib json ensures reliability
-4. **Benchmark your use case**: Profile your specific JSON payloads to measure impact
+4. **Benchmark each use case**: Profile the specific JSON payloads to measure impact
 5. **Handle errors gracefully**: Catch `json.JSONDecodeError` for malformed JSON
 
 **Common Pitfalls:**
@@ -749,15 +749,15 @@ for lap in lap_data["laps"]:
 
 ## Helper Functions
 
-The helpers module (`helpers.py`) provides a comprehensive suite of utility functions for DataFrame manipulation, validation, and data transformation. These functions are the workhorses of `tif1`'s data processing pipeline, handling everything from input validation to complex DataFrame operations across both pandas and polars backends.
+The helpers module (`helpers.py`) provides utility functions for DataFrame manipulation, validation, and data transformation. These functions carry most of `tif1`'s data processing work. They handle input validation and complex DataFrame operations across both pandas and polars backends.
 
 ### Design Philosophy
 
 The helper functions follow these core principles:
 
-1. **Backend Agnostic**: All functions work seamlessly with both pandas and polars DataFrames
+1. **Backend Agnostic**: All functions work with both pandas and polars DataFrames
 2. **Zero-Copy Optimization**: Minimize memory allocations and avoid unnecessary data copies
-3. **Type Safety**: Comprehensive validation with clear error messages
+3. **Type Safety**: Full validation with clear error messages
 4. **Performance First**: Optimized hot paths for common operations
 5. **Defensive Programming**: Handle edge cases gracefully with fallback strategies
 
@@ -765,7 +765,7 @@ The helper functions follow these core principles:
 
 ### Validation Functions
 
-Input validation is critical for data integrity and user experience. The validation helpers provide comprehensive checks with informative error messages.
+Input validation is critical for data integrity and user experience. The validation helpers provide complete checks with informative error messages.
 
 #### `_validate_year`
 
@@ -823,7 +823,7 @@ def load_session(year: int, gp: str, session_type: str):
 ```
 
 <Note>
-  This validation is performed early in the data loading pipeline to fail fast and provide clear feedback before any network requests are made.
+  The data loading pipeline performs this validation early, before any network requests are made. Early validation fails fast and provides clear feedback.
 </Note>
 
 ---
@@ -919,7 +919,7 @@ def get_driver_laps(laps_df, drivers: list[str] | None):
 ```
 
 <Tip>
-  Use `None` instead of an empty list when you want to indicate "all drivers". An empty list is considered an error because it would result in an empty DataFrame, which is likely unintentional.
+  Use `None` instead of an empty list to indicate "all drivers". An empty list is considered an error because it would result in an empty DataFrame, which is likely unintentional.
 </Tip>
 
 ---
@@ -1004,7 +1004,7 @@ def get_lap_telemetry(driver: str, lap_number: int):
 ```
 
 <Warning>
-  Lap numbers in F1 start from 1, not 0. If you're iterating over laps, use `range(1, num_laps + 1)` instead of `range(num_laps)`.
+  Lap numbers in F1 start from 1, not 0. When iterating over laps, use `range(1, num_laps + 1)` instead of `range(num_laps)`.
 </Warning>
 
 ---
@@ -1019,7 +1019,7 @@ Validate that a string parameter is non-empty and properly formatted. This gener
 
 **Parameters:**
 - `param` (`str`): String parameter to validate. Must be a non-empty string with at least one non-whitespace character.
-- `param_name` (`str`): Human-readable parameter name for error messages. Used to provide context in error messages (e.g., "gp", "session_type", "driver").
+- `param_name` (`str`): Human-readable parameter name for error messages. Used to provide context in error messages (for example, "gp", "session_type", "driver").
 
 **Raises:**
 - `TypeError`: If `param` is not a string. Error message includes the parameter name and actual type received.
@@ -1028,7 +1028,7 @@ Validate that a string parameter is non-empty and properly formatted. This gener
 **Validation Rules:**
 1. Must be a string type (not int, None, or other type)
 2. Cannot be empty string `""`
-3. Cannot be whitespace-only (e.g., `"   "`, `"\t"`, `"\n"`)
+3. Cannot be whitespace-only (for example, `"   "`, `"\t"`, `"\n"`)
 
 **Performance:**
 - **Time complexity**: O(n) where n is the string length (for whitespace check)
@@ -1109,13 +1109,13 @@ def get_session(year: int, gp: str, session_type: str):
 def _encode_url_component(component: str) -> str
 ```
 
-URL-encode a string component for safe use in CDN URLs. This function properly encodes special characters, spaces, and international characters according to RFC 3986, ensuring that URLs are valid and don't break when passed to HTTP clients.
+URL-encode a string component for safe use in CDN URLs. This function properly encodes special characters, spaces, and international characters according to RFC 3986. The encoded URLs stay valid and do not break when passed to HTTP clients.
 
 **Parameters:**
 - `component` (`str`): String to encode. Can contain any Unicode characters, spaces, or special characters.
 
 **Returns:**
-- `str`: URL-encoded string with all special characters percent-encoded (e.g., space becomes `%20`, `&` becomes `%26`).
+- `str`: URL-encoded string with all special characters percent-encoded (for example, space becomes `%20`, `&` becomes `%26`).
 
 **Caching:**
 - Uses `@lru_cache(maxsize=1024)` for memoization
@@ -1216,7 +1216,7 @@ for gp in gp_names:
 
 ### DataFrame Utility Functions
 
-These functions provide backend-agnostic operations for DataFrame manipulation, enabling seamless work with both pandas and polars.
+These functions provide backend-agnostic operations for DataFrame manipulation with both pandas and polars.
 
 #### `_is_empty_df`
 
@@ -1303,7 +1303,7 @@ def process_telemetry(telemetry_df, lib: str):
 ```
 
 <Note>
-  This function prefers concrete type checking over the `lib` parameter because some code paths can surface pandas DataFrames even when the configured backend is polars (e.g., during backend conversion).
+  This function prefers concrete type checking over the `lib` parameter. Some code paths can surface pandas DataFrames even when the configured backend is polars (for example, during backend conversion).
 </Note>
 
 ---
@@ -1396,7 +1396,7 @@ class SessionData:
 ```
 
 <Tip>
-  Use `_create_empty_df()` instead of `pd.DataFrame()` or `pl.DataFrame()` directly when you need backend-agnostic code. This ensures consistency and handles the polars availability check automatically.
+  Use `_create_empty_df()` instead of `pd.DataFrame()` or `pl.DataFrame()` directly for backend-agnostic code. This ensures consistency and handles the polars availability check automatically.
 </Tip>
 
 ---
@@ -1407,7 +1407,7 @@ class SessionData:
 def _filter_valid_laptimes(laps, lib: str)
 ```
 
-Filter laps DataFrame to include only rows with valid lap times, and add a numeric `LapTimeSeconds` column for analysis. This function is critical for data quality, removing invalid laps (pit laps, out laps, deleted laps) and providing a consistent numeric representation of lap times.
+Filter laps DataFrame to include only rows with valid lap times, and add a numeric `LapTimeSeconds` column for analysis. This function is critical for data quality. It removes invalid laps (pit laps, out laps, deleted laps) and provides a consistent numeric representation of lap times.
 
 **Parameters:**
 - `laps`: Laps DataFrame (pandas or polars). Must contain a `LapTime` column.
@@ -1552,7 +1552,7 @@ print(f"Valid laps: {len(valid_laps)} ({len(valid_laps)/len(laps)*100:.1f}%)")
 def _rename_columns(df, rename_map: dict, lib: str)
 ```
 
-Rename DataFrame columns based on a mapping dictionary, with intelligent handling of duplicates and backend-specific APIs. This function is used to transform CDN column names to user-facing FastF1-compatible names.
+Rename DataFrame columns based on a mapping dictionary, with automatic handling of duplicates and backend-specific APIs. This function is used to transform CDN column names to user-facing FastF1-compatible names.
 
 **Parameters:**
 - `df`: DataFrame to rename (pandas or polars)
@@ -1565,7 +1565,7 @@ Rename DataFrame columns based on a mapping dictionary, with intelligent handlin
 **Special Handling:**
 - **Duplicate prevention**: Skips renames that would create duplicate column names
 - **Drop columns**: Columns mapped to `None` are removed from the DataFrame
-- **No-op renames**: Skips renames where source == target (e.g., `{"Driver": "Driver"}`)
+- **No-op renames**: Skips renames where source == target (for example, `{"Driver": "Driver"}`)
 - **Existing columns**: Avoids conflicts when target name already exists independently
 
 **Performance:**
@@ -1690,7 +1690,7 @@ def process_cdn_laps(raw_laps_df, lib: str):
 ```
 
 <Tip>
-  The function automatically handles edge cases like duplicate column names and missing columns, making it safe to use with varying CDN data formats across different years and sessions.
+  The function automatically handles edge cases like duplicate column names and missing columns. This makes it safe to use with varying CDN data formats across different years and sessions.
 </Tip>
 
 ---
@@ -1964,7 +1964,7 @@ Defines the maximum number of items to store in the LRU cache for various operat
 
 ### Column Rename Maps
 
-The library defines comprehensive column rename mappings to transform CDN data format to user-facing FastF1-compatible format. These mappings handle both verbose and abbreviated column names from different CDN data versions.
+The library defines complete column rename mappings to transform CDN data format to user-facing FastF1-compatible format. These mappings handle both verbose and abbreviated column names from different CDN data versions.
 
 #### Lap Data Rename Map
 
@@ -2189,7 +2189,7 @@ WEATHER_RENAME_MAP = {
 CATEGORICAL_COLS = ["Driver", "Team", "Compound", "TrackStatus"]
 ```
 
-List of columns that should be converted to categorical dtype for memory optimization. These columns have low cardinality (few unique values) and benefit significantly from categorical encoding.
+List of columns that should be converted to categorical dtype for memory optimization. These columns have low cardinality (few unique values) and benefit from categorical encoding.
 
 **Memory Savings:**
 - Driver: ~70% reduction (20 unique values in ~1000 laps)
@@ -2310,7 +2310,7 @@ print(laps_ordered.columns[:10].tolist())
 
 ## Resource Manager
 
-The resource manager module (`resource_manager.py`) provides a robust pattern for managing resources with guaranteed cleanup, even when initialization fails partway through. This is critical for preventing resource leaks in error scenarios.
+The resource manager module (`resource_manager.py`) provides a pattern for managing resources with guaranteed cleanup. The cleanup runs even when initialization fails partway through. This is critical because it prevents resource leaks in error scenarios.
 
 ### Architecture
 
@@ -2319,7 +2319,7 @@ The `ResourceManager` class implements the context manager protocol and tracks r
 **Key Features:**
 - **LIFO cleanup order**: Resources cleaned up in reverse order of registration
 - **Error resilience**: Cleanup continues even if individual resources fail to close
-- **Comprehensive logging**: All cleanup operations are logged for debugging
+- **Complete logging**: All cleanup operations are logged for debugging
 - **Multiple cleanup methods**: Supports both `.close()` and `.shutdown()` methods
 
 ---
@@ -2401,7 +2401,7 @@ class DatabaseManager(ResourceManager):
 def _cleanup_resources(self) -> None
 ```
 
-Cleanup all registered resources in reverse order (LIFO). This method attempts to clean up all resources even if individual cleanup operations fail. Cleanup errors are logged but do not prevent other resources from being cleaned up.
+Cleanup all registered resources in reverse order (LIFO). This method tries to clean up all resources even if individual cleanup operations fail. Cleanup errors are logged but do not prevent other resources from being cleaned up.
 
 **Cleanup Strategy:**
 1. Iterate through resources in reverse order
@@ -2409,7 +2409,7 @@ Cleanup all registered resources in reverse order (LIFO). This method attempts t
 3. If no `.close()`, try `.shutdown(wait=True)` method
 4. If neither exists, skip the resource
 5. Log any errors but continue cleanup
-6. Clear the resource list after all cleanup attempts
+6. Clear the resource list after all cleanup work finishes
 
 **Example:**
 ```python
@@ -2537,7 +2537,7 @@ finally:
 
 ### Logging
 
-The ResourceManager provides comprehensive logging for debugging:
+The ResourceManager provides detailed logging for debugging:
 
 ```python
 import logging
@@ -2583,7 +2583,7 @@ with ResilientManager() as manager:
 ```
 
 <Note>
-  ResourceManager is used internally by the library for managing HTTP sessions, cache connections, and other resources. Most users don't need to interact with it directly, but it's available for advanced use cases requiring custom resource management.
+  ResourceManager is used internally by the library for managing HTTP sessions, cache connections, and other resources. Most users do not need to interact with it directly. It is available for advanced use cases requiring custom resource management.
 </Note>
 
 ---

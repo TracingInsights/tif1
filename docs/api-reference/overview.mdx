@@ -1,7 +1,7 @@
 ---
 title: "API Overview"
 icon: "book-open"
-description: "A comprehensive map of the tif1 programmatic interface"
+description: "A map of the tif1 programmatic interface"
 keywords:
   - "tif1 API"
   - "F1 API reference"
@@ -20,23 +20,23 @@ keywords:
 
 # API Overview
 
-The `tif1` API is a high-performance, modern Python library meticulously designed for Formula 1 data analysis, telemetry processing, and motorsport analytics. Built from the ground up with performance as the absolute primary focus, `tif1` provides a clean, intuitive, and powerful interface that maintains full compatibility with the popular `fastf1` library while delivering significant speed improvements—often 5-10x faster—through advanced async operations, intelligent multi-layer caching, parallel HTTP fetching, and optional Polars backend support.
+The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry processing, and motorsport analytics. Performance is the primary focus of the design. `tif1` maintains full compatibility with the `fastf1` library. It often loads data 5-10x faster. The speed comes from async operations, multi-layer caching, parallel HTTP fetching, and an optional Polars backend.
 
-Whether you're a data scientist analyzing race strategies, a motorsport engineer studying telemetry patterns, a developer building F1 applications, or an enthusiast exploring racing data, `tif1` provides the tools and performance you need to work efficiently with Formula 1 data at scale.
+`tif1` serves data scientists, motorsport engineers, application developers, and racing enthusiasts. These users can work efficiently with Formula 1 data at scale.
 
 ## What Makes tif1 Different
 
 `tif1` stands apart from other F1 data libraries through several key innovations:
 
-- **Uncompromising Performance**: Every single component, from HTTP fetching to DataFrame construction, has been optimized for maximum speed. Async operations run in parallel, caching happens at multiple layers (memory + SQLite), and the optional Polars backend provides memory-efficient processing for large datasets.
+- **Performance**: Every component, from HTTP fetching to DataFrame construction, is optimized for speed. Async operations run in parallel. Caching happens at multiple layers (memory + SQLite). The optional Polars backend gives memory-efficient processing for large datasets.
 
-- **Production-Ready Architecture**: Unlike research-focused libraries, `tif1` is built for production use with circuit breakers, retry logic, connection pooling, DNS-over-HTTPS support, comprehensive error handling, and graceful degradation when CDN sources fail.
+- **Production Architecture**: `tif1` is built for production use, not only for research. It includes circuit breakers, retry logic, connection pooling, and DNS-over-HTTPS support. Error handling is complete. Loading degrades gracefully when CDN sources fail.
 
-- **Developer Experience**: Comprehensive type hints throughout the codebase enable excellent IDE autocomplete and type checking. Clear error messages with structured context help you debug issues quickly. Consistent naming conventions make the API predictable and easy to learn.
+- **Developer Experience**: Type hints throughout the codebase enable IDE autocomplete and type checking. Clear error messages with structured context make debugging quick. Consistent naming conventions make the API predictable and easy to learn.
 
-- **Flexible Data Access**: Load exactly what you need—skip telemetry for faster lap time analysis, or load everything for comprehensive session exploration. The API adapts to your use case rather than forcing a one-size-fits-all approach.
+- **Flexible Data Access**: Load only the data that the task needs. Skip telemetry for faster lap time analysis. Load everything for full session exploration. The API adapts to each use case.
 
-- **Modern Python Practices**: Built for Python 3.11+, leveraging modern language features like structural pattern matching, improved type hints, and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
+- **Modern Python Practices**: `tif1` supports Python 3.11+. It uses structural pattern matching, improved type hints, and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
 
 ## Design Philosophy
 
@@ -44,27 +44,27 @@ The `tif1` API is built on a foundation of carefully considered design principle
 
 ### Performance First
 
-Performance isn't just a feature—it's the core reason `tif1` exists. Every component has been profiled, optimized, and benchmarked:
+Performance is not just a feature—it is the core reason `tif1` exists. Every component has been profiled, optimized, and benchmarked:
 
-- **Async Operations**: All network I/O uses async/await patterns with `niquests` (a modern fork of `requests`) to enable parallel fetching of multiple data sources simultaneously. Loading a full race session with 20 drivers can fetch all data in parallel rather than sequentially.
+- **Async Operations**: All network I/O uses async/await patterns with `niquests`, a modern fork of `requests`. This enables parallel fetching of multiple data sources at the same time. `tif1` can fetch all data for a 20-driver race session in parallel.
 
-- **Intelligent Caching**: Multi-layer caching strategy with in-memory LRU cache for hot data and SQLite-backed persistent cache for all fetched data. Cache hits return data in microseconds rather than seconds. The cache is content-addressed and validates data integrity.
+- **Multi-Layer Caching**: An in-memory LRU cache holds hot data. A SQLite-backed persistent cache holds all fetched data. Cache hits return data in microseconds rather than seconds. The cache is content-addressed and validates data integrity.
 
-- **Parallel Fetching**: When loading session data, `tif1` fetches lap data, telemetry, weather, and race control messages in parallel using asyncio task groups. This reduces total load time from ~10-15 seconds to ~2-3 seconds for uncached sessions.
+- **Parallel Fetching**: When loading session data, `tif1` fetches lap data, telemetry, weather, and race control messages in parallel. The fetches use asyncio task groups. This reduces total load time from ~10-15 seconds to ~2-3 seconds for uncached sessions.
 
-- **Optional Polars Backend**: For users working with large datasets (multiple seasons, comparative analysis), the Polars backend provides 2-5x better memory efficiency and faster DataFrame operations compared to pandas. The backend is lazy-loaded and can be switched at runtime.
+- **Optional Polars Backend**: The Polars backend serves large datasets, for example multiple seasons and comparative analysis. It provides 2-5x better memory efficiency and faster DataFrame operations than pandas. The backend is lazy-loaded and can be switched at runtime.
 
-- **Optimized JSON Parsing**: Uses `orjson` (written in Rust) instead of Python's stdlib `json` for 2-3x faster JSON parsing. This matters when processing megabytes of telemetry data.
+- **Optimized JSON Parsing**: `tif1` uses `orjson` (written in Rust) instead of Python's stdlib `json`. This gives 2-3x faster JSON parsing. The speed matters when processing megabytes of telemetry data.
 
-- **Connection Pooling**: HTTP sessions use connection pooling to reuse TCP connections across requests, reducing connection overhead by ~50-100ms per request.
+- **Connection Pooling**: HTTP sessions use connection pooling to reuse TCP connections across requests. This reduces connection overhead by ~50-100ms per request.
 
 ### Simplicity and Ergonomics
 
-Complex operations should feel simple. The API hides complexity behind intuitive interfaces:
+Complex operations should stay simple. The API hides complexity behind consistent interfaces:
 
 - **Minimal Entry Points**: Most users only need `get_session()` to start working with F1 data. Everything else is discoverable through the returned `Session` object via IDE autocomplete.
 
-- **Sensible Defaults**: All optional parameters have sensible defaults. `get_session()` loads all available data by default, but you can selectively disable data sources for faster loading when you don't need them.
+- **Sensible Defaults**: All optional parameters have sensible defaults. `get_session()` loads all available data by default. Disable unneeded data sources for faster loading.
 
 - **Fuzzy Matching**: Event names support fuzzy matching—"spa", "belgium", "Belgian Grand Prix", and "Spa-Francorchamps" all work. Session types accept both full names ("Qualifying") and short codes ("Q"). This reduces friction and makes the API more forgiving.
 
@@ -78,11 +78,11 @@ The API should be easy to learn and remember:
 
 - **Consistent Naming**: All methods follow clear patterns—`get_*` for retrieval operations, `load_*` for data loading, `clear_*` for cache operations. Attributes use snake_case, classes use PascalCase.
 
-- **Clear Data Hierarchies**: The object model mirrors F1's structure: `Session` contains `Driver` objects, which contain `Lap` objects, which contain `Telemetry` data. This mental model matches how you think about F1 data.
+- **Clear Data Hierarchies**: The object model mirrors F1's structure: `Session` contains `Driver` objects, which contain `Lap` objects, which contain `Telemetry` data. This mental model matches how most users think about F1 data.
 
-- **Comprehensive Type Hints**: Every public function and method includes complete type hints. Your IDE can show you exactly what parameters are expected and what will be returned, reducing the need to consult documentation.
+- **Complete Type Hints**: Every public function and method includes complete type hints. An IDE can show the expected parameters and the return values. This reduces the need to consult documentation.
 
-- **Structured Errors**: Exceptions include structured context (not just error messages) so you can programmatically handle errors. A `DataNotFoundError` includes the year, event, and session that weren't found.
+- **Structured Errors**: Exceptions include structured context (not just error messages) for programmatic error handling. A `DataNotFoundError` includes the year, event, and session that were not found.
 
 ### Compatibility
 
@@ -92,27 +92,27 @@ Existing `fastf1` users should be able to migrate with minimal friction:
 
 - **Compatibility Layer**: The `tif1.fastf1_compat` module provides shims for `fastf1`-specific functions like `set_log_level()` and `Cache.enable_cache()`.
 
-- **DataFrame Compatibility**: DataFrames returned by `tif1` have the same column names and structure as `fastf1`, ensuring your analysis code doesn't need changes.
+- **DataFrame Compatibility**: DataFrames returned by `tif1` have the same column names and structure as `fastf1`. Existing analysis code does not need changes.
 
-- **Migration Path**: You can use both libraries side-by-side during migration, gradually moving code to `tif1` as you validate behavior.
+- **Migration Path**: Both libraries can run side-by-side during migration. Validate the behavior of each piece of code, then move it to `tif1`.
 
 ### Extensibility and Customization
 
 Advanced users should be able to customize behavior:
 
-- **Configuration System**: Global configuration via `get_config()` allows you to tune performance parameters (max workers, cache TTL, validation), switch backends (pandas/polars), and control behavior (ultra cold start mode, DNS-over-HTTPS).
+- **Configuration System**: Global configuration via `get_config()` tunes performance parameters (max workers, cache TTL, validation). The same call switches backends (pandas/polars). It also controls behavior (ultra cold start mode, DNS-over-HTTPS).
 
-- **Modular Architecture**: The library is split into focused modules (`http_session`, `async_fetch`, `cache`, `cdn`) that can be used independently or replaced with custom implementations.
+- **Modular Architecture**: The library is split into focused modules (`http_session`, `async_fetch`, `cache`, `cdn`). Each module can be used independently or replaced with a custom implementation.
 
-- **Backend Abstraction**: The DataFrame backend is abstracted behind a common interface, making it possible to add new backends (DuckDB, Arrow) without changing user-facing code.
+- **Backend Abstraction**: A common interface abstracts the DataFrame backend. New backends (DuckDB, Arrow) can be added without changing user-facing code.
 
-- **Cache Management**: Full control over cache behavior—clear specific sessions, clear by date range, inspect cache size, vacuum the database, or disable caching entirely for testing.
+- **Cache Management**: The user has full control over cache behavior. Clear specific sessions, or clear by date range. Inspect cache size, vacuum the database, or disable caching entirely for testing.
 
-- **Retry and Circuit Breaker**: Configurable retry logic with exponential backoff and circuit breaker patterns to handle transient network failures gracefully.
+- **Retry and Circuit Breaker**: Configurable retry logic uses exponential backoff. Circuit breaker patterns handle transient network failures gracefully.
 
 ## Quick Start
 
-Get started with `tif1` in seconds. The library handles all the complexity of data fetching, parsing, caching, and DataFrame construction behind a simple, intuitive interface:
+Get started with `tif1` in seconds. The library handles all the complexity of data fetching, parsing, caching, and DataFrame construction behind a simple, consistent interface:
 
 ```python
 import tif1
@@ -178,7 +178,7 @@ print(f"Fastest lap: {results['FastestLap'].min():.3f}s by {results.loc[results[
 
 ### What Happens Behind the Scenes
 
-When you call `get_session()`, `tif1` orchestrates a complex series of operations to deliver data quickly and reliably:
+`get_session()` orchestrates a complex series of operations to deliver data quickly and reliably:
 
 1. **Input Validation and Normalization**
    - Validates the year is within supported range (2018-2026)
@@ -246,11 +246,11 @@ When you call `get_session()`, `tif1` orchestrates a complex series of operation
     - Establishes relationships between objects (Session → Driver → Lap → Telemetry)
     - Returns fully-initialized `Session` object ready for analysis
 
-All of this happens transparently in milliseconds for cached data, or a few seconds for fresh downloads with parallel async fetching. The user sees only a simple function call that returns a ready-to-use `Session` object.
+All of this happens transparently in milliseconds for cached data. Fresh downloads with parallel async fetching take a few seconds. The user sees only a simple function call. It returns a ready-to-use `Session` object.
 
 ### Performance Characteristics
 
-Understanding the performance profile helps you optimize your workflows:
+Use this performance profile to optimize workflows:
 
 - **Cache Hit (Warm)**: 1-5 milliseconds
   - Data loaded from SQLite cache
@@ -284,7 +284,7 @@ Understanding the performance profile helps you optimize your workflows:
 
 ## Entry Points
 
-The `tif1` API exposes five primary entry points that serve as the foundation for all data access, configuration, and cache management. These functions are designed to be the only imports you need for most use cases:
+The `tif1` API exposes five primary entry points that serve as the foundation for all data access, configuration, and cache management. For most use cases, these functions are the only imports needed:
 
 | Function | Purpose | Return Type | Typical Use Case | Documentation |
 | :--- | :--- | :--- | :--- | :--- |
@@ -298,7 +298,7 @@ The `tif1` API exposes five primary entry points that serve as the foundation fo
 
 #### `get_session(year, event, session_type, **kwargs)`
 
-The primary and most important entry point for loading Formula 1 session data. This function is designed to be flexible, forgiving, and powerful—accepting multiple input formats while providing fine-grained control over what data gets loaded.
+The primary entry point for loading Formula 1 session data. The function accepts multiple input formats. It also provides fine-grained control over what data gets loaded.
 
 **Function Signature:**
 ```python
@@ -371,7 +371,7 @@ session = tif1.get_session(2024, "Austria", "Sprint")  # or "S"
 
 **Selective Data Loading:**
 
-Control exactly what data gets loaded to optimize performance for your specific use case:
+Control exactly what data gets loaded to optimize performance for each specific use case:
 
 ```python
 # Load everything (default behavior)
@@ -572,13 +572,13 @@ except ValueError as e:
 
 **Performance Tips:**
 
-1. **Load only what you need**: Disable unused data sources
+1. **Load only the needed data**: Disable unused data sources
    ```python
    # 3-5x faster than loading everything
    session = tif1.get_session(2021, "Monaco", "Race", telemetry=False, weather=False, messages=False)
    ```
 
-2. **Use cache effectively**: Don't use `force_reload` unless necessary
+2. **Use cache effectively**: Do not use `force_reload` unless necessary
    ```python
    # Cache hit: &lt;5ms, Cache miss: 2-5 seconds
    session = tif1.get_session(2021, "Monaco", "Race")  # Uses cache
@@ -604,7 +604,7 @@ except ValueError as e:
 
 #### `get_events(year, **kwargs)`
 
-Retrieve the complete event schedule for a championship year, including all Grand Prix events with their metadata, dates, locations, and session structures.
+Retrieve the complete event schedule for a championship year. The schedule includes all Grand Prix events with metadata, dates, locations, and session structures.
 
 **Function Signature:**
 ```python
@@ -717,10 +717,10 @@ print(f"  {sprint['Session5']} - {sprint['Session5Date']}")  # Race
 **DataFrame Columns Explained:**
 
 - `RoundNumber` (int): Sequential round number in championship (1-24)
-- `EventName` (str): Short event name (e.g., "Monaco Grand Prix")
-- `OfficialEventName` (str): Full official name (e.g., "Formula 1 Grand Prix de Monaco 2024")
-- `Location` (str): Circuit location/city (e.g., "Monte Carlo")
-- `Country` (str): ISO country code (e.g., "MC" for Monaco)
+- `EventName` (str): Short event name (for example, "Monaco Grand Prix")
+- `OfficialEventName` (str): Full official name (for example, "Formula 1 Grand Prix de Monaco 2024")
+- `Location` (str): Circuit location/city (for example, "Monte Carlo")
+- `Country` (str): ISO country code (for example, "MC" for Monaco)
 - `EventDate` (str/datetime): Date of main race
 - `EventFormat` (str): "standard" or "sprint"
 - `Session1-5` (str): Session names ("Practice 1", "Qualifying", "Race", etc.)
@@ -929,11 +929,11 @@ graph TD
 
 ### Primary Objects
 
-These are the main objects you'll interact with when using `tif1`:
+These are the main objects that `tif1` users interact with:
 
 #### Session
 
-The `Session` object represents an entire Formula 1 session (Practice, Qualifying, Sprint, or Race) and serves as the primary container for all session data.
+The `Session` object represents an entire Formula 1 session (Practice, Qualifying, Sprint, or Race). It is the primary container for all session data.
 
 **Key Attributes:**
 - `session.laps` - All lap timing data from all drivers as a DataFrame
@@ -941,7 +941,7 @@ The `Session` object represents an entire Formula 1 session (Practice, Qualifyin
 - `session.race_control_messages` - Official race control messages and flags
 - `session.results` - Final classification and session results
 - `session.circuit_info` - Circuit metadata (length, corners, location)
-- `session.drivers` - List of driver codes (e.g., ['VER', 'HAM', 'LEC'])
+- `session.drivers` - List of driver codes (for example, ['VER', 'HAM', 'LEC'])
 - `session.session_info` - Session metadata (date, time, type)
 
 **Key Methods:**
@@ -979,10 +979,10 @@ See [Session API](/api-reference/core#session) for complete documentation.
 The `Driver` object represents a specific driver within a session and provides convenient access to driver-specific data and operations.
 
 **Key Attributes:**
-- `driver.code` - Three-letter driver code (e.g., 'VER')
-- `driver.name` - Full driver name (e.g., 'Max Verstappen')
-- `driver.team` - Team name (e.g., 'Red Bull Racing')
-- `driver.number` - Racing number (e.g., 33)
+- `driver.code` - Three-letter driver code (for example, 'VER')
+- `driver.name` - Full driver name (for example, 'Max Verstappen')
+- `driver.team` - Team name (for example, 'Red Bull Racing')
+- `driver.number` - Racing number (for example, 33)
 - `driver.laps` - All laps completed by this driver as a DataFrame
 - `driver.telemetry` - Telemetry data for all laps (if loaded)
 
@@ -1317,7 +1317,7 @@ config.save()
 
 ## Error Handling
 
-`tif1` uses a hierarchy of specific exceptions to help you handle common issues:
+`tif1` uses a hierarchy of specific exceptions. These exceptions help with common issues:
 
 ### Exception Hierarchy
 
@@ -1334,7 +1334,7 @@ TIF1Error (base)
 
 ### Common Exceptions
 
-- **`DataNotFoundError`**: The requested GP, year, or session doesn't exist
+- **`DataNotFoundError`**: The requested GP, year, or session does not exist
 - **`NetworkError`**: All CDN sources failed or timed out
 - **`InvalidDataError`**: The data fetched from the CDN was corrupted
 - **`DriverNotFoundError`**: The driver code provided is not in this session
@@ -1403,7 +1403,7 @@ See [Best Practices](/guides/best-practices) for more optimization tips.
 
 ## Type Hints
 
-All public APIs include comprehensive type hints for better IDE support:
+All public APIs include full type hints for better IDE support:
 
 ```python
 from tif1 import Session, Driver
@@ -1425,7 +1425,7 @@ See [Types API](/api-reference/types) for complete type definitions.
 
 - **[Core API](/api-reference/core)** - Start with Session, Driver, and Lap classes
 - **[Tutorials](/tutorials/race-analysis)** - Learn through practical examples
-- **[Best Practices](/guides/best-practices)** - Optimize your code
+- **[Best Practices](/guides/best-practices)** - Optimize analysis code
 - **[FAQ](/reference/faq)** - Common questions and answers
 
 ---

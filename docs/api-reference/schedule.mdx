@@ -1,7 +1,7 @@
 ---
 title: "Schedule Schema & Validation"
 icon: "calendar-days"
-description: "Comprehensive guide to schedule data validation, schema management, and internal data structures for Formula 1 event and session information"
+description: "Schedule data validation, schema management, and internal data structures for Formula 1 event and session information"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -16,11 +16,11 @@ keywords:
 
 # Schedule Schema & Validation
 
-The `schedule_schema` module serves as the foundational validation layer for tif1's internal schedule data architecture. This module implements a comprehensive validation system that acts as a critical gatekeeper, ensuring data integrity and structural consistency across all schedule-related operations within the library.
+The `schedule_schema` module is the validation layer for the tif1 internal schedule data architecture. It implements a validation system that ensures data integrity and structural consistency across all schedule operations in the library.
 
 ## Purpose and Role
 
-The schedule validation system is designed to guarantee that all schedule payloads—regardless of their origin (vendored JSON files, CDN sources, or custom data)—conform precisely to tif1's expected internal schema before being consumed by higher-level APIs. This validation layer provides several critical functions:
+The schedule validation system guarantees that all schedule payloads conform to the tif1 internal schema before use by higher-level APIs. This applies to payloads from vendored JSON files, CDN sources, or custom data. This validation layer provides these functions:
 
 - **Data Integrity Assurance**: Validates that schedule data structures are complete, correctly typed, and internally consistent
 - **Early Error Detection**: Catches malformed or incomplete data at the earliest possible stage, preventing cascading failures
@@ -28,14 +28,14 @@ The schedule validation system is designed to guarantee that all schedule payloa
 - **Type Safety Enforcement**: Verifies that all data elements match their expected types throughout the hierarchy
 - **Consistency Guarantees**: Ensures uniform data structure across all years, events, and data sources
 
-The validation process is designed for performance, typically completing in under 1 millisecond, and integrates seamlessly with tif1's caching system to ensure validation overhead is minimized in production use.
+The validation process is designed for performance and typically completes in under 1 millisecond. It integrates with the tif1 caching system, which minimizes validation overhead in production use.
 
 <Note>
-  **For Most Users**: This module operates transparently behind the scenes. You'll interact with schedule data through high-level APIs like `get_events()`, `get_sessions()`, and `get_event_schedule()`, which automatically handle validation. Direct use of validation functions is typically only needed for advanced scenarios such as working with custom schedule data, debugging data issues, or extending the library.
+  **For Most Users**: This module operates transparently. Schedule data is accessed through high-level APIs like `get_events()`, `get_sessions()`, and `get_event_schedule()`, which handle validation automatically. Direct use is needed only for advanced scenarios: custom schedule data, debugging, or extending the library.
 </Note>
 
 <Warning>
-  **Schema Version Compatibility**: Currently, only schema version 1 is supported. Attempting to validate payloads with different schema versions will raise an `InvalidDataError`. Future versions of tif1 may introduce new schema versions with additional features or structural changes.
+  **Schema Version Compatibility**: Now, only schema version 1 is supported. Attempting to validate payloads with different schema versions will raise an `InvalidDataError`. Future versions of tif1 may introduce new schema versions with additional features or structural changes.
 </Warning>
 
 ---
@@ -106,11 +106,11 @@ The schedule validation system sits at a critical junction in tif1's data pipeli
 
 2. **Single Validation Point**: All schedule data, regardless of source, passes through the same validation function, ensuring consistent quality standards.
 
-3. **Performance Optimization**: Validation is designed to be extremely fast (typically &lt;1ms) and runs only once per session due to aggressive caching.
+3. **Performance Optimization**: Validation is fast (typically &lt;1ms) and runs only once per session due to caching.
 
-4. **Detailed Error Reporting**: When validation fails, the system provides specific, actionable error messages that pinpoint exactly what went wrong and where.
+4. **Detailed Error Reporting**: When validation fails, the system provides specific error messages that identify what went wrong and where.
 
-5. **Type Safety**: The validation system enforces strict type checking at every level of the data hierarchy, preventing type-related bugs downstream.
+5. **Type Safety**: The validation system enforces strict type checking at every level of the data hierarchy. This prevents type-related bugs downstream.
 
 ### Validation Scope
 
@@ -137,7 +137,7 @@ The validation system is optimized for production use:
 - **Scalability**: Handles schedules with 20+ events per year efficiently
 
 <Info>
-  **Benchmark Example**: Validating a 5-year schedule (2020-2024) with ~22 events per year and ~5 sessions per event typically completes in 0.3-0.8ms on modern hardware.
+  **Benchmark Example**: A 5-year schedule (2020-2024) with ~22 events per year and ~5 sessions per event. Validation completes in 0.3-0.8ms on modern hardware.
 </Info>
 
 ---
@@ -150,7 +150,7 @@ The validation system is optimized for production use:
 def validate_schedule_payload(payload: Any) -> dict[str, Any]
 ```
 
-The primary and only public validation function in this module. This function performs comprehensive, hierarchical validation of schedule payloads to ensure they conform to tif1's internal schema specification version 1.
+The primary and only public validation function in this module. This function performs hierarchical validation of schedule payloads to ensure they conform to tif1's internal schema specification version 1.
 
 #### Function Signature
 
@@ -193,7 +193,7 @@ The primary and only public validation function in this module. This function pe
 
 #### Validation Process
 
-The function performs validation in a hierarchical, top-down manner, checking each level of the data structure before proceeding to the next:
+The function performs validation in a hierarchical, top-down manner. It checks each level of the data structure before it proceeds to the next:
 
 ##### Level 1: Top-Level Structure Validation
 
@@ -648,7 +648,7 @@ else:
 
 #### Common Validation Failures
 
-Here's a comprehensive reference of common validation failures and how to fix them:
+Here is a reference of common validation failures and how to fix them:
 
 | Error Message | Cause | Solution |
 |---------------|-------|----------|
@@ -679,7 +679,7 @@ The validation function is optimized for production use:
 | 10 years | 220 events | ~1100 sessions | ~1.1ms |
 
 <Tip>
-  **Integration Tip**: When building custom schedule loaders or data pipelines, call `validate_schedule_payload()` immediately after constructing your payload and before any caching or API exposure. This ensures data quality at the earliest possible stage.
+  **Integration Tip**: When building custom schedule loaders or data pipelines, call `validate_schedule_payload()` immediately after payload construction. Call it before any caching or API exposure. This ensures data quality at the earliest stage.
 </Tip>
 
 ---
@@ -688,7 +688,7 @@ The validation function is optimized for production use:
 
 ### Schema Structure
 
-The internal schedule schema is designed to be event-centric, optimizing for the most common query patterns in Formula 1 data analysis. This structure differs from the raw f1schedule format (which uses a columnar layout) to provide better performance for event and session lookups.
+The internal schedule schema is event-centric. It is optimized for the most common query patterns in Formula 1 data analysis. This structure differs from the raw f1schedule format, which uses a columnar layout. The event-centric structure gives better performance for event and session lookups.
 
 #### Complete Schema Definition
 
@@ -914,7 +914,7 @@ Future schema versions may include:
   - Circuit information (length, corners, DRS zones)
   - Weather forecast data
   - Tire compound allocations
-  - Support for new session types (e.g., "Sprint Shootout")
+  - Support for new session types (for example, "Sprint Shootout")
   - Enhanced metadata for special events
 
 <Warning>
@@ -925,7 +925,7 @@ Future schema versions may include:
 
 ## Validation Rules Reference
 
-This section provides a comprehensive reference of all validation rules enforced by `validate_schedule_payload()`.
+This section provides a reference of all validation rules enforced by `validate_schedule_payload()`.
 
 ### Rule Categories
 
@@ -983,7 +983,7 @@ The validation process follows this exact order:
 ```
 
 <Info>
-  **Early Exit Behavior**: Validation stops at the first rule violation. This means you'll only see one error at a time, even if multiple issues exist. Fix the reported error and re-validate to discover any additional issues.
+  **Early Exit Behavior**: Validation stops at the first rule violation. Only one error is reported at a time, even if multiple issues exist. Fix the reported error and re-validate to discover any additional issues.
 </Info>
 
 ### Common Validation Scenarios
@@ -1120,7 +1120,7 @@ payload = {
 ```
 
 <Note>
-  **Empty Lists**: While empty event lists and empty session lists pass validation, they may cause issues in higher-level APIs that expect at least one session per event. The validation layer only checks structural correctness, not business logic constraints.
+  **Empty Lists**: Empty event lists and empty session lists pass validation. They may cause issues in higher-level APIs that expect at least one session per event. The validation layer checks structural correctness only, not business logic constraints.
 </Note>
 
 #### Scenario 6: Invalid Session Type
@@ -1579,7 +1579,7 @@ def compare_payloads(test_payload, reference_payload):
 | API response parsing | `Year payload must be object for year=X` | Year data is list instead of dict | Transform API response structure |
 
 <Tip>
-  **Debugging Tip**: When validation fails, print the exact payload structure using `json.dumps(payload, indent=2)` to visually inspect the data hierarchy and identify structural issues.
+  **Debugging Tip**: When validation fails, print the payload structure with `json.dumps(payload, indent=2)`. Inspect the data hierarchy to identify structural issues.
 </Tip>
 
 ---
@@ -1761,7 +1761,7 @@ def _load_f1schedule_year_from_cdn(year):
 
 ### Custom Schedule Data Integration
 
-You can integrate custom schedule data with tif1's validation system:
+Integrate custom schedule data with the tif1 validation system:
 
 #### Example: Loading Custom Schedule File
 
@@ -2137,7 +2137,7 @@ def validate_schedule_payload(payload):
 
 #### Technique 4: In-Place Validation
 
-Validation doesn't copy data:
+Validation does not copy data:
 
 ```python
 def validate_schedule_payload(payload):
@@ -2155,7 +2155,7 @@ def validate_schedule_payload(payload):
 
 #### Adding Custom Validation Rules
 
-You can wrap the built-in validation with additional checks:
+Wrap the built-in validation with additional checks:
 
 ```python
 from tif1.schedule_schema import validate_schedule_payload
@@ -2273,7 +2273,7 @@ except InvalidDataError as e:
 
 #### Handling Future Schema Versions
 
-When schema version 2 is introduced, you might need migration logic:
+When schema version 2 is introduced, migration logic may be needed:
 
 ```python
 from tif1.schedule_schema import validate_schedule_payload
@@ -2379,7 +2379,7 @@ print(f"Total events: {total_events}")
 
 #### Issue: Cryptic Error Messages
 
-**Symptom**: Error message doesn't clearly indicate the problem.
+**Symptom**: Error message does not clearly indicate the problem.
 
 **Cause**: Complex nested structure makes errors hard to pinpoint.
 
@@ -2901,7 +2901,7 @@ The `schedule_schema` module provides the foundational validation layer for tif1
 ### Core Concepts
 
 - **Single Validation Function**: `validate_schedule_payload()` is the only public API
-- **Schema Version 1**: Currently the only supported version
+- **Schema Version 1**: Now the only supported version
 - **Event-Centric Structure**: Internal format optimized for fast event/session lookups
 - **Fail-Fast Validation**: Stops at first error with detailed error messages
 - **Performance Optimized**: Typically &lt;1ms validation time, cached results
@@ -2919,7 +2919,7 @@ The `schedule_schema` module provides the foundational validation layer for tif1
 2. **Handle Errors**: Always catch `InvalidDataError` and provide user-friendly messages
 3. **Preserve Context**: When wrapping validation, preserve error context for debugging
 4. **Build Incrementally**: For complex payloads, validate at each construction stage
-5. **Use Caching**: Leverage tif1's built-in caching to minimize validation overhead
+5. **Use Caching**: Use the tif1 built-in caching to minimize validation overhead
 
 ### Common Patterns
 
@@ -2954,16 +2954,16 @@ For more information on working with schedule data in tif1:
 
 <CardGroup cols={2}>
   <Card title="Events & Schedule API" href="/api-reference/events" icon="calendar">
-    High-level APIs for accessing event and session information
+    High-level APIs for accessing event and session information.
   </Card>
   <Card title="Core Session API" href="/api-reference/core" icon="database">
-    Loading and working with session data
+    Loading and working with session data.
   </Card>
   <Card title="Exception Handling" href="/api-reference/exceptions" icon="triangle-exclamation">
-    Complete exception hierarchy and error handling patterns
+    Complete exception hierarchy and error handling patterns.
   </Card>
   <Card title="Data Flow Concepts" href="/concepts/data-flow" icon="diagram-project">
-    Understanding tif1's data pipeline architecture
+    Understanding tif1's data pipeline architecture.
   </Card>
 </CardGroup>
 

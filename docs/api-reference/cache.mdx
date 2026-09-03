@@ -14,19 +14,19 @@ keywords:
 
 ## Overview
 
-`tif1` implements a sophisticated two-tier caching architecture designed to maximize performance while minimizing redundant network requests. The caching system consists of:
+`tif1` implements a two-tier caching architecture that reduces redundant network requests. The caching system consists of:
 
 1. **In-Memory LRU Cache**: Fast, volatile cache for frequently accessed data with configurable size limits
 2. **SQLite Persistent Cache**: Durable disk-based storage that survives across sessions
 
-This dual-layer approach ensures that hot data is served from memory (microsecond latency), while cold data can be retrieved from disk (millisecond latency) without hitting the network (second+ latency). The cache is thread-safe and supports both synchronous and asynchronous operations.
+This dual-layer approach serves hot data from memory (microsecond latency). Cold data is retrieved from disk (millisecond latency) without a network request (second+ latency). The cache is thread-safe and supports synchronous and asynchronous operations.
 
 ### Cache Architecture
 
 The cache stores two primary types of data:
 
-- **JSON Data**: Session metadata, lap data, driver information, weather data, and race control messages stored in a key-value table
-- **Telemetry Data**: High-frequency sensor data (speed, throttle, brake, gear, RPM, DRS) stored in a dedicated optimized table with composite indexing on (year, gp, session, driver, lap)
+- **JSON Data**: Session metadata, lap data, driver information, weather data, and race control messages in a key-value table
+- **Telemetry Data**: High-frequency sensor data (speed, throttle, brake, gear, RPM, DRS). Stored in a dedicated optimized table with composite indexing on (year, gp, session, driver, lap)
 
 All data is automatically cached when loaded through `Session.load()` and can be manually managed through the Cache API.
 
@@ -40,7 +40,7 @@ def get_cache() -> Cache
 
 Returns the global singleton `Cache` instance used throughout the library. This is the primary entry point for all cache operations.
 
-The cache is initialized lazily on first access and configured based on environment variables and `.tif1rc` settings. The same instance is shared across all sessions and operations within your application.
+The cache is initialized lazily on first access and configured based on environment variables and `.tif1rc` settings. The same instance is shared across all sessions and operations in the application.
 
 **Returns:** `Cache` - The global cache singleton
 
@@ -83,7 +83,7 @@ Removes all cached data from both the in-memory LRU cache and the persistent SQL
 - Forcing a complete data refresh
 - Troubleshooting data inconsistencies
 
-**Performance Impact:** After clearing the cache, the first load of any session will be significantly slower as all data must be fetched from the network.
+**Performance Impact:** After the cache is cleared, the first load of any session is slower. All data must be fetched from the network again.
 
 **Example:**
 ```python
@@ -122,8 +122,8 @@ def has_session_data(year: int, gp: str, session: str) -> bool
 Checks whether the cache contains any data for a specific session without actually loading it. This is a lightweight operation that queries the cache index rather than deserializing data.
 
 **Parameters:**
-- `year` (int): Season year (e.g., `2024`, `2023`)
-- `gp` (str): Grand Prix identifier in snake_case format (e.g., `"Monaco_Grand_Prix"`, `"Belgian_Grand_Prix"`)
+- `year` (int): Season year (for example, `2024`, `2023`)
+- `gp` (str): Grand Prix identifier in snake_case format (for example, `"Monaco_Grand_Prix"`, `"Belgian_Grand_Prix"`)
 - `session` (str): Session type - one of `"Race"`, `"Qualifying"`, `"Sprint"`, `"Practice_1"`, `"Practice_2"`, `"Practice_3"`, `"Sprint_Qualifying"`
 
 **Returns:** `bool` - `True` if any JSON or telemetry data exists for the session, `False` otherwise
@@ -176,7 +176,7 @@ for year, gp, session_type in sessions_to_check:
 def close() -> None
 ```
 
-Explicitly closes the SQLite database connection and releases associated resources. This method is called automatically when the Python process exits via an `atexit` handler, but can be invoked manually for fine-grained resource management.
+Explicitly closes the SQLite database connection and releases associated resources. This method runs automatically when the Python process exits, via an `atexit` handler. Invoke it manually for fine-grained resource management.
 
 **When to Use:**
 - Long-running applications that need to release resources
@@ -184,7 +184,7 @@ Explicitly closes the SQLite database connection and releases associated resourc
 - Before forking processes (to avoid connection sharing issues)
 - Explicit resource cleanup in context managers
 
-**Note:** After calling `close()`, the cache can still be used - it will automatically reconnect to the database on the next operation.
+**Note:** After `close()`, the cache can still be used. It reconnects to the database automatically on the next operation.
 
 **Example:**
 ```python
@@ -220,7 +220,7 @@ def process_session_data():
 
 ## General Cache Access (JSON Data)
 
-These methods provide low-level access to the cache's key-value store for JSON-serializable data. Most users won't need these methods directly, as `Session.load()` handles caching automatically. However, they're useful for advanced use cases like custom data pipelines or cache inspection.
+These methods provide low-level access to the cache's key-value store for JSON-serializable data. Most users will not need these methods directly, as `Session.load()` handles caching automatically. However, they are useful for advanced use cases like custom data pipelines or cache inspection.
 
 ### `get()`
 
@@ -286,7 +286,7 @@ Stores JSON-serializable data in the cache with the specified key. Updates both 
 - `key` (str): Cache key in the format `"{year}/{gp}/{session}/{file}.json"`
 - `data` (Any): JSON-serializable data to cache (dict, list, str, int, float, bool, None)
 
-**Serialization:** Data is serialized using `orjson` for performance. Ensure your data contains only JSON-compatible types.
+**Serialization:** Data is serialized with `orjson` for performance. Ensure that the data contains only JSON-compatible types.
 
 **Example:**
 ```python
@@ -359,10 +359,10 @@ def get_telemetry(
 Retrieves telemetry data for a specific driver's lap. Returns `None` if the telemetry is not cached.
 
 **Parameters:**
-- `year` (int): Season year (e.g., `2024`)
-- `gp` (str): Grand Prix identifier (e.g., `"Monaco_Grand_Prix"`)
-- `session` (str): Session type (e.g., `"Race"`, `"Qualifying"`)
-- `driver` (str): Three-letter driver code (e.g., `"VER"`, `"HAM"`, `"LEC"`)
+- `year` (int): Season year (for example, `2024`)
+- `gp` (str): Grand Prix identifier (for example, `"Monaco_Grand_Prix"`)
+- `session` (str): Session type (for example, `"Race"`, `"Qualifying"`)
+- `driver` (str): Three-letter driver code (for example, `"VER"`, `"HAM"`, `"LEC"`)
 - `lap` (int): Lap number (1-indexed)
 
 **Returns:** `Any | None` - Telemetry data structure (typically a dict with arrays), or `None` if not found
@@ -474,7 +474,7 @@ def get_telemetry_batch(
 ) -> dict[tuple[str, int], Any]
 ```
 
-Retrieves multiple telemetry entries in a single optimized batch query. This is significantly more efficient than calling `get_telemetry()` multiple times, as it uses a single SQL query with an `IN` clause.
+Retrieves multiple telemetry entries in a single optimized batch query. This is more efficient than calling `get_telemetry()` multiple times, as it uses a single SQL query with an `IN` clause.
 
 **Parameters:**
 - `year` (int): Season year
@@ -565,7 +565,7 @@ if fastest_key:
 
 ## Async Methods
 
-All cache read/write operations have async variants for use in async contexts. These methods are essential for building high-performance async applications that need to interact with the cache without blocking the event loop.
+All cache read/write operations have async variants for use in async contexts. These methods enable high-performance async applications to interact with the cache without blocking the event loop.
 
 ### Async Method Overview
 
@@ -937,13 +937,13 @@ Kind-based access to the in-memory tiers: `"json"` (path-keyed payloads), `"tele
 
 ### `SessionMemo`
 
-Per-session memo tier held as `Session._memo`. It consolidates the session-scoped caches behind the same kind-based interface, and additionally owns the fastest-lap-reference memo, the persistent-cache probe result (`has_session_data`), and per-driver telemetry failure tracking. Not internally synchronized; the owning session's access patterns are effectively single-threaded per event loop.
+Per-session memo tier held as `Session._memo`. It consolidates the session-scoped caches behind the same kind-based interface. It also owns the fastest-lap-reference memo, the persistent-cache probe result (`has_session_data`), and per-driver telemetry failure tracking. Not internally synchronized. The owning session's access patterns are single-threaded per event loop.
 
 ---
 
 ## Cache Statistics and Monitoring
 
-While the `Cache` class doesn't expose built-in statistics methods, you can query the SQLite database directly for monitoring purposes.
+The `Cache` class does not expose built-in statistics methods. Query the SQLite database directly for monitoring purposes.
 
 ### Example - Cache Size Analysis
 
@@ -1023,7 +1023,7 @@ for year, gp, session in sessions:
 
 The cache is most effective when:
 - Loading the same session multiple times
-- Analyzing historical data that doesn't change
+- Analyzing historical data that does not change
 - Working with telemetry-heavy workloads
 - Running batch analyses across multiple sessions
 
@@ -1066,8 +1066,8 @@ if size_mb > 1000:  # 1 GB threshold
 
 ### Optimization Tips
 
-1. **Use Batch Operations**: `get_telemetry_batch()` is significantly faster than multiple `get_telemetry()` calls
-2. **Selective Loading**: Only load the data you need (e.g., `session.load(laps=True, telemetry=False)`)
+1. **Use Batch Operations**: `get_telemetry_batch()` is faster than multiple `get_telemetry()` calls
+2. **Selective Loading**: Only load the data that is needed (for example, `session.load(laps=True, telemetry=False)`)
 3. **Async for Concurrency**: Use async methods when fetching data for multiple sessions in parallel
 4. **Cache Warming**: Pre-load frequently accessed sessions during off-peak hours
 5. **Read-Only Mode**: Use read-only mode in production environments to prevent cache pollution
@@ -1436,15 +1436,15 @@ validate_session_cache(2024, "Monaco_Grand_Prix", "Race")
 
 <CardGroup cols={2}>
   <Card title="Caching Strategy" href="/concepts/caching-strategy">
-    Understand the two-tier cache architecture
+    Understand the two-tier cache architecture.
   </Card>
   <Card title="Config API" href="/api-reference/config">
-    Configure cache behavior and location
+    Configure cache behavior and location.
   </Card>
   <Card title="Performance Guide" href="/guides/best-practices">
-    Optimization techniques and best practices
+    Optimization techniques and best practices.
   </Card>
   <Card title="Core API" href="/api-reference/core">
-    Learn how sessions interact with the cache
+    Learn how sessions interact with the cache.
   </Card>
 </CardGroup>

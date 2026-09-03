@@ -1,7 +1,7 @@
 ---
 title: "FastF1 Compatibility API"
 icon: "code-compare"
-description: "Comprehensive guide to drop-in replacement functions for migrating from fastf1"
+description: "Drop-in replacement functions for migrating from fastf1"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,7 +14,7 @@ keywords:
 
 # FastF1 Compatibility Layer
 
-The `fastf1_compat` module provides a comprehensive compatibility layer for applications migrating from `fastf1` to `tif1`. This module maintains API compatibility while leveraging tif1's performance optimizations, including async data fetching, HTTP/2 multiplexing, and intelligent caching strategies.
+The `fastf1_compat` module provides a compatibility layer for applications migrating from `fastf1` to `tif1`. This module maintains API compatibility while using tif1 performance optimizations, including async data fetching, HTTP/2 multiplexing, and caching strategies.
 
 <Info>
   **For new projects**: Use the native tif1 API directly for the best experience. This compatibility layer is specifically designed to ease migration from existing fastf1 codebases with minimal code changes.
@@ -33,7 +33,7 @@ The `fastf1_compat` module provides a comprehensive compatibility layer for appl
 
 ## Cache Management
 
-The `Cache` class provides fastf1-compatible cache management with enhanced performance through a multi-layer caching strategy. tif1 uses a sophisticated caching system that combines in-memory LRU caches with SQLite persistence, delivering significantly faster data access than fastf1's HTTP cache approach.
+The `Cache` class provides fastf1-compatible cache management with improved performance through a multi-layer caching strategy. tif1 uses a caching system that combines in-memory LRU caches with SQLite persistence. This structure gives faster data access than the fastf1 HTTP cache approach.
 
 ### Architecture Overview
 
@@ -78,7 +78,7 @@ Enable caching with fastf1-compatible API. This method initializes tif1's cachin
 
 When `enable_cache()` is called:
 
-1. **Directory Creation**: Creates the cache directory if it doesn't exist, with restricted permissions (0o700 on Unix-like systems)
+1. **Directory Creation**: Creates the cache directory if it does not exist, with restricted permissions (0o700 on Unix-like systems)
 2. **SQLite Initialization**: Sets up the SQLite database with WAL (Write-Ahead Logging) mode for better concurrency
 3. **Configuration Update**: Updates the global tif1 configuration to enable caching
 4. **Instance Reset**: Closes any existing cache instance and creates a fresh one
@@ -94,7 +94,7 @@ The cache directory is resolved in the following order of precedence:
 4. Platform-specific default:
    - **Windows**: `%LOCALAPPDATA%/Temp/tif1`
    - **macOS**: `~/Library/Caches/tif1`
-   - **Linux/other POSIX**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` doesn't exist)
+   - **Linux/other POSIX**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` does not exist)
 
 #### Examples
 
@@ -145,7 +145,7 @@ tif1.Cache.enable_cache()
 
 #### Migration from fastf1
 
-The API is identical, making migration seamless:
+The API is identical, so migration needs few changes:
 
 ```python
 # fastf1 code
@@ -166,7 +166,7 @@ tif1.Cache.enable_cache("./cache")
 
 #### Thread Safety
 
-`enable_cache()` is thread-safe and can be called from multiple threads. However, it's recommended to call it once during application initialization to avoid unnecessary overhead.
+`enable_cache()` is thread-safe and can be called from multiple threads. However, it is recommended to call it once during application initialization to avoid unnecessary overhead.
 
 ---
 
@@ -180,7 +180,7 @@ def clear_cache(
 ) -> None
 ```
 
-Clear cached data from the specified cache directory. This method removes all cached session data, lap times, telemetry, and other stored information. Use this when you want to force fresh data fetches or when troubleshooting cache-related issues.
+Clear cached data from the specified cache directory. This method removes all cached session data, lap times, telemetry, and other stored information. Use this method to force fresh data fetches or to troubleshoot cache-related issues.
 
 #### Parameters
 
@@ -193,7 +193,7 @@ Clear cached data from the specified cache directory. This method removes all ca
 
 The clearing process works as follows:
 
-1. **Active Cache Detection**: If `cache_dir` is `None`, uses the currently active cache instance
+1. **Active Cache Detection**: If `cache_dir` is `None`, uses the now active cache instance
 2. **Directory Validation**: Verifies the cache directory exists and is a valid directory
 3. **SQLite Clearing**: Executes `DELETE` statements on all cache tables
 4. **Memory Cache Flush**: Clears in-memory LRU caches
@@ -280,7 +280,7 @@ tif1.Cache.clear_cache()
 
 Consider clearing the cache in these scenarios:
 
-- **Data corruption**: If you suspect cached data is corrupted or invalid
+- **Data corruption**: When cached data is suspect or invalid
 - **Schema changes**: After updating tif1 to a version with data format changes
 - **Disk space**: When cache directory grows too large
 - **Testing**: To ensure tests fetch fresh data
@@ -305,7 +305,7 @@ def set_log_level(level: int = logging.WARNING) -> None
 Set the logging level for tif1 logger.
 
 **Parameters:**
-- `level`: Python logging level (e.g., `logging.DEBUG`, `logging.INFO`, `logging.WARNING`)
+- `level`: Python logging level (for example, `logging.DEBUG`, `logging.INFO`, `logging.WARNING`)
 
 **Example:**
 ```python
@@ -403,7 +403,7 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 
 ### Ignored Parameters
 
-Some fastf1 parameters are ignored in tif1 because they're handled automatically:
+Some fastf1 parameters are ignored in tif1 because they are handled automatically:
 
 - `Cache.enable_cache(ignore_version)`: tif1 handles versioning automatically
 - `Cache.enable_cache(force_renew)`: Use `Cache.clear_cache()` instead
@@ -427,7 +427,7 @@ When migrating from fastf1 to tif1:
 - [ ] Replace `import fastf1` with `import tif1`
 - [ ] Update `Cache.enable_cache()` calls (API is identical)
 - [ ] Update `set_log_level()` calls (API is identical)
-- [ ] Test that `get_session()` works with your year/GP/session combinations
+- [ ] Test that `get_session()` works with the year/GP/session combinations in use
 - [ ] Verify DataFrame column names match (tif1 uses fastf1 naming conventions)
 - [ ] Consider using async methods (`laps_async()`, `get_fastest_laps_tels_async()`) for better performance
 - [ ] Update any custom caching logic (tif1 handles caching automatically)
@@ -442,13 +442,13 @@ The following fastf1 features are not yet supported in tif1:
 - **Live timing**: tif1 focuses on historical data
 - **Custom data sources**: tif1 uses a fixed CDN structure
 
-If you need these features, continue using fastf1 or open an issue on the tif1 GitHub repository.
+When these features are needed, continue using fastf1 or open an issue on the tif1 GitHub repository.
 
 ---
 
 ## Getting Help
 
-If you encounter issues migrating from fastf1:
+When issues occur during migration from fastf1:
 
 1. Check the [Migration Guide](/migration-from-fastf1) for detailed instructions
 2. Review the [FAQ](/reference/faq) for common questions
