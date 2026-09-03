@@ -4,7 +4,7 @@ This directory contains the Mintlify documentation for tif1.
 
 ## Deployment Strategy (Free Plan)
 
-Since we're on Mintlify's free plan, we use a **separate branch deployment** strategy:
+The documentation runs on the Mintlify free plan. Deployment uses a **separate branch deployment** strategy:
 
 - **Main branch**: Development and PR reviews happen here
 - **docs-production branch**: Mintlify auto-deploys from this branch
@@ -12,8 +12,8 @@ Since we're on Mintlify's free plan, we use a **separate branch deployment** str
 
 ### How It Works
 
-1. You make doc changes in PRs on the `main` branch
-2. When you publish a release, GitHub Actions automatically:
+1. Make documentation changes in pull requests on the `main` branch
+2. When a release is published, GitHub Actions runs this sequence:
    - Updates the version in `docs.json`
    - Pushes the docs to the `docs-production` branch
    - Mintlify auto-deploys from `docs-production`
@@ -28,29 +28,29 @@ cd docs
 npx mintlify dev
 ```
 
-The documentation will be available at `http://localhost:3000`.
+The documentation is then available at `http://localhost:3000`.
 
 ## Deployment
 
 ### Automatic Deployment (Recommended)
 
-1. Merge your doc changes to `main`
-2. Create and publish a new release on GitHub (e.g., `v0.2.0`)
+1. Merge the documentation changes to `main`
+2. Create and publish a new release on GitHub (for example, `v0.2.0`)
 3. GitHub Actions automatically pushes to `docs-production`
 4. Mintlify auto-deploys within minutes
 
 ### Manual Deployment
 
-If you need to deploy docs without a release:
+To deploy the documentation without a release:
 
 1. Go to Actions → "Deploy Documentation"
 2. Click "Run workflow"
-3. Enter the version (e.g., `v0.2.0`)
+3. Enter the version (for example, `v0.2.0`)
 4. Click "Run workflow"
 
 ## Mintlify Configuration
 
-In your Mintlify dashboard:
+In the Mintlify dashboard:
 1. Go to Git Settings
 2. Set deployment branch to: `docs-production`
 3. Enable auto-deploy
@@ -87,29 +87,29 @@ The main configuration file is `docs.json`, which includes:
 1. Create a new `.mdx` file in the appropriate directory
 2. Add the page to the navigation in `docs.json`
 3. Test locally with `npx mintlify dev`
-4. Submit a PR with your changes
-5. Docs will deploy when the next release is published
+4. Submit a pull request with the changes
+5. The documentation deploys when the next release is published
 
 ## Version Management
 
-The `versions` array in `docs.json` is automatically updated when you release:
+The `versions` array in `docs.json` is updated automatically at each release:
 - GitHub Actions adds the new version to the array
 - Users can switch between versions using the navbar selector
 - The `version` field shows the current deployed version
 
 ## Troubleshooting
 
-**Docs not deploying?**
+**Documentation Does Not Deploy**
 - Check that `docs-production` branch is set in Mintlify Git Settings
 - Verify auto-deploy is enabled in Mintlify dashboard
 - Check GitHub Actions logs for errors
 
-**Version selector not showing?**
+**Version Selector Does Not Show**
 - Ensure `versionSelector.enabled` is `true` in `docs.json`
 - Verify multiple versions exist in the `versions` array
 
-**Local preview not working?**
-- Make sure you're in the `docs/` directory
+**Local Preview Does Not Work**
+- Make sure the current directory is `docs/`
 - Try `npx mintlify@latest dev` to use the latest version
 
 ## Resources

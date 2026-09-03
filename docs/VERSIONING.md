@@ -8,13 +8,13 @@ The tif1 documentation uses Mintlify's free plan with a separate branch deployme
 
 ## Deployment Strategy (Free Plan)
 
-Since we're on Mintlify's free plan (no API access), we use a branch-based deployment:
+The Mintlify free plan has no API access. Deployment uses a dedicated branch:
 
 1. **Development**: All doc changes happen on the `main` branch
 2. **Production**: Mintlify auto-deploys from the `docs-production` branch
 3. **Trigger**: GitHub Actions pushes to `docs-production` only on releases
 
-### Why This Approach?
+### Reason for This Approach
 
 - **Free plan limitation**: No API key for programmatic deployment
 - **Solution**: Use Mintlify's auto-deploy feature with a dedicated branch
@@ -24,7 +24,7 @@ Since we're on Mintlify's free plan (no API access), we use a branch-based deplo
 
 ### On Release
 
-1. You publish a new release (e.g., `v0.2.0`)
+1. The owner publishes a new release (for example, `v0.2.0`)
 2. GitHub Actions workflow triggers
 3. Workflow updates `docs.json` with the new version
 4. Workflow pushes docs to `docs-production` branch
@@ -36,11 +36,11 @@ Since we're on Mintlify's free plan (no API access), we use a branch-based deplo
 Users can switch between documentation versions using the version selector in the navbar:
 - Each release creates a versioned snapshot
 - Versions are listed in the `versions` array in `docs.json`
-- The `version` field shows the currently deployed version
+- The `version` field shows the deployed version
 
 ## Mintlify Configuration
 
-In your Mintlify dashboard, configure:
+In the Mintlify dashboard, configure:
 
 1. **Git Settings**:
    - Repository: `TracingInsights/tif1`
@@ -58,7 +58,7 @@ To deploy docs without creating a release:
 1. Go to GitHub Actions
 2. Select "Deploy Documentation" workflow
 3. Click "Run workflow"
-4. Enter the version (e.g., `v0.2.0`)
+4. Enter the version (for example, `v0.2.0`)
 5. Click "Run workflow"
 
 This is useful for:
@@ -71,14 +71,14 @@ This is useful for:
 ### Automatic Updates
 
 The GitHub Actions workflow automatically:
-- Extracts version from release tag (e.g., `v0.2.0` → `0.2.0`)
+- Extracts the version from the release tag (for example, `v0.2.0` → `0.2.0`)
 - Updates the `version` field in `docs.json`
 - Adds the version to the `versions` array (if not present)
 - Commits and pushes to `docs-production`
 
 ### Manual Updates
 
-If you need to manually manage versions:
+To manage versions manually:
 
 ```bash
 # Edit docs/docs.json
@@ -98,9 +98,9 @@ If you need to manually manage versions:
 
 2. **Keep versions in sync**: The workflow handles this, but verify after deployment
 
-3. **Use semantic versioning**: Match your package versions (e.g., `0.2.0`, `0.2.1`)
+3. **Use semantic versioning**: Match the package versions (for example, `0.2.0`, `0.2.1`)
 
-4. **Don't push to docs-production directly**: Always use the GitHub Actions workflow
+4. **Do not push to docs-production directly**: Always use the GitHub Actions workflow
 
 5. **Review the PR preview**: The docs-preview workflow validates changes
 
@@ -127,7 +127,7 @@ If you need to manually manage versions:
 
 ## Migration from API-Based Deployment
 
-If you later upgrade to a Pro plan:
+To move to a Pro plan later:
 
 1. Update `.github/workflows/docs.yml` to use Mintlify CLI
 2. Add `MINTLIFY_API_KEY` to GitHub Secrets

@@ -1,6 +1,6 @@
 # Design Language Document: Tracing Insights F1 Web
 
-This document provides a comprehensive overview of the design patterns, tokens, and code conventions used in the Tracing Insights F1 Web codebase. It is optimized for use by AI/LLMs during code generation.
+This document describes the design patterns, tokens, and code conventions of the Tracing Insights F1 Web codebase. It is written for use by AI and LLM tools during code generation.
 
 ---
 
@@ -18,7 +18,7 @@ The system uses **DaisyUI v4** semantic tokens within **Tailwind CSS v3**. The p
 - `--in` (`info`): `#0CA5E9`
 - `--su` (`success`): `green`
 - `--wa` (`warning`): `orange`
-- `--er` (`error`): [red](file:///c:/Users/haris/Documents/GitHub/f1-webv2/hf/templates/base.html#938-949)
+- `--er` (`error`): `red`
 
 **Team Themes (Sample Values):**
 - `mercedes`: primary `#00d2be`
@@ -54,7 +54,7 @@ The system uses a mix of display and body fonts.
 ### Breakpoints
 The system adheres to standard Tailwind breakpoints:
 - `sm`: 640px
-- [md](file:///c:/Users/haris/Documents/GitHub/f1-webv2/repo.md): 768px
+- `md`: 768px
 - `lg`: 1024px
 - `xl`: 1280px
 
