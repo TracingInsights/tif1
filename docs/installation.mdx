@@ -1,7 +1,7 @@
-﻿---
+---
 title: "Installation"
 icon: "download"
-description: "How to install and configure tif1"
+description: "Install and configure tif1"
 keywords:
   - "install tif1"
   - "pip install tif1"
@@ -20,8 +20,8 @@ keywords:
 ## Quick Install
 
 <Steps>
-  <Step title="Choose your package manager">
-    `tif1` is available on PyPI and can be installed with your favorite package manager.
+  <Step title="Choose a package manager">
+    `tif1` is available on PyPI. Install it with a package manager.
     <CodeGroup>
       ```bash pip
       pip install tif1
@@ -34,8 +34,8 @@ keywords:
       ```
     </CodeGroup>
   </Step>
-  <Step title="Install Optional Extras">
-    Enhance `tif1` with high-performance backends:
+  <Step title="Install the optional extras">
+    Add the `polars` extra for the Polars backend.
     <CodeGroup>
       ```bash pip
       pip install tif1[polars]
@@ -48,8 +48,8 @@ keywords:
       ```
     </CodeGroup>
   </Step>
-  <Step title="Verify Installation">
-    Run a quick check to ensure everything is working:
+  <Step title="Verify the installation">
+    Run this check to confirm that the installation works:
     ```python
     import tif1
     print(f"tif1 version: {tif1.__version__}")
@@ -63,7 +63,7 @@ keywords:
 ## Configuration
 
 ### Environment Variables
-You can configure `tif1` using environment variables. These are useful for CI/CD environments.
+Configure `tif1` with environment variables. They are useful in CI/CD environments.
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -72,10 +72,16 @@ You can configure `tif1` using environment variables. These are useful for CI/CD
 | `TIF1_ENABLE_CACHE` | Enable or disable caching (`true`/`false`) | `true` |
 | `TIF1_ULTRA_COLD_START` | Enable ultra-low latency mode | `false` |
 
-The default cache follows FastF1's platform layout, using `tif1` as the application directory: Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, and Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists (otherwise `~/.tif1`). Set `TIF1_CACHE_DIR` or `cache_dir` in `.tif1rc` to override it.
+The default cache directory follows the FastF1 platform layout. It uses `tif1` as the application directory:
+
+- Windows: `%LOCALAPPDATA%/Temp/tif1`
+- macOS: `~/Library/Caches/tif1`
+- Linux and other POSIX systems: `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`
+
+Set `TIF1_CACHE_DIR`, or set `cache_dir` in `.tif1rc`, to override the default.
 
 ### Config File (.tif1rc)
-For permanent settings, create a `.tif1rc` (JSON) file in your home directory:
+For permanent settings, create a `.tif1rc` (JSON) file in the home directory:
 
 ```json
 {
@@ -91,18 +97,18 @@ For permanent settings, create a `.tif1rc` (JSON) file in your home directory:
 
 <AccordionGroup>
   <Accordion title="HTTP/2 SSL Errors">
-    `tif1` uses `niquests` for HTTP/2 support. If you encounter SSL errors, ensure your system's `openssl` is up to date and that your certificate store is correctly configured.
+    `tif1` uses `niquests` for HTTP/2 support. If SSL errors occur, update the system `openssl` version. Also check that the certificate store has a correct configuration.
   </Accordion>
   <Accordion title="SQLite Database Locking">
-    If you see "database is locked" errors, it usually means multiple processes are trying to write to the cache simultaneously. `tif1` uses WAL mode to mitigate this, but extremely high concurrency on slow disks may still trigger it.
+    "Database is locked" errors show that multiple processes write to the cache at the same time. `tif1` uses WAL mode to reduce this problem. Very high concurrency on slow disks can still trigger the error.
   </Accordion>
   <Accordion title="Polars Version Mismatch">
-    Ensure you are using `polars>=1.40.1` to avoid compatibility issues with `tif1`'s categorical optimization.
+    Use `polars>=1.40.1` to avoid compatibility issues with the `tif1` categorical optimization.
   </Accordion>
 </AccordionGroup>
 
 <Tip>
-  Using the **Polars** lib can reduce memory usage by up to **50%** when processing full race telemetry.
+  The **Polars** lib can reduce memory usage by up to **50%** during full race telemetry processing.
 </Tip>
 
 ---
@@ -120,6 +126,6 @@ For permanent settings, create a `.tif1rc` (JSON) file in your home directory:
     Solve common issues
   </Card>
   <Card title="Environment Variables" href="/reference/environment-variables">
-    Configure via env vars
+    Configure with environment variables
   </Card>
 </CardGroup>

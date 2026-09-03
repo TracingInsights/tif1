@@ -1,8 +1,8 @@
-﻿---
+---
 title: "Getting Started Guide"
 sidebarTitle: "Getting Started"
 icon: "play"
-description: "Complete guide to start analyzing F1 data with tif1"
+description: "A complete guide to the first steps of F1 data analysis with tif1"
 keywords:
   - "tif1 tutorial"
   - "F1 data analysis"
@@ -13,11 +13,11 @@ keywords:
   - "driver data"
 ---
 
-This guide walks you through everything you need to know to start analyzing Formula 1 data with `tif1`.
+This guide shows how to start analyzing Formula 1 data with `tif1`.
 
 ## Prerequisites
 
-Before you begin, ensure you have:
+Complete these prerequisites before the first use:
 
 - Python 3.11 or higher
 - pip or uv package manager
@@ -28,7 +28,7 @@ Before you begin, ensure you have:
 
 <Steps>
   <Step title="Install tif1">
-    Install using pip or uv:
+    Install with pip or uv:
 
     <CodeGroup>
     ```bash pip
@@ -52,11 +52,11 @@ Before you begin, ensure you have:
 
 </Steps>
 
-## Your first analysis
+## The First Analysis
 
-Let's load and analyze data from a recent race.
+Load and analyze data from a recent race.
 
-### Step 1: load a session
+### Step 1: Load a session
 
 ```python
 import tif1
@@ -68,10 +68,10 @@ print(f"Loaded session: {session.event['EventName']} {session.name}")
 ```
 
 <Note>
-  The first time you load a session, tif1 fetches data from the CDN. Subsequent loads are instant thanks to caching.
+  The first session load fetches data from the CDN. Subsequent loads read from the cache.
 </Note>
 
-### Step 2: explore drivers
+### Step 2: Explore drivers
 
 ```python
 # Get list of drivers
@@ -89,7 +89,7 @@ Output:
 ...
 ```
 
-### Step 3: analyze lap times
+### Step 3: Analyze lap times
 
 ```python
 # Get all laps
@@ -100,7 +100,7 @@ fastest = laps.nsmallest(10, "LapTime")
 print(fastest[["Driver", "LapNumber", "LapTime", "Compound"]])
 ```
 
-### Step 4: compare drivers
+### Step 4: Compare drivers
 
 ```python
 # Get specific drivers
@@ -115,7 +115,7 @@ print(f"VER: {ver_fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 print(f"LEC: {lec_fastest['LapTime'].iloc[0].total_seconds():.3f}s")
 ```
 
-### Step 5: analyze telemetry
+### Step 5: Analyze telemetry
 
 ```python
 # Get telemetry for fastest lap
@@ -134,7 +134,7 @@ print(f"Avg speed: {telemetry['Speed'].mean():.1f} km/h")
 
 ### Finding available data
 
-Before loading data, check what's available:
+Check the available data before a load:
 
 ```python
 import tif1
@@ -150,7 +150,7 @@ print(f"Available sessions: {sessions}")
 
 ### Filtering Laps
 
-Clean and filter lap data for analysis:
+Clean and filter the lap data for analysis:
 
 ```python
 laps = session.laps
@@ -197,7 +197,7 @@ if weather["Rainfall"].any():
 
 ### Use async for cold cache
 
-When loading data for the first time, use async for parallel fetching (more than 3x faster than sequential in the benchmark suite):
+For a first load, use async for parallel fetching. The benchmark suite validates more than 3x speed versus sequential fetch:
 
 ```python
 import asyncio
@@ -249,7 +249,7 @@ laps_pl = session_pl.laps  # Returns polars DataFrame
 
 ## Visualization
 
-Create quick visualizations:
+Create a quick visualization:
 
 ```python
 import matplotlib.pyplot as plt
@@ -269,7 +269,7 @@ plt.show()
 
 ## Error Handling
 
-Handle errors gracefully:
+Handle the common errors:
 
 ```python
 import tif1
@@ -287,7 +287,7 @@ except tif1.TIF1Error as e:
 
 ## Configuration
 
-Customize tif1 behavior:
+Customize the tif1 configuration:
 
 ```python
 import tif1
@@ -307,20 +307,20 @@ config.log_level = "DEBUG"
 
 ## Next Steps
 
-Now that you understand the basics, explore:
+With the basics in place, explore further:
 
 <CardGroup cols={2}>
   <Card title="Tutorials" icon="graduation-cap" href="/tutorials/race-pace-analysis">
-    Learn advanced analysis techniques
+    Learn advanced analysis techniques.
   </Card>
   <Card title="API Reference" icon="book" href="/api-reference/overview">
-    Explore the complete API
+    Explore the complete API.
   </Card>
   <Card title="Best Practices" icon="star" href="/guides/best-practices">
-    Learn recommended patterns
+    Learn recommended patterns.
   </Card>
   <Card title="Examples" icon="code" href="/examples">
-    See more code examples
+    See more code examples.
   </Card>
 </CardGroup>
 
@@ -328,7 +328,7 @@ Now that you understand the basics, explore:
 
 ### Cache permission errors
 
-If you get permission errors:
+If permission errors occur:
 
 ```bash
 # Check cache directory permissions
@@ -341,7 +341,7 @@ chmod -R 755 <cache-dir>/
 
 ### Network Timeouts
 
-If requests timeout:
+If requests time out:
 
 ```python
 import tif1
