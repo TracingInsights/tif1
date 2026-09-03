@@ -1,7 +1,7 @@
 ---
 title: "Configuration API"
 icon: "gear"
-description: "Comprehensive guide to configuring tif1 via config files, environment variables, and runtime API for optimal performance"
+description: "Configure tif1 with config files, environment variables, and the runtime API"
 keywords:
   - "configuration"
   - "tif1 config"
@@ -17,26 +17,26 @@ keywords:
 
 ## Overview
 
-The `tif1` configuration system provides fine-grained control over every aspect of the library's behavior, from network settings and caching strategies to data validation and performance optimization. The configuration architecture is designed with flexibility and performance in mind, allowing you to tune the library for your specific use case—whether that's low-latency data access, high-throughput batch processing, or development debugging.
+The `tif1` configuration system controls every part of the library's behavior. It covers network settings, caching strategies, data validation, and performance settings. The configuration architecture is flexible. It allows tuning for a specific use case: low-latency data access, high-throughput batch processing, or development debugging.
 
-This comprehensive guide covers all configuration options, their interactions, performance implications, and best practices for different deployment scenarios. Whether you're running interactive Jupyter notebooks, building production data pipelines, or optimizing for CI/CD environments, this guide will help you configure `tif1` for optimal performance.
+This guide covers all configuration options, their interactions, performance implications, and best practices for different deployment scenarios. Interactive Jupyter notebooks, production data pipelines, and CI/CD environments have different requirements. This guide helps with the configuration of `tif1` for each one.
 
 ### Configuration Philosophy
 
-`tif1` is built for **performance-first** operation. The default configuration values are carefully chosen to provide excellent out-of-the-box performance for most use cases, but the library exposes dozens of tuning parameters for advanced users who need to squeeze every millisecond of latency or maximize throughput for their specific workload.
+`tif1` is built for **performance-first** operation. The default configuration values give good out-of-the-box performance for most use cases. The library also exposes dozens of tuning parameters for advanced use. These parameters minimize latency or maximize throughput for a specific workload.
 
-The configuration system follows a **layered override model**, where settings can be specified at multiple levels with clear precedence rules:
+The configuration system follows a **layered override model**. Settings can be specified at multiple levels with clear precedence rules:
 
 1. **Default values** — Hardcoded defaults optimized for general use
-2. **Configuration file** (`.tif1rc`) — Persistent settings stored in your home directory
+2. **Configuration file** (`.tif1rc`) — Persistent settings stored in the user's home directory
 3. **Environment variables** (`TIF1_*`) — Deployment-specific overrides
 4. **Programmatic API** (`config.set()`) — Runtime adjustments based on workload
 
-Each layer overrides the previous one, giving you maximum flexibility to configure the library for different environments (development, staging, production) and different use cases (interactive analysis, batch processing, CI/CD pipelines).
+Each layer overrides the previous one. This model supports different environments (development, staging, production). It also supports different use cases (interactive analysis, batch processing, CI/CD pipelines).
 
 ### Configuration Architecture
 
-The configuration system is implemented as a **singleton pattern**, ensuring that all parts of your application share the same configuration state. This design provides several benefits:
+The configuration system is implemented as a **singleton pattern**. This pattern ensures that all parts of an application share the same configuration state. This design provides several benefits:
 
 - **Consistency**: All modules and components use the same settings
 - **Efficiency**: No redundant configuration loading or memory overhead
@@ -48,18 +48,18 @@ The singleton is lazily initialized on first access, loading configuration from 
 
 ### When to Configure
 
-You should consider customizing the configuration when:
+Consider customizing the configuration when:
 
-- **Performance is critical** — You need to minimize latency or maximize throughput for time-sensitive applications
-- **Network conditions vary** — You're on a slow connection, behind a corporate proxy, experiencing DNS issues, or have specific network requirements
-- **Resource constraints exist** — You need to limit memory usage, connection pools, or concurrent requests due to system limitations
-- **Data validation is needed** — You're debugging data issues, implementing quality checks, or need strict validation for compliance
-- **Caching behavior matters** — You want to disable caching for fresh data, change cache location for shared storage, or tune cache parameters for your access patterns
-- **Backend preferences differ** — You prefer polars over pandas for performance, or need specific DataFrame behavior for your workflow
+- **Performance is critical** — The workload needs minimal latency or maximum throughput for time-sensitive applications
+- **Network conditions vary** — A slow connection, a corporate proxy, DNS issues, or specific network requirements apply
+- **Resource constraints exist** — Memory usage, connection pools, or concurrent requests need limits due to system limitations
+- **Data validation is needed** — Data issues need debugging, quality checks need implementing, or compliance needs strict validation
+- **Caching behavior matters** — Fresh data, shared storage, or access patterns need different cache settings
+- **Backend preferences differ** — Polars gives better performance than pandas, or a workflow needs specific DataFrame behavior
 - **Deployment environment differs** — Production, staging, development, or CI/CD environments have different performance, reliability, and debugging requirements
-- **Workload characteristics change** — You're switching between interactive analysis (low concurrency) and batch processing (high concurrency)
-- **Compliance requirements exist** — You need to control data storage locations, disable certain features, or meet specific regulatory requirements
-- **Debugging is required** — You need verbose logging, validation, or specific diagnostic information
+- **Workload characteristics change** — The workload switches between interactive analysis (low concurrency) and batch processing (high concurrency)
+- **Compliance requirements exist** — Data storage locations need control, certain features need disabling, or regulatory requirements apply
+- **Debugging is required** — Verbose logging, validation, or specific diagnostic information is needed
 
 ### Configuration Use Cases
 
@@ -79,9 +79,9 @@ Different use cases benefit from different configuration strategies:
 
 **Production Services**
 - Balanced concurrency based on expected load
-- Robust retry and circuit breaker settings
+- Reliable retry and circuit breaker settings
 - Persistent cache with appropriate sizing
-- Comprehensive logging for monitoring
+- Complete logging for monitoring
 
 **CI/CD Pipelines**
 - CI mode enabled for optimized testing
@@ -107,7 +107,7 @@ When `tif1` initializes, it loads configuration in the following sequence:
 3. **Apply environment variables** — Any `TIF1_*` environment variables override file settings
 4. **Accept runtime changes** — Programmatic `config.set()` calls override everything
 
-This layered approach means you can set baseline configuration in a file, override specific settings per environment with environment variables, and make dynamic adjustments at runtime based on workload characteristics.
+This layered approach works as follows. Set baseline configuration in a file. Override specific settings per environment with environment variables. Make dynamic adjustments at runtime based on workload characteristics.
 
 **Configuration File Search Order:**
 
@@ -117,7 +117,7 @@ The library searches for configuration files in a specific order and uses the **
 2. **Current directory** (`./.tif1rc`) — Only checked if `TIF1_TRUST_CWD_CONFIG=true` for security
 3. **Home directory** (`~/.tif1rc`) — Default location, most common for user-specific settings
 
-**Security Note:** By default, the library does **not** load `.tif1rc` from the current working directory to prevent malicious config files in untrusted directories. Set `TIF1_TRUST_CWD_CONFIG=true` only if you trust the current directory.
+**Security Note:** By default, the library does **not** load `.tif1rc` from the current working directory. This prevents malicious config files in untrusted directories. Set `TIF1_TRUST_CWD_CONFIG=true` only if the current directory is trusted.
 
 **Example Configuration Loading:**
 
@@ -137,7 +137,7 @@ The library searches for configuration files in a specific order and uses the **
 
 **Configuration Validation:**
 
-The configuration system performs validation when values are **read** (via `get()`), not when they're **set**. This design allows you to set any value programmatically, but invalid values are rejected when accessed, falling back to the provided default. Validation includes:
+The configuration system performs validation when values are **read** (via `get()`), not when they are **set**. This design allows any value to be set programmatically. Invalid values are rejected when accessed, falling back to the provided default. Validation includes:
 
 - Type checking (int, float, bool, str, list)
 - Range validation (positive numbers, valid enums)
@@ -163,7 +163,7 @@ This is the recommended location for user-specific configuration that persists a
 
 **Custom Locations:**
 
-You can specify a custom configuration file location using the `TIF1_CONFIG_FILE` environment variable:
+Specify a custom configuration file location using the `TIF1_CONFIG_FILE` environment variable:
 
 ```bash
 export TIF1_CONFIG_FILE=/path/to/custom-config.json
@@ -171,14 +171,14 @@ export TIF1_CONFIG_FILE=/path/to/custom-config.json
 
 **Current Directory:**
 
-For project-specific configuration, you can place a `.tif1rc` file in your project directory. However, for security reasons, this file is **only loaded** if you explicitly enable it:
+For project-specific configuration, place a `.tif1rc` file in the project directory. For security reasons, this file is **only loaded** if it is explicitly enabled:
 
 ```bash
 export TIF1_TRUST_CWD_CONFIG=true
 ```
 
 <Warning>
-  Only set `TIF1_TRUST_CWD_CONFIG=true` in directories you trust. Malicious `.tif1rc` files could modify library behavior in unexpected ways.
+  Only set `TIF1_TRUST_CWD_CONFIG=true` in trusted directories. Malicious `.tif1rc` files could modify library behavior in unexpected ways.
 </Warning>
 
 ### File Format
@@ -204,12 +204,12 @@ The configuration file must be valid JSON with a single object containing key-va
 - Root element must be an object `{}`
 - Keys must be strings matching configuration key names
 - Values must match expected types (string, number, boolean, array)
-- Comments are not supported (JSON doesn't allow comments)
+- Comments are not supported (JSON does not allow comments)
 - Trailing commas are not allowed
 
 **Invalid File Handling:**
 
-If the configuration file is invalid (malformed JSON, wrong type, etc.), the library logs a warning and continues with default values. The library never crashes due to invalid configuration files.
+If the configuration file is invalid (malformed JSON, wrong type), the library logs a warning. It then continues with default values. The library never crashes due to invalid configuration files.
 
 ### Creating Configuration Files
 
@@ -237,7 +237,7 @@ config.save(Path("/path/to/config.json"))
 
 **Method 2: Manual Creation**
 
-You can also create the file manually using any text editor:
+The file can also be created manually using any text editor:
 
 ```bash
 # Create config file
@@ -265,7 +265,7 @@ nano ~/.tif1rc
 
 ### Managing Multiple Configurations
 
-For different environments or use cases, you can maintain multiple configuration files and switch between them using environment variables.
+For different environments or use cases, maintain multiple configuration files. Switch between them using environment variables.
 
 **Example: Development vs Production**
 
@@ -516,13 +516,13 @@ python my_analysis.py
 def get_config() -> Config
 ```
 
-Returns the global singleton configuration instance. The `Config` object is a singleton, meaning there's only one instance per Python process. All calls to `get_config()` return the same object, ensuring configuration consistency across your entire application.
+Returns the global singleton configuration instance. The `Config` object is a singleton. There is only one instance per Python process. All calls to `get_config()` return the same object. This ensures configuration consistency across the entire application.
 
 **Returns:**
 - `Config` — The global configuration singleton instance
 
 **Thread Safety:**
-The configuration object is thread-safe for reading. However, modifying configuration values (`config.set()`) during concurrent operations may lead to race conditions. It's recommended to configure the library once at startup before spawning threads or processes.
+The configuration object is thread-safe for reading. However, modifying configuration values (`config.set()`) during concurrent operations may lead to race conditions. It is recommended to configure the library once at startup before spawning threads or processes.
 
 **Example:**
 ```python
@@ -562,11 +562,11 @@ print(config2.get("timeout"))  # 60
 
 ## Configuration Methods
 
-The `Config` object provides three primary methods for interacting with configuration values: `get()` for reading, `set()` for modifying, and `save()` for persisting changes to disk.
+The `Config` object provides three primary methods for configuration values: `get()` for reading, `set()` for modifying, and `save()` for persisting changes to disk.
 
 ### `get(key, default=None)`
 
-Retrieve the value for a specific configuration key. This method includes built-in validation for many configuration keys to ensure values are within acceptable ranges and of the correct type.
+Retrieve the value for a specific configuration key. This method includes built-in validation for many configuration keys. It ensures values are within acceptable ranges and of the correct type.
 
 ```python
 def get(key: str, default: Any = None) -> Any
@@ -574,10 +574,10 @@ def get(key: str, default: Any = None) -> Any
 
 **Parameters:**
 - `key` (str) — The configuration key name (case-sensitive)
-- `default` (Any, optional) — Default value to return if the key doesn't exist or validation fails. Defaults to `None`.
+- `default` (Any, optional) — Default value to return if the key does not exist or validation fails. Defaults to `None`.
 
 **Returns:**
-- `Any` — The configuration value, or `default` if the key doesn't exist or validation fails
+- `Any` — The configuration value, or `default` if the key does not exist or validation fails
 
 **Validation Behavior:**
 
@@ -648,7 +648,7 @@ retries = config.get("max_retries")  # Returns 0
 
 ### `set(key, value)`
 
-Update a configuration value in memory for the current Python session. Changes made with `set()` are **not persisted** to disk unless you explicitly call `save()`.
+Update a configuration value in memory for the current Python session. Changes made with `set()` are **not persisted** to disk unless `save()` is explicitly called.
 
 ```python
 def set(key: str, value: Any) -> None
@@ -664,9 +664,9 @@ def set(key: str, value: Any) -> None
 **Behavior:**
 
 - Changes take effect **immediately** for all subsequent operations
-- Changes are **session-only** unless you call `save()`
+- Changes are **session-only** unless `save()` is called
 - No validation is performed during `set()` — validation happens in `get()`
-- You can set custom keys that aren't part of the default configuration
+- Custom keys that are not part of the default configuration can be set
 
 **When to Use:**
 
@@ -753,7 +753,7 @@ config.save()  # Saves to ~/.tif1rc
 ```
 
 <Note>
-  Changes made with `set()` only affect the current Python session. To make changes permanent, call `save()` after setting your desired values.
+  Changes made with `set()` only affect the current Python session. To make changes permanent, call `save()` after setting the desired values.
 </Note>
 
 <Warning>
@@ -764,7 +764,7 @@ config.save()  # Saves to ~/.tif1rc
 
 ### `save(path=None)`
 
-Persist the current in-memory configuration to a JSON file on disk. This allows you to make configuration changes permanent across Python sessions.
+Persist the current in-memory configuration to a JSON file on disk. This makes configuration changes permanent across Python sessions.
 
 ```python
 def save(path: Path | None = None) -> None
@@ -779,7 +779,7 @@ def save(path: Path | None = None) -> None
 **Behavior:**
 
 - Writes the **entire** current configuration (including defaults) to the specified file
-- Creates the file if it doesn't exist
+- Creates the file if it does not exist
 - Overwrites the file if it already exists
 - Uses JSON format with 2-space indentation for readability
 - Logs success or failure messages
@@ -877,7 +877,7 @@ config.set("pool_connections", 1024)
 ```
 
 <Note>
-  The `save()` method writes the **entire** configuration, not just the keys you've modified. This ensures the saved file is a complete, self-contained configuration.
+  The `save()` method writes the **entire** configuration, not just the modified keys. This ensures the saved file is a complete, self-contained configuration.
 </Note>
 
 <Tip>
@@ -1031,12 +1031,12 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="user_agent" type="str" default="tif1/{version}">
-  User-Agent header sent with all HTTP requests. Useful for identifying your application in server logs or implementing custom rate limiting.
+  User-Agent header sent with all HTTP requests. Useful for identifying the application in server logs or implementing custom rate limiting.
 
-  **Default:** `tif1/{version}` (e.g., `tif1/0.2.0`)
+  **Default:** `tif1/{version}` (for example, `tif1/0.2.0`)
 
   **Use Cases:**
-  - Identify your application in CDN logs
+  - Identify the application in CDN logs
   - Implement custom rate limiting per application
   - Debug network issues by filtering logs
   - Comply with API usage policies
@@ -1374,7 +1374,7 @@ config.set("pool_connections", 1024)
   Number of worker processes for parallel JSON parsing. 0 disables multiprocessing.
 
   <Warning>
-    Process-pool JSON parsing can hurt performance due to IPC overhead for telemetry-heavy workloads. Keep disabled unless you have specific use cases.
+    Process-pool JSON parsing can hurt performance due to IPC overhead for telemetry-heavy workloads. Keep it disabled unless a specific use case requires it.
   </Warning>
 
   ```python
@@ -1570,7 +1570,7 @@ config.save()
 
 ## Setting Log Level
 
-While not part of the `Config` object, you can set the log level using `setup_logging`:
+While not part of the `Config` object, the log level can be set using `setup_logging`:
 
 ```python
 import tif1
@@ -1593,7 +1593,7 @@ tif1.set_log_level(logging.DEBUG)
 
 ## Configuration Patterns and Recipes
 
-This section provides comprehensive configuration recipes for common use cases, with detailed explanations of why each setting is chosen.
+This section provides configuration recipes for common use cases, with detailed explanations of why each setting is chosen.
 
 ### Maximum Performance Configuration
 
@@ -1808,7 +1808,7 @@ config.save()
 
 **Why these settings:**
 - Balanced concurrency handles typical load
-- Robust retry settings handle transient failures
+- Reliable retry settings handle transient failures
 - Circuit breaker prevents cascading failures
 - Reasonable timeout balances reliability and speed
 - Production logging reduces noise
@@ -2070,9 +2070,9 @@ config.save()
 **Issue: Configuration changes not taking effect**
 
 **Symptoms:**
-- Changes made with `config.set()` don't seem to work
+- Changes made with `config.set()` do not seem to work
 - Environment variables are ignored
-- Config file changes don't apply
+- Config file changes do not apply
 
 **Solutions:**
 1. Check configuration precedence (programmatic > env > file > defaults)
@@ -2110,7 +2110,7 @@ print(f"max_workers after invalid set: {config.get('max_workers', 20)}")  # Retu
 
 **Solutions:**
 1. Check if connection pool is too small
-2. Verify network bandwidth isn't saturated
+2. Verify network bandwidth is not saturated
 3. Check if CDN is rate limiting
 4. Ensure cache is enabled
 5. Monitor connection reuse rate
@@ -2213,7 +2213,7 @@ config.set("retry_backoff_factor", 2.5)
 2. Check cache directory permissions
 3. Ensure cache directory exists
 4. Check disk space
-5. Verify SQLite timeout isn't too short
+5. Verify SQLite timeout is not too short
 
 ```python
 import tif1
@@ -2240,7 +2240,7 @@ config.set("sqlite_timeout", 60.0)
 
 ### Configuration Strategy
 
-1. **Start with defaults** — The default configuration is optimized for most use cases. Only change settings when you have a specific need.
+1. **Start with defaults** — The default configuration is optimized for most use cases. Only change settings for a specific need.
 
 2. **Use config files for persistent settings** — Store common settings in `~/.tif1rc` for user-specific configuration that persists across all projects.
 
@@ -2248,7 +2248,7 @@ config.set("sqlite_timeout", 60.0)
 
 4. **Use programmatic API for runtime changes** — Adjust settings dynamically based on workload characteristics or user preferences.
 
-5. **Document your configuration** — Keep a README or comments explaining why specific settings were chosen.
+5. **Document the configuration** — Keep a README or comments explaining why specific settings were chosen.
 
 6. **Test configuration changes** — Verify performance impact before deploying to production. Use benchmarks to measure improvements.
 
@@ -2262,21 +2262,21 @@ config.set("sqlite_timeout", 60.0)
 
 2. **Monitor connection reuse** — Enable connection stats logging to track connection reuse rate. Low reuse indicates pool exhaustion.
 
-3. **Balance concurrency and resources** — Higher concurrency isn't always better. Find the sweet spot for your system and network.
+3. **Balance concurrency and resources** — Higher concurrency is not always better. Find the right level for the system and network.
 
 4. **Use polars for large datasets** — Polars provides better performance for large-scale analysis, but pandas has lower memory overhead.
 
-5. **Enable caching** — Cache dramatically improves performance for repeated queries. Only disable for debugging or when fresh data is critical.
+5. **Enable caching** — Cache improves performance for repeated queries. Only disable for debugging or when fresh data is critical.
 
 6. **Tune prefetching** — Enable prefetching for common access patterns, but disable for memory-constrained environments.
 
 7. **Use ultra cold start** — Enable for interactive analysis where first-byte latency matters. Disable for batch processing that needs all data.
 
-### Reliability and Robustness
+### Reliability
 
 1. **Keep validation disabled in production** — Enable only for debugging or data quality checks. Validation adds significant overhead.
 
-2. **Configure robust retry settings** — Use exponential backoff with jitter to handle transient failures gracefully.
+2. **Configure reliable retry settings** — Use exponential backoff with jitter to handle transient failures gracefully.
 
 3. **Set appropriate timeouts** — Balance between failing fast and tolerating slow networks. 30-60 seconds is reasonable for most cases.
 
@@ -2288,15 +2288,15 @@ config.set("sqlite_timeout", 60.0)
 
 ### Security and Privacy
 
-1. **Trust config files carefully** — Only set `TIF1_TRUST_CWD_CONFIG=true` in directories you trust.
+1. **Trust config files carefully** — Only set `TIF1_TRUST_CWD_CONFIG=true` in trusted directories.
 
 2. **Use DoH for privacy** — DNS-over-HTTPS encrypts DNS queries, improving privacy on untrusted networks.
 
-3. **Validate config files** — Ensure config files are valid JSON and don't contain malicious values.
+3. **Validate config files** — Ensure config files are valid JSON and do not contain malicious values.
 
 4. **Limit cache locations** — Store cache in secure locations with appropriate permissions.
 
-5. **Custom user agents** — Use descriptive user agents to identify your application in logs.
+5. **Custom user agents** — Use descriptive user agents to identify the application in logs.
 
 ### Development Workflow
 
@@ -2350,7 +2350,7 @@ config.set("sqlite_timeout", 60.0)
 
 ## Summary
 
-The `tif1` configuration system provides comprehensive control over library behavior through multiple configuration sources with clear precedence rules. Key takeaways:
+The `tif1` configuration system controls library behavior through multiple configuration sources with clear precedence rules. Key takeaways:
 
 ### Configuration Sources (Precedence Order)
 
@@ -2386,7 +2386,7 @@ The `tif1` configuration system provides comprehensive control over library beha
 - **Maximum performance** — High concurrency, large pools, aggressive prefetching
 - **Minimum latency** — Ultra cold start, DoH, moderate concurrency
 - **Development** — Disabled cache, enabled validation, verbose logging
-- **Production** — Balanced settings, robust retries, monitoring
+- **Production** — Balanced settings, reliable retries, monitoring
 - **CI/CD** — CI mode, disabled cache, fast failure
 - **Resource-constrained** — Low concurrency, small caches, minimal prefetching
 - **Offline** — Cache-only mode, no network requests
@@ -2407,7 +2407,7 @@ The `tif1` configuration system provides comprehensive control over library beha
 
 ### Getting Help
 
-If you encounter configuration issues:
+If configuration issues occur:
 
 1. Enable debug logging: `tif1.setup_logging(logging.DEBUG)`
 2. Check actual values: `config.get(key)`
@@ -2416,7 +2416,7 @@ If you encounter configuration issues:
 5. Compare with defaults: Reset to defaults to isolate issues
 6. Consult documentation: Review this guide for detailed explanations
 
-The configuration system is designed to be flexible, powerful, and easy to use. Whether you're running interactive notebooks, building production pipelines, or optimizing for specific workloads, the configuration system provides the tools you need to tune `tif1` for your use case.
+The configuration system is flexible and easy to use. Interactive notebooks, production pipelines, and specific workloads all have different needs. The configuration system provides the tools to tune `tif1` for each use case.
 
 ---
 
@@ -2477,22 +2477,22 @@ Legend: ↑ = Increases, ↓ = Decreases
 
 <CardGroup cols={2}>
   <Card title="Caching Strategy" href="/concepts/caching-strategy">
-    Learn about the multi-layer caching system and how to optimize cache configuration
+    Learn about the multi-layer caching system and its configuration options.
   </Card>
   <Card title="Best Practices" href="/guides/best-practices">
-    Advanced performance optimization techniques and benchmarking
+    Performance optimization techniques and benchmarking.
   </Card>
   <Card title="HTTP Session" href="/api-reference/http">
-    Deep dive into HTTP session configuration and connection pooling
+    HTTP session configuration and connection pooling in detail.
   </Card>
   <Card title="Installation" href="/installation">
-    Setup guide and initial configuration
+    Setup guide and initial configuration.
   </Card>
   <Card title="CLI Configuration" href="/concepts/cli">
-    Configure tif1 via command-line interface
+    Configure tif1 via the command-line interface.
   </Card>
   <Card title="Backends" href="/concepts/backends">
-    Pandas vs Polars backend comparison and configuration
+    Pandas vs Polars backend comparison and configuration.
   </Card>
 </CardGroup>
 
@@ -2574,7 +2574,7 @@ Legend: ↑ = Increases, ↓ = Decreases
 
 ### Configuration Validation Script
 
-Use this script to validate your configuration:
+Use this script to validate the configuration:
 
 ```python
 import tif1
@@ -2686,9 +2686,9 @@ generate_env_vars(Path.home() / ".tif1rc")
 
 **Q: Do I need to configure tif1?**
 
-A: No, the default configuration works well for most use cases. Only configure if you have specific performance, reliability, or resource requirements.
+A: No, the default configuration works well for most use cases. Only configure for specific performance, reliability, or resource requirements.
 
-**Q: What's the difference between config file and environment variables?**
+**Q: What is the difference between config file and environment variables?**
 
 A: Config files are persistent and user-specific. Environment variables are deployment-specific and override config files. Use config files for personal settings, environment variables for deployment settings.
 
@@ -2698,27 +2698,27 @@ A: Yes, use the `TIF1_CONFIG_FILE` environment variable to specify which config 
 
 **Q: How do I reset to default configuration?**
 
-A: Delete or rename your `.tif1rc` file and unset all `TIF1_*` environment variables. The library will use hardcoded defaults.
+A: Delete or rename the `.tif1rc` file and unset all `TIF1_*` environment variables. The library then uses hardcoded defaults.
 
-**Q: Why isn't my configuration taking effect?**
+**Q: Why is not my configuration taking effect?**
 
 A: Check configuration precedence (programmatic > env > file > defaults). Verify environment variable names are correct (`TIF1_` prefix, uppercase). Ensure config file is valid JSON. Check logs for validation warnings.
 
-**Q: What's the performance impact of validation?**
+**Q: What is the performance impact of validation?**
 
 A: Validation adds 10-30% overhead depending on workload. Disable in production for maximum performance.
 
 **Q: Should I use pandas or polars?**
 
-A: Polars is faster for large datasets but uses more memory. Pandas has lower memory overhead and better compatibility. Start with pandas, switch to polars if you need more performance.
+A: Polars is faster for large datasets but uses more memory. Pandas has lower memory overhead and better compatibility. Start with pandas, then switch to polars when more performance is needed.
 
 **Q: How much memory does tif1 use?**
 
 A: Depends on configuration and workload. Typical usage: 200-500 MB. High-performance: 1-2 GB. Maximum: 4-8 GB+. Reduce cache sizes and concurrency to lower memory usage.
 
-**Q: What's ultra cold start mode?**
+**Q: What is ultra cold start mode?**
 
-A: Ultra cold start skips loading full session data when only specific data is needed, reducing initial load time by 50-80%. Enable for interactive analysis, disable for batch processing.
+A: Ultra cold start skips loading full session data when only specific data is needed. It reduces initial load time by 50-80%. Enable for interactive analysis, disable for batch processing.
 
 **Q: How do I optimize for my use case?**
 
@@ -2726,25 +2726,25 @@ A: See the "Configuration Patterns and Recipes" section for detailed configurati
 
 **Q: Can I change configuration at runtime?**
 
-A: Yes, use `config.set()` to change values at runtime. Changes take effect immediately but are not persisted unless you call `config.save()`.
+A: Yes, use `config.set()` to change values at runtime. Changes take effect immediately but are not persisted unless `config.save()` is called.
 
-**Q: What's the recommended production configuration?**
+**Q: What is the recommended production configuration?**
 
-A: See the "Production Service Configuration" in the "Configuration Patterns and Recipes" section for a complete production-ready configuration.
+A: See the "Production Service Configuration" in the "Configuration Patterns and Recipes" section for a complete production configuration.
 
 **Q: How do I debug configuration issues?**
 
 A: Enable debug logging (`tif1.setup_logging(logging.DEBUG)`), check actual values (`config.get(key)`), verify precedence, and review logs for validation warnings.
 
-**Q: What's the difference between `pool_connections` and `pool_maxsize`?**
+**Q: What is the difference between `pool_connections` and `pool_maxsize`?**
 
 A: `pool_connections` is the number of connection pools (one per host). `pool_maxsize` is the maximum connections per pool. Both auto-calculate by default based on concurrency settings.
 
 **Q: Should I enable prefetching?**
 
-A: Enable for common access patterns (e.g., accessing driver laps after loading session). Disable for memory-constrained environments or when access patterns are unpredictable.
+A: Enable for common access patterns (for example, accessing driver laps after loading session). Disable for memory-constrained environments or when access patterns are unpredictable.
 
-**Q: What's the recommended cache size?**
+**Q: What is the recommended cache size?**
 
 A: Default (1024 items) works for most cases. Increase for large-scale analysis (4096+). Decrease for memory-constrained environments (256-512).
 
@@ -2756,15 +2756,15 @@ A: Enable `ci_mode`, disable cache, enable validation, use lower concurrency, sh
 
 A: Yes, enable `offline_mode` to use only cached data. Requires previously cached data. See "Offline/Cache-Only Configuration" for details.
 
-**Q: What's the impact of HTTP/2 multiplexing?**
+**Q: What is the impact of HTTP/2 multiplexing?**
 
-A: HTTP/2 multiplexing reduces connection overhead by reusing connections for multiple requests. Enabled by default. Disable only if you have issues with specific proxies or CDNs.
+A: HTTP/2 multiplexing reduces connection overhead by reusing connections for multiple requests. Enabled by default. Disable it only if specific proxies or CDNs cause issues.
 
 **Q: How do I configure DNS resolvers?**
 
 A: Use `http_resolvers` to specify resolver order. Default tries system DNS first, then DoH fallbacks. Use DoH for privacy or when system DNS is blocked.
 
-**Q: What's the circuit breaker for?**
+**Q: What is the circuit breaker for?**
 
 A: Circuit breaker prevents cascading failures by stopping requests after consecutive failures. Automatically recovers after timeout. Configure threshold and timeout based on reliability requirements.
 

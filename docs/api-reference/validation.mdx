@@ -1,7 +1,7 @@
 ---
 title: "Data Validation"
 icon: "check-circle"
-description: "Comprehensive Pydantic-based validation system for F1 data integrity and quality assurance"
+description: "Pydantic-based validation system for F1 data integrity and quality assurance"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -15,11 +15,11 @@ keywords:
 
 # Data Validation
 
-The validation module provides a comprehensive, Pydantic-based validation system that ensures data integrity and catches malformed responses from the CDN before they reach your application code.
+The validation module provides a Pydantic-based validation system. It ensures data integrity and catches malformed responses from the CDN before they reach the application code.
 
 ## Overview
 
-tif1's validation system acts as a quality gate between raw JSON data from the CDN and your application. It performs deep structural validation, type checking, and anomaly detection to ensure you're working with clean, consistent data.
+The tif1 validation system acts as a quality gate between raw CDN JSON data and the application. It performs deep structural validation, type checking, and anomaly detection. This ensures that the data is clean and consistent.
 
 ### What Validation Catches
 
@@ -30,7 +30,7 @@ The validation system detects and handles:
 - **Inconsistent Array Lengths**: Verifies all parallel arrays have matching lengths (critical for DataFrame construction)
 - **Invalid Enum Values**: Checks tire compounds, session types, and other categorical data against known valid values
 - **Null-like String Values**: Automatically converts "", "none", "null", "nan" to proper None values
-- **Out-of-Range Values**: Validates numeric constraints (e.g., RPM &lt; 20,000, gear &lt;= 8, stint &gt;= 1)
+- **Out-of-Range Values**: Validates numeric constraints (for example, RPM &lt; 20,000, gear &lt;= 8, stint &gt;= 1)
 - **Data Anomalies**: Detects missing laps, duplicate lap numbers, and statistical outliers
 - **Field Aliases**: Handles both verbose and abbreviated field names from different CDN formats
 
@@ -59,14 +59,14 @@ The validation system detects and handles:
 
 ### `validate_laps`
 
-Validates lap timing data structure with comprehensive field checking and length consistency validation.
+Validates lap timing data structure with full field checking and length consistency validation.
 
 ```python
 def validate_laps(data: dict) -> LapData
 ```
 
 **Purpose:**
-Validates raw lap timing JSON from the CDN, ensuring all required fields are present, arrays have consistent lengths, and values meet domain constraints (e.g., stint >= 1, tire life >= 0).
+Validates raw lap timing JSON from the CDN. Ensures that all required fields are present and that arrays have consistent lengths. Values must meet domain constraints (for example, stint >= 1, tire life >= 0).
 
 **Parameters:**
 - `data` (dict): Raw JSON dictionary from CDN containing lap timing arrays
@@ -154,7 +154,7 @@ bad_data = {
 
 ### `validate_telemetry`
 
-Validates high-frequency telemetry data in batch mode (significantly faster than point-by-point validation).
+Validates high-frequency telemetry data in batch mode (faster than point-by-point validation).
 
 ```python
 def validate_telemetry(data: dict) -> TelemetryData
@@ -268,7 +268,7 @@ def validate_drivers(data: dict) -> DriversData
 ```
 
 **Purpose:**
-Validates driver roster data from the CDN, ensuring all driver codes follow the 3-letter format and required metadata fields are present.
+Validates driver roster data from the CDN. Ensures that all driver codes follow the 3-letter format and that required metadata fields are present.
 
 **Parameters:**
 - `data` (dict): Raw JSON dictionary from CDN with `drivers` array
@@ -280,7 +280,7 @@ Validates driver roster data from the CDN, ensuring all driver codes follow the 
 - `pydantic.ValidationError`: If validation fails
 
 **Validation Rules:**
-- `driver`: Must be exactly 3 uppercase letters (e.g., "VER", "HAM", "LEC")
+- `driver`: Must be exactly 3 uppercase letters (for example, "VER", "HAM", "LEC")
 - `team`: Team name, 1-100 characters
 - `dn`: Driver number (string)
 - `fn`: First name (required)
@@ -631,7 +631,7 @@ sc_events = [
 
 ### `LapData`
 
-Comprehensive Pydantic model for lap timing data with automatic length consistency validation.
+Pydantic model for lap timing data with automatic length consistency validation.
 
 **Purpose:**
 Represents validated lap timing data with all required and optional fields. Ensures all parallel arrays have consistent lengths, which is critical for DataFrame construction.
@@ -764,7 +764,7 @@ print(lap_data.source_driver)  # ["VER"]
 
 ### `TelemetryData`
 
-Comprehensive Pydantic model for high-frequency telemetry data with automatic unwrapping of nested structures.
+Pydantic model for high-frequency telemetry data with automatic unwrapping of nested structures.
 
 **Purpose:**
 Represents validated telemetry sensor data with support for multiple CDN formats. Handles nested `tel` objects and performs boolean coercion for brake/DRS fields.
@@ -1212,9 +1212,9 @@ outliers = [a for a in anomalies if a.type == AnomalyType.OUTLIER_TIMES]
 ```
 
 **Anomaly Types:**
-- **MISSING_LAPS**: Gaps in lap number sequence (e.g., laps 1, 2, 4, 5 - missing lap 3)
+- **MISSING_LAPS**: Gaps in lap number sequence (for example, laps 1, 2, 4, 5 - missing lap 3)
 - **DUPLICATE_LAPS**: Same lap number appears multiple times
-- **OUTLIER_TIMES**: Lap times significantly different from average (>3x mean)
+- **OUTLIER_TIMES**: Lap times far from the average (>3x mean)
 
 ---
 
@@ -1232,7 +1232,7 @@ def detect_lap_anomalies(laps: list[dict]) -> list[Anomaly]
 Analyzes lap data to identify missing laps, duplicate lap numbers, and statistical outliers. Returns structured anomaly objects with severity levels and detailed context.
 
 **Parameters:**
-- `laps` (list[dict]): List of lap dictionaries with at least `lap` and/or `time` fields
+- `laps` (list[dict]): List of lap dictionaries with at least one of the `lap` or `time` fields
 
 **Returns:**
 - `list[Anomaly]`: List of detected anomalies with type, severity, description, and details
@@ -1373,9 +1373,9 @@ anomaly_dict = anomaly.model_dump()
 
 **Severity Levels:**
 
-- **low**: Minor issues that don't affect analysis (e.g., statistical outliers from pit stops)
-- **medium**: Moderate issues that may affect completeness (e.g., missing laps)
-- **high**: Critical issues that indicate data corruption (e.g., duplicate lap numbers)
+- **low**: Minor issues that do not affect analysis (for example, statistical outliers from pit stops)
+- **medium**: Moderate issues that may affect completeness (for example, missing laps)
+- **high**: Critical issues that indicate data corruption (for example, duplicate lap numbers)
 
 ---
 
@@ -1475,7 +1475,7 @@ When `validate_data=True`, the following CDN payloads are validated:
 #### Validation Modes
 
 **Non-Strict Mode (Default)**:
-- Validation errors are logged but don't raise exceptions
+- Validation errors are logged but do not raise exceptions
 - Original data is returned if validation fails
 - Suitable for production environments
 
@@ -1819,7 +1819,7 @@ validated = validate_with_logging(raw_data, "laps")
 validated = validate_lap_data(data, strict=True)
 ```
 
-2. **Handle validation errors gracefully**: Don't crash on bad data.
+2. **Handle validation errors gracefully**: Do not crash on bad data.
 
 ```python
 from tif1.exceptions import InvalidDataError
@@ -1836,7 +1836,7 @@ except Exception as e:
 
 4. **Clean data before validation**: Remove obvious errors first using normalization functions.
 
-5. **Leverage null-like string conversion**: The validation module automatically converts "", "none", "null", "nan" to None.
+5. **Use null-like string conversion**: The validation module automatically converts "", "none", "null", "nan" to None.
 
 ---
 

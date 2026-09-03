@@ -1,7 +1,7 @@
 ---
 title: "HTTP Session Management"
 icon: "network-wired"
-description: "Advanced HTTP session management with intelligent connection pooling, DNS-over-HTTPS fallback, and comprehensive performance monitoring"
+description: "HTTP session management with connection pooling, DNS-over-HTTPS fallback, and performance monitoring"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -17,7 +17,7 @@ keywords:
 
 ## Overview
 
-The `http_session` module provides enterprise-grade HTTP session management for tif1, implementing a thread-safe singleton pattern with aggressive connection pooling, intelligent DNS resolution with DNS-over-HTTPS (DoH) fallback, and comprehensive connection reuse tracking. This infrastructure is critical to tif1's performance characteristics, enabling high-throughput parallel data fetching while minimizing network overhead.
+The `http_session` module provides HTTP session management for tif1. It implements a thread-safe singleton pattern with connection pooling, DNS resolution with DNS-over-HTTPS (DoH) fallback, and connection reuse tracking. This infrastructure supports high-throughput parallel data fetching with low network overhead.
 
 ### Why HTTP Session Management Matters
 
@@ -40,7 +40,7 @@ The http_session module eliminates most of this overhead through connection reus
 - **HTTP/2 multiplexing**: Multiple requests over single connections (optional)
 - **HTTP/3 support**: QUIC protocol for improved performance (optional)
 - **DNS-over-HTTPS fallback**: Automatic DoH resolver fallback for reliability
-- **Connection reuse tracking**: Comprehensive metrics for monitoring and optimization
+- **Connection reuse tracking**: Detailed metrics for monitoring and optimization
 - **Keep-alive optimization**: Configurable timeouts and request limits per connection
 - **Automatic resource cleanup**: Graceful shutdown on process exit
 - **Zero-trust environment handling**: Disabled trust_env for predictable behavior
@@ -58,7 +58,7 @@ def get_session() -> niquests.Session
 Retrieve or create the shared HTTP session using a thread-safe singleton pattern. This function implements double-checked locking to ensure only one session instance exists across all threads while minimizing lock contention.
 
 **Thread Safety:**
-The function uses a module-level lock (`_session_lock`) to ensure thread-safe initialization. Once the session is created, subsequent calls return the cached instance without acquiring the lock, making this operation extremely fast in the common case.
+The function uses a module-level lock (`_session_lock`) to ensure thread-safe initialization. Once the session is created, subsequent calls return the cached instance without acquiring the lock. This keeps the common case free of lock contention.
 
 **Session Lifecycle:**
 1. First call creates the session with optimized settings
@@ -81,8 +81,8 @@ The session is configured with:
 - **HTTPAdapter** mounted on `https://` with custom pool settings
 - **Connection pooling**: `pool_connections` and `pool_maxsize` dynamically calculated
 - **Keep-alive headers**: `Connection: keep-alive` with timeout and max request limits
-- **Resolver fallback**: Attempts standard DNS, then Cloudflare DoH, then Google DoH
-- **Multiplexing**: HTTP/2 multiplexing enabled by default for optimal throughput
+- **Resolver fallback**: Tries standard DNS, then Cloudflare DoH, then Google DoH
+- **Multiplexing**: HTTP/2 multiplexing enabled by default
 
 **Performance Characteristics:**
 - **First call**: 10-50ms (session creation + DNS resolution)
@@ -126,7 +126,7 @@ print(f"Pool maxsize: {adapter._pool_maxsize}")
 ```
 
 <Warning>
-  This is an internal API. Most users don't need to interact with the HTTP session directly. The library handles all HTTP requests automatically through `Session.load()` and related methods.
+  This is an internal API. Most users do not need to interact with the HTTP session directly. The library handles all HTTP requests automatically through `Session.load()` and related methods.
 </Warning>
 
 <Note>
@@ -294,7 +294,7 @@ print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
 
 ### HTTP/2 Multiplexing
 
-HTTP/2 multiplexing is enabled by default to send multiple requests over a single connection. You can disable it if needed:
+HTTP/2 multiplexing is enabled by default to send multiple requests over a single connection. Disable it when needed:
 
 ```python
 import tif1
@@ -304,12 +304,12 @@ config.set("http_multiplexed", False)
 ```
 
 <Note>
-  HTTP/2 multiplexing is enabled by default for optimal performance. Only disable if you experience issues with specific CDN configurations.
+  HTTP/2 multiplexing is enabled by default. Disable it only when a specific CDN configuration causes issues.
 </Note>
 
 ### Custom pool sizing
 
-Pool sizes are automatically calculated based on concurrency settings. Override only if you have specific requirements:
+Pool sizes are calculated from the concurrency settings. Override them only for specific requirements:
 
 ```python
 import tif1
@@ -353,7 +353,7 @@ config.set("keepalive_max_requests", 100)
 
 ### Connection pool exhaustion
 
-If you see connection pool warnings, increase pool size:
+Increase the pool size when connection pool warnings appear:
 
 ```python
 import tif1
@@ -390,9 +390,9 @@ if stats['reuse_rate'] < 50:
 
 ## Best Practices
 
-1. **Don't create multiple sessions**: Use the shared session for all requests
+1. **Do not create multiple sessions**: Use the shared session for all requests
 2. **Monitor connection stats**: Track reuse rate to optimize performance
-3. **Tune pool size**: Match pool size to your concurrency needs
+3. **Tune pool size**: Match the pool size to the concurrency needs
 4. **Use DoH in restrictive networks**: Configure DoH resolvers for reliability
 5. **Enable HTTP/2 carefully**: Test thoroughly before enabling multiplexing
 6. **Let the library manage cleanup**: Session closes automatically on exit

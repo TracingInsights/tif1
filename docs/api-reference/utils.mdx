@@ -1,7 +1,7 @@
 ---
 title: "Utilities API"
 icon: "screwdriver-wrench"
-description: "Comprehensive utility functions for data manipulation, time conversion, and analysis"
+description: "Utility functions for data manipulation, time conversion, and analysis"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,7 +14,7 @@ keywords:
 ---
 
 <Info>
-  The `utils` module provides a comprehensive suite of utility functions designed to simplify working with Formula 1 data. These functions handle common tasks such as time format conversions, lap-by-lap performance comparisons, and safe nested data access.
+  The `utils` module provides a suite of utility functions designed to simplify working with Formula 1 data. These functions handle common tasks such as time format conversions, lap-by-lap performance comparisons, and safe nested data access.
 </Info>
 
 ## Overview
@@ -26,17 +26,17 @@ The utilities module serves as the foundational toolkit for data manipulation in
 3. **Data Access Helpers**: Safely navigate nested data structures
 4. **FastF1 Compatibility**: Maintain API compatibility with the FastF1 library
 
-These utilities are used extensively throughout tif1's core functionality and are designed to handle the diverse data formats encountered in Formula 1 telemetry, timing, and session data.
+These utilities operate throughout tif1's core functionality. They handle the diverse data formats found in Formula 1 telemetry, timing, and session data.
 
 <Note>
-  All utility functions are optimized for performance and handle edge cases gracefully, returning sensible defaults rather than raising exceptions when possible.
+  All utility functions are optimized for performance. They handle edge cases and return sensible defaults rather than raising exceptions when possible.
 </Note>
 
 ---
 
 ## Time Conversion Functions
 
-Time conversion is a critical aspect of working with Formula 1 data, as timing information arrives in multiple formats: ISO strings from the API, numeric seconds from telemetry, and formatted strings from timing screens. The utilities module provides robust converters that handle all these formats seamlessly.
+Time conversion is a critical part of working with Formula 1 data. Timing information arrives in multiple formats. These formats include ISO strings from the API, numeric seconds from telemetry, and formatted strings from timing screens. The utilities module provides converters that handle all these formats.
 
 ### `to_timedelta`
 
@@ -50,11 +50,11 @@ Converts various time representations to a standardized pandas Timedelta object.
 
 - **`x`** (`Any`): Time value in any of the following formats:
   - **`datetime.timedelta`**: Returned unchanged (passthrough)
-  - **`str`**: Parsed as a time string with intelligent format detection
+  - **`str`**: Parsed as a time string with automatic format detection
     - Short format: `"1:23.456"` (minutes:seconds.milliseconds) → automatically prepended with `"00:"` to become `"00:01:23.456"`
     - Full format: `"00:01:23.456"` (hours:minutes:seconds.milliseconds)
     - ISO 8601 duration format: `"PT1M23.456S"`
-  - **`int` or `float`**: Interpreted as seconds (e.g., `83.456` → 1 minute 23.456 seconds)
+  - **`int` or `float`**: Interpreted as seconds (for example, `83.456` → 1 minute 23.456 seconds)
   - **`numpy.integer` or `numpy.floating`**: Numeric types from NumPy arrays
   - Any other pandas-compatible time format
 
@@ -64,11 +64,11 @@ Converts various time representations to a standardized pandas Timedelta object.
 
 #### Behavior Details
 
-The function implements intelligent format detection:
+The function implements automatic format detection:
 
-1. **Passthrough for timedelta**: If the input is already a `datetime.timedelta`, it's returned immediately without conversion overhead
+1. **Passthrough for timedelta**: If the input is already a `datetime.timedelta`, it is returned immediately without conversion overhead
 2. **String parsing with auto-formatting**: String inputs are analyzed for colon count:
-   - If exactly one colon is found (e.g., `"1:23.456"`), the function prepends `"00:"` to create a valid hours:minutes:seconds format
+   - If exactly one colon is found (for example, `"1:23.456"`), the function prepends `"00:"` to create a valid hours:minutes:seconds format
    - This allows users to input lap times naturally without typing leading zeros
 3. **Numeric conversion**: Integer and float inputs are treated as seconds and converted using pandas' optimized `to_timedelta(x, unit="s")`
 4. **Fallback to pandas**: Any other format is passed directly to `pd.to_timedelta()` for pandas' native parsing
@@ -225,7 +225,7 @@ Converts various datetime representations to a standardized pandas Timestamp obj
 
 This function is a thin wrapper around pandas' `pd.to_datetime()` function, providing:
 
-1. **Automatic format detection**: Pandas intelligently detects ISO 8601, RFC 3339, and common datetime string formats
+1. **Automatic format detection**: Pandas detects ISO 8601, RFC 3339, and common datetime string formats
 2. **Unix timestamp support**: Numeric inputs are interpreted as Unix timestamps
 3. **Timezone awareness**: Preserves timezone information when present in the input
 4. **Consistent output**: Always returns a pandas Timestamp for uniform handling
@@ -233,7 +233,7 @@ This function is a thin wrapper around pandas' `pd.to_datetime()` function, prov
 #### Performance Characteristics
 
 - **O(1) complexity** for all input types
-- **Delegates to pandas**: Leverages pandas' highly optimized C-based datetime parsing
+- **Delegates to pandas**: Uses pandas' optimized C-based datetime parsing
 - **Timezone-aware**: Handles both naive and timezone-aware datetimes
 - **Error handling**: Invalid inputs return `NaT` (Not a Time) by default
 
@@ -373,7 +373,7 @@ The `to_datetime` function is used internally by tif1 for:
 
 ## Performance Analysis Functions
 
-Performance analysis is at the heart of Formula 1 data science. The utilities module provides functions to compare lap performance, calculate time deltas, and identify where drivers gain or lose time on track.
+Performance analysis is central to Formula 1 data science. The utilities module provides functions to compare lap performance and calculate time deltas. These functions identify where drivers gain or lose time on track.
 
 ### `delta_time`
 
@@ -389,7 +389,7 @@ Calculates the time delta between two laps at each telemetry sample point along 
 #### Parameters
 
 - **`reference_lap`** (`Lap`): The baseline lap used as the reference point for comparison
-  - Typically the faster lap or the lap you want to compare against
+  - Typically the faster lap, or the lap that serves as the comparison baseline
   - Must have telemetry data available (call `.get_telemetry()` to verify)
 
 - **`compare_lap`** (`Lap`): The lap to compare against the reference
@@ -668,7 +668,7 @@ When analyzing delta time plots:
 - **Sector-specific patterns**: Car strengths/weaknesses in different corner types
 
 <Warning>
-  Delta time calculations require both laps to have complete telemetry data. Laps with missing telemetry (e.g., in-laps, out-laps, or laps with data gaps) may produce inaccurate results.
+  Delta time calculations require both laps to have complete telemetry data. Laps with missing telemetry (for example, in-laps, out-laps, or laps with data gaps) may produce inaccurate results.
 </Warning>
 
 <Tip>
@@ -691,7 +691,7 @@ def recursive_dict_get(
 ) -> Any
 ```
 
-Safely accesses nested dictionary values using a sequence of keys, returning a default value if any key in the path doesn't exist. This function eliminates the need for multiple `try-except` blocks or chained `.get()` calls.
+Safely accesses nested dictionary values using a sequence of keys. The function returns a default value if any key in the path does not exist. This function eliminates the need for multiple `try-except` blocks or chained `.get()` calls.
 
 #### Parameters
 
@@ -720,13 +720,13 @@ Safely accesses nested dictionary values using a sequence of keys, returning a d
 The function traverses the dictionary iteratively:
 
 1. **Start with root**: Begins with the input dictionary `d`
-2. **Apply each key**: For each key in `*keys`, attempts to access `d[key]`
+2. **Apply each key**: For each key in `*keys`, tries to access `d[key]`
 3. **Handle missing keys**: If `KeyError` or `TypeError` occurs, returns the default value
 4. **Return final value**: If all keys exist, returns the value at the final key
 
 The function handles two types of errors:
-- **`KeyError`**: Raised when a key doesn't exist in the dictionary
-- **`TypeError`**: Raised when trying to index a non-dict value (e.g., `None[key]`)
+- **`KeyError`**: Raised when a key does not exist in the dictionary
+- **`TypeError`**: Raised when trying to index a non-dict value (for example, `None[key]`)
 
 #### Performance Characteristics
 
@@ -972,32 +972,32 @@ The `recursive_dict_get` function is used internally by tif1 for:
 #### Best Practices
 
 **When to use `default_none=False` (default):**
-- When you want to continue processing even if data is missing
-- When you're iterating over results (empty dict is safe to iterate)
-- When you want to use `or` for fallback values
-- When you're building data structures incrementally
+- When processing must continue even if data is missing
+- When the code iterates over results (empty dict is safe to iterate)
+- When `or` supplies fallback values
+- When data structures are built incrementally
 
 **When to use `default_none=True`:**
-- When you need to distinguish between "missing" and "empty"
-- When you want explicit `None` checks with `is None`
-- When you're validating required fields
-- When you want to raise errors for missing data
+- When the code must distinguish between "missing" and "empty"
+- For explicit `None` checks with `is None`
+- When validating required fields
+- When missing data must raise errors
 
 <Note>
-  The function returns the default value on the first missing key, so it short-circuits and doesn't traverse the entire key path if an early key is missing.
+  The function returns the default value on the first missing key. It short-circuits and does not traverse the entire key path when an early key is missing.
 </Note>
 
 <Tip>
-  For deeply nested structures with many optional fields, consider using `default_none=True` and checking for `None` explicitly. This makes your code's intent clearer and helps distinguish between missing data and empty values.
+  For deeply nested structures with many optional fields, consider using `default_none=True` and checking for `None` explicitly. This makes the intent of the code clearer and helps distinguish missing data from empty values.
 </Tip>
 
 ---
 
 ## Complete Real-World Examples
 
-These comprehensive examples demonstrate how to combine multiple utility functions to solve real-world Formula 1 data analysis problems.
+These examples demonstrate how to combine multiple utility functions to solve real-world Formula 1 data analysis problems.
 
-### Example 1: Comprehensive Lap Time Analysis
+### Example 1: Complete Lap Time Analysis
 
 This example shows how to analyze lap times across an entire session, identifying trends, outliers, and performance patterns.
 
@@ -1182,7 +1182,7 @@ plt.show()
 
 ### Example 3: Advanced Delta Time Analysis with Driver Comparison
 
-Perform comprehensive delta time analysis across multiple drivers and identify performance patterns.
+Perform delta time analysis across multiple drivers and identify performance patterns.
 
 ```python
 import tif1
@@ -1341,7 +1341,7 @@ for driver_code, delta in deltas.items():
 
 ### Example 4: Data Pipeline with Safe Nested Access
 
-Build a robust data processing pipeline using `recursive_dict_get` for safe data extraction.
+Build a reliable data processing pipeline using `recursive_dict_get` for safe data extraction.
 
 ```python
 import tif1
@@ -1567,7 +1567,7 @@ if __name__ == "__main__":
 
 ## Performance Considerations and Best Practices
 
-Understanding the performance characteristics of utility functions helps you write efficient data analysis code.
+Understanding the performance characteristics of utility functions helps developers write efficient data analysis code.
 
 ### Time Conversion Performance
 
@@ -1613,7 +1613,7 @@ Understanding the performance characteristics of utility functions helps you wri
        # Process delta...
    ```
 
-2. **Limit telemetry channels**: If you only need specific channels, filter after retrieval:
+2. **Limit telemetry channels**: When only specific channels are needed, filter after retrieval:
    ```python
    delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
 
@@ -1660,7 +1660,7 @@ Understanding the performance characteristics of utility functions helps you wri
    type_ = session_info.get("type")
    ```
 
-3. **Use default_none appropriately**: Choose the right default for your use case:
+3. **Use default_none appropriately**: Choose the default that fits the use case:
    ```python
    # Use default_none=False for chaining
    drivers = recursive_dict_get(data, "session", "drivers") or []
@@ -1702,7 +1702,7 @@ Understanding the performance characteristics of utility functions helps you wri
 
 ### Error Handling Best Practices
 
-**Robust error handling patterns:**
+**Reliable error handling patterns:**
 
 1. **Validate inputs before conversion**:
    ```python
@@ -1777,7 +1777,7 @@ def recursive_dict_get(
 
 ### Common Exceptions
 
-While these utilities are designed to handle errors gracefully, you may encounter:
+These utilities handle errors gracefully. Even so, the following errors can occur:
 
 - **`ValueError`**: Invalid input format that pandas cannot parse
 - **`TypeError`**: Attempting to convert incompatible types
@@ -1790,7 +1790,7 @@ While these utilities are designed to handle errors gracefully, you may encounte
 
 ### Core Module Integration
 
-The utilities are used extensively throughout tif1's core functionality:
+The utilities are used throughout tif1's core functionality:
 
 ```python
 # In core.py - Lap time conversion
@@ -1834,7 +1834,7 @@ laps['LapTime'] = laps['LapTime'].apply(to_timedelta)
 
 ## FastF1 Compatibility
 
-The utilities module maintains API compatibility with FastF1 for seamless migration:
+The utilities module maintains API compatibility with FastF1 for simple migration:
 
 ### Compatible Functions
 
@@ -1944,9 +1944,9 @@ df['LapTime'] = pd.to_timedelta(df['LapTimeStr'])  # Fast
 ### Example Notebooks
 
 Check out these Jupyter notebooks for more examples:
-- **Lap Time Analysis**: Comprehensive lap time analysis workflows
+- **Lap Time Analysis**: Complete lap time analysis workflows
 - **Delta Time Visualization**: Advanced delta time plotting techniques
-- **Data Pipeline**: Building robust data processing pipelines
+- **Data Pipeline**: Building reliable data processing pipelines
 
 ### Community Examples
 
@@ -1968,5 +1968,5 @@ Browse community-contributed examples:
 </Note>
 
 <Tip>
-  For the best performance, use vectorized pandas operations when working with large datasets, and cache intermediate results when performing multiple analyses on the same data.
+  Use vectorized pandas operations when working with large datasets. Cache intermediate results when performing multiple analyses on the same data.
 </Tip>

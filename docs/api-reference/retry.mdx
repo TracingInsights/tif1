@@ -1,7 +1,7 @@
 ---
 title: "Retry & Reliability"
 icon: "rotate-right"
-description: "Circuit breaker, retry strategies, and failure handling for robust network operations"
+description: "Circuit breaker, retry strategies, and failure handling for network operations"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -20,44 +20,44 @@ keywords:
   - "cascading failures"
 ---
 
-The retry module provides comprehensive reliability patterns to handle transient network failures, prevent cascading errors, and ensure robust data fetching operations. This module implements industry-standard patterns including circuit breakers, exponential backoff with jitter, and automatic retry mechanisms to make your F1 data applications resilient to network instability, API rate limits, and temporary service disruptions.
+The retry module provides reliability patterns to handle transient network failures, prevent cascading errors, and support reliable data fetching. The module implements circuit breakers, exponential backoff with jitter, and automatic retry. These mechanisms make F1 data applications resilient to network instability, API rate limits, and temporary service disruptions.
 
-All components in this module are production-ready with full thread safety, atomic state transitions, and monotonic time-based calculations that are immune to system clock adjustments. The implementation has been battle-tested in concurrent environments and provides predictable behavior under high load.
+All components in this module are thread-safe, with atomic state transitions. Monotonic time-based calculations are immune to system clock adjustments. The implementation is tested in concurrent environments and provides predictable behavior under high load.
 
 ## Overview
 
-Network operations are inherently unreliable in distributed systems. CDN endpoints can experience temporary outages, rate limiting, connection timeouts, DNS resolution failures, or intermittent network partitions. Without proper reliability mechanisms, these transient failures can cascade through your application, leading to poor user experience, wasted resources, and system instability.
+Network operations are inherently unreliable in distributed systems. CDN endpoints can experience temporary outages, rate limiting, connection timeouts, DNS resolution failures, or intermittent network partitions. Without reliability mechanisms, these transient failures can cascade through an application. The result is poor user experience, wasted resources, and system instability.
 
-The retry module provides a multi-layered defense strategy that addresses these challenges comprehensively:
+The retry module provides a multi-layered defense strategy that addresses these challenges:
 
 ### Core Reliability Mechanisms
 
-1. **Circuit Breaker Pattern**: Prevents overwhelming a failing service by temporarily blocking requests after repeated failures, allowing the service time to recover. This is your first line of defense against cascading failures and resource exhaustion.
+1. **Circuit Breaker Pattern**: Temporarily blocks requests to a failing service after repeated failures. The pause gives the service time to recover. This is the first line of defense against cascading failures and resource exhaustion.
 
-2. **Exponential Backoff**: Progressively increases wait time between retry attempts using an exponential function (2^attempt by default). This avoids hammering a struggling service while giving it breathing room to recover from overload conditions.
+2. **Exponential Backoff**: Progressively increases the wait time between retries with an exponential function (2^attempt by default). The increasing waits protect a struggling service during recovery from overload conditions.
 
 3. **Jitter**: Adds controlled randomization to retry timing to prevent thundering herd problems when multiple clients retry simultaneously. Without jitter, all clients would retry at exactly the same intervals, potentially overwhelming the service again.
 
 4. **Thread Safety**: All operations are thread-safe with atomic state transitions using reentrant locks (`threading.RLock`). Multiple threads can safely interact with the circuit breaker concurrently without race conditions or data corruption.
 
-5. **Monotonic Time**: Uses `time.monotonic()` for all timeout calculations, making the system immune to system clock adjustments, NTP synchronization, or daylight saving time changes.
+5. **Monotonic Time**: Uses `time.monotonic()` for all timeout calculations. This makes the system immune to system clock adjustments, NTP synchronization, and daylight saving time changes.
 
-6. **Configurable Thresholds**: Fine-tune behavior for your specific use case, network conditions, and service SLAs through global configuration or per-function parameters.
+6. **Configurable Thresholds**: Fine-tune behavior for a specific use case, network conditions, and service SLAs. Use global configuration or per-function parameters.
 
 ### How These Patterns Work Together
 
-These patterns work together seamlessly to provide defense in depth:
+These patterns work together to provide defense in depth:
 
 - The **retry decorator** handles individual request failures with exponential backoff and jitter, giving transient errors a chance to resolve
 - The **circuit breaker** provides system-wide protection against cascading failures by detecting persistent problems and failing fast
 - **Thread safety** ensures correct behavior in concurrent applications where multiple threads are making requests simultaneously
 - **Monotonic time** guarantees reliable timeout behavior regardless of system clock changes
 
-This layered approach means your application can handle brief network hiccups gracefully while also protecting against prolonged outages that would otherwise waste resources and degrade user experience.
+This layered approach lets an application handle brief network interruptions gracefully. It also protects against prolonged outages that would otherwise waste resources and degrade user experience.
 
 ### When to Use This Module
 
-You should use the retry module when:
+Use the retry module in these cases:
 
 - Fetching data from external APIs or CDN endpoints
 - Making network requests that might experience transient failures
@@ -66,45 +66,45 @@ You should use the retry module when:
 - Protecting downstream services from being overwhelmed during incidents
 - Building concurrent applications where multiple threads make network requests
 
-The retry module is automatically integrated into `tif1`'s data fetching pipeline, so you get these reliability benefits out of the box. However, you can also use these patterns directly in your own code for custom network operations or external API integrations.
+The retry module is automatically integrated into `tif1`'s data fetching pipeline. These reliability benefits work out of the box. The patterns also work directly in application code for custom network operations or external API integrations.
 
 ## Circuit Breaker Pattern
 
-The circuit breaker pattern is a critical reliability mechanism that prevents your application from repeatedly attempting operations that are likely to fail. Named after electrical circuit breakers that prevent electrical overload by cutting power when current exceeds safe levels, this software pattern "opens" (blocks requests) when a service is experiencing problems, giving it time to recover before allowing requests through again.
+The circuit breaker pattern is a reliability mechanism. It prevents an application from repeatedly attempting operations that are likely to fail. The pattern is named after electrical circuit breakers. Electrical breakers cut power when current exceeds safe levels. This software pattern "opens" (blocks requests) when a service has problems. This gives the service time to recover before the pattern allows requests through again.
 
 ### The Problem: Cascading Failures
 
-Without a circuit breaker, your application faces several critical problems when a downstream service fails:
+Without a circuit breaker, an application faces several critical problems when a downstream service fails:
 
-**Resource Exhaustion**: Your application continues making requests that will fail, wasting CPU cycles, memory, network bandwidth, and connection pool resources. In a high-traffic system, this can quickly exhaust available resources and bring down your entire application.
+**Resource Exhaustion**: The application continues to make requests that fail. These requests waste CPU cycles, memory, network bandwidth, and connection pool resources. In a high-traffic system, this can quickly exhaust available resources and bring down the entire application.
 
-**Slow Failure**: Each failed request must wait for the full timeout period (often 30-60 seconds) before failing. If you're making hundreds of requests per second, these timeouts accumulate and create massive latency, making your application appear frozen to users.
+**Slow Failure**: Each failed request must wait for the full timeout period (often 30-60 seconds) before it fails. At hundreds of requests per second, these timeouts accumulate. The result is high latency, and the application appears frozen to users.
 
-**Overwhelming the Failing Service**: Continued requests to an already struggling service prevent it from recovering. The service needs breathing room to clear its queues, restart processes, or scale up capacity, but constant incoming requests make recovery impossible.
+**Overwhelming the Failing Service**: Continued requests to an already struggling service prevent it from recovering. The service needs time to clear its queues, restart processes, or scale up capacity. Constant incoming requests make recovery impossible.
 
-**Cascading Failures**: When one service fails and your application keeps hammering it, the failure cascades upstream. Your application's thread pool fills with blocked requests, its memory fills with queued operations, and eventually your application fails too, potentially taking down other services that depend on it.
+**Cascading Failures**: When one service fails and the application keeps sending requests, the failure cascades upstream. The application's thread pool fills with blocked requests. Its memory fills with queued operations. The application eventually fails too. It can take down other services that depend on it.
 
-**Poor User Experience**: Users experience long waits followed by errors, often repeatedly, as the application keeps trying operations that will fail. This creates frustration and erodes trust in your application.
+**Poor User Experience**: Users experience long waits followed by errors, often repeatedly. The application keeps trying operations that cannot succeed. This creates frustration and erodes trust in the application.
 
 ### The Solution: Circuit Breaker
 
-The circuit breaker solves these problems by detecting failure patterns and failing fast when a service is known to be down:
+The circuit breaker solves these problems. It detects failure patterns and fails fast when a service is known to be down:
 
-**Fast Failure**: When the circuit is open, requests fail immediately with a clear error message instead of waiting for timeouts. This provides instant feedback and prevents resource waste.
+**Fast Failure**: When the circuit is open, requests fail immediately with a clear error message. The requests do not wait for timeouts. This provides instant feedback and prevents resource waste.
 
-**Automatic Recovery Testing**: The circuit breaker automatically transitions to a half-open state after a timeout period, allowing a single test request through to check if the service has recovered. This eliminates the need for manual intervention.
+**Automatic Recovery Testing**: The circuit breaker automatically transitions to a half-open state after a timeout period. A single test request then checks if the service has recovered. This eliminates the need for manual intervention.
 
-**Resource Protection**: By blocking requests to a failing service, the circuit breaker prevents wasting CPU, memory, network bandwidth, and connection pool resources on operations that will fail.
+**Resource Protection**: The circuit breaker blocks requests to a failing service. This prevents wasting CPU, memory, network bandwidth, and connection pool resources on operations that fail.
 
-**Graceful Degradation**: The immediate failure response gives your application an opportunity to use cached data, fallback strategies, or alternative services instead of just hanging.
+**Graceful Degradation**: The immediate failure response lets the application use cached data, fallback strategies, or alternative services. The application does not just hang.
 
-**System Stability**: By preventing cascading failures, the circuit breaker keeps one failing service from bringing down your entire application or other dependent services.
+**System Stability**: The circuit breaker prevents cascading failures. It keeps one failing service from bringing down the entire application or other dependent services.
 
-**Observability**: The circuit breaker's state (closed, open, half-open) and failure count provide clear signals about system health that you can monitor, alert on, and use for debugging.
+**Observability**: The circuit breaker's state (closed, open, half-open) and failure count provide clear signals about system health. Monitor these signals, set alerts on them, and use them for debugging.
 
 ### Circuit Breaker States
 
-The circuit breaker operates as a finite state machine with three distinct states, each serving a specific purpose in the failure detection and recovery cycle. Understanding these states and their transitions is crucial for effectively using and debugging circuit breaker behavior.
+The circuit breaker operates as a finite state machine with three distinct states. Each state serves a specific purpose in the failure detection and recovery cycle. Understanding these states and their transitions is crucial to use and debug circuit breaker behavior.
 
 #### Closed State (Normal Operation)
 
@@ -128,7 +128,7 @@ The Closed state is the default, healthy operating mode where everything is work
 
 **Use Case**: This is the state during normal, healthy operation when the downstream service is responding successfully. The circuit breaker adds minimal overhead in this state, simply counting failures without blocking any requests.
 
-**Example Scenario**: Your application is fetching F1 lap data from the CDN. The CDN is healthy and responding quickly. The circuit breaker stays in Closed state, allowing all requests through while monitoring for any failures. If a few requests fail due to transient network issues but stay below the threshold, the circuit remains closed and requests continue flowing normally.
+**Example Scenario**: The application fetches F1 lap data from the CDN. The CDN is healthy and responding quickly. The circuit breaker stays in Closed state, allowing all requests through while monitoring for any failures. A few requests may fail because of transient network issues. If the count stays below the threshold, the circuit remains closed. Requests continue to flow normally.
 
 #### Open State (Failure Mode)
 
@@ -148,17 +148,17 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 **Transition Conditions**:
 - Remains in Open state until the timeout period elapses
 - Automatically transitions to Half-Open state after the timeout expires
-- The transition check happens on the next request attempt after timeout expiration
+- The transition check happens on the next request after timeout expiration
 - Cannot transition back to Closed state directly; must go through Half-Open first
 
 **Error Handling**:
 - Raises `Exception("Circuit breaker is open")` immediately for all requests
-- This exception is distinct from network errors, allowing your code to handle circuit breaker failures differently
+- This exception is distinct from network errors, so code can handle circuit breaker failures differently
 - The immediate failure prevents resource waste and provides fast feedback
 
-**Use Case**: This state protects both your application and the failing service. Your application avoids wasting resources on requests that will fail, and the failing service gets time to recover without being bombarded by requests. Users get immediate error responses instead of waiting for timeouts.
+**Use Case**: This state protects both the application and the failing service. The application avoids wasting resources on requests that fail. The failing service gets time to recover without new requests. Users get immediate error responses instead of waiting for timeouts.
 
-**Example Scenario**: The CDN experiences an outage and 5 consecutive requests fail (assuming threshold=5). The circuit breaker opens immediately. For the next 60 seconds, all requests fail instantly with "Circuit breaker is open" instead of waiting for 30-second timeouts. This saves your application from wasting 30 seconds per request and prevents overwhelming the CDN. After 60 seconds, the circuit breaker automatically transitions to Half-Open to test if the CDN has recovered.
+**Example Scenario**: The CDN experiences an outage and 5 consecutive requests fail (assuming threshold=5). The circuit breaker opens immediately. For the next 60 seconds, all requests fail instantly with "Circuit breaker is open" instead of waiting for 30-second timeouts. This saves the application from wasting 30 seconds per request and prevents overwhelming the CDN. After 60 seconds, the circuit breaker automatically transitions to Half-Open to test if the CDN has recovered.
 
 #### Half-Open State (Recovery Testing)
 
@@ -188,7 +188,7 @@ The Half-Open state is the circuit breaker's recovery mechanism, cautiously test
 - The state transition (Half-Open → Closed or Half-Open → Open) is atomic
 - No race conditions occur even with many concurrent threads
 
-**Use Case**: This state automatically tests service recovery without manual intervention and without flooding the service with requests. It provides a controlled, gradual recovery path that protects both your application and the downstream service.
+**Use Case**: This state automatically tests service recovery without manual intervention and without flooding the service with requests. It provides a controlled, gradual recovery path that protects both the application and the downstream service.
 
 **Example Scenario**: After 60 seconds in Open state, the circuit breaker transitions to Half-Open. The next request is allowed through as a test. If the CDN responds successfully, the circuit closes and normal operation resumes. If the CDN is still down, the circuit opens again for another 60 seconds. This continues automatically until the service recovers, with no manual intervention required.
 
@@ -213,21 +213,21 @@ stateDiagram-v2
 
 **Key Transition Rules**:
 
-1. **Closed → Closed (Success)**: When a request succeeds in Closed state, the failure counter resets to 0 and the circuit remains closed.
+1. **Closed → Closed (Success)**: When a request succeeds in Closed state, the failure counter resets to 0. The circuit remains closed.
 
-2. **Closed → Closed (Failure Below Threshold)**: When a request fails but the failure count is still below the threshold, the counter increments and the circuit remains closed.
+2. **Closed → Closed (Failure Below Threshold)**: A request fails, but the count stays below the threshold. The counter increments, and the circuit remains closed.
 
-3. **Closed → Open (Threshold Reached)**: When a request fails and the failure count reaches or exceeds the threshold, the circuit immediately opens and starts the timeout timer.
+3. **Closed → Open (Threshold Reached)**: A request fails, and the count reaches or exceeds the threshold. The circuit immediately opens and starts the timeout timer.
 
-4. **Open → Open (Timeout Not Elapsed)**: While in Open state and the timeout hasn't elapsed, all requests are blocked immediately and the circuit remains open.
+4. **Open → Open (Timeout Not Elapsed)**: In Open state, the timeout has not elapsed. All requests are blocked immediately, and the circuit remains open.
 
-5. **Open → Half-Open (Timeout Elapsed)**: When the timeout period elapses, the circuit transitions to Half-Open on the next request attempt, allowing one test request through.
+5. **Open → Half-Open (Timeout Elapsed)**: When the timeout elapses, the circuit transitions to Half-Open on the next request. The circuit then allows one test request through.
 
-6. **Half-Open → Closed (Test Success)**: If the test request in Half-Open state succeeds, the circuit closes, resets the failure counter to 0, and resumes normal operation.
+6. **Half-Open → Closed (Test Success)**: If the test request succeeds, the circuit closes. It resets the failure counter to 0 and resumes normal operation.
 
-7. **Half-Open → Open (Test Failure)**: If the test request in Half-Open state fails, the circuit immediately opens again, resets the timeout timer, and increments the failure counter.
+7. **Half-Open → Open (Test Failure)**: If the test request fails, the circuit immediately opens again. It resets the timeout timer and increments the failure counter.
 
-8. **Any State → Initial (Manual Reset)**: Calling `reset_circuit_breaker()` creates a new circuit breaker instance in Closed state with zero failures, regardless of the current state.
+8. **Any State → Initial (Manual Reset)**: Calling `reset_circuit_breaker()` creates a new circuit breaker instance in Closed state. The new instance has zero failures, regardless of the current state.
 
 **Important Notes**:
 
@@ -239,7 +239,7 @@ stateDiagram-v2
 
 ### Thread Safety and Atomic Operations
 
-The `CircuitBreaker` implementation is fully thread-safe and uses atomic operations for all state transitions and counter updates. This is critical for production applications where multiple threads might be making requests simultaneously, and it ensures correct behavior under high concurrency without race conditions or data corruption.
+The `CircuitBreaker` implementation is fully thread-safe and uses atomic operations for all state transitions and counter updates. This is critical for production applications where multiple threads make requests simultaneously. It ensures correct behavior under high concurrency, without race conditions or data corruption.
 
 #### Thread Safety Mechanisms
 
@@ -277,13 +277,13 @@ The `CircuitBreaker` implementation is fully thread-safe and uses atomic operati
 
 The circuit breaker provides these concrete guarantees in concurrent environments:
 
-1. **No Lost Updates**: If multiple threads increment the failure counter simultaneously, all increments are recorded correctly with no lost updates.
+1. **No Lost Updates**: If multiple threads increment the failure counter simultaneously, all increments are recorded. No updates are lost.
 
-2. **Consistent State Transitions**: State transitions are atomic. You'll never see partial transitions or inconsistent state combinations.
+2. **Consistent State Transitions**: State transitions are atomic. Partial transitions and inconsistent state combinations never occur.
 
-3. **Accurate Failure Counting**: The failure count always accurately reflects the number of failures, even with concurrent failures from multiple threads.
+3. **Accurate Failure Counting**: The failure count always reflects the number of failures. This holds true even with concurrent failures from multiple threads.
 
-4. **Single Test Request in Half-Open**: Only one thread's request is allowed through as the test request in Half-Open state, even if many threads attempt requests simultaneously.
+4. **Single Test Request in Half-Open**: Only one thread's request passes as the test request. This applies even if many threads make requests simultaneously.
 
 5. **No Deadlocks**: The reentrant lock prevents deadlocks from nested calls within the same thread.
 
@@ -360,7 +360,7 @@ In this example:
 **Scalability**:
 - The circuit breaker scales well to hundreds of concurrent threads
 - Lock contention is minimal because critical sections are very short
-- The monotonic time check is fast and doesn't require system calls
+- The monotonic time check is fast and does not require system calls
 
 **Memory Overhead**:
 - The circuit breaker maintains minimal state: failure count, timestamps, and state
@@ -371,7 +371,7 @@ In this example:
 
 ### `CircuitBreaker`
 
-Thread-safe circuit breaker implementation with atomic state transitions and monotonic time-based timeout tracking. This class provides the core circuit breaker functionality and can be instantiated directly for custom use cases or accessed via the global instance through `get_circuit_breaker()`.
+Thread-safe circuit breaker implementation with atomic state transitions and monotonic time-based timeout tracking. This class provides the core circuit breaker functionality. Instantiate it directly for custom use cases. Alternatively, access the global instance through `get_circuit_breaker()`.
 
 ```python
 class CircuitBreaker:
@@ -388,14 +388,14 @@ class CircuitBreaker:
   Number of consecutive failures required before the circuit breaker opens. Must be >= 1.
 
   **Choosing the right threshold:**
-  - **Lower values (1-3)**: More sensitive, opens quickly. Use for critical services where fast failure detection is important, or when you have good fallback strategies.
+  - **Lower values (1-3)**: More sensitive, opens quickly. Use for critical services where fast failure detection is important. Also use when good fallback strategies exist.
   - **Medium values (4-7)**: Balanced approach. Good default for most use cases. Tolerates brief transient errors while still detecting persistent problems.
-  - **Higher values (8-15)**: More tolerant, slower to open. Use for services with expected intermittent failures or when you want to avoid false positives from brief network hiccups.
+  - **Higher values (8-15)**: More tolerant, slower to open. Use for services with expected intermittent failures. Also use to avoid false positives from brief network interruptions.
 
   **Trade-offs:**
   - Higher thresholds make the circuit breaker more tolerant of transient failures but slower to detect persistent problems
-  - Lower thresholds provide faster failure detection but may open prematurely on brief network hiccups
-  - Consider your service's typical failure patterns and SLAs when choosing a threshold
+  - Lower thresholds provide faster failure detection but may open prematurely on brief network interruptions
+  - Consider the service's typical failure patterns and SLAs when choosing a threshold
 
   **Example scenarios:**
   - Threshold=2 for a critical payment API where failures are rare and fast detection is crucial
@@ -407,15 +407,15 @@ class CircuitBreaker:
   Number of seconds the circuit breaker remains open before transitioning to half-open state to test recovery. Must be >= 1.
 
   **Choosing the right timeout:**
-  - **Short timeouts (10-30s)**: Quick recovery testing. Use when services typically recover quickly or when you want to minimize downtime.
+  - **Short timeouts (10-30s)**: Quick recovery testing. Use when services typically recover quickly. Also use to minimize downtime.
   - **Medium timeouts (60-120s)**: Balanced approach. Good default for most services. Gives services adequate time to recover without excessive waiting.
-  - **Long timeouts (180-300s)**: Patient recovery. Use for services that need significant time to recover (e.g., database failovers, service restarts).
+  - **Long timeouts (180-300s)**: Patient recovery. Use for services that need significant time to recover (for example, database failovers, service restarts).
 
   **Trade-offs:**
   - Shorter timeouts mean faster recovery when the service comes back online
-  - Longer timeouts give the failing service more breathing room to recover fully
-  - Too short and you might test recovery before the service is ready, causing it to open again
-  - Too long and you'll wait unnecessarily if the service recovers quickly
+  - Longer timeouts give the failing service more time to recover fully
+  - A timeout that is too short tests recovery before the service is ready. The circuit then opens again.
+  - A timeout that is too long causes unnecessary waiting if the service recovers quickly
 
   **Example scenarios:**
   - Timeout=30 for a CDN that typically recovers from transient issues quickly
@@ -428,7 +428,7 @@ class CircuitBreaker:
 <ResponseField name="state" type="str">
   Current circuit breaker state - one of `"closed"`, `"open"`, or `"half_open"`.
 
-  This is a read-only property that's thread-safe. The state reflects the current operational mode:
+  This is a read-only property that is thread-safe. The state reflects the current operational mode:
   - `"closed"`: Normal operation, all requests allowed through
   - `"open"`: Failure mode, all requests blocked immediately
   - `"half_open"`: Recovery testing, one test request allowed through
@@ -488,13 +488,13 @@ class CircuitBreaker:
 <ResponseField name="_last_failure_monotonic" type="float | None">
   Monotonic time of last failure used for timeout calculations. Immune to system clock adjustments.
 
-  This internal property uses `time.monotonic()` for accurate timeout calculations that aren't affected by:
+  This internal property uses `time.monotonic()` for accurate timeout calculations that are not affected by:
   - System clock adjustments (manual or automatic)
   - NTP synchronization
   - Daylight saving time changes
   - Leap seconds
 
-  You typically don't need to access this property directly; it's used internally for timeout calculations.
+  Applications typically do not need to access this property directly. The library uses it internally for timeout calculations.
 </ResponseField>
 
 <ResponseField name="_lock" type="threading.RLock">
@@ -506,7 +506,7 @@ class CircuitBreaker:
   - Protects all reads and writes to state and counters
   - Held for minimal time to reduce contention
 
-  You typically don't need to access this property directly; it's used internally for synchronization.
+  Applications typically do not need to access this property directly. The library uses it internally for synchronization.
 </ResponseField>
 
 **Thread Safety Guarantees:**
@@ -667,16 +667,16 @@ def get_circuit_breaker() -> CircuitBreaker
 <ResponseField name="CircuitBreaker" type="CircuitBreaker">
   The global `CircuitBreaker` instance that `tif1` uses internally for all CDN requests and network operations.
 
-  This is a singleton instance that's shared across your entire application. All `tif1` data fetching operations (session loading, lap data, telemetry, etc.) use this same circuit breaker instance, providing unified failure detection and protection across all network operations.
+  This is a singleton instance that is shared across the entire application. All `tif1` data fetching operations (session loading, lap data, telemetry, etc.) use this same circuit breaker instance. The instance provides unified failure detection and protection across all network operations.
 </ResponseField>
 
 **When to Use:**
 
-Use `get_circuit_breaker()` when you need to:
+Use `get_circuit_breaker()` for these purposes:
 - Monitor the current state of the circuit breaker
 - Check the failure count to understand system health
 - Implement custom logic based on circuit breaker state
-- Use the same circuit breaker for your own network operations
+- Use the same circuit breaker for custom network operations
 - Debug network issues by inspecting circuit breaker state
 
 **Example - Basic Monitoring:**
@@ -807,11 +807,11 @@ def reset_circuit_breaker() -> None
 **When to Use:**
 
 Call `reset_circuit_breaker()` when:
-- You've manually fixed the underlying issue and want to resume normal operation immediately
-- You're running tests and need a clean circuit breaker state between test cases
-- You've deployed a fix and want to clear the failure history
-- You're switching to a different CDN or service endpoint
-- You want to force the circuit breaker to give the service another chance
+- The underlying issue is manually fixed, and normal operation must resume immediately
+- Tests need a clean circuit breaker state between test cases
+- A fix is deployed, and the failure history must be cleared
+- The application switches to a different CDN or service endpoint
+- The circuit breaker must give the service another chance
 
 **Important Notes:**
 
@@ -819,7 +819,7 @@ Call `reset_circuit_breaker()` when:
 - All failure history is lost, including the failure count and last failure time
 - The new circuit breaker uses the current configuration values from `get_config()`
 - This is a global operation that affects all code using the circuit breaker
-- Use with caution in production; it's better to let the circuit breaker recover naturally in most cases
+- Use with caution in production; it is better to let the circuit breaker recover naturally in most cases
 
 **Example - Basic Reset:**
 
@@ -930,7 +930,7 @@ update_circuit_breaker_config(threshold=10, timeout=120)
 
 ### `call(func, *args, **kwargs)`
 
-Execute a function with circuit breaker protection using atomic state transitions. This is the primary method for using the circuit breaker to protect your operations.
+Execute a function with circuit breaker protection using atomic state transitions. This is the primary method for using the circuit breaker to protect application operations.
 
 ```python
 def call(
@@ -945,15 +945,15 @@ def call(
 <ParamField path="func" type="Callable[..., T]" required>
   The function to execute with circuit breaker protection. This can be any callable (function, lambda, method, etc.) that might fail and needs protection.
 
-  The function is executed outside the circuit breaker's lock to prevent holding the lock during I/O operations, which could cause deadlocks or performance issues.
+  The function runs outside the circuit breaker's lock. This prevents lock holding during I/O operations, which could cause deadlocks or performance issues.
 </ParamField>
 
 <ParamField path="*args" type="Any">
-  Positional arguments to pass to the function. These are forwarded directly to `func` when it's called.
+  Positional arguments to pass to the function. These are forwarded directly to `func` when it is called.
 </ParamField>
 
 <ParamField path="**kwargs" type="Any">
-  Keyword arguments to pass to the function. These are forwarded directly to `func` when it's called.
+  Keyword arguments to pass to the function. These are forwarded directly to `func` when it is called.
 </ParamField>
 
 **Returns:**
@@ -965,7 +965,7 @@ def call(
 **Raises:**
 
 <ResponseField name="Exception" type="Exception">
-  Raises `Exception("Circuit breaker is open")` if the circuit breaker is in Open state and the timeout hasn't elapsed.
+  Raises `Exception("Circuit breaker is open")` if the circuit breaker is in Open state and the timeout has not elapsed.
 
   Also raises any exception that `func` raises during execution. These exceptions are propagated after recording the failure in the circuit breaker.
 </ResponseField>
@@ -973,7 +973,7 @@ def call(
 **Behavior:**
 
 1. **State Check (Atomic)**: Checks the current circuit breaker state within a lock
-2. **Open State Handling**: If open and timeout hasn't elapsed, raises immediately
+2. **Open State Handling**: If open and timeout has not elapsed, raises immediately
 3. **Half-Open Transition**: If open and timeout has elapsed, transitions to half-open
 4. **Function Execution**: Executes the function outside the lock (prevents deadlocks during I/O)
 5. **Success Handling**: On success, resets failure counter and closes circuit if in half-open state
@@ -1202,7 +1202,7 @@ def retry_with_backoff(
 ```
 
 **Parameters:**
-- `max_retries`: Maximum retry attempts (default: 3)
+- `max_retries`: Maximum number of retries (default: 3)
 - `backoff_factor`: Exponential backoff multiplier (default: 2.0)
 - `jitter`: Add random jitter to backoff (default: True)
 - `exceptions`: Tuple of exceptions to catch (default: all exceptions)
@@ -1475,7 +1475,7 @@ if cb.state == "open":
     pass
 ```
 
-2. **Reset after fixing issues**: Don't wait for timeout if you know service is back.
+2. **Reset after fixing issues**: Do not wait for the timeout when the service is back.
 
 ```python
 reset_circuit_breaker()
@@ -1495,14 +1495,14 @@ def fetch_data():
     pass
 ```
 
-5. **Log retry attempts**: Helps diagnose network issues.
+5. **Log retries**: Helps diagnose network issues.
 
 ```python
 import logging
 logging.basicConfig(level=logging.WARNING)
 ```
 
-6. **Catch specific exceptions**: Don't retry on client errors (4xx).
+6. **Catch specific exceptions**: Do not retry on client errors (4xx).
 
 ```python
 @retry_with_backoff(exceptions=(NetworkError,))

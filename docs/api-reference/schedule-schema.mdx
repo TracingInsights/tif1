@@ -13,7 +13,7 @@ keywords:
   - "events"
 ---
 
-The `schedule_schema` module validates the shape of packaged F1 schedule payloads. It contains one function, `validate_schedule_payload`. The `tif1.events` module calls it on the schedule payload built from the packaged schedule files before any event data is read from that payload.
+The `schedule_schema` module validates the shape of packaged F1 schedule payloads. It contains one function, `validate_schedule_payload`. The `tif1.events` module calls it on each schedule payload before any event data is read.
 
 ## Overview
 
@@ -105,7 +105,7 @@ Each failed check has its own reason string:
 
 ## Where tif1 uses it
 
-`tif1.events` loads the packaged schedule files from `tif1/data/schedules/f1schedule/schedule_{year}.json`, converts each year to the shape above, and validates the combined payload with `validate_schedule_payload`. A validation failure stops event and schedule lookups before they read malformed data.
+`tif1.events` loads the packaged schedule files from `tif1/data/schedules/f1schedule/schedule_{year}.json` and converts each year to the shape above. `validate_schedule_payload` then validates the combined payload. A validation failure stops event and schedule lookups before they read malformed data.
 
 ## Related APIs
 

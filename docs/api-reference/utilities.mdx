@@ -1,7 +1,7 @@
 ---
 title: "Utilities"
 icon: "toolbox"
-description: "Comprehensive guide to helper functions for configuration, logging, cache management, data manipulation, and system optimization"
+description: "Helper functions for configuration, logging, cache management, data manipulation, and system optimization"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,9 +14,9 @@ keywords:
   - "performance"
 ---
 
-Beyond the core timing and telemetry API, `tif1` provides a comprehensive suite of utility functions to manage its internal state, performance optimization, reliability layers, and system configuration. These utilities give you fine-grained control over caching behavior, network resilience, logging verbosity, data processing pipelines, and more.
+Beyond the core timing and telemetry API, `tif1` provides utility functions. They manage internal state, performance optimization, reliability layers, and system configuration. These utilities give fine-grained control over caching behavior, network resilience, logging verbosity, data processing pipelines, and more.
 
-This guide provides an exhaustive reference for all available utility functions, covering their parameters, return values, edge cases, performance implications, thread safety considerations, and real-world usage patterns. Whether you're debugging data loading issues, optimizing cache performance, or building production applications, these utilities give you the control you need.
+This guide is an exhaustive reference for all utility functions. It covers parameters, return values, edge cases, performance implications, thread safety, and real-world usage patterns. Use these utilities when debugging data loading issues, optimizing cache performance, or building production applications.
 
 ## Overview
 
@@ -142,7 +142,7 @@ Settings are loaded in the following order (later sources override earlier ones)
 
 1. **Built-in defaults**: Hardcoded sensible defaults
 2. **Configuration file** (`~/.tif1rc`): JSON file in user's home directory
-3. **Environment variables**: Prefixed with `TIF1_` (e.g., `TIF1_LIB=polars`)
+3. **Environment variables**: Prefixed with `TIF1_` (for example, `TIF1_LIB=polars`)
 4. **Programmatic calls**: Using `config.set()` at runtime
 
 ### `get_config`
@@ -153,7 +153,7 @@ Returns the global configuration singleton instance.
 def get_config() -> Config
 ```
 
-The `Config` object is a singleton, meaning all calls to `get_config()` return the same instance. This ensures configuration consistency across your entire application.
+The `Config` object is a singleton, meaning all calls to `get_config()` return the same instance. This ensures configuration consistency across the entire application.
 
 **Returns:**
 - `Config`: Singleton configuration instance
@@ -191,7 +191,7 @@ Retrieve a configuration value by key.
 
 **Parameters:**
 - `key` (str): Configuration key name
-- `default` (Any, optional): Value to return if key doesn't exist. Defaults to `None`.
+- `default` (Any, optional): Value to return if key does not exist. Defaults to `None`.
 
 **Returns:**
 - The configuration value, or `default` if key not found
@@ -256,7 +256,7 @@ Save current configuration to a JSON file.
 - `path` (Path | str | None, optional): File path to save to. If `None`, saves to `~/.tif1rc`. Defaults to `None`.
 
 **Behavior:**
-- Creates parent directories if they don't exist
+- Creates parent directories if they do not exist
 - Uses atomic write (write to temp file, then rename)
 - Saves all current settings, including defaults
 - File format is human-readable JSON
@@ -299,7 +299,7 @@ config.save(Path.home() / ".config" / "tif1" / "config.json")
 
 ### Available Configuration Keys
 
-Comprehensive reference of all configuration options:
+Reference of all configuration options:
 
 | Key | Type | Default | Description | Performance Impact |
 | :--- | :--- | :--- | :--- | :--- |
@@ -343,7 +343,7 @@ export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
 **Type Conversion:**
 - Booleans: `"true"`, `"1"`, `"yes"` → `True`; `"false"`, `"0"`, `"no"` → `False`
 - Integers: Parsed automatically
-- Lists: Comma-separated values (e.g., `"url1,url2,url3"`)
+- Lists: Comma-separated values (for example, `"url1,url2,url3"`)
 
 ### Configuration Examples
 
@@ -416,19 +416,19 @@ config.save()
 ### Configuration Best Practices
 
 1. **Use environment variables for deployment**: Easier to configure across environments without code changes
-2. **Save configuration after tuning**: Persist your optimized settings with `config.save()`
+2. **Save configuration after tuning**: Persist the optimized settings with `config.save()`
 3. **Use polars for production**: Better performance and memory efficiency
 4. **Disable validation in production**: Saves ~10-15% processing time if data quality is trusted
 5. **Increase timeout for slow networks**: Default 30s may not be enough on mobile/satellite connections
-6. **Use ultra-cold start for single lap queries**: Dramatically faster when you only need one lap's telemetry
-7. **Configure circuit breaker for your use case**: Lower threshold for fail-fast, higher for resilience
+6. **Use ultra-cold start for single lap queries**: Faster when only one lap's telemetry is needed
+7. **Configure the circuit breaker for each use case**: Lower threshold for fail-fast, higher for resilience
 8. **Use multiple CDNs for reliability**: Configure fallback CDNs in production
 
 ---
 
 ## Cache Management
 
-The `tif1` caching system is a critical performance component that dramatically reduces data loading times and network bandwidth usage. It implements a sophisticated multi-layer caching strategy with both in-memory (LRU) and persistent (SQLite) storage.
+The `tif1` caching system is a performance component that reduces data loading times and network bandwidth usage. It implements a multi-layer caching strategy with both in-memory (LRU) and persistent (SQLite) storage.
 
 ### Cache Architecture
 
@@ -446,7 +446,7 @@ Returns the persistent SQLite cache singleton instance.
 def get_cache() -> Cache
 ```
 
-The `Cache` object manages the SQLite database that stores fetched JSON data and telemetry. Like `Config`, it's a singleton ensuring consistent cache state across your application.
+The `Cache` object manages the SQLite database that stores fetched JSON data and telemetry. Like `Config`, it is a singleton ensuring consistent cache state across the application.
 
 **Returns:**
 - `Cache`: Singleton cache instance
@@ -545,8 +545,8 @@ Get cached telemetry data for a specific lap.
 **Parameters:**
 - `year` (int): Season year
 - `gp` (str): Grand Prix name (underscored format)
-- `session` (str): Session type (e.g., "Race", "Qualifying")
-- `driver` (str): Driver code (e.g., "VER", "HAM")
+- `session` (str): Session type (for example, "Race", "Qualifying")
+- `driver` (str): Driver code (for example, "VER", "HAM")
 - `lap` (int): Lap number
 
 **Returns:**
@@ -740,7 +740,7 @@ finally:
 
 ### Cache Size Management
 
-The cache grows over time as you load more sessions. Here's how to manage cache size:
+The cache grows over time as more sessions are loaded. Here is how to manage cache size:
 
 **Check Cache Size:**
 ```python
@@ -817,12 +817,12 @@ asyncio.run(fetch_cached_data())
 ### Cache Best Practices
 
 1. **Let the cache warm up**: First load is slow, subsequent loads are fast
-2. **Don't clear cache unnecessarily**: Cache is your friend for performance
+2. **Do not clear cache unnecessarily**: The cache improves performance on repeated loads
 3. **Monitor cache size**: Set up periodic cleanup if disk space is limited
 4. **Use batch operations**: `get_telemetry_batch()` is much faster than individual calls
 5. **Close cache on exit**: Use `atexit.register(cache.close)` to ensure clean shutdown
 6. **Check cache before loading**: Use `has_session_data()` to avoid unnecessary network calls
-7. **Use SSD for cache**: Significantly faster than HDD for SQLite operations
+7. **Use SSD for cache**: Faster than HDD for SQLite operations
 8. **Consider cache location**: Put cache on fast local storage, not network drives
 
 ---
@@ -839,7 +839,7 @@ Convert various time formats to pandas `Timedelta` objects.
 def to_timedelta(x: str | float | int | timedelta) -> pd.Timedelta
 ```
 
-This function provides a unified interface for converting lap times, sector times, and other duration values into pandas `Timedelta` objects for consistent time arithmetic and comparison.
+This function provides a unified interface for converting lap times, sector times, and other duration values into pandas `Timedelta` objects. The converted values support consistent time arithmetic and comparison.
 
 **Parameters:**
 - `x` (str | float | int | timedelta): Time value to convert
@@ -856,7 +856,7 @@ This function provides a unified interface for converting lap times, sector time
 
 **Behavior:**
 - Automatically adds leading `"00:"` to `"M:SS.mmm"` format
-- Handles negative times (e.g., for deltas)
+- Handles negative times (for example, for deltas)
 - Preserves microsecond precision
 - Returns pandas `Timedelta` for consistent arithmetic
 
@@ -1003,7 +1003,7 @@ Safely navigate nested dictionaries without raising `KeyError`.
 def recursive_dict_get(d: dict, *keys: str, default_none: bool = False) -> Any
 ```
 
-This function provides safe access to deeply nested dictionary values, returning a default value instead of raising exceptions when keys don't exist.
+This function provides safe access to deeply nested dictionary values. It returns a default value instead of raising exceptions when keys do not exist.
 
 **Parameters:**
 - `d` (dict): Dictionary to navigate
@@ -1136,11 +1136,11 @@ print(f"Maximum disadvantage: {delta.min():.3f}s")
 
 ## Reliability & Networking
 
-The `tif1` library implements sophisticated reliability patterns to handle network failures, CDN outages, and transient errors gracefully. The circuit breaker pattern prevents cascading failures, while the CDN manager provides automatic fallback to alternative data sources.
+The `tif1` library implements reliability patterns to handle network failures, CDN outages, and transient errors gracefully. The circuit breaker pattern prevents cascading failures, while the CDN manager provides automatic fallback to alternative data sources.
 
 ### Circuit Breaker Pattern
 
-The circuit breaker is a critical reliability component that prevents your application from repeatedly attempting operations that are likely to fail. It acts like an electrical circuit breaker, "opening" after too many failures to prevent cascading issues.
+The circuit breaker is a critical reliability component. It stops the application from repeatedly trying operations that are likely to fail. It acts like an electrical circuit breaker, "opening" after too many failures to prevent cascading issues.
 
 **Circuit Breaker States:**
 
@@ -1164,7 +1164,7 @@ Returns the global circuit breaker instance used for all network requests.
 def get_circuit_breaker() -> CircuitBreaker
 ```
 
-The circuit breaker is a singleton that tracks failures across all network operations in your application.
+The circuit breaker is a singleton that tracks failures across all network operations in the application.
 
 **Returns:**
 - `CircuitBreaker`: Global circuit breaker instance
@@ -1393,7 +1393,7 @@ print(f"Failure tracking: {cdn._failure_counts}")
 Get list of enabled CDN sources sorted by priority.
 
 **Returns:**
-- List of enabled CDN sources that haven't exceeded failure threshold
+- List of enabled CDN sources that have not exceeded failure threshold
 
 **Example:**
 ```python
@@ -1622,19 +1622,19 @@ except Exception as e:
 ### Reliability Best Practices
 
 1. **Monitor circuit breaker state**: Check state before critical operations
-2. **Respect circuit breaker**: Don't bypass it when open
+2. **Respect circuit breaker**: Do not bypass it when open
 3. **Reset after network changes**: Call `reset_circuit_breaker()` when switching networks
 4. **Configure thresholds appropriately**: Lower for fail-fast, higher for resilience
 5. **Use multiple CDNs**: Configure fallback CDNs for production
 6. **Log failures**: Track patterns to identify systemic issues
-7. **Implement exponential backoff**: Don't retry immediately after failures
-8. **Handle DataNotFoundError separately**: Don't retry when data genuinely doesn't exist
+7. **Implement exponential backoff**: Do not retry immediately after failures
+8. **Handle DataNotFoundError separately**: Do not retry when data genuinely does not exist
 
 ---
 
 ## Memory Management
 
-The `tif1` library uses in-memory LRU (Least Recently Used) caches to speed up repeated access to lap DataFrames. While this improves performance, it can consume significant memory when working with many sessions. These utilities help you manage memory usage.
+The `tif1` library uses in-memory LRU (Least Recently Used) caches to speed up repeated access to lap DataFrames. While this improves performance, it can consume significant memory when working with many sessions. These utilities help manage memory usage.
 
 ### `clear_lap_cache`
 
@@ -1718,7 +1718,7 @@ print(f"Memory freed: {mem_after - mem_cleared:.1f} MB")
 **Best Practices:**
 1. Clear cache between unrelated analyses
 2. Clear cache in batch processing loops
-3. Don't clear too frequently (defeats caching purpose)
+3. Do not clear too frequently (defeats caching purpose)
 4. Monitor memory usage in long-running applications
 5. Consider clearing cache before loading different seasons
 
@@ -1752,11 +1752,11 @@ process_season_with_memory_management(2021)
 
 ## Complete Examples
 
-This section provides comprehensive, production-ready examples demonstrating how to combine multiple utilities for real-world use cases.
+This section provides examples demonstrating how to combine multiple utilities for real-world use cases.
 
 ### Example 1: Configure and Save Settings
 
-Set up optimal configuration for your use case and persist it.
+Set up the configuration for the specific use case and persist it.
 
 ```python
 import tif1
@@ -1861,7 +1861,7 @@ session = debug_session_load(2021, "Belgian Grand Prix", "Race")
 
 ### Example 3: Cache Management Workflow
 
-Comprehensive cache inspection and management.
+Complete cache inspection and management.
 
 ```python
 import tif1
@@ -1958,7 +1958,7 @@ cache_management_dashboard()
 
 ### Example 4: Handle Network Issues
 
-Robust error handling with circuit breaker awareness.
+Reliable error handling with circuit breaker awareness.
 
 ```python
 import tif1
@@ -2288,7 +2288,7 @@ for result in results:
 
 ## Best Practices
 
-Comprehensive guidelines for using `tif1` utilities effectively in different scenarios.
+Guidelines for using `tif1` utilities effectively in different scenarios.
 
 ### Development Best Practices
 
@@ -2329,7 +2329,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    config.set("timeout", 10)
    ```
    - Fail fast during development
-   - Don't wait for slow connections
+   - Do not wait for slow connections
    - Iterate quickly on code changes
 
 5. **Clear Cache When Testing**
@@ -2337,7 +2337,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    cache = tif1.get_cache()
    cache.clear()
    ```
-   - Ensures you're testing with fresh data
+   - Ensures that tests run with fresh data
    - Validates cache warming logic
    - Catches cache-related bugs
 
@@ -2442,7 +2442,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    ```python
    config.set("ultra_cold_start", True)
    ```
-   - Dramatically faster for single lap telemetry
+   - Faster for single lap telemetry
    - Skips loading full session data
    - On-demand fetching
    - Not suitable for full session analysis
@@ -2457,7 +2457,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    - Prevents memory bloat
    - Important for long-running applications
    - Clear between unrelated analyses
-   - Don't clear too frequently
+   - Do not clear too frequently
 
 3. **Use Batch Telemetry Operations**
    ```python
@@ -2497,7 +2497,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
    # Put cache on fast local SSD
    config.set("cache_dir", "/mnt/ssd/tif1_cache")
    ```
-   - Significantly faster than HDD
+   - Faster than HDD
    - Reduces SQLite query time
    - Better for concurrent access
    - Avoid network drives
@@ -2517,7 +2517,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
        # Network issue - can retry
        print("Network error, retrying...")
    ```
-   - Don't retry DataNotFoundError
+   - Do not retry DataNotFoundError
    - Retry NetworkError with backoff
    - Handle each error type appropriately
 
@@ -2548,7 +2548,7 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
                wait_time = 2 ** attempt
                time.sleep(wait_time)
    ```
-   - Don't retry immediately
+   - Do not retry immediately
    - Give service time to recover
    - Reduce load on failing service
    - Increase wait time exponentially
@@ -2782,12 +2782,12 @@ Comprehensive guidelines for using `tif1` utilities effectively in different sce
 
 ### Summary
 
-Following these best practices will help you:
+Follow these best practices to:
 - Build reliable applications with proper error handling
-- Optimize performance for your specific use case
+- Optimize performance for the specific use case
 - Manage resources efficiently
 - Debug issues quickly
 - Deploy confidently to production
 - Monitor system health effectively
 
-Remember: The right configuration depends on your specific use case. Development, production, and testing environments should have different configurations optimized for their respective goals.
+Remember: The right configuration depends on the specific use case. Development, production, and testing environments should have different configurations optimized for their respective goals.
