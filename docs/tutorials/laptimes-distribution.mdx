@@ -44,11 +44,12 @@ Get laps for the top 10 finishers (point-scoring positions) and filter out slow 
 
 ```python
 # Get all the laps for the point finishers only
-point_finishers = race.drivers[:10]
+# race.drivers returns driver numbers, so translate them to abbreviations first
+point_finishers = [race.get_driver(i)["Abbreviation"] for i in race.drivers[:10]]
 print(f"Point finishers: {point_finishers}")
 
 # Pick quick laps only (filter out slow laps)
-driver_laps = laps[laps["Driver"].isin(point_finishers)].copy()
+driver_laps = laps.pick_drivers(point_finishers).copy()
 
 # Filter out slow laps - remove deleted laps and pit laps
 driver_laps = driver_laps[~driver_laps["Deleted"]]
@@ -56,11 +57,9 @@ driver_laps = driver_laps[~driver_laps["PitOutTime"].notna()]
 driver_laps = driver_laps[~driver_laps["PitInTime"].notna()]
 
 # Remove outliers (laps > 110% of fastest lap per driver)
-def filter_quick_laps(group):
-    fastest = group["LapTime"].min()
-    return group[group["LapTime"] < fastest * 1.10]
-
-driver_laps = driver_laps.groupby("Driver", group_keys=False).apply(filter_quick_laps)
+# Use transform to keep every column; groupby().apply() drops the grouping column
+fastest_per_driver = driver_laps.groupby("Driver")["LapTime"].transform("min")
+driver_laps = driver_laps[driver_laps["LapTime"] < fastest_per_driver * 1.10]
 driver_laps = driver_laps.reset_index(drop=True)
 ```
 
@@ -69,8 +68,8 @@ driver_laps = driver_laps.reset_index(drop=True)
 To plot drivers by finishing order, extract their abbreviations in the correct sequence.
 
 ```python
-# Get three-letter abbreviations in finishing order
-finishing_order = [race.get_driver(i)["Abbreviation"] for i in point_finishers]
+# point_finishers already holds the abbreviations in finishing order
+finishing_order = point_finishers
 print(f"Finishing order: {finishing_order}")
 ```
 
@@ -249,7 +248,10 @@ sns.violinplot(data=soft_laps,
 ```python
 # Compare qualifying vs race pace
 quali = tif1.get_session(2023, "Azerbaijan", 'Q')
-quali_laps = quali.laps
+quali_laps = quali.laps.copy()
+
+# Seaborn needs numeric values, so convert the timedelta lap times to seconds
+quali_laps["LapTime(s)"] = quali_laps["LapTime"].dt.total_seconds()
 
 # Create side-by-side comparison
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))

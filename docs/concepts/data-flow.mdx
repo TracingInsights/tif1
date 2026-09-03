@@ -3179,7 +3179,7 @@ tif1.setup_logging(
 #### What Gets Logged
 
 **DEBUG Level:**
-```
+```text
 2025-04-19 14:30:15 [DEBUG] tif1.cache: Memory cache miss: laps_2025_monaco_race_pandas
 2025-04-19 14:30:15 [DEBUG] tif1.cache: SQLite cache miss: laps_2025_monaco_race_pandas
 2025-04-19 14:30:15 [DEBUG] tif1.cdn: Constructing URL: https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/laps/monaco/race/driver_VER.json
@@ -3197,21 +3197,21 @@ tif1.setup_logging(
 ```
 
 **INFO Level:**
-```
+```text
 2025-04-19 14:30:15 [INFO] tif1.session: Loading session: 2025 Monaco Grand Prix Race
 2025-04-19 14:30:16 [INFO] tif1.http: Fetched data for 20 drivers (580ms)
 2025-04-19 14:30:16 [INFO] tif1.session: Data loading complete: 1500 rows, 35 columns, 7.2 MB
 ```
 
 **WARNING Level:**
-```
+```text
 2025-04-19 14:30:16 [WARNING] tif1.validation: Found 3 laps with inconsistent sector times
 2025-04-19 14:30:16 [WARNING] tif1.http: jsDelivr CDN failed, trying GitHub fallback
 2025-04-19 14:30:16 [WARNING] tif1.cache: Cache entry expired, re-fetching data
 ```
 
 **ERROR Level:**
-```
+```text
 2025-04-19 14:30:16 [ERROR] tif1.http: All CDN sources failed for driver VER
 2025-04-19 14:30:16 [ERROR] tif1.parser: JSON parsing failed at position 1234
 2025-04-19 14:30:16 [ERROR] tif1.cache: Failed to write to SQLite cache: disk full
@@ -3587,7 +3587,7 @@ Understanding common data flow patterns helps you optimize your code for differe
 
 **Scenario:** First time loading data, no cache available.
 
-```
+```text
 User Request
     ↓
 Memory Cache Miss (< 1ms)
@@ -3639,7 +3639,7 @@ Return DataFrame
 
 **Scenario:** Data exists in SQLite cache, but not in memory.
 
-```
+```text
 User Request
     ↓
 Memory Cache Miss (< 1ms)
@@ -3673,7 +3673,7 @@ Return DataFrame
 
 **Scenario:** Data exists in memory cache.
 
-```
+```text
 User Request
     ↓
 Memory Cache Hit (< 1ms)
@@ -3698,7 +3698,7 @@ Return DataFrame
 
 **Scenario:** Some drivers cached, others need fetching.
 
-```
+```text
 User Request (20 drivers)
     ↓
 Memory Cache Check
@@ -3731,7 +3731,7 @@ Memory Cache Check
 
 **Scenario:** Network request fails, automatic retry with backoff.
 
-```
+```text
 User Request
     ↓
 Memory Cache Miss

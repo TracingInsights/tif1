@@ -57,7 +57,7 @@ The events module is built on several key design principles:
 Schedule data is sourced from two primary locations:
 
 - **Vendored JSON files**: Recent seasons (typically current and previous year) are packaged with `tif1` for instant access without network requests
-- **TracingInsights CDN**: Historical seasons are fetched from the TracingInsights GitHub data repositories via the jsdelivr CDN
+- **f1schedule CDN**: Historical seasons are fetched from the `theOehrly/f1schedule` GitHub repository via the jsDelivr CDN
 
 **Supported years**: 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026
 
@@ -127,7 +127,7 @@ The function returns an `EventSchedule` object, which is a specialized pandas Da
 **Behavior & Implementation Details:**
 
 - **Caching**: Schedule data is cached in-memory after the first request. Subsequent calls for the same year return cached data instantly without network requests.
-- **Data Source**: Schedule data is fetched from the TracingInsights CDN (via jsdelivr) or loaded from vendored JSON files included with the package for recent seasons.
+- **Data Source**: Schedule data is fetched from the `theOehrly/f1schedule` repository (via jsDelivr) or loaded from vendored JSON files included with the package for recent seasons.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Use `get_event_schedule(year, include_testing=False)` if you want to exclude testing events.
 - **Performance**: This function is highly optimized and typically completes in &lt;10ms for cached data or &lt;200ms for initial CDN fetch.
 

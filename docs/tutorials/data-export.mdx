@@ -30,7 +30,7 @@ ver.laps.to_csv("verstappen_laps.csv", index=False)
 
 # Export telemetry
 fastest_lap = ver.get_fastest_lap()
-telemetry = ver.get_lap(fastest_lap["LapNumber"].iloc[0]).telemetry
+telemetry = ver.get_lap(int(fastest_lap["LapNumber"].iloc[0])).telemetry
 telemetry.to_csv("verstappen_fastest_telemetry.csv", index=False)
 ```
 
@@ -69,6 +69,10 @@ laps.to_json("monaco_race_laps_split.json", orient="split")
 
 Create Excel files with multiple sheets.
 
+<Note>
+This section requires the optional Excel engine. Install it with `pip install openpyxl`.
+</Note>
+
 ```python
 # Single sheet
 laps.to_excel("monaco_race.xlsx", sheet_name="Laps", index=False)
@@ -85,6 +89,12 @@ with pd.ExcelWriter("monaco_race_full.xlsx") as writer:
 
 Store data in a relational database for complex queries.
 
+<Note>
+SQLite treats column names as case-insensitive. The laps DataFrame contains both
+`Team` and `team` (and `Driver` and `drv`) source columns, so drop the duplicates
+before you write to SQL.
+</Note>
+
 ```python
 import sqlite3
 import pandas as pd
@@ -92,14 +102,17 @@ import pandas as pd
 # Create database connection
 conn = sqlite3.connect("f1_data.db")
 
+# Drop case-insensitive duplicate columns before writing to SQLite
+laps_sql = laps.loc[:, ~laps.columns.str.lower().duplicated()]
+
 # Export laps
-laps.to_sql("laps", conn, if_exists="replace", index=False)
+laps_sql.to_sql("laps", conn, if_exists="replace", index=False)
 
 # Export telemetry for multiple drivers
 for driver in ["VER", "HAM", "LEC"]:
     driver_obj = session.get_driver(driver)
     fastest = driver_obj.get_fastest_lap()
-    tel = driver_obj.get_lap(fastest["LapNumber"].iloc[0]).telemetry
+    tel = driver_obj.get_lap(int(fastest["LapNumber"].iloc[0])).telemetry
     tel.to_sql(f"telemetry_{driver}", conn, if_exists="replace", index=False)
 
 conn.close()
@@ -121,6 +134,11 @@ conn.close()
 ## Export to PostgreSQL
 
 For production databases.
+
+<Note>
+This section requires the optional SQL toolkit. Install it with `pip install sqlalchemy`,
+plus a PostgreSQL driver such as `psycopg2-binary`.
+</Note>
 
 ```python
 from sqlalchemy import create_engine
@@ -157,10 +175,25 @@ np.save("telemetry_features.npy", tel_array)
 
 Efficient for large numerical datasets.
 
+<Note>
+This section requires the optional HDF5 engine. Install it with `pip install tables`.
+</Note>
+
 ```python
-# Export to HDF5
-laps.to_hdf("monaco_race.h5", key="laps", mode="w")
-telemetry.to_hdf("monaco_race.h5", key="telemetry", mode="a")
+# HDF5 does not support pandas nullable dtypes; convert them to native dtypes first
+def to_hdf_compatible(df):
+    convert = {}
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        if dtype == "Int64":
+            convert[col] = "int64"
+        elif dtype == "boolean":
+            convert[col] = "bool"
+    return df.astype(convert)
+
+# Export to HDF5 (format="table" supports categorical columns)
+to_hdf_compatible(laps).to_hdf("monaco_race.h5", key="laps", mode="w", format="table")
+to_hdf_compatible(telemetry).to_hdf("monaco_race.h5", key="telemetry", mode="a", format="table")
 
 # Read back
 laps_loaded = pd.read_hdf("monaco_race.h5", key="laps")
@@ -264,7 +297,7 @@ export_season(2024, "2024_season")
 
 If using the polars backend, you get additional export options.
 
-```
+```python
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
 laps = session.laps
 
@@ -292,12 +325,12 @@ def export_all_telemetry(session, lap_type="fastest", output_dir="telemetry"):
         # Use parallel fetching for speed
         tels = session.get_fastest_laps_tels(by_driver=True)
 
-        for driver, tel in tels.items():
+        for driver, tel in tels.groupby("Driver"):
             filename = f"{output_dir}/{driver}_fastest.parquet"
             tel.to_parquet(filename)
             print(f"Exported: {driver}")
 
-    return len(tels)
+    return tels["Driver"].nunique()
 
 session = tif1.get_session(2025, "Silverstone Grand Prix", "Qualifying")
 count = export_all_telemetry(session)

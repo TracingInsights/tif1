@@ -26,7 +26,7 @@ The async fetch system is built on `niquests` (a modern, actively-maintained for
 - **Parallel JSON Parsing**: Offloads JSON parsing to thread pools (or optional process pools) to avoid blocking the async event loop
 - **Rate Limiting**: Semaphore-based concurrency control to prevent CDN overload
 - **Automatic Retries**: Exponential backoff with jitter and circuit breaker protection
-- **Multi-CDN Fallback**: Automatic failover across multiple CDN sources (jsDelivr, custom CDNs)
+- **Multi-CDN Fallback**: Automatic failover across multiple CDN sources (StaticDelivr, jsDelivr, Hugging Face buckets, custom CDNs)
 - **Smart Caching**: SQLite-backed cache with in-memory LRU layer for hot data
 - **Payload Validation**: Optional pydantic-based validation for data integrity
 - **Resource Management**: Automatic cleanup of connections, thread pools, and process pools

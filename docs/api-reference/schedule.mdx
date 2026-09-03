@@ -46,7 +46,7 @@ The validation process is designed for performance, typically completing in unde
 
 The schedule validation system sits at a critical junction in tif1's data pipeline. Understanding this flow helps clarify when and why validation occurs:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Schedule Data Sources                        │
 ├─────────────────────────────────────────────────────────────────┤
@@ -969,7 +969,7 @@ These rules validate session mappings for each event:
 
 The validation process follows this exact order:
 
-```
+```text
 1. Check payload is dict (S1)
 2. Check schema_version exists and equals 1 (S2, S3)
 3. Check years exists and is dict (S4, S5)
@@ -1277,7 +1277,7 @@ def process_schedule_pipeline(raw_data):
 
 Schedule validation errors are part of tif1's exception hierarchy:
 
-```
+```python
 TIF1Error (base exception)
 └── InvalidDataError
     └── Raised by validate_schedule_payload()
@@ -1630,7 +1630,7 @@ print(events)
 ```
 
 **Internal Flow:**
-```
+```python
 get_events(2021)
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1652,7 +1652,7 @@ print(sessions)
 ```
 
 **Internal Flow:**
-```
+```python
 get_sessions(2021, "Belgian Grand Prix")
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1673,7 +1673,7 @@ print(schedule[['RoundNumber', 'EventName', 'Location']])
 ```
 
 **Internal Flow:**
-```
+```python
 get_event_schedule(2021)
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1696,7 +1696,7 @@ print(f"{event['EventName']} at {event['Location']}")
 ```
 
 **Internal Flow:**
-```
+```python
 get_event(2021, "Belgian Grand Prix")
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1709,7 +1709,7 @@ get_event(2021, "Belgian Grand Prix")
 
 tif1 uses a fallback system for schedule data:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Vendored JSON Files (Primary Source)                     │
 │    Location: src/tif1/data/schedules/f1schedule/            │

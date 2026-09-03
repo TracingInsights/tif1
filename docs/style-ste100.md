@@ -11,7 +11,7 @@ Python library reference.
 
 ASD-STE100 and its dictionary are copyrighted by ASD, Brussels. This guide is a
 paraphrase produced for internal use. It never reproduces rule or dictionary text.
-Request the free official copy at <https://www.asd-ste100.org/STE_downloads.html>.
+Request the free official copy at the ASD download form: https://www.asd-ste100.org/STE_downloads.html
 
 ## 1. Scope
 

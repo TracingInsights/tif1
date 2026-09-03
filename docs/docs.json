@@ -3,8 +3,8 @@
   "name": "tif1",
   "theme": "sequoia",
   "description": "High-performance Formula 1 data analysis for Python with a FastF1-compatible API.",
-  "version": "0.4.0",
-  "versions": ["latest","0.4.0", "0.3.1", "0.3.0", "0.2.0", "0.1.0"],
+  "version": "0.6.0",
+  "versions": ["latest","0.6.0", "0.5.1", "0.5.0", "0.4.0", "0.3.1", "0.3.0", "0.2.0", "0.1.0"],
   "logo": {
     "dark": "/logo/dark.svg",
     "light": "/logo/light.svg"
@@ -162,14 +162,17 @@
             "group": "Core API",
             "pages": [
               "api-reference/core",
+              "api-reference/session",
               "api-reference/models",
               "api-reference/events",
-              "api-reference/schedule"
+              "api-reference/schedule",
+              "api-reference/schedule-schema"
             ]
           },
           {
             "group": "Data Pipeline",
             "pages": [
+              "api-reference/payload-loader",
               "api-reference/async-fetch",
               "api-reference/http",
               "api-reference/http-session",
@@ -188,7 +191,9 @@
             "group": "Visualization & Tools",
             "pages": [
               "api-reference/plotting",
+              "api-reference/plotting-constants",
               "api-reference/charts",
+              "api-reference/assets",
               "api-reference/cli",
               "api-reference/jupyter"
             ]

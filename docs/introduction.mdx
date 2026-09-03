@@ -33,7 +33,7 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 
 <CardGroup cols={2}>
   <Card title="Blazing Fast" icon="bolt">
-    4-5x faster data loading with parallel async requests and HTTP/2.
+    Parallel async loading: more than 3x faster than sequential fetching (benchmark-validated), with HTTP/2 multiplexing.
   </Card>
   <Card title="API Compatible" icon="code">
     Same bindings as `fastf1`, making migration a breeze.
@@ -52,7 +52,7 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 
 1. **Fetch only what you need.** No `session.load()`, no full-weekend downloads. Pull a single driver's single lap of telemetry in seconds — less time, less disk, less bandwidth.
 2. **No API rate limits.** The upstream API behind fastf1 (jolpica-f1) caps unauthenticated use at **500 requests/hour** (4 req/s burst). `tif1` serves static files from a free global CDN with no quotas, no keys, and no throttling.
-3. **Batteries included.** 21 optional one-call `plot_*()` chart helpers turn raw data into ready-made charts and analyses — `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
+3. **Batteries included.** 22 optional one-call `plot_*()` chart helpers turn raw data into ready-made charts and analyses — `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
 4. **Works from any IP.** tif1's CDN works from home, cloud, CI, and notebooks alike, with no VPN or residential-IP requirements.
 5. **A few extras.** Mini-sector data, per-lap weather, and derived telemetry channels beyond fastf1's current scope.
 
@@ -62,24 +62,26 @@ Built as a faster alternative to `fastf1`, it maintains API compatibility while 
 
 ## Key Features
 
-- **Fast**: Multi-CDN access (StaticDelivr + jsDelivr) with automatic fallback and SQLite caching
+- **Fast**: Multi-CDN access (StaticDelivr, jsDelivr, and Hugging Face buckets) with automatic fallback and SQLite caching
 - **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and more
 - **Historical**: Data from 2018-current
 - **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
 - **Async**: Parallel data fetching for better performance
-- **HTTP/2**: Uses niquests for 20-30% faster network requests
+- **HTTP/2**: Uses niquests for multiplexed, connection-efficient network requests
 - **Flexible**: Supports both pandas and polars backends
 - **Type-Safe**: Comprehensive type hints for IDE support
 - **Jupyter-Ready**: Rich HTML display in notebooks
-- **Native Charts**: 21 one-call chart functions in `tif1.charts` for track maps, telemetry comparisons, and performance analysis
+- **Native Charts**: 22 one-call chart functions in `tif1.charts` for track maps, telemetry comparisons, and performance analysis
 
 ## Performance Comparison
 
 | Operation | fastf1 | tif1 (Async) | Speedup |
 | :--- | :--- | :--- | :--- |
-| Load 20 Drivers Laps | ~12.0s | ~2.5s | **4.8x** |
-| Load 20 Drivers Telemetry | ~11.2s | ~0.4s | **28x** |
-| Hot Cache Load | ~1.0s | ~0.05s | **20x** |
+| Load 20 Drivers Laps | ~12.0s | ~2.5s | **4.8x** (author-measured; not reproduced by the benchmark suite) |
+| Load 20 Drivers Telemetry | ~11.2s | ~0.4s | **28x** (author-measured; not reproduced by the benchmark suite) |
+| Hot Cache Load | ~1.0s | ~0.05s | **20x** (author-measured; not reproduced by the benchmark suite) |
+
+Benchmark-suite-validated results (2026-09-02, `uv run pytest tests/benchmarks/ -m benchmark`): parallel fetch is more than 3x faster than sequential fetch; the cache-hit read path is about 20x faster than the legacy path (109 ms to 5.3 ms median); the fastest-laps cold path is about 2.4x faster than the legacy path. Numbers vary by machine and network. Run the benchmark suite to reproduce them.
 
 ## Core Architecture
 
@@ -126,7 +128,7 @@ graph TD
     Common patterns and code examples.
   </Card>
   <Card title="Charts" icon="chart-column" href="/api-reference/charts">
-    Visualize F1 data with 21 one-call chart functions.
+    Visualize F1 data with 22 one-call chart functions.
   </Card>
   <Card title="Data Reference" icon="file-json" href="/reference/data-reference">
     Every field in the raw TracingInsights data files, explained.

@@ -32,7 +32,7 @@ This guide covers every exception type in detail, including when they're raised,
 
 The exception hierarchy is designed to allow you to catch errors at different levels of specificity. You can catch broad categories (like `TIF1Error` for any library error) or specific exceptions (like `DriverNotFoundError` for missing drivers).
 
-```
+```python
 TIF1Error (base exception for all tif1 errors)
 │
 ├── DataNotFoundError (data unavailable in CDN/cache)
@@ -696,7 +696,7 @@ class NetworkError(TIF1Error):
 
 **Common Scenarios:**
 
-1. **CDN Outage**: jsdelivr CDN experiencing downtime or degraded performance
+1. **CDN Outage**: One or more CDN sources (StaticDelivr, jsDelivr, Hugging Face buckets) experiencing downtime or degraded performance
 2. **GitHub Issues**: Source repository unavailable or rate-limited
 3. **Local Network**: No internet connection or restrictive firewall
 4. **Server Errors**: Backend infrastructure experiencing issues
@@ -1774,7 +1774,7 @@ cache = configure_cache(
     max_size_mb=1000,
     auto_cleanup=True
 )
-``` ---
+```
 
 ## Session State Errors
 

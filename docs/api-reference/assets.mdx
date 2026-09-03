@@ -1,0 +1,238 @@
+---
+title: "Assets API"
+icon: "image"
+description: "Bundled car, tyre, and font assets for offline chart rendering in tif1"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+  - "assets"
+  - "car images"
+  - "tyre images"
+  - "fonts"
+  - "matplotlib"
+  - "offline"
+---
+
+The `assets` module ships chart artwork inside the package: car images per team per season (2018 to 2026), tyre compound images, and brand fonts. Plots render this artwork fully offline, without a network fetch at plot time. The `tif1.assets` directory tree holds the files; this module provides path helpers, cached loaders, and matplotlib annotation helpers.
+
+## Overview
+
+The bundled layout is:
+
+- `tif1/assets/cars/{year}/{CODE}.png` — one car image per team code per season.
+- `tif1/assets/tyres/{COMPOUND}.png` — tyre images for `SOFT`, `MEDIUM`, `HARD`, `HARD1`, `INTERMEDIATE`, `WET`, and `None` (the generic fallback).
+- `tif1/assets/fonts/` — `Azonix.otf`, `coolvetica rg.otf`, `GreatVibes-Regular.ttf`, `Tenada.ttf`.
+
+The module also exports the directory constants `ASSET_DIR`, `CARS_DIR`, `TYRES_DIR`, and `FONTS_DIR` as `pathlib.Path` objects.
+
+The chart function `plot_race_launch_ratings` uses this module: it draws car images with `add_car_images`, tyre images with `add_tyre_image_at_position`, and headings with `font_path`. The shared chart style code in `tif1.charts._common` also resolves its logo and heading fonts through `font_path`.
+
+## Discovery
+
+### `available_car_years`
+
+```python
+available_car_years() -> list[int]
+```
+
+Return the sorted list of years that have bundled car images. The current data covers 2018 to 2026.
+
+### `available_team_codes`
+
+```python
+available_team_codes(year: int) -> list[str]
+```
+
+Return the sorted list of team codes available for a season. For 2024 the codes are `AMR`, `APN`, `FER`, `HAA`, `KS`, `MCL`, `MER`, `RB`, `RBR`, and `WIL`. Raises `FileNotFoundError` when no images are bundled for the year.
+
+### `list_fonts`
+
+```python
+list_fonts() -> list[str]
+```
+
+Return the sorted file names of the bundled fonts.
+
+## Path helpers
+
+All path helpers return a `pathlib.Path` and raise `FileNotFoundError` when the asset is not bundled. The error message lists the available assets for the year.
+
+### `car_image_path`
+
+```python
+car_image_path(year: int, team_code: str) -> Path
+```
+
+Return the bundled path of a car image for a season and team code, for example `car_image_path(2024, "RBR")`.
+
+### `tyre_image_path`
+
+```python
+tyre_image_path(compound: str) -> Path
+```
+
+Return the bundled path of a tyre image for a compound, for example `tyre_image_path("SOFT")`.
+
+### `font_path`
+
+```python
+font_path(name: str) -> Path
+```
+
+Return the bundled path of a font file, for example `font_path("Azonix.otf")`. Pass the result to `matplotlib.font_manager.FontProperties(fname=...)`.
+
+## Cached loaders
+
+### `load_car_image`
+
+```python
+load_car_image(year: int, team_code: str) -> np.ndarray
+```
+
+Load a bundled car image as an RGBA numpy array. The result is cached with `functools.cache`, so repeated calls for the same year and code return the same array without disk reads.
+
+### `load_tyre_image`
+
+```python
+load_tyre_image(compound: str) -> np.ndarray
+```
+
+Load a bundled tyre image as an RGBA numpy array, cached in the same way.
+
+## Matplotlib helpers
+
+The helpers draw bundled artwork on an axes with `matplotlib.offsetbox.AnnotationBbox` and `OffsetImage`. Rows whose artwork is not bundled are skipped without an error.
+
+### `add_car_images`
+
+```python
+add_car_images(
+    ax,
+    df,
+    year,
+    *,
+    x_col="LapTimeDelta",
+    y_col="Driver",
+    team_code_col="Team_code",
+    zoom=0.5,
+    x_offset=-110,
+    threshold=None,
+    y_offset=0.0,
+) -> None
+```
+
+Annotate an axes with the bundled car image for every row of `df`. The image for each row is drawn at `(df[x_col], row_index + y_offset)`. The vertical position is the row index in the DataFrame, not the value of `y_col`. This matches the bar-chart layout the helper was written for.
+
+<ResponseField name="ax" type="matplotlib.axes.Axes" required>
+Axes to annotate.
+</ResponseField>
+
+<ResponseField name="df" type="DataFrame" required>
+DataFrame with one row per car to draw.
+</ResponseField>
+
+<ResponseField name="year" type="int" required>
+Season year that selects the car artwork.
+</ResponseField>
+
+<ResponseField name="x_col" type="str" default='"LapTimeDelta"'>
+Column with the x-position of each car.
+</ResponseField>
+
+<ResponseField name="y_col" type="str" default='"Driver"'>
+Column with the row label. The drawn y-position is the row index.
+</ResponseField>
+
+<ResponseField name="team_code_col" type="str" default='"Team_code"'>
+Column with the team code, for example `"RBR"`.
+</ResponseField>
+
+<ResponseField name="zoom" type="float" default="0.5">
+Zoom factor of the car image.
+</ResponseField>
+
+<ResponseField name="x_offset" type="int" default="-110">
+Horizontal offset of the image from the point, in points.
+</ResponseField>
+
+<ResponseField name="threshold" type="float | None" default="None">
+When set, rows where `df[x_col] <= threshold` are skipped.
+</ResponseField>
+
+<ResponseField name="y_offset" type="float" default="0.0">
+Vertical offset applied to the y position.
+</ResponseField>
+
+### `add_tyre_images`
+
+```python
+add_tyre_images(
+    ax,
+    df,
+    *,
+    x_col="LapTimeDelta",
+    y_col="Driver",
+    compound_col="Compound",
+    zoom=0.07,
+    x_offset=-190,
+    y_offset=0.1,
+) -> None
+```
+
+Annotate an axes with the bundled tyre image for every row of `df`. An unknown compound falls back to the generic `None` artwork. As with `add_car_images`, the drawn y-position is the row index plus `y_offset`.
+
+### `add_car_image_at_position`
+
+```python
+add_car_image_at_position(ax, x, y, year, team_code, *, zoom=0.5, x_offset=-110) -> None
+```
+
+Add a single bundled car image at an explicit position `(x, y)` on the axes. When no image is bundled for the year and code, the call returns without drawing.
+
+### `add_tyre_image_at_position`
+
+```python
+add_tyre_image_at_position(ax, x, y, compound, *, zoom=0.07, x_offset=-190) -> None
+```
+
+Add a single bundled tyre image at an explicit position `(x, y)` on the axes. An unknown compound falls back to the generic `None` artwork.
+
+## Example
+
+This example runs offline with the Agg matplotlib backend.
+
+```python
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from tif1 import assets
+
+df = pd.DataFrame(
+    {
+        "Rating": [9.5, 8.0],
+        "Driver": ["VER", "HAM"],
+        "Team_code": ["RBR", "MER"],
+    }
+)
+
+fig, ax = plt.subplots()
+ax.barh(df["Driver"], df["Rating"])
+
+assets.add_car_images(ax, df, 2024, x_col="Rating", y_col="Driver")
+assets.add_car_image_at_position(ax, 5.0, 1.0, 2024, "FER")
+assets.add_tyre_image_at_position(ax, 0, 0, "SOFT")
+
+path = assets.font_path("Azonix.otf")
+print(path.is_file())  # True
+```
+
+Resolve a timing-data team name to a car code with `tif1.plotting.get_team_code` or `tif1.plotting.team_code_mapping`. The codes come from the `TEAM_CODES` mapping in `tif1.plotting_constants`.
+
+## Related APIs
+
+- **[Charts API](/api-reference/charts)**: `plot_race_launch_ratings` and the other chart functions
+- **[Plotting API](/api-reference/plotting)**: `get_team_code` and `team_code_mapping` for name-to-code resolution
+- **[Plotting Constants API](/api-reference/plotting-constants)**: the `TEAM_CODES` mapping behind the car image codes
+- **[Jupyter API](/api-reference/jupyter)**: notebook plot setup

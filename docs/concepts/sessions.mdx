@@ -1011,7 +1011,7 @@ tif1 implements a **multi-tier caching system** for maximum performance:
 - Configurable via `enable_cache` parameter
 
 #### 3. CDN (L3)
-- jsdelivr CDN serving TracingInsights data repositories
+- Three-source CDN chain (StaticDelivr, jsDelivr, Hugging Face buckets) serving TracingInsights data repositories
 - Fetched only on cache miss
 - Automatic retry with exponential backoff
 - Multiple CDN sources for redundancy

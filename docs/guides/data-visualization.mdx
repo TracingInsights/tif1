@@ -18,46 +18,35 @@ The `plotting` module provides quick visualization methods for common F1 analysi
 
 ### Speed Comparison
 
-Compare speed traces between drivers on the same lap.
+Compare the fastest-lap speed traces of two drivers.
 
 ```python
 import tif1
-from tif1.plotting import plot_speed_comparison
 
-session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
-
-# Get fastest laps for two drivers
-ver_fastest = session.get_driver("VER").get_fastest_lap()
-lec_fastest = session.get_driver("LEC").get_fastest_lap()
-
-# Plot speed comparison
-plot_speed_comparison(
-    [ver_fastest, lec_fastest],
-    labels=["VER", "LEC"],
-    title="Monaco Q3 Speed Comparison"
+# plot_speed_traces loads the session and draws both speed traces
+fig, ax = tif1.plot_speed_traces(
+    2025,
+    "Monaco Grand Prix",
+    "Qualifying",
+    drivers=["VER", "LEC"],
 )
-```python
+```
 
 ### Lap Time Evolution
 
-Track how lap times evolve throughout a stint.
+Track how lap times evolve lap by lap, colored by tire compound.
 
 ```python
-from tif1.plotting import plot_lap_times
+import tif1
 
-session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
-laps = session.laps
-
-# Filter to specific drivers
-drivers = ["VER", "HAM", "LEC"]
-filtered = laps[laps["Driver"].isin(drivers)]
-
-plot_lap_times(
-    filtered,
-    by_driver=True,
-    highlight_compounds=True
+# plot_driver_laptimes draws lap times per lap number for the given drivers
+fig, ax = tif1.plot_driver_laptimes(
+    2025,
+    "Bahrain Grand Prix",
+    "Race",
+    drivers=["VER", "HAM", "LEC"],
 )
-```python
+```
 
 ## Bar-chart layout guarantees
 
@@ -81,6 +70,11 @@ Both helpers are part of `tif1.charts._common`'s public API, so custom bar chart
 import matplotlib.pyplot as plt
 import tif1.charts._common as common
 
+# Example data for a small custom bar chart
+drivers = ["VER", "NOR", "PIA"]
+values = [98, 95, 93]
+team_colors = ["#3671C6", "#FF8000", "#FF8000"]
+
 fig, ax = plt.subplots(figsize=(12, 8))
 hbars = ax.barh(drivers, values, color=team_colors)
 labels = ax.bar_label(hbars, padding=8, color="white")
@@ -91,7 +85,8 @@ ax.invert_yaxis()
 
 # Labels stay inside the canvas
 common.fit_labels_inside_xlim(ax, labels)
-```For the branded footer, watermark, and `footer_y` placement used by the race-launch chart, see `tif1.charts._common.add_style_branding(fig, style)`.
+```
+For the branded footer, watermark, and `footer_y` placement used by the race-launch chart, see `tif1.charts._common.add_style_branding(fig, style)`.
 
 ### Per-driver line chart legends stay beside the plot
 
@@ -133,7 +128,7 @@ ax3.grid(True, alpha=0.3)
 plt.suptitle(f"VER Lap {lap['LapNumber']} Telemetry", fontsize=14, fontweight="bold")
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ### Tire strategy visualization
 
@@ -169,11 +164,15 @@ ax.legend(handles=patches, loc="upper right")
 
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ## Plotly for interactive plots
 
 Plotly enables interactive visualizations perfect for Jupyter notebooks.
+
+<Note>
+This section requires the optional plotting library. Install it with `pip install plotly`.
+</Note>
 
 ### Interactive speed trace
 
@@ -183,8 +182,8 @@ import tif1
 
 session = tif1.get_session(2025, "Spa", "Qualifying")
 ver = session.get_driver("VER")
-fastest = ver.get_fastest_lap()
-tel = fastest.telemetry
+# get_fastest_lap_tel() returns the telemetry of the fastest lap
+tel = ver.get_fastest_lap_tel()
 
 fig = go.Figure()
 
@@ -206,7 +205,7 @@ fig.update_layout(
 )
 
 fig.show()
-```python
+```
 
 ### 3D Track Map
 
@@ -244,7 +243,7 @@ fig.update_layout(
 )
 
 fig.show()
-```python
+```
 
 ## Seaborn for statistical plots
 
@@ -269,7 +268,7 @@ plt.title("Lap Time Distribution by Driver and Compound")
 plt.ylabel("Lap Time (s)")
 plt.tight_layout()
 plt.show()
-```python
+```
 
 ### Correlation Heatmap
 
@@ -292,7 +291,8 @@ sns.heatmap(correlation, annot=True, fmt=".2f", cmap="coolwarm", center=0)
 plt.title("Lap Data Correlation Matrix")
 plt.tight_layout()
 plt.show()
-```python ## Best Practices
+```
+## Best Practices
 
 ### Use Team Colors
 
@@ -310,7 +310,7 @@ for driver in ["VER", "HAM", "LEC"]:
     driver_laps = laps[laps["Driver"] == driver]
     plt.plot(driver_laps["LapNumber"], driver_laps["LapTime"],
              color=f"#{color_map[driver]}", label=driver)
-```python
+```
 
 ### Handle missing data
 
@@ -335,7 +335,7 @@ def clean_for_plotting(laps):
 
 laps = session.laps
 plot_data = clean_for_plotting(laps)
-```bash
+```
 
 ### Optimize for Performance
 
@@ -346,13 +346,15 @@ For large datasets, downsample telemetry before plotting.
 tel_downsampled = tel[::10]
 
 plt.plot(tel_downsampled["Distance"], tel_downsampled["Speed"])
-```bash
+```
 
 ## Export for external tools
 
 Save data for use in other visualization tools.
 
 ```python
+import pandas as pd
+
 # Export to CSV
 laps.to_csv("race_laps.csv", index=False)
 
@@ -363,7 +365,7 @@ laps.to_parquet("race_laps.parquet")
 with pd.ExcelWriter("race_analysis.xlsx") as writer:
     laps.to_excel(writer, sheet_name="Laps", index=False)
     session.weather.to_excel(writer, sheet_name="Weather", index=False)
-```python
+```
 
 ---
 

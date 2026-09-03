@@ -25,7 +25,7 @@ keywords:
 
 The core API is built around a hierarchical data model that mirrors the structure of Formula 1 sessions:
 
-```
+```python
 Session (2024 Monaco Grand Prix - Race)
 ├── Laps (all drivers, all laps)
 ├── Drivers (VER, HAM, LEC, ...)
@@ -45,7 +45,7 @@ Session (2024 Monaco Grand Prix - Race)
 
 - **Intelligent Caching**: Multi-layer caching strategy with in-memory LRU cache (instant access) and SQLite persistent cache (survives restarts). Cache keys are session-specific and backend-aware (pandas vs polars).
 
-- **Async Support**: All data-intensive operations have async variants (`laps_async()`, `get_fastest_laps_tels_async()`) that use parallel HTTP requests for 4-5x faster loading compared to sequential access.
+- **Async Support**: All data-intensive operations have async variants (`laps_async()`, `get_fastest_laps_tels_async()`) that use parallel HTTP requests. The benchmark suite validates more than 3x faster loading compared to sequential fetching.
 
 - **Backend Flexibility**: Choose between pandas (default, maximum compatibility) or polars (faster for large datasets, 10-100x speedup for some operations) for DataFrame operations. Backend selection is per-session and affects all data structures.
 
@@ -60,7 +60,7 @@ Session (2024 Monaco Grand Prix - Race)
 | Operation | Cold Cache | Warm Cache | Notes |
 |-----------|-----------|------------|-------|
 | `session.laps` | 2-4s | &lt;100ms | Auto-async parallel loading |
-| `laps_async()` | 0.5-1s | &lt;100ms | Explicit async, 4-5x faster |
+| `laps_async()` | 0.5-1s | &lt;100ms | Explicit async, parallel loading |
 | `get_fastest_lap_tel()` | 200-500ms | &lt;50ms | Single telemetry fetch |
 | `get_fastest_laps_tels()` | 300-800ms | &lt;100ms | Parallel telemetry for multiple drivers |
 | `ultra_cold=True` | 100-300ms | N/A | Skips cache validation |

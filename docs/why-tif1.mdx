@@ -2,7 +2,7 @@
 title: "Why tif1 instead of fastf1?"
 sidebarTitle: "Why tif1?"
 icon: "scale"
-description: "A detailed, fact-checked comparison of tif1 vs fastf1: no API rate limits (jolpica-f1 caps fastf1 at 500 requests/hour), fine-grained lazy data fetching, 21 built-in chart helpers, no IP restrictions thanks to global CDNs, and extra mini-sector data."
+description: "A detailed, fact-checked comparison of tif1 vs fastf1: no API rate limits (jolpica-f1 caps fastf1 at 500 requests/hour), fine-grained lazy data fetching, 22 built-in chart helpers, no IP restrictions thanks to global CDNs, and extra mini-sector data."
 keywords:
   - "tif1 vs fastf1"
   - "fastf1 alternative"
@@ -30,7 +30,7 @@ keywords:
 | **Granularity** | Whole-session `session.load()` required | Lazy, fine-grained — fetch one lap of telemetry directly |
 | **Rate limits** | Yes — jolpica-f1 caps at **500 requests/hour** (4 req/s burst); live-timing API can throttle/block | **None** — static CDN files, no quotas, no API keys |
 | **IP restrictions** | Live-timing endpoints may block VPNs and data-center IPs | None — works from any IP via global CDNs |
-| **Built-in charts** | Do-it-yourself matplotlib | **21 optional one-call chart helpers** |
+| **Built-in charts** | Do-it-yourself matplotlib | **22 optional one-call chart helpers** |
 | **Mini-sector data** | Not in the public API | Included (race-control mini-sectors + enriched lap splits) |
 | **Backends** | pandas only | pandas **and** polars |
 | **Caching** | File-based pickle cache | SQLite persistent cache + in-memory LRU |
@@ -108,7 +108,7 @@ can approach 500 requests in a hurry, especially with whole-session loads. It's 
 
 ### Why tif1 has no rate limits
 
-`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`) through **StaticDelivr (primary)** and **jsDelivr (fallback)** — the same free CDNs that distribute open-source software worldwide.
+`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`) through **StaticDelivr (primary)**, **jsDelivr (fallback)**, and **Hugging Face buckets (backup)** — free CDNs that distribute open-source software worldwide.
 
 The result:
 
@@ -122,7 +122,7 @@ You can load large amounts of data without watching a request counter.
 
 ---
 
-## 3. Batteries included — 21 optional one-call chart helpers
+## 3. Batteries included — 22 optional one-call chart helpers
 
 Many people enjoy building visualizations by hand, and fastf1's raw DataFrames are great for that. For quick, repeatable plots, `tif1` additionally bundles `plot_*()` helpers that handle the loading, filtering, and styling for you:
 
@@ -179,7 +179,7 @@ If that hasn't affected you, great — and if it has, you'll recognize why CDN-b
 
 ### The tif1 approach: global CDNs, no IP checks
 
-`tif1` serves files from **StaticDelivr** and **jsDelivr** — free CDNs used by millions of websites every day. CDNs are purpose-built to serve content to the entire internet, so there are:
+`tif1` serves files from **StaticDelivr** and **jsDelivr**, with **Hugging Face buckets** as a last-resort backup — free CDNs used by millions of websites every day. CDNs are purpose-built to serve content to the entire internet, so there are:
 
 - No IP allowlists or blocks
 - No VPN/proxy detection
@@ -251,7 +251,7 @@ See the [Migration from fastf1](/migration-from-fastf1) guide for the step-by-st
     Load your first session in under 30 seconds
   </Card>
   <Card title="Charts API" icon="chart-column" href="/api-reference/charts">
-    Browse all 21 native chart functions
+    Browse all 22 native chart functions
   </Card>
   <Card title="Migration Guide" icon="arrow-right-arrow-left" href="/migration-from-fastf1">
     Move an existing fastf1 project to tif1

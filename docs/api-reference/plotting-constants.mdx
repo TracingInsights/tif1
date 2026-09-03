@@ -1,0 +1,162 @@
+---
+title: "Plotting Constants API"
+icon: "palette"
+description: "Year-keyed team colors, team codes, and compound colors used by tif1 plots"
+keywords:
+  - "tif1"
+  - "Formula 1"
+  - "F1 data"
+  - "documentation"
+  - "plotting"
+  - "constants"
+  - "team colors"
+  - "compound colors"
+  - "colormap"
+---
+
+The `plotting_constants` module holds the plotting color data: historically accurate team colors and tyre compound colors for each F1 season from 2018 onwards. The `tif1.plotting` module reads these mappings when it resolves colors and car image codes. The module contains data only; it defines no functions.
+
+## Overview
+
+The module defines four public mappings. All are plain dicts, so a program can read and mutate them directly.
+
+| Name | Type | Keys | Purpose |
+| :--- | :--- | :--- | :--- |
+| `YEAR_CONSTANTS` | `dict[int, dict[str, Any]]` | season years, 2018 to 2026 | Compound colors and team profiles per season |
+| `DEFAULT_COMPOUND_COLORS` | `dict[str, str]` | compound names | Fallback colors when no year data exists |
+| `TEAM_COLORS` | `dict[int, dict[str, str]]` | season years, 2018 to 2026 | Timing-data team name to chart color |
+| `TEAM_CODES` | `dict[int, dict[str, str]]` | season years, 2018 to 2026 | Timing-data team name to car image code |
+
+```python
+from tif1.plotting_constants import (
+    DEFAULT_COMPOUND_COLORS,
+    TEAM_CODES,
+    TEAM_COLORS,
+    YEAR_CONSTANTS,
+)
+```
+
+## YEAR_CONSTANTS
+
+`YEAR_CONSTANTS` maps each season year to a dict with two keys:
+
+- `"compound_colors"`: `dict[str, str]` mapping compound name to hex color.
+- `"teams"`: `dict[str, TeamData]` mapping a lowercase team key to a team profile.
+
+A team profile has this shape:
+
+```python
+{
+    "short_name": "Ferrari",
+    "colors": {"official": "#e80020", "fastf1": "#e80020"},
+}
+```
+
+`official` and `fastf1` are the two colormaps that `tif1.plotting.get_team_color` and `get_driver_color` serve.
+
+Compound sets changed over the seasons. The 2018 mapping contains 11 entries: nine track compounds plus `UNKNOWN` and `TEST-UNKNOWN`. The 2019 to 2026 mappings contain 7 entries: `SOFT`, `MEDIUM`, `HARD`, `INTERMEDIATE`, and `WET`, plus the two unknown markers. The table below shows the 2018 entries:
+
+| Compound | Color |
+| :--- | :--- |
+| `HYPERSOFT` | `#feb1c1` |
+| `ULTRASOFT` | `#b24ba7` |
+| `SUPERSOFT` | `#fc2b2a` |
+| `SOFT` | `#ffd318` |
+| `MEDIUM` | `#f0f0f0` |
+| `HARD` | `#00a2f5` |
+| `SUPERHARD` | `#fd7d3c` |
+| `INTERMEDIATE` | `#43b02a` |
+| `WET` | `#0067ad` |
+
+Some team entries per season (from the actual data):
+
+| Year | Team key | Official color | fastf1 color |
+| :--- | :--- | :--- | :--- |
+| 2023 | `red bull` | `#3671c6` | `#0600ef` |
+| 2023 | `ferrari` | `#f91536` | `#da291c` |
+| 2025 | `ferrari` | `#e80020` | `#e80020` |
+
+Each season lists the teams that competed in it. For example, 2023 contains ten team keys, from `alfa romeo` to `williams`; 2025 replaces them with the current grid, including `kick sauber` and `racing bulls`.
+
+## DEFAULT_COMPOUND_COLORS
+
+`DEFAULT_COMPOUND_COLORS` is the fallback mapping. `tif1.plotting` uses it when a session year is unknown or missing from `YEAR_CONSTANTS`.
+
+| Compound | Color |
+| :--- | :--- |
+| `SOFT` | `#da291c` |
+| `MEDIUM` | `#ffd12e` |
+| `HARD` | `#f0f0ec` |
+| `INTERMEDIATE` | `#43b02a` |
+| `WET` | `#0067ad` |
+| `UNKNOWN` | `#00ffff` |
+| `TEST-UNKNOWN` | `#434649` |
+
+## TEAM_COLORS
+
+`TEAM_COLORS` maps a season year to a mapping of timing-data team names to the TracingInsights v2 chart palette. This bright palette is separate from the `official` and `fastf1` colormaps in `YEAR_CONSTANTS`. The charts module uses it for bar colors.
+
+Example entries for 2025:
+
+| Team name | Color |
+| :--- | :--- |
+| `Red Bull Racing` | `#ffe119` |
+| `Ferrari` | `#e6194b` |
+| `Mercedes` | `#00c0bf` |
+| `Alpine` | `#f032e6` |
+| `Racing Bulls` | `#dcbeff` |
+
+The 2026 mapping adds the new teams `Audi` (`#9a9a9a`) and `Cadillac` (`#C5A253`).
+
+## TEAM_CODES
+
+`TEAM_CODES` maps a season year to a mapping of timing-data team names to the short car image codes used by the bundled car artwork in `tif1.assets`. Names with engine suffixes map to the same code, so every team name variant that appears in lap data resolves to the correct artwork.
+
+Example entries for 2024:
+
+| Team name | Code |
+| :--- | :--- |
+| `Red Bull Racing` | `RBR` |
+| `Red Bull Racing Honda RBPT` | `RBR` |
+| `Ferrari` | `FER` |
+| `Aston Martin` | `AMR` |
+| `Aston Martin Aramco Mercedes` | `AMR` |
+
+## How plotting.py consumes the constants
+
+`tif1.plotting` imports all four mappings and resolves them per session and year:
+
+- `get_compound_color(compound, session=None)` and `get_compound_mapping(session=None)` read the compound colors for the session year. An unknown year falls back to `DEFAULT_COMPOUND_COLORS`. An unknown compound resolves to the `UNKNOWN` color.
+- `get_team_color(identifier, session, *, colormap="default", exact_match=False)` and `get_driver_color(...)` resolve team profiles built from `YEAR_CONSTANTS` for the session year. They require a session.
+- `team_code_mapping(year)` returns a copy of `TEAM_CODES[year]`.
+- `team_color_mapping(year)` returns a copy of `TEAM_COLORS[year]`, expanded so that every team name with a car code in `TEAM_CODES` also has a color.
+- `get_team_code(identifier, session=None, *, year=None, exact_match=False)` resolves a team name to its car image code, using the session year when a session is given, otherwise the explicit `year`.
+
+## Overrides
+
+Two mechanisms change the effective values:
+
+1. **Session-scoped overrides.** `tif1.plotting.override_team_constants(identifier, session, *, short_name=None, official_color=None, fastf1_color=None)` overrides one team for one session. It requires a session and matches the team exactly. The override applies to `get_team_color`, `get_driver_color`, and short-name lookups for that session only.
+2. **Direct dict mutation.** The mappings are module-level dicts, and the plotting helpers copy them at call time. An in-place change, for example `TEAM_COLORS[2026]["Audi"] = "#ff0000"`, takes effect on the next `team_color_mapping(2026)` call.
+
+## Example
+
+This example runs offline.
+
+```python
+from tif1.plotting import get_compound_color, team_code_mapping, team_color_mapping
+from tif1.plotting_constants import DEFAULT_COMPOUND_COLORS, YEAR_CONSTANTS
+
+print(sorted(YEAR_CONSTANTS))               # [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+print(team_code_mapping(2024)["Ferrari"])   # FER
+print(team_color_mapping(2026)["Audi"])     # #9a9a9a
+print(get_compound_color("SOFT", None))     # #da291c (DEFAULT_COMPOUND_COLORS)
+print(DEFAULT_COMPOUND_COLORS["UNKNOWN"])   # #00ffff
+```
+
+## Related APIs
+
+- **[Plotting API](/api-reference/plotting)**: the color and style helpers that read these constants
+- **[Assets API](/api-reference/assets)**: the car artwork selected by `TEAM_CODES`
+- **[Charts API](/api-reference/charts)**: the chart functions that consume the palettes
+- **[Core API](/api-reference/core)**: `Session`, required by the session-scoped color lookups
