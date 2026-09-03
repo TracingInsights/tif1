@@ -20,7 +20,7 @@ keywords:
 
 # API Overview
 
-The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry processing, and motorsport analytics. Performance is the primary focus of the design. `tif1` maintains full compatibility with the `fastf1` library. It often loads data 5-10x faster. The speed comes from async operations, multi-layer caching, parallel HTTP fetching, and an optional Polars backend.
+The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry processing, and motorsport analytics. Performance is the primary focus of the design. `tif1` is a drop-in replacement for `fastf1` in most common use cases. Load times are faster than `fastf1` (author-measured; see the Introduction benchmarks). The speed comes from async operations, multi-layer caching, parallel HTTP fetching, and an optional Polars backend.
 
 `tif1` serves data scientists, motorsport engineers, application developers, and racing enthusiasts. These users can work efficiently with Formula 1 data at scale.
 
