@@ -9,7 +9,7 @@ keywords:
   - "data formats"
 ---
 
-tif1 makes it easy to export F1 data to various formats for use in other tools, databases, or analysis platforms.
+tif1 exports F1 data to various formats for use in other tools, databases, and analysis platforms.
 
 ## Export to CSV
 
@@ -36,7 +36,7 @@ telemetry.to_csv("verstappen_fastest_telemetry.csv", index=False)
 
 ## Export to Parquet
 
-Parquet is a columnar storage format that's much more efficient than CSV for large datasets.
+Parquet is a columnar storage format. It is more efficient than CSV for large datasets.
 
 ```python
 # Export to Parquet (works with both pandas and polars)
@@ -91,8 +91,8 @@ Store data in a relational database for complex queries.
 
 <Note>
 SQLite treats column names as case-insensitive. The laps DataFrame contains both
-`Team` and `team` (and `Driver` and `drv`) source columns, so drop the duplicates
-before you write to SQL.
+`Team` and `team` (and `Driver` and `drv`) source columns. Drop the duplicates
+before the SQL write.
 </Note>
 
 ```python
@@ -295,7 +295,7 @@ export_season(2024, "2024_season")
 
 ## Working with Polars Backend
 
-If using the polars backend, you get additional export options.
+The polars backend gives additional export options.
 
 ```python
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
@@ -341,7 +341,7 @@ print(f"Exported telemetry for {count} drivers")
 
 <CardGroup cols={2}>
   <Card title="Use Parquet" icon="file">
-    Parquet is 5-10x smaller than CSV and much faster to read/write.
+    Parquet is 5-10x smaller than CSV and faster to read/write.
   </Card>
   <Card title="Batch Operations" icon="layer-group">
     Use async loading and batch exports for multiple sessions.
@@ -350,12 +350,12 @@ print(f"Exported telemetry for {count} drivers")
     Enable compression for large datasets (snappy, gzip, zstd).
   </Card>
   <Card title="Type Preservation" icon="database">
-    Parquet and HDF5 preserve data types; CSV doesn't.
+    Parquet and HDF5 preserve data types. CSV does not.
   </Card>
 </CardGroup>
 
 <Tip>
-  For large-scale data pipelines, consider using the polars lib with Arrow/Parquet formats for maximum performance.
+  For large-scale data pipelines, consider the polars lib with Arrow/Parquet formats for the fastest export.
 </Tip>
 
 ---
@@ -364,9 +364,9 @@ print(f"Exported telemetry for {count} drivers")
 
 <CardGroup cols={2}>
   <Card title="Examples" href="/examples">
-    Export examples
+    Export examples.
   </Card>
   <Card title="Common Use Cases" href="/guides/common-use-cases">
-    Handle big data
+    Handle big data.
   </Card>
 </CardGroup>

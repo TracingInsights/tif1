@@ -1,7 +1,7 @@
 ---
 title: "Complete Race Analysis"
 icon: "flag-checkered"
-description: "End-to-end guide to analyzing a full race with tif1"
+description: "Analyze a full race with tif1, from data loading to a complete race report"
 keywords:
   - "race analysis"
   - "race pace"
@@ -10,12 +10,9 @@ keywords:
   - "F1 race data"
 ---
 
-This tutorial walks through a complete race analysis workflow, from loading data to generating insights about race pace, strategy, and performance.
+This tutorial shows a complete race analysis workflow. The workflow runs from loading data to generating insights about race pace, strategy, and performance.
 
-<img
-  src="/assets/race_position_changes.png"
-  alt="Race position changes throughout the Abu Dhabi Grand Prix"
-/>
+<img src="/assets/race_position_changes.png" alt="Race position changes throughout the Abu Dhabi Grand Prix" />
 
 ## Setup
 
@@ -96,10 +93,7 @@ plot_position_changes(laps)
 
 Analyze lap time distributions and consistency.
 
-<img
-  src="/assets/race_pace_boxplot.png"
-  alt="Box plot showing race pace distribution for top 5 finishers"
-/>
+<img src="/assets/race_pace_boxplot.png" alt="Box plot showing race pace distribution for top 5 finishers" />
 
 ```python
 def clean_race_laps(laps):
@@ -157,10 +151,7 @@ plt.show()
 
 Analyze tire strategy and stint lengths.
 
-<img
-  src="/assets/race_tire_strategy.png"
-  alt="Tire strategy visualization showing compound usage throughout the race"
-/>
+<img src="/assets/race_tire_strategy.png" alt="Tire strategy visualization showing compound usage throughout the race" />
 
 ```python
 def plot_tire_strategy(laps):
@@ -387,7 +378,7 @@ if len(pit_stops_df) > 0:
 
 ## 8. Race Pace Comparison
 
-Compare race pace between drivers on same compound.
+Compare race pace between drivers on the same compound.
 
 ```python
 def compare_race_pace(laps, drivers, compound="MEDIUM"):
@@ -440,7 +431,7 @@ compare_race_pace(laps, top_5_drivers[:3], compound="MEDIUM")
 
 ## 9. Generate Race Report
 
-Create a comprehensive race summary.
+Create a complete race summary.
 
 ```python
 def generate_race_report(session, laps):
@@ -490,9 +481,9 @@ This complete race analysis workflow covers:
 6. Gap to leader tracking
 7. Pit stop analysis
 8. Race pace comparison
-9. Comprehensive race report
+9. Complete race report
 
-You can adapt these patterns to analyze any race in the tif1 database (2018-current).
+Adapt these patterns to analyze any race in the tif1 database (2018-current).
 
 ---
 
@@ -500,15 +491,15 @@ You can adapt these patterns to analyze any race in the tif1 database (2018-curr
 
 <CardGroup cols={2}>
   <Card title="Qualifying Analysis" href="/tutorials/qualifying-analysis">
-    Analyze qualifying
+    Analyze qualifying.
   </Card>
   <Card title="Weather Impact" href="/tutorials/weather-impact">
-    Weather analysis
+    Weather analysis.
   </Card>
   <Card title="Core API" href="/api-reference/core">
-    API reference
+    API reference.
   </Card>
   <Card title="Examples" href="/examples">
-    More examples
+    More examples.
   </Card>
 </CardGroup>

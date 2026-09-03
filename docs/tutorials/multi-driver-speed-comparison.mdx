@@ -11,14 +11,11 @@ keywords:
   - "track visualization"
 ---
 
-Visualizing speed variations around a circuit helps identify braking zones, acceleration areas, and flat-out sections. This tutorial shows how to create a color-coded track map where speed is represented by color intensity along the racing line.
+A speed comparison around a circuit identifies braking zones, acceleration areas, and flat-out sections. This tutorial shows how to create a color-coded track map. Color intensity along the racing line represents speed.
 
-<img
-  src="/assets/multi_driver_speed_comparison.png"
-  alt="Multi-driver speed comparison showing speed variations around the circuit"
-/>
+<img src="/assets/multi_driver_speed_comparison.png" alt="Multi-driver speed comparison showing speed variations around the circuit" />
 
-## Setup and configuration
+## Setup and Configuration
 
 First, set up the plotting environment with FastF1 color scheme and configure the session details.
 
@@ -40,7 +37,7 @@ driver = "VER"
 colormap = mpl.cm.plasma
 ```
 
-## Loading session and telemetry
+## Loading Session and Telemetry
 
 Load the session and extract telemetry data from the driver's fastest lap.
 
@@ -59,7 +56,7 @@ y = telemetry['Y'].values
 color = telemetry['Speed'].values
 ```
 
-## Creating line segments
+## Creating Line Segments
 
 Convert the track coordinates into line segments for color mapping.
 
@@ -69,7 +66,7 @@ points = np.array([x, y]).T.reshape(-1, 1, 2)
 segments = np.concatenate([points[:-1], points[1:]], axis=1)
 ```
 
-## Building the visualization
+## Building the Visualization
 
 Create the plot with a background track line and color-coded speed overlay.
 
@@ -99,7 +96,7 @@ lc.set_array(color)
 line = ax.add_collection(lc)
 ```
 
-## Adding the color bar
+## Adding the Color Bar
 
 Add a horizontal color bar to show the speed scale.
 
@@ -118,7 +115,7 @@ plt.show()
 
 ## Parameters
 
-The native chart overlays every selected driver on a single axes with a shared color scale (so colors are comparable across drivers), a driver legend, and a horizontal speed colorbar. Pick the drivers with the `drivers` list; the default is the top-3 finishers:
+The native chart overlays every selected driver on a single axes. A shared color scale keeps colors comparable across drivers. The chart includes a driver legend and a horizontal speed colorbar. Pick the drivers with the `drivers` list. The default is the top-3 finishers:
 
 ```python
 import tif1
@@ -134,7 +131,7 @@ fig, ax = tif1.plot_multi_driver_speed_comparison(
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -150,16 +147,16 @@ plt.show()
 # tif1.plot_multi_driver_speed_comparison(2023, 'Bahrain', 'Q', save_path='multi_driver_speed_comparison.png')
 ```
 
-## Interpreting the visualization
+## Interpreting the Visualization
 
 - **Red/yellow sections:** High-speed areas like straights and fast corners
 - **Blue/purple sections:** Low-speed areas indicating braking zones and slow corners
 - **Color transitions:** Show acceleration and deceleration patterns
 - **Track layout:** Black background line provides context for the circuit shape
 
-## Under the hood: side-by-side subplots
+## Alternative: Side-by-Side Subplots
 
-The native chart overlays drivers on one axes. If you prefer a separate subplot per driver, the manual approach still works:
+The native chart overlays drivers on one axes. For a separate subplot per driver, use the manual approach:
 
 ```python
 drivers = ['VER', 'PER', 'LEC']
@@ -191,7 +188,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Next steps
+## Next Steps
 
 - Analyze [lap time deltas](/tutorials/lap-delta-comparison) for detailed time differences
 - Compare [telemetry channels](/tutorials/telemetry-comparison) side by side

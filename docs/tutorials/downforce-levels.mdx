@@ -11,14 +11,11 @@ keywords:
   - "aerodynamics"
 ---
 
-Understanding downforce levels helps reveal car setup philosophy. By comparing average lap speed to maximum speed, we can estimate whether teams are running high-downforce (better cornering) or low-downforce (higher top speeds) configurations.
+Downforce levels reveal car setup philosophy. Compare the average lap speed with the maximum speed. The ratio estimates whether a team runs a high-downforce setup (better cornering) or a low-downforce setup (higher top speeds).
 
-<img
-  src="/assets/downforce_levels.png"
-  alt="Downforce levels comparison across drivers"
-/>
+<img src="/assets/downforce_levels.png" alt="Downforce levels comparison across drivers" />
 
-## The concept
+## The Concept
 
 The downforce metric is calculated as:
 
@@ -29,11 +26,11 @@ Downforce Level = (Average Speed / Maximum Speed) × 100
 - **Higher values** indicate more downforce: better cornering speeds but lower top speeds
 - **Lower values** indicate less downforce: higher top speeds but slower through corners
 
-This is particularly revealing on tracks like Monaco (high downforce) vs Monza (low downforce).
+The contrast is clear on tracks like Monaco (high downforce) and Monza (low downforce).
 
-## Loading the session
+## Loading the Session
 
-We'll analyze qualifying from the 2023 Monaco Grand Prix, a track where downforce is critical.
+Analyze qualifying from the 2023 Monaco Grand Prix, a track where downforce has a large effect.
 
 ```python
 import tif1
@@ -46,9 +43,9 @@ tif1.plotting.setup_mpl(color_scheme='fastf1')
 session = tif1.get_session(2023, 'Monaco Grand Prix', 'Q')
 ```
 
-## Calculating downforce metrics
+## Calculating Downforce Metrics
 
-For each driver, we calculate their average speed and maximum speed from their fastest lap.
+For each driver, calculate the average speed and maximum speed from the fastest lap.
 
 ```python
 drivers = session.laps['Driver'].unique()
@@ -81,9 +78,9 @@ for driver in drivers:
 downforce_data.sort(key=lambda x: x['Metric'], reverse=True)
 ```
 
-## Visualizing the results
+## Visualizing the Results
 
-Create a horizontal bar chart with team colors. To make the differences more apparent, we map the values to the minimum metric, showing relative differences rather than absolute values.
+Create a horizontal bar chart with team colors. Map the values to the minimum metric to show relative differences rather than absolute values.
 
 ```python
 # Sort by downforce metric
@@ -123,9 +120,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-The chart displays relative differences (bar lengths) while showing actual metric values (labels), making it easier to spot setup variations between drivers.
+The chart displays relative differences as bar lengths. The labels show the actual metric values. Together they show setup variations between drivers.
 
-## Interpreting the results
+## Interpreting the Results
 
 When analyzing downforce levels, consider:
 
@@ -134,9 +131,9 @@ When analyzing downforce levels, consider:
 - **Weather conditions:** Wet conditions often favor higher downforce setups
 - **Tire strategy:** High downforce can increase tire wear in races
 
-## Comparing teams
+## Comparing Teams
 
-You can also aggregate by team to see constructor-level setup choices:
+Aggregate by team to see constructor-level setup choices:
 
 ```python
 # Group by team and take the best driver from each
@@ -193,7 +190,7 @@ fig, ax = tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q', drivers=['V
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -209,7 +206,7 @@ plt.show()
 # tif1.plot_downforce_levels(2023, 'Monaco Grand Prix', 'Q', save_path="downforce_levels.png")
 ```
 
-## Next steps
+## Next Steps
 
 - Compare downforce levels across different tracks (Monaco vs Monza)
 - Analyze how downforce affects tire degradation in race stints

@@ -1,7 +1,7 @@
 ---
 title: "Gear Shifts on Track"
 icon: "gears"
-description: "Visualizing which gear is used at each point on the circuit"
+description: "Visualize which gear is used at each point on the circuit"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -11,16 +11,13 @@ keywords:
   - "track visualization"
 ---
 
-Visualizing gear usage across a lap provides insight into corner characteristics, acceleration zones, and the technical demands of a circuit. This tutorial shows how to create a color-coded track map where each segment is colored by the gear being used.
+Gear usage across a lap shows corner characteristics, acceleration zones, and the technical demands of a circuit. This tutorial creates a color-coded track map. Each segment is colored by the gear in use.
 
-<img
-  src="/assets/gear_shifts_on_track.png"
-  alt="Gear shifts visualization on track layout"
-/>
+<img src="/assets/gear_shifts_on_track.png" alt="Gear shifts visualization on track layout" />
 
-## Loading the session
+## Loading the Session
 
-We'll analyze the fastest qualifying lap from the 2021 Austrian Grand Prix.
+Analyze the fastest qualifying lap from the 2021 Austrian Grand Prix.
 
 ```python
 import tif1
@@ -36,7 +33,7 @@ tif1.plotting.setup_mpl(mpl_timedelta_support=False, color_scheme='fastf1')
 session = tif1.get_session(2021, 'Austrian Grand Prix', 'Q')
 ```
 
-## Getting telemetry data
+## Getting Telemetry Data
 
 Extract the fastest lap and its telemetry, which includes X/Y coordinates and gear data.
 
@@ -45,7 +42,7 @@ lap = session.laps.pick_fastest()
 tel = lap.get_telemetry()
 ```
 
-## Preparing the data
+## Preparing the Data
 
 Convert telemetry to numpy arrays and create line segments for plotting.
 
@@ -62,9 +59,9 @@ segments = np.concatenate([points[:-1], points[1:]], axis=1)
 gear = tel['nGear'].to_numpy().astype(float)
 ```
 
-## Creating the visualization
+## Creating the Visualization
 
-Use matplotlib's `LineCollection` to color each segment by gear.
+Use the matplotlib `LineCollection` to color each segment by gear.
 
 ```python
 # Create a segmented colormap
@@ -85,7 +82,7 @@ plt.suptitle(
 )
 ```
 
-## Adding a colorbar
+## Adding a Colorbar
 
 Add a colorbar to show which color corresponds to each gear.
 
@@ -98,7 +95,7 @@ cbar.set_ticklabels(np.arange(1, 9))
 plt.show()
 ```
 
-## Analyzing gear usage
+## Analyzing Gear Usage
 
 When examining gear shift patterns, look for:
 
@@ -126,9 +123,9 @@ fig, ax = tif1.plot_gear_shifts(
 plt.show()
 ```
 
-The colorbar is scaled from the data (generalized from the fixed 8-gear example above), so it works for any gearbox.
+The colorbar is scaled from the data, not the fixed 8-gear range in the example above. The chart works for any gearbox.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -144,9 +141,9 @@ plt.show()
 # tif1.plot_gear_shifts(2021, 'Austrian Grand Prix', 'Q', save_path='gear_shifts_on_track.png')
 ```
 
-## Next steps
+## Next Steps
 
-- Combine gear data with throttle/brake to analyze driving technique
+- Combine gear data with throttle and brake data to analyze driving technique
 - Compare gear usage between different drivers on the same circuit
 - Analyze how gear usage changes between qualifying and race conditions
 - Explore other track visualizations like speed or throttle maps

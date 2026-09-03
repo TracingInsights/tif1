@@ -11,14 +11,11 @@ keywords:
   - "race pace"
 ---
 
-A lap time heatmap provides a comprehensive view of race pace across all drivers and laps. By color-coding lap times, you can quickly identify consistent performers, tire degradation patterns, pit stop strategies, and incidents.
+A lap time heatmap shows race pace across all drivers and laps. Color coding identifies consistent performers, tire degradation patterns, pit stop strategies, and incidents.
 
-<img
-  src="/assets/laptime_heatmap.png"
-  alt="Lap time heatmap showing race pace patterns"
-/>
+<img src="/assets/laptime_heatmap.png" alt="Lap time heatmap showing race pace patterns" />
 
-## Understanding the visualization
+## Understanding the Visualization
 
 In a lap time heatmap:
 
@@ -29,11 +26,11 @@ In a lap time heatmap:
   - Red/warmer colors = slower laps
   - White/missing = pit stops or deleted laps
 
-This makes it easy to spot patterns like tire degradation (gradual color shift), pit stop windows (gaps), and incidents (sudden color changes).
+These patterns show tire degradation (gradual color shift), pit stop windows (gaps), and incidents (sudden color changes).
 
-## Loading the session
+## Loading the Session
 
-We'll analyze the 2023 Monaco Grand Prix race to see how drivers performed throughout the event.
+Analyze the 2023 Monaco Grand Prix race to see how drivers performed throughout the event.
 
 ```python
 import tif1
@@ -48,7 +45,7 @@ session = tif1.get_session(2023, 'Monaco Grand Prix', 'R')
 laps = session.laps
 ```
 
-## Preparing the data
+## Preparing the Data
 
 Convert lap times to seconds and filter out invalid laps for cleaner visualization.
 
@@ -67,7 +64,7 @@ fastest_lap = laps_clean['LapTimeSeconds'].min()
 laps_clean = laps_clean[laps_clean['LapTimeSeconds'] < fastest_lap * 1.07]
 ```
 
-## Creating the pivot table
+## Creating the Pivot Table
 
 Reshape the data so drivers are rows and lap numbers are columns.
 
@@ -85,9 +82,9 @@ driver_avg = heatmap_data.mean(axis=1).sort_values()
 heatmap_data = heatmap_data.loc[driver_avg.index]
 ```
 
-## Visualizing with seaborn
+## Visualizing with Seaborn
 
-Use seaborn's heatmap function for a clean, professional visualization.
+Use the seaborn heatmap function to draw the chart.
 
 ```python
 fig, ax = plt.subplots(figsize=(16, 10))
@@ -117,19 +114,19 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Interpreting the heatmap
+## Interpreting the Heatmap
 
 When analyzing a lap time heatmap, look for:
 
-- **Vertical patterns:** Consistent colors down a column indicate similar pace across all drivers (e.g., safety car periods)
+- **Vertical patterns:** Consistent colors down a column indicate similar pace across all drivers (for example, safety car periods)
 - **Horizontal patterns:** Gradual color shifts across a row show tire degradation or fuel load effects
 - **Gaps:** White spaces indicate pit stops
 - **Sudden changes:** Abrupt color shifts may indicate incidents, traffic, or mistakes
 - **Consistent greens:** Drivers with predominantly green rows had strong, consistent pace
 
-## Adding fuel correction
+## Adding Fuel Correction
 
-To better compare true pace, you can apply fuel correction to account for decreasing fuel load:
+To compare true pace, apply fuel correction to account for the decreasing fuel load:
 
 ```python
 # Simple fuel correction formula
@@ -176,7 +173,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `laptime_cutoff` fixes the color scale (fastest to `fastest * cutoff`), `include_deleted` and `include_pit_laps` keep those laps when `True`, and `cmap` / `xticklabels` control the styling:
+The native function exposes the same filters as parameters. `laptime_cutoff` fixes the color scale, from fastest to `fastest * cutoff`. `include_deleted` and `include_pit_laps` keep those laps when `True`. `cmap` and `xticklabels` control the styling:
 
 ```python
 import tif1
@@ -195,7 +192,7 @@ fig, ax = tif1.plot_laptime_heatmap(
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -211,9 +208,9 @@ plt.show()
 # tif1.plot_laptime_heatmap(2023, 'Monaco Grand Prix', 'R', save_path="laptime_heatmap.png")
 ```
 
-## Advanced variations
+## Advanced Variations
 
-### Compare specific drivers
+### Compare Specific Drivers
 
 Focus on a subset of drivers for detailed comparison:
 
@@ -237,7 +234,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-### Annotate with lap times
+### Annotate with Lap Times
 
 Add actual lap time values to cells for precise analysis:
 
@@ -260,7 +257,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Next steps
+## Next Steps
 
 - Combine with tire strategy visualization to correlate pace with compounds
 - Analyze specific stint performance by filtering lap ranges

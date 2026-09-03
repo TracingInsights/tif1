@@ -12,18 +12,15 @@ keywords:
 
 Acceleration maps show the g-forces experienced by the car around the circuit. This includes longitudinal acceleration (braking and acceleration) and lateral acceleration (cornering forces).
 
-<img
-  src="/assets/track_acceleration_map.png"
-  alt="Track acceleration map showing g-forces"
-/>
+<img src="/assets/track_acceleration_map.png" alt="Track acceleration map showing g-forces" />
 
-## Understanding acceleration data
+## Understanding Acceleration Data
 
 - **Longitudinal acceleration:** Forward/backward forces during acceleration and braking
 - **Lateral acceleration:** Sideways forces during cornering
 - Measured in g-forces (1g = 9.81 m/s²)
 
-## Loading the session
+## Loading the Session
 
 ```python
 import tif1
@@ -36,7 +33,7 @@ session = tif1.get_session(2023, 'Suzuka', 'Q')
 fastest_lap = session.laps.pick_fastest()
 ```
 
-## Calculating longitudinal acceleration
+## Calculating Longitudinal Acceleration
 
 Longitudinal acceleration is derived from speed changes over time.
 
@@ -56,7 +53,7 @@ x = telemetry['X']
 y = telemetry['Y']
 ```
 
-## Creating the acceleration map
+## Creating the Acceleration Map
 
 ```python
 # Prepare segments
@@ -102,7 +99,7 @@ plt.show()
 
 The default `cmap='RdBu_r'` matches the chart above.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -118,7 +115,7 @@ plt.show()
 # tif1.plot_track_acceleration_map(2023, 'Suzuka', 'Q', save_path='track_acceleration_map.png')
 ```
 
-## Interpreting the colors
+## Interpreting the Colors
 
 - **Red:** Positive acceleration (accelerating)
 - **Blue:** Negative acceleration (braking)
@@ -130,7 +127,7 @@ Modern F1 cars can achieve:
 - Up to 2g during acceleration
 - Up to 6g in high-speed corners (lateral)
 
-## Lateral acceleration
+## Lateral Acceleration
 
 For cornering forces, calculate lateral acceleration from speed and track curvature:
 
@@ -150,7 +147,7 @@ lat_acc = (speed_ms**2 * curvature) / 9.81
 
 The [G-G diagram](/tutorials/gg-diagram) and [telemetry comparison](/tutorials/telemetry-comparison) tutorials use a numerically safer smooth-derivative approach for both acceleration components.
 
-## Next steps
+## Next Steps
 
 - Compare [speed patterns](/tutorials/track-speed-map) with acceleration zones
 - Analyze [brake zones](/tutorials/track-brake-zones) for peak deceleration

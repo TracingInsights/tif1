@@ -10,12 +10,9 @@ keywords:
   - "race visualization"
 ---
 
-This tutorial shows how to create a scatter plot of a driver's lap times throughout a race, with color coding based on tire compounds used. This visualization helps identify tire performance, consistency, and strategy effectiveness.
+This tutorial shows how to create a scatter plot of driver lap times throughout a race. The color coding is based on the tire compounds used. This visualization helps identify tire performance, consistency, and strategy effectiveness.
 
-<img
-  src="/assets/driver_laptimes_example.png"
-  alt="Driver lap times scatter plot showing Alonso's lap times in the 2023 Azerbaijan Grand Prix"
-/>
+<img src="/assets/driver_laptimes_example.png" alt="Driver lap times scatter plot showing Alonso's lap times in the 2023 Azerbaijan Grand Prix" />
 
 ## Setup
 
@@ -81,7 +78,7 @@ sns.scatterplot(
 
 ## Enhance the Plot
 
-Make the plot more aesthetic and easier to read.
+Improve the appearance and readability of the plot.
 
 ```python
 # Set axis labels
@@ -108,7 +105,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `drivers` selects whose laps to plot (a single driver for the view above, or several), `laptime_cutoff` removes slow laps, and `include_deleted` keeps deleted laps when `True`:
+The native function exposes the same filters as parameters. `drivers` selects the drivers to plot: a single driver for the view above, or several. `laptime_cutoff` removes slow laps. `include_deleted` keeps deleted laps when `True`:
 
 ```python
 import tif1
@@ -161,7 +158,7 @@ plt.show()
 
 ## Insights from the Visualization
 
-This type of plot reveals several key insights:
+This type of plot reveals several insights:
 
 1. **Tire Performance**: Different compounds show distinct lap time clusters
 2. **Degradation**: Upward trends within a compound indicate tire wear
@@ -171,7 +168,7 @@ This type of plot reveals several key insights:
 
 ## Customization Options
 
-You can customize the plot further:
+Customize the plot further:
 
 ```python
 # Use custom colors
@@ -200,7 +197,7 @@ sns.scatterplot(
 
 ## Summary
 
-This tutorial demonstrated how to create an effective lap time visualization that combines temporal data (lap number) with performance data (lap time) and strategic information (tire compound). The scatter plot format makes it easy to spot patterns, outliers, and strategic decisions throughout a race.
+This tutorial shows how to create a lap time visualization. The plot combines temporal data (lap number), performance data (lap time), and strategic information (tire compound). The scatter plot format shows patterns, outliers, and strategic decisions clearly throughout a race.
 
 ---
 
@@ -208,15 +205,15 @@ This tutorial demonstrated how to create an effective lap time visualization tha
 
 <CardGroup cols={2}>
   <Card title="Tire Strategy" href="/tutorials/tire-strategy">
-    Detailed tire analysis
+    Detailed tire analysis.
   </Card>
   <Card title="Race Pace Analysis" href="/tutorials/race-pace-analysis">
-    Compare race pace
+    Compare race pace.
   </Card>
   <Card title="Plotting API" href="/api-reference/plotting">
-    Plotting reference
+    Plotting reference.
   </Card>
   <Card title="Complete Race Analysis" href="/tutorials/race-analysis">
-    Full race workflow
+    Full race workflow.
   </Card>
 </CardGroup>

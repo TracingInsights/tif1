@@ -13,10 +13,7 @@ keywords:
 
 This tutorial demonstrates how to visualize lap time distributions for multiple drivers using violin plots combined with swarm plots. This visualization helps compare driver consistency, pace, and tire strategy across the field.
 
-<img
-  src="/assets/laptimes_distribution.png"
-  alt="Lap time distributions for top 10 finishers in the 2023 Azerbaijan Grand Prix"
-/>
+<img src="/assets/laptimes_distribution.png" alt="Lap time distributions for top 10 finishers in the 2023 Azerbaijan Grand Prix" />
 
 ## Setup
 
@@ -112,7 +109,7 @@ sns.swarmplot(data=driver_laps,
 
 ## Enhance the Plot
 
-Make the visualization more aesthetic and easier to read.
+Add labels, a title, and a clean layout to the plot.
 
 ```python
 # Set axis labels
@@ -131,7 +128,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default, matching the point finishers above), and `laptime_cutoff` controls the per-driver outlier removal:
+The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default, matching the point finishers above). `laptime_cutoff` controls the per-driver outlier removal:
 
 ```python
 import tif1
@@ -149,7 +146,7 @@ fig, ax = tif1.plot_laptimes_distribution(
 plt.show()
 ```
 
-Drivers are always ordered by finishing position, and deleted/pit laps are always excluded.
+Drivers are always ordered by finishing position, and deleted and pit laps are always excluded.
 
 ## Complete Example
 
@@ -169,7 +166,7 @@ plt.show()
 
 ## Understanding the Visualization
 
-This dual-layer plot provides rich insights:
+This dual-layer plot shows two kinds of information:
 
 ### Violin Plot Layer
 - Shows the probability density of lap times for each driver
@@ -185,7 +182,7 @@ This dual-layer plot provides rich insights:
 
 ## Insights from the Visualization
 
-This visualization reveals several key aspects of race performance:
+This visualization shows several aspects of race performance:
 
 1. **Driver Consistency**: Narrow distributions indicate consistent lap times
 2. **Pace Comparison**: Vertical position shows relative speed between drivers
@@ -298,7 +295,7 @@ print(f"Standard deviation: {consistency.iloc[0]:.3f}s")
 
 ## Summary
 
-This tutorial demonstrated how to create a comprehensive lap time distribution visualization that combines violin plots for density estimation with swarm plots for individual data points. This dual-layer approach provides both statistical overview and granular detail, making it ideal for comparing driver performance and tire strategies across the field.
+This tutorial created a lap time distribution visualization that combines violin plots with swarm plots. The violin plots show the density of lap times. The swarm plots show individual laps. Together they give a statistical overview and per-lap detail for comparing driver performance and tire strategies across the field.
 
 ---
 
@@ -306,15 +303,15 @@ This tutorial demonstrated how to create a comprehensive lap time distribution v
 
 <CardGroup cols={2}>
   <Card title="Driver Lap Times" href="/tutorials/driver-laptimes">
-    Single driver lap time analysis
+    Single driver lap time analysis.
   </Card>
   <Card title="Race Pace Analysis" href="/tutorials/race-pace-analysis">
-    Detailed pace comparison
+    Detailed pace comparison.
   </Card>
   <Card title="Tire Strategy" href="/tutorials/tire-strategy">
-    Tire compound analysis
+    Tire compound analysis.
   </Card>
   <Card title="Plotting API" href="/api-reference/plotting">
-    Plotting reference
+    Plotting reference.
   </Card>
 </CardGroup>

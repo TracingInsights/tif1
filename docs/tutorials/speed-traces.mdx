@@ -1,7 +1,7 @@
 ---
 title: "Speed Traces Comparison"
 icon: "gauge-high"
-description: "Overlaying speed traces to compare fastest laps"
+description: "Overlay speed traces to compare fastest laps"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -10,16 +10,13 @@ keywords:
   - "speed comparison"
 ---
 
-Speed traces are one of the most intuitive ways to compare lap performance between drivers. By overlaying the speed profiles of two laps, you can instantly see where one driver is faster and identify braking points, acceleration zones, and top speeds.
+Speed traces give a direct comparison of lap performance between drivers. Overlay the speed profiles of two laps. The overlay shows where one driver is faster. It also shows braking points, acceleration zones, and top speeds.
 
-<img
-  src="/assets/speed_traces.png"
-  alt="Speed traces comparison between two drivers"
-/>
+<img src="/assets/speed_traces.png" alt="Speed traces comparison between two drivers" />
 
-## Loading the session
+## Loading the Session
 
-We'll compare the fastest qualifying laps from the 2023 Spanish Grand Prix between Verstappen and Hamilton.
+Compare the fastest qualifying laps from the 2023 Spanish Grand Prix between Verstappen and Hamilton.
 
 ```python
 import tif1
@@ -32,7 +29,7 @@ tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
 session = tif1.get_session(2023, 'Spanish Grand Prix', 'Q')
 ```
 
-## Selecting the laps
+## Selecting the Laps
 
 Use the `pick_drivers()` and `pick_fastest()` methods to get each driver's fastest lap.
 
@@ -41,16 +38,16 @@ ver_lap = session.laps.pick_drivers('VER').pick_fastest()
 ham_lap = session.laps.pick_drivers('HAM').pick_fastest()
 ```
 
-## Getting telemetry with distance
+## Getting Telemetry with Distance
 
-Telemetry data includes speed, throttle, brake, and more. The `add_distance()` method adds a cumulative distance column, making it easy to align laps for comparison.
+Telemetry data includes speed, throttle, brake, and more. The `add_distance()` method adds a cumulative distance column. Use this column to align the laps for comparison.
 
 ```python
 ver_tel = ver_lap.get_car_data().add_distance()
 ham_tel = ham_lap.get_car_data().add_distance()
 ```
 
-## Plotting with team colors
+## Plotting with Team Colors
 
 Use `tif1.plotting.get_team_color()` to automatically fetch the correct team colors for visual consistency.
 
@@ -73,7 +70,7 @@ plt.suptitle(f"Fastest Lap Speed Comparison\n"
 plt.show()
 ```
 
-## Analyzing the traces
+## Analyzing the Traces
 
 When examining speed traces, look for:
 
@@ -99,7 +96,7 @@ fig, ax = tif1.plot_speed_traces(
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -115,8 +112,8 @@ plt.show()
 # tif1.plot_speed_traces(2023, 'Spanish Grand Prix', 'Q', save_path='speed_traces.png')
 ```
 
-## Next steps
+## Next Steps
 
-- Explore other telemetry channels like throttle and brake in the [Telemetry Deep Dive](/tutorials/telemetry-comparison)
+- Explore other telemetry channels like throttle and brake in the [Telemetry Comparison](/tutorials/telemetry-comparison)
 - Learn about calculating time deltas between laps
 - Analyze gear shifts and RPM data for transmission insights

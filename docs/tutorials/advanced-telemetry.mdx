@@ -1,7 +1,7 @@
 ---
 title: "Advanced Telemetry Analysis"
 icon: "chart-line"
-description: "Deep dive into acceleration, position data, and racing lines"
+description: "Examine acceleration, position data, and racing lines"
 keywords:
   - "telemetry analysis"
   - "speed trace"
@@ -10,7 +10,7 @@ keywords:
   - "advanced telemetry"
 ---
 
-tif1 provides rich telemetry data including position coordinates and acceleration vectors. This tutorial shows how to leverage this data for advanced analysis.
+tif1 provides telemetry data including position coordinates and acceleration vectors. This tutorial shows how to use this data for advanced analysis.
 
 ## Acceleration Analysis
 
@@ -87,7 +87,7 @@ plt.grid(True, alpha=0.3)
 plt.show()
 ```
 
-## Racing line visualization
+## Racing Line Visualization
 
 Use position data (X, Y, Z) to visualize the racing line.
 
@@ -179,9 +179,9 @@ for idx, (start, end) in enumerate(corners[:3]):  # First 3 corners
     print(f"  Distance: {corner_tel['Distance'].iloc[0]:.0f}m - {corner_tel['Distance'].iloc[-1]:.0f}m")
 ```
 
-## Throttle and brake overlap
+## Throttle and Brake Overlap
 
-Analyze driver technique by looking at throttle and brake overlap.
+Examine the throttle and brake overlap to analyze driver technique.
 
 ```python
 # Find instances where both throttle and brake are applied
@@ -230,7 +230,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Gear usage analysis
+## Gear Usage Analysis
 
 Analyze gear selection throughout the lap.
 
@@ -311,7 +311,7 @@ for idx, (start, end) in enumerate(drs_zones):
 
 ## Summary
 
-With tif1's rich telemetry data, you can:
+Use `tif1` to:
 
 - Analyze acceleration patterns (longitudinal, lateral, vertical)
 - Visualize racing lines with position data
@@ -320,7 +320,7 @@ With tif1's rich telemetry data, you can:
 - Examine gear selection strategies
 - Track DRS usage and zones
 
-All of this data is available at high frequency (~4Hz) for every lap, enabling deep performance analysis.
+All of this data is available at high frequency (~4Hz) for every lap. It enables detailed performance analysis.
 
 ---
 
@@ -328,12 +328,12 @@ All of this data is available at high frequency (~4Hz) for every lap, enabling d
 
 <CardGroup cols={2}>
   <Card title="Telemetry Comparison" href="/tutorials/telemetry-comparison">
-    Compare telemetry
+    Compare telemetry.
   </Card>
   <Card title="Data Visualization" href="/guides/data-visualization">
-    Visualization guide
+    Visualization guide.
   </Card>
   <Card title="Core API" href="/api-reference/core">
-    Telemetry API
+    Telemetry API.
   </Card>
 </CardGroup>

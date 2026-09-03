@@ -1,7 +1,7 @@
 ---
 title: "Top Speeds by Team"
 icon: "rocket"
-description: "Visualizing maximum speed trap data across teams"
+description: "Visualize maximum speed trap data across teams"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -11,16 +11,13 @@ keywords:
   - "team comparison"
 ---
 
-Speed trap data reveals which teams have the most powerful engines and efficient aerodynamics. By comparing maximum speeds across teams, you can identify performance advantages on straights and understand the power unit hierarchy.
+Speed trap data reveals which teams have the most powerful engines and efficient aerodynamics. Compare maximum speeds across teams to identify performance advantages on straights and understand the power unit hierarchy.
 
-<img
-  src="/assets/top_speeds.png"
-  alt="Top speeds by team comparison"
-/>
+<img src="/assets/top_speeds.png" alt="Top speeds by team comparison" />
 
-## Loading the session
+## Loading the Session
 
-We'll analyze speed trap data from the 2023 Italian Grand Prix qualifying session, where top speeds are typically highest due to Monza's low-downforce setup.
+Analyze speed trap data from the 2023 Italian Grand Prix qualifying session. Top speeds are typically highest at Monza because of the low-downforce setup.
 
 ```python
 import tif1
@@ -31,9 +28,9 @@ import pandas as pd
 session = tif1.get_session(2023, 'Italian Grand Prix', 'Q')
 ```
 
-## Finding the fastest speed trap
+## Finding the Fastest Speed Trap
 
-F1 tracks have multiple speed measurement points (I1, I2, ST, FL). Let's identify which one recorded the highest speeds.
+F1 tracks have multiple speed measurement points (I1, I2, ST, FL). Identify which one recorded the highest speeds.
 
 ```python
 # Get speed columns
@@ -45,7 +42,7 @@ fastest_trap = speed_data.idxmax(axis=1).value_counts().index[0]
 print(f"Fastest speed trap: {fastest_trap}")
 ```
 
-## Calculating maximum speeds by team
+## Calculating Maximum Speeds by Team
 
 Group the data by team and find the maximum speed recorded for each.
 
@@ -64,7 +61,7 @@ max_speeds = max_speeds.sort_values('MaxSpeed', ascending=False)
 max_speeds['Diff'] = max_speeds['MaxSpeed'] - max_speeds['MaxSpeed'].min()
 ```
 
-## Adding team colors
+## Adding Team Colors
 
 Use the plotting module to get official team colors for the visualization.
 
@@ -77,7 +74,7 @@ for team in max_speeds['Team']:
 max_speeds['Color'] = max_speeds['Team'].map(team_colors)
 ```
 
-## Creating the visualization
+## Creating the Visualization
 
 Build a horizontal bar chart showing the speed differences between teams.
 
@@ -119,14 +116,14 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Interpreting the results
+## Interpreting the Results
 
 When analyzing top speed data, consider:
 
 - **Power unit performance:** Teams with the same engine supplier often show similar top speeds
 - **Aerodynamic efficiency:** Lower drag setups achieve higher speeds but may sacrifice cornering performance
 - **Track-specific setups:** Monza and Spa typically show the highest speeds due to low-downforce configurations
-- **DRS effect:** Ensure you're comparing like-for-like (DRS enabled or disabled)
+- **DRS effect:** Ensure the comparison is like-for-like (DRS enabled or disabled)
 
 ## Parameters
 
@@ -146,7 +143,7 @@ plt.show()
 
 The default `speed_trap=None` auto-detects the trap with the highest readings, using exactly the logic from the sections above. Omit `teams` (the default) to include every team.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -162,7 +159,7 @@ plt.show()
 # tif1.plot_top_speeds(2023, 'Italian Grand Prix', 'Q', save_path='top_speeds.png')
 ```
 
-## Next steps
+## Next Steps
 
 - Compare speed trap data across different tracks to see setup variations
 - Analyze the relationship between top speed and lap time

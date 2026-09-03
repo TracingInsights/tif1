@@ -1,7 +1,7 @@
 ---
 title: "Tire Strategy Analysis"
 icon: "circle-dot"
-description: "Analyzing tire compounds, degradation, and stint lengths"
+description: "Analyze tire compounds, degradation, and stint lengths"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -9,16 +9,13 @@ keywords:
   - "documentation"
 ---
 
-F1 is often won and lost on tire strategy. Understanding how different compounds perform and when they reach their "cliff" is crucial.
+F1 is often won and lost on tire strategy. How each compound performs and when it reaches its "cliff" has a large effect on the result.
 
-<img
-  src="/assets/race_tire_strategy.png"
-  alt="Tire strategy Gantt chart showing compound usage"
-/>
+<img src="/assets/race_tire_strategy.png" alt="Tire strategy Gantt chart showing compound usage" />
 
-## Getting stint data
+## Getting Stint Data
 
-`tif1` provides the `Stint` and `Compound` for every lap. We can use this to map out the entire race strategy.
+`tif1` provides the `Stint` and `Compound` for every lap. Use this data to map out the entire race strategy.
 
 ```python
 import tif1
@@ -37,7 +34,7 @@ print(strategy.head())
 
 ## Visualizing the Strategy
 
-A "Gantt-style" chart is the best way to visualize when drivers swapped tires.
+A "Gantt-style" chart shows when each driver swapped tires.
 
 ```python
 import matplotlib.pyplot as plt
@@ -71,7 +68,7 @@ plt.show()
 
 ## Analyzing Degradation
 
-Tire degradation is the increase in lap time as the tires wear out. We can calculate this by looking at the slope of lap times during a long stint.
+Tire degradation is the increase in lap time when the tires wear out. Calculate it from the slope of lap times during a long stint.
 
 ```python
 # Filter for a long stint (e.g., VER Stint 2)
@@ -89,14 +86,14 @@ slope, intercept, r_value, p_value, std_err = stats.linregress(
 print(f"Degradation Rate: {slope:.4f} seconds per lap")
 ```
 
-### What the slope tells us
-- **Slope > 0:** The driver is losing time as the tire wears (typical).
-- **Slope < 0:** The driver is actually getting faster (often due to fuel burn-off overcoming tire wear).
+### What the Slope Shows
+- **Slope > 0:** The driver loses time when the tire wears (typical).
+- **Slope < 0:** The driver gets faster (often due to fuel burn-off overcoming tire wear).
 - **Near Zero:** Excellent tire management.
 
 ## Comparing Compounds
 
-We can also compare the performance delta between Soft, Medium, and Hard tires.
+Compare the performance delta between Soft, Medium, and Hard tires.
 
 ```python
 # Average lap time per compound (cleaned)
@@ -108,4 +105,4 @@ print(compound_performance)
 
 ## Summary
 
-With `tif1`, you have access to detailed tire information that allows you to reconstruct race strategies and quantify the performance characteristics of every compound used in the race.
+Use `tif1` to reconstruct race strategies and quantify the performance characteristics of every compound used in the race.

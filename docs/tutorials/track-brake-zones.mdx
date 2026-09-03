@@ -10,14 +10,11 @@ keywords:
   - "brake zones"
 ---
 
-Brake zone visualization highlights where drivers apply the brakes around the circuit. This is crucial for understanding corner entry, comparing braking points, and analyzing overtaking opportunities.
+Brake zone visualization highlights where drivers apply the brakes around the circuit. Use the visualization to understand corner entry, compare braking points, and analyze overtaking opportunities.
 
-<img
-  src="/assets/track_brake_zones.png"
-  alt="Track brake zones showing where drivers brake"
-/>
+<img src="/assets/track_brake_zones.png" alt="Track brake zones showing where drivers brake" />
 
-## Loading the session
+## Loading the Session
 
 ```python
 import tif1
@@ -30,7 +27,7 @@ session = tif1.get_session(2023, 'Monza', 'Q')
 fastest_lap = session.laps.pick_fastest()
 ```
 
-## Getting brake data
+## Getting Brake Data
 
 Brake data is binary: 0 (not braking) or 1 (braking).
 
@@ -44,7 +41,7 @@ y = telemetry['Y']
 brake = telemetry['Brake']
 ```
 
-## Creating the brake zone map
+## Creating the Brake Zone Map
 
 ```python
 # Prepare segments
@@ -91,7 +88,7 @@ plt.show()
 
 The default `cmap='RdYlGn_r'` with on/off colorbar ticks matches the chart above.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -107,7 +104,7 @@ plt.show()
 # tif1.plot_track_brake_zones(2023, 'Monza', 'Q', save_path='track_brake_zones.png')
 ```
 
-## Analyzing brake zones
+## Analyzing Brake Zones
 
 - **Red sections:** Active braking zones before corners
 - **Green sections:** No braking (straights and corners)
@@ -115,7 +112,7 @@ plt.show()
 
 Circuits like Monza have fewer but more intense braking zones, while Monaco has frequent braking throughout the lap.
 
-## Comparing drivers
+## Comparing Drivers
 
 The track map charts always use the session's fastest lap. For multi-driver comparisons, the telemetry charts accept a `drivers` list. For example, [speed traces](/tutorials/speed-traces) plots each driver's fastest-lap speed against distance:
 
@@ -127,7 +124,7 @@ fig, ax = tif1.plot_speed_traces(2023, 'Spanish Grand Prix', 'Q', drivers=['VER'
 plt.show()
 ```
 
-## Next steps
+## Next Steps
 
 - Combine with [speed maps](/tutorials/track-speed-map) to see braking effectiveness
 - Analyze [throttle application](/tutorials/track-throttle-map) after braking

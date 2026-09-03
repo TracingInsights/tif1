@@ -1,7 +1,7 @@
 ---
 title: "Tire Degradation Analysis"
 icon: "chart-line"
-description: "Visualizing tire performance degradation over race distance"
+description: "Visualize tire performance degradation over race distance"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -10,16 +10,13 @@ keywords:
   - "documentation"
 ---
 
-Understanding tire degradation is crucial in F1 strategy. This tutorial shows how to visualize how different tire compounds lose performance as they age during a race.
+Tire degradation has a large effect on F1 race strategy. This tutorial shows how different tire compounds lose performance as they age during a race.
 
-<img
-  src="/assets/tire_degradation.png"
-  alt="Tire degradation chart showing compound performance over tire life"
-/>
+<img src="/assets/tire_degradation.png" alt="Tire degradation chart showing compound performance over tire life" />
 
-## What is Tire Degradation?
+## Tire Degradation
 
-Tire degradation is the gradual loss of grip and increase in lap times as tires wear out. Different compounds (Soft, Medium, Hard) have different degradation profiles:
+Tire degradation is the gradual loss of grip and the increase in lap times when tires wear out. Different compounds (Soft, Medium, Hard) have different degradation profiles:
 
 - **Soft**: Fastest initially but degrades quickly
 - **Medium**: Balanced performance and durability
@@ -27,7 +24,7 @@ Tire degradation is the gradual loss of grip and increase in lap times as tires 
 
 ## Loading Race Data
 
-We'll analyze the 2024 Hungarian Grand Prix to see how tires performed:
+Analyze the 2024 Hungarian Grand Prix to see how the tires performed:
 
 ```python
 import tif1
@@ -54,7 +51,7 @@ clean_laps = laps[
 
 ## Fuel-Corrected Lap Times
 
-Cars get lighter as they burn fuel, making them faster. To see true tire degradation, we need to correct for this:
+Cars burn fuel during the race, so the cars get lighter and faster. To see true tire degradation, correct for this effect:
 
 ```python
 # Estimate fuel effect: ~0.03s per lap improvement
@@ -67,7 +64,7 @@ clean_laps["FuelCorrectedTime"] = (
 
 ## Smoothing Data with Rolling Median
 
-To reduce noise in the degradation curves, we'll use a rolling median:
+To reduce noise in the degradation curves, use a rolling median:
 
 ```python
 def rolling_median(data, window=5):
@@ -82,7 +79,7 @@ def rolling_median(data, window=5):
 
 ## Visualizing Degradation by Compound
 
-Let's plot how each compound performs over its lifetime with both raw data and smoothed trends:
+Plot how each compound performs over its lifetime, with raw data and smoothed trends:
 
 ```python
 fig, ax = plt.subplots(figsize=(14, 8))
@@ -215,7 +212,7 @@ plt.show()
 
 ## Understanding Degradation Rates
 
-The slope of the trend line tells you the degradation rate:
+The slope of the trend line gives the degradation rate:
 
 - **0.00 - 0.05 s/lap**: Excellent tire management
 - **0.05 - 0.10 s/lap**: Normal degradation
@@ -247,7 +244,7 @@ for compound in ["SOFT", "MEDIUM", "HARD"]:
 
 ## Parameters
 
-The native function exposes the same controls as parameters. `compounds` picks which compounds to plot, `fuel_correction` sets the per-lap fuel gain, `min_laps` drops compounds with too few laps, and `smoothing_window` tunes the rolling median:
+The native function exposes the same controls as parameters. `compounds` picks the compounds to plot. `fuel_correction` sets the per-lap fuel gain. `min_laps` drops compounds with too few laps. `smoothing_window` tunes the rolling median:
 
 ```python
 import tif1
@@ -269,9 +266,9 @@ plt.show()
 
 Compound colors come from `tif1.plotting.get_compound_mapping(session)` (season-aware), not hardcoded literals.
 
-## Complete example
+## Complete Example
 
-The whole workflow above (fuel correction, rolling median, cliff-friendly y-limits) is wrapped in a single native function:
+The complete workflow above (fuel correction, rolling median, cliff-friendly y-limits) is one native function:
 
 ```python
 import tif1
@@ -289,7 +286,7 @@ The `rolling_median` helper shown above lives in the library as `tif1.charts.per
 
 ## Summary
 
-With `tif1`, you can:
+Use `tif1` to:
 - Analyze tire degradation patterns across compounds
 - Compare driver tire management skills
 - Identify optimal stint lengths before the "cliff"

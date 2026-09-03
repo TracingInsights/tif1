@@ -13,14 +13,11 @@ keywords:
 
 Understanding how much of a lap drivers spend at full throttle reveals track characteristics and driving styles. Power-limited tracks like Monza show high percentages, while technical circuits like Monaco show much lower values.
 
-<img
-  src="/assets/throttle_distance.png"
-  alt="Full throttle distance comparison across drivers"
-/>
+<img src="/assets/throttle_distance.png" alt="Full throttle distance comparison across drivers" />
 
-## The concept
+## The Concept
 
-The full throttle metric calculates what percentage of the lap distance is covered with the throttle at or above 98%:
+The full throttle metric calculates the percentage of lap distance covered with the throttle at or above 98%:
 
 ```text
 Full Throttle % = (Distance at ≥98% throttle / Total lap distance) × 100
@@ -30,9 +27,9 @@ Full Throttle % = (Distance at ≥98% throttle / Total lap distance) × 100
 - **Lower values** indicate technical tracks with many corners
 - Differences between drivers can reveal confidence, car balance, or setup choices
 
-## Loading the session
+## Loading the Session
 
-We'll analyze qualifying from the 2023 Bahrain Grand Prix, a track with a good mix of straights and technical sections.
+This example analyzes qualifying from the 2023 Bahrain Grand Prix. The track has a good mix of straights and technical sections.
 
 ```python
 import tif1
@@ -45,9 +42,9 @@ tif1.plotting.setup_mpl(color_scheme='fastf1')
 session = tif1.get_session(2023, 'Bahrain Grand Prix', 'Q')
 ```
 
-## Calculating throttle distance
+## Calculating Throttle Distance
 
-For each driver, we analyze their fastest lap telemetry to find where throttle is at or above 98%.
+Analyze each driver's fastest lap telemetry to find where the throttle is at or above 98%.
 
 ```python
 drivers = session.laps['Driver'].unique()
@@ -84,7 +81,7 @@ for driver in drivers:
 throttle_data.sort(key=lambda x: x['ThrottlePercentage'], reverse=True)
 ```
 
-## Visualizing the results
+## Visualizing the Results
 
 Create a horizontal bar chart showing relative differences between drivers.
 
@@ -124,20 +121,20 @@ plt.tight_layout()
 plt.show()
 ```
 
-The chart displays relative differences (bar lengths) while showing actual percentages (labels), making it easy to compare drivers.
+The chart displays relative differences (bar lengths) and actual percentages (labels). This format enables a direct comparison between drivers.
 
-## Interpreting the results
+## Interpreting the Results
 
 When analyzing full throttle distance, consider:
 
-- **Track layout:** Monza (~70%) vs Monaco (~30%) shows dramatic differences
+- **Track layout:** Monza (~70%) vs Monaco (~30%) shows a large difference
 - **Driver confidence:** Higher percentages can indicate confidence in car balance
 - **Setup choices:** Aggressive setups may allow earlier throttle application
 - **Tire management:** Drivers managing tires may be more conservative with throttle
 
-## Comparing across tracks
+## Comparing Across Tracks
 
-You can compare the same driver across different tracks to understand track characteristics:
+Compare the same driver across different tracks to understand track characteristics:
 
 ```python
 tracks = ['Bahrain Grand Prix', 'Monaco Grand Prix', 'Italian Grand Prix']
@@ -199,7 +196,7 @@ fig, ax = tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q', throttle_
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -215,7 +212,7 @@ plt.show()
 # tif1.plot_throttle_distance(2023, 'Bahrain Grand Prix', 'Q', save_path="throttle_distance.png")
 ```
 
-## Next steps
+## Next Steps
 
 - Analyze throttle application patterns through specific corners
 - Compare throttle traces between drivers to identify different driving styles
