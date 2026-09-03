@@ -1,7 +1,7 @@
 ---
 title: "Error Handling"
 icon: "triangle-exclamation"
-description: "Comprehensive guide to handling errors and exceptions in tif1"
+description: "Handle errors and exceptions in tif1"
 keywords:
   - "error handling"
   - "exception handling"
@@ -9,7 +9,7 @@ keywords:
   - "troubleshooting"
 ---
 
-tif1 uses a structured exception hierarchy to help you handle errors gracefully. All exceptions inherit from `TIF1Error`, making it easy to catch all library-specific errors.
+tif1 uses a structured exception hierarchy for graceful error handling. All exceptions inherit from `TIF1Error`, so a single clause catches every library-specific error.
 
 ## Exception Hierarchy
 
@@ -37,7 +37,7 @@ graph TD
 
 ### DataNotFoundError
 
-Raised when requested data doesn't exist in the archive.
+Raised when requested data does not exist in the archive.
 
 ```python
 import tif1
@@ -52,7 +52,7 @@ except DataNotFoundError as e:
 
 **Common causes:**
 - Misspelled event name
-- Session hasn't happened yet
+- The session has not started yet
 - Data not yet available in archive
 
 **Solution:**
@@ -65,7 +65,7 @@ if "Monaco Grand Prix" in events:
 
 ### DriverNotFoundError
 
-Raised when accessing a driver that doesn't exist in the session.
+Raised when code accesses a driver that does not exist in the session.
 
 ```python
 from tif1 import DriverNotFoundError
@@ -142,7 +142,7 @@ except CacheError as e:
 
 ### Graceful Degradation
 
-Handle errors without crashing your analysis.
+Handle errors without stopping the analysis.
 
 ```python
 def safe_load_session(year, gp, session_type):
@@ -258,7 +258,7 @@ with SessionContext(2025, "Monaco Grand Prix", "Race") as session:
 
 ### Enable debug logging
 
-See detailed information about what's happening.
+See detailed information about the operations in progress.
 
 ```python
 import tif1
@@ -336,7 +336,7 @@ if cb.state == "open":
 ```
   </Step>
   <Step title="Fail Fast">
-    Don't continue processing if critical data is missing.
+    Do not continue processing when critical data is missing.
     ```python
     session = tif1.get_session(2025, "Monaco", "Race")
     if session is None:
@@ -412,7 +412,7 @@ class TIF1Monitor:
 
 ## Summary
 
-Proper error handling makes your tif1 applications robust and maintainable. Always use specific exceptions, validate input, and implement appropriate retry logic for production use.
+Proper error handling makes tif1 applications robust and maintainable. Always use specific exceptions, validate input, and add retry logic for production use.
 
 ---
 

@@ -1,7 +1,7 @@
-﻿---
+---
 title: "Troubleshooting"
 icon: "wrench"
-description: "Common issues and solutions"
+description: "Solutions for common tif1 installation, data, performance, and cache problems"
 keywords:
   - "troubleshooting"
   - "common issues"
@@ -13,19 +13,19 @@ keywords:
 
 
 
-### Duckdb import error
+### DuckDB Import Error
 
 **Error:** `ModuleNotFoundError: No module named 'duckdb'`
 
 **Solution:**
-DuckDB is an optional dependency for advanced analytics. You must install it separately:
+DuckDB is an optional dependency for advanced analytics. Install it separately:
 ```bash
 pip install duckdb
 ```
 
 ---
 
-## Data access issues
+## Data Access Issues
 
 ### DataNotFoundError
 
@@ -55,31 +55,31 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
    import tif1, logging
    tif1.setup_logging(logging.DEBUG)
 ```
-2. **Reset Circuit Breaker:** If you've had many failures, the breaker might be open.
+2. **Reset Circuit Breaker:** After several failures, the circuit breaker can be open.
    ```python
    tif1.reset_circuit_breaker()
 ```
-3. **Check CDN Status:** Our primary CDN is StaticDelivr, with jsDelivr and Hugging Face buckets as fallbacks. Ensure your network doesn't block them.
+3. **Check CDN Status:** The primary CDN is StaticDelivr, with jsDelivr and Hugging Face buckets as fallbacks. Make sure that the network does not block them.
 
 ---
 
 ## Performance Issues
 
-### Slow cold start
+### Slow Cold Start
 
-**Problem:** The first time loading a session takes several seconds.
+**Problem:** The first load of a session takes several seconds.
 
 **Solutions:**
 1. **Async Loading:** Use `await session.laps_async()` to fetch all drivers in parallel.
-2. **Ultra Cold Start:** For real-time apps, enable Ultra Cold Start in your `.tif1rc` to skip validation and background-fill the cache.
+2. **Ultra Cold Start:** For real-time apps, enable Ultra Cold Start in the `.tif1rc` file to skip validation and background-fill the cache.
 
-### High memory usage
+### High Memory Usage
 
 **Problem:** Analyzing an entire season consumes too much RAM.
 
 **Solutions:**
-1. **Use Polars:** It is significantly more memory-efficient than Pandas.
-2. **Categorical Types:** `tif1` automatically uses categoricals for columns like `Driver` and `Team`. Ensure you aren't casting them back to strings.
+1. **Use Polars:** It is significantly more memory-efficient than pandas.
+2. **Categorical Types:** `tif1` automatically uses categoricals for columns like `Driver` and `Team`. Make sure that the code does not cast these columns back to strings.
 
 ---
 
@@ -110,7 +110,7 @@ tif1.get_cache().clear()
 
 ## API & Schema Issues
 
-### Column name keyerror
+### Column Name KeyError
 
 **Error:** `KeyError: 'time'` or `KeyError: 'speed'`
 
@@ -127,9 +127,9 @@ tif1.get_cache().clear()
 
 ## Getting Help
 
-If you're still stuck:
+If the problem persists:
 1. Check the [GitHub Issues](https://github.com/TracingInsights/tif1/issues).
-2. Run with `logging.DEBUG` and include the logs in your report.
+2. Run with `logging.DEBUG` and include the logs in the report.
 3. Provide a minimal reproducible example (MRE).
 
 ---
@@ -138,12 +138,12 @@ If you're still stuck:
 
 <CardGroup cols={2}>
   <Card title="FAQ" href="/reference/faq">
-    Common questions
+    Common questions.
   </Card>
   <Card title="Error Handling" href="/guides/error-handling">
-    Handle errors
+    Handle errors.
   </Card>
   <Card title="Installation" href="/installation">
-    Setup issues
+    Setup issues.
   </Card>
 </CardGroup>

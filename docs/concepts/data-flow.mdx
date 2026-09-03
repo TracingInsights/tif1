@@ -1,7 +1,7 @@
 ---
 title: "Data Flow Architecture"
 icon: "diagram-project"
-description: "Comprehensive guide to understanding how data moves through tif1's multi-tier architecture"
+description: "How data moves through tif1, from CDN requests to DataFrame delivery. Covers multi-tier caching, HTTP/2 fetching, orjson parsing, and type optimization."
 keywords:
   - "data flow"
   - "architecture"
@@ -13,17 +13,17 @@ keywords:
   - "HTTP/2"
 ---
 
-Understanding tif1's data flow architecture is essential for optimizing performance, troubleshooting issues, and making informed decisions about data loading strategies. This comprehensive guide provides an in-depth exploration of how data moves through the system, from initial CDN requests to final DataFrame delivery, including detailed explanations of caching mechanisms, network protocols, data transformations, and performance optimizations.
+This document explains how data moves through tif1, from the first CDN request to the final DataFrame delivery. It covers caching mechanisms, network protocols, data transformations, and performance optimizations. These details help with performance tuning, troubleshooting, and data loading decisions.
 
-tif1 is built with performance as its core principle. Every architectural decision—from the multi-tier caching system to HTTP/2 multiplexing to async parallel fetching—is designed to minimize latency and maximize throughput. This document explains not just *what* happens, but *why* it happens and *how* you can leverage these systems for optimal performance.
+tif1 treats performance as its core principle. The multi-tier caching system, HTTP/2 multiplexing, and async parallel fetching all minimize latency and maximize throughput. Each section explains what happens, why it happens, and how to use these systems.
 
 ## System Architecture Overview
 
-tif1's architecture is designed around three core principles:
+The tif1 architecture follows three core principles:
 
-1. **Performance First**: Every component is optimized for speed, from HTTP/2 multiplexing to orjson parsing to categorical data types
-2. **Resilience**: Multi-tier caching, circuit breakers, and retry logic ensure reliability even under adverse network conditions
-3. **Transparency**: Comprehensive logging and monitoring allow you to understand exactly what's happening at each stage
+1. **Performance First**: Every component is optimized for speed, from HTTP/2 multiplexing to orjson parsing to categorical data types.
+2. **Resilience**: Multi-tier caching, circuit breakers, and retry logic ensure reliability even under adverse network conditions.
+3. **Transparency**: Logging and monitoring show what happens at each stage.
 
 ### High-Level Architecture Diagram
 
@@ -142,11 +142,11 @@ graph TD
 
 ## Complete Data Loading Pipeline
 
-The data loading pipeline consists of eight distinct stages, each with specific responsibilities and performance characteristics. Understanding each stage helps you optimize your code and troubleshoot issues effectively.
+The data loading pipeline consists of eight distinct stages. Each stage has specific responsibilities and performance characteristics. These details help with code optimization and troubleshooting.
 
 ### Stage 1: Request Initiation
 
-When you access data through a Session object, tif1 initiates the loading pipeline. This stage involves property access, lazy evaluation, and request routing.
+When code accesses data through a Session object, tif1 initiates the loading pipeline. This stage involves property access, lazy evaluation, and request routing.
 
 ```python
 import tif1
@@ -198,7 +198,7 @@ session = tif1.get_session(2025, "Monaco", "Race", lib="pandas")  # Use pandas (
 
 ### Stage 2: Multi-Tier Cache Lookup
 
-tif1 implements a sophisticated two-tier caching system that dramatically reduces load times for frequently accessed data. Understanding cache behavior is crucial for performance optimization.
+tif1 implements a two-tier caching system that reduces load times for frequently accessed data. This section explains the cache behavior needed for performance optimization.
 
 #### Tier 1: Memory LRU Cache (L1 Cache)
 
@@ -429,7 +429,7 @@ session = tif1.get_session(2025, "Monaco", "Race", force_refresh=True)
 
 ### Stage 3: CDN Fetching with Fallback Strategy
 
-When data isn't found in either cache tier, tif1 fetches from the CDN using a sophisticated multi-source strategy with automatic fallback.
+When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a multi-source strategy with automatic fallback.
 
 #### CDN Architecture
 
@@ -459,7 +459,7 @@ When data isn't found in either cache tier, tif1 fetches from the CDN using a so
 
 **Forbidden Source: raw.githubusercontent.com**
 - Never used due to strict rate limits (10 requests/hour)
-- Will cause `NetworkError` if all other sources fail
+- Causes `NetworkError` when all other sources fail
 
 #### URL Construction
 
@@ -544,8 +544,8 @@ tif1 implements a circuit breaker to prevent cascading failures during network i
    - Threshold: 5 consecutive failures
 
 2. **OPEN (Failing)**
-   - Requests fail immediately without attempting network call
-   - Prevents overwhelming failing service
+   - Requests fail immediately, without a network call
+   - Prevents overload of the failing service
    - Duration: 60 seconds
 
 3. **HALF_OPEN (Testing Recovery)**
@@ -639,7 +639,7 @@ async with http_client.get(url, timeout=TIMEOUTS) as response:
 
 ### Stage 4: Async Parallel Fetching
 
-One of tif1's most significant performance optimizations is parallel fetching of data for multiple drivers using asyncio and HTTP/2.
+tif1 fetches data for multiple drivers in parallel with asyncio and HTTP/2. This parallel fetching is one of the most important tif1 performance optimizations.
 
 #### Sequential vs Parallel Fetching
 
@@ -686,7 +686,7 @@ async def fetch_all_drivers(drivers):
 
 #### HTTP/2 Multiplexing
 
-tif1 uses `niquests` library which supports HTTP/2, enabling true request multiplexing over a single TCP connection.
+tif1 uses the `niquests` library. `niquests` supports HTTP/2 and multiplexes requests over a single TCP connection.
 
 **HTTP/1.1 Limitations:**
 - One request per TCP connection
@@ -857,7 +857,7 @@ print(f"Speedup: {speedup:.1f}x faster")
 
 ### Stage 5: High-Performance JSON Parsing
 
-After fetching raw data from the CDN, tif1 parses JSON using `orjson`, a high-performance JSON library that's 2-3x faster than Python's standard `json` module.
+After the CDN fetch, tif1 parses JSON with `orjson`. This library parses 2-3x faster than the standard Python `json` module.
 
 #### Why orjson?
 
@@ -1299,7 +1299,7 @@ def optimize_dtypes_polars(df):
 
 #### Column Ordering
 
-Columns are ordered logically for better readability:
+tif1 orders columns logically for better readability:
 
 ```python
 COLUMN_ORDER = [
@@ -1728,7 +1728,7 @@ def detect_corners(tel_df, speed_threshold=200):
 | Lap data | 4 MB | 7 MB | +75% |
 | Telemetry | 18 MB | 25 MB | +39% |
 
-The memory increase is acceptable given the significant analytical value added by enrichment.
+The memory increase is acceptable because enrichment adds analytical value.
 
 ### Stage 8: Cache Storage and Finalization
 
@@ -2040,9 +2040,11 @@ def finalize_and_return(df, session_info):
 **Speedup Summary:**
 - Warm vs Cold: **93x faster** (31ms vs 2868ms)
 - Hot vs Cold: **2868x faster** (< 1ms vs 2868ms)
-- Hot vs Warm: **31x faster** (< 1ms vs 31ms) ## Data Transformation Through the Pipeline
+- Hot vs Warm: **31x faster** (< 1ms vs 31ms)
 
-Understanding how data transforms at each stage helps you debug issues and optimize performance.
+## Data Transformation Through the Pipeline
+
+This section follows data through each transformation stage. The details help with debugging and performance optimization.
 
 ### Stage-by-Stage Data Evolution
 
@@ -2297,7 +2299,7 @@ Polars consistently uses ~50% less memory than pandas for the same data.
 
 ## Advanced Performance Optimizations
 
-tif1 implements numerous performance optimizations throughout the data pipeline. Understanding these optimizations helps you write faster code and make informed architectural decisions.
+tif1 implements many performance optimizations throughout the data pipeline. This section explains them for faster code and better architectural decisions.
 
 ### 1. HTTP/2 Multiplexing and Connection Reuse
 
@@ -2371,7 +2373,7 @@ async def fetch_all_drivers(drivers):
 
 ### 2. Lazy Loading and On-Demand Data Fetching
 
-Lazy loading ensures data is only fetched when actually needed, reducing unnecessary network I/O and memory usage.
+Lazy loading fetches data only when the code needs it. This reduces unnecessary network I/O and memory usage.
 
 #### Implementation
 
@@ -2430,7 +2432,7 @@ weather = session.weather  # 200ms
 
 ### 3. Categorical Data Type Optimization
 
-Converting string columns to categoricals provides massive memory savings and faster operations.
+Converting string columns to categoricals gives large memory savings and faster operations.
 
 #### Memory Comparison
 
@@ -2499,7 +2501,7 @@ CATEGORICAL_COLUMNS = [
 
 ### 4. Backend Selection: Pandas vs Polars
 
-Choose the right backend for your use case to maximize performance.
+Select the backend that matches the workload to maximize performance.
 
 #### Performance Benchmarks
 
@@ -2527,19 +2529,19 @@ Choose the right backend for your use case to maximize performance.
 #### When to Use Each Backend
 
 **Use Pandas When:**
-- You need compatibility with existing pandas code
-- You're using libraries that require pandas (matplotlib, seaborn, etc.)
-- You need mutable DataFrames (in-place operations)
+- Compatibility with existing pandas code is required
+- A library requires pandas (matplotlib, seaborn, and others)
+- Mutable DataFrames are required (in-place operations)
 - Dataset is small (&lt;10k rows)
-- You need the full pandas ecosystem
+- The complete pandas ecosystem is required
 
 **Use Polars When:**
 - Performance is critical
-- Working with large datasets (>100k rows)
+- The datasets are large (>100k rows)
 - Memory is constrained
-- You need lazy evaluation
-- You want type safety and better error messages
-- You're starting a new project
+- Lazy evaluation is required
+- Type safety and better error messages are preferred
+- The project is new
 
 #### Switching Backends
 
@@ -2564,7 +2566,7 @@ laps_pandas = laps_polars.to_pandas()
 
 ### 5. Async Parallel Fetching
 
-Async fetching is one of tif1's most significant performance optimizations.
+Async fetching is one of the most important tif1 performance optimizations.
 
 #### Sequential vs Parallel Comparison
 
@@ -2755,7 +2757,7 @@ telemetries = session.get_fastest_laps_telemetry(by_driver=True)
 
 ## Comprehensive Error Handling
 
-tif1 implements a robust error handling system with a hierarchical exception structure, detailed error context, and recovery strategies.
+tif1 implements an error handling system with a hierarchical exception structure, detailed error context, and recovery strategies.
 
 ### Exception Hierarchy
 
@@ -2871,7 +2873,7 @@ except tif1.CDNError as e:
 
 ### Data Not Found Errors
 
-These errors occur when requested data doesn't exist.
+These errors occur when the requested data does not exist.
 
 #### DataNotFoundError (Base)
 
@@ -3119,7 +3121,7 @@ def load_with_degradation(year, event, session_type):
 
 ### Error Context and Debugging
 
-All tif1 exceptions include rich context for debugging.
+All tif1 exceptions include detailed context for debugging.
 
 ```python
 try:
@@ -3145,7 +3147,7 @@ except tif1.TIF1Error as e:
 
 ## Monitoring and Observability
 
-tif1 provides comprehensive monitoring capabilities to help you understand system behavior, diagnose issues, and optimize performance.
+tif1 provides monitoring capabilities for understanding system behavior, diagnosing issues, and optimizing performance.
 
 ### Logging System
 
@@ -3581,7 +3583,7 @@ dashboard.print_dashboard()
 
 ## Data Flow Patterns and Scenarios
 
-Understanding common data flow patterns helps you optimize your code for different use cases.
+Common data flow patterns help with code optimization for different use cases.
 
 ### Pattern 1: Cold Start (First Load)
 
@@ -3691,7 +3693,7 @@ Return DataFrame
 
 **Optimization Tips:**
 - Reuse session objects to maximize memory cache hits
-- Increase memory cache size if you have available RAM
+- Increase the memory cache size when RAM is available
 - Keep frequently accessed data in memory
 
 ### Pattern 4: Partial Cache Hit
@@ -3761,11 +3763,11 @@ Return DataFrame
 
 **Total Time:** ~34 seconds (with failures)
 **Breakdown:**
-- Attempt 1: 30s (timeout)
+- Try 1: 30s (timeout)
 - Backoff 1: 1s
-- Attempt 2: 500ms (fast fail)
+- Try 2: 500ms (fast fail)
 - Backoff 2: 2s
-- Attempt 3: 500ms (success)
+- Try 3: 500ms (success)
 - Processing: 370ms
 
 **Optimization Tips:**
@@ -3863,7 +3865,7 @@ warm_cache_background(2025)
 
 ## Advanced Optimization Strategies
 
-These strategies help you achieve maximum performance in production environments.
+These strategies achieve maximum performance in production environments.
 
 ### Strategy 1: Intelligent Cache Pre-warming
 
@@ -3956,7 +3958,7 @@ adaptive_timeout.record_request(response.elapsed.total_seconds())
 
 ### Strategy 3: Selective Data Loading
 
-Load only the data you need.
+Load only the required data.
 
 ```python
 # Bad: Load everything (slow, high memory)
@@ -4074,7 +4076,7 @@ result_polars = (
 
 ### Strategy 7: Connection Pooling Optimization
 
-Optimize HTTP connection pooling for your workload.
+Optimize HTTP connection pooling for the workload.
 
 ```python
 import niquests
@@ -4246,14 +4248,14 @@ profiler.print_report()
 
 ## Comprehensive Summary
 
-tif1's data flow architecture is designed from the ground up for maximum performance, reliability, and developer experience. This section summarizes the key concepts and provides actionable recommendations.
+The tif1 data flow architecture targets maximum performance, reliability, and developer experience. This section summarizes the key concepts and gives actionable recommendations.
 
 ### Architecture Principles
 
 **1. Performance First**
 - Every component optimized for speed
 - Multi-tier caching reduces latency by 2800x
-- HTTP/2 multiplexing enables true parallel fetching
+- HTTP/2 multiplexing enables parallel fetching
 - orjson provides 3x faster JSON parsing
 - Categorical types reduce memory by 90%
 - Polars backend offers 4x faster operations
@@ -4268,7 +4270,7 @@ tif1's data flow architecture is designed from the ground up for maximum perform
 **3. Developer Experience**
 - Lazy loading minimizes unnecessary work
 - Intuitive API with sensible defaults
-- Rich logging and monitoring capabilities
+- Detailed logging and monitoring capabilities
 - Detailed error messages with recovery suggestions
 - Flexible backend selection (pandas/polars)
 
@@ -4476,7 +4478,7 @@ except tif1.NetworkError as e:
 
 ### Future Enhancements
 
-tif1's data flow architecture is designed to evolve. Planned enhancements include:
+The tif1 data flow architecture is designed to evolve. Planned enhancements include:
 
 **Short Term:**
 - Streaming data support for live sessions
@@ -4494,7 +4496,7 @@ tif1's data flow architecture is designed to evolve. Planned enhancements includ
 
 ### Conclusion
 
-tif1's data flow architecture represents a comprehensive approach to high-performance data loading and processing. By understanding the eight-stage pipeline, leveraging multi-tier caching, utilizing async parallel fetching, and following best practices, you can achieve:
+The tif1 data flow architecture takes a complete approach to high-performance data loading and processing. Combine the eight-stage pipeline, multi-tier caching, async parallel fetching, and these best practices to get:
 
 - **93-2800x faster** data access through caching
 - **17x faster** multi-driver operations through parallelization
@@ -4502,9 +4504,9 @@ tif1's data flow architecture represents a comprehensive approach to high-perfor
 - **4x faster** operations through Polars backend
 - **99%+ reliability** through error handling and circuit breakers
 
-The architecture is designed to be transparent, observable, and tunable. Whether you're building a simple analysis script or a production data pipeline, tif1 provides the performance and reliability you need.
+The architecture is transparent, observable, and tunable. For a simple analysis script or a production data pipeline, tif1 provides the needed performance and reliability.
 
-For questions, issues, or contributions, visit the [GitHub repository](https://github.com/TracingInsights/tif1) or join our [community discussions](https://github.com/TracingInsights/tif1/discussions).
+For questions, issues, or contributions, visit the [GitHub repository](https://github.com/TracingInsights/tif1) or join the [community discussions](https://github.com/TracingInsights/tif1/discussions).
 
 ---
 
@@ -4512,22 +4514,22 @@ For questions, issues, or contributions, visit the [GitHub repository](https://g
 
 <CardGroup cols={2}>
   <Card title="Caching Strategy" href="/concepts/caching-strategy">
-    Deep dive into multi-tier caching system
+    The multi-tier caching system.
   </Card>
   <Card title="Backends" href="/concepts/backends">
-    Pandas vs Polars comparison and selection guide
+    Pandas vs Polars comparison and selection guide.
   </Card>
   <Card title="Sessions" href="/concepts/sessions">
-    Session management and data loading
+    Session management and data loading.
   </Card>
   <Card title="HTTP API" href="/api-reference/http">
-    HTTP client and network operations
+    HTTP client and network operations.
   </Card>
   <Card title="Utilities" href="/api-reference/utilities">
-    Helper functions and utilities
+    Helper functions and utilities.
   </Card>
   <Card title="CLI" href="/concepts/cli">
-    Command-line interface for data management
+    Command-line interface for data management.
   </Card>
 </CardGroup>
 

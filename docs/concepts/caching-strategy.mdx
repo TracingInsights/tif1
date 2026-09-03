@@ -1,7 +1,7 @@
 ---
 title: "Caching Strategy"
 icon: "database"
-description: "Deep dive into tif1's sophisticated multi-layer caching architecture for optimal performance"
+description: "Describes the tif1 multi-layer cache: memory cache, SQLite cache, and CDN fetch, plus configuration, warming, and maintenance"
 keywords:
   - "caching strategy"
   - "cache architecture"
@@ -15,19 +15,19 @@ keywords:
 
 ## Overview
 
-`tif1` implements a sophisticated, production-grade multi-layer caching system designed to minimize network requests, reduce latency, and maximize data access performance. The caching architecture is built on the principle of **locality of reference** and employs multiple storage tiers to balance speed, capacity, and persistence.
+`tif1` implements a multi-layer caching system designed to minimize network requests, reduce latency, and maximize data access performance. The caching architecture follows the principle of **locality of reference**. Multiple storage tiers balance speed, capacity, and persistence.
 
-The caching system is critical to `tif1`'s performance characteristics. Without caching, every data access would require a network round-trip to the CDN, introducing latency of 500ms-3s per request. With the multi-layer cache, subsequent accesses can be served in microseconds from memory or milliseconds from disk, representing a **1000-10000x performance improvement** for cached data.
+The caching system is critical to the performance of `tif1`. Without caching, every data access requires a network round-trip to the CDN, which introduces latency of 500ms-3s per request. The multi-layer cache serves subsequent accesses from memory in microseconds or from disk in milliseconds. This is a **1000-10000x performance improvement** for cached data.
 
-### Why Multi-Layer Caching?
+### Reasons for Multi-Layer Caching
 
 The multi-layer approach provides several key advantages:
 
 1. **Speed Hierarchy**: Different storage tiers offer different speed/capacity tradeoffs. Memory is fastest but limited; disk is slower but abundant.
 2. **Persistence**: In-memory caches are lost on process restart, while disk caches survive across sessions.
-3. **Sharing**: Process-local memory caches can't be shared, while disk caches enable multi-process coordination.
+3. **Sharing**: Process-local memory caches cannot be shared, while disk caches enable multi-process coordination.
 4. **Graceful Degradation**: If one cache layer fails, the system falls back to the next layer automatically.
-5. **Optimal Resource Usage**: Hot data stays in fast memory; warm data lives on disk; cold data is fetched on-demand.
+5. **Optimal Resource Usage**: Hot data stays in fast memory. Warm data stays on disk. `tif1` fetches cold data on demand.
 
 ### Performance Impact
 
@@ -38,11 +38,11 @@ Real-world performance improvements with caching enabled:
 - **Third access (hot cache)**: &lt;1ms (memory read)
 - **Overall speedup**: 100-3000x for cached data
 
-For a typical analysis session accessing 5-10 race sessions with multiple data types, caching reduces total load time from **30-60 seconds to under 1 second**.
+A typical analysis session accesses 5-10 race sessions with multiple data types. Caching reduces the total load time for these sessions from **30-60 seconds to under 1 second**.
 
 ## Cache Architecture
 
-The `tif1` caching system consists of two primary layers working in concert, with an optional third layer for distributed deployments. Each layer serves a specific purpose in the performance hierarchy.
+The `tif1` caching system consists of two primary layers that work together, with an optional third layer for distributed deployments. Each layer serves a specific purpose in the performance hierarchy.
 
 ```mermaid
 graph TD
@@ -62,9 +62,9 @@ graph TD
     style G fill:#FF6B6B
 ```
 
-### Cache Flow Detailed Explanation
+### Cache Flow in Detail
 
-When you request data (e.g., `session.laps`), the system follows this precise flow:
+When `tif1` receives a data request (for example, `session.laps`), the system follows this flow:
 
 1. **Memory Cache Lookup** (Layer 1)
    - Check if data exists in the in-process LRU cache
@@ -101,7 +101,7 @@ When you request data (e.g., `session.laps`), the system follows this precise fl
 
 ## Layer 1: Memory Cache (LRU)
 
-The first and fastest cache layer is an in-memory LRU (Least Recently Used) cache implemented using Python's `functools.lru_cache` decorator with custom enhancements. This cache stores recently accessed DataFrames and metadata objects directly in process memory.
+The first and fastest cache layer is an in-memory LRU (Least Recently Used) cache. It extends the Python `functools.lru_cache` decorator with custom enhancements. This cache stores recently accessed DataFrames and metadata objects directly in process memory.
 
 ### Architecture & Implementation
 
@@ -110,7 +110,7 @@ The memory cache uses a **doubly-linked list** combined with a **hash map** for 
 - **Hash Map**: Provides constant-time lookups by cache key
 - **Doubly-Linked List**: Maintains access order for LRU eviction
 - **Thread-Safe**: Uses locks to ensure thread-safe access in multi-threaded environments
-- **Automatic Eviction**: When capacity is reached, least recently used items are evicted automatically
+   - **Automatic Eviction**: When the cache reaches capacity, it evicts the least recently used items automatically
 
 ### Characteristics
 
@@ -156,7 +156,7 @@ export TIF1_MEMORY_CACHE_LAPS_SIZE=100
 export TIF1_MEMORY_CACHE_TELEMETRY_SIZE=50
 ```
 
-### What Gets Cached
+### Cached Data Types
 
 The memory cache stores the following data types:
 
@@ -188,7 +188,7 @@ The memory cache stores the following data types:
 
 ### Cache Key Generation
 
-Cache keys are deterministically generated from request parameters to ensure consistency:
+`tif1` generates cache keys deterministically from request parameters to ensure consistency:
 
 ```python
 # Key format: {year}_{event}_{session_type}_{data_type}_{backend}
@@ -295,7 +295,7 @@ Memory overhead per cached item:
 
 <AccordionGroup>
   <Accordion title="Size Configuration">
-    Set memory cache size based on your workload:
+    Set the memory cache size to match the workload:
 
     - **Interactive analysis**: 100-200 items (default)
     - **Batch processing**: 50-100 items (lower memory footprint)
@@ -306,14 +306,14 @@ Memory overhead per cached item:
   <Accordion title="Multi-Process Considerations">
     Each process has its own memory cache:
 
-    - **Separate caches**: Processes don't share memory cache
+    - **Separate caches**: Processes do not share the memory cache
     - **SQLite coordination**: Use SQLite cache for cross-process sharing
     - **Warm-up**: Each process should warm its own cache
     - **Memory multiplication**: Total memory = cache_size × num_processes
   </Accordion>
 
   <Accordion title="Memory Pressure">
-    Handle memory pressure gracefully:
+    Handle memory pressure:
 
     - Monitor system memory usage
     - Reduce cache size if memory is constrained
@@ -324,11 +324,11 @@ Memory overhead per cached item:
 
 ## Layer 2: SQLite Persistent Cache
 
-The second cache layer is a SQLite database that provides persistent, disk-based storage for cached data. This layer bridges the gap between fast but volatile memory cache and slow but reliable network fetches.
+The second cache layer is a SQLite database that provides persistent, disk-based storage for cached data. This layer is positioned between the fast but volatile memory cache and the slow but reliable network fetches.
 
 ### Architecture & Implementation
 
-The SQLite cache is implemented as a single-file database with optimized schema and indexes:
+The SQLite cache is a single-file database with an optimized schema and indexes:
 
 - **Storage Format**: Single SQLite database file with BLOB storage
 - **Compression**: Zstandard (zstd) compression for 60-80% size reduction
@@ -351,7 +351,7 @@ The SQLite cache is implemented as a single-file database with optimized schema 
 
 ### Cache Location & Configuration
 
-Default cache location follows FastF1's platform layout, using `tif1` as the application directory:
+The default cache location follows the FastF1 platform layout, using `tif1` as the application directory:
 
 - **Windows**: `%LOCALAPPDATA%/Temp/tif1`
 - **macOS**: `~/Library/Caches/tif1`
@@ -472,7 +472,7 @@ Data is stored using a multi-step pipeline optimized for space and speed:
 
 3. **Store in SQLite BLOB**
    - Insert compressed bytes into SQLite BLOB column
-   - Atomic transaction ensures data integrity
+   - An atomic transaction ensures data integrity
    - Update metadata (timestamps, size, access count)
    - Time: ~5-30ms depending on disk speed
 
@@ -669,7 +669,7 @@ with ThreadPoolExecutor(max_workers=4) as executor:
 **Concurrency characteristics:**
 - **Multiple readers**: Unlimited concurrent reads (no blocking)
 - **Single writer**: Writes are serialized (SQLite limitation)
-- **Read-write**: Readers don't block writers in WAL mode
+- **Read-write**: Readers do not block writers in WAL mode
 - **Deadlock prevention**: Automatic retry with exponential backoff
 - **Lock timeout**: 30 seconds default (configurable)
 
@@ -712,13 +712,13 @@ Performance impact of compression levels:
 
 <AccordionGroup>
   <Accordion title="Cache Location">
-    Choose cache location based on your deployment:
+    Choose the cache location for the deployment:
 
-    - **Local development**: Use tif1's OS-dependent default cache directory
-    - **Shared server**: Use shared directory (e.g., `/shared/cache/tif1/`)
-    - **Docker**: Mount volume for persistence
+    - **Local development**: Use the tif1 OS-dependent default cache directory
+    - **Shared server**: Use a shared directory (for example, `/shared/cache/tif1/`)
+    - **Docker**: Mount a volume for persistence
     - **Cloud**: Use fast SSD storage (not network drives)
-    - **CI/CD**: Use temporary directory, clear after tests
+    - **CI/CD**: Use a temporary directory and clear it after tests
   </Accordion>
 
   <Accordion title="Disk Space Management">
@@ -737,16 +737,16 @@ Performance impact of compression levels:
     - Use shared cache directory
     - Enable WAL mode (default)
     - Set appropriate lock timeout
-    - Handle lock timeout errors gracefully
+    - Handle lock timeout errors
     - Consider process-specific memory caches
   </Accordion>
 
   <Accordion title="Backup & Recovery">
     Protect cache data:
 
-    - Backup cache database periodically
+    - Back up the cache database periodically
     - Test cache restoration
-    - Handle corruption gracefully (auto-rebuild)
+    - Rely on automatic rebuild after corruption
     - Use checksums for integrity verification
     - Keep cache separate from application data
   </Accordion>
@@ -754,11 +754,11 @@ Performance impact of compression levels:
 
 ## Cache Operations & Workflows
 
-Understanding how to effectively use the cache system is crucial for optimal performance. This section covers common operations, workflows, and patterns.
+Correct use of the cache system is necessary for optimal performance. This section covers common operations, workflows, and patterns.
 
 ### Reading from Cache
 
-The cache system operates transparently - you don't need to explicitly check or manage cache hits/misses. The system automatically handles the cache hierarchy:
+The cache system operates transparently. Applications do not check or manage cache hits and cache misses explicitly. The system handles the cache hierarchy automatically:
 
 ```python
 import tif1
@@ -969,7 +969,7 @@ if exists:
 
 ## Cache Invalidation Strategies
 
-Cache invalidation is one of the hardest problems in computer science. `tif1` provides multiple strategies to ensure cache freshness while maintaining performance.
+Cache invalidation is a difficult problem in computer science. `tif1` provides multiple strategies to ensure cache freshness while maintaining performance.
 
 ### Manual Invalidation
 
@@ -1015,7 +1015,7 @@ The cache system automatically invalidates entries in several scenarios:
 
 #### 1. Schema Version Changes
 
-When the data structure changes (e.g., new columns added), old cache entries are automatically invalidated:
+When the data structure changes (for example, new columns), the cache system invalidates old entries automatically:
 
 ```python
 # Cache entry includes schema version
@@ -1032,7 +1032,7 @@ When the data structure changes (e.g., new columns added), old cache entries are
 
 #### 2. CDN Freshness Checks
 
-The cache system can check CDN for data updates using HTTP headers:
+The cache system can check the CDN for data updates with HTTP headers:
 
 ```python
 import tif1
@@ -1055,7 +1055,7 @@ config.cache_freshness_interval = 3600  # Check every hour
 
 #### 3. Corruption Detection
 
-Corrupted cache entries are automatically detected and removed:
+The cache system detects and removes corrupted entries automatically:
 
 ```python
 # Corruption detection happens when:
@@ -1218,7 +1218,7 @@ if not compatible:
     - **When data is updated**: New race results available
     - **On corruption**: Detected errors in cached data
     - **For debugging**: Testing data pipeline changes
-    - **Periodic cleanup**: Remove old/unused entries
+    - **Periodic cleanup**: Remove old or unused entries
     - **Before critical operations**: Ensure fresh data
   </Accordion>
 
@@ -1238,7 +1238,7 @@ if not compatible:
 
     - **Frequent invalidation**: Fresh data, slower performance
     - **Rare invalidation**: Fast performance, stale data risk
-    - **Selective invalidation**: Best of both worlds
+    - **Selective invalidation**: Balances freshness and performance
     - **Freshness checks**: Add latency but ensure accuracy
     - **TTL**: Good balance for most use cases
   </Accordion>
@@ -1256,15 +1256,15 @@ if not compatible:
 
 ## Cache Warming Strategies
 
-Cache warming is the process of pre-populating the cache with data before it's needed. This eliminates cold-start latency and ensures optimal performance from the first request.
+Cache warming pre-populates the cache with data before the data is needed. Warming eliminates cold-start latency and ensures optimal performance from the first request.
 
-### Why Warm the Cache?
+### Benefits of Cache Warming
 
 Cache warming provides several benefits:
 
 1. **Eliminate Cold Start**: First requests are as fast as subsequent ones
 2. **Predictable Performance**: No sudden latency spikes from cache misses
-3. **Better User Experience**: Dashboards and applications load instantly
+3. **Better User Experience**: Dashboards and applications load without cold-start delay
 4. **Reduced CDN Load**: Batch fetching is more efficient than on-demand
 5. **Offline Capability**: Pre-cached data works without network access
 
@@ -1613,7 +1613,7 @@ asyncio.run(parallel_warm_season(2025, max_workers=10))
 
 ### Smart Cache Warming
 
-Intelligently warm cache based on usage patterns:
+Warm the cache based on usage patterns:
 
 ```python
 import tif1
@@ -1668,10 +1668,10 @@ smart_warm_cache(min_access_count=5)
     Optimal times for cache warming:
 
     - **Before race weekend**: Warm upcoming event data
-    - **Off-peak hours**: Minimize CDN load (e.g., 2-4 AM)
+    - **Off-peak hours**: Minimize the CDN load (for example, 2-4 AM)
     - **After data updates**: When new race results are available
     - **Application startup**: For dashboards and services
-    - **Before analysis**: Pre-warm data you'll need
+    - **Before analysis**: Pre-warm the data needed for the analysis
     - **Periodic refresh**: Weekly or monthly for historical data
   </Accordion>
 
@@ -1681,7 +1681,7 @@ smart_warm_cache(min_access_count=5)
     - **Hot data**: Current season, recent races
     - **Frequently accessed**: Popular events (Monaco, Silverstone)
     - **Critical data**: Race results, qualifying times
-    - **User-specific**: Data for favorite drivers/teams
+    - **User-specific**: Data for favorite drivers or teams
     - **Predictable access**: Upcoming race weekends
     - **Complete sessions**: All data types for consistency
   </Accordion>
@@ -1691,9 +1691,9 @@ smart_warm_cache(min_access_count=5)
 
     - **Full warming**: All data for all sessions (slow, complete)
     - **Selective warming**: Specific events or data types (fast, targeted)
-    - **Incremental warming**: Warm as needed (balanced)
+    - **Incremental warming**: Warm the data when it is needed (balanced)
     - **Parallel warming**: Multiple sessions at once (fastest)
-    - **Scheduled warming**: Automatic periodic warming (hands-off)
+    - **Scheduled warming**: Periodic warming without manual work
     - **Smart warming**: Based on access patterns (efficient)
   </Accordion>
 
@@ -1701,7 +1701,7 @@ smart_warm_cache(min_access_count=5)
     Optimize warming performance:
 
     - **Parallel execution**: Use async/await or threading
-    - **Rate limiting**: Don't overwhelm CDN (max 10-20 concurrent)
+    - **Rate limiting**: Do not overwhelm the CDN (max 10-20 concurrent)
     - **Error handling**: Continue on failures, log errors
     - **Progress tracking**: Monitor warming progress
     - **Resource limits**: Consider memory and disk space
@@ -1711,18 +1711,18 @@ smart_warm_cache(min_access_count=5)
   <Accordion title="Monitoring Warming">
     Track warming effectiveness:
 
-    - **Warming time**: How long does it take?
-    - **Success rate**: How many sessions succeed?
-    - **Cache hit rate**: Does warming improve hit rate?
-    - **Storage usage**: How much disk space used?
-    - **CDN requests**: How many requests made?
-    - **Error patterns**: Which sessions fail consistently?
+    - **Warming time**: Measure the total warming time
+    - **Success rate**: Count the sessions that succeed
+    - **Cache hit rate**: Check whether warming improves the hit rate
+    - **Storage usage**: Measure the disk space used
+    - **CDN requests**: Count the requests made to the CDN
+    - **Error patterns**: Find the sessions that fail consistently
   </Accordion>
 </AccordionGroup>
 
 ## Cache Performance Analysis
 
-Understanding cache performance is crucial for optimization. This section provides detailed performance metrics, benchmarks, and analysis techniques.
+Cache performance analysis guides optimization. This section provides detailed performance metrics, benchmarks, and analysis techniques.
 
 ### Benchmark Results
 
@@ -1842,7 +1842,7 @@ print(f"{seasons} seasons: {total_mb / 1024:.1f} GB")
 
 ### Performance Profiling
 
-Profile cache performance in your application:
+Profile cache performance in the application:
 
 ```python
 import tif1
@@ -1935,11 +1935,11 @@ print(f"Ratio: {len(parquet_bytes) / len(compressed):.1f}:1")
     - **Use parallel fetching**: Fetch multiple sessions at once
     - **Enable retry logic**: Handle transient failures
     - **Monitor CDN performance**: Track fetch times
-    - **Use CDN geographically close**: Reduce latency
+    - **Use a nearby CDN**: Reduces latency
   </Accordion>
 
   <Accordion title="Application-Level Optimization">
-    Optimize cache usage in your application:
+    Optimize cache usage in the application:
 
     - **Batch requests**: Fetch multiple sessions together
     - **Reuse session objects**: Avoid redundant fetches
@@ -2680,7 +2680,7 @@ spec:
 
 ### Read-Only Cache
 
-For read-only deployments (e.g., serverless, immutable infrastructure):
+For read-only deployments (for example, serverless and immutable infrastructure):
 
 ```python
 import tif1
@@ -2981,7 +2981,7 @@ Common cache problems and their solutions.
 
 ### Cache Corruption
 
-If you encounter cache errors or corrupted data:
+If cache errors or corrupted data occur:
 
 ```python
 import tif1
@@ -3020,7 +3020,7 @@ if result['integrity_pct'] < 50:
 
 ### Cache Not Working
 
-If cache doesn't seem to be working:
+If the cache does not work as expected:
 
 ```python
 import tif1
@@ -3091,7 +3091,7 @@ except Exception as e:
 
 ### Performance Issues
 
-If cache is slow:
+If the cache is slow:
 
 ```python
 import tif1
@@ -3179,7 +3179,7 @@ print("  cache.optimize()         # Optimize database")
 
 ### Memory Issues
 
-If experiencing memory problems:
+If memory problems occur:
 
 ```python
 import tif1
@@ -3253,7 +3253,7 @@ print("3. Report issue to tif1 developers")
 
 ### Disk Space Issues
 
-If running out of disk space:
+If the disk runs out of space:
 
 ```python
 import tif1
@@ -3314,7 +3314,7 @@ elif disk.free / disk.total < 0.2:
 
 ### Connection Issues
 
-If experiencing SQLite connection problems:
+If SQLite connection problems occur:
 
 ```python
 import tif1
@@ -3369,7 +3369,7 @@ if os.path.exists(wal_file) or os.path.exists(shm_file):
 
 <AccordionGroup>
   <Accordion title="'database is locked'">
-    **Cause**: Another process has exclusive lock on database
+    **Cause**: Another process has an exclusive lock on the database
 
     **Solutions**:
     - Increase lock timeout: `config.cache_lock_timeout = 60`
@@ -3379,7 +3379,7 @@ if os.path.exists(wal_file) or os.path.exists(shm_file):
   </Accordion>
 
   <Accordion title="'Failed to decompress'">
-    **Cause**: Corrupted compressed data in cache
+    **Cause**: Corrupted compressed data in the cache
 
     **Solutions**:
     - Clear corrupted entry: `cache.clear_corrupted()`
@@ -3399,7 +3399,7 @@ if os.path.exists(wal_file) or os.path.exists(shm_file):
   </Accordion>
 
   <Accordion title="'Permission denied'">
-    **Cause**: Insufficient permissions on cache directory
+    **Cause**: Insufficient permissions on the cache directory
 
     **Solutions**:
     - Fix permissions on the platform-specific cache directory (for example, `chmod 700 ~/.cache/tif1` on Linux)
@@ -3468,7 +3468,7 @@ Follow these best practices for optimal cache performance and reliability.
   </Card>
 
   <Card title="Use SSD Storage" icon="hard-drive">
-    SQLite cache performs 10-100x better on SSD vs HDD. Place cache on fast storage.
+    SQLite cache performs 10-100x better on SSD vs HDD. Place the cache on fast storage.
   </Card>
 </CardGroup>
 
@@ -3487,7 +3487,7 @@ Follow these best practices for optimal cache performance and reliability.
     Daily: verify integrity, clear old entries. Weekly: vacuum, rebuild indexes. Monthly: backup.
   </Card>
 
-  <Card title="Handle Errors Gracefully" icon="shield-check">
+  <Card title="Handle Errors" icon="shield-check">
     Implement retry logic, fallback to CDN, and automatic corruption cleanup.
   </Card>
 </CardGroup>
@@ -3504,7 +3504,7 @@ Follow these best practices for optimal cache performance and reliability.
   </Card>
 
   <Card title="Reuse Session Objects" icon="recycle">
-    Avoid redundant fetches by reusing session objects. Memory cache is very fast.
+    Avoid redundant fetches by reusing session objects. Memory cache access takes under 1ms.
   </Card>
 
   <Card title="Test Cache Behavior" icon="flask">
@@ -3516,15 +3516,15 @@ Follow these best practices for optimal cache performance and reliability.
 
 <CardGroup cols={2}>
   <Card title="Use Shared Cache" icon="share-nodes">
-    Configure shared cache directory for multi-process applications to maximize hit rate.
+    Configure a shared cache directory for multi-process applications to maximize the hit rate.
   </Card>
 
   <Card title="Persistent Storage" icon="database">
-    Mount cache on persistent volumes in Docker/Kubernetes to survive restarts.
+    Mount the cache on persistent volumes in Docker or Kubernetes to survive restarts.
   </Card>
 
   <Card title="Backup Regularly" icon="floppy-disk">
-    Backup cache database periodically. Test restoration process.
+    Back up the cache database periodically. Test the restoration process.
   </Card>
 
   <Card title="Monitor & Alert" icon="bell">
@@ -3536,11 +3536,11 @@ Follow these best practices for optimal cache performance and reliability.
 
 <Steps>
   <Step title="Enable Memory Cache">
-    Ensure memory cache is enabled with appropriate size (100-500 items).
+    Ensure the memory cache is enabled with an appropriate size (100-500 items).
   </Step>
 
   <Step title="Use SSD Storage">
-    Place SQLite cache on SSD for 10-100x better performance.
+    Place the SQLite cache on an SSD for 10-100x better performance.
   </Step>
 
   <Step title="Tune SQLite Settings">
@@ -3572,7 +3572,7 @@ Follow these best practices for optimal cache performance and reliability.
 
 <AccordionGroup>
   <Accordion title="File Permissions">
-    Set appropriate permissions on cache directory:
+    Set appropriate permissions on the cache directory:
     - Owner: read/write/execute (rwx)
     - Group: read/execute (r-x)
     - Others: none (---)
@@ -3580,14 +3580,14 @@ Follow these best practices for optimal cache performance and reliability.
   </Accordion>
 
   <Accordion title="Encryption at Rest">
-    For sensitive deployments, encrypt cache:
-    - Use encrypted filesystem (LUKS, BitLocker)
-    - Or encrypt cache database with SQLCipher
+    For sensitive deployments, encrypt the cache:
+    - Use an encrypted filesystem (LUKS, BitLocker)
+    - Or encrypt the cache database with SQLCipher
     - Or use application-level encryption
   </Accordion>
 
   <Accordion title="Access Control">
-    Control who can access cache:
+    Control access to the cache:
     - Use separate cache directories per user/application
     - Set file ownership appropriately
     - Use SELinux/AppArmor for additional isolation
@@ -3603,10 +3603,10 @@ Follow these best practices for optimal cache performance and reliability.
 
 ## Conclusion
 
-The `tif1` caching system is a sophisticated, production-grade solution designed to maximize performance while maintaining data integrity and reliability. By understanding and properly configuring the multi-layer cache architecture, you can achieve:
+The `tif1` caching system is a production-grade solution. It maximizes performance and maintains data integrity and reliability. Correct configuration of the multi-layer cache architecture provides:
 
 - **100-3000x performance improvement** for cached data access
-- **Minimal network usage** through intelligent caching
+- **Minimal network usage** through the local cache tiers
 - **Predictable performance** with cache warming
 - **Scalability** through shared cache and replication
 - **Reliability** through automatic corruption detection and cleanup
@@ -3655,46 +3655,46 @@ session = tif1.get_session(2025, "Monaco", "Race")
 - **Optimize Performance**: Follow the [Best Practices Guide](/guides/best-practices) for optimization tips
 - **Deploy to Production**: See [Caching Strategy](/concepts/caching-strategy) for production best practices
 - **Monitor Cache**: Set up monitoring to track cache health
-- **Get Help**: Join our [Discord](https://discord.gg/tif1) or [GitHub Discussions](https://github.com/tracinginsights/tif1/discussions)
+- **Get Help**: Join the [Discord](https://discord.gg/tif1) or the [GitHub Discussions](https://github.com/tracinginsights/tif1/discussions)
 
 ### Additional Resources
 
 <CardGroup cols={3}>
   <Card title="Cache API" href="/api-reference/cache" icon="code">
-    Complete API reference for cache operations
+    Complete API reference for cache operations.
   </Card>
 
   <Card title="Best Practices" href="/guides/best-practices" icon="gauge-high">
-    Optimize cache for maximum performance
+    Optimize cache performance.
   </Card>
 
   <Card title="Architecture" href="/concepts/data-flow" icon="diagram-project">
-    Understand tif1 architecture and data flow
+    Understand tif1 architecture and data flow.
   </Card>
 
   <Card title="Configuration" href="/reference/environment-variables" icon="gear">
-    Configure cache for your use case
+    Configure the cache for a specific use case.
   </Card>
 
   <Card title="Error Handling" href="/guides/error-handling" icon="server">
-    Handle errors and exceptions properly
+    Handle errors and exceptions properly.
   </Card>
 
   <Card title="Troubleshooting" href="/reference/troubleshooting" icon="circle-question">
-    Solve common cache issues
+    Solve common cache issues.
   </Card>
 </CardGroup>
 
 ---
 
 <Note>
-**Performance Tip**: For the best performance, enable memory cache, use SSD storage, and warm frequently accessed data. This can provide 1000-3000x speedup compared to fetching from CDN.
+**Performance Tip**: For the best performance, enable memory cache, use SSD storage, and warm frequently accessed data. This can provide 1000-3000x speedup compared to fetching from the CDN.
 </Note>
 
 <Warning>
-**Important**: Always monitor cache size and enable automatic cleanup to prevent disk space issues. Set `cache_max_size_mb` to an appropriate limit for your environment.
+**Important**: Always monitor cache size and enable automatic cleanup to prevent disk space issues. Set `cache_max_size_mb` to an appropriate limit for the deployment environment.
 </Warning>
 
 <Info>
-**Did you know?** The tif1 cache system can store an entire F1 season (24 races, all sessions, all data types) in just ~720 MB of compressed storage, providing instant access to over 12 GB of uncompressed data.
+**Season storage**: The `tif1` cache system stores an entire F1 season in ~720 MB of compressed storage. The season covers 24 races, all sessions, and all data types. The uncompressed data occupies over 12 GB. Cached access to this data is immediate.
 </Info>

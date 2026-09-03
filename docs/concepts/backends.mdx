@@ -1,7 +1,7 @@
-﻿---
+---
 title: "Data Backends"
 icon: "layer-group"
-description: "Comprehensive guide to pandas and polars backends in tif1 - architecture, performance, API differences, and best practices"
+description: "pandas and polars backends in tif1: architecture, performance, API differences, and best practices"
 keywords:
   - "pandas backend"
   - "polars backend"
@@ -15,20 +15,20 @@ keywords:
 
 # Data Backends in tif1
 
-tif1 is built with a flexible backend architecture that supports two powerful DataFrame libraries: **pandas** (default) and **polars** (optional). This design allows you to choose the right tool for your specific use case, balancing familiarity, ecosystem compatibility, and raw performance.
+tif1 is built with a flexible backend architecture that supports two DataFrame libraries: **pandas** (default) and **polars** (optional). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
 
-The backend system is deeply integrated into tif1's core architecture. When you load session data, telemetry, or lap information, the library constructs DataFrames using your chosen backend, ensuring that all subsequent operations leverage that backend's strengths. This abstraction means you can switch backends with minimal code changes while gaining significant performance benefits.
+The backend system is integrated into the tif1 core architecture. When tif1 loads session data, telemetry, or lap data, it constructs DataFrames with the selected backend. All subsequent operations then use the strengths of that backend. This abstraction enables a backend switch with minimal code changes and a large performance gain.
 
 ## Why Multiple Backends?
 
 The Formula 1 data analysis landscape presents unique challenges:
 
-- **Volume**: A single race session can generate over 1,200 laps with telemetry sampled at 10-60Hz, resulting in millions of data points
+- **Volume**: A single race session can generate over 1,200 laps. Telemetry sampled at 10-60Hz results in millions of data points.
 - **Velocity**: Real-time analysis during sessions requires fast data processing
-- **Variety**: Different analysis tasks have different requirements - exploratory analysis benefits from pandas' rich ecosystem, while production pipelines need polars' speed
+- **Variety**: Different analysis tasks have different requirements. Exploratory analysis benefits from the pandas ecosystem, while production pipelines need polars speed.
 - **Compatibility**: Many existing tools and libraries in the Python ecosystem expect pandas DataFrames
 
-By supporting both backends, tif1 gives you the flexibility to optimize for your specific constraints without sacrificing functionality.
+By supporting both backends, tif1 allows optimization for specific constraints without loss of functionality.
 
 ---
 
@@ -68,7 +68,7 @@ graph TB
     style PL4 fill:#51cf66
 ```
 
-The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. When you call `get_session()` or access session attributes like `.laps` or `.telemetry`, tif1 internally:
+The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. When code calls `get_session()` or reads session attributes like `.laps` or `.telemetry`, tif1 runs these steps internally.
 
 1. **Fetches data** from the CDN or cache (backend-agnostic)
 2. **Parses JSON** using orjson (backend-agnostic)
@@ -76,7 +76,7 @@ The backend abstraction layer in tif1 handles the complexity of supporting multi
 4. **Applies transformations** (column renaming, type casting) using backend-specific code
 5. **Returns typed objects** with the appropriate DataFrame type
 
-This architecture ensures that backend-specific optimizations are applied at the lowest level while maintaining a consistent high-level API.
+This architecture applies backend-specific optimizations at the lowest level and keeps the high-level API consistent.
 
 ---
 
@@ -102,7 +102,7 @@ This architecture ensures that backend-specific optimizations are applied at the
 
 ## Pandas Backend (Default)
 
-Pandas is the default backend in tif1, providing maximum compatibility with the Python data science ecosystem. It's been the de facto standard for tabular data in Python since 2008, with a massive ecosystem of tools, libraries, and community knowledge.
+Pandas is the default backend in tif1 and provides maximum compatibility with the Python data science ecosystem. Pandas has been the de facto standard for tabular data in Python since 2008. Its ecosystem of tools, libraries, and community knowledge is large.
 
 ### Architecture and Design
 
@@ -118,13 +118,13 @@ Pandas is built on top of NumPy arrays and provides a rich, high-level API for d
 
 Pandas is the right choice when:
 
-- **You're learning tif1**: The pandas API is more forgiving and has extensive documentation
-- **You need ecosystem compatibility**: Libraries like matplotlib, seaborn, scikit-learn, and statsmodels expect pandas DataFrames
-- **You're doing exploratory analysis**: Pandas' rich API and Jupyter integration make it ideal for interactive work
-- **You're working with small to medium datasets**: For datasets under 1 million rows, pandas performance is typically sufficient
-- **You need the full pandas API**: Some advanced pandas features (MultiIndex, time series resampling, etc.) aren't available in polars
-- **You're integrating with existing code**: If your codebase already uses pandas, staying consistent reduces friction
-- **You value stability**: Pandas has a stable API with strong backward compatibility guarantees
+- **Learning tif1**: The pandas API is more forgiving and has extensive documentation.
+- **Ecosystem compatibility**: Libraries like matplotlib, seaborn, scikit-learn, and statsmodels expect pandas DataFrames.
+- **Exploratory analysis**: The pandas API and Jupyter integration suit interactive work.
+- **Small to medium datasets**: For datasets under 1 million rows, pandas performance is typically sufficient.
+- **The complete pandas API**: Some advanced pandas features (MultiIndex, time series resampling, etc.) are not available in polars.
+- **Integration with existing code**: When a codebase already uses pandas, staying consistent reduces friction.
+- **Stability**: Pandas has a stable API with strong backward compatibility guarantees.
 
 ### Performance Characteristics
 
@@ -134,7 +134,7 @@ Pandas performance varies significantly by operation type:
 - **Moderate operations**: String operations, groupby with multiple aggregations, merges
 - **Slow operations**: Apply with Python functions, iteration, complex string parsing
 
-For typical tif1 workloads (filtering laps, computing statistics, grouping by driver), pandas performs well up to about 10,000 laps (roughly 5-8 race sessions).
+Typical tif1 workloads include filtering laps, computing statistics, and grouping by driver. Pandas performs well on these workloads up to about 10,000 laps, roughly 5-8 race sessions.
 
 ### Example Usage
 
@@ -183,7 +183,7 @@ When using the pandas backend, tif1 provides additional functionality:
 
 ## Polars Backend (High-Performance)
 
-Polars is a blazingly fast DataFrame library written in Rust, designed from the ground up for performance and memory efficiency. It represents the next generation of DataFrame libraries, incorporating lessons learned from pandas while leveraging modern hardware capabilities.
+Polars is a fast DataFrame library written in Rust and designed for performance and memory efficiency. It incorporates lessons learned from pandas and uses modern hardware capabilities.
 
 ### Architecture and Design
 
@@ -192,7 +192,7 @@ Polars is built on Apache Arrow and uses a fundamentally different execution mod
 - **Multi-threaded execution**: Automatically parallelizes operations across all CPU cores
 - **Apache Arrow memory format**: Columnar, cache-friendly layout with zero-copy operations
 - **Query optimization**: Analyzes and optimizes query plans before execution (in lazy mode)
-- **SIMD vectorization**: Leverages CPU SIMD instructions for 4-8x faster operations
+- **SIMD vectorization**: Uses CPU SIMD instructions for 4-8x faster operations
 - **Proper null handling**: Native null support without NaN confusion
 - **Rust implementation**: Memory-safe, no GIL limitations, predictable performance
 
@@ -200,20 +200,20 @@ Polars is built on Apache Arrow and uses a fundamentally different execution mod
 
 Polars is the right choice when:
 
-- **You're processing large datasets**: For datasets over 1 million rows, polars' parallelization shines
-- **Performance is critical**: When you need maximum throughput for production pipelines
-- **Memory is constrained**: Polars uses 50-70% less memory than pandas for equivalent operations
-- **You're building data pipelines**: Lazy evaluation enables sophisticated query optimization
-- **You're doing heavy aggregations**: Groupby operations are 3-5x faster than pandas
-- **You're working with strings**: Polars has highly optimized string kernels
-- **You want predictable performance**: Rust implementation eliminates GIL and memory management issues
-- **You're comfortable with a different API**: The polars API is more explicit but requires learning
+- **Large datasets**: For datasets over 1 million rows, polars parallelization performs best.
+- **Performance is critical**: Production pipelines need maximum throughput.
+- **Memory is constrained**: Polars uses 50-70% less memory than pandas for equivalent operations.
+- **Data pipelines**: Lazy evaluation enables query optimization.
+- **Heavy aggregations**: Groupby operations run 3-5x faster than pandas.
+- **String work**: Polars has highly optimized string kernels.
+- **Predictable performance**: The Rust implementation eliminates GIL and memory management issues.
+- **A different API**: The polars API is more explicit but requires learning.
 
 ### Performance Characteristics
 
-Polars excels across the board but shows particular strength in:
+Polars performs well in every operation type and shows the largest gains in these areas:
 
-- **Exceptional operations**: Groupby aggregations, joins, sorting, filtering large datasets
+- **Fastest operations**: Groupby aggregations, joins, sorting, filtering large datasets
 - **Strong operations**: String operations, window functions, complex expressions
 - **Good operations**: Simple selections, arithmetic, type conversions
 
@@ -293,7 +293,7 @@ laps_with_rolling = laps.with_columns([
 
 ### Polars-Specific Features in tif1
 
-When using the polars backend, tif1 leverages polars' unique capabilities:
+When using the polars backend, tif1 uses these polars capabilities:
 
 - **Lazy evaluation**: Use `backend="polars"` with `lazy=True` for query optimization
 - **Parallel execution**: All operations automatically use available CPU cores
@@ -305,7 +305,7 @@ When using the polars backend, tif1 leverages polars' unique capabilities:
 
 ## Detailed Performance Comparison
 
-Performance varies significantly based on operation type, data size, and hardware. The following benchmarks were conducted on a modern 8-core CPU with a full race session dataset.
+Performance varies by operation type, data size, and hardware. The benchmarks below were measured on a modern 8-core CPU with a full race session dataset.
 
 ### Benchmark Methodology
 
@@ -349,7 +349,7 @@ Performance varies significantly based on operation type, data size, and hardwar
 | Peak during groupby | 680MB | 310MB | **2.2x** | Less intermediate copies |
 
 <Note>
-  Benchmarks are representative but will vary based on your hardware, data characteristics, and specific operations. Always profile your own workloads.
+  Benchmarks are representative but vary with hardware, data characteristics, and specific operations. Always profile the actual workloads.
 </Note>
 
 ### Real-World Use Case Benchmarks
@@ -419,7 +419,7 @@ How performance scales with data size:
 
 ## Comprehensive API Differences
 
-While tif1 abstracts many differences, understanding the API variations helps you write idiomatic code for each backend. This section provides a detailed comparison of common operations.
+While tif1 abstracts many differences, the API variations still matter for idiomatic code in each backend. This section compares common operations.
 
 ### Data Selection and Filtering
 
@@ -871,7 +871,7 @@ laps = laps.with_columns([
 
 ## Converting Between Backends
 
-tif1 makes it easy to convert DataFrames between backends, allowing you to leverage the strengths of each library in different parts of your workflow.
+tif1 converts DataFrames between backends. This lets different parts of a workflow use the strengths of each library.
 
 ### Basic Conversion
 
@@ -916,7 +916,7 @@ Conversion between backends has a cost, so use it strategically:
 | Pandas → Polars | 3ms | 65ms | 720ms |
 
 <Warning>
-  Frequent conversions can negate the performance benefits of using polars. Design your workflow to minimize backend switches.
+  Frequent conversions can negate the performance benefits of using polars. Design the workflow to minimize backend switches.
 </Warning>
 
 ### Zero-Copy Conversion (Arrow)
@@ -939,7 +939,7 @@ laps_pandas = arrow_table.to_pandas()
 ```
 
 <Tip>
-  Zero-copy conversions avoid memory duplication, making them much faster for large datasets. However, this requires compatible data types.
+  Zero-copy conversions avoid memory duplication and are much faster for large datasets. These conversions require compatible data types.
 </Tip>
 
 ### Hybrid Workflows
@@ -978,7 +978,7 @@ plt.show()
 
 ### Preserving Data Types
 
-Some data types don't convert perfectly between backends:
+Some data types do not convert exactly between backends:
 
 | Type | Pandas | Polars | Conversion Notes |
 | :--- | :--- | :--- | :--- |
@@ -1007,7 +1007,7 @@ laps_polars = pl.from_pandas(
 
 ## Setting Default Backend
 
-You can configure tif1 to use your preferred backend by default, avoiding the need to specify `backend=` on every call.
+Configure tif1 to use a preferred backend by default. This avoids the need to specify `backend=` on every call.
 
 ### Via Configuration File
 
@@ -1021,7 +1021,7 @@ Create or edit `~/.tif1rc` (JSON format):
 }
 ```
 
-After setting this, all sessions will use polars by default:
+After this setting, all sessions use polars by default:
 
 ```python
 import tif1
@@ -1076,7 +1076,7 @@ session = tif1.get_session(2025, "Monaco", "Race")
 
 ### Per-Session Override
 
-You can always override the default on a per-session basis:
+Override the default on a per-session basis at any time:
 
 ```python
 import tif1
@@ -1122,7 +1122,7 @@ session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
 
 ## Backend-Specific Features and Capabilities
 
-Each backend has unique features that can be leveraged for specific use cases.
+Each backend has unique features for specific use cases.
 
 ### Pandas-Exclusive Features
 
@@ -1302,7 +1302,7 @@ result = (
 
 ## Lazy Evaluation Deep Dive (Polars)
 
-Lazy evaluation is one of polars' most powerful features, enabling sophisticated query optimization that can dramatically improve performance.
+Lazy evaluation is a key polars feature. It enables query optimization that can improve performance by a large factor.
 
 ### Understanding Lazy vs Eager Execution
 
@@ -1409,7 +1409,7 @@ result = (
 
 ### Viewing Query Plans
 
-Understand what polars will do before execution:
+Examine what polars plans to do before execution:
 
 ```python
 query = (
@@ -1441,13 +1441,13 @@ Use lazy evaluation when:
 
 - **Reading from files**: Parquet, CSV, JSON (use `scan_*` instead of `read_*`)
 - **Complex queries**: Multiple filters, joins, aggregations
-- **Large datasets**: When data doesn't fit comfortably in memory
+- **Large datasets**: When data does not fit comfortably in memory
 - **Production pipelines**: Consistent performance is critical
 
-Don't use lazy evaluation when:
+Do not use lazy evaluation when:
 
 - **Interactive exploration**: Eager mode gives immediate feedback
-- **Small datasets**: Optimization overhead isn't worth it
+- **Small datasets**: The optimization overhead exceeds the gain.
 - **Simple operations**: Single filter or selection is already fast
 
 ### Lazy Evaluation Patterns
@@ -1545,7 +1545,7 @@ def analyze_huge_telemetry(telemetry_file: str):
 
 ## Decision Framework: Choosing the Right Backend
 
-Use this decision tree to select the optimal backend for your use case:
+Use this decision tree to select the best backend for a given use case:
 
 ```mermaid
 graph TD
@@ -1599,36 +1599,36 @@ graph TD
 #### Choose Pandas When:
 
 1. **Ecosystem Integration is Critical**
-   - You're using libraries that require pandas (seaborn, scikit-learn, statsmodels)
-   - You're working in a team that standardizes on pandas
-   - You have existing pandas code to maintain
+   - The analysis uses libraries that require pandas (seaborn, scikit-learn, statsmodels)
+   - The team standardizes on pandas
+   - Existing pandas code needs maintenance
 
 2. **Dataset is Small to Medium**
    - Under 100,000 rows: Performance difference is negligible
    - Under 1,000,000 rows: Pandas is still performant enough
 
-3. **You Need Specific Pandas Features**
+3. **Specific Pandas Features**
    - MultiIndex for hierarchical data
    - Advanced time series resampling
    - Flexible indexing with loc/iloc
-   - Pandas-specific methods your code depends on
+   - Pandas-specific methods that the code depends on
 
 4. **Learning and Exploration**
-   - You're new to data analysis in Python
-   - You're doing interactive exploration in Jupyter
-   - You want maximum Stack Overflow coverage
+   - Data analysis in Python is new work
+   - The work is interactive exploration in Jupyter
+   - Stack Overflow coverage is a priority
 
 #### Choose Polars When:
 
 1. **Performance is Critical**
-   - You're processing data in production
-   - You need consistent, predictable performance
-   - You're working with tight time constraints
+   - Data processing runs in production
+   - Consistent, predictable performance is required
+   - Time constraints are tight
 
 2. **Dataset is Large**
-   - Over 1,000,000 rows: Polars' parallelization shines
+   - Over 1,000,000 rows: Polars parallelization performs best
    - Over 10,000,000 rows: Polars may be 5-10x faster
-   - Data doesn't fit comfortably in RAM: Use streaming
+   - Data does not fit comfortably in RAM: Use streaming
 
 3. **Memory is Constrained**
    - Running on limited hardware
@@ -1647,7 +1647,7 @@ graph TD
 
 ### Hybrid Approach
 
-You don't have to choose just one. Use both strategically:
+One backend is not required for the whole project. Use both strategically:
 
 ```python
 import tif1
@@ -1747,7 +1747,7 @@ all_fastest = pl.concat(results)
 
 ### Pattern 2: Memory-Efficient Telemetry Analysis
 
-Telemetry data can be massive. Here's how to handle it efficiently:
+Telemetry data can be very large. This pattern handles it efficiently:
 
 ```python
 import tif1
@@ -2092,7 +2092,7 @@ result_pandas = result.to_pandas()
 
 ### Issue 6: Lazy Evaluation Confusion
 
-**Symptom**: Polars lazy query doesn't return data
+**Symptom**: A polars lazy query does not return data
 
 **Solution**: Remember to call `.collect()`
 
@@ -2152,7 +2152,7 @@ laps[["Lap Time"]]  # Pandas
 
 ### Issue 9: Performance Not Improving with Polars
 
-**Symptom**: Polars isn't faster than pandas for your use case
+**Symptom**: Polars is not faster than pandas for the given use case
 
 **Possible Causes**:
 1. Dataset is too small (< 10k rows)
@@ -2208,13 +2208,13 @@ else:  # pandas
 
 <CardGroup cols={2}>
   <Card title="Common Use Cases" href="/guides/common-use-cases">
-    Performance guide
+    Performance guide.
   </Card>
   <Card title="Performance" href="/guides/best-practices">
-    Optimization
+    Optimization.
   </Card>
   <Card title="Installation" href="/installation">
-    Install polars
+    Install polars.
   </Card>
 </CardGroup>
 
@@ -2230,9 +2230,9 @@ else:  # pandas
 
 ### Key Performance Insights
 
-1. **Polars shines with large datasets**: 3-5x speedup for > 100k rows
+1. **Polars performs best with large datasets**: 3-5x speedup for > 100k rows
 2. **Memory efficiency matters**: Polars uses 50-70% less memory
-3. **Lazy evaluation is powerful**: Query optimization can double performance
+3. **Lazy evaluation improves speed**: Query optimization can double performance
 4. **Conversion has cost**: Minimize backend switches
 5. **Ecosystem compatibility**: Pandas still dominates for visualization and ML
 
@@ -2271,10 +2271,10 @@ else:  # pandas
 
 <Steps>
   <Step title="Experiment">
-    Try both backends with your typical workloads to measure actual performance differences.
+    Try both backends with typical workloads to measure the actual performance differences.
   </Step>
   <Step title="Profile">
-    Use profiling tools to identify bottlenecks in your code.
+    Use profiling tools to identify bottlenecks in the code.
   </Step>
   <Step title="Optimize">
     Apply backend-specific optimizations (lazy evaluation, vectorization).
@@ -2283,7 +2283,7 @@ else:  # pandas
     Track performance and memory usage in production.
   </Step>
   <Step title="Iterate">
-    Continuously refine your backend choice based on real-world results.
+    Continuously refine the backend choice based on real-world results.
   </Step>
 </Steps>
 
@@ -2293,22 +2293,22 @@ else:  # pandas
 
 <CardGroup cols={3}>
   <Card title="Installation Guide" icon="download" href="/installation">
-    Install tif1 with polars support
+    Install tif1 with polars support.
   </Card>
   <Card title="Performance Guide" icon="gauge-high" href="/guides/best-practices">
-    Optimization techniques and best practices
+    Optimization techniques and best practices.
   </Card>
   <Card title="API Reference" icon="code" href="/api-reference/utilities">
-    Complete API documentation
+    Complete API documentation.
   </Card>
   <Card title="Data Flow" icon="diagram-project" href="/concepts/data-flow">
-    Understanding tif1's data architecture
+    The tif1 data architecture.
   </Card>
   <Card title="Caching Strategy" icon="database" href="/concepts/caching-strategy">
-    How tif1 caches data efficiently
+    How tif1 caches data efficiently.
   </Card>
   <Card title="Common Use Cases" icon="lightbulb" href="/guides/common-use-cases">
-    Real-world examples and patterns
+    Real-world examples and patterns.
   </Card>
 </CardGroup>
 
@@ -2320,7 +2320,7 @@ else:  # pandas
 
 - [Pandas Documentation](https://pandas.pydata.org/docs/) - Official pandas documentation
 - [Polars Documentation](https://pola-rs.github.io/polars/) - Official polars documentation
-- [Polars User Guide](https://pola-rs.github.io/polars-book/) - Comprehensive polars guide
+- [Polars User Guide](https://pola-rs.github.io/polars-book/) - Complete polars guide
 - [Apache Arrow](https://arrow.apache.org/) - Arrow format specification
 
 ### Performance Benchmarks

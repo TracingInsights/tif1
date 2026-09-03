@@ -2,7 +2,7 @@
 title: "Migration from fastf1"
 sidebarTitle: "Migration"
 icon: "arrow-right-arrow-left"
-description: "Step-by-step guide to switching to tif1"
+description: "Migrate from fastf1 to tif1 step by step"
 keywords:
   - "fastf1 migration"
   - "fastf1 to tif1"
@@ -11,7 +11,7 @@ keywords:
   - "F1 library comparison"
 ---
 
-`tif1` is designed to be a drop-in replacement for `fastf1` for most common use cases. This guide highlights the similarities and the few key differences you need to know.
+`tif1` is a drop-in replacement for `fastf1` in most common use cases. This guide shows the similarities and the key differences.
 
 ## Comparison at a Glance
 
@@ -49,7 +49,7 @@ keywords:
     </CodeGroup>
   </Step>
   <Step title="Check Filters">
-    If you used `pick_` methods, switch to standard DataFrame filtering or use the new `Session` methods.
+    Replace `pick_` methods with standard DataFrame filtering or the new `Session` methods.
 
     | fastf1 | tif1 |
     | :--- | :--- |
@@ -120,10 +120,10 @@ laps = await session.laps_async()
     `tif1` focuses on historical data (2018-current). It does not support Live Timing.
   </Card>
   <Card title="Track Maps" icon="map">
-    Track map generation is currently not supported but is planned for a future release.
+    Track map generation is not supported. It is planned for a future release.
   </Card>
   <Card title="Weather Data" icon="cloud">
-    We provide raw 1-minute weather samples. `fastf1` style interpolation is not yet implemented.
+    tif1 provides raw 1-minute weather samples. `fastf1` style interpolation is not yet implemented.
   </Card>
   <Card title="Categorical Optimization" icon="database">
     `tif1` optimizes memory by default using categoricals, which may behave slightly differently in some Pandas operations.
@@ -131,7 +131,7 @@ laps = await session.laps_async()
 </CardGroup>
 
 <Info>
-  Ready to start? Check out the [Quickstart](/quickstart) guide.
+  Ready to start? Read the [Quickstart](/quickstart) guide.
 </Info>
 
 ---
@@ -140,18 +140,18 @@ laps = await session.laps_async()
 
 <CardGroup cols={2}>
   <Card title="Why tif1?" href="/why-tif1">
-    The full fastf1 comparison — rate limits, granularity, and more
+    The full fastf1 comparison — rate limits, granularity, and more.
   </Card>
   <Card title="Quickstart" href="/quickstart">
-    Get started quickly
+    Get started quickly.
   </Card>
   <Card title="API Reference" href="/api-reference/core">
-    Core API details
+    Core API details.
   </Card>
   <Card title="FastF1 Compat" href="/api-reference/fastf1-compat">
-    Compatibility layer
+    Compatibility layer.
   </Card>
   <Card title="Best Practices" href="/guides/best-practices">
-    tif1 patterns
+    tif1 patterns.
   </Card>
 </CardGroup>

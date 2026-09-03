@@ -14,10 +14,10 @@ keywords:
   - "race control"
 ---
 
-This guide walks through every field found in the TracingInsights GitHub telemetry data repositories and their JSON structures. Each one is clearly explained and expanded with practical context, making it easy to understand even if you're completely new to Formula 1 data analysis.
+This guide documents every field in the TracingInsights GitHub telemetry data repositories and the JSON structures. Each field is explained with practical context, so no prior Formula 1 knowledge is required.
 
 <Note>
-  This page documents the **raw JSON files** served from the TracingInsights data repos. tif1 loads these files and maps their abbreviated keys to fastf1-compatible PascalCase DataFrame columns — see the [Data Schema Reference](/reference/data-schema) for the columns you work with via `session.laps`, `lap.telemetry`, and the other public APIs.
+  This page documents the **raw JSON files** served from the TracingInsights data repos. tif1 loads these files and maps their abbreviated keys to fastf1-compatible PascalCase DataFrame columns. See the [Data Schema Reference](/reference/data-schema) for the columns of `session.laps`, `lap.telemetry`, and the other public APIs.
 </Note>
 
 ## How This Data Is Generated
@@ -53,7 +53,7 @@ Environmental conditions recorded approximately once per minute during the sessi
 
 ### Why Weather Matters in F1
 
-Weather affects lap times dramatically. Cold air reduces engine power, hot tracks reduce tire grip, rain changes braking distances. Wind direction affects DRS (Drag Reduction System) effectiveness and how the car handles in turns.
+Weather has a strong effect on lap times. Cold air reduces engine power, hot tracks reduce tire grip, and rain changes braking distances. Wind direction affects DRS (Drag Reduction System) effectiveness and how the car handles in turns.
 
 ## Race Control Messages (`rcm.json`)
 
@@ -73,7 +73,7 @@ Messages sent by Race Control (the officials) to teams about track status, penal
 
 ### What This Means
 
-When a yellow flag is deployed due to debris in Sector 2, you might see `{cat: "Flag", msg: "Yellow", flag: "YELLOW", scope: "Sector", sector: 2}`. This tells teams drivers must slow down in that sector.
+When a yellow flag is deployed due to debris in Sector 2, the data can show `{cat: "Flag", msg: "Yellow", flag: "YELLOW", scope: "Sector", sector: 2}`. This tells the teams that drivers must slow down in that sector.
 
 ## Telemetry Data (`tel.json`)
 
@@ -102,7 +102,7 @@ Detailed second-by-second (actually 3.7 Hz sampling, roughly 270ms intervals) da
 
 ### Acceleration Vectors (G-Forces)
 
-The car experiences forces in three directions simultaneously. These are **computed by the extraction script** using gradient analysis of position, speed, and distance data. **These are NOT raw IMU sensor values** — they are mathematically derived and heavily processed.
+The car experiences forces in three directions simultaneously. The extraction script **computes these values** using gradient analysis of position, speed, and distance data. **These are not raw IMU sensor values.** They are mathematically derived and heavily processed.
 
 | Key | Axis Direction | Computation Formula | Outlier Handling | Smoothing |
 | :--- | :--- | :--- | :--- | :--- |
@@ -119,7 +119,7 @@ The car experiences forces in three directions simultaneously. These are **compu
 | `z` | Z Position | Vertical height above track surface | meters |
 
 <Note>
-  Position data is interpolated (estimated between actual measurements) to align with the higher-frequency car data. The car data comes at roughly 240ms intervals and position data at roughly 220ms, so they need to be matched up.
+  Position data is interpolated (estimated between actual measurements) to align with the higher-frequency car data. Car data comes at roughly 240ms intervals and position data at roughly 220ms. The two streams must be matched.
 </Note>
 
 ### Other Telemetry Fields
@@ -136,7 +136,7 @@ The format is `Year-EventName-Session-Driver 3 letter code-Lap Number`, for exam
 
 ## Driver Data (`drivers.json`)
 
-Static information about each driver that doesn't change during a session.
+Static information about each driver that does not change during a session.
 
 | Key | Field | Description | Type |
 | :--- | :--- | :--- | :--- |
@@ -164,7 +164,7 @@ Comprehensive timing and performance information for each completed lap, stored 
 
 ### Sector Times (Track Divided into 3 Sections)
 
-The track is divided into 3 sectors. Sector times help identify where a driver gained or lost time.
+The track is divided into 3 sectors. Sector times show where a driver gained or lost time.
 
 | Key | Field | Description | Notes |
 | :--- | :--- | :--- | :--- |
@@ -197,7 +197,7 @@ Modern F1 tracks have speed guns that measure top speed at specific locations:
 
 ### Mini-Sector Segment Times (OpenF1)
 
-Three-character encoded strings showing per-mini-sector colour/segment classification for each sector. Only available when OpenF1 data can be matched to the session.
+Three-character encoded strings show the per-mini-sector colour and segment classification for each sector. These fields are available only when OpenF1 data can be matched to the session.
 
 | Key | Field | Description | Values |
 | :--- | :--- | :--- | :--- |
@@ -234,7 +234,7 @@ Each character is one mini-sector and is encoded using the following colour map:
 
 ### Pit Stop Information
 
-If a driver pitted during this lap, it was either an **in-lap** (driving into pits) or **out-lap** (driving out of pits):
+A pit lap is either an **in-lap** (driving into the pits) or an **out-lap** (driving out of the pits).
 
 | Key | Field | Description | Unit | Notes |
 | :--- | :--- | :--- | :--- | :--- |

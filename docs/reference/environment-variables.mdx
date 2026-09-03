@@ -78,21 +78,21 @@ export TIF1_CDN_USE_MINIFICATION=true
 <Info>
   Default: `false`
 
-  When enabled, requests `.min.json` files which are 20-40% smaller.
+  When enabled, tif1 requests `.min.json` files which are 20-40% smaller.
 </Info>
 
 ### TIF1_CDN_BASE_URL
 
-Legacy single CDN configuration (deprecated in favor of TIF1_CDNS).
+Legacy single CDN configuration (deprecated: use `TIF1_CDNS` instead).
 
 ```bash
 export TIF1_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/TracingInsights"
 ```
 
 <Warning>
-  Only change this if you're hosting your own data mirror. Never use `raw.githubusercontent.com` due to rate limits.
+  Change this variable only for a privately hosted data mirror. Never use `raw.githubusercontent.com` because of rate limits.
 
-  Consider using `TIF1_CDNS` for multi-CDN support with automatic fallback.
+  Use `TIF1_CDNS` for multi-CDN support with automatic fallback.
 </Warning>
 
 ### TIF1_REQUEST_TIMEOUT
@@ -109,7 +109,7 @@ export TIF1_REQUEST_TIMEOUT=30
 
 ### TIF1_MAX_RETRIES
 
-Maximum number of retry attempts for failed requests.
+Maximum number of retries for failed requests.
 
 ```bash
 export TIF1_MAX_RETRIES=5
@@ -149,7 +149,7 @@ export TIF1_CIRCUIT_BREAKER_THRESHOLD=10
 
 ### TIF1_CIRCUIT_BREAKER_TIMEOUT
 
-Time in seconds before attempting to close an open circuit.
+Time in seconds before tif1 tries to close an open circuit.
 
 ```bash
 export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
@@ -200,7 +200,7 @@ export TIF1_ASYNC_WORKERS=20
 <Info>
   Default: `10`
 
-  Higher values = more parallelism but more memory usage
+  Higher values give more parallelism and more memory usage.
 </Info>
 
 ### TIF1_MEMORY_CACHE_SIZE
@@ -226,7 +226,7 @@ export TIF1_HTTP2_ENABLED=true
 <Info>
   Default: `true`
 
-  Disable only if experiencing connection issues
+  Disable this option only when connection problems occur.
 </Info>
 
 ## Data Processing
@@ -242,7 +242,7 @@ export TIF1_USE_CATEGORICAL=true
 <Info>
   Default: `true`
 
-  Can reduce memory usage by 30-50%
+  This option can reduce memory usage by 30-50%.
 </Info>
 
 ### TIF1_TELEMETRY_FREQUENCY
@@ -256,12 +256,12 @@ export TIF1_TELEMETRY_FREQUENCY=4
 <Info>
   Default: `4` Hz
 
-  Higher values = more data points but larger files
+  Higher values give more data points and larger files.
 </Info>
 
 ## Configuration File
 
-Instead of environment variables, create a `.tif1rc` file in your home directory or project root.
+Instead of environment variables, create a `.tif1rc` file in the home directory or the project root.
 
 ### Example .tif1rc
 
@@ -298,7 +298,7 @@ telemetry_frequency = 4
 
 ## Programmatic Configuration
 
-You can also configure tif1 directly in your code.
+Configure tif1 directly in code as an alternative.
 
 ```python
 import tif1
@@ -338,7 +338,7 @@ Configuration is resolved in this order (highest to lowest priority):
 
 ## Validation
 
-Invalid configuration values will raise a `ConfigError` at startup.
+Invalid configuration values raise a `ConfigError` at startup.
 
 ```python
 import tif1
@@ -359,9 +359,9 @@ except tif1.ConfigError as e:
     Use environment variables in production for flexibility.
   </Card>
   <Card title="Keep Defaults" icon="check">
-    Only override what you need to change.
+    Override only the values that must change.
   </Card>
   <Card title="Document Changes" icon="book">
-    Comment why you changed defaults in your config.
+    Add a comment for each changed default value.
   </Card>
 </CardGroup>
