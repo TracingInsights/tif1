@@ -78,7 +78,7 @@ Without a circuit breaker, an application faces several critical problems when a
 
 **Resource Exhaustion**: The application continues to make requests that fail. These requests waste CPU cycles, memory, network bandwidth, and connection pool resources. In a high-traffic system, this can quickly exhaust available resources and bring down the entire application.
 
-**Slow Failure**: Each failed request must wait for the full timeout period (often 30-60 seconds) before it fails. At hundreds of requests per second, these timeouts accumulate. The result is high latency, and the application appears frozen to users.
+**Slow Failure**: Each failed request must wait for the full timeout period before it fails. At hundreds of requests per second, these timeouts accumulate. The result is high latency, and the application appears frozen to users.
 
 **Overwhelming the Failing Service**: Continued requests to an already struggling service prevent it from recovering. The service needs time to clear its queues, restart processes, or scale up capacity. Constant incoming requests make recovery impossible.
 

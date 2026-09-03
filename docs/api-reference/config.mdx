@@ -1030,23 +1030,6 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="user_agent" type="str" default="tif1/{version}">
-  User-Agent header sent with all HTTP requests. Useful for identifying the application in server logs or implementing custom rate limiting.
-
-  **Default:** `tif1/{version}` (for example, `tif1/0.2.0`)
-
-  **Use Cases:**
-  - Identify the application in CDN logs
-  - Implement custom rate limiting per application
-  - Debug network issues by filtering logs
-  - Comply with API usage policies
-
-  ```python
-  config.set("user_agent", "my-app/1.0.0")
-  config.set("user_agent", "research-project/2024.1")
-  ```
-</ResponseField>
-
 <ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
   DNS resolver configuration with DNS-over-HTTPS (DoH) fallback support. The library tries resolvers in order until one succeeds.
 
@@ -1406,7 +1389,6 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_disable_http3": false,
   "keepalive_timeout": 300,
   "keepalive_max_requests": 5000,
-  "user_agent": "my-app/1.0.0",
   "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
 }
 ```
