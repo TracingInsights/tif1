@@ -1,7 +1,7 @@
 ---
 title: "Annotated Speed Trace"
 icon: "map-pin"
-description: "Visualizing speed traces with corner markers and annotations"
+description: "Visualize speed traces with corner markers and annotations"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -12,16 +12,13 @@ keywords:
   - "annotations"
 ---
 
-Understanding where speed changes occur on a circuit is crucial for lap analysis. By annotating a speed trace with corner locations, you can quickly identify braking zones, apex speeds, and acceleration patterns at specific corners.
+Identify where speed changes occur on a circuit. These locations have a large effect on lap time. Annotate a speed trace with corner locations to show braking zones, apex speeds, and acceleration patterns at specific corners.
 
-<img
-  src="/assets/annotated_speed_trace.png"
-  alt="Speed trace with corner annotations"
-/>
+<img src="/assets/annotated_speed_trace.png" alt="Speed trace with corner annotations" />
 
-## Loading the session and data
+## Loading the Session and Data
 
-We'll analyze the fastest qualifying lap from the 2021 Spanish Grand Prix and overlay corner markers.
+Analyze the fastest qualifying lap from the 2021 Spanish Grand Prix. Overlay the corner markers.
 
 ```python
 import matplotlib.pyplot as plt
@@ -34,7 +31,7 @@ tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
 session = tif1.get_session(2021, 'Spanish Grand Prix', 'Q')
 ```
 
-## Getting the fastest lap telemetry
+## Getting the Fastest Lap Telemetry
 
 Select the fastest lap and retrieve its telemetry data with distance information.
 
@@ -43,7 +40,7 @@ fastest_lap = session.laps.pick_fastest()
 car_data = fastest_lap.get_car_data().add_distance()
 ```
 
-## Loading circuit information
+## Loading Circuit Information
 
 The circuit info contains corner locations, numbers, and other track-specific data.
 
@@ -58,7 +55,7 @@ The `circuit_info.corners` DataFrame includes:
 - `Angle`: Corner angle
 - `X`, `Y`: Track coordinates
 
-## Creating the annotated plot
+## Creating the Annotated Plot
 
 Plot the speed trace and add vertical lines at each corner location.
 
@@ -95,7 +92,7 @@ plt.suptitle(f"Speed Trace with Corner Annotations\n"
 plt.show()
 ```
 
-## Understanding the visualization
+## Understanding the Visualization
 
 The annotated speed trace reveals:
 
@@ -104,9 +101,9 @@ The annotated speed trace reveals:
 - **Corner exit acceleration:** How quickly speed increases after each corner
 - **Straight-line performance:** Speed plateaus between corners
 
-For example, Turn 1 at Barcelona typically shows a sharp speed drop from ~310 km/h to ~150 km/h, while the high-speed Turn 9 maintains speeds above 250 km/h.
+For example, Turn 1 at Barcelona typically shows a sharp speed drop from ~310 km/h to ~150 km/h. The high-speed Turn 9 maintains speeds above 250 km/h.
 
-## Comparing multiple drivers
+## Comparing Multiple Drivers
 
 The native [speed traces](/tutorials/speed-traces) chart overlays the fastest laps of several drivers on a shared distance axis:
 
@@ -118,9 +115,9 @@ fig, ax = tif1.plot_speed_traces(2023, 'Spanish Grand Prix', 'Q', drivers=['VER'
 plt.show()
 ```
 
-The [telemetry comparison](/tutorials/telemetry-comparison) chart goes further, adding acceleration and driver-action panels.
+The [telemetry comparison](/tutorials/telemetry-comparison) chart adds acceleration and driver-action panels.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -136,8 +133,8 @@ plt.show()
 # tif1.plot_annotated_speed_trace(2021, 'Spanish Grand Prix', 'Q', save_path='annotated_speed_trace.png')
 ```
 
-## Next steps
+## Next Steps
 
 - Explore [Speed Traces Comparison](/tutorials/speed-traces) for multi-driver analysis
 - Learn about [Gear Shifts on Track](/tutorials/gear-shifts-on-track) for transmission analysis
-- Dive into [Telemetry Comparison](/tutorials/telemetry-comparison) for detailed channel analysis
+- Examine [Telemetry Comparison](/tutorials/telemetry-comparison) for detailed channel analysis

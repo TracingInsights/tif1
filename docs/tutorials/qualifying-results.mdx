@@ -9,12 +9,9 @@ keywords:
   - "qualifying chart"
 ---
 
-This tutorial shows you how to create a professional qualifying results chart that displays all drivers' performance relative to pole position, with team colors for easy identification.
+This tutorial shows how to create a qualifying results chart. The chart displays each driver's performance relative to pole position, with team colors.
 
-<img
-  src="/assets/qualifying_grid.png"
-  alt="Qualifying results showing gap to pole position for all drivers"
-/>
+<img src="/assets/qualifying_grid.png" alt="Qualifying results showing gap to pole position for all drivers" />
 
 ## Overview
 
@@ -24,7 +21,7 @@ The qualifying results chart is a horizontal bar chart that shows:
 - Team colors for visual identification
 - Clear pole position reference
 
-## Loading the data
+## Loading the Data
 
 First, load the qualifying session and get all drivers' fastest laps.
 
@@ -44,7 +41,7 @@ laps = session.laps
 drivers = pd.unique(laps['Driver'])
 ```
 
-## Getting fastest laps per driver
+## Getting Fastest Laps per Driver
 
 Extract each driver's fastest lap from the session.
 
@@ -63,7 +60,7 @@ fastest_laps = pd.DataFrame(list_fastest_laps) \
     .reset_index(drop=True)
 ```
 
-## Calculating gap to pole
+## Calculating Gap to Pole
 
 The chart shows time differences from pole position, not absolute lap times.
 
@@ -76,11 +73,11 @@ fastest_laps['LapTimeDelta'] = fastest_laps['LapTime'] - pole_lap_time
 print(fastest_laps[['Driver', 'LapTime', 'LapTimeDelta']].head(10))
 ```
 
-This gives you a clear view of how far each driver was from pole position.
+This shows the distance from each driver to pole position.
 
-## Getting team colors
+## Getting Team Colors
 
-Use tif1's built-in color mapping to get official team colors.
+Use the tif1 color mapping to get official team colors.
 
 ```python
 # Get team colors for each driver
@@ -90,7 +87,7 @@ for _, lap in fastest_laps.iterrows():
     team_colors.append(color)
 ```
 
-## Creating the visualization
+## Creating the Visualization
 
 Build a horizontal bar chart with proper formatting.
 
@@ -130,7 +127,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the shared filters. `n_drivers` keeps only the top-N finishers, and `include_deleted` controls whether deleted laps count toward a driver's best (the default `False` is a correctness fix: a deleted lap can never win the pole):
+The native function exposes the shared filters. `n_drivers` keeps only the top-N finishers. `include_deleted` controls whether deleted laps count toward a driver's best. The default `False` exists because a deleted lap can never win pole:
 
 ```python
 import tif1
@@ -144,7 +141,7 @@ fig, ax = tif1.plot_qualifying_grid(2023, 'Spanish Grand Prix', 'Q')
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -162,7 +159,7 @@ plt.show()
 
 The pole lap time and driver are shown in the title automatically.
 
-## Customization options
+## Customization Options
 
 To show only the top 10, use `n_drivers=10` (shown in the Parameters section). For value labels or highlighted drivers, style the returned `ax` after the call:
 
@@ -180,7 +177,7 @@ for patch, label in zip(ax.patches, ax.get_yticklabels()):
 plt.show()
 ```
 
-## Comparing multiple sessions
+## Comparing Multiple Sessions
 
 Create side-by-side comparisons of different qualifying sessions:
 
@@ -198,7 +195,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Exporting the chart
+## Exporting the Chart
 
 Save the visualization for reports or presentations:
 
@@ -211,9 +208,9 @@ plt.savefig('qualifying_results.png', dpi=300, bbox_inches='tight',
 plt.savefig('qualifying_results.svg', bbox_inches='tight')
 ```
 
-## Key insights from the chart
+## Key Insights from the Chart
 
-This visualization helps you quickly identify:
+Use this visualization to identify:
 - Pole position and front row starters
 - Gaps between drivers and teams
 - Team performance clusters
@@ -222,7 +219,7 @@ This visualization helps you quickly identify:
 
 ## Summary
 
-The qualifying results chart provides an intuitive way to understand the competitive order and performance gaps in qualifying. By using team colors and showing gaps to pole, it makes it easy to spot patterns and compare driver performance at a glance.
+The qualifying results chart shows the competitive order and the performance gaps in qualifying. Team colors and gaps to pole make patterns and driver comparisons clear.
 
 ---
 
@@ -230,15 +227,15 @@ The qualifying results chart provides an intuitive way to understand the competi
 
 <CardGroup cols={2}>
   <Card title="Qualifying Analysis" href="/tutorials/qualifying-analysis">
-    Deep dive into qualifying data
+    A detailed examination of qualifying data.
   </Card>
   <Card title="Driver Lap Times" href="/tutorials/driver-laptimes">
-    Analyze lap time progression
+    Analyze lap time progression.
   </Card>
   <Card title="Data Visualization" href="/guides/data-visualization">
-    More visualization techniques
+    More visualization techniques.
   </Card>
   <Card title="Plotting API" href="/api-reference/plotting">
-    Plotting functions reference
+    Plotting functions reference.
   </Card>
 </CardGroup>

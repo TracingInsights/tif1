@@ -11,24 +11,21 @@ keywords:
   - "performance envelope"
 ---
 
-A G-G diagram plots lateral vs longitudinal acceleration, showing the performance envelope of a car. The outer boundary represents the maximum grip available - it's one of the most insightful ways to compare car performance and driver technique.
+A G-G diagram plots lateral against longitudinal acceleration and shows the performance envelope of a car. The outer boundary represents the maximum grip available. The diagram compares car performance and driver technique clearly.
 
-<img
-  src="/assets/gg_diagram.png"
-  alt="G-G diagram showing acceleration envelope"
-/>
+<img src="/assets/gg_diagram.png" alt="G-G diagram showing acceleration envelope" />
 
-## What is a G-G diagram?
+## The G-G Diagram
 
 The G-G diagram shows:
 - X-axis: Lateral acceleration (cornering forces)
-- Y-axis: Longitudinal acceleration (braking/accelerating forces)
+- Y-axis: Longitudinal acceleration (braking and accelerating forces)
 - Each point represents a moment in time during the lap
 - The outer boundary shows the car's performance limit
 
-## Load session and get telemetry
+## Load Session and Get Telemetry
 
-We'll compare multiple drivers at Monaco Qualifying.
+Compare multiple drivers at Monaco Qualifying.
 
 ```python
 import math
@@ -50,12 +47,12 @@ laps = session.laps
 drivers = ["VER", "LEC", "NOR"]
 ```
 
-## Compute accelerations
+## Compute Accelerations
 
 Calculate g-forces from telemetry data using smooth derivatives to reduce noise.
 
 <Note>
-The `smooth_derivative()` function uses a low-noise differentiator algorithm that reduces noise in the acceleration calculations. This is important because raw numerical derivatives amplify noise in the telemetry data, which would create unrealistic spikes in the G-G diagram.
+The `smooth_derivative()` function uses a low-noise differentiator algorithm that reduces noise in the acceleration calculations. Raw numerical derivatives amplify telemetry noise and create unrealistic spikes in the G-G diagram.
 </Note>
 
 ```python
@@ -159,7 +156,7 @@ def compute_accelerations(telemetry):
     return lon_acc, lat_acc
 ```
 
-## Create G-G diagram
+## Create a G-G Diagram
 
 Plot acceleration data with performance envelope using convex hull.
 
@@ -259,7 +256,7 @@ fig, ax = tif1.plot_gg_diagram(
 plt.show()
 ```
 
-## Complete example
+## Complete Example
 
 The whole workflow above (smooth derivatives, angle normalization, convex hull) is wrapped in a single native function:
 
@@ -275,32 +272,32 @@ plt.show()
 # tif1.plot_gg_diagram(2024, "Monaco", "Q", save_path="gg_diagram.png")
 ```
 
-The `smooth_derivative` / `compute_accelerations` helpers above live in the library under `tif1.charts._acceleration` and are shared with the [telemetry comparison](/tutorials/telemetry-comparison) chart.
+The `smooth_derivative` and `compute_accelerations` helpers above live in the library under `tif1.charts._acceleration`. The [telemetry comparison](/tutorials/telemetry-comparison) chart shares these helpers.
 
-## Reading the diagram
+## Reading the Diagram
 
 Key insights from a G-G diagram:
 
 - **Top of envelope (positive Y):** Maximum acceleration
 - **Bottom of envelope (negative Y):** Maximum braking
-- **Left/right edges (X):** Maximum cornering forces
-- **Corners of envelope:** Combined braking/acceleration + cornering
+- **Left and right edges (X):** Maximum cornering forces
+- **Corners of envelope:** Braking or acceleration combined with cornering
 - **Wider envelope:** More grip available
 - **Rounder envelope:** Better balanced car
 
-## Comparing drivers
+## Comparing Drivers
 
 Look for:
-- **Envelope size:** Larger = more grip being used
+- **Envelope size:** A larger envelope shows more grip in use
 - **Envelope shape:** Asymmetry shows car balance issues
 - **Point density:** Where drivers spend most time
 - **Peak values:** Maximum g-forces achieved
 
-## Track characteristics
+## Track Characteristics
 
 Different tracks produce different shapes:
 - **Monaco:** Smaller envelope, lower speeds, less extreme forces
 - **Monza:** Larger longitudinal values (high-speed braking)
 - **Silverstone:** Large lateral values (high-speed corners)
 
-The G-G diagram is a powerful tool for understanding car performance limits and how drivers extract maximum grip from the car.
+Use the G-G diagram to understand car performance limits and how drivers extract maximum grip from the car.

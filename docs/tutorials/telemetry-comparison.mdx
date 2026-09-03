@@ -13,14 +13,11 @@ keywords:
 
 Telemetry data reveals exactly where one driver gains or loses time. This tutorial compares two drivers' fastest laps, analyzing speed, acceleration forces, and driving inputs.
 
-<img
-  src="/assets/telemetry_comparison.png"
-  alt="Telemetry comparison with acceleration analysis"
-/>
+<img src="/assets/telemetry_comparison.png" alt="Telemetry comparison with acceleration analysis" />
 
-## Load session and get fastest laps
+## Load Session and Get Fastest Laps
 
-We'll compare VER and LEC at Monaco Qualifying.
+Compare VER and LEC at Monaco Qualifying.
 
 ```python
 import tif1
@@ -47,7 +44,7 @@ tel_d1 = laps_d1.get_telemetry().add_distance()
 tel_d2 = laps_d2.get_telemetry().add_distance()
 ```
 
-## Compute accelerations
+## Compute Accelerations
 
 Calculate longitudinal and lateral g-forces from telemetry data.
 
@@ -81,7 +78,7 @@ tel_d1["LongAcc"], tel_d1["LatAcc"] = compute_accelerations(tel_d1)
 tel_d2["LongAcc"], tel_d2["LatAcc"] = compute_accelerations(tel_d2)
 ```
 
-## Label driver actions
+## Label Driver Actions
 
 Categorize each telemetry point as braking, full throttle, or lifting.
 
@@ -101,7 +98,7 @@ tel_d1["ActionID"] = (tel_d1["Action"] != tel_d1["Action"].shift(1)).cumsum()
 tel_d2["ActionID"] = (tel_d2["Action"] != tel_d2["Action"].shift(1)).cumsum()
 ```
 
-## Create comparison plot
+## Create Comparison Plot
 
 Visualize speed, accelerations, and driver inputs.
 
@@ -155,7 +152,7 @@ plt.show()
 
 ## Parameters
 
-The native chart accepts the shared filters plus the analysed distance window. `distance_min` / `distance_max` bound the comparison to a section of the lap (the section shown above), and the default picks the top-2 finishers:
+The native chart accepts the shared filters plus the analyzed distance window. `distance_min` and `distance_max` bound the comparison to a section of the lap, such as the section shown above. The default picks the top-2 finishers:
 
 ```python
 import tif1
@@ -172,7 +169,7 @@ plt.show()
 
 Note that `ax` is a numpy array of the 4 panel axes, not a single axes.
 
-## Complete example
+## Complete Example
 
 The whole workflow above (acceleration math included) is wrapped in a single native function:
 
@@ -188,16 +185,16 @@ plt.show()
 # tif1.plot_telemetry_comparison(2024, "Monaco", "Q", save_path="telemetry_comparison.png")
 ```
 
-The internal acceleration computation uses a numerically safer carry-forward outlier policy (instead of the `np.clip` shown above) so the envelopes stay faithful to the data.
+The internal acceleration computation uses a numerically safer carry-forward outlier policy instead of the `np.clip` shown above. This policy keeps the envelopes faithful to the data.
 
-## What to analyze
+## What to Analyze
 
 - **Speed traces:** Who carries more speed through corners?
 - **Longitudinal acceleration:** Positive = accelerating, negative = braking. Who brakes harder or accelerates earlier?
 - **Lateral acceleration:** Shows cornering forces. Higher values = faster through corners.
 - **Driver actions:** Visual representation of throttle and brake application.
 
-## Key insights
+## Key Insights
 
 Look for:
 - Braking points: Who brakes later?
@@ -205,4 +202,4 @@ Look for:
 - Cornering speed: Who maintains higher minimum speeds?
 - G-forces: Who pushes the car harder in braking and cornering?
 
-Telemetry analysis with `tif1` gives you professional-level insights into driver performance and car behavior.
+Telemetry analysis with `tif1` shows driver performance and car behavior in detail.

@@ -1,7 +1,7 @@
 ---
 title: "Track Temperature Analysis"
 icon: "temperature-high"
-description: "Visualizing track temperature changes throughout a session"
+description: "Visualize track temperature changes throughout a session"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -10,16 +10,13 @@ keywords:
   - "track temperature"
 ---
 
-Track temperature is a critical factor in F1 performance, affecting tire grip, degradation, and overall lap times. By visualizing how track temperature evolves during a session, you can understand the conditions drivers faced and how they might have influenced strategy.
+Track temperature has a large effect on F1 performance. It affects tire grip, degradation, and overall lap times. Visualize how track temperature evolves during a session. This shows the conditions drivers faced and their possible effect on strategy.
 
-<img
-  src="/assets/track_temperature.png"
-  alt="Track temperature evolution during a race session"
-/>
+<img src="/assets/track_temperature.png" alt="Track temperature evolution during a race session" />
 
-## Loading the session
+## Loading the Session
 
-We'll analyze track temperature changes during the 2023 Monaco Grand Prix race.
+Analyze track temperature changes during the 2023 Monaco Grand Prix race.
 
 ```python
 import tif1
@@ -29,7 +26,7 @@ import matplotlib.pyplot as plt
 session = tif1.get_session(2023, 'Monaco', 'R')
 ```
 
-## Getting weather data
+## Getting Weather Data
 
 Weather data is automatically included in the laps DataFrame. Each lap has associated weather information like track temperature, air temperature, humidity, and more.
 
@@ -43,7 +40,7 @@ most_laps_driver = driver_counts.idxmax()
 driver_laps = laps.pick_drivers(most_laps_driver)
 ```
 
-## Creating the visualization
+## Creating the Visualization
 
 Plot track temperature against lap number to see how conditions evolved.
 
@@ -65,9 +62,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Understanding the data
+## Understanding the Data
 
-Track temperature patterns reveal important insights:
+Track temperature patterns show the following:
 
 - **Rising temperature:** Often seen in afternoon sessions as the sun heats the track surface
 - **Cooling trends:** Can occur with cloud cover or as the sun sets
@@ -76,7 +73,7 @@ Track temperature patterns reveal important insights:
 
 ## Parameters
 
-The native function accepts the shared filters. With no `drivers`, it automatically uses the driver with the most recorded laps (exactly the logic above); pass a list to draw one line per driver:
+The native function accepts the shared filters. With no `drivers`, it automatically uses the driver with the most recorded laps. This is the logic shown above. Pass a list to draw one line per driver:
 
 ```python
 import tif1
@@ -92,7 +89,7 @@ plt.show()
 
 The session's weather data must be available (it is included in the laps by default).
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -108,7 +105,7 @@ plt.show()
 # tif1.plot_track_temperature(2023, 'Monaco', 'R', save_path="track_temperature.png")
 ```
 
-## Adding air temperature
+## Adding Air Temperature
 
 Compare track and air temperature to see the relationship between ambient conditions and track surface.
 
@@ -131,7 +128,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Next steps
+## Next Steps
 
 - Explore other weather data like humidity and wind speed
 - Correlate temperature changes with lap time variations

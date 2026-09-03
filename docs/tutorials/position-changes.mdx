@@ -10,16 +10,13 @@ keywords:
   - "visualization"
 ---
 
-Understanding how positions change during a race provides insights into race strategy, overtaking opportunities, and driver performance. This tutorial shows you how to create a position chart that tracks every driver's position lap by lap.
+Position changes during a race show race strategy, overtaking opportunities, and driver performance. This tutorial shows how to create a position chart. The chart tracks every driver's position lap by lap.
 
-<img
-  src="/assets/race_position_changes.png"
-  alt="Race position changes visualization"
-/>
+<img src="/assets/race_position_changes.png" alt="Race position changes visualization" />
 
 ## Loading the Session
 
-We'll analyze the 2023 Bahrain Grand Prix, the season opener. For this visualization, we only need lap data, not telemetry or weather.
+Analyze the 2023 Bahrain Grand Prix, the season opener. This visualization needs lap data only, not telemetry or weather.
 
 ```python
 import matplotlib.pyplot as plt
@@ -32,7 +29,7 @@ laps = session.laps
 
 ## Creating the Visualization
 
-The key is to plot each driver's position against lap number. We'll use driver-specific colors to make the chart readable.
+Plot each driver's position against lap number. Use driver-specific colors to make the chart readable.
 
 ```python
 # Setup plotting with F1 theme
@@ -55,7 +52,7 @@ for drv in laps["Driver"].unique():
 
 ## Configuring the Plot
 
-To make the chart intuitive, we invert the y-axis so position 1 is at the top, and add appropriate labels.
+Invert the y-axis so position 1 is at the top. Add the appropriate labels.
 
 ```python
 # Configure axes
@@ -73,7 +70,7 @@ plt.show()
 
 ## Interpreting the Results
 
-From this visualization, you can identify:
+Use this visualization to identify:
 
 - **Starting grid**: Where each driver began the race
 - **Overtakes**: Sharp position changes indicate on-track passes
@@ -100,7 +97,7 @@ plt.show()
 
 Axis limits are derived from the data automatically, so the chart works for any grid size without hardcoded y-limits.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -118,4 +115,4 @@ plt.show()
 
 ## Conclusion
 
-Position change charts are essential for race analysis. They reveal the story of the race at a glance, showing strategic decisions, on-track battles, and performance trends. Combined with tire strategy and pace analysis, they provide a complete picture of race dynamics.
+Position change charts show the strategic decisions, on-track battles, and performance trends of a race. Combined with tire strategy and pace analysis, they give a complete picture of race dynamics.

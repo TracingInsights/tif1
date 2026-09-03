@@ -10,16 +10,13 @@ keywords:
   - "circuit analysis"
 ---
 
-Track speed maps provide an intuitive way to visualize how speed varies around a circuit. By color-coding the track based on speed, you can instantly identify fast straights, slow corners, and braking zones.
+Track speed maps show how speed varies around a circuit. Color-code the track by speed to identify fast straights, slow corners, and braking zones.
 
-<img
-  src="/assets/track_speed_map.png"
-  alt="Track speed map showing speed variations around the circuit"
-/>
+<img src="/assets/track_speed_map.png" alt="Track speed map showing speed variations around the circuit" />
 
-## Loading the session
+## Loading the Session
 
-We'll visualize the fastest lap from the 2023 Monaco Grand Prix qualifying session.
+Visualize the fastest lap from the 2023 Monaco Grand Prix qualifying session.
 
 ```python
 import tif1
@@ -34,7 +31,7 @@ session = tif1.get_session(2023, 'Monaco', 'Q')
 fastest_lap = session.laps.pick_fastest()
 ```
 
-## Getting track position and telemetry
+## Getting Track Position and Telemetry
 
 The telemetry includes X, Y coordinates for the car's position and speed data.
 
@@ -48,9 +45,9 @@ y = telemetry['Y']
 speed = telemetry['Speed']
 ```
 
-## Creating the visualization
+## Creating the Visualization
 
-We'll use matplotlib's `LineCollection` to create a color-coded track map.
+Use the matplotlib `LineCollection` to create a color-coded track map.
 
 ```python
 # Prepare the track segments
@@ -80,9 +77,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Adding corner markers
+## Adding Corner Markers
 
-You can enhance the visualization by adding corner numbers from the circuit info.
+Enhance the visualization with corner numbers from the circuit info.
 
 ```python
 # Get circuit information
@@ -115,7 +112,7 @@ plt.show()
 
 The default `cmap='plasma'` matches the chart above.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -131,13 +128,13 @@ plt.show()
 # tif1.plot_track_speed_map(2023, 'Monaco', 'Q', save_path='track_speed_map.png')
 ```
 
-## Interpreting the visualization
+## Interpreting the Visualization
 
 - **Hot colors (red/yellow):** High-speed sections like straights
 - **Cool colors (blue/purple):** Low-speed corners and braking zones
 - **Gradients:** Show acceleration and deceleration patterns
 
-## Next steps
+## Next Steps
 
 - Create [throttle maps](/tutorials/track-throttle-map) to see driver inputs
 - Visualize [brake zones](/tutorials/track-brake-zones) to analyze braking points

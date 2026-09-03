@@ -1,7 +1,7 @@
 ---
 title: "Race Pace Analysis"
 icon: "gauge-high"
-description: "Learn how to compare driver performance and consistency"
+description: "Compare driver performance and consistency"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -9,16 +9,13 @@ keywords:
   - "documentation"
 ---
 
-Race pace analysis is one of the most common tasks in F1 data science. It involves looking at lap times over a long stint to see which driver is faster and how well they manage their tires.
+Race pace analysis is a common task in F1 data science. The analysis examines lap times over a long stint. The results show which driver is faster and how well each driver manages the tires.
 
-<img
-  src="/assets/race_pace_boxplot.png"
-  alt="Race pace comparison box plot"
-/>
+<img src="/assets/race_pace_boxplot.png" alt="Race pace comparison box plot" />
 
 ## Loading the Data
 
-For this analysis, we'll look at the 2024 Abu Dhabi Grand Prix. We'll use the `polars` lib for faster filtering.
+This example uses the 2024 Abu Dhabi Grand Prix. Use the `polars` lib for faster filtering.
 
 ```python
 import tif1
@@ -37,7 +34,7 @@ In a race, lap times can be skewed by:
 - Pit stops (very slow laps)
 - Lap 1 (standing start)
 
-We need to filter these out to get a "true" race pace.
+Filter these laps out to get a "true" race pace.
 
 ```python
 # Convert to pandas for easier plotting
@@ -55,7 +52,7 @@ clean_laps = df[
 
 ## Comparing Drivers
 
-Let's compare the pace of the top two finishers.
+Compare the pace of the top two finishers.
 
 ```python
 # Filter for specific drivers
@@ -75,9 +72,9 @@ plt.show()
 - **Box size (IQR):** Represents consistency. A smaller box means the driver was more consistent.
 - **Whiskers/Outliers:** Show variance caused by traffic or minor errors.
 
-## Visualizing pace over the race
+## Visualizing Pace Over the Race
 
-To see how the pace evolved (tire degradation), we can plot lap times against lap numbers.
+Plot lap times against lap numbers to see how the pace evolved (tire degradation).
 
 ```python
 plt.figure(figsize=(12, 6))
@@ -95,7 +92,7 @@ plt.show()
 
 ## Conclusion
 
-By following this workflow, you can:
+Follow this workflow to:
 1. Load high-quality timing data.
 2. Clean it to remove anomalies.
 3. Compare drivers using statistical distributions.

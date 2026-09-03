@@ -10,14 +10,11 @@ keywords:
   - "driver inputs"
 ---
 
-Throttle maps show where and how much throttle drivers apply around the circuit. This visualization reveals driving style, traction zones, and areas where drivers can push the car to its limits.
+Throttle maps show where and how much throttle drivers apply around the circuit. The visualization shows driving style, traction zones, and the areas of maximum throttle.
 
-<img
-  src="/assets/track_throttle_map.png"
-  alt="Track throttle map showing throttle application percentage"
-/>
+<img src="/assets/track_throttle_map.png" alt="Track throttle map showing throttle application percentage" />
 
-## Loading the session
+## Loading the Session
 
 ```python
 import tif1
@@ -30,7 +27,7 @@ session = tif1.get_session(2023, 'Silverstone', 'Q')
 fastest_lap = session.laps.pick_fastest()
 ```
 
-## Getting throttle data
+## Getting Throttle Data
 
 Throttle values range from 0 (no throttle) to 100 (full throttle).
 
@@ -44,7 +41,7 @@ y = telemetry['Y']
 throttle = telemetry['Throttle']
 ```
 
-## Creating the throttle map
+## Creating the Throttle Map
 
 ```python
 # Prepare segments
@@ -90,7 +87,7 @@ plt.show()
 
 The default `cmap='RdYlGn'` with a fixed 0-100% scale matches the chart above.
 
-## Complete example
+## Complete Example
 
 The whole workflow above is wrapped in a single native function:
 
@@ -106,7 +103,7 @@ plt.show()
 # tif1.plot_track_throttle_map(2023, 'Silverstone', 'Q', save_path='track_throttle_map.png')
 ```
 
-## Analyzing throttle patterns
+## Analyzing Throttle Patterns
 
 - **Green sections:** Full throttle on straights
 - **Yellow/orange:** Partial throttle through fast corners
@@ -115,7 +112,7 @@ plt.show()
 
 High-speed corners with partial throttle indicate where drivers balance speed with traction limits.
 
-## Next steps
+## Next Steps
 
 - Compare with [brake zone maps](/tutorials/track-brake-zones)
 - Analyze [speed variations](/tutorials/track-speed-map)

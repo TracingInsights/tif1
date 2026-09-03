@@ -10,12 +10,9 @@ keywords:
   - "bar chart"
 ---
 
-This tutorial shows how to create a lap-by-lap delta comparison between two drivers. The visualization reveals who was faster on each lap and by how much, making it easy to spot performance trends throughout a race.
+This tutorial shows how to create a lap-by-lap delta comparison between two drivers. The chart shows who was faster on each lap and by how much. It also shows performance trends across a race.
 
-<img
-  src="/assets/lap_delta.png"
-  alt="Lap time delta comparison showing VER vs LEC at Monaco 2024"
-/>
+<img src="/assets/lap_delta.png" alt="Lap time delta comparison showing VER vs LEC at Monaco 2024" />
 
 ## Setup
 
@@ -146,14 +143,14 @@ plt.show()
 # tif1.plot_lap_delta(2024, "Monaco", "R", drivers=["VER", "LEC"], save_path="lap_delta.png")
 ```
 
-Bars below zero mean the first driver was faster; bars above zero mean the second driver was faster. The y-axis auto-scales to the data instead of the hardcoded `(-2, 2)` used above, and bars are colored with the faster driver's team color.
+Bars below zero mean the first driver was faster; bars above zero mean the second driver was faster. The y-axis auto-scales to the data instead of the hardcoded `(-2, 2)` used above. Bars are colored with the faster driver's team color.
 
 ## Interpreting the Chart
 
 - **Bars above zero**: Driver 2 was faster on that lap
 - **Bars below zero**: Driver 1 was faster on that lap
 - **Bar height**: Magnitude of the time difference in seconds
-- **Color coding**: Quick visual identification of who was faster
+- **Color coding**: The bar color identifies the faster driver
 
 ## What to Look For
 
@@ -182,11 +179,11 @@ fig, ax = tif1.plot_lap_delta(
 plt.show()
 ```
 
-You can also restrict the comparison to specific laps with the `laps` parameter (e.g. `laps=[10, 11, 12]`).
+Restrict the comparison to specific laps with the `laps` parameter, for example `laps=[10, 11, 12]`.
 
 ## Comparing Multiple Driver Pairs
 
-To compare different pairs, just call the native function with a different `drivers` list:
+To compare different pairs, call the native function with a different `drivers` list:
 
 ```python
 import tif1
@@ -202,7 +199,7 @@ plt.show()
 
 ## Summary
 
-Lap delta comparisons provide a clear, lap-by-lap view of relative performance between drivers. This simple visualization makes it easy to spot patterns, consistency differences, and the impact of race events on driver performance.
+Lap delta comparisons give a clear, lap-by-lap view of relative performance between drivers. The chart shows patterns, consistency differences, and the effect of race events on driver performance.
 
 ---
 
@@ -210,15 +207,15 @@ Lap delta comparisons provide a clear, lap-by-lap view of relative performance b
 
 <CardGroup cols={2}>
   <Card title="Driver Lap Times" href="/tutorials/driver-laptimes">
-    Individual driver analysis
+    Individual driver analysis.
   </Card>
   <Card title="Telemetry Comparison" href="/tutorials/telemetry-comparison">
-    Detailed telemetry analysis
+    Detailed telemetry analysis.
   </Card>
   <Card title="Race Pace Analysis" href="/tutorials/race-pace-analysis">
-    Compare race pace
+    Compare race pace.
   </Card>
   <Card title="Position Changes" href="/tutorials/position-changes">
-    Track position changes
+    Track position changes.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
 title: "Qualifying Analysis"
 icon: "stopwatch"
-description: "Analyzing qualifying performance and progression through Q1, Q2, Q3"
+description: "Analyze qualifying performance and progression through Q1, Q2, Q3"
 keywords:
   - "qualifying analysis"
   - "Q1 Q2 Q3"
@@ -9,14 +9,11 @@ keywords:
   - "grid position"
 ---
 
-Qualifying is where drivers push to the absolute limit. This tutorial shows you how to analyze qualifying sessions, compare progression through Q1/Q2/Q3, and identify where time is gained or lost.
+In qualifying, drivers search for the fastest possible lap. This tutorial shows how to analyze qualifying sessions. It compares progression through Q1/Q2/Q3 and identifies where time is gained or lost.
 
-<img
-  src="/assets/qualifying_grid.png"
-  alt="Qualifying results showing top 10 grid positions"
-/>
+<img src="/assets/qualifying_grid.png" alt="Qualifying results showing top 10 grid positions" />
 
-## Loading qualifying data
+## Loading Qualifying Data
 
 ```python
 import tif1
@@ -29,7 +26,7 @@ session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
 laps = session.laps
 ```
 
-## Understanding qualifying structure
+## Understanding Qualifying Structure
 
 Modern F1 qualifying has three segments:
 - Q1: All 20 drivers, bottom 5 eliminated
@@ -42,7 +39,7 @@ Modern F1 qualifying has three segments:
 print(laps["QualifyingSession"].value_counts())
 ```
 
-## Finding fastest laps per driver
+## Finding Fastest Laps per Driver
 
 Get each driver's best lap time.
 
@@ -83,7 +80,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Progression through sessions
+## Progression Through Sessions
 
 Analyze how drivers improved from Q1 to Q3.
 
@@ -140,7 +137,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Tire compound analysis
+## Tire Compound Analysis
 
 See which compounds drivers used for their fastest laps.
 
@@ -297,7 +294,7 @@ plt.show()
 
 ## Complete Analysis Function
 
-Put it all together in a reusable function.
+Combine these steps in a reusable function.
 
 ```python
 def analyze_qualifying(year, gp):
@@ -331,7 +328,7 @@ print(f"Total laps: {results['total_laps']}, Deleted: {results['deleted_laps']}"
 
 ## Summary
 
-Qualifying analysis with tif1 allows you to:
+Use `tif1` to:
 - Identify pole position and grid order
 - Track progression through Q1/Q2/Q3
 - Analyze sector performance
@@ -347,12 +344,12 @@ Use these techniques to understand what separates pole position from the rest of
 
 <CardGroup cols={2}>
   <Card title="Race Analysis" href="/tutorials/race-analysis">
-    Analyze races
+    Analyze races.
   </Card>
   <Card title="Advanced Telemetry" href="/tutorials/advanced-telemetry">
-    Telemetry deep dive
+    A detailed examination of telemetry.
   </Card>
   <Card title="Examples" href="/examples">
-    More examples
+    More examples.
   </Card>
 </CardGroup>
