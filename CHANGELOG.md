@@ -6,6 +6,24 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-04
+
+### Summary
+
+`0.7.0` is a performance release. Fetch-path validation no longer uses pydantic
+(validation-on full-session fetch 1971 → 1024 ms, 1.9x), the SQLite cache compresses
+large blobs and keeps parsed objects for warm hits, and the default concurrency and
+cache-commit settings are retuned from live CDN measurements. The docs site is converted
+to Simplified Technical English, with five new API reference pages. No public APIs are
+removed; `Cache.set_raw()` is added. Default-config users (validation off) still see the
+cache and concurrency gains.
+
+### Added
+
+- **`Cache.set_raw()`** — persist already-serialized JSON blobs without re-encoding.
+  The async fetch pipeline uses this when validation left the payload byte-identical
+  to the HTTP body. Blobs ≥4 KB are zlib-compressed at the SQLite boundary.
+
 ### Changed
 
 - **Pydantic removed from the fetch-pipeline validation path** (`validation.py`): the four
@@ -18,10 +36,10 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   fetch path (`normalize=False`), relying on the existing vectorized
   `helpers._replace_null_like_strings`; weather keeps inline coercion. Per-payload validation
   cost drops to ~0.006-0.008 ms.
-- **SQLite cache tier compresses large blobs** (zlib-3, ≥4 KB; telemetry payloads compress ~12x)
-  and gains `Cache.set_raw()` used by the async fetch pipeline to persist untransformed payloads
-  without re-serialization. Default-config cold write-cache full-session load: 3750 → ~2100 ms
-  (-44%). Legacy TEXT rows still read; corrupt rows degrade to a cache miss.
+- **SQLite cache tier compresses large blobs** (zlib-3, ≥4 KB; telemetry payloads compress ~12x).
+  Default-config cold write-cache full-session load: 3750 → ~2100 ms (-44%). Legacy TEXT rows
+  still read; corrupt rows degrade to a cache miss. Caches written by 0.7.0 are not readable
+  by 0.6.x — clear the cache if you downgrade.
 - **Parsed-object read-through tiers** in `Cache` (128 json / 256 telemetry entries): repeat warm
   hits skip orjson parsing (190 µs → 0.4 µs); writes drop parsed entries so stale objects cannot
   survive.
@@ -29,6 +47,8 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   payloads: 22 beat 20 in 5/5 interleaved pairs, median -26%; cap 64 was slower than 20).
 - Default `cache_commit_interval` 25 → 100 (~20% of the compressed-write path; `close()` still
   force-commits).
+- Runtime dependency lower bounds raised: niquests 3.21.1, pydantic 2.13.5, typer 0.27.2,
+  typing-extensions 4.16.0, matplotlib 3.11.1, scipy 1.17.1, orjson 3.12.0, polars 1.44.1.
 
 ### Performance
 
@@ -40,6 +60,19 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   polars-first assembly for the pandas backend (H9 — the merged-dict batch path is already at its
   dependency-free floor; faster routes require pyarrow or change dtype inference semantics).
 - Already implemented previously: single-shot laps/telemetry frame assembly (H8).
+
+### Documentation
+
+- Converted the docs site (guides, concepts, tutorials, API reference) to Simplified Technical
+  English (ASD-STE100).
+- Added API reference pages for `session`, `payload-loader`, `schedule-schema`,
+  `plotting-constants`, and `assets`.
+- Corrected factual drift from 0.6.0 (three-source CDN chain, config defaults, Hugging Face
+  minification rule).
+
+### Known Issues
+
+- None reported at release time.
 
 ## [0.6.0] - 2026-08-26
 

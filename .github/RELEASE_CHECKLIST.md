@@ -130,6 +130,14 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.7.0 (Performance Release)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.7.0"`
+- [ ] Confirm public `validate_laps` / `validate_telemetry` still use pydantic
+- [ ] Confirm fetch-path validation is pydantic-free (`validate_*_data`)
+- [ ] Confirm legacy SQLite TEXT cache rows still read
+- [ ] Confirm default `max_concurrent_requests` is 22 and `cache_commit_interval` is 100
+- [ ] Confirm `docs/docs.json` version is `0.7.0` and `0.7.0` is in `versions`
+
 ### v0.4.0 (Major Release)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.4.0"`
 - [ ] Confirm Python 3.11+ requirement is documented (3.10 support dropped)
