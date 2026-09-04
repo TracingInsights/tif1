@@ -170,7 +170,7 @@ Environment: 2 cores; CDN reachable but live payload layout not discoverable
 | H3 parse off event loop | **REJECTED by measurement** — thread offload of telemetry parse gained nothing under 30 ms latency (726 vs 706 ms) and regressed ~8% without latency (1048 vs ~960 ms): GIL serializes orjson anyway and the executor hop costs ~0.08 ms/payload. Matches the existing design comment. Change reverted. |
 | H4 parsed-object tier | **KEPT** — read-through parsed LRU (128 json / 256 telemetry entries) in front of the blob tiers; any write drops the parsed entry. Repeat hit: 0.4 us vs 190 us parse (~460x); one-driver warm telemetry load 12.9 -> 0.028 ms. Full-session warm loads unaffected by design (1144 payloads > 128 cap; larger caps would cost ~250 KB/payload in RAM). |
 | H6 commit interval | **KEPT (small)** — 25 -> 100: 1144 compressed writes 532 -> 427 ms (noisy ~20% of the write path). Durability window widens to 100 regenerable cache writes; `close()` force-commits. |
-| H7 concurrency cap | **KEPT, flagged** — default `max_concurrent_requests` 20 -> 64: simulated 30 ms RTT batch load 720 -> 450 ms (-37%), saturating at 64 (128: 447 ms). Rides the multiplexed HTTP/2/3 session. Needs real-CDN validation before release. |
+| H7 concurrency cap | **KEPT at 22 after live CDN** — simulated 30 ms RTT had favoured 64 (-37%). Real StaticDelivr/jsDelivr/HF, 96 telemetry payloads, 2025 Abu Dhabi Practice 1: 64 was slower than 20 (median 10.4 s vs 6.4 s); 22 beat 20 in 5/5 interleaved pairs (median 7.25 s vs 9.85 s, -26%). Default is 22. |
 | H8 single-shot laps frame | **Already implemented** — pandas path already builds one DataFrame from `_merge_lap_payloads` dict-of-lists (pd.concat noted as ~2x regression in pandas 3.0); polars path uses `pl.concat(vertical_relaxed)`. No further work found. |
 | H9 polars telemetry assembly | **REJECTED after implementation attempt** — the real batch path is already merged-dict optimized (the 6.1x micro number was against the legacy fallback); faster routes require pyarrow (~40 MB new dep, environment-dependent dtypes) or change inference semantics; the semantics-safe route is 3%. See the H9 deep-dive above. |
 | H10 lazy pandas import | **MEASURED, rejected** — `import tif1` ~50 ms warm / pandas dominates (331 ms cold); pydantic confirmed NOT imported (lazy already). Lazy-pandas is a large refactor for CLI-startup-only wins. |
@@ -185,11 +185,11 @@ Canonical macro runs (1144-payload full session, best of 5):
 | default config, no cache | 960 ms | 921 ms | parity (no regression) |
 | default config, cold write-cache | 3750 ms | 2086 ms | **-44%** |
 
-Plus: repeat warm hits ~460x faster (H4), network-bound batch loads -37%
-simulated (H7), one-driver warm telemetry loads ~460x (H4).
+Plus: repeat warm hits ~460x faster (H4), live-CDN concurrency cap 22 (H7),
+one-driver warm telemetry loads ~460x (H4).
 
 Code changed: `src/tif1/validation.py`, `src/tif1/async_fetch.py`,
-`src/tif1/cache.py`, `src/tif1/config.py` (max_concurrent_requests 64,
+`src/tif1/cache.py`, `src/tif1/config.py` (max_concurrent_requests 22,
 cache_commit_interval 100), `tests/unit/test_cache.py` (interval-pinned
 batching test), `tools/perf_validation_experiment.py` (harness).
 Verification: 1164 unit + 94 property/integration pass; ruff clean; ty
@@ -205,7 +205,7 @@ diagnostics identical to the pre-change baseline (40, all pre-existing).
 | H4 | Warm-start loads re-parse every cached payload from SQLite (`cache.get` -> orjson parse ~0.85 ms/tel payload); cache parsed objects or a parsed-frame tier | Large warm telemetry-load win (~1 s of parse per full session) | MEASURED (this run): read-through parsed tier; repeat hits 0.4 us vs 190 us (~460x) |
 | H5 | `cache.set` re-serializes every fetched payload (`json_dumps`, cache.py:592); store the raw response bytes instead and parse on read | ~-0.5 s on cold write-cache full-session loads | MEASURED (this run): re-serialization was only 4%; real cost was SQLite insert volume. Raw blobs + zlib-3 at the SQLite boundary (12x smaller rows): cold write 3750 -> ~2270 ms (-39%) |
 | H6 | Batch SQLite writes: one transaction per `fetch_multiple_async` batch instead of per-payload `cache.set` | Moderate cold-start win when `write_cache` on; measure with `test_cache_serialization_benchmark` | MEASURED: interval 25->100, ~20% of the write path; kept |
-| H7 | Raise `max_concurrent_requests`/telemetry prefetch caps (20/32) for multiplexed HTTP/2 CDN fetches | Network-bound cold-start wall-clock win; requires online measurement | MEASURED (simulated 30 ms RTT): 20->64 concurrency, -37% wall; kept, needs real-CDN check |
+| H7 | Raise `max_concurrent_requests`/telemetry prefetch caps (20/32) for multiplexed HTTP/2 CDN fetches | Network-bound cold-start wall-clock win; requires online measurement | MEASURED: sim 20->64 -37%; live CDN 64 lost to 20, 22 beat 20 (-26% median); default 22 |
 | H8 | Laps DataFrame assembly from per-driver frames + concat; construct once from `session_laptimes.json` columns | Moderate laps-load win; verify current construction path first | Already implemented (`_merge_lap_payloads`); no further work |
 | H9 | Polars-first assembly for telemetry batches (polars is a hard dep) or zero-copy dict-of-lists construction | Assembly speedup for 1140 x 400-sample frames; extend `tests/benchmarks/test_dataframe_performance.py` | MEASURED + implementation attempted: rejected — real batch path already merged-dict optimized; faster routes need pyarrow or change dtype semantics (see H9 deep-dive) |
 | H10 | `import tif1` costs ~50 ms (pandas eager; pydantic already lazy — verified not in `sys.modules`) | Minor CLI/notebook startup win via lazy pandas; low priority | MEASURED: rejected — pandas dominates import, CLI-only win |

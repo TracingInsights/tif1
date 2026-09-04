@@ -25,9 +25,8 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 - **Parsed-object read-through tiers** in `Cache` (128 json / 256 telemetry entries): repeat warm
   hits skip orjson parsing (190 µs → 0.4 µs); writes drop parsed entries so stale objects cannot
   survive.
-- Default `max_concurrent_requests` 20 → 64 (measured -37% wall time on network-bound batch
-  loads with 30 ms RTT simulation; rides the multiplexed HTTP/2/3 session). Needs real-CDN
-  validation before the next release.
+- Default `max_concurrent_requests` 20 → 22 (live CDN, 2025 Abu Dhabi Practice 1, 96 telemetry
+  payloads: 22 beat 20 in 5/5 interleaved pairs, median -26%; cap 64 was slower than 20).
 - Default `cache_commit_interval` 25 → 100 (~20% of the compressed-write path; `close()` still
   force-commits).
 
@@ -36,7 +35,7 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 - Full experiment log with baselines, methodology, and per-hypothesis verdicts:
   `.agents/perf/RESULTS.md`; reproducible offline harness: `tools/perf_validation_experiment.py`.
 - Accepted: pydantic removal (H1), deferred normalization (H2), raw+compressed cache writes (H5),
-  parsed-object tiers (H4), commit interval (H6), concurrency cap (H7, flagged).
+  parsed-object tiers (H4), commit interval (H6), concurrency cap (H7: 22 after live CDN).
 - Rejected by measurement: event-loop parse offload (H3, GIL-bound), lazy pandas import (H10),
   polars-first assembly for the pandas backend (H9 — the merged-dict batch path is already at its
   dependency-free floor; faster routes require pyarrow or change dtype inference semantics).

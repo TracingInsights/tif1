@@ -77,10 +77,9 @@ class Config:
             "http2_max_connections": 10,
             "http2_max_pool_size": 20,
             "max_workers": 20,
-            # 64 streams ride the multiplexed HTTP/2/3 session; measured -37%
-            # wall time on network-bound batch loads vs 20 (see
-            # .agents/perf/RESULTS.md H7). CDNs absorb this per-client.
-            "max_concurrent_requests": 64,
+            # Real-CDN 96-file telemetry batches: 22 beat 20 (median -26%, 5/5
+            # interleaved pairs); 64 was slower than 20. See RESULTS.md H7.
+            "max_concurrent_requests": 22,
             "enable_cache": True,
             "offline_mode": False,
             "ci_mode": False,

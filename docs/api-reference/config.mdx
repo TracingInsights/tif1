@@ -962,7 +962,7 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="max_concurrent_requests" type="int" default="64">
+<ResponseField name="max_concurrent_requests" type="int" default="22">
   Maximum number of concurrent HTTP requests.
 
   ```python
@@ -2519,7 +2519,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http2_max_connections": 10,
   "http2_max_pool_size": 20,
   "max_workers": 20,
-  "max_concurrent_requests": 64,
+  "max_concurrent_requests": 22,
   "enable_cache": true,
   "offline_mode": false,
   "ci_mode": false,
