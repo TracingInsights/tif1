@@ -44,8 +44,8 @@ def _validate_json_payload(path: str, data: dict[str, Any], config) -> dict[str,
         if (path == "rcm.json" or path.endswith("/rcm.json")) and config.get("validate_data", True):
             from .validation import validate_race_control_data
 
-            # normalize=False: null-like cleanup happens vectorized at DataFrame
-            # construction, matching the default no-validation path.
+            # normalize=False: the default no-validation path never scanned
+            # element-wise; table load still swaps the token "None".
             return validate_race_control_data(data, strict=False, normalize=False)
 
         if (path == "weather.json" or path.endswith("/weather.json")) and config.get(
@@ -467,7 +467,11 @@ async def fetch_json_async(
 
             if write_cache and cache is not None:
                 set_raw = getattr(cache, "set_raw", None)
-                if untransformed and callable(set_raw) and isinstance(content, bytes | bytearray):
+                if (
+                    untransformed
+                    and callable(set_raw)
+                    and isinstance(content, bytes | bytearray | memoryview)
+                ):
                     # Payload is byte-identical to what was parsed: persist the
                     # original blob and skip re-serialization.
                     await loop.run_in_executor(executor, set_raw, cache_key, bytes(content))

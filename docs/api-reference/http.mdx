@@ -286,7 +286,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 **Basic HTTP Settings:**
 - `timeout` (int, default: 30): Request timeout in seconds. Increase for slow connections or large files.
 - `max_retries` (int, default: 3): Maximum retries per CDN. Set to 0 for zero-retry mode (ultra-fast cold start).
-- `max_workers` (int, default: 20): Thread pool size for async operations. Should match or exceed `max_concurrent_requests`.
+- `max_workers` (int, default: 20): Thread pool size for async operations. The executor is sized as the max of `max_workers` and the concurrency caps (`max_concurrent_requests`, telemetry prefetch).
 
 **Retry Strategy:**
 - `retry_backoff_factor` (float, default: 2.0): Exponential backoff multiplier. Delay = factor^attempt seconds.
@@ -1061,7 +1061,7 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
   - Applies per-request, not total batch time
   - Increase for slow connections or large files
 - `max_concurrent_requests` (int | None): Maximum concurrent requests
-  - Default: Uses `max_concurrent_requests` config value (typically 20)
+  - Default: Uses `max_concurrent_requests` config value (typically 64)
   - Increase to 50-128 for fast connections and telemetry prefetch
   - Decrease to 5-10 for slow connections or rate-limited CDNs
   - Higher values = faster but more resource intensive
@@ -1285,7 +1285,7 @@ asyncio.run(load_with_progress())
 </Note>
 
 <Warning>
-  High concurrency (128+) can overwhelm slow networks or trigger CDN rate limiting. Start with default settings (20) and increase gradually while monitoring connection stats and success rates.
+  High concurrency (128+) can overwhelm slow networks or trigger CDN rate limiting. Start with default settings (64) and increase gradually while monitoring connection stats and success rates.
 </Warning>
 - `validate_payload`: If True, run payload validation before returning data
 - `max_retries`: Maximum retries per request

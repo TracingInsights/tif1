@@ -397,7 +397,12 @@ def run_macro(
         # Warm disk: drop the in-memory tiers (blobs + parsed), keep SQLite
         # (fresh-process shape).
         cache_obj._memory_cache.clear()
-        cache_obj._parsed_cache.clear()
+        parsed = getattr(cache_obj, "_parsed_cache", None)
+        if parsed is not None:
+            parsed.clear()
+        parsed_tel = getattr(cache_obj, "_parsed_telemetry_cache", None)
+        if parsed_tel is not None:
+            parsed_tel.clear()
         warm_disk = time_best(lambda: asyncio.run(run_once(use_cache=True, write_cache=True)), reps)
 
         return {

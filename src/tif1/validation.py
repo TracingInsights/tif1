@@ -721,7 +721,18 @@ def validate_telemetry_data(data: dict, strict: bool = False, *, normalize: bool
 def validate_race_control_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
     """Validate race control data arrays (pydantic-free fast path).
 
-    See :func:`validate_lap_data` for the ``normalize`` flag.
+    Args:
+        data: Race control payload dictionary
+        strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, convert null-like string tokens to ``None`` here. The
+            fetch pipeline passes ``False``; table load still swaps the token
+            ``"None"``. See :func:`validate_lap_data`.
+
+    Returns:
+        Validated data dictionary
+
+    Raises:
+        InvalidDataError: If strict=True and validation fails
     """
     source = _normalize_payload_lists(data) if normalize else data
     dumped = _fast_list_dump(source, _RACE_CONTROL_FIELDS)
@@ -736,7 +747,18 @@ def validate_race_control_data(data: dict, strict: bool = False, *, normalize: b
 def validate_weather_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
     """Validate weather data arrays (pydantic-free fast path).
 
-    See :func:`validate_lap_data` for the ``normalize`` flag.
+    Args:
+        data: Weather payload dictionary (CDN aliases or PascalCase keys)
+        strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, convert null-like string tokens to ``None`` here.
+            Weather fetch keeps the default (inline coercion). See
+            :func:`validate_lap_data`.
+
+    Returns:
+        Validated data dictionary
+
+    Raises:
+        InvalidDataError: If strict=True and validation fails
     """
     original = data
     if any(key in data for key in _WEATHER_PASCAL_KEYS):

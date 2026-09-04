@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from tif1.exceptions import InvalidDataError
 from tif1.validation import (
     AnomalyType,
     DriverInfo,
@@ -13,6 +14,7 @@ from tif1.validation import (
     validate_race_control,
     validate_race_control_data,
     validate_telemetry,
+    validate_telemetry_data,
     validate_weather,
     validate_weather_data,
 )
@@ -649,6 +651,104 @@ class TestValidation:
         data = {"wT": [10.0, 20.0], "wAT": [25.0]}
         validated = validate_weather_data(data, strict=False)
         assert validated == data
+
+    def test_fast_path_lap_dump_matches_pydantic(self):
+        """Fetch-path dump matches pydantic model_dump on well-typed lap payloads."""
+        data = {
+            "time": [90.123, 91.0],
+            "lap": [1.0, 2.0],
+            "compound": ["SOFT", "MEDIUM"],
+            "stint": [1, 1],
+            "s1": [30.1, 30.2],
+            "s2": [35.2, 35.0],
+            "s3": [24.8, 25.1],
+            "life": [1, 2],
+            "pos": [1, 2],
+            "status": ["OK", "OK"],
+            "pb": [True, False],
+            "qs": ["Q1", "Q1"],
+        }
+        assert validate_lap_data(data, strict=True) == validate_laps(data).model_dump()
+
+    def test_validate_lap_data_normalize_false_keeps_null_like_strings(self):
+        """Fetch pipeline passes normalize=False so null-like strings are left for DataFrames."""
+        data = {
+            "time": [90.123, "None"],
+            "lap": [1.0, 2.0],
+            "compound": ["SOFT", "SOFT"],
+            "stint": [1, 1],
+            "s1": [30.1, 29.9],
+            "s2": [35.2, 34.8],
+            "s3": [24.8, 25.1],
+            "life": [1, 2],
+            "pos": [1, 2],
+            "status": ["OK", "OK"],
+            "pb": [True, False],
+        }
+        dumped = validate_lap_data(data, strict=True, normalize=False)
+        assert dumped["time"][1] == "None"
+
+    def test_fast_path_telemetry_dump_matches_sanitized_pydantic(self):
+        """Fast path matches pydantic dump after dropping tel and empty channels."""
+        data = {
+            "time": [0.0, 0.1],
+            "speed": [100.0, 150.0],
+            "throttle": [50.0, 75.0],
+            "brake": [False, True],
+            "rpm": [8000.0, 8100.0],
+        }
+
+        def _sanitized(payload: dict) -> dict:
+            dumped = validate_telemetry(payload).model_dump()
+            return {
+                key: value
+                for key, value in dumped.items()
+                if key != "tel" and not (isinstance(value, list) and not value)
+            }
+
+        assert validate_telemetry_data(data, strict=True) == _sanitized(data)
+        wrapped = {"tel": data}
+        assert validate_telemetry_data(wrapped, strict=True) == _sanitized(wrapped)
+
+    def test_validate_telemetry_data_normalize_false_skips_bool_coercion(self):
+        data = {
+            "time": [0.0, 0.1],
+            "speed": [100.0, 150.0],
+            "brake": [0, 1],
+            "drs": [1, 0],
+        }
+        skipped = validate_telemetry_data(data, strict=True, normalize=False)
+        assert skipped["brake"] == [0, 1]
+        assert skipped["drs"] == [1, 0]
+        coerced = validate_telemetry_data(data, strict=True, normalize=True)
+        assert coerced["brake"] == [False, True]
+        assert coerced["drs"] == [True, False]
+
+    def test_validate_telemetry_data_strict_missing_required(self):
+        with pytest.raises(InvalidDataError):
+            validate_telemetry_data({"throttle": [1.0]}, strict=True)
+
+    def test_fast_path_rcm_and_weather_match_pydantic(self):
+        rcm = {
+            "time": [10.0, 20.0],
+            "cat": ["Flag", "Other"],
+            "msg": ["GREEN", "FCY"],
+        }
+        assert (
+            validate_race_control_data(rcm, strict=True) == validate_race_control(rcm).model_dump()
+        )
+
+        weather = {
+            "Time": [10.0, 20.0],
+            "AirTemp": [25.0, 26.0],
+            "Humidity": [40.0, 41.0],
+            "Pressure": [1010.0, 1011.0],
+            "Rainfall": [False, False],
+            "TrackTemp": [30.0, 31.0],
+            "WindDirection": [180.0, 190.0],
+            "WindSpeed": [2.0, 2.5],
+        }
+        assert validate_weather_data(weather, strict=True) == validate_weather(weather).model_dump()
 
     def test_validate_drivers_invalid(self):
         """Test validate_drivers with invalid data."""

@@ -48,6 +48,10 @@ FastestLapRefKind = Literal["laps", "drivers"]
 # threshold stay plain TEXT so small rows keep the legacy storage shape.
 _SQLITE_COMPRESS_MIN_BYTES = 4096
 _SQLITE_COMPRESS_LEVEL = 3
+# Parsed-object front tiers: bounded small because parsed payloads are far
+# larger than blobs. Repeat hits skip orjson entirely (see RESULTS.md H4).
+_PARSED_CACHE_MAX_ITEMS = 128
+_PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
 
 
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
@@ -393,16 +397,14 @@ class Cache:
         from .config import get_config
 
         config = get_config()
-        self._commit_interval = config.get("cache_commit_interval", 25)
+        self._commit_interval = config.get("cache_commit_interval", 100)
         self._sqlite_timeout = config.get("sqlite_timeout", 30.0)
         self._memory_cache_max_items = config.get("memory_cache_max_items", 1024)
         self._memory_telemetry_cache_max_items = config.get(
             "memory_telemetry_cache_max_items", 2048
         )
-        # Parsed-object front tiers: a warm hit skips orjson parsing entirely.
-        # Bounded small because parsed payloads are far larger than blobs.
-        self._parsed_cache_max_items = config.get("parsed_cache_max_items", 128)
-        self._parsed_telemetry_cache_max_items = config.get("parsed_telemetry_cache_max_items", 256)
+        self._parsed_cache_max_items = _PARSED_CACHE_MAX_ITEMS
+        self._parsed_telemetry_cache_max_items = _PARSED_TELEMETRY_CACHE_MAX_ITEMS
 
         # Shared write lock for both memory tiers (serializes updates exactly
         # like the previous single OrderedDict lock). Kept separate from the
@@ -679,7 +681,7 @@ class Cache:
         """
         self.set_entry("json", key, data)
 
-    def set_raw(self, key: str, blob: bytes | bytearray) -> None:
+    def set_raw(self, key: str, blob: bytes | bytearray | memoryview) -> None:
         """Set cached data from an already-serialized JSON blob (thread-safe).
 
         Skips re-serialization when the caller still holds the original payload
@@ -953,6 +955,8 @@ class Cache:
         with self._memory_cache_lock:
             self._memory_cache.clear()
             self._memory_telemetry_cache.clear()
+            self._parsed_cache.clear()
+            self._parsed_telemetry_cache.clear()
 
         if conn is not None:
             logger.debug("Cache connection closed")
