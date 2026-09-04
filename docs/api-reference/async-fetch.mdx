@@ -382,7 +382,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 </ParamField>
 
 <ParamField path="max_concurrent_requests" type="int | None" default="None">
-  Maximum number of concurrent network requests. If `None`, uses global config value (default: 20).
+  Maximum number of concurrent network requests. If `None`, uses global config value (default: 64).
 
   **Tuning guide**:
   - `10-20`: Conservative, good for shared networks or rate-limited CDNs
@@ -589,7 +589,7 @@ Execute an async function with rate limiting using a semaphore for concurrency c
 </ParamField>
 
 <ParamField path="semaphore" type="asyncio.Semaphore | None" default="None">
-  Optional semaphore for rate limiting. If `None`, creates a new semaphore based on `max_concurrent_requests` config (default: 20).
+  Optional semaphore for rate limiting. If `None`, creates a new semaphore based on `max_concurrent_requests` config (default: 64).
 
   **Use cases**:
   - Pass a shared semaphore to coordinate concurrency across multiple operations
@@ -876,7 +876,7 @@ config.set("timeout", 60)
 # Set max retries (default: 3)
 config.set("max_retries", 5)
 
-# Set max concurrent requests (default: 20)
+# Set max concurrent requests (default: 64)
 config.set("max_concurrent_requests", 50)
 
 # Enable/disable validation (default: True)
@@ -989,7 +989,7 @@ data = await fetch_json_async(
 </Accordion>
 
 <Accordion title="Rate Limiting">
-  A semaphore-based rate limiter ensures no more than `max_concurrent_requests` requests are in flight simultaneously. This prevents overwhelming the CDN and triggering rate limits. The default is 20 concurrent requests, configurable via global config.
+  A semaphore-based rate limiter ensures no more than `max_concurrent_requests` requests are in flight simultaneously. This prevents overwhelming the CDN and triggering rate limits. The default is 64 concurrent requests, configurable via global config.
 </Accordion>
 
 <Accordion title="Retry Logic">

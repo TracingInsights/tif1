@@ -173,7 +173,7 @@ Always use a proper CDN like jsDelivr that is designed for high-volume content d
 
 Prevents CDN throttling and manages resource consumption:
 
-- **Configurable Concurrency**: Default 20 concurrent requests, up to 128+ for telemetry prefetch
+- **Configurable Concurrency**: Default 64 concurrent requests, up to 128+ for telemetry prefetch
 - **Semaphore-Based Control**: Async semaphores limit concurrent operations
 - **Per-Operation Limits**: Different limits for different workloads (lap data vs telemetry)
 - **Backoff on Exhaustion**: Automatic backoff when limits are reached
@@ -262,7 +262,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
   "circuit_breaker_threshold": 5,
   "circuit_breaker_timeout": 60,
   "max_workers": 20,
-  "max_concurrent_requests": 20,
+  "max_concurrent_requests": 64,
   "pool_connections": 256,
   "pool_maxsize": 512,
   "keepalive_timeout": 120,
@@ -305,7 +305,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 - `keepalive_max_requests` (int, default: 1000): Maximum requests per connection before recycling.
 
 **Concurrency Control:**
-- `max_concurrent_requests` (int, default: 20): Maximum concurrent HTTP requests for general operations.
+- `max_concurrent_requests` (int, default: 64): Maximum concurrent HTTP requests for general operations.
 - `telemetry_prefetch_max_concurrent_requests` (int, default: 128): Maximum concurrent requests for telemetry prefetch.
 
 **Protocol Configuration:**
@@ -353,7 +353,7 @@ export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=1000
 
 # Concurrency
-export TIF1_MAX_CONCURRENT_REQUESTS=20
+export TIF1_MAX_CONCURRENT_REQUESTS=64
 export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=128
 
 # Protocol
@@ -1098,7 +1098,7 @@ async def load_multiple_drivers():
         for driver in drivers
     ]
 
-    # Fetch all in parallel (default 20 concurrent)
+    # Fetch all in parallel (default 64 concurrent)
     results = await fetch_multiple_async(requests)
 
     # Process results (None for failed requests)
@@ -1290,7 +1290,7 @@ asyncio.run(load_with_progress())
 - `validate_payload`: If True, run payload validation before returning data
 - `max_retries`: Maximum retries per request
 - `timeout`: Request timeout in seconds
-- `max_concurrent_requests`: Maximum concurrent requests (defaults to config value, typically 20)
+- `max_concurrent_requests`: Maximum concurrent requests (defaults to config value, typically 64)
 
 **Returns:**
 - List of fetched data dictionaries (None for failed requests). Exceptions are logged and converted to None for graceful degradation. DataNotFoundError (404) is silently converted to None.
@@ -1398,7 +1398,7 @@ cleanup_resources()
 
 The async fetch module includes automatic rate limiting to prevent CDN throttling:
 
-- Maximum 20 concurrent requests by default (configurable via `max_concurrent_requests` config)
+- Maximum 64 concurrent requests by default (configurable via `max_concurrent_requests` config)
 - Configurable via `max_concurrent_requests` parameter in `fetch_multiple_async`
 - Automatic backoff on rate limit errors and pool exhaustion
 - Semaphore-based concurrency control
