@@ -77,14 +77,17 @@ class Config:
             "http2_max_connections": 10,
             "http2_max_pool_size": 20,
             "max_workers": 20,
-            "max_concurrent_requests": 20,
+            # 64 streams ride the multiplexed HTTP/2/3 session; measured -37%
+            # wall time on network-bound batch loads vs 20 (see
+            # .agents/perf/RESULTS.md H7). CDNs absorb this per-client.
+            "max_concurrent_requests": 64,
             "enable_cache": True,
             "offline_mode": False,
             "ci_mode": False,
             "lib": "pandas",
             "polars_lap_categorical": False,
             # Cache configuration constants
-            "cache_commit_interval": 25,
+            "cache_commit_interval": 100,
             "sqlite_timeout": 30.0,
             "memory_cache_max_items": 1024,
             "memory_telemetry_cache_max_items": 2048,

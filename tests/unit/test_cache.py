@@ -99,13 +99,16 @@ class TestCache:
     def test_cache_batches_commits(self, tmp_path):
         """Test cache writes are batched instead of committed every write."""
         cache = Cache(tmp_path)
+        # Pin the interval so the test checks the batching mechanism, not the
+        # configured default (see config cache_commit_interval).
+        cache._commit_interval = 5
 
-        for idx in range(24):
+        for idx in range(4):
             cache.set(f"key-{idx}", {"data": idx})
 
-        assert cache._pending_writes == 24
+        assert cache._pending_writes == 4
 
-        cache.set("key-24", {"data": 24})
+        cache.set("key-4", {"data": 4})
         assert cache._pending_writes == 0
 
     def test_cache_close_flushes_pending_writes(self, tmp_path):
