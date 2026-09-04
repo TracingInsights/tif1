@@ -26,6 +26,7 @@ import atexit
 import logging
 import sqlite3
 import threading
+import zlib
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Literal
@@ -41,6 +42,39 @@ CacheKind = Literal["json", "telemetry"]
 InvalidateScope = Literal["all", "memory", "json", "telemetry"]
 SessionMemoKind = Literal["json", "telemetry_payload", "telemetry_df"]
 FastestLapRefKind = Literal["laps", "drivers"]
+
+# SQLite-tier compression: telemetry payloads compress ~12x (numeric JSON),
+# cutting insert/WAL volume on cold write-cache loads. Values below the
+# threshold stay plain TEXT so small rows keep the legacy storage shape.
+_SQLITE_COMPRESS_MIN_BYTES = 4096
+_SQLITE_COMPRESS_LEVEL = 3
+# Parsed-object front tiers: bounded small because parsed payloads are far
+# larger than blobs. Repeat hits skip orjson entirely (see RESULTS.md H4).
+_PARSED_CACHE_MAX_ITEMS = 128
+_PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
+
+
+def _encode_sqlite_value(blob: bytes) -> bytes | str:
+    """Serialize a JSON blob for the SQLite tier (compress large payloads)."""
+    if len(blob) >= _SQLITE_COMPRESS_MIN_BYTES:
+        return zlib.compress(blob, _SQLITE_COMPRESS_LEVEL)
+    return blob.decode("utf-8")
+
+
+def _decode_sqlite_value(stored: Any) -> Any:
+    """Invert :func:`_encode_sqlite_value`.
+
+    ``bytes`` marks a compressed row; ``str`` is plain legacy JSON. A corrupt
+    compressed row raises ``ValueError`` so callers' existing error handling
+    turns it into a cache miss.
+    """
+    if isinstance(stored, bytes):
+        try:
+            return zlib.decompress(stored)
+        except zlib.error as e:
+            raise ValueError(f"Corrupt compressed cache entry: {e}") from e
+    return stored
+
 
 # Sentinel returned by SessionMemo.get_fastest_lap_ref_if_current on a source-id miss.
 FASTEST_LAP_REF_MISS: Any = object()
@@ -363,12 +397,14 @@ class Cache:
         from .config import get_config
 
         config = get_config()
-        self._commit_interval = config.get("cache_commit_interval", 25)
+        self._commit_interval = config.get("cache_commit_interval", 100)
         self._sqlite_timeout = config.get("sqlite_timeout", 30.0)
         self._memory_cache_max_items = config.get("memory_cache_max_items", 1024)
         self._memory_telemetry_cache_max_items = config.get(
             "memory_telemetry_cache_max_items", 2048
         )
+        self._parsed_cache_max_items = _PARSED_CACHE_MAX_ITEMS
+        self._parsed_telemetry_cache_max_items = _PARSED_TELEMETRY_CACHE_MAX_ITEMS
 
         # Shared write lock for both memory tiers (serializes updates exactly
         # like the previous single OrderedDict lock). Kept separate from the
@@ -380,6 +416,12 @@ class Cache:
         )
         self._memory_telemetry_cache: LRUCache = LRUCache(
             maxsize=self._memory_telemetry_cache_max_items, lock=self._lru_lock
+        )
+        self._parsed_cache: LRUCache = LRUCache(
+            maxsize=self._parsed_cache_max_items, lock=self._lru_lock
+        )
+        self._parsed_telemetry_cache: LRUCache = LRUCache(
+            maxsize=self._parsed_telemetry_cache_max_items, lock=self._lru_lock
         )
 
         self._init_sqlite()
@@ -450,11 +492,18 @@ class Cache:
         if self.conn is None:
             return None
         try:
+            # Parsed-object front tier: a repeat hit skips orjson entirely.
+            parsed = self._parsed_cache.get(key, ordered=False)
+            if parsed is not None:
+                return parsed
+
             # Completely lock-free read - no LRU update
             json_data = self._memory_cache.get(key, ordered=False)
 
             if json_data is not None:
-                return json_loads(json_data)
+                parsed = json_loads(json_data)
+                self._parsed_cache.set(key, parsed)
+                return parsed
 
             return None
         except (RuntimeError, TypeError, ValueError) as e:
@@ -514,6 +563,8 @@ class Cache:
             with self._memory_cache_lock:
                 self._memory_cache.clear()
                 self._memory_telemetry_cache.clear()
+                self._parsed_cache.clear()
+                self._parsed_telemetry_cache.clear()
             logger.info("Memory cache tiers invalidated")
             return
         if scope not in ("json", "telemetry"):
@@ -524,12 +575,14 @@ class Cache:
 
         table = "cache" if scope == "json" else "telemetry_cache"
         memory_tier = self._memory_cache if scope == "json" else self._memory_telemetry_cache
+        parsed_tier = self._parsed_cache if scope == "json" else self._parsed_telemetry_cache
         with self._sqlite_lock:
             self.conn.execute(f"DELETE FROM {table}")
             self.conn.commit()
             self._pending_writes = 0
         with self._memory_cache_lock:
             memory_tier.clear()
+            parsed_tier.clear()
         logger.info("Cache tier invalidated: %s", scope)
 
     def _get_json(self, key: str) -> Any | None:
@@ -550,13 +603,15 @@ class Cache:
                     "SELECT data FROM cache WHERE key = ?", (key,)
                 ).fetchone()
                 if result:
-                    json_data = result[0]
+                    json_data = _decode_sqlite_value(result[0])
 
             # Update memory cache outside SQLite lock
             if json_data is not None:
                 self._memory_cache.set(key, json_data)
+                parsed = json_loads(json_data)
+                self._parsed_cache.set(key, parsed)
                 logger.debug("Cache hit (SQLite): %s", key)
-                return json_loads(json_data)
+                return parsed
 
             logger.debug("Cache miss: %s", key)
             return None
@@ -584,19 +639,23 @@ class Cache:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.get, key)
 
-    def _set_json(self, key: str, data: Any) -> None:
-        """Set cached JSON payload (thread-safe); core of ``set``."""
+    def _store_json_blob(self, key: str, blob: bytes) -> None:
+        """Write a serialized JSON blob to both tiers (thread-safe); core of ``set``.
+
+        The memory tier keeps the plain blob; the SQLite tier stores it
+        compressed when large (see :func:`_encode_sqlite_value`).
+        """
         if self.conn is None or self.read_only:
             return
         try:
-            json_data = json_dumps(data)
-
             # Update memory cache first (fast operation, <1ms)
-            self._memory_cache.set(key, json_data)
+            self._memory_cache.set(key, blob)
 
             # Then update SQLite (slower operation)
             with self._sqlite_lock:
-                self.conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json_data))
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, _encode_sqlite_value(blob))
+                )
                 self._pending_writes += 1
                 self._commit_if_needed()
 
@@ -604,14 +663,34 @@ class Cache:
         except (RuntimeError, TypeError, ValueError, sqlite3.Error):
             logger.debug("Cache write skipped: %s", key)
 
+    def _set_json(self, key: str, data: Any) -> None:
+        """Set cached JSON payload (thread-safe); core of ``set``.
+
+        The parsed-object tier is read-through: writes drop any parsed entry
+        instead of populating it, so stale parsed objects can never survive.
+        """
+        self._store_json_blob(key, json_dumps(data).encode("utf-8"))
+        self._parsed_cache.pop(key, None)
+
     def set(self, key: str, data: Any) -> None:
         """Set cached data (thread-safe).
 
-        Optimized to update memory cache first (fast, <1ms) before SQLite (slower).
+        Optimized to update memory cache first (fast operation, <1ms) before SQLite (slower).
         This ensures minimal lock duration for memory operations.
         Thin wrapper over ``set_entry("json", key, data)``.
         """
         self.set_entry("json", key, data)
+
+    def set_raw(self, key: str, blob: bytes | bytearray | memoryview) -> None:
+        """Set cached data from an already-serialized JSON blob (thread-safe).
+
+        Skips re-serialization when the caller still holds the original payload
+        bytes (e.g. the async fetch pipeline with validation disabled). The
+        SQLite tier compresses large blobs exactly like :meth:`set`. The
+        parsed-object entry (if any) is dropped; reads repopulate it.
+        """
+        self._store_json_blob(key, bytes(blob))
+        self._parsed_cache.pop(key, None)
 
     async def set_async(self, key: str, data: Any) -> None:
         """Set cached data asynchronously."""
@@ -625,12 +704,20 @@ class Cache:
         try:
             cache_key = (year, gp, session, driver, lap)
 
+            # Parsed-object front tier: a repeat hit skips orjson entirely.
+            parsed = self._parsed_telemetry_cache.get(cache_key, ordered=False)
+            if parsed is not None:
+                logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
+                return parsed
+
             # Completely lock-free memory cache read - no LRU update
             json_data = self._memory_telemetry_cache.get(cache_key, ordered=False)
 
             if json_data is not None:
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
-                return json_loads(json_data)
+                parsed = json_loads(json_data)
+                self._parsed_telemetry_cache.set(cache_key, parsed)
+                return parsed
 
             # Memory cache miss - check SQLite with lock
             with self._sqlite_lock:
@@ -639,13 +726,15 @@ class Cache:
                     cache_key,
                 ).fetchone()
                 if result:
-                    json_data = result[0]
+                    json_data = _decode_sqlite_value(result[0])
 
             # Update memory cache outside SQLite lock
             if json_data is not None:
                 self._memory_telemetry_cache.set(cache_key, json_data)
+                parsed = json_loads(json_data)
+                self._parsed_telemetry_cache.set(cache_key, parsed)
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
-                return json_loads(json_data)
+                return parsed
 
             return None
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
@@ -688,12 +777,18 @@ class Cache:
         results = {}
         misses = []
 
-        # 1. Try memory cache first (lock-free)
+        # 1. Try memory cache first (lock-free), parsed tier before blob tier
         for driver, lap in driver_laps:
             key = (year, gp, session, driver, lap)
+            parsed = self._parsed_telemetry_cache.get(key, ordered=False)
+            if parsed is not None:
+                results[(driver, lap)] = parsed
+                continue
             json_data = self._memory_telemetry_cache.get(key, ordered=False)
             if json_data:
-                results[(driver, lap)] = json_loads(json_data)
+                parsed = json_loads(json_data)
+                self._parsed_telemetry_cache.set(key, parsed)
+                results[(driver, lap)] = parsed
             else:
                 misses.append((driver, lap))
 
@@ -712,11 +807,16 @@ class Cache:
 
             if rows:
                 for driver_code, lap_num, json_data in rows:
+                    decoded = _decode_sqlite_value(json_data)
                     self._memory_telemetry_cache.set(
                         (year, gp, session, driver_code, lap_num),
-                        json_data,
+                        decoded,
                     )
-                    results[(driver_code, lap_num)] = json_loads(json_data)
+                    parsed = json_loads(decoded)
+                    self._parsed_telemetry_cache.set(
+                        (year, gp, session, driver_code, lap_num), parsed
+                    )
+                    results[(driver_code, lap_num)] = parsed
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             logger.warning("Telemetry batch cache read error: %s", e)
 
@@ -738,17 +838,19 @@ class Cache:
         if self.conn is None or self.read_only:
             return
         try:
-            json_data = json_dumps(data)
+            blob = json_dumps(data).encode("utf-8")
             cache_key = (year, gp, session, driver, lap)
 
-            # Update memory cache first (fast operation, <1ms)
-            self._memory_telemetry_cache.set(cache_key, json_data)
+            # Update memory cache first (fast operation, <1ms); plain blob.
+            # Parsed tier is read-through: drop any parsed entry on write.
+            self._memory_telemetry_cache.set(cache_key, blob)
+            self._parsed_telemetry_cache.pop(cache_key, None)
 
-            # Then update SQLite (slower operation)
+            # Then update SQLite (slower operation); compressed when large.
             with self._sqlite_lock:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO telemetry_cache VALUES (?, ?, ?, ?, ?, ?)",
-                    (*cache_key, json_data),
+                    (*cache_key, _encode_sqlite_value(blob)),
                 )
                 self._pending_writes += 1
                 self._commit_if_needed()
@@ -829,6 +931,8 @@ class Cache:
         with self._memory_cache_lock:
             self._memory_cache.clear()
             self._memory_telemetry_cache.clear()
+            self._parsed_cache.clear()
+            self._parsed_telemetry_cache.clear()
 
         logger.info("Cache cleared")
 
@@ -851,6 +955,8 @@ class Cache:
         with self._memory_cache_lock:
             self._memory_cache.clear()
             self._memory_telemetry_cache.clear()
+            self._parsed_cache.clear()
+            self._parsed_telemetry_cache.clear()
 
         if conn is not None:
             logger.debug("Cache connection closed")

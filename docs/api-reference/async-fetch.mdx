@@ -28,7 +28,7 @@ The async fetch system is built on `niquests` (a modern, actively-maintained for
 - **Automatic Retries**: Exponential backoff with jitter and circuit breaker protection
 - **Multi-CDN Fallback**: Automatic failover across multiple CDN sources (StaticDelivr, jsDelivr, Hugging Face buckets, custom CDNs)
 - **Smart Caching**: SQLite-backed cache with in-memory LRU layer for hot data
-- **Payload Validation**: Optional pydantic-based validation for data integrity
+- **Payload Validation**: Optional pydantic-free fetch-path validation for data integrity
 - **Resource Management**: Automatic cleanup of connections, thread pools, and process pools
 
 <Note>
@@ -44,7 +44,7 @@ The async fetch system follows this execution path:
 1. **Cache Check**: Query in-memory LRU cache, then SQLite cache (if enabled)
 2. **Network Fetch**: If cache miss, fetch from CDN with HTTP/2 multiplexing
 3. **JSON Parsing**: Offload parsing to thread pool (or process pool for non-telemetry data)
-4. **Validation**: Optional pydantic validation based on payload type
+4. **Validation**: Optional fetch-path validation based on payload type
 5. **Cache Write**: Persist to SQLite and in-memory cache (if enabled)
 6. **Return**: Deliver parsed dictionary to caller
 
@@ -144,12 +144,13 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 </ParamField>
 
 <ParamField path="validate_payload" type="bool" default="True">
-  If `True`, run pydantic validation on the fetched data before returning. Validation rules depend on the payload type:
+  If `True`, run fetch-path validation on the fetched data before returning. The fetch
+  path is pydantic-free; public `validate_*` APIs remain for compatibility.
+  Validation rules depend on the payload type:
 
-  - `drivers.json`: Validate driver metadata (names, numbers, teams)
-  - `rcm.json`: Validate race control messages (strict=False)
+  - `rcm.json`: Validate race control messages (strict=False, normalize=False)
   - `weather.json`: Validate weather data (strict=False)
-  - `*_tel.json`: Validate telemetry data (strict=False)
+  - `*_tel.json`: Validate telemetry data (strict=False, normalize=False)
   - `laps.json` / `laptimes.json`: Validate lap times (if `validate_lap_times=True`)
 
   Set to `False` for ~10-20% faster parsing when data integrity is guaranteed.
@@ -368,7 +369,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 </ParamField>
 
 <ParamField path="validate_payload" type="bool" default="True">
-  If `True`, run pydantic validation on each fetched payload. Validation happens in parallel across all requests.
+  If `True`, run fetch-path validation on each fetched payload.
 </ParamField>
 
 <ParamField path="max_retries" type="int | None" default="None">
@@ -382,7 +383,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 </ParamField>
 
 <ParamField path="max_concurrent_requests" type="int | None" default="None">
-  Maximum number of concurrent network requests. If `None`, uses global config value (default: 20).
+  Maximum number of concurrent network requests. If `None`, uses global config value (default: 22).
 
   **Tuning guide**:
   - `10-20`: Conservative, good for shared networks or rate-limited CDNs
@@ -589,7 +590,7 @@ Execute an async function with rate limiting using a semaphore for concurrency c
 </ParamField>
 
 <ParamField path="semaphore" type="asyncio.Semaphore | None" default="None">
-  Optional semaphore for rate limiting. If `None`, creates a new semaphore based on `max_concurrent_requests` config (default: 20).
+  Optional semaphore for rate limiting. If `None`, creates a new semaphore based on `max_concurrent_requests` config (default: 22).
 
   **Use cases**:
   - Pass a shared semaphore to coordinate concurrency across multiple operations
@@ -876,7 +877,7 @@ config.set("timeout", 60)
 # Set max retries (default: 3)
 config.set("max_retries", 5)
 
-# Set max concurrent requests (default: 20)
+# Set max concurrent requests (default: 22)
 config.set("max_concurrent_requests", 50)
 
 # Enable/disable validation (default: True)
@@ -989,7 +990,7 @@ data = await fetch_json_async(
 </Accordion>
 
 <Accordion title="Rate Limiting">
-  A semaphore-based rate limiter ensures no more than `max_concurrent_requests` requests are in flight simultaneously. This prevents overwhelming the CDN and triggering rate limits. The default is 20 concurrent requests, configurable via global config.
+  A semaphore-based rate limiter ensures no more than `max_concurrent_requests` requests are in flight simultaneously. This prevents overwhelming the CDN and triggering rate limits. The default is 22 concurrent requests, configurable via global config.
 </Accordion>
 
 <Accordion title="Retry Logic">

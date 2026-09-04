@@ -367,6 +367,10 @@ class TestConfigSetAndSave:
         config = config_module.Config()
         assert config.get("polars_lap_categorical") is False
 
+    def test_max_concurrent_requests_default(self):
+        config = config_module.Config()
+        assert config.get("max_concurrent_requests") == 22
+
     def test_save_and_load_round_trip(self, tmp_path):
         config = config_module.Config()
         config.set("timeout", 77)

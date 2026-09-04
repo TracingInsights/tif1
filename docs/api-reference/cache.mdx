@@ -327,6 +327,30 @@ for filename, data in session_data.items():
 
 ---
 
+### `set_raw()`
+
+```python
+def set_raw(key: str, blob: bytes | bytearray | memoryview) -> None
+```
+
+Stores an already-serialized JSON blob without re-encoding. The async fetch pipeline uses this when validation left the payload byte-identical to the HTTP body.
+
+Blobs of 4 KB or larger are zlib-compressed at the SQLite boundary only. The in-memory LRU keeps the plain blob. Small rows stay plain TEXT so legacy cache files remain readable.
+
+**Parameters:**
+- `key` (str): Cache key in the format `"{year}/{gp}/{session}/{file}.json"`
+- `blob` (bytes | bytearray | memoryview): UTF-8 JSON bytes
+
+**Example:**
+```python
+import tif1
+
+cache = tif1.get_cache()
+cache.set_raw("2024/Monaco_Grand_Prix/Race/drivers.json", b'{"drivers":["VER"]}')
+```
+
+---
+
 ## Telemetry Cache Access
 
 Telemetry data (high-frequency sensor readings) is stored in a dedicated SQLite table optimized for lap-by-lap queries. This separation improves performance for telemetry-heavy workloads and enables efficient batch operations.

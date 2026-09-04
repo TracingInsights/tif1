@@ -99,13 +99,16 @@ class TestCache:
     def test_cache_batches_commits(self, tmp_path):
         """Test cache writes are batched instead of committed every write."""
         cache = Cache(tmp_path)
+        # Pin the interval so the test checks the batching mechanism, not the
+        # configured default (see config cache_commit_interval).
+        cache._commit_interval = 5
 
-        for idx in range(24):
+        for idx in range(4):
             cache.set(f"key-{idx}", {"data": idx})
 
-        assert cache._pending_writes == 24
+        assert cache._pending_writes == 4
 
-        cache.set("key-24", {"data": 24})
+        cache.set("key-4", {"data": 4})
         assert cache._pending_writes == 0
 
     def test_cache_close_flushes_pending_writes(self, tmp_path):
@@ -477,6 +480,82 @@ class TestTelemetryBatchCoverage:
         cache = Cache(tmp_path)
         cache.conn = None
         assert cache.get_telemetry(2025, "Nowhere", "Race", "VER", 1) is None
+
+    def test_set_raw_round_trip(self, tmp_path):
+        cache = Cache(tmp_path)
+        blob = b'{"raw":true,"n":1}'
+        cache.set_raw("raw-key", blob)
+        assert cache.get("raw-key") == {"raw": True, "n": 1}
+        cache.set_raw("mv-key", memoryview(blob))
+        assert cache.get("mv-key") == {"raw": True, "n": 1}
+
+    def test_sqlite_compresses_large_blobs_and_keeps_small_text(self, tmp_path):
+        cache = Cache(tmp_path)
+        small = {"n": 1}
+        large = {"blob": "x" * 5000}
+        cache.set("small", small)
+        cache.set("large", large)
+
+        small_row = cache.conn.execute(
+            "SELECT data FROM cache WHERE key = ?", ("small",)
+        ).fetchone()[0]
+        large_row = cache.conn.execute(
+            "SELECT data FROM cache WHERE key = ?", ("large",)
+        ).fetchone()[0]
+        assert isinstance(small_row, str)
+        assert isinstance(large_row, bytes)
+
+        cache._memory_cache.clear()
+        cache._parsed_cache.clear()
+        assert cache.get("small") == small
+        assert cache.get("large") == large
+
+    def test_legacy_text_rows_still_read(self, tmp_path):
+        cache = Cache(tmp_path)
+        cache.conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", ("legacy", '{"a": 1}'))
+        cache.conn.commit()
+        assert cache.get("legacy") == {"a": 1}
+
+    def test_corrupt_compressed_row_is_cache_miss(self, tmp_path):
+        cache = Cache(tmp_path)
+        cache.conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)", ("bad", b"not-zlib"))
+        cache.conn.commit()
+        assert cache.get("bad") is None
+
+    def test_parsed_tier_repeat_hit_and_write_drops_stale(self, tmp_path):
+        cache = Cache(tmp_path)
+        cache.set("k", {"v": 1})
+        first = cache.get("k")
+        second = cache.get("k")
+        assert first == {"v": 1}
+        assert first is second
+        cache.set("k", {"v": 2})
+        third = cache.get("k")
+        assert third == {"v": 2}
+        assert third is not first
+
+    def test_close_clears_parsed_tiers(self, tmp_path):
+        cache = Cache(tmp_path)
+        cache.set("k", {"v": 1})
+        assert cache.get("k") == {"v": 1}
+        assert len(cache._parsed_cache) == 1
+        cache.close()
+        assert len(cache._parsed_cache) == 0
+
+    def test_telemetry_sqlite_compressed_round_trip(self, tmp_path):
+        cache = Cache(tmp_path)
+        payload = {"speed": list(range(2000))}
+        cache.set_telemetry(2025, "Monza", "Race", "VER", 1, payload)
+        key = (2025, "Monza", "Race", "VER", 1)
+        row = cache.conn.execute(
+            "SELECT data FROM telemetry_cache WHERE year=? AND gp=? AND session=? "
+            "AND driver=? AND lap=?",
+            key,
+        ).fetchone()[0]
+        assert isinstance(row, bytes)
+        cache._memory_telemetry_cache.clear()
+        cache._parsed_telemetry_cache.clear()
+        assert cache.get_telemetry(2025, "Monza", "Race", "VER", 1) == payload
 
 
 class TestLRUCache:

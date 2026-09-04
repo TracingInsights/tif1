@@ -403,7 +403,7 @@ export TIF1_CI_MODE=false
 export TIF1_TIMEOUT=30
 export TIF1_MAX_RETRIES=3
 export TIF1_MAX_WORKERS=20
-export TIF1_MAX_CONCURRENT_REQUESTS=20
+export TIF1_MAX_CONCURRENT_REQUESTS=22
 
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
@@ -427,7 +427,7 @@ export TIF1_HTTP2_MAX_CONNECTIONS=10
 export TIF1_HTTP2_MAX_POOL_SIZE=20
 
 # Cache Configuration
-export TIF1_CACHE_COMMIT_INTERVAL=25
+export TIF1_CACHE_COMMIT_INTERVAL=100
 export TIF1_SQLITE_TIMEOUT=30.0
 export TIF1_MEMORY_CACHE_MAX_ITEMS=1024
 export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=2048
@@ -962,7 +962,7 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="max_concurrent_requests" type="int" default="20">
+<ResponseField name="max_concurrent_requests" type="int" default="22">
   Maximum number of concurrent HTTP requests.
 
   ```python
@@ -1097,7 +1097,7 @@ config.set("pool_connections", 1024)
 
 <Accordion title="Cache Internals">
 
-<ResponseField name="cache_commit_interval" type="int" default="25">
+<ResponseField name="cache_commit_interval" type="int" default="100">
   Number of cache operations before committing to SQLite.
 
   ```python
@@ -2519,13 +2519,13 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http2_max_connections": 10,
   "http2_max_pool_size": 20,
   "max_workers": 20,
-  "max_concurrent_requests": 20,
+  "max_concurrent_requests": 22,
   "enable_cache": true,
   "offline_mode": false,
   "ci_mode": false,
   "lib": "pandas",
   "polars_lap_categorical": false,
-  "cache_commit_interval": 25,
+  "cache_commit_interval": 100,
   "sqlite_timeout": 30.0,
   "memory_cache_max_items": 1024,
   "memory_telemetry_cache_max_items": 2048,

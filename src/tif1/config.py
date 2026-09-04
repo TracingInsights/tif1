@@ -77,14 +77,16 @@ class Config:
             "http2_max_connections": 10,
             "http2_max_pool_size": 20,
             "max_workers": 20,
-            "max_concurrent_requests": 20,
+            # Real-CDN 96-file telemetry batches: 22 beat 20 (median -26%, 5/5
+            # interleaved pairs); 64 was slower than 20. See RESULTS.md H7.
+            "max_concurrent_requests": 22,
             "enable_cache": True,
             "offline_mode": False,
             "ci_mode": False,
             "lib": "pandas",
             "polars_lap_categorical": False,
             # Cache configuration constants
-            "cache_commit_interval": 25,
+            "cache_commit_interval": 100,
             "sqlite_timeout": 30.0,
             "memory_cache_max_items": 1024,
             "memory_telemetry_cache_max_items": 2048,

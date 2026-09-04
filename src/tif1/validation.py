@@ -518,6 +518,96 @@ def _normalize_telemetry_data(data: dict[str, Any]) -> dict[str, Any]:
     return _normalize_payload_lists(data)
 
 
+def _list_field_spec(model_cls: type[BaseModel]) -> tuple[tuple[str, str, bool], ...]:
+    """Build (field_name, payload_key, required) triples from a list-column model."""
+    return tuple(
+        (name, field.alias or name, field.is_required())
+        for name, field in model_cls.model_fields.items()
+    )
+
+
+_LAP_FIELDS = _list_field_spec(LapData)
+_TELEMETRY_FIELDS = _list_field_spec(TelemetryData)
+_RACE_CONTROL_FIELDS = _list_field_spec(RaceControlData)
+_WEATHER_FIELDS = _list_field_spec(WeatherData)
+
+_WEATHER_PASCAL_KEYS = {
+    "Time": "time",
+    "AirTemp": "air_temp",
+    "Humidity": "humidity",
+    "Pressure": "pressure",
+    "Rainfall": "rainfall",
+    "TrackTemp": "track_temp",
+    "WindDirection": "wind_direction",
+    "WindSpeed": "wind_speed",
+}
+
+
+def _fast_list_dump(
+    data: dict[str, Any], spec: tuple[tuple[str, str, bool], ...]
+) -> dict[str, Any] | None:
+    """Pydantic-free equivalent of ``model_validate(data).model_dump()`` for list-column models.
+
+    Maps payload alias keys to field names, fills absent optional fields with ``[]``,
+    and returns ``None`` when a required field is missing or empty so callers can
+    mirror the non-strict pydantic failure path (return the payload unchanged).
+    Unlike pydantic it does not coerce per-element types; the ``_normalize_*``
+    helpers cover the known dirty-data cases.
+    """
+    out: dict[str, Any] = {}
+    for name, key, required in spec:
+        if key in data:
+            value = data[key]
+        elif name in data:
+            value = data[name]
+        elif required:
+            return None
+        else:
+            value = []
+        if required and (not isinstance(value, list) or not value):
+            return None
+        out[name] = value
+    return out
+
+
+def _consistent_list_lengths(dumped: dict[str, Any]) -> bool:
+    first_len = -1
+    for value in dumped.values():
+        if isinstance(value, list) and value:
+            if first_len < 0:
+                first_len = len(value)
+            elif len(value) != first_len:
+                return False
+    return True
+
+
+def _fast_telemetry_dump(tel_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Telemetry variant of :func:`_fast_list_dump` matching the sanitized dump contract.
+
+    Empty channel lists are dropped (the pydantic path dropped them post-dump via
+    ``_sanitize_telemetry_payload``) and the ``tel`` wrapper field is never emitted.
+    """
+    out: dict[str, Any] = {}
+    for name, key, required in _TELEMETRY_FIELDS:
+        if name == "tel":
+            continue
+        if key in tel_data:
+            value = tel_data[key]
+        elif name in tel_data:
+            value = tel_data[name]
+        elif required:
+            return None
+        else:
+            continue
+        if not isinstance(value, list):
+            return None
+        if value:
+            out[name] = value
+    if not _consistent_list_lengths(out):
+        return None
+    return out
+
+
 def validate_telemetry(data: dict) -> TelemetryData:
     """Validate telemetry data in batch (faster than point-by-point).
 
@@ -555,12 +645,19 @@ def validate_weather(data: dict) -> WeatherData:
     return WeatherData.model_validate(weather_data)
 
 
-def validate_lap_data(data: dict, strict: bool = False) -> dict:
+def validate_lap_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
     """Validate lap data with quality checks.
+
+    Pydantic-free fast path: normalizes null-like strings, maps CDN alias keys to
+    field names, fills optional fields, and checks list-length consistency.
 
     Args:
         data: Lap data dictionary
         strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, convert null-like string tokens to ``None`` here. The
+            fetch pipeline passes ``False`` because DataFrame construction already
+            normalizes them vectorized (``helpers._replace_null_like_strings``),
+            matching the default no-validation path.
 
     Returns:
         Validated data dictionary
@@ -568,25 +665,32 @@ def validate_lap_data(data: dict, strict: bool = False) -> dict:
     Raises:
         InvalidDataError: If strict=True and validation fails
     """
-    normalized_data = _normalize_lap_data(data)
-    try:
-        validated = LapData.model_validate(normalized_data)
-        return validated.model_dump()
-    except Exception as e:
+    normalized_data = _normalize_lap_data(data) if normalize else data
+    dumped = _fast_list_dump(normalized_data, _LAP_FIELDS)
+    if dumped is None or not _consistent_list_lengths(dumped):
         if strict:
-            raise InvalidDataError(reason=f"Lap data validation failed: {e}")
-        logger.debug(f"Lap validation failed (non-strict): {e}")
+            raise InvalidDataError(reason="Lap data validation failed")
+        logger.debug("Lap validation failed (non-strict); returning normalized payload")
         # Return the normalized payload so null-like strings (e.g. "None" in the
         # 2026 season) never leak through to DataFrame construction unchanged.
         return normalized_data
+    return dumped
 
 
-def validate_telemetry_data(data: dict, strict: bool = False) -> dict:
-    """Validate telemetry data in batch (replaces point-by-point validation).
+def validate_telemetry_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
+    """Validate telemetry data in batch (pydantic-free fast path).
+
+    Mirrors the previous ``validate_telemetry(data).model_dump()`` contract:
+    unwraps a ``tel`` dict, normalizes null-like strings, coerces ``brake``/
+    ``drs`` to bools, maps alias keys to field names, and drops empty channels.
 
     Args:
         data: Telemetry data dictionary with arrays
         strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, run null-like string normalization and ``brake``/``drs``
+            bool coercion here. The fetch pipeline passes ``False`` to skip the
+            per-element scan; downstream consumers see the same values the
+            default no-validation path produces.
 
     Returns:
         Validated data dictionary
@@ -594,38 +698,79 @@ def validate_telemetry_data(data: dict, strict: bool = False) -> dict:
     Raises:
         InvalidDataError: If strict=True and validation fails
     """
-    try:
-        validated = validate_telemetry(data)
-        return validated.model_dump()
-    except Exception as e:
+    tel_data = data["tel"] if isinstance(data.get("tel"), dict) else data
+    if normalize:
+        tel_data = _normalize_telemetry_data(tel_data)
+        for channel in ("brake", "drs"):
+            values = tel_data.get(channel)
+            if isinstance(values, list):
+                coerced = _coerce_optional_bool_list(values)
+                if coerced is not values:
+                    tel_data = dict(tel_data)
+                    tel_data[channel] = coerced
+
+    dumped = _fast_telemetry_dump(tel_data)
+    if dumped is None:
         if strict:
-            raise InvalidDataError(reason=f"Telemetry validation failed: {e}")
-        logger.debug(f"Telemetry validation failed (non-strict): {e}")
+            raise InvalidDataError(reason="Telemetry data validation failed")
+        logger.debug("Telemetry validation failed (non-strict); returning original payload")
         return data
+    return dumped
 
 
-def validate_race_control_data(data: dict, strict: bool = False) -> dict:
-    """Validate race control data arrays."""
-    try:
-        validated = validate_race_control(data)
-        return validated.model_dump()
-    except Exception as e:
+def validate_race_control_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
+    """Validate race control data arrays (pydantic-free fast path).
+
+    Args:
+        data: Race control payload dictionary
+        strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, convert null-like string tokens to ``None`` here. The
+            fetch pipeline passes ``False``; table load still swaps the token
+            ``"None"``. See :func:`validate_lap_data`.
+
+    Returns:
+        Validated data dictionary
+
+    Raises:
+        InvalidDataError: If strict=True and validation fails
+    """
+    source = _normalize_payload_lists(data) if normalize else data
+    dumped = _fast_list_dump(source, _RACE_CONTROL_FIELDS)
+    if dumped is None or not _consistent_list_lengths(dumped):
         if strict:
-            raise InvalidDataError(reason=f"Race control validation failed: {e}")
-        logger.debug(f"Race control validation failed (non-strict): {e}")
+            raise InvalidDataError(reason="Race control validation failed")
+        logger.debug("Race control validation failed (non-strict); returning original payload")
         return data
+    return dumped
 
 
-def validate_weather_data(data: dict, strict: bool = False) -> dict:
-    """Validate weather data arrays."""
-    try:
-        validated = validate_weather(data)
-        return validated.model_dump()
-    except Exception as e:
+def validate_weather_data(data: dict, strict: bool = False, *, normalize: bool = True) -> dict:
+    """Validate weather data arrays (pydantic-free fast path).
+
+    Args:
+        data: Weather payload dictionary (CDN aliases or PascalCase keys)
+        strict: If True, raise on validation errors; if False, return original data
+        normalize: If True, convert null-like string tokens to ``None`` here.
+            Weather fetch keeps the default (inline coercion). See
+            :func:`validate_lap_data`.
+
+    Returns:
+        Validated data dictionary
+
+    Raises:
+        InvalidDataError: If strict=True and validation fails
+    """
+    original = data
+    if any(key in data for key in _WEATHER_PASCAL_KEYS):
+        data = {_WEATHER_PASCAL_KEYS.get(key, key): value for key, value in data.items()}
+    normalized = _normalize_payload_lists(data) if normalize else data
+    dumped = _fast_list_dump(normalized, _WEATHER_FIELDS)
+    if dumped is None or not _consistent_list_lengths(dumped):
         if strict:
-            raise InvalidDataError(reason=f"Weather validation failed: {e}")
-        logger.debug(f"Weather validation failed (non-strict): {e}")
-        return data
+            raise InvalidDataError(reason="Weather validation failed")
+        logger.debug("Weather validation failed (non-strict); returning original payload")
+        return original
+    return dumped
 
 
 def validate_driver_info(data: dict, strict: bool = False) -> dict:

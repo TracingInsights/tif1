@@ -6,6 +6,41 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Changed
+
+- **Pydantic removed from the fetch-pipeline validation path** (`validation.py`): the four
+  `validate_*_data` functions now use a pydantic-free fast path (alias→field mapping, default
+  filling, length checks) with identical output on well-typed payloads. Validation-enabled
+  full-session fetch: 1971 → 1024 ms (1.9x). The pydantic entry points (`validate_laps`,
+  `validate_telemetry`, ...) remain for API compatibility. Note: no per-element type coercion
+  or driver-code pattern check on the fetch path.
+- **Null-like normalization deferred to DataFrame construction** for laps/telemetry/rcm on the
+  fetch path (`normalize=False`), relying on the existing vectorized
+  `helpers._replace_null_like_strings`; weather keeps inline coercion. Per-payload validation
+  cost drops to ~0.006-0.008 ms.
+- **SQLite cache tier compresses large blobs** (zlib-3, ≥4 KB; telemetry payloads compress ~12x)
+  and gains `Cache.set_raw()` used by the async fetch pipeline to persist untransformed payloads
+  without re-serialization. Default-config cold write-cache full-session load: 3750 → ~2100 ms
+  (-44%). Legacy TEXT rows still read; corrupt rows degrade to a cache miss.
+- **Parsed-object read-through tiers** in `Cache` (128 json / 256 telemetry entries): repeat warm
+  hits skip orjson parsing (190 µs → 0.4 µs); writes drop parsed entries so stale objects cannot
+  survive.
+- Default `max_concurrent_requests` 20 → 22 (live CDN, 2025 Abu Dhabi Practice 1, 96 telemetry
+  payloads: 22 beat 20 in 5/5 interleaved pairs, median -26%; cap 64 was slower than 20).
+- Default `cache_commit_interval` 25 → 100 (~20% of the compressed-write path; `close()` still
+  force-commits).
+
+### Performance
+
+- Full experiment log with baselines, methodology, and per-hypothesis verdicts:
+  `.agents/perf/RESULTS.md`; reproducible offline harness: `tools/perf_validation_experiment.py`.
+- Accepted: pydantic removal (H1), deferred normalization (H2), raw+compressed cache writes (H5),
+  parsed-object tiers (H4), commit interval (H6), concurrency cap (H7: 22 after live CDN).
+- Rejected by measurement: event-loop parse offload (H3, GIL-bound), lazy pandas import (H10),
+  polars-first assembly for the pandas backend (H9 — the merged-dict batch path is already at its
+  dependency-free floor; faster routes require pyarrow or change dtype inference semantics).
+- Already implemented previously: single-shot laps/telemetry frame assembly (H8).
+
 ## [0.6.0] - 2026-08-26
 
 ### Summary

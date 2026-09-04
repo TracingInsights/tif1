@@ -41,25 +41,20 @@ def _validate_json_payload(path: str, data: dict[str, Any], config) -> dict[str,
         return sanitized
 
     try:
-        if path == "drivers.json" and config.get("validate_data", True):
-            from .validation import validate_drivers
-
-            try:
-                return validate_drivers(data).model_dump()
-            except (InvalidDataError, KeyError, TypeError, ValueError) as e:
-                logger.debug(f"Driver validation failed (non-strict) for {path}: {e}")
-                return data
-
         if (path == "rcm.json" or path.endswith("/rcm.json")) and config.get("validate_data", True):
             from .validation import validate_race_control_data
 
-            return validate_race_control_data(data, strict=False)
+            # normalize=False: the default no-validation path never scanned
+            # element-wise; table load still swaps the token "None".
+            return validate_race_control_data(data, strict=False, normalize=False)
 
         if (path == "weather.json" or path.endswith("/weather.json")) and config.get(
             "validate_data", True
         ):
             from .validation import validate_weather_data
 
+            # Weather payloads are tiny; keep inline "None"-string coercion
+            # (contract: test_coverage_core2 weather_json_none_strings_coerced).
             return validate_weather_data(data, strict=False)
 
         if (path == "session_laptimes.json" or path.endswith("/laptimes.json")) and config.get(
@@ -67,19 +62,19 @@ def _validate_json_payload(path: str, data: dict[str, Any], config) -> dict[str,
         ):
             from .validation import validate_lap_data
 
-            return validate_lap_data(data, strict=False)
+            return validate_lap_data(data, strict=False, normalize=False)
 
         if path.endswith("_tel.json") and config.get("validate_telemetry", True):
             from .validation import validate_telemetry_data
 
             if "tel" in data and isinstance(data["tel"], dict):
-                validated = validate_telemetry_data(data["tel"], strict=False)
+                validated = validate_telemetry_data(data["tel"], strict=False, normalize=False)
                 validated = _sanitize_telemetry_payload(validated)
                 merged = dict(data)
                 merged["tel"] = validated
                 return merged
 
-            validated = validate_telemetry_data(data, strict=False)
+            validated = validate_telemetry_data(data, strict=False, normalize=False)
             return _sanitize_telemetry_payload(validated)
     except (AttributeError, InvalidDataError, KeyError, TypeError, ValueError) as e:
         raise InvalidDataError(reason=f"Validation failed for {path}: {e}") from e
@@ -451,6 +446,8 @@ async def fetch_json_async(
                         )
                     elif is_telemetry_payload:
                         # Telemetry-heavy cold starts perform better without cross-process IPC.
+                        # (Measured: thread offload gains nothing under network latency
+                        # and adds ~8% executor overhead on warm/cacheless loads.)
                         data = json_loads(content)
                     else:
                         data = await loop.run_in_executor(executor, json_loads, content)
@@ -462,11 +459,24 @@ async def fetch_json_async(
             if not isinstance(data, dict):
                 raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
 
+            untransformed = True
             if validate_payload:
-                data = _validate_json_payload(path, data, config)
+                validated = _validate_json_payload(path, data, config)
+                untransformed = validated is data
+                data = validated
 
             if write_cache and cache is not None:
-                await loop.run_in_executor(executor, cache.set, cache_key, data)
+                set_raw = getattr(cache, "set_raw", None)
+                if (
+                    untransformed
+                    and callable(set_raw)
+                    and isinstance(content, bytes | bytearray | memoryview)
+                ):
+                    # Payload is byte-identical to what was parsed: persist the
+                    # original blob and skip re-serialization.
+                    await loop.run_in_executor(executor, set_raw, cache_key, bytes(content))
+                else:
+                    await loop.run_in_executor(executor, cache.set, cache_key, data)
 
             circuit_breaker.record_success()
 
