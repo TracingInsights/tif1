@@ -180,6 +180,23 @@ def _parse_json_payload_bytes(payload: bytes | bytearray | memoryview) -> Any:
     return json_loads(payload)
 
 
+def _response_bytes(response: Any) -> Any:
+    """Access the lazy response body off the event loop."""
+    return getattr(response, "content", None)
+
+
+def _decode_and_parse(response: Any) -> tuple[Any, Any]:
+    """Decode the lazy response body and parse JSON off the event loop.
+
+    Returns ``(parsed, raw_content)`` so the caller can persist the original
+    bytes without re-touching the lazy attribute on the event loop.
+    """
+    content = getattr(response, "content", None)
+    if isinstance(content, bytes | bytearray | memoryview):
+        return json_loads(content), content
+    return parse_response_json(response), None
+
+
 def _get_json_parse_executor() -> Any | None:
     """Get or create shared process pool for JSON parsing."""
     global _json_parse_executor
@@ -437,23 +454,26 @@ async def fetch_json_async(
             response.raise_for_status()
 
             try:
-                content = getattr(response, "content", None)
                 json_parse_executor = _get_json_parse_executor()
                 is_telemetry_payload = path.endswith("_tel.json")
-                if isinstance(content, bytes | bytearray | memoryview):
-                    if json_parse_executor and not is_telemetry_payload:
+                if json_parse_executor and not is_telemetry_payload:
+                    # Opt-in process-pool parse: decode bytes in a worker
+                    # thread, then parse in the process pool.
+                    content = await loop.run_in_executor(executor, _response_bytes, response)
+                    if isinstance(content, bytes | bytearray | memoryview):
                         data = await loop.run_in_executor(
                             json_parse_executor, _parse_json_payload_bytes, bytes(content)
                         )
-                    elif is_telemetry_payload:
-                        # Telemetry-heavy cold starts perform better without cross-process IPC.
-                        # (Measured: thread offload gains nothing under network latency
-                        # and adds ~8% executor overhead on warm/cacheless loads.)
-                        data = json_loads(content)
                     else:
-                        data = await loop.run_in_executor(executor, json_loads, content)
+                        content = None
+                        data = await loop.run_in_executor(executor, parse_response_json, response)
                 else:
-                    data = await loop.run_in_executor(executor, parse_response_json, response)
+                    # niquests' lazy content decode plus orjson parse cost
+                    # milliseconds per response; paying that on the event loop
+                    # serializes the whole batch. Decode + parse in a worker.
+                    data, content = await loop.run_in_executor(
+                        executor, _decode_and_parse, response
+                    )
             except (ValueError, TypeError, AttributeError) as e:
                 raise InvalidDataError(reason=f"JSON parsing failed: {e}")
 
