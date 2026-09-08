@@ -1,0 +1,22 @@
+[
+  {
+    "path": "src/tif1/async_fetch.py",
+    "old": "import asyncio\nimport atexit\nimport logging",
+    "new": "import asyncio\nimport atexit\nimport gc\nimport logging"
+  },
+  {
+    "path": "src/tif1/async_fetch.py",
+    "old": "async def fetch_multiple_async(",
+    "new": "_GC_BATCH_MIN_REQUESTS = 64\n\n\nasync def _gather_with_gc_pause(*awaitables: Any) -> list[Any]:\n    \"\"\"asyncio.gather with the GC paused for large batches.\n\n    Parsed payloads allocate millions of small objects per large batch; gen2\n    collections mid-batch pause the event loop and amplify GIL contention\n    with the worker threads. GC resumes automatically after the batch.\n    \"\"\"\n    tune = len(awaitables) >= _GC_BATCH_MIN_REQUESTS and gc.isenabled()\n    if tune:\n        gc.disable()\n    try:\n        return await asyncio.gather(*awaitables, return_exceptions=True)\n    finally:\n        if tune:\n            gc.enable()\n\n\nasync def fetch_multiple_async("
+  },
+  {
+    "path": "src/tif1/async_fetch.py",
+    "old": "    if max_concurrent >= len(requests):\n        results = await asyncio.gather(\n            *(\n                fetch_json_async(\n                    *req,\n                    use_cache=use_cache,\n                    write_cache=write_cache,\n                    validate_payload=validate_payload,\n                    max_retries=max_retries,\n                    timeout=timeout,\n                )\n                for req in requests\n            ),\n            return_exceptions=True,\n        )",
+    "new": "    if max_concurrent >= len(requests):\n        results = await _gather_with_gc_pause(\n            *(\n                fetch_json_async(\n                    *req,\n                    use_cache=use_cache,\n                    write_cache=write_cache,\n                    validate_payload=validate_payload,\n                    max_retries=max_retries,\n                    timeout=timeout,\n                )\n                for req in requests\n            )\n        )"
+  },
+  {
+    "path": "src/tif1/async_fetch.py",
+    "old": "        tasks = [fetch_with_semaphore(req) for req in requests]\n        results = await asyncio.gather(*tasks, return_exceptions=True)",
+    "new": "        tasks = [fetch_with_semaphore(req) for req in requests]\n        results = await _gather_with_gc_pause(*tasks)"
+  }
+]

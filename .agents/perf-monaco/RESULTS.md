@@ -40,7 +40,7 @@ processing (E1) eliminates that collapse mode.
 | # | Hypothesis | Target | Status |
 |---|-------------|--------|--------|
 | E1 | Offload niquests lazy content decode + orjson parse off the event loop | fetch phase; collapse-mode elimination | MEASURED: KEPT (-12.6% median, -51% mean, max 21.7 s vs 72.4 s) |
-| E2 | Pre-typed DataFrame construction for telemetry frames (no post-hoc setitem/astype churn) | 3.9 s assembly phase | pending |
+| E2 | Pre-typed DataFrame construction for telemetry frames (no post-hoc setitem/astype churn) | 3.9 s assembly phase | MEASURED: KEPT (-16.2% median total; assembly 4.14 -> 2.36 s offline, 1452/1452 frames identical) |
 | E3 | GC freeze/disable around batch fetch | allocation/GC pauses during fetch | pending |
 | E4 | Fix `retry_jitter_max` default validation (per-request logger.warning on the loop) | loop-side logging + retry-delay correctness | pending |
 | E5 | Memoize Config validation lookups | per-request config.get validation | pending |
@@ -70,3 +70,38 @@ Median -12.6%, mean -51%: the control collapsed into the slow regime twice;
 E1 never did. Telemetry-phase medians: 18.29 s → 15.76 s (-13.8%).
 Verification: 1183 unit tests pass; ruff clean.
 Files: `src/tif1/async_fetch.py`.
+
+## Experiment 2 (E2): pre-typed telemetry frame construction — KEPT
+
+`_create_telemetry_df` built each frame from raw lists and then converted
+canonical columns one by one (`Time` to_timedelta, `nGear`/`DRS`/`LapNumber`
+astype Int64, `Driver` astype object, Brake bool, missing-channel NA columns)
+— ~8 `__setitem__` calls plus an inference+astype round trip per frame,
+~2.9 ms x 1452 frames offline. The merged-dict alternative (1.5 s) was
+rejected first: cross-payload type mixing changes per-frame dtypes
+(object instead of float64) — 0/1452 parity.
+
+Change: `_typed_telemetry_frame` pre-types the canonical columns and passes
+them into the `pd.DataFrame` constructor (Driver wrapped as object-dtype
+Series — pandas 3 infers str dtype from object arrays at construction),
+falling back to the legacy build+convert path whenever a canonical
+conversion fails, so the historical error contract (bad payloads drop to
+None) is preserved.
+
+Offline (1452 real Monaco payloads, best/median of 5): 3.57/4.14 s ->
+2.16/2.36 s (**1.7x**), parity 1452/1452 frames identical (columns, dtypes,
+values, sha256-hashed). End-to-end interleaved A/B vs the E1 state:
+
+| variant | runs (total_s) | median | min |
+|---------|----------------|-------:|----:|
+| A (E1) | 22.16, 22.41, 18.99, 21.94, 18.51 | 21.94 | 18.51 |
+| B (E1+E2) | 47.72, 24.11, 15.81, 14.56, 18.40 | **18.40** | **14.56** |
+
+Median **-16.2%** (telemetry phase -16.9%); min -21%. The B-side 47.7 s run
+is the same intermittent straggler regime the control hit in E1's suite
+(cloudfront origin errors stalling a handful of requests); it is
+network-side and orthogonal to this change (which only alters post-fetch
+CPU work).
+Verification: parity 1452/1452; focused dtype/model/core suites pass
+(284 tests); ruff clean.
+Files: `src/tif1/core_utils/helpers.py`.
