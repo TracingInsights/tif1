@@ -37,7 +37,6 @@ def main() -> None:
     print(f"laps: {t_laps:.2f}s rows={len(laps)}")
 
     t0 = time.perf_counter()
-    refs_done = 0
     tel = session.fetch_all_laps_telemetry()
     t_tel = time.perf_counter() - t0
 
