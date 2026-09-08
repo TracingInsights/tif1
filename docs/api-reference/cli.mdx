@@ -723,7 +723,7 @@ Cache Check (SQLite)
 When data is requested for the first time:
 
 1. **Cache Lookup**: CLI checks local SQLite cache
-2. **Network Fetch**: Data is downloaded from the CDN (StaticDelivr primary; jsDelivr and Hugging Face fallbacks)
+2. **Network Fetch**: Data is downloaded from the CDN (jsDelivr primary; Hugging Face and StaticDelivr fallbacks)
 3. **JSON Parsing**: Raw JSON is parsed into structured data
 4. **DataFrame Creation**: Data is converted to pandas/polars DataFrame
 5. **Cache Write**: Processed data is stored in cache

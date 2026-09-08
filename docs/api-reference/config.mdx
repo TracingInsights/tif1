@@ -1134,7 +1134,7 @@ config.set("pool_connections", 1024)
 <Accordion title="CDN Configuration">
 
 <ResponseField name="cdns" type="list[str]" default='["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]'>
-  List of CDN URLs to use for data fetching, in priority order (StaticDelivr primary, jsDelivr fallback, Hugging Face buckets backup). Must be HTTPS URLs.
+  List of CDN URLs to use for data fetching, in priority order (jsDelivr primary, Hugging Face buckets fallback, StaticDelivr backup). Must be HTTPS URLs.
 
   ```python
   config.set("cdns", ["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"])

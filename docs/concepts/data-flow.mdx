@@ -39,11 +39,11 @@ graph TD
     H -->|Yes| I[Fail Fast]
     H -->|No| J[Async HTTP Fetcher]
     J --> K[CDN Manager]
-    K --> L{Try StaticDelivr}
+    K --> L{Try jsDelivr}
     L -->|Success| M[JSON Data]
-    L -->|Failure| N{Try jsDelivr}
+    L -->|Failure| N{Try Hugging Face}
     N -->|Success| M
-    N -->|Failure| V{Try Hugging Face}
+    N -->|Failure| V{Try StaticDelivr}
     V -->|Success| M
     V -->|Failure| W[Fail]
     M --> P[Schema Validator]
@@ -88,11 +88,12 @@ graph TD
 
 **CDN Manager (`cdn.py`)**
 - Manages multiple CDN sources with automatic fallback
-- Primary: StaticDelivr CDN (`cdn.staticdelivr.com/gh/TracingInsights/{year}/main`)
-- Fallback: jsDelivr CDN (`cdn.jsdelivr.net/gh/TracingInsights/{year}@main`)
-- Backup: Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}/resolve`)
+- Primary: jsDelivr CDN (`cdn.jsdelivr.net/gh/TracingInsights/{year}@main`)
+- Fallback: Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}/resolve`)
+- Backup: StaticDelivr CDN (`cdn.staticdelivr.com/gh/TracingInsights/{year}/main`)
 - Tracks failure counts per CDN source
 - Automatically disables failing sources after 3 consecutive failures
+- A 404 from one CDN falls through to the next (mirrors can be stale); `DataNotFoundError` is raised only when every CDN returns 404
 - Handles URL encoding and path construction
 - Never uses `raw.githubusercontent.com` (strict rate limits)
 
@@ -433,8 +434,8 @@ When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a mul
 
 #### CDN Architecture
 
-**Primary Source: StaticDelivr CDN**
-- URL Pattern: `https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{path}`
+**Primary Source: jsDelivr CDN**
+- URL Pattern: `https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{path}`
 - Global CDN with edge locations worldwide
 - Automatic caching and compression
 - No rate limits for reasonable usage
@@ -442,20 +443,20 @@ When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a mul
 - Average latency: 50-200ms (depending on location)
 - Uptime: 99.9%+
 
-**Fallback Source: jsDelivr CDN**
-- URL Pattern: `https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{path}`
+**Fallback Source: Hugging Face Buckets**
+- URL Pattern: `https://huggingface.co/buckets/tracinginsights/{year}/resolve/{path}`
+- Mirrors the TracingInsights GitHub data repos with the same layout (no branch segment)
+- Pre-warmed CDN edge locations in the US and EU
+- Used when jsDelivr fails or is unavailable
+
+**Backup Source: StaticDelivr CDN**
+- URL Pattern: `https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{path}`
 - Global CDN with edge locations worldwide
 - Automatic caching and compression
 - No rate limits for reasonable usage
 - HTTPS with HTTP/2 support
 - Average latency: 50-200ms (depending on location)
-- Used when StaticDelivr fails or is unavailable
-
-**Backup Source: Hugging Face Buckets**
-- URL Pattern: `https://huggingface.co/buckets/tracinginsights/{year}/resolve/{path}`
-- Mirrors the TracingInsights GitHub data repos with the same layout (no branch segment)
-- Pre-warmed CDN edge locations in the US and EU
-- Used when both StaticDelivr and jsDelivr fail or are unavailable
+- Used when both jsDelivr and Hugging Face fail or are unavailable
 
 **Forbidden Source: raw.githubusercontent.com**
 - Never used due to strict rate limits (10 requests/hour)
@@ -470,8 +471,8 @@ gp_name = "monaco"  # Normalized (lowercase, no spaces)
 session_type = "race"  # Normalized
 driver = "VER"
 
-# Primary URL (StaticDelivr)
-base_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main"
+# Primary URL (jsDelivr)
+base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main"
 lap_url = f"{base_url}/laps/{gp_name}/{session_type}/driver_{driver}.json"
 # Result: https://cdn.staticdelivr.com/gh/TracingInsights/2025/main/laps/monaco/race/driver_VER.json
 
@@ -491,7 +492,7 @@ messages_url = f"{base_url}/messages/{gp_name}/{session_type}/messages.json"
 async def fetch_with_fallback(url_path):
     """Fetch data with automatic CDN fallback."""
 
-    # Attempt 1: StaticDelivr CDN (primary)
+    # Attempt 1: jsDelivr CDN (primary)
     try:
         staticdelivr_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{url_path}"
         response = await http_client.get(staticdelivr_url, timeout=30)

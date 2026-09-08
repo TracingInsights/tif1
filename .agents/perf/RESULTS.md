@@ -212,3 +212,36 @@ diagnostics identical to the pre-change baseline (40, all pre-existing).
 
 Rejected during analysis (measured, not worth pursuing): dispatch overhead of
 `_validate_json_payload` with toggles off (~0.0006 ms/payload).
+
+## Experiment 11 (2026-09-08): race all CDNs per payload vs sequential fallback — REJECTED
+
+Context: default CDN chain reordered to jsDelivr (primary) -> Hugging Face
+buckets -> StaticDelivr, and 404s now fall through to the next CDN (stale
+mirrors can diverge; `DataNotFoundError` only after every CDN 404s).
+Question: would firing every CDN per payload (hedged requests) be faster than
+the sequential fallback loop?
+
+Harness: `tools/cdn_parallel_experiment.py` (live CDNs, production HTTP stack —
+niquests, one shared session; file-level concurrency cap 22; 3 rounds per
+cell, medians reported). Workloads: 12 session-table files, 24 telemetry
+files (2026 Italian GP), a simulated stale primary (jsDelivr genuinely 404s,
+mirrors have the file), and files missing everywhere. Vantage point: this
+sandbox; warm single-file medians — StaticDelivr 1.7 ms, jsDelivr 7.9 ms,
+HuggingFace 397.5 ms (redirect hop to the xet CDN).
+
+| scenario | sequential | hedged (race all) | staggered (150 ms) |
+|---|---:|---:|---:|
+| small files, healthy | 0.04 s / 12 req | 0.05 s / 36 req | 0.05 s / 12 req |
+| 24 telemetry files, healthy | 0.19 s / 5.1 MB | 0.47 s / 15.3 MB | 0.12 s / 5.1 MB |
+| primary 404s (stale jsDelivr) | 0.56 s (max 3.7) | 0.48 s (max 0.49) | 0.44 s / 36 req |
+| missing everywhere | 0.15 s / 12 req | 0.14 s / 12 req | 0.16 s / 12 req |
+
+Verdict: **rejected as a default**. Hedging never beats sequential on the
+healthy path (jsDelivr is already the fastest source), triples requests and
+bytes (15.3 MB vs 5.1 MB for the telemetry batch), and is 2.5x slower there
+because loser requests still download to completion and contend for the
+connection pool. Its only wins are tail latency (primary-404 max 3.7 s ->
+0.49 s) and ~0.1 s median when the primary is stale — the 404 fall-through
+already covers the stale-mirror case for a few tens of ms per file. Keeping
+the sequential fallback loop in `CDNManager.try_sources[_async]`; the harness
+stays in `tools/` for re-measurement from other vantage points.

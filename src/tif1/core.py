@@ -551,12 +551,17 @@ class Session:
                 sources = cdn_manager.get_sources()
                 for src in sources:
                     url = src.format_url(self.year, self.gp, self.session, path)
-                    resp = http.get(url, timeout=timeout)
-                    if resp.status_code == 404:
-                        return None
-                    resp.raise_for_status()
-                    data = parse_response_json(resp)
-                    return data if isinstance(data, dict) else None
+                    try:
+                        resp = http.get(url, timeout=timeout)
+                        if resp.status_code == 404:
+                            # Mirror may be stale; the next CDN may have it.
+                            continue
+                        resp.raise_for_status()
+                        data = parse_response_json(resp)
+                        return data if isinstance(data, dict) else None
+                    except Exception:
+                        continue
+                return None
             except Exception:
                 return None
 

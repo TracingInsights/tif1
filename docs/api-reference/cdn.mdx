@@ -95,7 +95,7 @@ Optional JSON minification reduces file sizes by 20-40% by removing whitespace a
 - jsDelivr CDN automatically serves minified versions when available
 - Minification is transparent—parsed data is identical to non-minified versions
 - Can be enabled globally via config or per-source
-- Hugging Face bucket sources never use minification. These sources do not serve `.min.json`. A 404 there would abort the fallback chain with a fatal `DataNotFoundError`
+- Hugging Face bucket sources never use minification. These sources do not serve `.min.json`. A 404 there would waste a round trip (the fallback chain would have to hit another source) on every request, so Hugging Face sources are always excluded from minification
 
 **Performance impact:**
 - **Telemetry data**: ~35-40% size reduction (structured, repetitive data)
@@ -139,7 +139,7 @@ The CDN manager uses a singleton pattern to ensure consistent state across the e
 The CDN system operates in the background. Applications typically do not interact with it directly:
 
 - **Automatic initialization**: CDN manager is created on first use
-- **Zero-configuration default**: Works out-of-the-box with the StaticDelivr → jsDelivr → Hugging Face chain
+- **Zero-configuration default**: Works out-of-the-box with the jsDelivr → Hugging Face → StaticDelivr chain
 - **Session API integration**: `Session.load()` automatically uses CDN system
 - **Error handling**: Network errors are caught and trigger automatic fallback
 - **Logging**: Debug-level logs show which CDN source is being used
@@ -226,13 +226,15 @@ Here's how a typical data fetch flows through the CDN system:
       - Call mark_success(source_name) to reset failure count
       - Return fetched data (done!)
    d. If DataNotFoundError (404):
-      - Re-raise immediately (data doesn't exist, no point trying other sources)
+      - Fall through to the next source (mirrors can be stale or divergent)
+      - Do NOT increment the failure count (not a CDN health problem)
    e. If other error (network, timeout, 5xx):
       - Call mark_failure(source_name) to increment failure count
       - Log warning and try next source
    ↓
 6. If all sources fail:
-   - Raise NetworkError with details
+   - Raise DataNotFoundError if every failure was a 404 (data does not exist)
+   - Otherwise raise NetworkError with details
    ↓
 7. If any source succeeds:
    - Return data to Session
@@ -320,7 +322,7 @@ Most users never need to interact with the CDN API directly. It works transparen
 </Warning>
 
 <Info>
-  The default configuration uses three sources in priority order. The sources are **StaticDelivr** (primary), **jsDelivr** (fallback), and **Hugging Face buckets** (`https://huggingface.co/buckets/tracinginsights`, last resort):
+  The default configuration uses three sources in priority order. The sources are **jsDelivr** (primary), **Hugging Face buckets** (`https://huggingface.co/buckets/tracinginsights`, fallback), and **StaticDelivr** (last resort):
 
   - **Global performance**: 800+ CDN locations worldwide
   - **Unlimited bandwidth**: No rate limits or bandwidth caps
@@ -646,20 +648,20 @@ The CDN manager initializes automatically on the first call to `get_cdn_manager(
 5. **Assign priorities**: Sources are assigned priorities based on their order (1, 2, 3, ...)
 6. **Initialize health tracking**: Sets up `_failure_counts` dictionary with all sources at 0 failures
 7. **Sort by priority**: Orders sources so highest-priority (lowest number) is tried first
-8. **Fallback to defaults**: If no valid sources found, uses StaticDelivr, jsDelivr, and Hugging Face buckets as defaults
+8. **Fallback to defaults**: If no valid sources found, uses jsDelivr, Hugging Face buckets, and StaticDelivr as defaults
 
 **Configuration Sources (in order of precedence):**
 
 1. **Environment variable**: `TIF1_CDNS` (comma-separated list of HTTPS URLs)
 2. **Config file**: `~/.tif1rc` in home directory or current directory (if `TIF1_TRUST_CWD_CONFIG=true`)
-3. **Default**: `https://cdn.staticdelivr.com/gh/TracingInsights`, `https://cdn.jsdelivr.net/gh/TracingInsights`, and `https://huggingface.co/buckets/tracinginsights` (in priority order)
+3. **Default**: `https://cdn.jsdelivr.net/gh/TracingInsights`, `https://huggingface.co/buckets/tracinginsights`, and `https://cdn.staticdelivr.com/gh/TracingInsights` (in priority order)
 
 **Validation Rules:**
 
 - URLs must start with `https://` (HTTP is rejected for security)
 - URLs containing `raw.githubusercontent.com` are rejected (rate limits)
 - Invalid URLs are logged as warnings and skipped
-- If all URLs are invalid, falls back to the default StaticDelivr → jsDelivr → Hugging Face chain
+- If all URLs are invalid, falls back to the default jsDelivr → Hugging Face → StaticDelivr chain
 
 **Example: Initialization via Environment Variable**
 
@@ -1610,9 +1612,9 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
    - Log debug message: `"Trying CDN: {source.name} - {url}"`
    - Call `fetch_func(url)` to try the HTTP request
    - **On success**: Call `mark_success(source.name)` and return data (done!)
-   - **On `DataNotFoundError` (404)**: Re-raise immediately (data does not exist, no point trying other sources)
+   - **On `DataNotFoundError` (404)**: Fall through to the next source (mirrors can be stale or divergent, so the payload may exist elsewhere); the failure count is NOT incremented
    - **On other exceptions**: Log warning, call `mark_failure(source.name)`, try next source
-4. **All sources failed**: Raise `NetworkError` with details from last exception
+4. **All sources failed**: Raise `DataNotFoundError` if every failure was a 404; otherwise `NetworkError` with details from last exception
 
 **Parameters:**
 
@@ -1631,10 +1633,10 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
 - `Any`: Fetched data from the first successful CDN source (return type depends on `fetch_func`)
 
 **Raises:**
-- `DataNotFoundError`: If resource does not exist (404 from any source)
-  - This is re-raised immediately without trying other sources
-  - Indicates the requested data genuinely does not exist
-- `NetworkError`: If all CDN sources fail
+- `DataNotFoundError`: If every CDN source returned 404 for the resource
+  - Raised only after all sources were tried
+  - Indicates the requested data does not exist on any mirror
+- `NetworkError`: If all CDN sources failed with non-404 errors
   - Includes URL path and status code from last exception
   - Indicates all sources are unavailable or experiencing issues
 
@@ -1642,10 +1644,10 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
 
 The method distinguishes between two types of errors:
 
-1. **Data not found (404)**: Permanent error—data does not exist
-   - Re-raised immediately as `DataNotFoundError`
-   - No point trying other CDN sources (they will all return 404)
-   - Does NOT increment failure counter (not a CDN failure)
+1. **Data not found (404)**: Possibly a stale or divergent mirror
+   - Falls through to the next CDN source (the payload may exist elsewhere)
+   - Does NOT increment failure counter (not a CDN health problem)
+   - If every source 404s, raises `DataNotFoundError`
 
 2. **Network/server errors**: Temporary error—CDN source is failing
    - Logged as warning

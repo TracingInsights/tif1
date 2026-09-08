@@ -34,7 +34,7 @@ Architecture:
 Key patterns:
 - Session.load() accepts `laps`, `telemetry`, `messages`, `weather` booleans to control what data gets fetched.
 - Data flows: CDN URL → async HTTP fetch → JSON parse → DataFrame construction → column rename/reorder → cache.
-- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via StaticDelivr CDN (primary) with jsDelivr as fallback and Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}`, same repo layout via `/resolve/`) as a last-resort backup.
+- The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via jsDelivr (primary) with Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}`, same repo layout via `/resolve/`) as fallback and StaticDelivr as last-resort backup. A 404 from one CDN falls through to the next; `DataNotFoundError` is raised only when every CDN returns 404.
 - Exception hierarchy: TIF1Error → DataNotFoundError → {DriverNotFoundError, LapNotFoundError}; TIF1Error → {NetworkError, InvalidDataError, CacheError, SessionNotLoadedError}.
 - All exceptions accept `**context` kwargs for structured error info.
 

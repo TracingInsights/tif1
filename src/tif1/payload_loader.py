@@ -412,8 +412,8 @@ class PayloadLoader:
             Parsed JSON object from the first working CDN source.
 
         Raises:
-            DataNotFoundError: Payload does not exist (HTTP 404).
-            NetworkError: Every CDN source failed.
+            DataNotFoundError: Payload returned 404 on every CDN source.
+            NetworkError: Every CDN source failed with a non-404 error.
         """
         from .config import get_config
 

@@ -111,7 +111,7 @@ Reliable CDN management with automatic failover, health tracking, and optional m
 
 **CDN Configuration:**
 
-The default CDN configuration uses StaticDelivr as the primary source. jsDelivr is the fallback, and Hugging Face buckets are a last-resort backup:
+The default CDN configuration uses jsDelivr as the primary source. Hugging Face buckets are the fallback, and StaticDelivr is a last-resort backup:
 
 ```json
 {
@@ -782,7 +782,7 @@ This is the core async fetching function that powers all data loading in `tif1`.
 **Pipeline Stages:**
 
 1. **Cache Lookup**: Checks in-memory cache first (&lt;1ms), then SQLite cache (~5-10ms)
-2. **Network Fetch**: Tries primary CDN (StaticDelivr), falls back to jsDelivr, then Hugging Face buckets on failure
+2. **Network Fetch**: Tries primary CDN (jsDelivr), falls back to Hugging Face buckets, then StaticDelivr on failure
 3. **JSON Parsing**: Uses `orjson` for fast parsing (2-5x faster than stdlib), optional process pool for large payloads
 4. **Validation**: Optional Pydantic validation (non-strict mode allows partial data)
 5. **Cache Write**: Persists to SQLite and updates in-memory cache for fast subsequent access
