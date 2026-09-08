@@ -215,3 +215,29 @@ connection recycle mid-batch. Interleaved A/B vs the E1+E2+E4+E6+E9 state:
 Paired deltas -2.42, -1.77, -0.48, -1.47, +0.10 (4/5 favor B); aggregate
 median **-16.5%**. Verification: http-session suites pass (19 tests);
 ruff clean. Files: `src/tif1/config.py`.
+
+## Final state (E1+E2+E4+E6+E9+E10) — cumulative
+
+Six of ten hypotheses were kept; four (E3, E5, E7, E8) were rejected by
+measurement and reverted. Final 5-run suite on the accumulated state
+(same dedicated cold benchmark, all runs fetched 1452/1455 frames):
+
+| run | total_s | telemetry_s |
+|-----|--------:|------------:|
+| 1 | 9.24 | 8.14 |
+| 2 | 8.01 | 6.76 |
+| 3 | 8.61 | 7.36 |
+| 4 | 8.98 | 7.74 |
+| 5 | 9.80 | 8.75 |
+
+**Median total 12.80 s (baseline) -> 8.98 s (-30%); median telemetry
+11.45 s -> 7.74 s (-32%).** No run in the final suite hit the
+60-97 s collapse regime the baseline code intermittently produced.
+Caveats: the baseline suite was measured with jsDelivr-primary in a warm
+edge regime; the final state includes E9 (StaticDelivr-first), so part of
+the cumulative delta is CDN choice. Per-experiment improvements were each
+verified with interleaved A/B pairs (same edge conditions for both
+variants) against the previously accepted state.
+
+Verification on the final state: 1183 unit tests pass, `ruff check src/`
+clean.
