@@ -5,6 +5,10 @@ the sync pipeline (:meth:`CDNManager.try_sources`, used by
 ``tif1.payload_loader.PayloadLoader``) and the async fan-out pipeline
 (:meth:`CDNManager.try_sources_async`, used by ``tif1.async_fetch``), so CDN
 fallback exists exactly once in the codebase.
+
+Default priority order: jsDelivr (primary), Hugging Face buckets, StaticDelivr
+(last resort). A 404 from one CDN falls through to the next: mirrors can be
+stale or divergent, so a payload missing on one CDN may resolve on another.
 """
 
 import logging
@@ -60,9 +64,9 @@ class CDNManager:
 
         config = get_config()
         default_sources = [
-            "https://cdn.staticdelivr.com/gh/TracingInsights",
             "https://cdn.jsdelivr.net/gh/TracingInsights",
             "https://huggingface.co/buckets/tracinginsights",
+            "https://cdn.staticdelivr.com/gh/TracingInsights",
         ]
         configured_sources = config.get("cdns", default_sources) or default_sources
         use_minification = config.get("cdn_use_minification", False)
@@ -94,22 +98,22 @@ class CDNManager:
             logger.warning("No valid CDNs configured, using defaults")
             self.sources = [
                 CDNSource(
-                    name="StaticDelivr",
+                    name="jsDelivr",
                     base_url=default_sources[0],
                     priority=1,
                     use_minification=use_minification,
                 ),
                 CDNSource(
-                    name="jsDelivr",
+                    name="HuggingFace",
                     base_url=default_sources[1],
                     priority=2,
-                    use_minification=use_minification,
+                    use_minification=False,
                 ),
                 CDNSource(
-                    name="HuggingFace",
+                    name="StaticDelivr",
                     base_url=default_sources[2],
                     priority=3,
-                    use_minification=False,
+                    use_minification=use_minification,
                 ),
             ]
 
@@ -161,9 +165,13 @@ class CDNManager:
     ) -> Any:
         """Try fetching from CDN sources with fallback.
 
-        Fatal errors (:class:`DataNotFoundError`, :class:`InvalidDataError`)
-        propagate immediately; any other failure marks the source down and
-        falls through to the next one.
+        A 404 (:class:`DataNotFoundError`) falls through to the next source:
+        mirrors can be stale or divergent, so the payload may exist elsewhere.
+        Any other failure marks the source down and falls through. When every
+        source was tried, ``DataNotFoundError`` is raised if all failures were
+        404s, otherwise :class:`NetworkError`. :class:`InvalidDataError`
+        propagates immediately; invalid payloads will not improve on another
+        CDN.
         """
         sources = self.get_sources()
 
@@ -171,6 +179,7 @@ class CDNManager:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
         last_exception = None
+        not_found = False
 
         for source in sources:
             try:
@@ -179,18 +188,24 @@ class CDNManager:
                 result = fetch_func(url)
                 self.mark_success(source.name)
                 return result
-            except (DataNotFoundError, InvalidDataError):
-                # 404 means data genuinely doesn't exist for the requested
-                # resource; invalid payloads will not improve on another CDN.
+            except DataNotFoundError:
+                # 404 can be CDN-specific (stale cache, divergent mirror);
+                # it is not a health signal, so no failure count.
+                logger.debug(f"CDN {source.name} returned 404 for {path}, trying next source")
+                not_found = True
+            except InvalidDataError:
                 raise
             except Exception as e:
                 logger.warning(f"CDN {source.name} failed: {e}")
                 self.mark_failure(source.name)
                 last_exception = e
 
+        if not_found and last_exception is None:
+            raise DataNotFoundError(year=year, event=gp, session=session)
+
         raise NetworkError(
             url=f"{year}/{gp}/{session}/{path}",
-            status_code=getattr(getattr(last_exception, "response", None), "status_code", None),
+            status_code=self._response_status(last_exception),
         )
 
     async def try_sources_async(
@@ -204,11 +219,12 @@ class CDNManager:
         """Async variant of :meth:`try_sources` for the fan-out pipeline.
 
         Iterates enabled sources in priority order, awaiting ``fetch_func``
-        per source URL. Fatal errors (:class:`DataNotFoundError`,
-        :class:`InvalidDataError`) propagate immediately; other failures mark
-        the source down (skipped for HTTP-404 responses, mirroring the legacy
-        async behavior) and fall through to the next source. When every
-        source fails, raises :class:`NetworkError`.
+        per source URL. A 404 (:class:`DataNotFoundError`) falls through to
+        the next source without marking it failed; any other failure marks the
+        source down and falls through. When every source was tried,
+        ``DataNotFoundError`` is raised if all failures were 404s, otherwise
+        :class:`NetworkError`. :class:`InvalidDataError` propagates
+        immediately.
 
         Args:
             year: Season year.
@@ -224,6 +240,7 @@ class CDNManager:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
         last_exception = None
+        not_found = False
 
         for source in sources:
             try:
@@ -232,18 +249,33 @@ class CDNManager:
                 result = await fetch_func(source, url)
                 self.mark_success(source.name)
                 return result
-            except (DataNotFoundError, InvalidDataError):
+            except DataNotFoundError:
+                logger.debug(f"CDN {source.name} returned 404 for {path}, trying next source")
+                not_found = True
+            except InvalidDataError:
                 raise
             except Exception as e:
                 logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
-                if not (hasattr(e, "response") and getattr(e.response, "status_code", None) == 404):
+                if self._response_status(e) != 404:
                     self.mark_failure(source.name)
                 last_exception = e
 
+        if not_found and last_exception is None:
+            raise DataNotFoundError(year=year, event=gp, session=session)
+
         raise NetworkError(
             url=f"{year}/{gp}/{session}/{path}",
-            status_code=getattr(getattr(last_exception, "response", None), "status_code", None),
+            status_code=self._response_status(last_exception),
         )
+
+    @staticmethod
+    def _response_status(exception: BaseException | None) -> int | None:
+        """Best-effort HTTP status carried by an exception, if any."""
+        if exception is None:
+            return None
+        response = getattr(exception, "response", None)
+        status = getattr(response, "status_code", None)
+        return status if isinstance(status, int) else None
 
 
 _cdn_manager = CDNManager()

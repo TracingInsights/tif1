@@ -108,7 +108,7 @@ These patterns can approach 500 requests quickly, especially with whole-session 
 
 ### Why tif1 has no rate limits
 
-`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`). Distribution runs through **StaticDelivr (primary)**, **jsDelivr (fallback)**, and **Hugging Face buckets (backup)**. These free CDNs distribute open-source software worldwide.
+`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`). Distribution runs through **jsDelivr (primary)**, **Hugging Face buckets (fallback)**, and **StaticDelivr (backup)**. These free CDNs distribute open-source software worldwide.
 
 The result:
 

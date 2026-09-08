@@ -415,10 +415,11 @@ async def fetch_json_async(
         """Fetch, parse, validate, and cache one payload from a single CDN URL.
 
         Implements the per-source work for the CDN fallback loop owned by
-        :meth:`tif1.cdn.CDNManager.try_sources_async`: fatal errors
-        (DataNotFoundError, InvalidDataError) abort the loop, transport
-        errors fall through to the next source. Retry/backoff policy across
-        attempts stays here (circuit breaker, pool-exhaustion backoff).
+        :meth:`tif1.cdn.CDNManager.try_sources_async`: 404s
+        (DataNotFoundError) and transport errors fall through to the next
+        source, while validation errors (InvalidDataError) abort the loop.
+        Retry/backoff policy across attempts stays here (circuit breaker,
+        pool-exhaustion backoff).
         """
         try:
             response = await loop.run_in_executor(

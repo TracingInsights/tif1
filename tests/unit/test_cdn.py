@@ -220,7 +220,7 @@ class TestCDNManagerTrySources:
         result = manager.try_sources(2024, "Bahrain", "Race", "drivers.json", _fetch)
         assert result == {"data": True}
 
-    def test_data_not_found_propagates(self):
+    def test_404_on_first_source_falls_through_to_next(self):
         with patch(
             "tif1.config.get_config",
             return_value=_StubConfig(
@@ -229,11 +229,70 @@ class TestCDNManagerTrySources:
         ):
             manager = CDNManager()
 
-        def _raise(_url):
+        calls: list[str] = []
+
+        def _fetch(url):
+            calls.append(url)
+            if "jsdelivr" in url:
+                raise DataNotFoundError(year=2024, event="Test", session="Race")
+            return {"data": True}
+
+        result = manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
+        assert result == {"data": True}
+        assert len(calls) == 2
+
+    def test_404_on_all_sources_raises_data_not_found(self):
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig(
+                ["https://cdn.jsdelivr.net/gh/X", "https://example.com/cdn/Y"]
+            ),
+        ):
+            manager = CDNManager()
+
+        calls: list[str] = []
+
+        def _raise(url):
+            calls.append(url)
             raise DataNotFoundError(year=2024, event="Test", session="Race")
 
         with pytest.raises(DataNotFoundError):
             manager.try_sources(2024, "Test", "Race", "drivers.json", _raise)
+        assert len(calls) == 2
+
+    def test_404_does_not_count_as_source_failure(self):
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig(
+                ["https://cdn.jsdelivr.net/gh/X", "https://example.com/cdn/Y"]
+            ),
+        ):
+            manager = CDNManager()
+
+        def _fetch(url):
+            if "jsdelivr" in url:
+                raise DataNotFoundError(year=2024, event="Test", session="Race")
+            return {"data": True}
+
+        manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
+        assert all(count == 0 for count in manager._failure_counts.values())
+
+    def test_mixed_404_and_network_error_raises_network_error(self):
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig(
+                ["https://cdn.jsdelivr.net/gh/X", "https://example.com/cdn/Y"]
+            ),
+        ):
+            manager = CDNManager()
+
+        def _fetch(url):
+            if "jsdelivr" in url:
+                raise DataNotFoundError(year=2024, event="Test", session="Race")
+            raise ConnectionError("down")
+
+        with pytest.raises(NetworkError):
+            manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
 
 
 class TestCDNManagerInit:
@@ -287,14 +346,14 @@ class TestCDNManagerInit:
         with patch("tif1.config.get_config", return_value=_StubConfig([])):
             manager = CDNManager()
         assert len(manager.sources) == 3
-        assert manager.sources[0].name == "StaticDelivr"
-        assert manager.sources[1].name == "jsDelivr"
-        assert manager.sources[2].name == "HuggingFace"
+        assert manager.sources[0].name == "jsDelivr"
+        assert manager.sources[1].name == "HuggingFace"
+        assert manager.sources[2].name == "StaticDelivr"
 
-    def test_default_sources_include_huggingface_after_jsdelivr(self):
+    def test_default_sources_order_jsdelivr_huggingface_staticdelivr(self):
         manager = CDNManager()
         names = [s.name for s in sorted(manager.sources, key=lambda s: s.priority)]
-        assert names.index("StaticDelivr") < names.index("jsDelivr") < names.index("HuggingFace")
+        assert names.index("jsDelivr") < names.index("HuggingFace") < names.index("StaticDelivr")
 
     def test_huggingface_never_minifies_even_when_configured(self):
         with patch(

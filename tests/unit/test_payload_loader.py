@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -123,15 +124,42 @@ class TestPayloadLoaderGet:
         assert loader.get("test.json", validate=False) == {"unexpected": "schema-free"}
 
 
+class _StubConfig:
+    def __init__(self, cdns):
+        self._cdns = cdns
+
+    def get(self, key, default=None):
+        if key == "cdns":
+            return self._cdns
+        return default
+
+
+def _make_cdn_manager(cdns: list[str]) -> CDNManager:
+    """Build a CDNManager with explicit sources (order-independent of defaults)."""
+    with patch("tif1.config.get_config", return_value=_StubConfig(cdns)):
+        return CDNManager()
+
+
 class TestPayloadLoaderFetchFromCdn:
     """Test direct CDN fetching and fallback between sources."""
 
     def test_fallback_to_second_source(self):
+        manager = _make_cdn_manager(["https://cdn-a.example.com/X", "https://cdn-b.example.com/Y"])
         payloads = {
-            "staticdelivr.com": NetworkError(url="x", status_code=None),
-            "jsdelivr.net": {"ok": True},
+            "cdn-a.example.com": NetworkError(url="x", status_code=None),
+            "cdn-b.example.com": {"ok": True},
         }
-        loader = _make_loader(transport=InMemoryTransport(payloads))
+        loader = _make_loader(transport=InMemoryTransport(payloads), cdn_manager=manager)
+        assert loader.fetch_from_cdn("test.json", fast=True) == {"ok": True}
+        assert len(loader.transport.calls) == 2
+
+    def test_404_on_first_source_falls_through_to_next(self):
+        manager = _make_cdn_manager(["https://cdn-a.example.com/X", "https://cdn-b.example.com/Y"])
+        payloads = {
+            "cdn-a.example.com": DataNotFoundError(url="x"),
+            "cdn-b.example.com": {"ok": True},
+        }
+        loader = _make_loader(transport=InMemoryTransport(payloads), cdn_manager=manager)
         assert loader.fetch_from_cdn("test.json", fast=True) == {"ok": True}
         assert len(loader.transport.calls) == 2
 
@@ -226,11 +254,12 @@ class TestTrySourcesAsync:
 
     async def test_uses_first_working_source(self):
         manager = CDNManager()
+        first_source = manager.get_sources()[0]
         calls: list[tuple[str, str]] = []
 
         async def fetch_func(source, url):
             calls.append((source.name, url))
-            if "staticdelivr" in url:
+            if source is first_source:
                 raise NetworkError(url=url, status_code=None)
             return {"ok": True}
 
@@ -247,7 +276,7 @@ class TestTrySourcesAsync:
         with pytest.raises(NetworkError, match="Network request failed"):
             await manager.try_sources_async(2024, "Test", "Race", "test.json", fetch_func)
 
-    async def test_data_not_found_is_not_retried(self):
+    async def test_data_not_found_falls_through_all_sources(self):
         manager = CDNManager()
         calls = 0
 
@@ -258,7 +287,23 @@ class TestTrySourcesAsync:
 
         with pytest.raises(DataNotFoundError):
             await manager.try_sources_async(2024, "Test", "Race", "test.json", fetch_func)
-        assert calls == 1
+        assert calls == 3
+
+    async def test_404_on_first_source_falls_through_to_next(self):
+        manager = CDNManager()
+        first_source = manager.get_sources()[0]
+        calls: list[str] = []
+
+        async def fetch_func(source, url):
+            calls.append(url)
+            if source is first_source:
+                raise DataNotFoundError(url=url)
+            return {"ok": True}
+
+        result = await manager.try_sources_async(2024, "Test", "Race", "test.json", fetch_func)
+        assert result == {"ok": True}
+        assert len(calls) == 2
+        assert manager._failure_counts[first_source.name] == 0
 
     async def test_invalid_data_is_not_retried(self):
         manager = CDNManager()

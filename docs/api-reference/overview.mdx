@@ -201,7 +201,7 @@ print(f"Fastest lap: {results['FastestLap'].min():.3f}s by {results.loc[results[
 
 4. **CDN URL Construction**
    - Builds URLs for all requested data sources (laps, telemetry, weather, messages)
-   - Uses a three-source CDN chain (StaticDelivr primary, jsDelivr fallback, Hugging Face buckets backup) pointing to TracingInsights GitHub data repositories
+   - Uses a three-source CDN chain (jsDelivr primary, Hugging Face buckets fallback, StaticDelivr backup) pointing to TracingInsights GitHub data repositories
    - Constructs fallback URLs in case primary CDN fails
    - Includes cache-busting parameters when needed
 

@@ -23,6 +23,7 @@ def _stub_cdn_manager(sources):
         mark_success=MagicMock(),
         mark_failure=MagicMock(),
     )
+    manager._response_status = CDNManager._response_status
     manager.try_sources_async = MethodType(CDNManager.try_sources_async, manager)
     return manager
 
