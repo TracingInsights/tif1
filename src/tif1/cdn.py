@@ -64,9 +64,9 @@ class CDNManager:
 
         config = get_config()
         default_sources = [
+            "https://cdn.staticdelivr.com/gh/TracingInsights",
             "https://cdn.jsdelivr.net/gh/TracingInsights",
             "https://huggingface.co/buckets/tracinginsights",
-            "https://cdn.staticdelivr.com/gh/TracingInsights",
         ]
         configured_sources = config.get("cdns", default_sources) or default_sources
         use_minification = config.get("cdn_use_minification", False)
