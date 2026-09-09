@@ -4029,11 +4029,14 @@ class Session:
                 if driver and lap_num is not None:
                     lap_refs.append((str(driver), int(lap_num)))
         else:
-            for _, row in laps.iterrows():  # type: ignore[ty:unresolved-attribute]
-                driver = row.get("Driver")
-                lap_num = row.get("LapNumber")
-                if pd.notna(driver) and pd.notna(lap_num):
-                    lap_refs.append((str(driver), int(lap_num)))
+            # Vectorized extraction: iterrows over ~1500 rows costs ~200 ms.
+            refs_frame = cast(pd.DataFrame, laps)[[COL_DRIVER, COL_LAP_NUMBER]].dropna()
+            lap_refs.extend(
+                zip(
+                    refs_frame[COL_DRIVER].astype(str),
+                    refs_frame[COL_LAP_NUMBER].astype(int),
+                )
+            )
 
         if not lap_refs:
             return {}

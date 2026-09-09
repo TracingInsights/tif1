@@ -92,7 +92,7 @@ class Config:
             "memory_telemetry_cache_max_items": 2048,
             # HTTP session configuration constants
             "keepalive_timeout": 120,
-            "keepalive_max_requests": 1000,
+            "keepalive_max_requests": 10000,
             "connection_stats_log_interval": 60.0,
             # Pool exhaustion backoff configuration
             "pool_exhaustion_backoff_base": 0.01,
@@ -279,13 +279,19 @@ class Config:
         # Validate float values (can be positive floats)
         if key in (
             "sqlite_timeout",
-            "retry_jitter_max",
             "connection_stats_log_interval",
             "pool_exhaustion_backoff_base",
             "pool_exhaustion_backoff_max",
             "pool_exhaustion_backoff_jitter",
         ):
             if value is not None and (not isinstance(value, int | float) or value <= 0):
+                logger.warning(f"Invalid {key}={value}, using default={default}")
+                return default
+
+        # 0.0 is a legitimate retry_jitter_max (jitter disabled); only reject
+        # negative or non-numeric values.
+        if key == "retry_jitter_max":
+            if value is not None and (not isinstance(value, int | float) or value < 0):
                 logger.warning(f"Invalid {key}={value}, using default={default}")
                 return default
 

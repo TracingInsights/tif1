@@ -266,7 +266,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
   "pool_connections": 256,
   "pool_maxsize": 512,
   "keepalive_timeout": 120,
-  "keepalive_max_requests": 1000,
+  "keepalive_max_requests": 10000,
   "http_multiplexed": true,
   "http_disable_http3": false,
   "http_resolvers": ["standard", "doh://cloudflare", "doh://google"],
@@ -302,7 +302,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 - `pool_connections` (int, default: 256): Number of connection pools to maintain. Auto-calculated if not set.
 - `pool_maxsize` (int, default: 512): Maximum connections per pool. Should be 2-4x `pool_connections`.
 - `keepalive_timeout` (int, default: 120): Keep-alive timeout in seconds for persistent connections.
-- `keepalive_max_requests` (int, default: 1000): Maximum requests per connection before recycling.
+- `keepalive_max_requests` (int, default: 10000): Maximum requests per connection before recycling.
 
 **Concurrency Control:**
 - `max_concurrent_requests` (int, default: 22): Maximum concurrent HTTP requests for general operations.
@@ -450,7 +450,7 @@ This function implements a thread-safe singleton pattern, ensuring only one sess
 
 **Keep-Alive Configuration:**
 - Persistent connections with 120-second timeout (configurable via `keepalive_timeout`)
-- Maximum 1000 requests per connection (configurable via `keepalive_max_requests`)
+- Maximum 10000 requests per connection (configurable via `keepalive_max_requests`)
 - Automatic connection recycling when limits are reached
 
 **DNS Resolution:**
