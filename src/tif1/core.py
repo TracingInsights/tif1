@@ -636,9 +636,14 @@ class Session:
 
     def _resolve_ultra_cold_mode(self, ultra_cold: bool | None) -> bool:
         """Resolve whether ultra-cold mode should be enabled."""
-        if ultra_cold is None:
-            return bool(config.get("ultra_cold_start", False))
-        return ultra_cold
+        if ultra_cold is not None:
+            return ultra_cold
+        if not bool(config.get("ultra_cold_start", False)):
+            return False
+        # ultra_cold_start=True is the cold-START fast path: skip cache reads
+        # only when the session isn't already cached. A warm cache reads
+        # faster than the network, so never re-download over it.
+        return not self._session_cache_available()
 
     def _is_fastest_lap_tel_cold_start(self) -> bool:
         """Detect whether fastest-lap telemetry is being requested on a brand-new session."""
