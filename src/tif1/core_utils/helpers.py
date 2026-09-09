@@ -2,19 +2,11 @@
 
 import logging
 from functools import lru_cache
-from typing import Any, Union, cast
+from typing import TYPE_CHECKING, Any, Union, cast
 from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
-
-try:
-    import polars as pl
-
-    POLARS_AVAILABLE = True
-except ImportError:
-    pl = None  # type: ignore
-    POLARS_AVAILABLE = False
 
 from tif1.config import get_config
 from tif1.validation import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
@@ -32,16 +24,24 @@ from .constants import (
     TELEMETRY_RENAME_MAP,
 )
 
+if TYPE_CHECKING:
+    import polars as pl
+else:
+    # Polars is optional: importing it eagerly costs ~260 ms on every cold
+    # start for pandas-only users. It loads lazily via
+    # _ensure_polars_available() on the first polars backend use.
+    pl = None  # type: ignore[ty:invalid-assignment]
+
+POLARS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Shared global configuration singleton (same instance as tif1.core.config).
 config = get_config()
 
-# Type alias for DataFrame
-if POLARS_AVAILABLE:
-    DataFrame = Union[pd.DataFrame, pl.DataFrame]
-else:
-    DataFrame = pd.DataFrame
+# Type alias for DataFrame (polars resolved lazily; string ref keeps the
+# annotation meaningful without importing polars at module load).
+DataFrame = Union[pd.DataFrame, "pl.DataFrame"]
 
 
 def _ensure_polars_available() -> bool:
@@ -572,6 +572,8 @@ def _replace_null_like_strings_pl(lap_df):
     columns. No-op for clean data. Columns already stringified by polars (e.g.
     bools coerced to Utf8 when mixed with strings) cannot be re-typed here.
     """
+    if not _ensure_polars_available():
+        return lap_df
     lap_df_pl = cast(Any, lap_df)
     string_cols = [c for c, t in zip(lap_df_pl.columns, lap_df_pl.dtypes) if t == pl.String]
     if not string_cols:

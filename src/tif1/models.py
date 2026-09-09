@@ -15,18 +15,10 @@ import logging
 import math
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
-
-try:
-    import polars as pl
-
-    POLARS_AVAILABLE = True
-except ImportError:
-    pl = None  # type: ignore
-    POLARS_AVAILABLE = False
 
 from .cache import get_cache
 from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER
@@ -51,6 +43,15 @@ from .exceptions import (
     LapNotFoundError,
     NetworkError,
 )
+
+if TYPE_CHECKING:
+    import polars as pl
+else:
+    # Polars is optional; _ensure_polars_available() (below) imports it on
+    # first polars-backend use instead of paying ~260 ms at module load.
+    pl = None  # type: ignore[ty:invalid-assignment]
+
+POLARS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 

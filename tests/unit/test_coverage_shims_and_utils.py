@@ -107,7 +107,7 @@ def test_backend_conversion_import_error_paths(monkeypatch):
 
     dataframe = pd.DataFrame({"a": [1]})
 
-    monkeypatch.setattr(conv, "POLARS_AVAILABLE", False, raising=True)
+    monkeypatch.setattr(conv, "_ensure_polars_bound", lambda: False)
     with pytest.raises(ImportError):
         conv.pandas_to_polars(dataframe)
 
@@ -125,7 +125,7 @@ def test_backend_conversion_error_paths(monkeypatch):
         class DataFrame:
             pass
 
-    monkeypatch.setattr(conv, "POLARS_AVAILABLE", True, raising=True)
+    monkeypatch.setattr(conv, "_ensure_polars_bound", lambda: True)
     monkeypatch.setattr(conv, "pl", _BadPl, raising=True)
 
     with pytest.raises(ValueError, match="Failed to convert pandas DataFrame to polars"):
