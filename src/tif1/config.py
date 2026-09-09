@@ -92,7 +92,9 @@ class Config:
             "memory_telemetry_cache_max_items": 2048,
             # HTTP session configuration constants
             "keepalive_timeout": 120,
-            "keepalive_max_requests": 1000,
+            # A full-session telemetry batch is ~1500 requests on one
+            # multiplexed connection; 1000 forced a mid-batch recycle.
+            "keepalive_max_requests": 10000,
             "connection_stats_log_interval": 60.0,
             # Pool exhaustion backoff configuration
             "pool_exhaustion_backoff_base": 0.01,

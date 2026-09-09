@@ -48,7 +48,7 @@ processing (E1) eliminates that collapse mode.
 | E7 | Disable HTTP/3 (h2 only) | transport CPU per request | REJECTED during screening: the `http_disable_http3` knob does not prevent h3 negotiation (requests still h3; wall unchanged) — no implementable/behavior-changing variant |
 | E8 | max_concurrent_requests 22 → 44 | fetch concurrency | MEASURED: REJECTED (4/5 pairs worse, +35% aggregate median; 44 amplifies the straggler regime, matching the earlier H7 finding that 64 lost to 22) |
 | E9 | StaticDelivr-first CDN order | transport latency | MEASURED: KEPT (steady-state 4/5 pairs faster, aggregate median -53.5%: B 7.8-11.1 s vs A 15.5-24.5 s; first cold-edge touch is slower — see caveat) |
-| E10 | keepalive_max_requests 1000 → 10000 | mid-batch connection recycling | pending |
+| E10 | keepalive_max_requests 1000 → 10000 | mid-batch connection recycling | MEASURED: KEPT (4/5 pairs faster; median paired delta -1.47 s; aggregate median -16.5%) |
 
 ## Experiment 1 (E1): decode + parse off the event loop — KEPT
 
@@ -200,3 +200,44 @@ contract tests (`test_default_sources_order...`,
 `test_empty_list_falls_back_to_defaults`) and the CDNManager fallback
 list; ruff clean. Files: `src/tif1/config.py`, `src/tif1/cdn.py`,
 `tests/unit/test_cdn.py`.
+
+## Experiment 10 (E10): keepalive_max_requests 1000 -> 10000 — KEPT
+
+A full-session telemetry batch is ~1450 requests riding one multiplexed
+h3/h2 connection; the shipped `Keep-Alive: max=1000` header forces a
+connection recycle mid-batch. Interleaved A/B vs the E1+E2+E4+E6+E9 state:
+
+| variant | runs (total_s) | median |
+|---------|----------------|-------:|
+| A (max=1000) | 10.11, 9.26, 7.75, 8.92, 7.21 | 8.92 |
+| B (max=10000) | 7.68, 7.48, 7.27, 7.45, 7.31 | **7.45** |
+
+Paired deltas -2.42, -1.77, -0.48, -1.47, +0.10 (4/5 favor B); aggregate
+median **-16.5%**. Verification: http-session suites pass (19 tests);
+ruff clean. Files: `src/tif1/config.py`.
+
+## Final state (E1+E2+E4+E6+E9+E10) — cumulative
+
+Six of ten hypotheses were kept; four (E3, E5, E7, E8) were rejected by
+measurement and reverted. Final 5-run suite on the accumulated state
+(same dedicated cold benchmark, all runs fetched 1452/1455 frames):
+
+| run | total_s | telemetry_s |
+|-----|--------:|------------:|
+| 1 | 9.24 | 8.14 |
+| 2 | 8.01 | 6.76 |
+| 3 | 8.61 | 7.36 |
+| 4 | 8.98 | 7.74 |
+| 5 | 9.80 | 8.75 |
+
+**Median total 12.80 s (baseline) -> 8.98 s (-30%); median telemetry
+11.45 s -> 7.74 s (-32%).** No run in the final suite hit the
+60-97 s collapse regime the baseline code intermittently produced.
+Caveats: the baseline suite was measured with jsDelivr-primary in a warm
+edge regime; the final state includes E9 (StaticDelivr-first), so part of
+the cumulative delta is CDN choice. Per-experiment improvements were each
+verified with interleaved A/B pairs (same edge conditions for both
+variants) against the previously accepted state.
+
+Verification on the final state: 1183 unit tests pass, `ruff check src/`
+clean.
