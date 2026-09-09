@@ -346,14 +346,14 @@ class TestCDNManagerInit:
         with patch("tif1.config.get_config", return_value=_StubConfig([])):
             manager = CDNManager()
         assert len(manager.sources) == 3
-        assert manager.sources[0].name == "StaticDelivr"
-        assert manager.sources[1].name == "jsDelivr"
-        assert manager.sources[2].name == "HuggingFace"
+        assert manager.sources[0].name == "jsDelivr"
+        assert manager.sources[1].name == "HuggingFace"
+        assert manager.sources[2].name == "StaticDelivr"
 
-    def test_default_sources_order_staticdelivr_jsdelivr_huggingface(self):
+    def test_default_sources_order_jsdelivr_huggingface_staticdelivr(self):
         manager = CDNManager()
         names = [s.name for s in sorted(manager.sources, key=lambda s: s.priority)]
-        assert names.index("StaticDelivr") < names.index("jsDelivr") < names.index("HuggingFace")
+        assert names.index("jsDelivr") < names.index("HuggingFace") < names.index("StaticDelivr")
 
     def test_huggingface_never_minifies_even_when_configured(self):
         with patch(

@@ -103,9 +103,9 @@ class Config:
             "http_multiplexed": True,
             "http_disable_http3": False,
             "cdns": [
-                "https://cdn.staticdelivr.com/gh/TracingInsights",
                 "https://cdn.jsdelivr.net/gh/TracingInsights",
                 "https://huggingface.co/buckets/tracinginsights",
+                "https://cdn.staticdelivr.com/gh/TracingInsights",
             ],
             "cdn_use_minification": False,
             "validate_data": False,

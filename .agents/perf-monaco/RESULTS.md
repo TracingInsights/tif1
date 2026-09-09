@@ -241,3 +241,27 @@ variants) against the previously accepted state.
 
 Verification on the final state: 1183 unit tests pass, `ruff check src/`
 clean.
+
+## CDN bake-off (2026-09-09, next day): jsDelivr is fastest — supersedes E9
+
+Re-measured all three CDNs as sole source on the same dedicated cold
+benchmark (PR #63 state, 5 interleaved rounds per CDN,
+`tools/monaco_cdn_bakeoff.py`; fresh process + throwaway cache per run,
+identical code, only ``TIF1_CDNS`` varies):
+
+| CDN | runs (total_s) | median |
+|-----|----------------|-------:|
+| **jsDelivr** | 10.04, 11.72, 12.33, 9.10, 9.87 | **10.04 s** |
+| StaticDelivr | 32.42, 26.09, 26.46, 25.28, 24.45 | 26.09 s |
+| HuggingFace | 36.16, 36.73 (2/5 valid; rounds 3-5 failed with NetworkError on drivers.json) | 36.45 s |
+
+jsDelivr beat StaticDelivr in all 5 paired rounds (deltas -22.4, -14.4,
+-14.1, -16.2, -14.6 s); HuggingFace is slowest and flaky as sole source.
+
+This supersedes E9's conclusion: StaticDelivr's 7.8-11.1 s advantage was
+an artifact of measuring immediately after self-warming its edge for these
+files. Twelve hours of no traffic later, the same files cost 24-32 s there
+while jsDelivr's globally shared cache stays warm (~10 s) — and
+StaticDelivr's first-ever touch cost 97.6 s. The shipped default is
+therefore restored to **jsDelivr primary** (HuggingFace fallback,
+StaticDelivr backup).
