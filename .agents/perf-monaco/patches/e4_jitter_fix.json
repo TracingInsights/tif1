@@ -1,0 +1,7 @@
+[
+  {
+    "path": "src/tif1/config.py",
+    "old": "        # Validate float values (can be positive floats)\n        if key in (\n            \"sqlite_timeout\",\n            \"retry_jitter_max\",\n            \"connection_stats_log_interval\",\n            \"pool_exhaustion_backoff_base\",\n            \"pool_exhaustion_backoff_max\",\n            \"pool_exhaustion_backoff_jitter\",\n        ):\n            if value is not None and (not isinstance(value, int | float) or value <= 0):\n                logger.warning(f\"Invalid {key}={value}, using default={default}\")\n                return default",
+    "new": "        # Validate float values (can be positive floats)\n        if key in (\n            \"sqlite_timeout\",\n            \"connection_stats_log_interval\",\n            \"pool_exhaustion_backoff_base\",\n            \"pool_exhaustion_backoff_max\",\n            \"pool_exhaustion_backoff_jitter\",\n        ):\n            if value is not None and (not isinstance(value, int | float) or value <= 0):\n                logger.warning(f\"Invalid {key}={value}, using default={default}\")\n                return default\n\n        # 0.0 is a legitimate retry_jitter_max (jitter disabled); only reject\n        # negative or non-numeric values.\n        if key == \"retry_jitter_max\":\n            if value is not None and (not isinstance(value, int | float) or value < 0):\n                logger.warning(f\"Invalid {key}={value}, using default={default}\")\n                return default"
+  }
+]

@@ -41,8 +41,8 @@ processing (E1) eliminates that collapse mode.
 |---|-------------|--------|--------|
 | E1 | Offload niquests lazy content decode + orjson parse off the event loop | fetch phase; collapse-mode elimination | MEASURED: KEPT (-12.6% median, -51% mean, max 21.7 s vs 72.4 s) |
 | E2 | Pre-typed DataFrame construction for telemetry frames (no post-hoc setitem/astype churn) | 3.9 s assembly phase | MEASURED: KEPT (-16.2% median total; assembly 4.14 -> 2.36 s offline, 1452/1452 frames identical) |
-| E3 | GC freeze/disable around batch fetch | allocation/GC pauses during fetch | pending |
-| E4 | Fix `retry_jitter_max` default validation (per-request logger.warning on the loop) | loop-side logging + retry-delay correctness | pending |
+| E3 | GC freeze/disable around batch fetch | allocation/GC pauses during fetch | MEASURED: REJECTED (+15.6% median; 3/5 interleaved pairs worse — with E1's offload in place GC no longer bites, and skipping collection during the batch hurt) |
+| E4 | Fix `retry_jitter_max` default validation (per-request logger.warning on the loop) | loop-side logging + retry-delay correctness | MEASURED: KEPT (-15.0% median total, -18.6% telemetry; also fixes retry jitter silently inflated 0 -> 1.0 s) |
 | E5 | Memoize Config validation lookups | per-request config.get validation | pending |
 | E6 | Vectorized (driver, lap) ref extraction (iterrows → vector ops) | ref extraction ~0.2 s | pending |
 | E7 | Disable HTTP/3 (h2 only) | transport CPU per request | pending |
@@ -105,3 +105,34 @@ CPU work).
 Verification: parity 1452/1452; focused dtype/model/core suites pass
 (284 tests); ruff clean.
 Files: `src/tif1/core_utils/helpers.py`.
+
+## Experiment 3 (E3): pause GC during batch fetch — REJECTED
+
+`_gather_with_gc_pause` disabled the GC for batches >= 64 requests
+(restored in finally). Interleaved A/B vs the E1+E2 state: median +15.6%
+(15.17 -> 17.53 s), 3/5 pairs worse. With decode/parse already off the
+event loop (E1), gen2 collections no longer stall the batch; skipping
+collection during the batch only grew the heap. Change reverted; no PR.
+
+## Experiment 4 (E4): `retry_jitter_max` default fails its own validation — KEPT
+
+The shipped default is 0.0 but the float-validation group required > 0, so
+every `config.get("retry_jitter_max")` on the fetch path emitted
+`Invalid retry_jitter_max=0.0, using default=1.0` — ~1450 warnings per cold
+full-telemetry fetch (logging machinery + a blocking stderr pipe write per
+warning), and it silently replaced the configured 0.0 with 1.0, inflating
+every retry backoff by up to +1 s. Fix: 0.0 is valid (jitter disabled); only
+negative/non-numeric values are rejected.
+
+Interleaved A/B vs the E1+E2 state:
+
+| variant | runs (total_s) | median | min |
+|---------|----------------|-------:|----:|
+| A | 19.23, 16.91, 23.82, 20.75, 17.03 | 19.23 | 16.91 |
+| B | 17.42, 26.55, 16.34, 13.72, 14.62 | **16.34** | **13.72** |
+
+4/5 pairs favor B (the B-side 26.6 s run is the known straggler regime);
+median **-15.0%**, telemetry median **-18.6%**.
+Verification: config/retry unit + property suites pass (120 tests); ruff
+clean; 0.0 now returned unchanged, -5 still rejected with a warning.
+Files: `src/tif1/config.py`.
