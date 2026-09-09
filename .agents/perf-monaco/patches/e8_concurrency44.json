@@ -1,0 +1,7 @@
+[
+  {
+    "path": "src/tif1/config.py",
+    "old": "            # Real-CDN 96-file telemetry batches: 22 beat 20 (median -26%, 5/5\n            # interleaved pairs); 64 was slower than 20. See RESULTS.md H7.\n            \"max_concurrent_requests\": 22,",
+    "new": "            # Real-CDN 96-file telemetry batches: 22 beat 20 (median -26%, 5/5\n            # interleaved pairs); 64 was slower than 20. See RESULTS.md H7.\n            # 2026-09-08 live Monaco full-telemetry A/B with decode/parse off\n            # the event loop: 44 beat 22 (see .agents/perf-monaco/RESULTS.md E8).\n            \"max_concurrent_requests\": 44,"
+  }
+]
