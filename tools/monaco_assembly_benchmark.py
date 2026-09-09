@@ -141,7 +141,7 @@ def bench() -> None:
                     frame_data[k] = pd.array(v, dtype="Int64")
                 else:
                     frame_data[k] = v
-            frame_data["Driver"] = np.full(max_len, driver, dtype=object)
+            frame_data["Driver"] = pd.Series(np.full(max_len, driver, dtype=object), dtype=object)
             frame_data["LapNumber"] = pd.array([lap] * max_len, dtype="Int64")
             try:
                 df = pd.DataFrame(frame_data, copy=False)
