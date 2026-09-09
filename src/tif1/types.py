@@ -1,16 +1,16 @@
 """Type stubs for tif1 with DataFrame column types."""
 
 import datetime
-from typing import Literal, NotRequired, Protocol, TypedDict, Union
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, Union
 
 import pandas as pd
 
-try:
+if TYPE_CHECKING:
     import polars as pl
 
-    DataFrame = Union[pd.DataFrame, pl.DataFrame]
-except ImportError:
-    DataFrame = pd.DataFrame
+# Polars is optional and imported lazily; the string ref keeps the annotation
+# meaningful without paying the import cost at module load.
+DataFrame = Union[pd.DataFrame, "pl.DataFrame"]
 
 
 # Lap data column types

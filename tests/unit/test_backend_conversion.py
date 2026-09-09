@@ -85,8 +85,10 @@ class TestPandasToPolars:
 
         import tif1.core_utils.backend_conversion as bc_module
 
-        # Mock POLARS_AVAILABLE flag to simulate polars not being installed
-        with patch.object(bc_module, "POLARS_AVAILABLE", False):
+        # Simulate polars not being installed: the availability check is the
+        # lazily-resolved _ensure_polars_bound() (POLARS_AVAILABLE was a
+        # module-level eager-import flag before lazy loading).
+        with patch.object(bc_module, "_ensure_polars_bound", return_value=False):
             df_pd = pd.DataFrame({"a": [1, 2, 3]})
             with pytest.raises(ImportError, match="polars is not installed"):
                 bc_module.pandas_to_polars(df_pd)
@@ -160,8 +162,8 @@ class TestPolarsToPandas:
 
         import tif1.core_utils.backend_conversion as bc_module
 
-        # Mock POLARS_AVAILABLE flag to simulate polars not being installed
-        with patch.object(bc_module, "POLARS_AVAILABLE", False):
+        # Simulate polars not being installed (lazy availability check)
+        with patch.object(bc_module, "_ensure_polars_bound", return_value=False):
             with pytest.raises(ImportError, match="polars is not installed"):
                 # Pass a mock object since we can't create a real polars DataFrame
                 bc_module.polars_to_pandas(None)  # type: ignore
@@ -215,8 +217,8 @@ class TestConvertBackend:
 
         import tif1.core_utils.backend_conversion as bc_module
 
-        # Mock POLARS_AVAILABLE flag to simulate polars not being installed
-        with patch.object(bc_module, "POLARS_AVAILABLE", False):
+        # Simulate polars not being installed (lazy availability check)
+        with patch.object(bc_module, "_ensure_polars_bound", return_value=False):
             df_pd = pd.DataFrame({"a": [1, 2, 3]})
             with pytest.raises(ImportError, match="polars is not installed"):
                 bc_module.convert_backend(df_pd, "polars")

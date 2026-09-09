@@ -5,18 +5,30 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-try:
-    import polars as pl
-
-    POLARS_AVAILABLE = True
-except ImportError:
-    pl = None  # type: ignore
-    POLARS_AVAILABLE = False
+from .helpers import _ensure_polars_available
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from .helpers import DataFrame
+else:
+    # Polars is optional; _ensure_polars_bound() imports it on first use and
+    # binds it here (keeps ``pl`` patchable for tests).
+    pl = None  # type: ignore[ty:invalid-assignment]
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_polars_bound() -> bool:
+    """Return True when polars is usable, binding it to this module's ``pl``."""
+    global pl
+    if pl is not None:
+        return True
+    if not _ensure_polars_available():
+        return False
+    import polars as pl
+
+    return pl is not None
 
 
 def pandas_to_polars(df: pd.DataFrame, *, rechunk: bool = False) -> "pl.DataFrame":
@@ -33,7 +45,7 @@ def pandas_to_polars(df: pd.DataFrame, *, rechunk: bool = False) -> "pl.DataFram
         ImportError: If polars is not available
         ValueError: If conversion fails
     """
-    if not POLARS_AVAILABLE:
+    if not _ensure_polars_bound():
         raise ImportError("polars is not installed")
 
     try:
@@ -58,7 +70,7 @@ def polars_to_pandas(df: "pl.DataFrame", *, use_pyarrow: bool = True) -> pd.Data
         ImportError: If polars is not available
         ValueError: If conversion fails
     """
-    if not POLARS_AVAILABLE:
+    if not _ensure_polars_bound():
         raise ImportError("polars is not installed")
 
     try:
@@ -90,15 +102,17 @@ def convert_backend(df: "DataFrame", target_backend: str) -> "DataFrame":
     if isinstance(df, pd.DataFrame) and target_backend == "pandas":
         return df
 
-    if POLARS_AVAILABLE and isinstance(df, pl.DataFrame) and target_backend == "polars":
-        return df
+    polars_available = _ensure_polars_bound()
+    if polars_available:
+        if isinstance(df, pl.DataFrame) and target_backend == "polars":
+            return df
+
+        # Convert polars → pandas
+        if isinstance(df, pl.DataFrame) and target_backend == "pandas":
+            return polars_to_pandas(df, use_pyarrow=True)
 
     # Convert pandas → polars
     if isinstance(df, pd.DataFrame) and target_backend == "polars":
         return pandas_to_polars(df, rechunk=False)
-
-    # Convert polars → pandas
-    if POLARS_AVAILABLE and isinstance(df, pl.DataFrame) and target_backend == "pandas":
-        return polars_to_pandas(df, use_pyarrow=True)
 
     raise ValueError(f"Cannot convert {type(df).__name__} to {target_backend}")
