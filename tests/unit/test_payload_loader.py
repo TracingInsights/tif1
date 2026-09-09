@@ -302,7 +302,10 @@ class TestTrySourcesAsync:
 
         result = await manager.try_sources_async(2024, "Test", "Race", "test.json", fetch_func)
         assert result == {"ok": True}
-        assert len(calls) == 2
+        # The primary is tried synchronously; after its 404 the remaining
+        # sources are raced concurrently (both attempted, first success wins).
+        assert calls[0] == first_source.format_url(2024, "Test", "Race", "test.json")
+        assert len(calls) == 3
         assert manager._failure_counts[first_source.name] == 0
 
     async def test_invalid_data_is_not_retried(self):
