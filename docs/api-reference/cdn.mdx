@@ -95,7 +95,7 @@ Optional JSON minification reduces file sizes by 20-40% by removing whitespace a
 - jsDelivr CDN automatically serves minified versions when available
 - Minification is transparent—parsed data is identical to non-minified versions
 - Can be enabled globally via config or per-source
-- Hugging Face bucket sources never use minification. These sources do not serve `.min.json`. A 404 there would waste a round trip (the fallback chain would have to hit another source) on every request, so Hugging Face sources are always excluded from minification
+- Hugging Face bucket sources never use minification. These sources do not serve `.min.json`. A 404 there would waste a round trip on every request, so these sources are always excluded from minification
 
 **Performance impact:**
 - **Telemetry data**: ~35-40% size reduction (structured, repetitive data)
@@ -1612,7 +1612,7 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
    - Log debug message: `"Trying CDN: {source.name} - {url}"`
    - Call `fetch_func(url)` to try the HTTP request
    - **On success**: Call `mark_success(source.name)` and return data (done!)
-   - **On `DataNotFoundError` (404)**: Fall through to the next source (mirrors can be stale or divergent, so the payload may exist elsewhere); the failure count is NOT incremented
+   - **On `DataNotFoundError` (404)**: Fall through to the next source. The failure count is NOT incremented (a 404 is not a CDN health problem).
    - **On other exceptions**: Log warning, call `mark_failure(source.name)`, try next source
 4. **All sources failed**: Raise `DataNotFoundError` if every failure was a 404; otherwise `NetworkError` with details from last exception
 

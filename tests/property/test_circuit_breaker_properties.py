@@ -276,7 +276,7 @@ class TestCircuitBreakerConcurrentConsistency:
         This test simulates a realistic concurrent workload where multiple
         threads are calling the circuit breaker with functions that may fail.
         """
-        breaker = CircuitBreaker(threshold=5, timeout=2)
+        breaker = CircuitBreaker(threshold=5, timeout=60)
         num_calls = 100
         failure_rate = 0.3  # 30% of calls fail
 
@@ -315,9 +315,12 @@ class TestCircuitBreakerConcurrentConsistency:
         total = results["success"] + results["failure"] + results["circuit_open"]
         assert total == num_calls, f"Expected {num_calls} total, got {total}"
 
-        # Property: if circuit opened, some calls were blocked
+        # Property: an open circuit blocks subsequent calls. Verified directly
+        # after the pool drains: the concurrent phase can open the circuit on
+        # its final call, leaving no in-flight call to observe the block.
         if breaker.state == "open":
-            assert results["circuit_open"] > 0, "Circuit open but no calls were blocked"
+            with pytest.raises(Exception, match="Circuit breaker is open"):
+                breaker.call(lambda: "must not run")
 
     @pytest.mark.parametrize("threshold", [1, 3, 5, 10])
     def test_exact_threshold_boundary_concurrent(self, threshold: int):
