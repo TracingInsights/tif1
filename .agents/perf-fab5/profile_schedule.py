@@ -24,7 +24,7 @@ print(f"get_events warm: {time.perf_counter() - t0:.3f}s")
 
 # profile a fresh interpreter-equivalent: clear caches and re-run
 ev._events_cache.clear() if hasattr(ev, "_events_cache") else None
-import tif1.events as ev2  # noqa: F401
+import tif1.events as ev2  # noqa: F401, E402  (deliberate late import: profiles a fresh import)
 
 pr = cProfile.Profile()
 pr.enable()
