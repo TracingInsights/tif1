@@ -1,0 +1,136 @@
+{
+  "timestamp": "2026-09-09T03:24:57.417742+00:00",
+  "src_dir": "/tmp/tif1-pr63/src",
+  "rounds": 5,
+  "cdns": {
+    "staticdelivr": {
+      "n": 5,
+      "total_s": {
+        "mean": 26.939,
+        "median": 26.089,
+        "min": 24.446,
+        "max": 32.419,
+        "values": [
+          32.4187,
+          26.0891,
+          26.458,
+          25.2845,
+          24.4463
+        ]
+      },
+      "telemetry_s": {
+        "median": 24.454,
+        "values": [
+          30.5225,
+          24.4539,
+          25.2698,
+          24.2615,
+          23.2017
+        ]
+      }
+    },
+    "jsdelivr": {
+      "n": 5,
+      "total_s": {
+        "mean": 10.612,
+        "median": 10.043,
+        "min": 9.104,
+        "max": 12.33,
+        "values": [
+          10.0433,
+          11.7164,
+          12.3298,
+          9.1036,
+          9.8661
+        ]
+      },
+      "telemetry_s": {
+        "median": 8.822,
+        "values": [
+          8.8223,
+          10.5797,
+          11.1213,
+          7.9243,
+          8.6791
+        ]
+      }
+    },
+    "huggingface": {
+      "n": 2,
+      "total_s": {
+        "mean": 36.447,
+        "median": 36.447,
+        "min": 36.163,
+        "max": 36.732,
+        "values": [
+          36.1629,
+          36.732
+        ]
+      },
+      "telemetry_s": {
+        "median": 34.497,
+        "values": [
+          33.9576,
+          35.0369
+        ]
+      }
+    }
+  },
+  "per_round_delta_vs_reference": {
+    "staticdelivr": 0.0,
+    "jsdelivr": [
+      -22.375,
+      -14.373,
+      -14.128,
+      -16.181,
+      -14.58
+    ],
+    "huggingface": [
+      3.744,
+      10.643
+    ]
+  },
+  "failures": [
+    {
+      "round": 3,
+      "cdn": "huggingface",
+      "reason": "incomplete",
+      "import_s": 0.0444,
+      "get_session_s": 0.7536,
+      "laps_s": 1.0142,
+      "telemetry_s": 7.8359,
+      "total_s": 9.6038,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 189,
+      "completeness": 0.1299,
+      "telemetry_rows": 78464,
+      "python": "3.12.3"
+    },
+    {
+      "round": 3,
+      "cdn": "huggingface",
+      "reason": "child failed rc=1: s = self._drivers_data\n              ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 776, in _drivers_data\n    data = self._fetch_json_unvalidated(\"drivers.json\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 720, in _fetch_json_unvalidated\n    return self._payload_loader.get(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 380, in get\n    result = self._fetch(path, fast=fast)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 299, in _fetch\n    return self._fetch_override(path, fast=fast)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 715, in _delegate_loader_fetch\n    return self._fetch_from_cdn_fast(path)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 730, in _fetch_from_cdn_fast\n    return self._payload_loader.fetch_from_cdn(path, fast=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 443, in fetch_from_cdn\n    return self.cdn_manager.try_sources(year, gp, session, path, fetch)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/cdn.py\", line 206, in try_sources\n    raise NetworkError(\ntif1.exceptions.NetworkError: Network request failed: url='2026/Monaco%20Grand%20Prix/Race/drivers.json'\n"
+    },
+    {
+      "round": 4,
+      "cdn": "huggingface",
+      "reason": "child failed rc=1: s = self._drivers_data\n              ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 776, in _drivers_data\n    data = self._fetch_json_unvalidated(\"drivers.json\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 720, in _fetch_json_unvalidated\n    return self._payload_loader.get(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 380, in get\n    result = self._fetch(path, fast=fast)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 299, in _fetch\n    return self._fetch_override(path, fast=fast)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 715, in _delegate_loader_fetch\n    return self._fetch_from_cdn_fast(path)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 730, in _fetch_from_cdn_fast\n    return self._payload_loader.fetch_from_cdn(path, fast=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 443, in fetch_from_cdn\n    return self.cdn_manager.try_sources(year, gp, session, path, fetch)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/cdn.py\", line 206, in try_sources\n    raise NetworkError(\ntif1.exceptions.NetworkError: Network request failed: url='2026/Monaco%20Grand%20Prix/Race/drivers.json'\n"
+    },
+    {
+      "round": 4,
+      "cdn": "huggingface",
+      "reason": "child failed rc=1: s = self._drivers_data\n              ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 776, in _drivers_data\n    data = self._fetch_json_unvalidated(\"drivers.json\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 720, in _fetch_json_unvalidated\n    return self._payload_loader.get(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 380, in get\n    result = self._fetch(path, fast=fast)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 299, in _fetch\n    return self._fetch_override(path, fast=fast)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 715, in _delegate_loader_fetch\n    return self._fetch_from_cdn_fast(path)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 730, in _fetch_from_cdn_fast\n    return self._payload_loader.fetch_from_cdn(path, fast=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 443, in fetch_from_cdn\n    return self.cdn_manager.try_sources(year, gp, session, path, fetch)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/cdn.py\", line 206, in try_sources\n    raise NetworkError(\ntif1.exceptions.NetworkError: Network request failed: url='2026/Monaco%20Grand%20Prix/Race/drivers.json'\n"
+    },
+    {
+      "round": 5,
+      "cdn": "huggingface",
+      "reason": "child failed rc=1: s = self._drivers_data\n              ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 776, in _drivers_data\n    data = self._fetch_json_unvalidated(\"drivers.json\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 720, in _fetch_json_unvalidated\n    return self._payload_loader.get(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 380, in get\n    result = self._fetch(path, fast=fast)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 299, in _fetch\n    return self._fetch_override(path, fast=fast)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 715, in _delegate_loader_fetch\n    return self._fetch_from_cdn_fast(path)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 730, in _fetch_from_cdn_fast\n    return self._payload_loader.fetch_from_cdn(path, fast=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 443, in fetch_from_cdn\n    return self.cdn_manager.try_sources(year, gp, session, path, fetch)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/cdn.py\", line 206, in try_sources\n    raise NetworkError(\ntif1.exceptions.NetworkError: Network request failed: url='2026/Monaco%20Grand%20Prix/Race/drivers.json'\n"
+    },
+    {
+      "round": 5,
+      "cdn": "huggingface",
+      "reason": "child failed rc=1: s = self._drivers_data\n              ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 776, in _drivers_data\n    data = self._fetch_json_unvalidated(\"drivers.json\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 720, in _fetch_json_unvalidated\n    return self._payload_loader.get(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 380, in get\n    result = self._fetch(path, fast=fast)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 299, in _fetch\n    return self._fetch_override(path, fast=fast)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 715, in _delegate_loader_fetch\n    return self._fetch_from_cdn_fast(path)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/core.py\", line 730, in _fetch_from_cdn_fast\n    return self._payload_loader.fetch_from_cdn(path, fast=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/payload_loader.py\", line 443, in fetch_from_cdn\n    return self.cdn_manager.try_sources(year, gp, session, path, fetch)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tif1-pr63/src/tif1/cdn.py\", line 206, in try_sources\n    raise NetworkError(\ntif1.exceptions.NetworkError: Network request failed: url='2026/Monaco%20Grand%20Prix/Race/drivers.json'\n"
+    }
+  ]
+}
