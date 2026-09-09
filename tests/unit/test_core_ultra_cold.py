@@ -306,6 +306,10 @@ def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypat
 
     monkeypatch.setattr("tif1.core.fetch_multiple_async", _fake_fetch_multiple_async)
     monkeypatch.setattr(session, "_fetch_json_unvalidated", _fake_fetch_unvalidated)
+    # ultra_cold_start=True now means "cold-START fast path": it only skips
+    # cache reads when the session isn't already cached. Simulate the cold
+    # session this test exercises.
+    monkeypatch.setattr(session, "_session_cache_available", lambda: False)
 
     previous_ultra = core_module.config.get("ultra_cold_start", False)
     previous_backfill = core_module.config.get("ultra_cold_background_cache_fill", False)
