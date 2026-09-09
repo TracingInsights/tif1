@@ -95,3 +95,52 @@ process + throwaway cache each) so CDN edge-state drift hits both variants;
 micro-hypotheses (F5/F6/F8/F9) were measured with deterministic offline
 harnesses because their predicted effects (0.003-0.3%) are below the live
 suite's noise floor (±1-2 s), which is itself the honest verdict for them.
+
+---
+
+# G-series — 10 more experiments (2026-09-09) — FINAL
+
+Triggered after the F-series stack PR (#65). Same benchmark and methodology;
+H/E/F territory skipped. Recon probes: gcore.jsdelivr.net matches cdn
+steady-state (41 ms vs 40 ms warm; fastly 7x slower); 3 Monaco telemetry files
+404 on every CDN (LEC/66, STR/58, SAI/72; warm-edge 404-walk 0.09-0.92 s);
+helpers.py eagerly imports polars (258 ms of the cold import chain);
+`_prefetch_session_tables` drags weather.json (~10 KB) + rcm.json (~38 KB)
+into every laps load over a dedicated extra HTTP session; jsDelivr serves
+brotli (119,773 B -> 48,544 B); default `ultra_cold_start=True` skips ALL
+cache reads (a warm-cache second process re-downloads everything).
+
+Baseline for this series: the G-experiments' control sides (G1 suite A-side
+get_session median 0.733 s, total ~11.4-11.8 s on the re-warmed edge; the
+vantage had cooled to a 121 s batch immediately post-restart, then re-warmed).
+
+## Outcomes
+
+| # | Hypothesis | Verdict | Evidence |
+|---|------------|---------|----------|
+| G1 | Lazy polars import (helpers/models/types/backend_conversion) | **KEPT** | polars is optional but eagerly imported — 258 ms of every pandas-default cold start. Deterministic subprocess: first get_session 0.542 -> 0.425 s. A/B 5+5: get_session_s median 0.733 -> 0.447 s (**-39%**); total/telemetry within noise. Polars backend verified lazily loading. Commit f13e595. |
+| G2 | Race remaining CDNs after a 404 (happy path untouched) | **KEPT** | Sequential 404-walk pays every CDN's latency (HF redirect ~0.4 s) in series. Raced: production walk for LEC/66_tel.json, 6 reps: median 0.09 -> 0.05 s (**-40%** warm edge; cool edges save the smaller remaining CDN latency, hundreds of ms). DataNotFound-still-only-after-all-404 preserved; 1183 tests. Commit a0d09d2. |
+| G3 | Shard large batches across cdn + gcore mirrors | **REJECTED (probe)** | 300-file probe: steady-state shard 1.01 s vs cdn-only 1.34 s (-25%), BUT gcore's own edge was cold for these files — first gcore round 10.94 s. First-touch mirror-edge cost dominates for real users (confirms F1's +35% at mechanism level); mirrors are also vantage-risky. No code change. |
+| G4 | Prefetch only requested session tables (weather/rcm gated on intent) | **KEPT** | laps-only flows fetched weather+rcm (~48 KB) + a dedicated extra HTTP session they never used; load()'s docstring already promises fetch-only-what's-required. Behavior verified: laps-only now fetches drivers only; load(all) unchanged. A/B 5+5: total median 11.38 -> 10.67 s (-6.3%), laps parity on this warm edge (win is cold-edge material). Commit 27ddc19. |
+| G5 | `ultra_cold_start` auto-detects a warm cache | **KEPT** | Default config NEVER read the persistent cache (config short-circuit made the auto-detect unreachable): a warm-cache second process re-downloaded all 84 MB. Now ultra-cold only skips cache when the session isn't cached. Warm full-telemetry load: 10.72 -> **6.29 s (-41%)**; cold path unchanged (one memoized availability probe). 1183 tests. Commit 8a2446a. |
+| G6 | Telemetry-tier cache write: orjson bytes direct | **REJECTED (negligible)** | 7.8 us/write (3.1 ms per 400 payloads) — ~11 ms per full-session write pass; zlib compression dominates the write, not the str round-trip. |
+| G7 | Laps reorder: fuse insert(0)+reorder double copy | **REJECTED** | Measured on a 1455-row frame: current path 0.60 ms; the fused alternative 0.87 ms — the current code is already faster; sub-ms either way. |
+| G8 | drivers.json sync fetch off the event loop | **REJECTED (analysis)** | Pure serial dependency — laptimes URLs cannot exist before drivers resolve, and nothing else is scheduled on the loop during the blocking call; G4's A/B laps-phase parity (0.412 vs 0.435 s medians) confirms no inflation. |
+| G9 | `import tif1` trim (fuzzy/init eager imports) | **REJECTED (negligible)** | Import breakdown shows no deferrable module of consequence left after G1 (fuzzy ~11 ms at most, tif1 self is its own definitions); nothing worth the churn. |
+| G10 | Drop Connection/Keep-Alive headers on h2/h3 | **REJECTED (negligible)** | 44 bytes/request uplink (~64 KB per full batch); no latency effect measurable. Protocol-hygiene note kept here: these headers are RFC-noncompliant on h2/h3 (harmless today); removal is a correctness nicety, not a perf change. |
+
+## Series conclusion
+
+Four of ten kept — the wins were all in cold-start and cache-semantics
+territory the earlier series hadn't mapped: import-chain fat (G1), over-fetch
+(G4), a config default that silently disabled the persistent cache (G5), and
+serial 404-walks (G2). The fetch phase's steady state remains edge-bound and
+client-side exhausted (G3 confirms F1 at the mechanism level); per-request
+micros (G6-G10) are at the floor, consistent with the F-series.
+
+Stack: G1 -> G4 -> G5 -> G2 (each commit's tree passed the full 1183-test
+unit suite; A/B or deterministic measurements per the table). PR publication
+from this thread is blocked while #65 (the stack root, docs-only) is open:
+the platform's stack namespace (`<thread-branch>/<slug>`) collides with
+#65's head ref until that branch is merged/deleted or the PR closed; the
+commits are staged on the branch chain ready to publish.
