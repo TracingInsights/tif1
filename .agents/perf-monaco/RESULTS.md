@@ -41,14 +41,14 @@ processing (E1) eliminates that collapse mode.
 |---|-------------|--------|--------|
 | E1 | Offload niquests lazy content decode + orjson parse off the event loop | fetch phase; collapse-mode elimination | MEASURED: KEPT (-12.6% median, -51% mean, max 21.7 s vs 72.4 s) |
 | E2 | Pre-typed DataFrame construction for telemetry frames (no post-hoc setitem/astype churn) | 3.9 s assembly phase | MEASURED: KEPT (-16.2% median total; assembly 4.14 -> 2.36 s offline, 1452/1452 frames identical) |
-| E3 | GC freeze/disable around batch fetch | allocation/GC pauses during fetch | pending |
-| E4 | Fix `retry_jitter_max` default validation (per-request logger.warning on the loop) | loop-side logging + retry-delay correctness | pending |
-| E5 | Memoize Config validation lookups | per-request config.get validation | pending |
-| E6 | Vectorized (driver, lap) ref extraction (iterrows → vector ops) | ref extraction ~0.2 s | pending |
-| E7 | Disable HTTP/3 (h2 only) | transport CPU per request | pending |
-| E8 | max_concurrent_requests 22 → 44 | fetch concurrency | pending |
-| E9 | StaticDelivr-first CDN order | transport latency | pending |
-| E10 | keepalive_max_requests 1000 → 10000 | mid-batch connection recycling | pending |
+| E3 | GC freeze/disable around batch fetch | allocation/GC pauses during fetch | MEASURED: REJECTED (+15.6% median; 3/5 interleaved pairs worse — with E1's offload in place GC no longer bites, and skipping collection during the batch hurt) |
+| E4 | Fix `retry_jitter_max` default validation (per-request logger.warning on the loop) | loop-side logging + retry-delay correctness | MEASURED: KEPT (-15.0% median total, -18.6% telemetry; also fixes retry jitter silently inflated 0 -> 1.0 s) |
+| E5 | Memoize Config validation lookups | per-request config.get validation | MEASURED: REJECTED (-1.8% median, 2/5 pairs — within noise; not worth the stale-memo hazard) |
+| E6 | Vectorized (driver, lap) ref extraction (iterrows → vector ops) | ref extraction ~0.2 s | MEASURED: KEPT (8/10 pairs faster over two rounds; median paired delta -3.1 s) |
+| E7 | Disable HTTP/3 (h2 only) | transport CPU per request | REJECTED during screening: the `http_disable_http3` knob does not prevent h3 negotiation (requests still h3; wall unchanged) — no implementable/behavior-changing variant |
+| E8 | max_concurrent_requests 22 → 44 | fetch concurrency | MEASURED: REJECTED (4/5 pairs worse, +35% aggregate median; 44 amplifies the straggler regime, matching the earlier H7 finding that 64 lost to 22) |
+| E9 | StaticDelivr-first CDN order | transport latency | MEASURED: kept at the time (steady-state 4/5 pairs faster, aggregate median -53.5%) — superseded by the next-day CDN bake-off (see below); main retains jsDelivr-first |
+| E10 | keepalive_max_requests 1000 → 10000 | mid-batch connection recycling | MEASURED: KEPT (4/5 pairs faster; median paired delta -1.47 s; aggregate median -16.5%) |
 
 ## Experiment 1 (E1): decode + parse off the event loop — KEPT
 
@@ -105,3 +105,164 @@ CPU work).
 Verification: parity 1452/1452; focused dtype/model/core suites pass
 (284 tests); ruff clean.
 Files: `src/tif1/core_utils/helpers.py`.
+
+## Experiment 3 (E3): pause GC during batch fetch — REJECTED
+
+`_gather_with_gc_pause` disabled the GC for batches >= 64 requests
+(restored in finally). Interleaved A/B vs the E1+E2 state: median +15.6%
+(15.17 -> 17.53 s), 3/5 pairs worse. With decode/parse already off the
+event loop (E1), gen2 collections no longer stall the batch; skipping
+collection during the batch only grew the heap. Change reverted; no PR.
+
+## Experiment 4 (E4): `retry_jitter_max` default fails its own validation — KEPT
+
+The shipped default is 0.0 but the float-validation group required > 0, so
+every `config.get("retry_jitter_max")` on the fetch path emitted
+`Invalid retry_jitter_max=0.0, using default=1.0` — ~1450 warnings per cold
+full-telemetry fetch (logging machinery + a blocking stderr pipe write per
+warning), and it silently replaced the configured 0.0 with 1.0, inflating
+every retry backoff by up to +1 s. Fix: 0.0 is valid (jitter disabled); only
+negative/non-numeric values are rejected.
+
+Interleaved A/B vs the E1+E2 state:
+
+| variant | runs (total_s) | median | min |
+|---------|----------------|-------:|----:|
+| A | 19.23, 16.91, 23.82, 20.75, 17.03 | 19.23 | 16.91 |
+| B | 17.42, 26.55, 16.34, 13.72, 14.62 | **16.34** | **13.72** |
+
+4/5 pairs favor B (the B-side 26.6 s run is the known straggler regime);
+median **-15.0%**, telemetry median **-18.6%**.
+Verification: config/retry unit + property suites pass (120 tests); ruff
+clean; 0.0 now returned unchanged, -5 still rejected with a warning.
+Files: `src/tif1/config.py`.
+
+## Experiment 5 (E5): memoize Config.get validation — REJECTED
+
+Memoized validation results per (key, default) with set() invalidation.
+Interleaved A/B vs the E1+E2+E4 state: median -1.8%, 2/5 pairs — within
+noise. With E4 already removing the per-request warning, the remaining
+validation cost is microseconds. Not worth the stale-memo hazard for
+callers that mutate `_config` directly. Change reverted; no PR.
+
+## Experiment 6 (E6): vectorized lap-ref extraction — KEPT
+
+`fetch_all_laps_telemetry_async` built (driver, lap) refs with
+`laps.iterrows()` — a per-row Series construction (~200 ms and thousands of
+allocations for ~1455 rows). Replaced with vectorized column selection +
+dropna + astype (identical refs, order preserved).
+
+Two interleaved A/B rounds vs the E1+E2+E4 state (10 pairs): 8/10 pairs
+favor B; paired deltas (b-a): -0.30, -0.31, +3.87, -1.10, -36.57, -14.15,
+-6.32, -5.07, +0.42, -15.58; median paired delta -3.1 s (round-2 aggregate
+median -12.4%). Verification: core/parallel-fetch suites pass (63 tests);
+ruff clean. Files: `src/tif1/core.py`.
+
+## Experiment 7 (E7): disable HTTP/3 — REJECTED during screening
+
+`TIF1_HTTP_DISABLE_HTTP3=true` (passed to `niquests.Session`) did not
+change the negotiated protocol: 1436/1461 requests still used h3 in the
+instrumented diagnostic, and the full-workload wall time was identical
+(7.52 s vs the 7.4-7.7 s control band). With no implementable h2-only
+variant, the hypothesis is not measurable; no code change, no PR.
+
+## Experiment 8 (E8): max_concurrent_requests 22 -> 44 — REJECTED
+
+Interleaved A/B vs the E1+E2+E4+E6 state: paired deltas -17.56, +1.18,
++33.54, +11.92, +1.34 — 4/5 pairs worse, aggregate median +35.5%, and the
+candidate hit a 51.6 s collapse. Higher concurrency amplifies the
+straggler/origin-error regime; matches the earlier H7 finding (64 lost to
+22 on live CDN). Reverted; no PR.
+
+## Experiment 9 (E9): StaticDelivr-first CDN order — KEPT (with caveat)
+
+Motivation: prior single-file medians from this sandbox had StaticDelivr at
+1.7 ms vs jsDelivr 7.9 ms (warm), but the shipped default is jsDelivr
+primary. Measured at batch scale (interleaved A/B vs the E1+E2+E4+E6
+state):
+
+| variant | runs (total_s) | median |
+|---------|----------------|-------:|
+| A (jsDelivr first) | 26.24, 17.74, 17.46, 15.53, 24.49 | 17.74 |
+| B (StaticDelivr first) | 97.65, 11.09, 8.24, 8.13, 7.85 | **8.24** |
+
+Aggregate median **-53.5%**; steady-state B runs are 7.8-11.1 s vs A's
+15.5-24.5 s (4/5 pairs). Caveat, disclosed for review: the very first B
+run (97.6 s) paid a one-time StaticDelivr edge-cache warm-up — jsDelivr's
+globally shared cache often arrives pre-warmed for popular files, while a
+smaller CDN's regional edges may be cold on first touch. Steady-state
+users (repeat/other-session fetches) get the 2-3x win; the very first
+cold-edge fetch per region can be slower. The 404 fall-through chain is
+unchanged, so correctness never depends on the order.
+
+Verification: full unit suite passes after updating the two CDN-order
+contract tests (`test_default_sources_order...`,
+`test_empty_list_falls_back_to_defaults`) and the CDNManager fallback
+list; ruff clean. Files: `src/tif1/config.py`, `src/tif1/cdn.py`,
+`tests/unit/test_cdn.py`.
+
+## Experiment 10 (E10): keepalive_max_requests 1000 -> 10000 — KEPT
+
+A full-session telemetry batch is ~1450 requests riding one multiplexed
+h3/h2 connection; the shipped `Keep-Alive: max=1000` header forces a
+connection recycle mid-batch. Interleaved A/B vs the E1+E2+E4+E6+E9 state:
+
+| variant | runs (total_s) | median |
+|---------|----------------|-------:|
+| A (max=1000) | 10.11, 9.26, 7.75, 8.92, 7.21 | 8.92 |
+| B (max=10000) | 7.68, 7.48, 7.27, 7.45, 7.31 | **7.45** |
+
+Paired deltas -2.42, -1.77, -0.48, -1.47, +0.10 (4/5 favor B); aggregate
+median **-16.5%**. Verification: http-session suites pass (19 tests);
+ruff clean. Files: `src/tif1/config.py`.
+
+## Final state (E1+E2+E4+E6+E9+E10) — cumulative
+
+Six of ten hypotheses were kept; four (E3, E5, E7, E8) were rejected by
+measurement and reverted. Final 5-run suite on the accumulated state
+(same dedicated cold benchmark, all runs fetched 1452/1455 frames):
+
+| run | total_s | telemetry_s |
+|-----|--------:|------------:|
+| 1 | 9.24 | 8.14 |
+| 2 | 8.01 | 6.76 |
+| 3 | 8.61 | 7.36 |
+| 4 | 8.98 | 7.74 |
+| 5 | 9.80 | 8.75 |
+
+**Median total 12.80 s (baseline) -> 8.98 s (-30%); median telemetry
+11.45 s -> 7.74 s (-32%).** No run in the final suite hit the
+60-97 s collapse regime the baseline code intermittently produced.
+Caveats: the baseline suite was measured with jsDelivr-primary in a warm
+edge regime; the final state includes E9 (StaticDelivr-first), so part of
+the cumulative delta is CDN choice. Per-experiment improvements were each
+verified with interleaved A/B pairs (same edge conditions for both
+variants) against the previously accepted state.
+
+Verification on the final state: 1183 unit tests pass, `ruff check src/`
+clean.
+
+## CDN bake-off (2026-09-09, next day): jsDelivr is fastest — supersedes E9
+
+Re-measured all three CDNs as sole source on the same dedicated cold
+benchmark (PR #63 state, 5 interleaved rounds per CDN,
+`tools/monaco_cdn_bakeoff.py`; fresh process + throwaway cache per run,
+identical code, only ``TIF1_CDNS`` varies):
+
+| CDN | runs (total_s) | median |
+|-----|----------------|-------:|
+| **jsDelivr** | 10.04, 11.72, 12.33, 9.10, 9.87 | **10.04 s** |
+| StaticDelivr | 32.42, 26.09, 26.46, 25.28, 24.45 | 26.09 s |
+| HuggingFace | 36.16, 36.73 (2/5 valid; rounds 3-5 failed with NetworkError on drivers.json) | 36.45 s |
+
+jsDelivr beat StaticDelivr in all 5 paired rounds (deltas -22.4, -14.4,
+-14.1, -16.2, -14.6 s); HuggingFace is slowest and flaky as sole source.
+
+This supersedes E9's conclusion: StaticDelivr's 7.8-11.1 s advantage was
+an artifact of measuring immediately after self-warming its edge for these
+files. Twelve hours of no traffic later, the same files cost 24-32 s there
+while jsDelivr's globally shared cache stays warm (~10 s) — and
+StaticDelivr's first-ever touch cost 97.6 s. jsDelivr primary (HuggingFace
+fallback, StaticDelivr backup) is the right default; main retains that
+order (the E9 reorder was not kept), and this bake-off is the data that
+confirms it.
