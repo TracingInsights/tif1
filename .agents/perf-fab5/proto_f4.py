@@ -95,7 +95,8 @@ def main() -> None:
     # parity on Time (dtype + values incl NaT) and full-frame spot checks
     nat_mismatch = 0
     for fa, fb in zip(out_a, out_b):
-        assert "Time" in fa.columns and "Time" in fb.columns
+        assert "Time" in fa.columns
+        assert "Time" in fb.columns
         assert fa["Time"].dtype == fb["Time"].dtype, (fa["Time"].dtype, fb["Time"].dtype)
         va, vb = fa["Time"].to_numpy(), fb["Time"].to_numpy()
         equal = (va == vb) | (pd.isna(va) & pd.isna(vb))

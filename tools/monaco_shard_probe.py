@@ -24,9 +24,7 @@ STATICDELIVR = "https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{gp}
 
 def build_urls(year: int, gp: str, session: str, paths: list[str]) -> dict[str, list[str]]:
     return {
-        "jsdelivr": [
-            JSDELIVR.format(year=year, gp=gp, session=session, path=p) for p in paths
-        ],
+        "jsdelivr": [JSDELIVR.format(year=year, gp=gp, session=session, path=p) for p in paths],
         "staticdelivr": [
             STATICDELIVR.format(year=year, gp=gp, session=session, path=p) for p in paths
         ],
@@ -57,7 +55,12 @@ def fetch_batch(
                 ok += 1
 
     list(executor.map(get, urls))
-    return time.perf_counter() - t0, ok, total_bytes, total_bytes / max(1e-9, time.perf_counter() - t0)
+    return (
+        time.perf_counter() - t0,
+        ok,
+        total_bytes,
+        total_bytes / max(1e-9, time.perf_counter() - t0),
+    )
 
 
 def main() -> None:

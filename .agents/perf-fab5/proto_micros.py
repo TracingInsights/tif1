@@ -16,7 +16,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import tif1.http_session as hs
-from tif1.config import get_config
 
 N = 1452
 
@@ -39,7 +38,9 @@ def f6_micro(n: int) -> None:
 def f6_threaded(n: int) -> None:
     """_track_request under 22-thread contention."""
     with ThreadPoolExecutor(max_workers=22) as pool:
-        list(pool.map(lambda _: [hs._track_request(reused=True) for _ in range(n // 22)], range(22)))
+        list(
+            pool.map(lambda _: [hs._track_request(reused=True) for _ in range(n // 22)], range(22))
+        )
 
 
 def f6_noop(n: int) -> None:
@@ -51,8 +52,8 @@ def f8_imports(n: int) -> None:
     """Three function-level imports per request (sys.modules lookups)."""
     for _ in range(n):
         from tif1.cdn import get_cdn_manager  # noqa: F401
-        from tif1.retry import get_circuit_breaker  # noqa: F401
         from tif1.http_session import _track_request  # noqa: F401
+        from tif1.retry import get_circuit_breaker  # noqa: F401
 
 
 def f8_noop(n: int) -> None:
@@ -73,6 +74,7 @@ def f5_roundtrips(n: int) -> None:
 
         async def run():
             await asyncio.gather(*(one() for _ in range(n)))
+
         loop.run_until_complete(run())
     finally:
         loop.close()
@@ -86,12 +88,11 @@ def f5_fused(n: int) -> None:
     try:
 
         async def one():
-            return await loop.run_in_executor(
-                executor, lambda: "get" and "parse"
-            )
+            return await loop.run_in_executor(executor, lambda: "get" and "parse")
 
         async def run():
             await asyncio.gather(*(one() for _ in range(n)))
+
         loop.run_until_complete(run())
     finally:
         loop.close()
@@ -159,11 +160,12 @@ def f9_noop(n: int) -> None:
 
 
 def main() -> None:
-    config = get_config()
     print(f"N={N} per-request micros:")
     t = bench(f6_noop, N)
     t6 = bench(f6_micro, N)
-    print(f"F6 _track_request: {(t6 - t) * 1e3:.2f} ms per {N} calls (loop baseline {(t) * 1e3:.2f} ms)")
+    print(
+        f"F6 _track_request: {(t6 - t) * 1e3:.2f} ms per {N} calls (loop baseline {(t) * 1e3:.2f} ms)"
+    )
     t6t = bench(f6_threaded, N)
     print(f"F6 _track_request (22 threads): {(t6t) * 1e3:.2f} ms per {N} calls")
     t8 = bench(f8_imports, N)
@@ -171,7 +173,9 @@ def main() -> None:
     print(f"F8 3x function-level imports: {(t8 - t8n) * 1e3:.2f} ms per {N} requests")
     t5a = bench(f5_roundtrips, N, repeat=3)
     t5b = bench(f5_fused, N, repeat=3)
-    print(f"F5 two executor hops: {t5a * 1e3:.1f} ms | one fused hop: {t5b * 1e3:.1f} ms | delta {(t5a - t5b) * 1e3:.1f} ms")
+    print(
+        f"F5 two executor hops: {t5a * 1e3:.1f} ms | one fused hop: {t5b * 1e3:.1f} ms | delta {(t5a - t5b) * 1e3:.1f} ms"
+    )
     t9a = bench(f9_semaphore, N, repeat=3)
     t9w = bench(f9_workers, N, repeat=3)
     t9n = bench(f9_noop, N, repeat=3)
