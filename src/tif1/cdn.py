@@ -306,7 +306,7 @@ class CDNManager:
         """
 
         class _RaceFailureError(Exception):
-            def __init__(self, source_name: str, error: BaseException) -> None:
+            def __init__(self, source_name: str, error: Exception) -> None:
                 super().__init__(source_name)
                 self.source_name = source_name
                 self.error = error
