@@ -29,6 +29,10 @@ into the experiment stack, now landed here from PRs #68–#71):
 - **Race remaining CDNs after a 404 (G2)** — the async fallback races the remaining
   CDN sources concurrently instead of walking them serially; missing-file walks pay
   one latency, not one per CDN (median 0.09 → 0.05 s per missing file).
+- **Restored E-series measurement evidence** — the 18 A/B result and patch files under
+  `.agents/perf-monaco/` (e3, e4, e5, e6, e6r2, e8, e9, e10, final, and eight
+  `patches/*.json`) were dropped by merge 931e9f3 when PR #66 superseded the E-series
+  stack; PR #72 restored the E4/E6/E10 source fixes but not their evidence files.
 
 ### Fixed
 

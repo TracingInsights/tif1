@@ -1,0 +1,7 @@
+[
+  {
+    "path": "src/tif1/core.py",
+    "old": "        else:\n            for _, row in laps.iterrows():  # type: ignore[ty:unresolved-attribute]\n                driver = row.get(\"Driver\")\n                lap_num = row.get(\"LapNumber\")\n                if pd.notna(driver) and pd.notna(lap_num):\n                    lap_refs.append((str(driver), int(lap_num)))",
+    "new": "        else:\n            # Vectorized extraction: iterrows over ~1500 rows costs ~200 ms.\n            refs_frame = cast(pd.DataFrame, laps)[[COL_DRIVER, COL_LAP_NUMBER]].dropna()\n            lap_refs.extend(\n                zip(\n                    refs_frame[COL_DRIVER].astype(str),\n                    refs_frame[COL_LAP_NUMBER].astype(int),\n                )\n            )"
+  }
+]

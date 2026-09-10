@@ -1,0 +1,12 @@
+[
+  {
+    "path": "src/tif1/cdn.py",
+    "old": "        default_sources = [\n            \"https://cdn.jsdelivr.net/gh/TracingInsights\",\n            \"https://huggingface.co/buckets/tracinginsights\",\n            \"https://cdn.staticdelivr.com/gh/TracingInsights\",\n        ]",
+    "new": "        default_sources = [\n            \"https://cdn.staticdelivr.com/gh/TracingInsights\",\n            \"https://cdn.jsdelivr.net/gh/TracingInsights\",\n            \"https://huggingface.co/buckets/tracinginsights\",\n        ]"
+  },
+  {
+    "path": "tests/unit/test_cdn.py",
+    "old": "    def test_default_sources_order_jsdelivr_huggingface_staticdelivr(self):\n        manager = CDNManager()\n        names = [s.name for s in sorted(manager.sources, key=lambda s: s.priority)]\n        assert names.index(\"jsDelivr\") < names.index(\"HuggingFace\") < names.index(\"StaticDelivr\")",
+    "new": "    def test_default_sources_order_staticdelivr_jsdelivr_huggingface(self):\n        manager = CDNManager()\n        names = [s.name for s in sorted(manager.sources, key=lambda s: s.priority)]\n        assert names.index(\"StaticDelivr\") < names.index(\"jsDelivr\") < names.index(\"HuggingFace\")"
+  }
+]

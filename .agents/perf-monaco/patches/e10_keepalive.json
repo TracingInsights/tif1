@@ -1,0 +1,7 @@
+[
+  {
+    "path": "src/tif1/config.py",
+    "old": "            \"keepalive_max_requests\": 1000,",
+    "new": "            # A full-session telemetry batch is ~1500 requests on one\n            # multiplexed connection; 1000 forced a mid-batch recycle.\n            \"keepalive_max_requests\": 10000,"
+  }
+]

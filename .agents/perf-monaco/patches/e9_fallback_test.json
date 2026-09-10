@@ -1,0 +1,7 @@
+[
+  {
+    "path": "tests/unit/test_cdn.py",
+    "old": "        assert len(manager.sources) == 3\n        assert manager.sources[0].name == \"jsDelivr\"\n        assert manager.sources[1].name == \"HuggingFace\"\n        assert manager.sources[2].name == \"StaticDelivr\"",
+    "new": "        assert len(manager.sources) == 3\n        assert manager.sources[0].name == \"StaticDelivr\"\n        assert manager.sources[1].name == \"jsDelivr\"\n        assert manager.sources[2].name == \"HuggingFace\""
+  }
+]
