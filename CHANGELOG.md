@@ -4,40 +4,78 @@ All notable changes to this project are documented in this file.
 
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
-## [Unreleased]
+
+## [0.8.0] - 2026-09-10
+
+### Summary
+
+`0.8.0` is a performance release. Cold starts drop polars until the polars backend
+is used (`get_session` median 0.733 → 0.447 s, −39%), default ultra-cold mode now
+reads a warm cache instead of re-downloading (full-telemetry 10.72 → 6.29 s, −41%),
+and the default CDN chain is jsDelivr → Hugging Face buckets → StaticDelivr after a
+live bake-off. Fetch-path decode/parse moves off the event loop, telemetry frames are
+pre-typed, and a 404 races the remaining CDNs instead of walking them serially. No
+public APIs are removed. Custom `cdns` configurations are unchanged.
+
+### Changed
+
+- **Default CDN order is jsDelivr-first** (`config.py`):
+  jsDelivr (`https://cdn.jsdelivr.net/gh/TracingInsights`) → Hugging Face buckets
+  (`https://huggingface.co/buckets/tracinginsights`) → StaticDelivr
+  (`https://cdn.staticdelivr.com/gh/TracingInsights`). A live bake-off superseded the
+  earlier StaticDelivr-first trial (E9). Existing custom `cdns` values are unaffected.
+- **A 404 falls through to the next CDN** — `DataNotFoundError` is raised only when
+  every source returns 404, so a stale primary mirror no longer hides files that a
+  fallback still has. After a 404, the async fallback races the remaining sources
+  instead of walking them serially (missing-file walk median 0.09 → 0.05 s).
+- **`ultra_cold_start=True` (the default) skips cache reads only when the session is
+  not already cached.** Warm-cache full-telemetry loads 10.72 → 6.29 s (−41%).
+  Explicit `ultra_cold=` arguments are unchanged.
+- **Prefetch fetches only the session tables that were requested** — laps-only flows
+  no longer pull weather/rcm payloads alongside `drivers.json`. `load()`'s "fetches
+  only the data that is required" promise now holds for the prefetch wave.
+- **Polars is imported lazily** — `helpers`, `models`, `types`, and
+  `backend_conversion` no longer import polars at module load (~260 ms of every cold
+  start for pandas-default users). It loads via `_ensure_polars_available()` on first
+  polars-backend use.
+- Default `keepalive_max_requests` 1000 → 10000 (live CDN: 4/5 interleaved pairs
+  faster; aggregate median −16.5%).
+- Runtime dependency lower bound raised: rapidfuzz 3.14.6.
 
 ### Performance
 
-Consolidates every performance optimization merged since 0.7.0 so none can be lost
-in merges. E-series wins (already in main, verified present): decode/parse off the
-event loop (E1), pre-typed telemetry frames (E2), `retry_jitter_max` validation fix
-(E4), vectorized (driver, lap) ref extraction (E6), `keepalive_max_requests` 10000
-(E10), jsDelivr-first CDN order (bake-off; supersedes E9). G-series wins (merged only
-into the experiment stack, now landed here from PRs #68–#71):
-
-- **Lazy polars import (G1)** — `helpers`, `models`, `types`, and
-  `backend_conversion` no longer import polars at module load (~260 ms of every cold
-  start for pandas-default users); it loads via `_ensure_polars_available()` on first
-  polars-backend use. Cold `get_session` median 0.733 → 0.447 s (−39%).
-- **Prefetch only requested session tables (G4)** — laps-only flows no longer fetch
-  weather/rcm payloads alongside drivers.json; `load()`'s "fetches only the data
-  that is required" promise now holds for the prefetch wave.
-- **Ultra-cold mode auto-detects a warm cache (G5)** — `ultra_cold_start=True` (the
-  default) now means skip cache reads only when the session is not already cached;
-  warm-cache full-telemetry loads 10.72 → 6.29 s (−41%). Explicit `ultra_cold=`
-  arguments are unchanged.
-- **Race remaining CDNs after a 404 (G2)** — the async fallback races the remaining
-  CDN sources concurrently instead of walking them serially; missing-file walks pay
-  one latency, not one per CDN (median 0.09 → 0.05 s per missing file).
-- **Restored E-series measurement evidence** — the 18 A/B result and patch files under
-  `.agents/perf-monaco/` (e3, e4, e5, e6, e6r2, e8, e9, e10, final, and eight
-  `patches/*.json`) were dropped by merge 931e9f3 when PR #66 superseded the E-series
-  stack; PR #72 restored the E4/E6/E10 source fixes but not their evidence files.
+- Full experiment logs: `.agents/perf-monaco/RESULTS.md` (E-series),
+  `.agents/perf-fab5/RESULTS.md` (F- and G-series); live harnesses under `tools/`
+  (`monaco_ab_suite.py`, `monaco_cdn_bakeoff.py`, `cdn_parallel_experiment.py`).
+- Accepted (E-series, live 2026 Monaco GP Race): decode/parse off the event loop
+  (E1: median −12.6%, mean −51%; eliminated a 60–72 s collapse mode), pre-typed
+  telemetry frames (E2: assembly 4.14 → 2.36 s), `retry_jitter_max` validation fix
+  (E4), vectorized (driver, lap) ref extraction (E6), `keepalive_max_requests` 10000
+  (E10), jsDelivr-first CDN order (bake-off; supersedes E9).
+- Accepted (G-series): lazy polars import (G1), race remaining CDNs after a 404 (G2),
+  prefetch only requested session tables (G4), ultra-cold warm-cache auto-detect (G5).
+- Rejected by measurement (F-series, ten hypotheses): CDN host sharding, overlapped
+  assembly, merged-dict slice views, timedelta micro-casts, fused get+decode hops,
+  tracking/import/pool micros, minified jsDelivr payloads, and thread-parallel
+  frame assembly. None beat the E-series stack.
 
 ### Fixed
 
+- Default `retry_jitter_max` failed its own validation and silently inflated retry
+  delay (0 → 1.0 s) while emitting a per-request warning on the fetch loop.
 - `_RaceFailureError.error` is typed `Exception` (only `Exception` is ever wrapped),
   keeping `ty` diagnostics at or below the pre-existing main baseline.
+
+### Documentation
+
+- CDN chain, config defaults, and architecture diagrams updated to jsDelivr-first
+  with Hugging Face fallback and StaticDelivr last resort.
+- Restored E-series measurement artifacts under `.agents/perf-monaco/` that merge
+  931e9f3 dropped when PR #66 superseded that stack.
+
+### Known Issues
+
+- None reported at release time.
 
 ## [0.7.0] - 2026-09-04
 

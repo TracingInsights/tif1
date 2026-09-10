@@ -85,10 +85,12 @@ graph TD
     Session --> MemCache[Memory LRU Cache]
     MemCache -- Miss --> SQLite[SQLite Persistent Cache]
     SQLite -- Miss --> CDN[CDN Manager]
-    CDN --> SD[StaticDelivr Primary]
-    CDN --> JS[jsDelivr Fallback]
-    SD -- Data --> SQLite
+    CDN --> JS[jsDelivr Primary]
+    CDN --> HF[Hugging Face Fallback]
+    CDN --> SD[StaticDelivr Backup]
     JS -- Data --> SQLite
+    HF -- Data --> SQLite
+    SD -- Data --> SQLite
     SQLite -- Data --> MemCache
     MemCache -- Data --> Session
 ```

@@ -116,9 +116,9 @@ The default CDN configuration uses jsDelivr as the primary source. Hugging Face 
 ```json
 {
   "cdns": [
-    "https://cdn.staticdelivr.com/gh/TracingInsights",
     "https://cdn.jsdelivr.net/gh/TracingInsights",
-    "https://huggingface.co/buckets/tracinginsights"
+    "https://huggingface.co/buckets/tracinginsights",
+    "https://cdn.staticdelivr.com/gh/TracingInsights"
   ],
   "cdn_use_minification": false
 }
@@ -350,7 +350,7 @@ export TIF1_CIRCUIT_BREAKER_TIMEOUT=60
 export TIF1_POOL_CONNECTIONS=256
 export TIF1_POOL_MAXSIZE=512
 export TIF1_KEEPALIVE_TIMEOUT=120
-export TIF1_KEEPALIVE_MAX_REQUESTS=1000
+export TIF1_KEEPALIVE_MAX_REQUESTS=10000
 
 # Concurrency
 export TIF1_MAX_CONCURRENT_REQUESTS=22

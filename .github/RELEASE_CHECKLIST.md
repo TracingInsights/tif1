@@ -130,6 +130,16 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.8.0 (Performance Release)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.8.0"`
+- [ ] Confirm default CDN order is jsDelivr → Hugging Face buckets → StaticDelivr
+- [ ] Confirm a 404 falls through to the next CDN (`DataNotFoundError` only after every source 404s)
+- [ ] Confirm default `keepalive_max_requests` is 10000
+- [ ] Confirm `ultra_cold_start=True` reads the cache when the session is already cached
+- [ ] Confirm laps-only loads do not prefetch weather/rcm payloads
+- [ ] Confirm polars is not imported until the polars backend is used
+- [ ] Confirm `docs/docs.json` version is `0.8.0` and `0.8.0` is in `versions`
+
 ### v0.7.0 (Performance Release)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.7.0"`
 - [ ] Confirm public `validate_laps` / `validate_telemetry` still use pydantic
