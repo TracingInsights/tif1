@@ -6,6 +6,35 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance
+
+Consolidates every performance optimization merged since 0.7.0 so none can be lost
+in merges. E-series wins (already in main, verified present): decode/parse off the
+event loop (E1), pre-typed telemetry frames (E2), `retry_jitter_max` validation fix
+(E4), vectorized (driver, lap) ref extraction (E6), `keepalive_max_requests` 10000
+(E10), jsDelivr-first CDN order (bake-off; supersedes E9). G-series wins (merged only
+into the experiment stack, now landed here from PRs #68–#71):
+
+- **Lazy polars import (G1)** — `helpers`, `models`, `types`, and
+  `backend_conversion` no longer import polars at module load (~260 ms of every cold
+  start for pandas-default users); it loads via `_ensure_polars_available()` on first
+  polars-backend use. Cold `get_session` median 0.733 → 0.447 s (−39%).
+- **Prefetch only requested session tables (G4)** — laps-only flows no longer fetch
+  weather/rcm payloads alongside drivers.json; `load()`'s "fetches only the data
+  that is required" promise now holds for the prefetch wave.
+- **Ultra-cold mode auto-detects a warm cache (G5)** — `ultra_cold_start=True` (the
+  default) now means skip cache reads only when the session is not already cached;
+  warm-cache full-telemetry loads 10.72 → 6.29 s (−41%). Explicit `ultra_cold=`
+  arguments are unchanged.
+- **Race remaining CDNs after a 404 (G2)** — the async fallback races the remaining
+  CDN sources concurrently instead of walking them serially; missing-file walks pay
+  one latency, not one per CDN (median 0.09 → 0.05 s per missing file).
+
+### Fixed
+
+- `_RaceFailureError.error` is typed `Exception` (only `Exception` is ever wrapped),
+  keeping `ty` diagnostics at or below the pre-existing main baseline.
+
 ## [0.7.0] - 2026-09-04
 
 ### Summary

@@ -381,6 +381,10 @@ class Session:
         self._telemetry_bulk_prefetch_done = False
         self._telemetry_background_prefetch_started = False
         self._session_tables_prefetched = False
+        # Session-level tables (weather.json/rcm.json) are only fetched when
+        # explicitly requested (load() flags or a property access); laps-only
+        # flows must not pay for payloads they never read.
+        self._requested_session_tables: set[str] = set()
         # Single owner of the payload pipeline (memo -> cache -> CDN fallback
         # -> retry -> validate -> parse). The fetch step routes back through
         # the overridable _fetch_from_cdn/_fetch_from_cdn_fast delegates.
@@ -481,6 +485,13 @@ class Session:
         if telemetry and not laps:
             laps = True
 
+        # Mark table intent before touching properties so the batch prefetch
+        # fetches exactly what was requested.
+        if weather:
+            self._requested_session_tables.add("weather.json")
+        if messages:
+            self._requested_session_tables.add("rcm.json")
+
         if laps:
             _ = self.laps
         if weather:
@@ -529,9 +540,17 @@ class Session:
         self._session_tables_prefetched = True
 
         paths_to_fetch: list[str] = []
-        if self._get_local_payload("weather.json") is None and self._weather is None:
+        if (
+            "weather.json" in self._requested_session_tables
+            and self._get_local_payload("weather.json") is None
+            and self._weather is None
+        ):
             paths_to_fetch.append("weather.json")
-        if self._get_local_payload("rcm.json") is None and self._race_control_messages is None:
+        if (
+            "rcm.json" in self._requested_session_tables
+            and self._get_local_payload("rcm.json") is None
+            and self._race_control_messages is None
+        ):
             paths_to_fetch.append("rcm.json")
         if self._get_local_payload("drivers.json") is None and self._drivers is None:
             paths_to_fetch.append("drivers.json")
@@ -617,9 +636,14 @@ class Session:
 
     def _resolve_ultra_cold_mode(self, ultra_cold: bool | None) -> bool:
         """Resolve whether ultra-cold mode should be enabled."""
-        if ultra_cold is None:
-            return bool(config.get("ultra_cold_start", False))
-        return ultra_cold
+        if ultra_cold is not None:
+            return ultra_cold
+        if not bool(config.get("ultra_cold_start", False)):
+            return False
+        # ultra_cold_start=True is the cold-START fast path: skip cache reads
+        # only when the session isn't already cached. A warm cache reads
+        # faster than the network, so never re-download over it.
+        return not self._session_cache_available()
 
     def _is_fastest_lap_tel_cold_start(self) -> bool:
         """Detect whether fastest-lap telemetry is being requested on a brand-new session."""
@@ -987,6 +1011,8 @@ class Session:
     def race_control_messages(self) -> DataFrame:
         """Get session race control messages."""
         if self._race_control_messages is None:
+            # Accessing messages IS the request for the rcm table.
+            self._requested_session_tables.add("rcm.json")
             self._prefetch_session_tables()
             try:
                 self._race_control_messages = self._load_session_table(
@@ -1175,6 +1201,8 @@ class Session:
     def weather(self) -> DataFrame:
         """Get session weather data."""
         if self._weather is None:
+            # Accessing weather IS the request for the weather table.
+            self._requested_session_tables.add("weather.json")
             self._prefetch_session_tables()
             try:
                 self._weather = self._load_session_table("weather.json", WEATHER_RENAME_MAP)

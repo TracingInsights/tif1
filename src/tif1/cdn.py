@@ -9,8 +9,12 @@ fallback exists exactly once in the codebase.
 Default priority order: jsDelivr (primary), Hugging Face buckets, StaticDelivr
 (last resort). A 404 from one CDN falls through to the next: mirrors can be
 stale or divergent, so a payload missing on one CDN may resolve on another.
+In the async pipeline the remaining sources are raced concurrently after a
+404 (missing-file walks pay one latency, not one per CDN); the happy path is
+untouched.
 """
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -242,7 +246,7 @@ class CDNManager:
         last_exception = None
         not_found = False
 
-        for source in sources:
+        for index, source in enumerate(sources):
             try:
                 url = source.format_url(year, gp, session, path)
                 logger.debug(f"Trying CDN: {source.name} - {url}")
@@ -250,8 +254,21 @@ class CDNManager:
                 self.mark_success(source.name)
                 return result
             except DataNotFoundError:
-                logger.debug(f"CDN {source.name} returned 404 for {path}, trying next source")
-                not_found = True
+                # Mirror may be stale or divergent; race the remaining sources
+                # concurrently instead of paying each latency in series.
+                remaining = sources[index + 1 :]
+                if not remaining:
+                    not_found = True
+                    break
+                result, race_error, race_not_found = await self._race_remaining_async(
+                    year, gp, session, path, fetch_func, remaining
+                )
+                if result is not None:
+                    return result
+                not_found = race_not_found
+                if race_error is not None:
+                    last_exception = race_error
+                break  # every source has now been tried
             except InvalidDataError:
                 raise
             except Exception as e:
@@ -267,6 +284,68 @@ class CDNManager:
             url=f"{year}/{gp}/{session}/{path}",
             status_code=self._response_status(last_exception),
         )
+
+    async def _race_remaining_async(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        path: str,
+        fetch_func: Callable[[CDNSource, str], Awaitable[Any]],
+        remaining: list[CDNSource],
+    ) -> tuple[Any | None, Exception | None, bool]:
+        """Fetch the remaining sources concurrently after a primary 404.
+
+        Returns ``(result, last_error, not_found)``: ``result`` is the first
+        successful payload (that source is marked up), or None when every
+        remaining source also failed — with ``last_error`` holding the last
+        transport error (source marked down, mirroring the sequential loop)
+        and ``not_found`` True when all failures were 404s. 404 responses are
+        tiny, so loser requests are effectively free. :class:`InvalidDataError`
+        propagates immediately, exactly like the sequential loop.
+        """
+
+        class _RaceFailureError(Exception):
+            def __init__(self, source_name: str, error: Exception) -> None:
+                super().__init__(source_name)
+                self.source_name = source_name
+                self.error = error
+
+        async def _fetch_one(source: CDNSource) -> tuple[CDNSource, Any]:
+            try:
+                payload = await fetch_func(source, source.format_url(year, gp, session, path))
+            except Exception as e:
+                raise _RaceFailureError(source.name, e) from e
+            return source, payload
+
+        tasks = [asyncio.ensure_future(_fetch_one(source)) for source in remaining]
+        last_error: Exception | None = None
+        not_found = False
+        try:
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    source, payload = await coro
+                except _RaceFailureError as race_failure:
+                    error = race_failure.error
+                    if isinstance(error, DataNotFoundError):
+                        not_found = True
+                        continue
+                    if isinstance(error, InvalidDataError):
+                        raise error from race_failure
+                    logger.warning(
+                        f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
+                    )
+                    if self._response_status(error) != 404:
+                        self.mark_failure(race_failure.source_name)
+                    last_error = error
+                    continue
+                self.mark_success(source.name)
+                return payload, None, False
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+        return None, last_error, not_found
 
     @staticmethod
     def _response_status(exception: BaseException | None) -> int | None:
