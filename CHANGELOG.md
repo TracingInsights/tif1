@@ -5,6 +5,98 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
+## [Unreleased]
+
+### Summary
+
+K-series performance work (10 hypotheses, all run; full log in
+`.agents/perf-kalchedon/RESULTS.md`). The headline: **the persistent cache now
+works under default config** — cold sessions persist what they fetch, so the
+second load of a cached full-telemetry session drops **9.31 → 4.68 s (−50%)**
+instead of re-downloading ~84 MB every process. Cold loads are unchanged to
+slightly faster, the missing-file retry storm is structurally eliminated, and
+bulk cache writes are ~4.5x faster via a zstd storage codec and single-tier
+telemetry writes.
+
+### Changed
+
+- **Ultra-cold mode now skips cache READS only — writes always persist**
+  (`core.py`): every fetch path (laps wave, telemetry bulk wave, fastest-lap
+  single fetches, session tables) keeps `write_cache` gated on `enable_cache`
+  alone. Previously `ultra_cold_start=True` (the default) made
+  `write_cache = enable_cache and not ultra_cold`, so a default-config user's
+  persistent cache stayed empty forever and every process re-downloaded the
+  full session. A session that starts cold keeps its cold-start semantics for
+  the rest of the process (`_mark_session_cache_populated` only upgrades an
+  unresolved probe); the *next* process detects the warm cache and reads it.
+- **Telemetry payloads persist to a single cache tier** (`async_fetch.py`,
+  `core.py`): the bulk fetch path no longer writes both the JSON tier and the
+  telemetry table per payload. Telemetry-path writes route to
+  `cache.set_telemetry`; every reader (batch and single-ref) consults the
+  telemetry table first, so the JSON-tier copy was duplicate dumps/compress/
+  insert work. Measured on the 1452-payload Monaco set: 3.08 → 0.69 s per
+  full-session write pass.
+- **Bulk telemetry writes are deferred out of the fetch slots**
+  (`async_fetch.py`): `fetch_multiple_async(defer_telemetry_writes=True)`
+  collects telemetry writes during the batch and flushes them in one serial
+  executor job after the gather. Writing inside the 22-wide semaphore slots
+  serialized slots on the SQLite lock and added seconds to cold batches on
+  small machines; the post-gather flush costs 0.78 s (measured) and the cold
+  interleaved A/B ended at median −9.2%.
+- **SQLite-tier compression is zstd-1** (`cache.py`, new `zstandard`
+  dependency): compresses ~4.5x faster and decompresses ~2x faster than the
+  previous zlib-3 at a slightly better ratio (23.4% vs 26.2% of original
+  size, measured on 1452 real telemetry payloads). Legacy zlib rows stay
+  readable via magic-byte detection; small rows keep the plain-TEXT shape.
+- **A 404 mixed with other 4xx refusals on every CDN is now
+  `DataNotFoundError`** (`cdn.py`): previously a 403 from one CDN (e.g. a
+  jsDelivr rate-limit window) plus 404s from every mirror produced a
+  retryable `NetworkError`, burning 3 attempts × backoff sleeps (~3.2 s of
+  pure sleep per everywhere-missing file, observed live). All-4xx exhaustion
+  now resolves in one raced CDN round (~0.2 s). 5xx and transport errors keep
+  the retryable `NetworkError` contract.
+- Cache writes serialize via `json_dumps_bytes` (orjson emits bytes; the old
+  path paid a str round-trip on every write).
+
+### Performance
+
+- Warm second load of a cached full-telemetry session: **9.31 → 4.68 s (−50%)**
+  under default config (two-run protocol, fresh process per run).
+- Cold full-telemetry loads: median −9.2% in the final interleaved A/B suite
+  (4/5 pairs faster than control), including the deferred write-back cost.
+- Bulk cache write pass: **3.08 → 0.69 s (4.47x)** (zstd + single tier).
+- Everywhere-missing files: retry storm **3.15 s / 9 CDN probes → 0.18 s /
+  3 probes (−94%)** (deterministic harness); the live win is situational on
+  whether the primary CDN is rate-limiting, but the storm is now impossible.
+
+### Rejected by measurement (documented in `.agents/perf-kalchedon/RESULTS.md`)
+
+- K2 parallel warm-read decode (0.85–1.01x on this 1-core vantage; the
+  GIL-release mechanism needs ≥2 cores — not shipped since it regresses
+  single-core machines).
+- K5 batched `executemany` writes and `synchronous=OFF` (no gain; WAL + commit
+  interval already absorb the fsync).
+- K6 numpy-first typed-frame construction (0.83x with perfect parity —
+  pandas' internal sanitize is already at the floor).
+- K7 pre-typed laps assembly (the whole laps assembly is 79 ms, ~0.8% of the
+  pipeline).
+- K8 msgpack SQLite-tier encoding (decode 1.1x, encode slower, stored size
+  bigger than json+zstd).
+- K10 uvloop (below the noise floor; matches the F-series finding that loop
+  scheduling is ~9 ms per 1452-request batch).
+- Rust/native extension: evaluated against the measured hot loops (pandas-C
+  construction, orjson-C parse, zstd-C codec); the remaining Python slice is
+  too small to pay the PyO3 boundary + build-backend costs. Evidence in
+  RESULTS.md.
+
+### Testing
+
+- 1183 unit tests pass; 3 updated to the new ultra-cold write-back contract
+  (ultra-cold now asserts writes-persist + reads-skipped); 11 new contract
+  tests in `tests/unit/test_k_series_contracts.py` covering the all-4xx CDN
+  semantics, the zstd codec round-trip + legacy-row readability, and the
+  deferred single-tier telemetry write path.
+
 ## [0.8.0] - 2026-09-10
 
 ### Summary

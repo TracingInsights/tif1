@@ -1613,6 +1613,8 @@ class TestCoreCoverageSecondPass:
         assert isinstance(fetched, pd.DataFrame)
         assert not fetched.empty
 
+        # K-series write-back: ultra-cold fetches persist inside the fetch
+        # pipeline itself, so no background fill is scheduled here anymore.
         scheduled: list[dict] = []
         session._fetch_json_unvalidated = lambda path: {"tel": {"speed": [302.0]}}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         session._should_backfill_ultra_cold_cache = lambda enabled: enabled  # type: ignore[ty:invalid-assignment]
@@ -1620,7 +1622,7 @@ class TestCoreCoverageSecondPass:
         ultra = session._get_telemetry_df_for_ref("PIA", 6, ultra_cold=True)
         assert isinstance(ultra, pd.DataFrame)
         assert not ultra.empty
-        assert scheduled
+        assert scheduled == []
 
         session._fetch_json = lambda path: {}  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         empty_payload = session._get_telemetry_df_for_ref("SAI", 7, ultra_cold=False)

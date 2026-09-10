@@ -335,7 +335,7 @@ def set_raw(key: str, blob: bytes | bytearray | memoryview) -> None
 
 Stores an already-serialized JSON blob without re-encoding. The async fetch pipeline uses this when validation left the payload byte-identical to the HTTP body.
 
-Blobs of 4 KB or larger are zlib-compressed at the SQLite boundary only. The in-memory LRU keeps the plain blob. Small rows stay plain TEXT so legacy cache files remain readable.
+Blobs of 4 KB or larger are compressed at the SQLite boundary only (zstd level 1; legacy zlib rows stay readable via magic-byte detection). The in-memory LRU keeps the plain blob. Small rows stay plain TEXT so legacy cache files remain readable.
 
 **Parameters:**
 - `key` (str): Cache key in the format `"{year}/{gp}/{session}/{file}.json"`

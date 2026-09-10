@@ -195,3 +195,14 @@ FASTF1_LAPS_COLUMN_ORDER = [
     "LapTimeSeconds",
     "QualifyingSession",
 ]
+
+
+def telemetry_ref_from_path(path: str) -> tuple[str, int] | None:
+    """Parse a ``{driver}/{lap}_tel.json`` payload path into (driver, lap)."""
+    if not path.endswith("_tel.json") or path.count("/") != 1:
+        return None
+    driver, file_name = path.split("/", 1)
+    lap_part = file_name.removesuffix("_tel.json")
+    if not driver or not lap_part.isdigit():
+        return None
+    return driver, int(lap_part)

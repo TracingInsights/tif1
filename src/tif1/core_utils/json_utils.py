@@ -40,6 +40,19 @@ def json_dumps(data: Any) -> str:
         return json.dumps(data)
 
 
+def json_dumps_bytes(data: Any) -> bytes:
+    """Serialize JSON payload to bytes with the accelerated lib.
+
+    orjson already emits bytes; this avoids the str round-trip that
+    ``json_dumps(...).encode()`` pays on every cache write.
+    """
+    try:
+        blob = _ORJSON.dumps(data)
+        return blob if isinstance(blob, bytes) else blob.encode("utf-8")
+    except Exception:
+        return json.dumps(data).encode("utf-8")
+
+
 def parse_response_json(response: Any) -> Any:
     """Decode an HTTP response body, preferring raw-byte parsing when available."""
     content = getattr(response, "content", None)
