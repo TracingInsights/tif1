@@ -89,7 +89,9 @@ def test_get_fastest_lap_tel_ultra_cold_skips_telemetry_cache_lookup(monkeypatch
     assert tel["Driver"].iloc[0] == "VER"
     assert int(tel["LapNumber"].iloc[0]) == 5
     assert cache.telemetry_get_calls == 0
-    backfill_mock.assert_called_once()
+    # K-series write-back: the fetch pipeline persists inline, so the
+    # ultra-cold single-payload path no longer schedules a background fill.
+    backfill_mock.assert_not_called()
 
 
 def test_find_fastest_lap_reference_ultra_cold_schedules_backfill(monkeypatch):
@@ -264,7 +266,8 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
     assert len(fetch_kwargs) == 2
     for kwargs in fetch_kwargs:
         assert kwargs.get("use_cache") is False
-        assert kwargs.get("write_cache") is False
+        # K-series write-back: ultra-cold skips cache READS, writes persist.
+        assert kwargs.get("write_cache") is True
         assert kwargs.get("validate_payload") is False
 
 

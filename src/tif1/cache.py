@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .core_utils.constants import MAX_CACHE_SIZE
-from .core_utils.json_utils import json_dumps, json_loads
+from .core_utils.json_utils import json_dumps_bytes, json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,22 @@ FastestLapRefKind = Literal["laps", "drivers"]
 # SQLite-tier compression: telemetry payloads compress ~12x (numeric JSON),
 # cutting insert/WAL volume on cold write-cache loads. Values below the
 # threshold stay plain TEXT so small rows keep the legacy storage shape.
+# zstd-1 compresses ~4.5x faster than zlib-3 at a slightly better ratio and
+# decompresses ~2x faster (measured on the 1452-payload Monaco set), so it is
+# the codec when ``zstandard`` is importable; zlib remains the fallback and
+# legacy zlib rows stay readable (zstd frames carry a 4-byte magic prefix).
 _SQLITE_COMPRESS_MIN_BYTES = 4096
 _SQLITE_COMPRESS_LEVEL = 3
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+try:  # pragma: no cover - trivial import guard
+    import zstandard as _zstandard
+
+    _ZSTD_COMPRESSOR = _zstandard.ZstdCompressor(level=1)
+    _ZSTD_DECOMPRESSOR = _zstandard.ZstdDecompressor()
+except ImportError:  # pragma: no cover - defensive fallback only
+    _ZSTD_COMPRESSOR = None
+    _ZSTD_DECOMPRESSOR = None
 # Parsed-object front tiers: bounded small because parsed payloads are far
 # larger than blobs. Repeat hits skip orjson entirely (see RESULTS.md H4).
 _PARSED_CACHE_MAX_ITEMS = 128
@@ -57,6 +71,8 @@ _PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
     """Serialize a JSON blob for the SQLite tier (compress large payloads)."""
     if len(blob) >= _SQLITE_COMPRESS_MIN_BYTES:
+        if _ZSTD_COMPRESSOR is not None:
+            return _ZSTD_COMPRESSOR.compress(blob)
         return zlib.compress(blob, _SQLITE_COMPRESS_LEVEL)
     return blob.decode("utf-8")
 
@@ -64,11 +80,17 @@ def _encode_sqlite_value(blob: bytes) -> bytes | str:
 def _decode_sqlite_value(stored: Any) -> Any:
     """Invert :func:`_encode_sqlite_value`.
 
-    ``bytes`` marks a compressed row; ``str`` is plain legacy JSON. A corrupt
-    compressed row raises ``ValueError`` so callers' existing error handling
-    turns it into a cache miss.
+    ``bytes`` marks a compressed row (zstd frames start with a 4-byte magic;
+    anything else is a legacy zlib row); ``str`` is plain legacy JSON. A
+    corrupt compressed row raises ``ValueError`` so callers' existing error
+    handling turns it into a cache miss.
     """
     if isinstance(stored, bytes):
+        if _ZSTD_DECOMPRESSOR is not None and len(stored) >= 4 and stored[:4] == _ZSTD_MAGIC:
+            try:
+                return _ZSTD_DECOMPRESSOR.decompress(stored)
+            except _zstandard.ZstdError as e:
+                raise ValueError(f"Corrupt compressed cache entry: {e}") from e
         try:
             return zlib.decompress(stored)
         except zlib.error as e:
@@ -669,7 +691,7 @@ class Cache:
         The parsed-object tier is read-through: writes drop any parsed entry
         instead of populating it, so stale parsed objects can never survive.
         """
-        self._store_json_blob(key, json_dumps(data).encode("utf-8"))
+        self._store_json_blob(key, json_dumps_bytes(data))
         self._parsed_cache.pop(key, None)
 
     def set(self, key: str, data: Any) -> None:
@@ -838,7 +860,7 @@ class Cache:
         if self.conn is None or self.read_only:
             return
         try:
-            blob = json_dumps(data).encode("utf-8")
+            blob = json_dumps_bytes(data)
             cache_key = (year, gp, session, driver, lap)
 
             # Update memory cache first (fast operation, <1ms); plain blob.

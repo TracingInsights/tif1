@@ -421,7 +421,8 @@ class TestTelemetryBatchCoverage:
     def test_set_telemetry_handles_json_failure(self, tmp_path, monkeypatch):
         cache = Cache(tmp_path)
         monkeypatch.setattr(
-            "tif1.cache.json_dumps", lambda _data: (_ for _ in ()).throw(TypeError("x"))
+            "tif1.cache.json_dumps_bytes",
+            lambda _data: (_ for _ in ()).throw(TypeError("x")),
         )
         # Should be swallowed by write-skip path.
         cache.set_telemetry(2025, "Test GP", "Race", "ALO", 9, {"speed": [280]})

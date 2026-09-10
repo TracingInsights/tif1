@@ -165,7 +165,8 @@ def test_get_fastest_laps_ultra_cold_disables_cache_io(monkeypatch):
     assert isinstance(fastest, pd.DataFrame)
     assert not fastest.empty
     assert fetch_kwargs.get("use_cache") is False
-    assert fetch_kwargs.get("write_cache") is False
+    # K-series write-back: ultra-cold skips cache READS, writes persist.
+    assert fetch_kwargs.get("write_cache") is True
     assert fetch_kwargs.get("validate_payload") is False
     backfill_mock.assert_called_once()
     payloads = backfill_mock.call_args.kwargs.get("json_payloads", [])

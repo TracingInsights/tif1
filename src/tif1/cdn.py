@@ -11,7 +11,11 @@ Default priority order: jsDelivr (primary), Hugging Face buckets, StaticDelivr
 stale or divergent, so a payload missing on one CDN may resolve on another.
 In the async pipeline the remaining sources are raced concurrently after a
 404 (missing-file walks pay one latency, not one per CDN); the happy path is
-untouched.
+untouched. When every source refused the request with a 4xx client error
+(404 included) the fallback raises :class:`DataNotFoundError` — no mirror
+holds the file, so retrying cannot help — instead of burning the retry/backoff
+budget on files that are missing everywhere.
+
 """
 
 import asyncio
@@ -172,10 +176,11 @@ class CDNManager:
         A 404 (:class:`DataNotFoundError`) falls through to the next source:
         mirrors can be stale or divergent, so the payload may exist elsewhere.
         Any other failure marks the source down and falls through. When every
-        source was tried, ``DataNotFoundError`` is raised if all failures were
-        404s, otherwise :class:`NetworkError`. :class:`InvalidDataError`
-        propagates immediately; invalid payloads will not improve on another
-        CDN.
+        source was tried, ``DataNotFoundError`` is raised if all refusals were
+        4xx client errors (404 included) — no mirror holds the file, so
+        retrying cannot help; otherwise :class:`NetworkError`.
+        :class:`InvalidDataError` propagates immediately; invalid payloads
+        will not improve on another CDN.
         """
         sources = self.get_sources()
 
@@ -183,7 +188,7 @@ class CDNManager:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
         last_exception = None
-        not_found = False
+        statuses: list[int | None] = []
 
         for source in sources:
             try:
@@ -196,15 +201,17 @@ class CDNManager:
                 # 404 can be CDN-specific (stale cache, divergent mirror);
                 # it is not a health signal, so no failure count.
                 logger.debug(f"CDN {source.name} returned 404 for {path}, trying next source")
-                not_found = True
+                statuses.append(404)
             except InvalidDataError:
                 raise
             except Exception as e:
                 logger.warning(f"CDN {source.name} failed: {e}")
                 self.mark_failure(source.name)
                 last_exception = e
+                statuses.append(self._response_status(e))
 
-        if not_found and last_exception is None:
+        # Called via the class so Mock-bound instances keep the real decision logic.
+        if CDNManager._all_client_refusals(statuses):
             raise DataNotFoundError(year=year, event=gp, session=session)
 
         raise NetworkError(
@@ -226,8 +233,9 @@ class CDNManager:
         per source URL. A 404 (:class:`DataNotFoundError`) falls through to
         the next source without marking it failed; any other failure marks the
         source down and falls through. When every source was tried,
-        ``DataNotFoundError`` is raised if all failures were 404s, otherwise
-        :class:`NetworkError`. :class:`InvalidDataError` propagates
+        ``DataNotFoundError`` is raised if all refusals were 4xx client errors
+        (404 included) — no mirror holds the file, so retrying cannot help;
+        otherwise :class:`NetworkError`. :class:`InvalidDataError` propagates
         immediately.
 
         Args:
@@ -244,7 +252,7 @@ class CDNManager:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
         last_exception = None
-        not_found = False
+        statuses: list[int | None] = []
 
         for index, source in enumerate(sources):
             try:
@@ -256,16 +264,16 @@ class CDNManager:
             except DataNotFoundError:
                 # Mirror may be stale or divergent; race the remaining sources
                 # concurrently instead of paying each latency in series.
+                statuses.append(404)
                 remaining = sources[index + 1 :]
                 if not remaining:
-                    not_found = True
                     break
-                result, race_error, race_not_found = await self._race_remaining_async(
+                result, race_error, race_statuses = await self._race_remaining_async(
                     year, gp, session, path, fetch_func, remaining
                 )
+                statuses.extend(race_statuses)
                 if result is not None:
                     return result
-                not_found = race_not_found
                 if race_error is not None:
                     last_exception = race_error
                 break  # every source has now been tried
@@ -276,8 +284,10 @@ class CDNManager:
                 if self._response_status(e) != 404:
                     self.mark_failure(source.name)
                 last_exception = e
+                statuses.append(self._response_status(e))
 
-        if not_found and last_exception is None:
+        # Called via the class so Mock-bound instances keep the real decision logic.
+        if CDNManager._all_client_refusals(statuses):
             raise DataNotFoundError(year=year, event=gp, session=session)
 
         raise NetworkError(
@@ -293,16 +303,18 @@ class CDNManager:
         path: str,
         fetch_func: Callable[[CDNSource, str], Awaitable[Any]],
         remaining: list[CDNSource],
-    ) -> tuple[Any | None, Exception | None, bool]:
+    ) -> tuple[Any | None, Exception | None, list[int | None]]:
         """Fetch the remaining sources concurrently after a primary 404.
 
-        Returns ``(result, last_error, not_found)``: ``result`` is the first
+        Returns ``(result, last_error, statuses)``: ``result`` is the first
         successful payload (that source is marked up), or None when every
         remaining source also failed — with ``last_error`` holding the last
         transport error (source marked down, mirroring the sequential loop)
-        and ``not_found`` True when all failures were 404s. 404 responses are
-        tiny, so loser requests are effectively free. :class:`InvalidDataError`
-        propagates immediately, exactly like the sequential loop.
+        and ``statuses`` holding each raced source's refusal status (404 for
+        :class:`DataNotFoundError`, best-effort status otherwise). 404
+        responses are tiny, so loser requests are effectively free.
+        :class:`InvalidDataError` propagates immediately, exactly like the
+        sequential loop.
         """
 
         class _RaceFailureError(Exception):
@@ -320,7 +332,7 @@ class CDNManager:
 
         tasks = [asyncio.ensure_future(_fetch_one(source)) for source in remaining]
         last_error: Exception | None = None
-        not_found = False
+        statuses: list[int | None] = []
         try:
             for coro in asyncio.as_completed(tasks):
                 try:
@@ -328,24 +340,26 @@ class CDNManager:
                 except _RaceFailureError as race_failure:
                     error = race_failure.error
                     if isinstance(error, DataNotFoundError):
-                        not_found = True
+                        statuses.append(404)
                         continue
                     if isinstance(error, InvalidDataError):
                         raise error from race_failure
                     logger.warning(
                         f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
                     )
-                    if self._response_status(error) != 404:
+                    status = self._response_status(error)
+                    if status != 404:
                         self.mark_failure(race_failure.source_name)
                     last_error = error
+                    statuses.append(status)
                     continue
                 self.mark_success(source.name)
-                return payload, None, False
+                return payload, None, []
         finally:
             for task in tasks:
                 if not task.done():
                     task.cancel()
-        return None, last_error, not_found
+        return None, last_error, statuses
 
     @staticmethod
     def _response_status(exception: BaseException | None) -> int | None:
@@ -355,6 +369,18 @@ class CDNManager:
         response = getattr(exception, "response", None)
         status = getattr(response, "status_code", None)
         return status if isinstance(status, int) else None
+
+    @staticmethod
+    def _all_client_refusals(statuses: list[int | None]) -> bool:
+        """True when every source refused with a 4xx client error.
+
+        A ``None`` status (transport error, timeout) or a 5xx means a mirror
+        might still serve the payload, so the caller must stay retryable.
+        Non-int entries (defensive: mocked seams) also count as non-refusals.
+        """
+        return bool(statuses) and all(
+            s is not None and isinstance(s, int) and 400 <= s < 500 for s in statuses
+        )
 
 
 _cdn_manager = CDNManager()

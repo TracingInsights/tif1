@@ -93,7 +93,7 @@ graph TD
 - Backup: StaticDelivr CDN (`cdn.staticdelivr.com/gh/TracingInsights/{year}/main`)
 - Tracks failure counts per CDN source
 - Automatically disables failing sources after 3 consecutive failures
-- A 404 from one CDN falls through to the next (mirrors can be stale); `DataNotFoundError` is raised only when every CDN returns 404
+- A 404 from one CDN falls through to the next (mirrors can be stale); `DataNotFoundError` is raised when every CDN refuses the request with a 4xx client error (404 included), so everywhere-missing files do not burn the retry/backoff budget. 5xx and transport errors keep the retryable `NetworkError`
 - Handles URL encoding and path construction
 - Never uses `raw.githubusercontent.com` (strict rate limits)
 
@@ -264,7 +264,7 @@ The SQLite cache provides persistent storage that survives process restarts.
 - Implementation: SQLite3 with custom connection pooling
 - Storage: Disk-based database file
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
-- Data format: Compressed JSON (zlib compression, level 6)
+- Data format: Compressed JSON (zstd level 1; legacy zlib rows stay readable)
 - Capacity: Unlimited (constrained by disk space)
 - Access time: 10-50ms (depends on disk I/O)
 - Thread safety: Connection pooling with thread-local storage
@@ -287,16 +287,16 @@ CREATE INDEX IF NOT EXISTS idx_last_access ON cache(last_access);
 
 **Compression Strategy:**
 ```python
-import zlib
 import orjson
+import zstandard
 
 # Serialization (write to cache)
 json_bytes = orjson.dumps(data)
-compressed = zlib.compress(json_bytes, level=6)
-# Typical compression ratio: 5:1 to 10:1
+compressed = zstandard.ZstdCompressor(level=1).compress(json_bytes)
+# Typical compression ratio: ~4:1 (better than zlib-3, ~4.5x faster)
 
 # Deserialization (read from cache)
-json_bytes = zlib.decompress(compressed)
+json_bytes = zstandard.ZstdDecompressor().decompress(compressed)
 data = orjson.loads(json_bytes)
 ```
 

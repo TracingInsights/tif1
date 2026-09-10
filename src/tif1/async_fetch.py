@@ -5,10 +5,12 @@ import atexit
 import logging
 import random
 import threading
+from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
+from .core_utils.constants import telemetry_ref_from_path
 from .core_utils.json_utils import json_loads, parse_response_json
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .http_session import close_session as close_http_session
@@ -307,6 +309,29 @@ def cleanup_resources() -> None:
 atexit.register(cleanup_resources)
 
 
+# Deferred telemetry cache writes: bulk telemetry batches collect the
+# (year, gp, session, driver, lap, tel_payload) tuples during the fetch and
+# flush them in ONE serial executor job after the gather. Writing inside the
+# semaphore slots serializes 22 concurrent slots on the SQLite lock and adds
+# seconds to cold batches on small machines; the post-gather flush costs a
+# fraction of that (measured, see .agents/perf-kalchedon/RESULTS.md).
+_deferred_telemetry_writes: ContextVar[list[tuple[Any, ...]] | None] = ContextVar(
+    "tif1_deferred_telemetry_writes", default=None
+)
+
+
+def _flush_telemetry_writes(cache: Any, entries: list[tuple[Any, ...]]) -> None:
+    """Drain deferred telemetry writes in one executor job (serial)."""
+    set_telemetry = getattr(cache, "set_telemetry", None)
+    if not callable(set_telemetry):
+        return
+    for year, gp, session, driver, lap, tel_payload in entries:
+        try:
+            set_telemetry(year, gp, session, driver, lap, tel_payload)
+        except (RuntimeError, TypeError, ValueError) as e:
+            logger.debug("Deferred telemetry cache write skipped: %s", e)
+
+
 async def fetch_with_rate_limit(
     coro_func,
     *args,
@@ -487,17 +512,49 @@ async def fetch_json_async(
                 data = validated
 
             if write_cache and cache is not None:
-                set_raw = getattr(cache, "set_raw", None)
+                set_telemetry = getattr(cache, "set_telemetry", None)
+                tel_ref = telemetry_ref_from_path(path)
+                tel_payload = data.get("tel") if isinstance(data, dict) else None
                 if (
-                    untransformed
-                    and callable(set_raw)
-                    and isinstance(content, bytes | bytearray | memoryview)
+                    tel_ref is not None
+                    and callable(set_telemetry)
+                    and isinstance(tel_payload, dict)
+                    and tel_payload
                 ):
-                    # Payload is byte-identical to what was parsed: persist the
-                    # original blob and skip re-serialization.
-                    await loop.run_in_executor(executor, set_raw, cache_key, bytes(content))
+                    driver, lap = tel_ref
+                    collector = _deferred_telemetry_writes.get()
+                    if collector is not None:
+                        # Bulk batch with deferred writes: collect now, one
+                        # serial flush job after the gather (see collector
+                        # block above for the measurement rationale).
+                        collector.append((year, gp, session, driver, lap, tel_payload))
+                    else:
+                        # Single-tier write: telemetry payloads persist to the
+                        # telemetry table (what every batch/single-ref reader
+                        # consults first); the JSON-tier copy was duplicate
+                        # work.
+                        await loop.run_in_executor(
+                            executor,
+                            set_telemetry,
+                            year,
+                            gp,
+                            session,
+                            driver,
+                            lap,
+                            tel_payload,
+                        )
                 else:
-                    await loop.run_in_executor(executor, cache.set, cache_key, data)
+                    set_raw = getattr(cache, "set_raw", None)
+                    if (
+                        untransformed
+                        and callable(set_raw)
+                        and isinstance(content, bytes | bytearray | memoryview)
+                    ):
+                        # Payload is byte-identical to what was parsed: persist the
+                        # original blob and skip re-serialization.
+                        await loop.run_in_executor(executor, set_raw, cache_key, bytes(content))
+                    else:
+                        await loop.run_in_executor(executor, cache.set, cache_key, data)
 
             circuit_breaker.record_success()
 
@@ -593,6 +650,7 @@ async def fetch_multiple_async(
     max_retries: int | None = None,
     timeout: int | None = None,
     max_concurrent_requests: int | None = None,
+    defer_telemetry_writes: bool = False,
 ) -> list[dict[str, Any] | None]:
     """Fetch multiple JSON files in parallel with optimized batch size.
 
@@ -601,6 +659,9 @@ async def fetch_multiple_async(
         use_cache: If True, read from cache before network fetch
         write_cache: If True, persist successful network responses to cache
         validate_payload: If True, run payload validation before returning data
+        defer_telemetry_writes: If True, telemetry payloads are collected
+            during the batch and written in one serial flush after the
+            gather, instead of inside the concurrency slots
 
     Returns:
         List of fetched data dictionaries (None for failed requests).
@@ -618,22 +679,52 @@ async def fetch_multiple_async(
     if not requests:
         return []
 
-    if max_concurrent >= len(requests):
-        results = await asyncio.gather(
-            *(
-                fetch_json_async(
-                    *req,
-                    use_cache=use_cache,
-                    write_cache=write_cache,
-                    validate_payload=validate_payload,
-                    max_retries=max_retries,
-                    timeout=timeout,
-                )
-                for req in requests
-            ),
-            return_exceptions=True,
+    collector: list[tuple[Any, ...]] | None = None
+    collector_token = None
+    if defer_telemetry_writes and write_cache:
+        cache_for_defer = get_cache() if (use_cache or write_cache) else None
+        if cache_for_defer is not None and callable(
+            getattr(cache_for_defer, "set_telemetry", None)
+        ):
+            collector = []
+            collector_token = _deferred_telemetry_writes.set(collector)
+
+    try:
+        results = await _gather_fetches(
+            requests,
+            use_cache=use_cache,
+            write_cache=write_cache,
+            validate_payload=validate_payload,
+            max_retries=max_retries,
+            timeout=timeout,
+            max_concurrent=max_concurrent,
         )
-    else:
+    finally:
+        if collector_token is not None:
+            _deferred_telemetry_writes.reset(collector_token)
+
+    if collector:
+        cache_for_flush = get_cache()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            _get_executor(), _flush_telemetry_writes, cache_for_flush, collector
+        )
+
+    return _process_fetch_results(requests, results)
+
+
+async def _gather_fetches(
+    requests: list[tuple[int, str, str, str]],
+    *,
+    use_cache: bool,
+    write_cache: bool,
+    validate_payload: bool,
+    max_retries: int | None,
+    timeout: int | None,
+    max_concurrent: int,
+) -> list[Any]:
+    """Gather per-request fetches under the concurrency cap."""
+    if max_concurrent < len(requests):
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def fetch_with_semaphore(req):
@@ -648,8 +739,28 @@ async def fetch_multiple_async(
                 )
 
         tasks = [fetch_with_semaphore(req) for req in requests]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
+    return await asyncio.gather(
+        *(
+            fetch_json_async(
+                *req,
+                use_cache=use_cache,
+                write_cache=write_cache,
+                validate_payload=validate_payload,
+                max_retries=max_retries,
+                timeout=timeout,
+            )
+            for req in requests
+        ),
+        return_exceptions=True,
+    )
+
+
+def _process_fetch_results(
+    requests: list[tuple[int, str, str, str]], results: list[Any]
+) -> list[dict[str, Any] | None]:
+    """Convert gather results to the graceful-degradation list."""
     processed = []
     for req, result in zip(requests, results):
         if isinstance(result, Exception):

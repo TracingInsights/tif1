@@ -36,6 +36,7 @@ from .core_utils.constants import (
     RACE_CONTROL_RENAME_MAP,
     TELEMETRY_RENAME_MAP,
     WEATHER_RENAME_MAP,
+    telemetry_ref_from_path,
 )
 from .core_utils.helpers import (
     DataFrame,
@@ -211,6 +212,29 @@ def _extract_lap_numbers(laps, lib: str) -> set[int]:
         except ValueError:
             continue
     return lap_numbers
+
+
+def _cache_telemetry_payload(
+    cache, year: int, gp: str, session: str, path: str, data: dict[str, Any]
+) -> bool:
+    """Persist a telemetry payload to the telemetry tier (single-tier write).
+
+    Returns True when the payload was routed to the telemetry table; callers
+    then skip the JSON-tier write. Payloads without a dict ``tel`` member fall
+    back to the JSON tier so odd shapes keep the legacy storage contract.
+    """
+    ref = telemetry_ref_from_path(path)
+    if ref is None:
+        return False
+    tel = data.get("tel") if isinstance(data, dict) else None
+    if not isinstance(tel, dict) or not tel:
+        return False
+    set_telemetry = getattr(cache, "set_telemetry", None)
+    if not callable(set_telemetry):
+        return False
+    driver, lap = ref
+    set_telemetry(year, gp, session, driver, lap, tel)
+    return True
 
 
 def _merge_lap_payloads(
@@ -442,8 +466,15 @@ class Session:
         return self._memo.has_session_data
 
     def _mark_session_cache_populated(self) -> None:
-        """Mark that this session now has cacheable data persisted or scheduled."""
-        if self.enable_cache:
+        """Mark that this session now has cacheable data persisted or scheduled.
+
+        Only upgrades an unresolved probe: a session that started cold keeps
+        its cold-start semantics for the rest of the process (reads were
+        already skipped), while everything it fetches persists for the next
+        process. Overriding a resolved-cold probe would silently flip later
+        waves into cache-read mode mid-session.
+        """
+        if self.enable_cache and self._memo.has_session_data is None:
             self._memo.has_session_data = True
 
     def _get_from_cache(self, cache_key: str):
@@ -453,9 +484,24 @@ class Session:
         return get_cache().get(cache_key)
 
     def _cache_result(self, cache_key: str, data: dict) -> None:
-        """Cache data if caching is enabled."""
+        """Cache data if caching is enabled.
+
+        Telemetry payloads persist to the telemetry tier (read first by every
+        batch/single ref reader); other payloads keep the JSON tier.
+        """
         if self.enable_cache:
-            get_cache().set(cache_key, data)
+            cache = get_cache()
+            parts = cache_key.split("/", 3)
+            if (
+                len(parts) == 4
+                and parts[0].isdigit()
+                and _cache_telemetry_payload(
+                    cache, int(parts[0]), parts[1], parts[2], parts[3], data
+                )
+            ):
+                self._mark_session_cache_populated()
+                return
+            cache.set(cache_key, data)
             self._mark_session_cache_populated()
 
     def load(self, laps=True, telemetry=True, weather=True, messages=True):
@@ -718,11 +764,11 @@ class Session:
                         cache_key = f"{year}/{gp}/{session}/{path}"
                         cache.set(cache_key, payload)
 
+                # Telemetry payloads persist to the telemetry tier only: every
+                # reader consults it first, so a JSON-tier copy is a duplicate
+                # dumps/compress/insert per payload.
                 for driver, lap_num, tel_payload in telemetry_items:
                     cache.set_telemetry(year, gp, session, driver, lap_num, tel_payload)
-                    cache.set(
-                        f"{year}/{gp}/{session}/{driver}/{lap_num}_tel.json", {"tel": tel_payload}
-                    )
             except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 logger.debug("Background cache fill skipped: %s", e)
 
@@ -740,12 +786,17 @@ class Session:
         return self._fetch_from_cdn(path)
 
     def _fetch_json_unvalidated(self, path: str) -> dict[str, Any]:
-        """Fetch JSON payload without validation/caching for ultra-cold paths."""
+        """Fetch JSON payload without validation for ultra-cold paths.
+
+        Skips cache reads (the ultra-cold fast path) but still persists the
+        fetched payload, so a cold session becomes a warm cache for the next
+        process instead of re-downloading the full session every time.
+        """
         return self._payload_loader.get(
             path,
             validate=False,
             use_cache=False,
-            write_cache=False,
+            write_cache=True,
             fast=bool(config.get("ultra_cold_skip_retries", True)),
         )
 
@@ -1437,7 +1488,9 @@ class Session:
         ]
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
         use_cache = self.enable_cache and not ultra_cold_enabled and self._session_cache_available()
-        write_cache = self.enable_cache and not ultra_cold_enabled
+        # Cold-start speed comes from skipping cache READS; writes always
+        # persist so the session is warm for the next process.
+        write_cache = self.enable_cache
         validate_payload = not ultra_cold_enabled
         max_retries = (
             1 if (ultra_cold_enabled and config.get("ultra_cold_skip_retries", True)) else None
@@ -1700,7 +1753,9 @@ class Session:
             return [], []
 
         use_cache = self.enable_cache and not ultra_cold and self._session_cache_available()
-        write_cache = self.enable_cache and not ultra_cold
+        # Cold-start speed comes from skipping cache READS; writes always
+        # persist so the session is warm for the next process.
+        write_cache = self.enable_cache
         validate_payload = not ultra_cold
         max_retries = 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
 
@@ -1902,7 +1957,9 @@ class Session:
             return [], []
 
         use_cache = self.enable_cache and not ultra_cold and self._session_cache_available()
-        write_cache = self.enable_cache and not ultra_cold
+        # Cold-start speed comes from skipping cache READS; writes always
+        # persist so the session is warm for the next process.
+        write_cache = self.enable_cache
         validate_payload = not ultra_cold
         max_retries = 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
 
@@ -3670,7 +3727,7 @@ class Session:
                             fetch_multiple_async(
                                 requests,
                                 use_cache=False,
-                                write_cache=False,
+                                write_cache=self.enable_cache,
                                 validate_payload=False,
                                 max_retries=max_retries,
                             )
@@ -3764,7 +3821,7 @@ class Session:
                         results = await fetch_multiple_async(
                             requests,
                             use_cache=False,
-                            write_cache=False,
+                            write_cache=self.enable_cache,
                             validate_payload=False,
                             max_retries=max_retries,
                         )
@@ -3843,16 +3900,8 @@ class Session:
             return None
 
         self._remember_telemetry_payload(driver, lap_num, tel_payload)
-        if self.enable_cache:
-            if ultra_cold and self._should_backfill_ultra_cold_cache(ultra_cold):
-                self._schedule_background_cache_fill(
-                    telemetry_payload=(driver, lap_num, tel_payload)
-                )
-            elif not ultra_cold:
-                if cache is None:
-                    cache = get_cache()
-                cache.set_telemetry(self.year, self.gp, self.session, driver, lap_num, tel_payload)
-                self._mark_session_cache_populated()
+        # The fetch itself persists to the telemetry tier (write-back is no
+        # longer ultra-cold-gated), so no explicit cache write here.
         return tel_payload
 
     def _get_telemetry_df_for_ref(
@@ -3984,7 +4033,7 @@ class Session:
                         results = await fetch_multiple_async(
                             requests,
                             use_cache=False,
-                            write_cache=False,
+                            write_cache=self.enable_cache,
                             validate_payload=False,
                             max_retries=max_retries,
                         )
@@ -4081,15 +4130,19 @@ class Session:
             if tel_df is not None and not _is_empty_df(tel_df, self.lib):
                 telemetry_map[(str(driver), int(lap_num))] = tel_df
 
-        # Fetch remaining telemetry from network
+        # Fetch remaining telemetry from network. Writes persist even in
+        # ultra-cold mode (single telemetry-tier write per payload) so the
+        # next process loads this session from a warm cache; the writes are
+        # deferred out of the fetch slots into one serial post-gather flush.
         if requests:
             from .async_fetch import fetch_multiple_async
 
             results = await fetch_multiple_async(
                 requests,
                 use_cache=not ultra_cold_enabled,
-                write_cache=not ultra_cold_enabled,
+                write_cache=self.enable_cache,
                 validate_payload=not ultra_cold_enabled,
+                defer_telemetry_writes=True,
             )
 
             for (driver, lap_num), result in zip(lap_info, results):
@@ -4100,12 +4153,6 @@ class Session:
                         tel_df = _create_telemetry_df(tel_data, driver, lap_num, self.lib)
                         if tel_df is not None and not _is_empty_df(tel_df, self.lib):
                             telemetry_map[(driver, lap_num)] = tel_df
-
-                            # Cache if not in ultra cold mode
-                            if not ultra_cold_enabled and self.enable_cache:
-                                get_cache().set_telemetry(
-                                    self.year, self.gp, self.session, driver, lap_num, tel_data
-                                )
 
         return telemetry_map
 
