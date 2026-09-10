@@ -1,0 +1,22 @@
+[
+  {
+    "path": "src/tif1/config.py",
+    "old": "logger = logging.getLogger(__name__)",
+    "new": "logger = logging.getLogger(__name__)\n\n_MISSING: Any = object()"
+  },
+  {
+    "path": "src/tif1/config.py",
+    "old": "    def __init__(self):\n        if hasattr(self, \"_initialized\"):\n            return\n        self._initialized = True",
+    "new": "    def __init__(self):\n        if hasattr(self, \"_initialized\"):\n            return\n        self._initialized = True\n        # Memoized get() results, cleared by set().\n        self._validated: dict[Any, Any] = {}"
+  },
+  {
+    "path": "src/tif1/config.py",
+    "old": "    def get(self, key: str, default: Any = None) -> Any:\n        \"\"\"Get configuration value with validation.\"\"\"\n        value = self._config.get(key, default)",
+    "new": "    def get(self, key: str, default: Any = None) -> Any:\n        \"\"\"Get configuration value with validation.\n\n        Results are memoized per (key, default) pair: the fetch pipeline\n        reads ~10 config keys per payload, so validation ran thousands of\n        times per large batch. ``set()`` clears the memo.\n        \"\"\"\n        try:\n            memo_key = (key, default)\n        except TypeError:  # unhashable default: skip memoization\n            memo_key = None\n        if memo_key is not None:\n            cached = self._validated.get(memo_key, _MISSING)\n            if cached is not _MISSING:\n                return cached\n        result = self._validate_and_get(key, default)\n        if memo_key is not None:\n            self._validated[memo_key] = result\n        return result\n\n    def _validate_and_get(self, key: str, default: Any) -> Any:\n        \"\"\"Validate and return one configuration value.\"\"\"\n        value = self._config.get(key, default)"
+  },
+  {
+    "path": "src/tif1/config.py",
+    "old": "    def set(self, key: str, value: Any):\n        \"\"\"Set configuration value.\"\"\"\n        self._config[key] = value",
+    "new": "    def set(self, key: str, value: Any):\n        \"\"\"Set configuration value.\"\"\"\n        self._config[key] = value\n        self._validated.clear()"
+  }
+]
