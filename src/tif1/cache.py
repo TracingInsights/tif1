@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import pickle
 import sqlite3
 import threading
+import time
 import zlib
 from collections import OrderedDict
 from pathlib import Path
@@ -427,6 +429,11 @@ class Cache:
         )
         self._parsed_cache_max_items = _PARSED_CACHE_MAX_ITEMS
         self._parsed_telemetry_cache_max_items = _PARSED_TELEMETRY_CACHE_MAX_ITEMS
+        self._missing_payloads_ttl_days = config.get("missing_payloads_ttl_days", 7.0)
+
+        # Negative-result tier: payloads that returned 4xx on every CDN source
+        # (all-missing verdicts). Lazily loaded from SQLite; key -> recorded_at.
+        self._missing_payloads: dict[str, float] | None = None
 
         # Shared write lock for both memory tiers (serializes updates exactly
         # like the previous single OrderedDict lock). Kept separate from the
@@ -463,6 +470,23 @@ class Cache:
             conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
 
             conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS missing_payloads ("
+                "key TEXT PRIMARY KEY, recorded_at REAL)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry_frames (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    driver TEXT,
+                    lap INTEGER,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session, driver, lap)
+                )
+                """
+            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS telemetry_cache (
                     year INTEGER,
@@ -568,6 +592,80 @@ class Cache:
             return
         raise ValueError(f"Unknown cache kind: {kind!r}")
 
+    # -- negative-result tier -----------------------------------------------
+
+    def _load_missing_payloads(self) -> dict[str, float]:
+        """Load the all-4xx verdicts once per process (TTL-filtered)."""
+        if self._missing_payloads is not None:
+            return self._missing_payloads
+        missing: dict[str, float] = {}
+        if self.conn is not None:
+            try:
+                cutoff = time.time() - self._missing_payloads_ttl_days * 86400.0
+                with self._sqlite_lock:
+                    rows = self.conn.execute(
+                        "SELECT key, recorded_at FROM missing_payloads WHERE recorded_at > ?",
+                        (cutoff,),
+                    ).fetchall()
+                missing = dict(rows)
+            except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+                logger.debug("Missing-payloads load failed: %s", e)
+        self._missing_payloads = missing
+        return missing
+
+    def is_known_missing(self, key: str) -> bool:
+        """Return True when ``key`` was refused with 4xx by every CDN recently.
+
+        The verdict is TTL-scoped (``missing_payloads_ttl_days``, default 7
+        days): after that the payload is re-probed on the next request.
+        """
+        if self.conn is None:
+            return False
+        recorded = self._load_missing_payloads().get(key)
+        if recorded is None:
+            return False
+        if time.time() - recorded > self._missing_payloads_ttl_days * 86400.0:
+            # Expired verdict: drop it so the next request re-probes.
+            self.discard_missing(key)
+            return False
+        return True
+
+    def record_missing(self, key: str) -> None:
+        """Persist an everywhere-missing (all-CDN 4xx) verdict for ``key``."""
+        if self.conn is None or self.read_only:
+            return
+        now = time.time()
+        try:
+            missing = self._load_missing_payloads()
+            missing[key] = now
+            with self._sqlite_lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO missing_payloads VALUES (?, ?)", (key, now)
+                )
+                self._pending_writes += 1
+                self._commit_if_needed()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Missing-payload record skipped: %s", e)
+
+    def discard_missing(self, key: str) -> None:
+        """Drop a missing-verdict (the payload exists again or was invalidated)."""
+        missing = self._missing_payloads
+        if missing is None:
+            # Not loaded yet: load once so the membership guard below can
+            # skip the DELETE for the overwhelmingly common no-verdict case
+            # (every successful fetch calls this; the SQL write must not run).
+            missing = self._load_missing_payloads()
+        if key not in missing:
+            return
+        missing.pop(key, None)
+        if self.conn is None or self.read_only:
+            return
+        try:
+            with self._sqlite_lock:
+                self.conn.execute("DELETE FROM missing_payloads WHERE key = ?", (key,))
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Missing-payload discard skipped: %s", e)
+
     def invalidate(self, scope: InvalidateScope = "all") -> None:
         """Invalidate cached data by scope.
 
@@ -600,11 +698,19 @@ class Cache:
         parsed_tier = self._parsed_cache if scope == "json" else self._parsed_telemetry_cache
         with self._sqlite_lock:
             self.conn.execute(f"DELETE FROM {table}")
+            # Missing-verdict keys are JSON-tier-shaped even for telemetry
+            # paths, so dropping either tier must also drop its verdicts.
+            self.conn.execute("DELETE FROM missing_payloads")
+            if scope == "telemetry":
+                # Frames are derived from telemetry payloads.
+                self.conn.execute("DELETE FROM telemetry_frames")
             self.conn.commit()
             self._pending_writes = 0
         with self._memory_cache_lock:
             memory_tier.clear()
             parsed_tier.clear()
+            if self._missing_payloads is not None:
+                self._missing_payloads.clear()
         logger.info("Cache tier invalidated: %s", scope)
 
     def _get_json(self, key: str) -> Any | None:
@@ -672,6 +778,9 @@ class Cache:
         try:
             # Update memory cache first (fast operation, <1ms)
             self._memory_cache.set(key, blob)
+            # The payload exists: drop any stale everywhere-missing verdict.
+            if self._missing_payloads is not None:
+                self._missing_payloads.pop(key, None)
 
             # Then update SQLite (slower operation)
             with self._sqlite_lock:
@@ -853,6 +962,88 @@ class Cache:
             None, self.get_telemetry_batch, year, gp, session, driver_laps
         )
 
+    # -- materialized telemetry-frame tier ------------------------------------
+    #
+    # Warm-load fast path: assembled per-(driver, lap) pandas DataFrames,
+    # pickled and zstd-compressed. The payload tier stays the source of
+    # truth; frames are derived data written on warm loads only, so cold
+    # starts pay nothing for this tier. Unpickling trusts the same 0o700
+    # user-local cache directory every other tier already trusts (a
+    # corrupted or foreign blob degrades to a tier miss, never a crash).
+
+    def get_telemetry_frames_batch(
+        self, year: int, gp: str, session: str, driver_laps: list[tuple[str, int]]
+    ) -> dict[tuple[str, int], Any]:
+        """Batch-read materialized telemetry frames.
+
+        Returns:
+            Mapping of ``(driver, lap)`` to the unpickled DataFrame; refs with
+            no (or corrupt) frame rows are absent and fall through to the
+            payload tier.
+        """
+        if self.conn is None or not driver_laps or _ZSTD_DECOMPRESSOR is None:
+            return {}
+        results: dict[tuple[str, int], Any] = {}
+        try:
+            with self._sqlite_lock:
+                placeholders = ", ".join(["(?, ?)"] * len(driver_laps))
+                params: list[Any] = [year, gp, session]
+                for driver_code, lap_num in driver_laps:
+                    params.extend([driver_code, lap_num])
+                query = (
+                    "SELECT driver, lap, frame FROM telemetry_frames WHERE year = ? AND gp = ? "
+                    f"AND session = ? AND (driver, lap) IN ({placeholders})"
+                )
+                rows = self.conn.execute(query, params).fetchall()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Telemetry frames batch read error: %s", e)
+            return results
+        for driver_code, lap_num, blob in rows:
+            try:
+                results[(driver_code, lap_num)] = pickle.loads(_ZSTD_DECOMPRESSOR.decompress(blob))
+            except (
+                AttributeError,
+                EOFError,
+                ImportError,
+                IndexError,
+                TypeError,
+                ValueError,
+                pickle.UnpicklingError,
+                _zstandard.ZstdError,
+            ):
+                logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
+        return results
+
+    def set_telemetry_frames_batch(
+        self, year: int, gp: str, session: str, frames: list[tuple[str, int, Any]]
+    ) -> int:
+        """Materialize assembled telemetry frames in one bulk write.
+
+        Args:
+            frames: ``(driver, lap, DataFrame)`` tuples to persist.
+
+        Returns:
+            Number of frames written (0 when the tier is unavailable).
+        """
+        if self.conn is None or self.read_only or _ZSTD_COMPRESSOR is None or not frames:
+            return 0
+        written = 0
+        try:
+            with self._sqlite_lock:
+                for driver, lap, frame in frames:
+                    blob = _ZSTD_COMPRESSOR.compress(pickle.dumps(frame, protocol=5))
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO telemetry_frames VALUES (?, ?, ?, ?, ?, ?)",
+                        (year, gp, session, driver, lap, blob),
+                    )
+                    written += 1
+                self._pending_writes += written
+                self._commit_if_needed()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Telemetry frames write skipped: %s", e)
+            return 0
+        return written
+
     def _set_telemetry(
         self, year: int, gp: str, session: str, driver: str, lap: int, data: Any
     ) -> None:
@@ -947,6 +1138,8 @@ class Cache:
         with self._sqlite_lock:
             self.conn.execute("DELETE FROM cache")
             self.conn.execute("DELETE FROM telemetry_cache")
+            self.conn.execute("DELETE FROM telemetry_frames")
+            self.conn.execute("DELETE FROM missing_payloads")
             self.conn.commit()
             self._pending_writes = 0
 
@@ -955,6 +1148,8 @@ class Cache:
             self._memory_telemetry_cache.clear()
             self._parsed_cache.clear()
             self._parsed_telemetry_cache.clear()
+            if self._missing_payloads is not None:
+                self._missing_payloads.clear()
 
         logger.info("Cache cleared")
 

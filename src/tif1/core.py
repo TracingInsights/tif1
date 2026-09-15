@@ -4118,22 +4118,60 @@ class Session:
         if not lap_refs:
             return {}
 
+        # Frames memoized earlier in this Session (built by a previous
+        # fetch_all call or the per-lap telemetry path) are reused as-is:
+        # a repeat fetch_all_laps_telemetry() call then skips the payload
+        # reads and the per-frame DataFrame construction entirely.
+        telemetry_map: dict[tuple[str, int], DataFrame] = {}
+        pending_refs: list[tuple[str, int]] = []
+        for ref in lap_refs:
+            memoized_df = self._memo.get("telemetry_df", ref)
+            if memoized_df is not None:
+                telemetry_map[ref] = memoized_df
+            else:
+                pending_refs.append(ref)
+
+        # Materialized-frame tier (pandas backend, warm loads): refs with a
+        # stored assembled frame skip the payload read, decompress, parse and
+        # frame construction. Frames are only written from payload-tier hits,
+        # so cold fetches never pay for this tier.
+        if (
+            pending_refs
+            and self.lib == "pandas"
+            and not ultra_cold_enabled
+            and self.enable_cache
+            and self._session_cache_available()
+        ):
+            frame_hits = get_cache().get_telemetry_frames_batch(
+                self.year, self.gp, self.session, pending_refs
+            )
+            for ref, frame in frame_hits.items():
+                self._memo.set("telemetry_df", ref, frame)
+                telemetry_map[ref] = frame
+            pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
+
         # Fetch telemetry in batch
         requests, lap_info, cached_tels = await self._fetch_telemetry_batch_from_refs_async(
-            lap_refs, skip_cache=ultra_cold_enabled
+            pending_refs, skip_cache=ultra_cold_enabled
         )
 
         # Build result map from cached telemetry
-        telemetry_map: dict[tuple[str, int], DataFrame] = {}
+        materialized_frames: list[tuple[str, int, DataFrame]] = []
         for driver, lap_num, tel_payload in cached_tels:
             tel_df = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
             if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                 telemetry_map[(str(driver), int(lap_num))] = tel_df
+                if self.lib == "pandas":
+                    materialized_frames.append((driver, lap_num, tel_df))
 
         # Fetch remaining telemetry from network. Writes persist even in
         # ultra-cold mode (single telemetry-tier write per payload) so the
         # next process loads this session from a warm cache; the writes are
         # deferred out of the fetch slots into one serial post-gather flush.
+        # (An overlapped flush/assembly variant was measured and rejected:
+        # interleaved A/B showed +23%/+36% cold regressions on 1-core
+        # vantages; see .agents/perf-sestos/RESULTS.md L8.)
         if requests:
             from .async_fetch import fetch_multiple_async
 
@@ -4152,7 +4190,18 @@ class Session:
                         self._remember_telemetry_payload(driver, lap_num, tel_data)
                         tel_df = _create_telemetry_df(tel_data, driver, lap_num, self.lib)
                         if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                            self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                             telemetry_map[(driver, lap_num)] = tel_df
+
+        # One bulk write materializes the frames assembled from the payload
+        # tier; the next warm load reads them instead of re-assembling.
+        if materialized_frames:
+            try:
+                get_cache().set_telemetry_frames_batch(
+                    self.year, self.gp, self.session, materialized_frames
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
+                logger.debug("Telemetry frame materialization skipped: %s", e)
 
         return telemetry_map
 
