@@ -604,6 +604,26 @@ class Session:
         if len(paths_to_fetch) < 2:
             return
 
+        # Persistent-cache hits satisfy the prefetch without the network;
+        # network results are persisted below so a cold load() warms the
+        # cache for the *next* process (previously these tables were
+        # memo-only and re-downloaded by every fresh process).
+        still_to_fetch: list[str] = []
+        for path in paths_to_fetch:
+            cached = None
+            try:
+                cached = self._payload_loader._cache_get(self._payload_loader.cache_key(path))
+            except Exception:
+                cached = None
+            if isinstance(cached, dict):
+                self._remember_local_payload(path, cached)
+            else:
+                still_to_fetch.append(path)
+        paths_to_fetch = still_to_fetch
+
+        if not paths_to_fetch:
+            return
+
         import niquests as _nq
 
         from .core_utils.json_utils import parse_response_json
@@ -642,6 +662,12 @@ class Session:
                             result = future.result()
                             if isinstance(result, dict):
                                 self._remember_local_payload(path, result)
+                                try:
+                                    self._payload_loader._cache_set(
+                                        self._payload_loader.cache_key(path), result
+                                    )
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
         except Exception as e:
@@ -4192,9 +4218,16 @@ class Session:
                         if tel_df is not None and not _is_empty_df(tel_df, self.lib):
                             self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                             telemetry_map[(driver, lap_num)] = tel_df
+                            if self.lib == "pandas" and self.enable_cache:
+                                # N1: frames from the cold network path are
+                                # materialized too, so the *next* load starts
+                                # at the frame tier instead of re-parsing the
+                                # payload tier first.
+                                materialized_frames.append((driver, lap_num, tel_df))
 
-        # One bulk write materializes the frames assembled from the payload
-        # tier; the next warm load reads them instead of re-assembling.
+        # One bulk write materializes the assembled telemetry frames (payload
+        # tier hits and network fetches alike); the next warm load reads them
+        # instead of re-assembling.
         if materialized_frames:
             try:
                 get_cache().set_telemetry_frames_batch(
