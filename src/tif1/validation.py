@@ -476,23 +476,12 @@ def _coerce_optional_bool_list(values: list[Any]) -> list[Any]:
     return values
 
 
-_NULL_LIKE_STRINGS = {"", "none", "null", "nan"}
-
-
-def _coerce_null_like_string_list(values: list[Any]) -> list[Any]:
-    """Convert null-like string tokens to None in any list field."""
-    if not values:
-        return values
-
-    normalized: list[Any] = []
-    changed = False
-    for value in values:
-        if isinstance(value, str) and value.strip().lower() in _NULL_LIKE_STRINGS:
-            normalized.append(None)
-            changed = True
-        else:
-            normalized.append(value)
-    return normalized if changed else values
+# Null-like sentinels live in ``tif1.exceptions`` (pydantic-free); re-exported
+# here for backward compatibility of ``tif1.validation`` imports.
+from tif1.exceptions import (  # noqa: F401,E402
+    _NULL_LIKE_STRINGS,
+    _coerce_null_like_string_list,
+)
 
 
 def _normalize_payload_lists(data: dict[str, Any]) -> dict[str, Any]:

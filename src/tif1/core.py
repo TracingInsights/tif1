@@ -1107,7 +1107,7 @@ class Session:
                             exprs.append(
                                 pl.col("Time")
                                 .cast(pl.Utf8)
-                                .str.to_datetime(format=None, strict=False)
+                                .str.to_datetime(format="%Y-%m-%dT%H:%M:%S%.f", strict=False)
                                 .cast(pl.Datetime("ns"))
                             )
                         # String columns: replace "None" sentinel with null
@@ -1145,7 +1145,7 @@ class Session:
                         # Time: ISO string → datetime64[ns]
                         if "Time" in rcm_pd.columns:
                             rcm_pd["Time"] = pd.to_datetime(
-                                rcm_pd["Time"], errors="coerce", utc=False
+                                rcm_pd["Time"], errors="coerce", utc=False, format="ISO8601"
                             ).astype("datetime64[ns]")
                         # String columns: replace "None" sentinel with None → object dtype
                         for _col in (
@@ -3210,7 +3210,7 @@ class Session:
             - tels: List of (driver, lap_num, tel_payload) tuples for cache hits
         """
         cache = None
-        if not skip_cache and (not self.enable_cache or self._session_cache_available()):
+        if not skip_cache and self.enable_cache and self._session_cache_available():
             cache = get_cache()
 
         requests, lap_info, tels = [], [], []

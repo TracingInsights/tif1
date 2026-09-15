@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from tif1.config import get_config
-from tif1.validation import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
+from tif1.exceptions import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
 from .constants import (
     CATEGORICAL_COLS,
@@ -628,7 +628,9 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     if "LapStartDate" in df.columns and not pd.api.types.is_datetime64_any_dtype(
         df["LapStartDate"]
     ):
-        df["LapStartDate"] = pd.to_datetime(df["LapStartDate"], errors="coerce", utc=False)
+        df["LapStartDate"] = pd.to_datetime(
+            df["LapStartDate"], errors="coerce", utc=False, format="ISO8601"
+        )
 
     # ------------------------------------------------------------------
     # Float64 columns (may arrive as int or object with None)
@@ -745,12 +747,15 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
         lap_time_series = cast(pd.Series, lap_df[COL_LAP_TIME])
         if not pd.api.types.is_timedelta64_dtype(lap_time_series):
             numeric_lap_times = pd.to_numeric(lap_time_series, errors="coerce")
-            parsed_lap_times = pd.to_timedelta(lap_time_series, errors="coerce")
             numeric_lap_timedeltas = _numeric_seconds_to_timedelta(numeric_lap_times)
-            lap_df[COL_LAP_TIME] = numeric_lap_timedeltas.where(
-                numeric_lap_times.notna(),
-                parsed_lap_times,
-            )
+            missing_mask = numeric_lap_times.isna()
+            if bool(missing_mask.any()):
+                # Only non-numeric entries (deleted laps, string times) pay for
+                # the string parse, and only on that subset.
+                parsed_subset = pd.to_timedelta(lap_time_series[missing_mask], errors="coerce")
+                numeric_lap_timedeltas = numeric_lap_timedeltas.copy()
+                numeric_lap_timedeltas[missing_mask] = parsed_subset
+            lap_df[COL_LAP_TIME] = numeric_lap_timedeltas
         lap_df[COL_LAP_TIME_SECONDS] = (
             cast(pd.Series, lap_df[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
         )
