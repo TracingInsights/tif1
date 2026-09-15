@@ -9,6 +9,67 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ### Summary
 
+L-series performance work (10 hypotheses, all run; full log in
+`.agents/perf-sestos/RESULTS.md`). The headline: **warm loads of a cached
+full-telemetry session drop 5.13 → ~1.0 s on the telemetry phase (−80%)** via
+a materialized-frame cache tier, everywhere-missing payloads stop being
+re-probed on every load (negative-result cache), and repeat
+`fetch_all_laps_telemetry()` calls in one process become ~free (frame-memo
+reuse). Cold loads are unchanged to faster (no cold-path work was added; the
+kept set was measured at parity-or-better in a final interleaved A/B,
+median −24% on that suite with no pair regressing materially). Seven of the
+ten hypotheses were rejected by measurement and are documented with their
+numbers; one (L8, overlapped cache-write flush) was fully implemented,
+measured at +23%/+36% cold regression on 1-core vantages, and reverted.
+
+### Added
+
+- **Materialized telemetry-frame tier** (`cache.py`, `core.py`): the first
+  warm `fetch_all_laps_telemetry()` after a cold load persists the assembled
+  per-(driver, lap) DataFrames (pickle protocol 5 + zstd-1, new
+  `telemetry_frames` table); subsequent warm loads batch-read the frames
+  directly, skipping the payload blob read, decompress, orjson parse and
+  pandas frame construction (measured 4.9 → ~1.0 s read+assembly; live
+  parity 0/1452 mismatched on columns, dtypes and values). Frames materialize
+  only from cache/memo-sourced payloads — network fresh-result frames never
+  write the tier, so cold fetches pay zero. Corrupt rows degrade to tier
+  misses; `invalidate("telemetry")`/`clear()` drop the tier.
+- **Negative-result cache for everywhere-missing payloads** (`cache.py`,
+  `async_fetch.py`, `config.py`): when every CDN refuses a payload with a 4xx
+  (the K9 all-missing verdict), the key is remembered in a new
+  `missing_payloads` table (TTL `missing_payloads_ttl_days`, default 7, env
+  `TIF1_MISSING_PAYLOADS_TTL_DAYS`); later loads raise `DataNotFoundError`
+  without re-walking the CDN chain. Verdicts are dropped on successful
+  writes and by `invalidate()`/`clear()`, and discards are no-ops when no
+  verdict exists (no per-fetch SQL on the cold path — the first A/B caught a
+  DELETE-per-fetch version of this at +23% cold and it was fixed). Measured
+  on the Monaco set: warm telemetry −17.8% (3/3 paired runs), 9 → 0 HTTP
+  GETs for the 3 everywhere-missing files.
+
+### Changed
+
+- **`fetch_all_laps_telemetry_async` reuses memoized frames** (`core.py`):
+  frames built by a previous call (or by the per-lap telemetry path) are
+  returned as-is instead of re-reading and re-assembling every payload.
+  Repeat calls in one process: 2.90 → 0.13 s (22.6x; ~5 ms once the frame
+  tier is warm).
+
+### Rejected by measurement (documented in `.agents/perf-sestos/RESULTS.md`)
+
+- L1 brotli transfer encoding (gzip already negotiated; 2% byte delta),
+  L4 multi-connection batch fetch (parity probe: 1×22 vs 2×22/2×11/4×6),
+  L5 SQLite `mmap_size` (12 ms of a 5.13 s phase), L6 zstd trained
+  dictionary (ratio 0.234 → 0.232 on 50–120 KB blobs), L8 overlapped
+  deferred-write flush (+23%/+36% cold, 10/10 interleaved pairs — reverted),
+  L9 skipping per-request JSON-tier probes (the default cold path already
+  does zero probes), L10 trimming the `get_session` schedule path (5.2 ms;
+  the 0.42–0.65 s is the already-adjudicated lazy-import chain).
+
+
+## [Unreleased]
+
+### Summary
+
 K-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-kalchedon/RESULTS.md`). The headline: **the persistent cache now
 works under default config** — cold sessions persist what they fetch, so the

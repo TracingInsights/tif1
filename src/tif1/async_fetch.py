@@ -433,6 +433,14 @@ async def fetch_json_async(
         if cached is not None:
             return cached
 
+        # Everywhere-missing verdict (all CDNs refused with 4xx recently):
+        # skip the network walk entirely until the verdict expires.
+        is_known_missing = getattr(cache, "is_known_missing", None)
+        if callable(is_known_missing):
+            known_missing = await loop.run_in_executor(executor, is_known_missing, cache_key)
+            if known_missing:
+                raise DataNotFoundError(year=year, event=gp, session=session)
+
     if bool(config.get("offline_mode", False)):
         raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
 
@@ -558,6 +566,11 @@ async def fetch_json_async(
 
             circuit_breaker.record_success()
 
+            # The payload exists: drop any stale everywhere-missing verdict.
+            discard_missing = getattr(cache, "discard_missing", None)
+            if callable(discard_missing):
+                discard_missing(cache_key)
+
             logger.debug(f"Fetched: {cache_key} from {cdn_source.name}")
             return data
         except (DataNotFoundError, InvalidDataError):
@@ -620,8 +633,15 @@ async def fetch_json_async(
                 path,
                 partial(_fetch_from_source, attempt_num=attempt),
             )
-        except (DataNotFoundError, InvalidDataError):
-            # Fatal errors - raise immediately
+        except DataNotFoundError:
+            # Every CDN source refused with a 4xx (all-missing): remember the
+            # verdict so later loads skip the CDN walk until the TTL expires.
+            record_missing = getattr(cache, "record_missing", None)
+            if callable(record_missing):
+                record_missing(cache_key)
+            raise
+        except InvalidDataError:
+            # Fatal error - raise immediately
             raise
         except NetworkError as e:
             # Every CDN source failed this attempt; back off and retry.

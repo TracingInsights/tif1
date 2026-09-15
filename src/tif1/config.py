@@ -90,6 +90,9 @@ class Config:
             "sqlite_timeout": 30.0,
             "memory_cache_max_items": 1024,
             "memory_telemetry_cache_max_items": 2048,
+            # Everywhere-missing (all-CDN 4xx) payloads are remembered for this
+            # many days instead of re-probing every CDN on every load.
+            "missing_payloads_ttl_days": 7.0,
             # HTTP session configuration constants
             "keepalive_timeout": 120,
             "keepalive_max_requests": 10000,
@@ -186,6 +189,7 @@ class Config:
             "TIF1_POLARS_LAP_CATEGORICAL": ("polars_lap_categorical", _to_bool),
             "TIF1_CACHE_COMMIT_INTERVAL": ("cache_commit_interval", int),
             "TIF1_SQLITE_TIMEOUT": ("sqlite_timeout", float),
+            "TIF1_MISSING_PAYLOADS_TTL_DAYS": ("missing_payloads_ttl_days", float),
             "TIF1_MEMORY_CACHE_MAX_ITEMS": ("memory_cache_max_items", int),
             "TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS": ("memory_telemetry_cache_max_items", int),
             "TIF1_KEEPALIVE_TIMEOUT": ("keepalive_timeout", int),
