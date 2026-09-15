@@ -9,6 +9,71 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ### Summary
 
+N-series performance work (10 hypotheses, all run; full log in
+`.agents/perf-lindos/RESULTS.md`). The headline: **the second load of a
+full-telemetry session drops 5.37 → ~1.7-2.0 s total** — cold fetches now
+materialize assembled telemetry frames into the frame tier directly (so the
+next process loads from the fast tier instead of re-parsing 84 MB of payload
+JSON first), and the session-table prefetch (drivers/weather/rcm) now both
+persists what it fetches and consults the persistent cache before going to
+the network (previously those tables were memo-only and re-downloaded by
+every fresh process after a cold `load()`). Frame-tier bulk writes use
+`executemany` (0.36 → 0.21 s per session write pass). Cold loads stay at
+parity-or-better (final interleaved A/B, medians favor the candidate; the
+added materialization write is post-gather and amortized). Seven of the ten
+hypotheses were rejected by measurement — including a fully-built Rust/pyo3
+columnar parser (parity-exact, 0% speedup) and pyarrow/msgspec/Arrow-IPC
+alternatives — all documented with their numbers.
+
+### Changed
+
+- **Cold-path telemetry frame materialization** (`core.py`): network-fetched
+  telemetry batches now append their assembled frames to the same bulk
+  materialization write the payload-tier path uses, gated on the session's
+  cache enablement. A cold `fetch_all_laps_telemetry()` leaves the frame tier
+  fully populated, so the *second* load hits the materialized tier directly:
+  warm-#1 telemetry 4.66 → 1.08 s (−77%), total 5.37 → ~1.7-2.0 s.
+- **Session-table prefetch persists + reads cache** (`core.py`):
+  `_prefetch_session_tables` now writes fetched drivers/weather/rcm payloads
+  through the payload loader's cache seam (respecting `enable_cache` and test
+  overrides) and checks the persistent cache before fetching — warm-#1 laps
+  0.456 → 0.068 s (−85%), and `load()`-only sessions stop re-downloading
+  those tables in every later process.
+- **Bulk frame writes via `executemany`** (`cache.py`):
+  `set_telemetry_frames_batch` batches the per-frame `INSERT OR REPLACE` rows
+  into one C-level executemany loop (1452-frame pass 0.36 → 0.21 s); round-trip
+  parity, corrupt-row fallback and commit cadence unchanged.
+
+### Rejected (measured, not shipped)
+
+- Brotli Accept-Encoding negotiation: ~5% smaller on-wire than gzip; A/B
+  median −3.4%, pairs split 2-2 (noise).
+- Concurrency slow-start ramp (6 → 22): A/B median +8.96% total; ramping
+  delays the TLS warm-up without a compensating win.
+- Custom Rust/pyo3 columnar parser + numpy-native assembly: built and measured
+  (parity 0/1452 mismatches); pipeline 2.38 s vs 2.39 s — no speedup; the
+  costs are pandas construction (parity-bound) and number parsing (orjson is
+  already near-optimal).
+- pyarrow.json parse (1.70 s vs orjson 0.84 s), Arrow IPC frame tier (3.05 s
+  vs pickle+zstd 1.42 s), msgspec decode (1.04 s vs 0.97 s), zstd level -3
+  (81% larger blobs), numpy-first Int64 construction (4.06 s vs 2.55 s,
+  parity-breaking), merged-dict assembly + slicing (2-3x faster build but
+  session-wide dtype inference breaks per-lap dtype parity 1452/1452 —
+  confirms F3's mechanism), pool-sizing alignment (auto-sized, no mismatch).
+
+### Added
+
+- Contract tests for the kept changes (`tests/unit/test_n_series_contracts.py`):
+  cold-batch frame materialization (+ cache-disable gating), prefetch
+  persistence and cache-first behavior, and bulk-write round-trip parity.
+- N-series measurement harnesses and reports (`tools/lindos_*.py`,
+  `.agents/perf-lindos/`).
+
+
+## [Unreleased] — L-series performance work (prior series)
+
+### Summary
+
 L-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-sestos/RESULTS.md`). The headline: **warm loads of a cached
 full-telemetry session drop 5.13 → ~1.0 s on the telemetry phase (−80%)** via
