@@ -53,7 +53,9 @@ def main() -> None:
     _loaded = [pickle.loads(p) for p in pickles]
     t_load = time.perf_counter() - t0
     pickle_bytes = sum(len(p) for p in pickles)
-    print(f"per-frame pickle: dump={t_dump:.3f}s load={t_load:.3f}s total={pickle_bytes/1e6:.1f} MB")
+    print(
+        f"per-frame pickle: dump={t_dump:.3f}s load={t_load:.3f}s total={pickle_bytes / 1e6:.1f} MB"
+    )
 
     c = zstd.ZstdCompressor(level=1)
     d = zstd.ZstdDecompressor()
@@ -65,7 +67,7 @@ def main() -> None:
     t_rt = time.perf_counter() - t0
     zbytes = sum(len(z) for z in compressed)
     print(
-        f"per-frame zstd: compress={t_compress:.3f}s stored={zbytes/1e6:.1f} MB "
+        f"per-frame zstd: compress={t_compress:.3f}s stored={zbytes / 1e6:.1f} MB "
         f"roundtrip(decompress+loads)={t_rt:.3f}s"
     )
 
@@ -88,7 +90,7 @@ def main() -> None:
     big_back = pickle.loads(d.decompress(big_z))
     t_bigrt = time.perf_counter() - t0
     print(
-        f"one-blob: pickle={len(big_p)/1e6:.1f} MB zstd={len(big_z)/1e6:.1f} MB "
+        f"one-blob: pickle={len(big_p) / 1e6:.1f} MB zstd={len(big_z) / 1e6:.1f} MB "
         f"dump={t_bigdump:.3f}s compress={t_bigcompress:.3f}s roundtrip={t_bigrt:.3f}s "
         f"frames={len(big_back)}"
     )

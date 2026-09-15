@@ -30,7 +30,9 @@ def timed(label: str, fn):
 def main() -> None:
     print(f"import tif1: {t_import:.4f}s")
 
-    payload = timed("events._load_schedule_payload (vendored parse+validate)", ev._load_schedule_payload)
+    payload = timed(
+        "events._load_schedule_payload (vendored parse+validate)", ev._load_schedule_payload
+    )
     print(f"  years in payload: {len(payload['years'])}")
 
     timed("events._load_schedule_payload (cached 2nd call)", ev._load_schedule_payload)

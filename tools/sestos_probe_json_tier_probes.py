@@ -71,22 +71,26 @@ async def main() -> None:
 
     # 1. Default-config cold bulk path: use_cache=False
     t0 = time.perf_counter()
-    await af.fetch_multiple_async(requests, use_cache=False, write_cache=True, validate_payload=False)
+    await af.fetch_multiple_async(
+        requests, use_cache=False, write_cache=True, validate_payload=False
+    )
     t_default = time.perf_counter() - t0
-    print(f"default cold (use_cache=False): probes={cache.get_calls} wall={t_default*1000:.1f}ms")
+    print(f"default cold (use_cache=False): probes={cache.get_calls} wall={t_default * 1000:.1f}ms")
 
     # 2. Off-default cold bulk path: use_cache=True (ultra_cold_start=false users)
     cache.get_calls = 0
     t0 = time.perf_counter()
-    await af.fetch_multiple_async(requests, use_cache=True, write_cache=True, validate_payload=False)
+    await af.fetch_multiple_async(
+        requests, use_cache=True, write_cache=True, validate_payload=False
+    )
     t_offdefault = time.perf_counter() - t0
     print(
         f"off-default cold (use_cache=True): probes={cache.get_calls} "
-        f"wall={t_offdefault*1000:.1f}ms"
+        f"wall={t_offdefault * 1000:.1f}ms"
     )
     print(
-        f"probe overhead (20 payloads): {(t_offdefault - t_default)*1000:.1f}ms "
-        f"-> per 1452 payloads ~{((t_offdefault - t_default)*1000/20*1452):.0f}ms "
+        f"probe overhead (20 payloads): {(t_offdefault - t_default) * 1000:.1f}ms "
+        f"-> per 1452 payloads ~{((t_offdefault - t_default) * 1000 / 20 * 1452):.0f}ms "
         "(in-memory stub; real SQL adds per-SELECT cost)"
     )
 

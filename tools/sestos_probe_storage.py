@@ -72,14 +72,18 @@ def main() -> None:
     blobs = load_blobs()
     print(f"telemetry rows: {len(blobs)}")
     raw_total = sum(len(zstd.ZstdDecompressor().decompress(b)) for _, _, b in blobs)
-    print(f"stored bytes: {sum(len(b) for _, _, b in blobs) / 1e6:.1f} MB, raw: {raw_total / 1e6:.1f} MB")
+    print(
+        f"stored bytes: {sum(len(b) for _, _, b in blobs) / 1e6:.1f} MB, raw: {raw_total / 1e6:.1f} MB"
+    )
 
     # L5: mmap
     stock = bench_read(None)
     mmapped = bench_read(1 << 30)
-    print(f"L5 stock read:  median={statistics.median(stock):.3f}s runs={[round(t,3) for t in stock]}")
     print(
-        f"L5 mmap read:   median={statistics.median(mmapped):.3f}s runs={[round(t,3) for t in mmapped]}"
+        f"L5 stock read:  median={statistics.median(stock):.3f}s runs={[round(t, 3) for t in stock]}"
+    )
+    print(
+        f"L5 mmap read:   median={statistics.median(mmapped):.3f}s runs={[round(t, 3) for t in mmapped]}"
     )
 
     # L6: baseline zstd-1 (level shipped)

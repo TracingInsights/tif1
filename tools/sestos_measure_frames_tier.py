@@ -57,9 +57,7 @@ def main() -> None:
 
         cache = get_cache()
         refs = list(tel.keys())
-        payloads = cache.get_telemetry_batch(
-            2026, "Monaco%20Grand%20Prix", "Race", refs
-        )
+        payloads = cache.get_telemetry_batch(2026, "Monaco%20Grand%20Prix", "Race", refs)
         mismatched = []
         for ref in refs:
             fresh = _create_telemetry_df(payloads.get(ref), ref[0], ref[1], "pandas")

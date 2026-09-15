@@ -87,7 +87,9 @@ async def main() -> None:
             print(f"round {round_num} {name}: {t:.2f}s")
     print("\n=== medians ===")
     for name, _, _ in configs:
-        print(f"{name}: median={statistics.median(times[name]):.2f}s runs={[round(t,2) for t in times[name]]}")
+        print(
+            f"{name}: median={statistics.median(times[name]):.2f}s runs={[round(t, 2) for t in times[name]]}"
+        )
 
 
 if __name__ == "__main__":
