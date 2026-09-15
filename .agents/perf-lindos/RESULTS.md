@@ -64,8 +64,9 @@ in every later process.
 - Ruff lint + format clean (`src/`, `tests/`, `tools/`); `ty` diagnostics identical to HEAD.
 - 5 new contract tests in `tests/unit/test_n_series_contracts.py`
   (N1 network materialization + cache-disable gating, N3 persist + cache-first, N5 bulk-write parity).
-- Rust probe artifacts: crate built with pyo3 0.26/numpy 0.26, wheel installed, parity
-  verified against the full 1452-payload corpus; probe kept at `tools/lindos_probe_rust.py`.
+- Rust probe artifacts: crate source kept at `.agents/perf-lindos/telparse/`
+  (pyo3 0.26/numpy 0.26; `maturin build --release` then `tools/lindos_probe_rust.py`);
+  parity verified against the full 1452-payload corpus before rejection.
 
 ## Main changed files
 
