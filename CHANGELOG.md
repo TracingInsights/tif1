@@ -9,6 +9,60 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ### Summary
 
+Tyria-series performance work (10 hypotheses, all run; full log in
+`.agents/perf-tyria/RESULTS.md`). The headline: **lap assembly gets ~25% cheaper
+on the LapTime block and datetime parsing gets explicit formats where real
+payloads are proven uniform** — the LapTime double-parse now only string-parses
+the non-numeric subset (12.97 → 9.79 ms on 20k realistic rows), `LapStartDate`
+and RCM `Time` parsing use explicit ISO formats (pandas −15–19%; polars RCM
+switched to an explicit format for determinism — no measurable speed change on
+the locked polars 1.44.1), and `tif1.validation` + pydantic are out of the
+`import tif1.core` tree (helpers import self-cost ~78 → ~8 ms cumulative).
+Six of the ten hypotheses were rejected by measurement — including a
+single-call `_numeric_seconds_to_timedelta` that broke the NaN-guard contract —
+all documented with their numbers.
+
+### Changed
+
+- **LapTime subset-fallback parse** (`core_utils/helpers.py`):
+  `_process_lap_df` runs `pd.to_numeric` once and only string-parses the
+  non-numeric subset instead of the full column + `.where`; exact dtype+value
+  parity on realistic numeric+None input.
+- **Explicit datetime formats on uniform-shape columns** (`core_utils/helpers.py`,
+  `core.py`): `format="ISO8601"` for `LapStartDate` and pandas RCM `Time`,
+  explicit `"%Y-%m-%dT%H:%M:%S%.f"` for polars RCM `Time`. Real payloads are
+  uniform all-9-digit-fraction (verified live across 2021–2025 sessions), so
+  the explicit format is parity-exact — and strictly more correct than
+  first-format-wins inference on mixed shapes.
+- **Import-time trim** (`exceptions.py`, `validation.py`,
+  `core_utils/helpers.py`): `_NULL_LIKE_STRINGS`/`_coerce_null_like_string_list`
+  live in pydantic-free `tif1.exceptions`; `validation` re-exports them for
+  backward compatibility.
+- **Inverted async cache-enable condition** (`core.py`): the telemetry fetch
+  plan opened the SQLite cache exactly when caching was disabled; now gated on
+  `self.enable_cache and self._session_cache_available()`.
+
+### Rejected (measured, not shipped)
+
+- Single-C-call `_numeric_seconds_to_timedelta`: ~−5% standalone but breaks the
+  `never_passes_nan_to_seconds_timedelta` contract; NaN-safe variants slower.
+- Single-blob session frames tier (~9.35x slower), batch JSON-tier cache reads
+  (cold-SQLite-only ~37%, negligible warm benefit — excluded as marginal),
+  exact-`isin` null-like probe (no measurable win), merged-dict cold-path
+  assembly (already shipped), per-request fetch overhead (~0.008 ms/req —
+  negligible).
+
+### Added
+
+- Tyria-series measurement harness and reports
+  (`.agents/perf-tyria/tools/offline_assembly_bench.py`,
+  `.agents/perf-tyria/PLAN.md`, `.agents/perf-tyria/RESULTS.md`).
+
+
+## [Unreleased]
+
+### Summary
+
 N-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-lindos/RESULTS.md`). The headline: **the second load of a
 full-telemetry session drops 5.37 → ~1.7-2.0 s total** — cold fetches now

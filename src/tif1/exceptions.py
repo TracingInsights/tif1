@@ -97,3 +97,25 @@ class LapNotFoundError(DataNotFoundError):
         TIF1Error.__init__(
             self, parts[0] + message, lap_number=lap_number, driver=driver, **context
         )
+
+
+# Null-like string sentinels shared by payload normalization
+# (``helpers``) and payload validation (``validation``). Defined here so
+# hot-path helpers stay importable without pulling in pydantic.
+_NULL_LIKE_STRINGS = {"", "none", "null", "nan"}
+
+
+def _coerce_null_like_string_list(values: list[Any]) -> list[Any]:
+    """Convert null-like string tokens to None in any list field."""
+    if not values:
+        return values
+
+    normalized: list[Any] = []
+    changed = False
+    for value in values:
+        if isinstance(value, str) and value.strip().lower() in _NULL_LIKE_STRINGS:
+            normalized.append(None)
+            changed = True
+        else:
+            normalized.append(value)
+    return normalized if changed else values
