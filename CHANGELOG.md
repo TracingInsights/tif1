@@ -9,18 +9,39 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ### Summary
 
-Tyria-series performance work (10 hypotheses, all run; full log in
-`.agents/perf-tyria/RESULTS.md`). The headline: **lap assembly gets ~25% cheaper
-on the LapTime block and datetime parsing gets explicit formats where real
-payloads are proven uniform** — the LapTime double-parse now only string-parses
-the non-numeric subset (12.97 → 9.79 ms on 20k realistic rows), `LapStartDate`
-and RCM `Time` parsing use explicit ISO formats (pandas −15–19%; polars RCM
-switched to an explicit format for determinism — no measurable speed change on
-the locked polars 1.44.1), and `tif1.validation` + pydantic are out of the
-`import tif1.core` tree (helpers import self-cost ~78 → ~8 ms cumulative).
-Six of the ten hypotheses were rejected by measurement — including a
-single-call `_numeric_seconds_to_timedelta` that broke the NaN-guard contract —
-all documented with their numbers.
+Rhodes-series performance work (10 hypotheses, all run; full log in
+`.agents/perf-rhodes/RESULTS.md`). The headline: **warm loads get GC-aware
+batch loops and the polars backend gains a materialized frame tier** — pandas
+warm telemetry drops ~20% (0.875 → ~0.70 s on the Monaco 1452-frame set,
+unpickle loop −44%), polars warm telemetry drops **−78–85%** (1.53–1.66 s →
+0.25–0.37 s; previously polars re-read the payload tier and re-constructed
+every frame on each load), cold assembly is −20%, and the `laps.pick_driver(x)
+.telemetry` flow uses vectorized refs + one batched cache read. Seven of the
+ten hypotheses were rejected or falsified by measurement — including a
+columnar frame-tier rewrite (construction costs more than unpickle saves), raw
+uncompressed blobs (parity at 4.3× storage), and cold orchestration overlap
+(sub-noise prelude) — all documented with their numbers.
+
+### Changed
+
+- **GC suspension for short-lived allocation bursts** (`cache.py`,
+  `async_fetch.py`, `core.py`): a `_suspend_gc()` context manager wraps the
+  materialized-frame batch read/write, the payload batch read, the deferred
+  telemetry flush, and the assembly loops. These tight loops allocate ~100 MB
+  of short-lived objects; gen-0 collections cost ~44% of the unpickle loop
+  (470 → 264 ms) and ~20% of the cold assembly (2.17 → 1.73 s). GC state is
+  restored on exit (nested/disabled-safe) and never suspended across `await`.
+- **Polars materialized frame tier** (`cache.py`, `core.py`): polars frames
+  persist in a dedicated `telemetry_frames_pl` table (pickle protocol 5 +
+  zstd-1, same as pandas) and warm polars loads read them directly instead of
+  re-parsing the payload tier and re-constructing `pl.DataFrame` per frame.
+  Both backends materialize from payload-tier hits and network fetches; tables
+  are backend-isolated and foreign/corrupt blobs degrade to tier misses.
+- **Vectorized `Laps.telemetry` refs + batched cache read** (`models.py`):
+  `_telemetry_merged` extracts `(driver, lap)` refs with vectorized column ops
+  (no `iterrows`) and reads warm-cache payloads in one batched IN query;
+  still-missing refs keep the original per-ref chain (skip-verdicts, network
+  fallback, failure recording).
 
 ### Changed
 

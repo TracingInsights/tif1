@@ -325,11 +325,17 @@ def _flush_telemetry_writes(cache: Any, entries: list[tuple[Any, ...]]) -> None:
     set_telemetry = getattr(cache, "set_telemetry", None)
     if not callable(set_telemetry):
         return
-    for year, gp, session, driver, lap, tel_payload in entries:
-        try:
-            set_telemetry(year, gp, session, driver, lap, tel_payload)
-        except (RuntimeError, TypeError, ValueError) as e:
-            logger.debug("Deferred telemetry cache write skipped: %s", e)
+    # ~1400 serial dumps+compress+SQL iterations allocate heavily; suspending
+    # GC for the scoped loop is the same mechanism as the frame-tier read
+    # (Rhodes R3) and restores the prior state afterwards.
+    from .cache import _suspend_gc
+
+    with _suspend_gc():
+        for year, gp, session, driver, lap, tel_payload in entries:
+            try:
+                set_telemetry(year, gp, session, driver, lap, tel_payload)
+            except (RuntimeError, TypeError, ValueError) as e:
+                logger.debug("Deferred telemetry cache write skipped: %s", e)
 
 
 async def fetch_with_rate_limit(
