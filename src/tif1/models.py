@@ -551,20 +551,47 @@ class Laps(pd.DataFrame):
         ``Telemetry`` when all laps were processed and all failed — failures
         are already counted per-lap inside this method, so returning None here
         would cause double-counting when the caller re-iterates.
+
+        Rhodes R7: references come from vectorized column ops (no
+        ``iterrows``) and warm-cache payloads come from ONE batched SQLite
+        read instead of one query per lap; still-missing refs keep the
+        original per-ref chain (skip-verdicts, network fallback, failure
+        recording).
         """
         session = self.session
         assert session is not None  # guaranteed by _telemetry_merged_available
         entries: list[tuple[str, int, dict]] = []
         try:
             ultra_cold = session._resolve_telemetry_ultra_cold_mode(None)
-            for _, lap in self.iterrows():
-                driver = lap.get("Driver")
-                lap_num = lap.get("LapNumber")
-                if not driver or lap_num is None:
-                    continue
+            # Vectorized refs in row order (same extraction the batch fetch
+            # path uses); iterrows built one Series per row (~30 ms per
+            # 78-lap driver).
+            refs_frame = self[["Driver", "LapNumber"]].dropna()
+            refs: list[tuple[str, int]] = [
+                (str(d), int(n)) for d, n in zip(refs_frame["Driver"], refs_frame["LapNumber"])
+            ]
+            collected: dict[tuple[str, int], dict] = {}
+            for driver, lap_num in refs:
+                payload = session._get_telemetry_payload(driver, lap_num)
+                if payload is not None:
+                    collected[(driver, lap_num)] = payload
+
+            if len(collected) < len(refs) and not ultra_cold and session.enable_cache:
+                missing = [ref for ref in refs if ref not in collected]
+                batch = get_cache().get_telemetry_batch(
+                    session.year, session.gp, session.session, missing
+                )
+                for ref, payload in batch.items():
+                    session._remember_telemetry_payload(ref[0], ref[1], payload)
+                    collected[ref] = payload
+
+            # Emit entries in laps-row order (the per-ref chain's historical
+            # order) so merged telemetry row order is unchanged.
+            missing = [ref for ref in refs if ref not in collected]
+            for driver, lap_num in missing:
                 try:
                     payload = session._get_telemetry_payload_for_ref(
-                        driver, int(lap_num), ultra_cold=ultra_cold, allow_prefetch=False
+                        driver, lap_num, ultra_cold=ultra_cold, allow_prefetch=False
                     )
                 except (
                     DataNotFoundError,
@@ -573,10 +600,15 @@ class Laps(pd.DataFrame):
                     TypeError,
                     ValueError,
                 ) as e:
-                    session._record_telemetry_failure(driver, int(lap_num), e)
+                    session._record_telemetry_failure(driver, lap_num, e)
                     continue
                 if payload is not None:
-                    entries.append((driver, int(lap_num), payload))
+                    collected[(driver, lap_num)] = payload
+            entries = [
+                (drv, lap_num, collected[(drv, lap_num)])
+                for drv, lap_num in refs
+                if (drv, lap_num) in collected
+            ]
         except AttributeError:
             return None
         if not entries:

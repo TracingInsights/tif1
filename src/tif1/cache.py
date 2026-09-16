@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
+import gc
 import logging
 import pickle
 import sqlite3
@@ -68,6 +70,32 @@ except ImportError:  # pragma: no cover - defensive fallback only
 # larger than blobs. Repeat hits skip orjson entirely (see RESULTS.md H4).
 _PARSED_CACHE_MAX_ITEMS = 128
 _PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
+
+# Materialized-frame tables per backend: pandas frames live in
+# ``telemetry_frames`` (pre-existing), polars frames in ``telemetry_frames_pl``
+# so both backends can keep a warm frame tier without PK collisions and
+# without migrating existing caches.
+_FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "telemetry_frames_pl"}
+
+
+@contextlib.contextmanager
+def _suspend_gc():
+    """Pause cyclic GC for a short-lived burst of container allocations.
+
+    Batch frame reads/writes allocate ~100 MB of short-lived objects in a
+    tight loop; the resulting gen-0 collections cost ~40% of the unpickle
+    loop (Rhodes R3: 470 -> 264 ms on the Monaco 1452-frame set) while no
+    reference cycles are created. Restores the prior GC state, so nesting
+    and callers that disabled GC themselves are safe.
+    """
+    if gc.isenabled():
+        gc.disable()
+        try:
+            yield
+        finally:
+            gc.enable()
+    else:
+        yield
 
 
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
@@ -477,6 +505,19 @@ class Cache:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS telemetry_frames (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    driver TEXT,
+                    lap INTEGER,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session, driver, lap)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry_frames_pl (
                     year INTEGER,
                     gp TEXT,
                     session TEXT,
@@ -937,17 +978,18 @@ class Cache:
                 rows = self.conn.execute(query, params).fetchall()
 
             if rows:
-                for driver_code, lap_num, json_data in rows:
-                    decoded = _decode_sqlite_value(json_data)
-                    self._memory_telemetry_cache.set(
-                        (year, gp, session, driver_code, lap_num),
-                        decoded,
-                    )
-                    parsed = json_loads(decoded)
-                    self._parsed_telemetry_cache.set(
-                        (year, gp, session, driver_code, lap_num), parsed
-                    )
-                    results[(driver_code, lap_num)] = parsed
+                with _suspend_gc():
+                    for driver_code, lap_num, json_data in rows:
+                        decoded = _decode_sqlite_value(json_data)
+                        self._memory_telemetry_cache.set(
+                            (year, gp, session, driver_code, lap_num),
+                            decoded,
+                        )
+                        parsed = json_loads(decoded)
+                        self._parsed_telemetry_cache.set(
+                            (year, gp, session, driver_code, lap_num), parsed
+                        )
+                        results[(driver_code, lap_num)] = parsed
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             logger.warning("Telemetry batch cache read error: %s", e)
 
@@ -972,9 +1014,19 @@ class Cache:
     # corrupted or foreign blob degrades to a tier miss, never a crash).
 
     def get_telemetry_frames_batch(
-        self, year: int, gp: str, session: str, driver_laps: list[tuple[str, int]]
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        driver_laps: list[tuple[str, int]],
+        lib: Literal["pandas", "polars"] = "pandas",
     ) -> dict[tuple[str, int], Any]:
         """Batch-read materialized telemetry frames.
+
+        Args:
+            lib: Backend whose frame table to read (``pandas`` or ``polars``);
+                rows from the other backend are never returned because a
+                foreign frame object would surface in caller maps.
 
         Returns:
             Mapping of ``(driver, lap)`` to the unpickled DataFrame; refs with
@@ -983,6 +1035,7 @@ class Cache:
         """
         if self.conn is None or not driver_laps or _ZSTD_DECOMPRESSOR is None:
             return {}
+        table = _FRAME_TABLES.get(lib, "telemetry_frames")
         results: dict[tuple[str, int], Any] = {}
         try:
             with self._sqlite_lock:
@@ -991,62 +1044,81 @@ class Cache:
                 for driver_code, lap_num in driver_laps:
                     params.extend([driver_code, lap_num])
                 query = (
-                    "SELECT driver, lap, frame FROM telemetry_frames WHERE year = ? AND gp = ? "
+                    f"SELECT driver, lap, frame FROM {table} WHERE year = ? AND gp = ? "
                     f"AND session = ? AND (driver, lap) IN ({placeholders})"
                 )
                 rows = self.conn.execute(query, params).fetchall()
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             logger.warning("Telemetry frames batch read error: %s", e)
             return results
-        for driver_code, lap_num, blob in rows:
-            try:
-                results[(driver_code, lap_num)] = pickle.loads(_ZSTD_DECOMPRESSOR.decompress(blob))
-            except (
-                AttributeError,
-                EOFError,
-                ImportError,
-                IndexError,
-                TypeError,
-                ValueError,
-                pickle.UnpicklingError,
-                _zstandard.ZstdError,
-            ):
-                logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
+        # ~100 MB of short-lived allocations; GC suspension halves this loop
+        # (Rhodes R3) and pickle data holds no reference cycles.
+        _foreign_marker = "_df" if lib == "polars" else "_mgr"
+        with _suspend_gc():
+            for driver_code, lap_num, blob in rows:
+                try:
+                    frame = pickle.loads(_ZSTD_DECOMPRESSOR.decompress(blob))
+                    # A foreign-backend blob (hand-migrated cache) degrades to
+                    # a tier miss instead of surfacing in caller maps.
+                    if not hasattr(frame, _foreign_marker):
+                        raise TypeError("foreign frame object")
+                    results[(driver_code, lap_num)] = frame
+                except (
+                    AttributeError,
+                    EOFError,
+                    ImportError,
+                    IndexError,
+                    TypeError,
+                    ValueError,
+                    pickle.UnpicklingError,
+                    _zstandard.ZstdError,
+                ):
+                    logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
         return results
 
     def set_telemetry_frames_batch(
-        self, year: int, gp: str, session: str, frames: list[tuple[str, int, Any]]
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        frames: list[tuple[str, int, Any]],
+        lib: Literal["pandas", "polars"] = "pandas",
     ) -> int:
         """Materialize assembled telemetry frames in one bulk write.
 
         Args:
             frames: ``(driver, lap, DataFrame)`` tuples to persist.
+            lib: Backend whose frame table to write (``pandas`` or ``polars``).
 
         Returns:
             Number of frames written (0 when the tier is unavailable).
         """
         if self.conn is None or self.read_only or _ZSTD_COMPRESSOR is None or not frames:
             return 0
+        table = _FRAME_TABLES.get(lib, "telemetry_frames")
         written = 0
         try:
             with self._sqlite_lock:
                 # executemany batches the 1400+ per-session frame rows into
                 # one C-level loop (measured ~0.2 s vs ~0.36 s per-row execute
-                # on the Monaco 1452-frame set).
-                self.conn.executemany(
-                    "INSERT OR REPLACE INTO telemetry_frames VALUES (?, ?, ?, ?, ?, ?)",
-                    (
+                # on the Monaco 1452-frame set). Serialization inside
+                # _suspend_gc: the pickle+zstd burst allocates heavily and GC
+                # pauses cost ~25% of this pass (Rhodes R3).
+                with _suspend_gc():
+                    self.conn.executemany(
+                        f"INSERT OR REPLACE INTO {table} VALUES (?, ?, ?, ?, ?, ?)",
                         (
-                            year,
-                            gp,
-                            session,
-                            driver,
-                            lap,
-                            _ZSTD_COMPRESSOR.compress(pickle.dumps(frame, protocol=5)),
-                        )
-                        for driver, lap, frame in frames
-                    ),
-                )
+                            (
+                                year,
+                                gp,
+                                session,
+                                driver,
+                                lap,
+                                _ZSTD_COMPRESSOR.compress(pickle.dumps(frame, protocol=5)),
+                            )
+                            for driver, lap, frame in frames
+                        ),
+                    )
                 written = len(frames)
                 self._pending_writes += written
                 self._commit_if_needed()

@@ -16,6 +16,7 @@ from .cache import (
     FASTEST_LAP_REF_MISS,
     LRUCache,  # noqa: F401  # re-exported for backward compatibility
     SessionMemo,
+    _suspend_gc,
     clear_lap_cache,  # noqa: F401  # re-exported alias (canonical home: tif1.cache)
     get_backend_lap_cache,
     get_cache,
@@ -3626,25 +3627,28 @@ class Session:
         """
         if self.lib == "polars":
             frames = []
-            for driver, lap_num, tel_payload in tels:
-                frame = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
-                if frame is not None:
-                    frames.append(frame)
+            with _suspend_gc():
+                for driver, lap_num, tel_payload in tels:
+                    frame = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
+                    if frame is not None:
+                        frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
             return pl.concat(frames, how="vertical_relaxed", rechunk=False)
 
         try:
-            merged_df = _telemetry_frame_from_merged(_merge_telemetry_payloads(tels))
+            with _suspend_gc():
+                merged_df = _telemetry_frame_from_merged(_merge_telemetry_payloads(tels))
         except (InvalidDataError, NetworkError, TypeError, ValueError):
             # Defensive fallback: per-driver construction isolates malformed
             # payloads instead of failing the whole batch.
             logger.warning("Merged telemetry assembly failed; falling back to per-driver frames")
             frames = []
-            for driver, lap_num, tel_payload in tels:
-                frame = _create_telemetry_df(tel_payload, driver, lap_num, "pandas")
-                if frame is not None:
-                    frames.append(frame)
+            with _suspend_gc():
+                for driver, lap_num, tel_payload in tels:
+                    frame = _create_telemetry_df(tel_payload, driver, lap_num, "pandas")
+                    if frame is not None:
+                        frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
             frames_pd = [cast(pd.DataFrame, frame) for frame in frames]
@@ -4157,19 +4161,20 @@ class Session:
             else:
                 pending_refs.append(ref)
 
-        # Materialized-frame tier (pandas backend, warm loads): refs with a
-        # stored assembled frame skip the payload read, decompress, parse and
-        # frame construction. Frames are only written from payload-tier hits,
-        # so cold fetches never pay for this tier.
+        # Materialized-frame tier (warm loads): refs with a stored assembled
+        # frame skip the payload read, decompress, parse and frame
+        # construction. Frames are only written from payload-tier hits, so
+        # cold fetches never pay for this tier. Both backends keep their own
+        # frame table (Rhodes R4); a pandas session never reads polars rows
+        # and vice versa.
         if (
             pending_refs
-            and self.lib == "pandas"
             and not ultra_cold_enabled
             and self.enable_cache
             and self._session_cache_available()
         ):
             frame_hits = get_cache().get_telemetry_frames_batch(
-                self.year, self.gp, self.session, pending_refs
+                self.year, self.gp, self.session, pending_refs, lib=self.lib
             )
             for ref, frame in frame_hits.items():
                 self._memo.set("telemetry_df", ref, frame)
@@ -4181,14 +4186,17 @@ class Session:
             pending_refs, skip_cache=ultra_cold_enabled
         )
 
-        # Build result map from cached telemetry
+        # Build result map from cached telemetry. The per-frame build loop
+        # allocates heavily (Rhodes R3: GC suspension cuts the 1452-frame
+        # build ~20%); scope stays inside this synchronous loop, so the event
+        # loop never observes GC off across an await.
         materialized_frames: list[tuple[str, int, DataFrame]] = []
-        for driver, lap_num, tel_payload in cached_tels:
-            tel_df = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
-            if tel_df is not None and not _is_empty_df(tel_df, self.lib):
-                self._memo.set("telemetry_df", (driver, lap_num), tel_df)
-                telemetry_map[(str(driver), int(lap_num))] = tel_df
-                if self.lib == "pandas":
+        with _suspend_gc():
+            for driver, lap_num, tel_payload in cached_tels:
+                tel_df = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
+                if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                    self._memo.set("telemetry_df", (driver, lap_num), tel_df)
+                    telemetry_map[(str(driver), int(lap_num))] = tel_df
                     materialized_frames.append((driver, lap_num, tel_df))
 
         # Fetch remaining telemetry from network. Writes persist even in
@@ -4209,21 +4217,22 @@ class Session:
                 defer_telemetry_writes=True,
             )
 
-            for (driver, lap_num), result in zip(lap_info, results):
-                if result is not None and isinstance(result, dict):
-                    tel_data = result.get("tel", {})
-                    if tel_data:
-                        self._remember_telemetry_payload(driver, lap_num, tel_data)
-                        tel_df = _create_telemetry_df(tel_data, driver, lap_num, self.lib)
-                        if tel_df is not None and not _is_empty_df(tel_df, self.lib):
-                            self._memo.set("telemetry_df", (driver, lap_num), tel_df)
-                            telemetry_map[(driver, lap_num)] = tel_df
-                            if self.lib == "pandas" and self.enable_cache:
-                                # N1: frames from the cold network path are
-                                # materialized too, so the *next* load starts
-                                # at the frame tier instead of re-parsing the
-                                # payload tier first.
-                                materialized_frames.append((driver, lap_num, tel_df))
+            with _suspend_gc():
+                for (driver, lap_num), result in zip(lap_info, results):
+                    if result is not None and isinstance(result, dict):
+                        tel_data = result.get("tel", {})
+                        if tel_data:
+                            self._remember_telemetry_payload(driver, lap_num, tel_data)
+                            tel_df = _create_telemetry_df(tel_data, driver, lap_num, self.lib)
+                            if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                                self._memo.set("telemetry_df", (driver, lap_num), tel_df)
+                                telemetry_map[(driver, lap_num)] = tel_df
+                                if self.enable_cache:
+                                    # N1: frames from the cold network path are
+                                    # materialized too, so the *next* load starts
+                                    # at the frame tier instead of re-parsing the
+                                    # payload tier first.
+                                    materialized_frames.append((driver, lap_num, tel_df))
 
         # One bulk write materializes the assembled telemetry frames (payload
         # tier hits and network fetches alike); the next warm load reads them
@@ -4231,7 +4240,7 @@ class Session:
         if materialized_frames:
             try:
                 get_cache().set_telemetry_frames_batch(
-                    self.year, self.gp, self.session, materialized_frames
+                    self.year, self.gp, self.session, materialized_frames, lib=self.lib
                 )
             except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 logger.debug("Telemetry frame materialization skipped: %s", e)
