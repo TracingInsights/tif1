@@ -16,7 +16,7 @@ import time
 
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
-import tif1  # noqa: E402
+import tif1
 
 
 def main() -> None:
@@ -30,15 +30,15 @@ def main() -> None:
 
     # THE FastF1 idiom: driver laps -> .telemetry (payload tier, per-lap SQL)
     t0 = time.perf_counter()
-    tel = ver.telemetry
+    _tel = ver.telemetry  # measured side effect
     out["ver_laps_telemetry_cold_ms"] = round((time.perf_counter() - t0) * 1000, 2)
-    out["ver_laps_rows"] = int(len(ver))
-    out["ver_telemetry_rows"] = int(len(tel))
+    out["ver_laps_rows"] = len(ver)
+    out["ver_telemetry_rows"] = len(_tel)
 
     # repeat (payloads now memoized in parsed tiers)
     ver2 = laps.pick_driver("ALB")
     t0 = time.perf_counter()
-    tel2 = ver2.telemetry
+    tel2 = ver2.telemetry  # noqa: F841
     out["ver_laps_telemetry_repeat_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
     # single-lap access
@@ -48,13 +48,13 @@ def main() -> None:
     t0 = time.perf_counter()
     t3 = lap1.telemetry
     out["lap_telemetry_ms"] = round((time.perf_counter() - t0) * 1000, 2)
-    out["lap_telemetry_rows"] = int(len(t3))
+    out["lap_telemetry_rows"] = len(t3)
 
     # LazyTelemetryDict
     t0 = time.perf_counter()
     _ = session.laps  # ensure loaded
     lazy = tif1.models.LazyTelemetryDict(session)
-    v = lazy["ALB"]
+    v = lazy["ALB"]  # noqa: F841
     out["lazy_dict_access_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
     # pick_fastest
@@ -62,7 +62,7 @@ def main() -> None:
     f = laps.pick_fastest()
     out["pick_fastest_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     t0 = time.perf_counter()
-    ft = f.telemetry
+    ft = f.telemetry  # noqa: F841
     out["fastest_lap_telemetry_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
     # full batch flow for comparison (the fetch_all path, frames not yet memoized)
@@ -74,7 +74,7 @@ def main() -> None:
     # now ver.telemetry again — payloads memoized by fetch_all
     ver3 = laps.pick_driver("ALB")
     t0 = time.perf_counter()
-    tel3 = ver3.telemetry
+    tel3 = ver3.telemetry  # noqa: F841
     out["ver_laps_telemetry_after_fetchall_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
     print(json.dumps(out, indent=1))

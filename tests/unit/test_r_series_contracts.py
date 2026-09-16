@@ -24,7 +24,9 @@ polars = pytest.importorskip("polars", reason="polars not installed")
 def _make_polars_frame():
     from tif1.core_utils import helpers
 
-    return helpers._create_telemetry_df({"Speed": [300.0, 301.0], "Time": [1.0, 2.0]}, "VER", 1, "polars")
+    return helpers._create_telemetry_df(
+        {"Speed": [300.0, 301.0], "Time": [1.0, 2.0]}, "VER", 1, "polars"
+    )
 
 
 class TestR3GcSuspension:
@@ -86,9 +88,7 @@ class TestR4PolarsFrameTier:
         cache.set_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1, pd_frame)])
         cache.set_telemetry_frames_batch(2026, "GP", "Race", [("HAM", 2, pl_frame)], lib="polars")
 
-        pd_hits = cache.get_telemetry_frames_batch(
-            2026, "GP", "Race", [("VER", 1), ("HAM", 2)]
-        )
+        pd_hits = cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1), ("HAM", 2)])
         pl_hits = cache.get_telemetry_frames_batch(
             2026, "GP", "Race", [("VER", 1), ("HAM", 2)], lib="polars"
         )
@@ -114,7 +114,9 @@ class TestR4PolarsFrameTier:
             (2026, "GP", "Race", "VER", 1, blob),
         )
         cache.conn.commit()
-        assert cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
+        assert (
+            cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
+        )
 
     def test_corrupt_polars_blob_degrades_to_miss(self, tmp_path):
         cache = Cache(tmp_path)
@@ -124,7 +126,9 @@ class TestR4PolarsFrameTier:
                 (2026, "GP", "Race", "VER", 1, b"not-a-zstd-frame"),
             )
             cache.conn.commit()
-        assert cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
+        assert (
+            cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
+        )
 
     def test_polars_warm_load_uses_frame_tier(self, tmp_path, monkeypatch):
         """R4: a warm polars session reads materialized frames instead of
@@ -135,9 +139,9 @@ class TestR4PolarsFrameTier:
         session = core.Session(2026, "Monaco Grand Prix", "Race", True, "polars")
         session._laps = core.Session(2026, "Monaco Grand Prix", "Race", True, "pandas")._laps
         # laps as a polars frame with one ref
-        session._laps = polars.DataFrame(
-            {"Driver": ["VER"], "LapNumber": [1]}
-        ).with_columns(polars.col("LapNumber").cast(polars.Int64))
+        session._laps = polars.DataFrame({"Driver": ["VER"], "LapNumber": [1]}).with_columns(
+            polars.col("LapNumber").cast(polars.Int64)
+        )
         session._memo.has_session_data = True  # warm session
 
         frame = _make_polars_frame()
@@ -162,8 +166,9 @@ class TestR7MergedTelemetry:
         # Seed payloads out of laps-row order (SQL may return any order).
         for lap in (3, 1, 2):
             # payload tier stores the unwrapped channel dict
-            cache.set_telemetry(2026, "Monaco%20Grand%20Prix", "Race", "ALB", lap,
-                                {"Speed": [300.0 + lap]})
+            cache.set_telemetry(
+                2026, "Monaco%20Grand%20Prix", "Race", "ALB", lap, {"Speed": [300.0 + lap]}
+            )
 
         session = core.Session(2026, "Monaco Grand Prix", "Race", True, "pandas")
         laps = pd.DataFrame(

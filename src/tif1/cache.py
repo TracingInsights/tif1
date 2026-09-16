@@ -1073,9 +1073,7 @@ class Cache:
                     pickle.UnpicklingError,
                     _zstandard.ZstdError,
                 ):
-                    logger.debug(
-                        "Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num
-                    )
+                    logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
         return results
 
     def set_telemetry_frames_batch(

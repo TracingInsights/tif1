@@ -36,13 +36,10 @@ def main() -> None:
     KEY = (session.year, session.gp, session.session)
     laps = session.laps
     # refs extraction (same code as fetch_all_laps_telemetry_async pandas branch)
-    import pandas as pd
 
     t0 = time.perf_counter()
     refs_frame = laps[["Driver", "LapNumber"]].dropna()
-    lap_refs = list(
-        zip(refs_frame["Driver"].astype(str), refs_frame["LapNumber"].astype(int))
-    )
+    lap_refs = list(zip(refs_frame["Driver"].astype(str), refs_frame["LapNumber"].astype(int)))
     out["refs_extraction_ms"] = ms(time.perf_counter() - t0)
     out["n_refs"] = len(lap_refs)
 
@@ -59,12 +56,14 @@ def main() -> None:
     out["n_pending_after_memo"] = len(pending)
 
     # raw frame-tier read split
-    db = os.path.join(WARM, "cache.sqlite")
+    from pathlib import Path
+
+    db = str(Path(WARM) / "cache.sqlite")
     conn = sqlite3.connect(db)
     placeholders = ", ".join(["(?, ?)"] * len(lap_refs))
     params: list = list(KEY)
-    for d, l in lap_refs:
-        params.extend([d, l])
+    for d, lap in lap_refs:
+        params.extend([d, lap])
     query = (
         "SELECT driver, lap, frame FROM telemetry_frames WHERE year = ? AND gp = ? "
         f"AND session = ? AND (driver, lap) IN ({placeholders})"
@@ -94,11 +93,11 @@ def main() -> None:
     # what dtypes live in a frame?
     f0 = frames[0]
     out["frame_columns"] = {c: str(t) for c, t in f0.dtypes.items()}
-    out["frame_rows"] = int(len(f0))
+    out["frame_rows"] = len(f0)
 
     # repeat-call residual (L3): everything memoized now
-    for (d, l), f in zip([tuple(r[:2]) for r in rows], frames):
-        session._memo.set("telemetry_df", (d, int(l)), f)
+    for (d, lap), f in zip([tuple(r[:2]) for r in rows], frames):
+        session._memo.set("telemetry_df", (d, int(lap)), f)
     t0 = time.perf_counter()
     tel2 = session.fetch_all_laps_telemetry()
     out["repeat_call_ms"] = ms(time.perf_counter() - t0)

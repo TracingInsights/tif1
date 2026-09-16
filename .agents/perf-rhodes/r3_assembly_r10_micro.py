@@ -17,8 +17,7 @@ import time
 
 os.environ.setdefault("TIF1_CACHE_DIR", "/tmp/tif1-warm-cache")
 
-import pandas as pd  # noqa: E402
-import zstandard  # noqa: E402
+import zstandard
 
 WARM = "/tmp/tif1-warm-cache"
 ZC = zstandard.ZstdCompressor(level=1)
@@ -46,15 +45,15 @@ def main() -> None:
     cache = tif1.cache.get_cache()
     payloads = cache.get_telemetry_batch(session.year, session.gp, session.session, refs)
     print("payloads:", len(payloads))
-    items = [(d, l, p.get("tel", p)) for (d, l), p in payloads.items()]
+    items = [(d, lap, p.get("tel", p)) for (d, lap), p in payloads.items()]
 
     def assemble_gc_on():
-        return [_create_telemetry_df(p, d, l, "pandas") for d, l, p in items]
+        return [_create_telemetry_df(p, d, lap, "pandas") for d, lap, p in items]
 
     def assemble_gc_off():
         gc.disable()
         try:
-            return [_create_telemetry_df(p, d, l, "pandas") for d, l, p in items]
+            return [_create_telemetry_df(p, d, lap, "pandas") for d, lap, p in items]
         finally:
             gc.enable()
 
@@ -69,22 +68,22 @@ def main() -> None:
     # then executemany-ish writes (set_raw), then N1 materialization pass =
     # per-frame pickle.dumps+zstd + executemany. Two separate passes+transactions.
     def json_pass():
-        blobs = [(d, l, ZC.compress(json.dumps(p).encode())) for d, l, p in items]
+        blobs = [(d, lap, ZC.compress(json.dumps(p).encode())) for d, lap, p in items]
         return blobs
 
     def frame_pass():
         blobs = [
-            (d, l, ZC.compress(pickle.dumps(f, protocol=5)))
-            for (d, l, _), f in zip(items, frames)
+            (d, lap, ZC.compress(pickle.dumps(f, protocol=5)))
+            for (d, lap, _), f in zip(items, frames)
         ]
         return blobs
 
     def combined_pass():
         out_rows: list = []
         frame_rows: list = []
-        for (d, l, p), f in zip(items, frames):
-            out_rows.append((d, l, ZC.compress(json.dumps(p).encode())))
-            frame_rows.append((d, l, ZC.compress(pickle.dumps(f, protocol=5))))
+        for (d, lap, p), f in zip(items, frames):
+            out_rows.append((d, lap, ZC.compress(json.dumps(p).encode())))
+            frame_rows.append((d, lap, ZC.compress(pickle.dumps(f, protocol=5))))
         return out_rows, frame_rows
 
     out["json_dumps_zstd_ms"] = bench(json_pass)

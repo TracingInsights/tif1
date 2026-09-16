@@ -40,9 +40,9 @@ def main() -> None:
         "SELECT driver, lap, frame FROM telemetry_frames ORDER BY driver, lap"
     ).fetchall()
     dctx = zstandard.ZstdDecompressor()
-    zctx = zstandard.ZstdCompressor(level=1)
+    _zctx = zstandard.ZstdCompressor(level=1)  # write-side reference
     raw = [dctx.decompress(b) for _, _, b in rows]
-    keys = [(d, l) for d, l, _ in rows]
+    _keys = [tuple(r[:2]) for r in rows]  # ref list for later loops
     out: dict = {"n_frames": len(rows)}
 
     # A: baseline
@@ -80,7 +80,7 @@ def main() -> None:
     out["C_blob_kb"] = len(blob) // 1024
 
     def loop_c():
-        m, dicts = pickle.loads(blob)
+        _, dicts = pickle.loads(blob)
         return [pd.DataFrame(d, copy=False) for d in dicts]
 
     out["C_onelob_df_construct_ms"] = bench(loop_c)
@@ -113,13 +113,13 @@ def main() -> None:
         return pd.DataFrame(mgr, copy=False)
 
     def loop_d():
-        m, dicts = pickle.loads(blob)
+        _, dicts = pickle.loads(blob)
         return [build_fast(d) for d in dicts]
 
     try:
         out["D_onelob_blockmgr_ms"] = bench(loop_d)
         # parity spot-check D
-        m, dicts = pickle.loads(blob)
+        _, dicts = pickle.loads(blob)
         f0 = build_fast(dicts[0])
         same = list(f0.columns) == list(frames[0].columns) and all(
             str(a) == str(b) for a, b in zip(f0.dtypes, frames[0].dtypes)
@@ -139,7 +139,7 @@ def main() -> None:
     out["E_perframe_arrays_construct_ms"] = bench(loop_e)
 
     # C parity spot-check
-    m, dicts = pickle.loads(blob)
+    _, dicts = pickle.loads(blob)
     c0 = pd.DataFrame(dicts[0], copy=False)
     out["C_columns_dtypes_match"] = list(c0.columns) == list(frames[0].columns)
     out["C_dtypes_match"] = all(str(a) == str(b) for a, b in zip(c0.dtypes, frames[0].dtypes))

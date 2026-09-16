@@ -73,7 +73,7 @@ def main() -> None:
     conn.execute("CREATE TEMP TABLE rawframes (driver TEXT, lap INT, frame BLOB)")
     conn.executemany(
         "INSERT INTO rawframes VALUES (?, ?, ?)",
-        [(d, l, p) for (d, l, _), p in zip(rows, raw_blobs)],
+        [(d, lap, p) for (d, lap, _), p in zip(rows, raw_blobs)],
     )
     conn.commit()
     out["raw_sql_read_ms"] = bench(
