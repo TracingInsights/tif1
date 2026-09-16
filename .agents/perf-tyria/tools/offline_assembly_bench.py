@@ -53,9 +53,7 @@ def make_lap_time_series(n: int) -> pd.Series:
     """Realistic LapTime column: numeric seconds + ~2% None (object dtype)."""
     r = np.random.default_rng(11)
     secs = r.random(n) * 100 + 70
-    return pd.Series(
-        [None if r.random() < 0.02 else float(x) for x in secs], dtype=object
-    )
+    return pd.Series([None if r.random() < 0.02 else float(x) for x in secs], dtype=object)
 
 
 def bench(fn, iters=5):
