@@ -1,4 +1,4 @@
-"""Offline assembly microbenchmarks for Tyria T2/T3/T5/T8.
+"""Offline assembly microbenchmarks for Tyria T2/T3/T8.
 
 Synthetic payloads mirror real schema (Monaco 2026 shapes).
 Fresh-process, interleaved A/B.
@@ -12,14 +12,10 @@ sys.path.insert(0, "src")
 import numpy as np
 import pandas as pd
 
-from tif1.core import _merge_lap_payloads
 from tif1.core_utils.helpers import (
-    _apply_laps_dtypes,
     _create_telemetry_df,
     _merge_telemetry_payloads,
-    _normalize_lap_payload,
     _numeric_seconds_to_timedelta,
-    _process_lap_df,
     _telemetry_frame_from_merged,
 )
 
@@ -27,8 +23,6 @@ rng = np.random.default_rng(7)
 
 N_TEL = 200  # payloads (assembly cost is linear in rows)
 ROWS = 423
-N_LAPS_DRIVERS = 24
-LAPS_PER_DRIVER = 60
 
 
 def make_tel_payload():
@@ -55,32 +49,13 @@ def make_tel_payload():
 TELS = [(f"D{i % 24:02d}", (i % 60) + 1, make_tel_payload()) for i in range(N_TEL)]
 
 
-def make_lap_payload(n):
-    return {
-        "time": (rng.random(n) * 100 + 70).tolist(),
-        "lap": list(range(1, n + 1)),
-        "compound": ["SOFT"] * n,
-        "stint": [1] * n,
-        "s1": (rng.random(n) * 30).tolist(),
-        "s2": (rng.random(n) * 30).tolist(),
-        "s3": (rng.random(n) * 30).tolist(),
-        "life": rng.integers(1, 20, n).tolist(),
-        "pos": rng.integers(1, 20, n).tolist(),
-        "session_time": (rng.random(n) * 5000).tolist(),
-        "lap_start_time": (rng.random(n) * 5000).tolist(),
-        "lap_start_date": ["2026-05-24T15:00:00.000"] * n,
-        "deleted": ["None"] * n,
-        "is_accurate": [True] * n,
-        "fresh_tyre": [True] * n,
-        "wind_direction": rng.integers(0, 360, n).tolist(),
-        "air_temp": (rng.random(n) * 10 + 20).tolist(),
-    }
-
-
-LAP_PAYLOADS = [
-    (_normalize_lap_payload(make_lap_payload(LAPS_PER_DRIVER)), f"D{i:02d}", f"T{i}")
-    for i in range(N_LAPS_DRIVERS)
-]
+def make_lap_time_series(n: int) -> pd.Series:
+    """Realistic LapTime column: numeric seconds + ~2% None (object dtype)."""
+    r = np.random.default_rng(11)
+    secs = r.random(n) * 100 + 70
+    return pd.Series(
+        [None if r.random() < 0.02 else float(x) for x in secs], dtype=object
+    )
 
 
 def bench(fn, iters=5):
@@ -93,34 +68,37 @@ def bench(fn, iters=5):
     return min(ts)
 
 
-def laps_df():
-    from tif1.core_utils.constants import LAP_RENAME_MAP
-    from tif1.core_utils.helpers import _rename_columns
-
-    df = pd.DataFrame(_merge_lap_payloads(LAP_PAYLOADS), copy=False)
-    return _rename_columns(df, LAP_RENAME_MAP, "pandas")
+# --- T2: LapTime block (control = pre-PR full-column double-parse;
+# candidate = shipped subset-fallback parse, identical to _process_lap_df) ---
+N_LAPTIME = 20000
+T2_SERIES = make_lap_time_series(N_LAPTIME)
 
 
-# --- T2: LapTime double-parse (control runs both to_numeric and to_timedelta) ---
+def _t2_frame() -> pd.DataFrame:
+    return pd.DataFrame({"LapTime": T2_SERIES})
+
+
 def t2_control():
-    return _process_lap_df(laps_df(), "pandas")
+    df = _t2_frame()
+    s = df["LapTime"]
+    num = pd.to_numeric(s, errors="coerce")
+    parsed = pd.to_timedelta(s, errors="coerce")
+    df["LapTime"] = _numeric_seconds_to_timedelta(num).where(num.notna(), parsed)
+    return df
 
 
 def t2_candidate():
-    df = laps_df()
+    df = _t2_frame()
     s = df["LapTime"]
     num = pd.to_numeric(s, errors="coerce")
-    if bool(num.notna().all()):
-        df["LapTime"] = _numeric_seconds_to_timedelta(num)
-    else:
-        parsed = pd.to_timedelta(s, errors="coerce")
-        df["LapTime"] = _numeric_seconds_to_timedelta(num).where(num.notna(), parsed)
-    df["LapTimeSeconds"] = df["LapTime"].dt.total_seconds().to_numpy(copy=False)
-    if "Time" in df.columns:
-        df["Time"] = _numeric_seconds_to_timedelta(df["Time"])
-    if "WeatherTime" in df.columns:
-        df["WeatherTime"] = _numeric_seconds_to_timedelta(df["WeatherTime"])
-    return _apply_laps_dtypes(df)
+    td = _numeric_seconds_to_timedelta(num)
+    missing = num.isna()
+    if bool(missing.any()):
+        parsed_subset = pd.to_timedelta(s[missing], errors="coerce")
+        td = td.copy()
+        td[missing] = parsed_subset
+    df["LapTime"] = td
+    return df
 
 
 # --- T8: merged vs per-frame telemetry assembly ---
@@ -144,8 +122,8 @@ def t3_control():
 
 
 def t3_candidate():
-    # NOTE: stale numpy-native sketch, superseded by the shipped single-call
-    # pd.to_timedelta form (see helpers._numeric_seconds_to_timedelta).
+    # NOTE: rejected sketch, kept for the record — the single-call form breaks
+    # the NaN-guard contract (RESULTS.md T3); shipped code stays masked.
     out = pd.to_timedelta(T3_SERIES, unit="s")
     if out.dtype != "timedelta64[ns]":
         out = out.astype("timedelta64[ns]")
@@ -158,17 +136,11 @@ if __name__ == "__main__":
         a = bench(t2_control)
         b = bench(t2_candidate)
         print(f"T2 control: {a * 1000:.1f}ms candidate: {b * 1000:.1f}ms ratio={b / a:.3f}")
-        r1 = t2_control().reset_index(drop=True)
-        r2 = t2_candidate().reset_index(drop=True)
-        # control runs the full _process_lap_df (incl. reorder+'index' col);
-        # candidate mirrors the LapTime/Time fast path then applies dtypes.
-        # Compare on the shared column set with order aligned.
-        shared = [c for c in r1.columns if c in r2.columns]
-        r1 = r1[shared]
-        r2 = r2[shared]
         try:
-            pd.testing.assert_frame_equal(r1, r2, check_dtype=True)
-            print("T2 parity: OK (dtypes+values)")
+            pd.testing.assert_series_equal(
+                t2_control()["LapTime"], t2_candidate()["LapTime"], check_dtype=True
+            )
+            print("T2 parity: OK (dtypes+values on 20k numeric+None)")
         except AssertionError as e:
             print(f"T2 parity: MISMATCH {str(e)[:300]}")
     if which in ("all", "t8"):

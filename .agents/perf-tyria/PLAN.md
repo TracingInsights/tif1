@@ -17,7 +17,7 @@ Sandbox: 1 vCPU (bursts to 2), 8 GiB. Prior shipped work (H/E/F/G/K/L/N) is NOT 
 | T1 | Fix inverted async cache-enable condition (`core.py:3213`) | correctness/cache | SHIPPED (correctness fix) |
 | T2 | Eliminate LapTime double-parse (`to_numeric` + `to_timedelta` both run fully) | laps assembly | SHIPPED (~25% on LapTime block) |
 | T3 | Single-C-call `_numeric_seconds_to_timedelta` (no NaT-Series + masked `.loc` assign) | laps/weather/RCM | REJECTED (breaks NaN-guard contract; safe variant slower) |
-| T4 | `format="ISO8601"`/`"mixed"` for `LapStartDate` + RCM `Time` parsing | laps/RCM | SHIPPED (pandas ~15-19%, polars ~10x; uniform real shapes only) |
+| T4 | `format="ISO8601"`/`"mixed"` for `LapStartDate` + RCM `Time` parsing | laps/RCM | SHIPPED (pandas ~15-19%; polars: determinism only — no measurable win on locked polars 1.44.1; uniform real shapes only) |
 | T5 | Single-pass null-like string normalization (exact `isin` probe before strip/lower) | laps | REJECTED (no measurable win) |
 | T6 | Single-blob session frames tier (1 SELECT + 1 decompress vs 1452) | warm cache | REJECTED (~9.35x slower) |
 | T7 | Batch JSON-tier cache reads for laptime waves (one `IN` SELECT vs ~24) | laps fetch | EXCLUDED (cold-SQLite-only ~37%, negligible warm benefit) |

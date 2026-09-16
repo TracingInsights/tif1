@@ -14,8 +14,9 @@ Tyria-series performance work (10 hypotheses, all run; full log in
 on the LapTime block and datetime parsing gets explicit formats where real
 payloads are proven uniform** — the LapTime double-parse now only string-parses
 the non-numeric subset (12.97 → 9.79 ms on 20k realistic rows), `LapStartDate`
-and RCM `Time` parsing use explicit ISO formats (pandas −15–19%, polars RCM
-1.42 → 0.13 ms), and `tif1.validation` + pydantic are out of the
+and RCM `Time` parsing use explicit ISO formats (pandas −15–19%; polars RCM
+switched to an explicit format for determinism — no measurable speed change on
+the locked polars 1.44.1), and `tif1.validation` + pydantic are out of the
 `import tif1.core` tree (helpers import self-cost ~78 → ~8 ms cumulative).
 Six of the ten hypotheses were rejected by measurement — including a
 single-call `_numeric_seconds_to_timedelta` that broke the NaN-guard contract —
@@ -30,7 +31,7 @@ all documented with their numbers.
 - **Explicit datetime formats on uniform-shape columns** (`core_utils/helpers.py`,
   `core.py`): `format="ISO8601"` for `LapStartDate` and pandas RCM `Time`,
   explicit `"%Y-%m-%dT%H:%M:%S%.f"` for polars RCM `Time`. Real payloads are
-  uniform all-9-digit-fraction (verified live across 2024/2025 sessions), so
+  uniform all-9-digit-fraction (verified live across 2021–2025 sessions), so
   the explicit format is parity-exact — and strictly more correct than
   first-format-wins inference on mixed shapes.
 - **Import-time trim** (`exceptions.py`, `validation.py`,
