@@ -341,13 +341,31 @@ def _typed_telemetry_frame(
             elif k == "Brake" and None not in v:
                 frame_data[k] = np.asarray(v, dtype=bool)
             elif k in ("nGear", "DRS"):
-                frame_data[k] = pd.array(v, dtype="Int64")
+                # Integer lists (the common case) build the IntegerArray
+                # directly: one C conversion + zero mask beats pd.array's
+                # generic mask inference (~23 us/frame on Monaco-size rows).
+                arr = np.asarray(v)
+                if arr.dtype.kind in "iu":
+                    frame_data[k] = pd.arrays.IntegerArray(arr, np.zeros(len(arr), dtype=bool))
+                else:
+                    frame_data[k] = pd.array(v, dtype="Int64")
             else:
-                frame_data[k] = v
+                # Numeric channels pass ndarray straight to the constructor:
+                # pandas' list path re-validates per element (~150 us/frame
+                # extra on 19-column Monaco frames). Strings/None keep the
+                # raw list so dtype inference is unchanged.
+                first = v[0] if v else None
+                if isinstance(first, (int, float)) and not isinstance(first, bool):
+                    arr = np.asarray(v)
+                    frame_data[k] = arr if arr.dtype.kind in "if" else v
+                else:
+                    frame_data[k] = v
         # pandas 3 infers str dtype from object arrays at construction; the
         # FastF1-compatible Driver contract is object.
         frame_data["Driver"] = pd.Series(np.full(max_len, driver, dtype=object), dtype=object)
-        frame_data["LapNumber"] = pd.array([lap_num] * max_len, dtype="Int64")
+        frame_data["LapNumber"] = pd.arrays.IntegerArray(
+            np.full(max_len, lap_num, dtype="int64"), np.zeros(max_len, dtype=bool)
+        )
         frame = pd.DataFrame(frame_data, copy=False)
     except (TypeError, ValueError):
         return None

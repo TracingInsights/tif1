@@ -514,6 +514,17 @@ def _find_event_by_name(
     if not event_names:
         return None
 
+    # Exact (case-insensitive) names are the common call pattern; returning
+    # them directly skips the fuzzy machinery *and* its rapidfuzz import
+    # (~14 ms on the first resolve of a process). The fuzzy path returns the
+    # same event for exact names (ratio 100 -> exact=True, no warning), so
+    # behavior is identical; near-miss names still take the fuzzy route.
+    folded = name.casefold()
+    for event_name in event_names:
+        if event_name.casefold() == folded:
+            metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
+            return _create_event(year, event_name, metadata)
+
     from .fuzzy import fuzzy_matcher
 
     def _remove_common_words(event_name: str) -> str:

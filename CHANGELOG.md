@@ -7,6 +7,32 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Summary — Halikarnassos-series performance work
+
+Eleven new hypotheses were measured (full log in
+`.agents/perf-halikarnassos/RESULTS.md`); all eleven ran to a verdict, three
+shipped, eight were rejected by measurement. Headline numbers on the 2026
+Monaco GP race benchmark (~1452 telemetry frames):
+
+- Cold telemetry assembly **1568 → ~1354-1397 ms (−11 to −13%)** via
+  preconverted ndarray columns and direct `IntegerArray` construction in
+  `_typed_telemetry_frame` (1452/1452 frames dtype- and value-identical).
+- Warm `get_session` **0.435 → 0.339 s (−22%)**: exact (case-insensitive)
+  event names return without importing rapidfuzz or running the fuzzy
+  matcher.
+- Frame-tier whole-session batch reads use one range scan instead of a
+  1452-pair `(driver, lap) IN (...)` list; SQL-only read **46 → 19 ms (−59%)**.
+- Live cold fetch A/B: total **−5.5%**, telemetry phase **−9.8%** (3 runs per
+  arm, interleaved).
+- Rejected with numbers: `TimedeltaIndex` conversion (value parity fail),
+  null-like probe rework (variants tie at 3.7 ms), merged-path ndarray
+  preconversion (+17%, reverted), lazy cache init, further import trim,
+  SQLite page-cache PRAGMA, lz4/unpickle thread overlap (lz4 holds the GIL),
+  raw-ndarray Driver column (infers `str` dtype).
+- Verified that warm loads make zero network requests; one probe that seemed
+  to show warm-path network calls had set `TIF1_CACHE_DIR` after tif1
+  imports (config resolved a cold default dir) — pitfall documented.
+
 ### Summary — Ithome-series performance work
 
 Ten new hypotheses were measured (full log in `.agents/perf-ithome/RESULTS.md`);
