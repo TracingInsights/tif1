@@ -1,0 +1,147 @@
+{
+  "label": "halikarnassos-cold",
+  "timestamp": "2026-09-18T06:35:00.866831+00:00",
+  "src_a": "/tmp/perf-baseline-src/src",
+  "src_b": "src",
+  "runs": [
+    {
+      "import_s": 0.0146,
+      "get_session_s": 0.3673,
+      "laps_s": 0.4442,
+      "telemetry_s": 11.6974,
+      "total_s": 12.509,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0109,
+      "get_session_s": 0.8229,
+      "laps_s": 0.5178,
+      "telemetry_s": 8.7433,
+      "total_s": 10.084,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "b"
+    },
+    {
+      "import_s": 0.0121,
+      "get_session_s": 0.6043,
+      "laps_s": 0.428,
+      "telemetry_s": 8.5472,
+      "total_s": 9.5796,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0117,
+      "get_session_s": 0.3446,
+      "laps_s": 0.6956,
+      "telemetry_s": 10.3709,
+      "total_s": 11.4111,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "b"
+    },
+    {
+      "import_s": 0.0102,
+      "get_session_s": 0.347,
+      "laps_s": 0.6286,
+      "telemetry_s": 9.6926,
+      "total_s": 10.6681,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0104,
+      "get_session_s": 0.3426,
+      "laps_s": 0.4585,
+      "telemetry_s": 8.2436,
+      "total_s": 9.0447,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.12.3",
+      "variant": "b"
+    }
+  ],
+  "failures": [],
+  "stats": {
+    "a": {
+      "n": 3,
+      "total_s": {
+        "mean": 10.9189,
+        "median": 10.6681,
+        "min": 9.5796,
+        "max": 12.509,
+        "values": [
+          12.509,
+          9.5796,
+          10.6681
+        ]
+      },
+      "telemetry_s": {
+        "mean": 9.9791,
+        "median": 9.6926,
+        "min": 8.5472,
+        "max": 11.6974,
+        "values": [
+          11.6974,
+          8.5472,
+          9.6926
+        ]
+      }
+    },
+    "b": {
+      "n": 3,
+      "total_s": {
+        "mean": 10.1799,
+        "median": 10.084,
+        "min": 9.0447,
+        "max": 11.4111,
+        "values": [
+          10.084,
+          11.4111,
+          9.0447
+        ]
+      },
+      "telemetry_s": {
+        "mean": 9.1193,
+        "median": 8.7433,
+        "min": 8.2436,
+        "max": 10.3709,
+        "values": [
+          8.7433,
+          10.3709,
+          8.2436
+        ]
+      }
+    }
+  },
+  "b_vs_a_total_pct": -5.48,
+  "b_vs_a_telemetry_pct": -9.79
+}

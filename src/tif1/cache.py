@@ -1073,15 +1073,42 @@ class Cache:
         results: dict[tuple[str, int], Any] = {}
         try:
             with self._sqlite_lock:
-                placeholders = ", ".join(["(?, ?)"] * len(driver_laps))
-                params: list[Any] = [year, gp, session]
-                for driver_code, lap_num in driver_laps:
-                    params.extend([driver_code, lap_num])
-                query = (
-                    f"SELECT driver, lap, frame FROM {table} WHERE year = ? AND gp = ? "
-                    f"AND session = ? AND (driver, lap) IN ({placeholders})"
-                )
-                rows = self.conn.execute(query, params).fetchall()
+                # Whole-session batches (fetch_all_laps_telemetry) read far
+                # more cheaply as one range scan with a Python-side membership
+                # filter: the (driver, lap) IN (...) row-value list costs
+                # SQLite a transient b-tree per execute (measured 46 vs 19 ms
+                # interleaved on the Monaco 1452-frame batch). Partial
+                # batches keep the tight IN query so they never drag the
+                # whole session partition's blobs through the scan.
+                if len(driver_laps) >= 128:
+                    count = self.conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE year = ? AND gp = ? AND session = ?",
+                        (year, gp, session),
+                    ).fetchone()
+                    session_frames = count[0] if count else 0
+                else:
+                    session_frames = 0
+                if session_frames and len(driver_laps) * 2 >= session_frames:
+                    ref_set = set(driver_laps)
+                    rows = [
+                        r
+                        for r in self.conn.execute(
+                            f"SELECT driver, lap, frame FROM {table} "
+                            "WHERE year = ? AND gp = ? AND session = ?",
+                            (year, gp, session),
+                        ).fetchall()
+                        if (r[0], r[1]) in ref_set
+                    ]
+                else:
+                    placeholders = ", ".join(["(?, ?)"] * len(driver_laps))
+                    params: list[Any] = [year, gp, session]
+                    for driver_code, lap_num in driver_laps:
+                        params.extend([driver_code, lap_num])
+                    query = (
+                        f"SELECT driver, lap, frame FROM {table} WHERE year = ? AND gp = ? "
+                        f"AND session = ? AND (driver, lap) IN ({placeholders})"
+                    )
+                    rows = self.conn.execute(query, params).fetchall()
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             logger.warning("Telemetry frames batch read error: %s", e)
             return results
