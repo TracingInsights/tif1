@@ -20,6 +20,7 @@ from .cache import (
     clear_lap_cache,  # noqa: F401  # re-exported alias (canonical home: tif1.cache)
     get_backend_lap_cache,
     get_cache,
+    register_frame_writer,
 )
 from .cdn import get_cdn_manager
 from .config import get_config
@@ -51,6 +52,7 @@ from .core_utils.helpers import (
     _is_empty_df,
     _merge_telemetry_payloads,
     _normalize_lap_payload,
+    _normalize_lap_payload_polars,
     _numeric_seconds_to_timedelta,
     _process_lap_df,
     _rename_columns,
@@ -2804,27 +2806,29 @@ class Session:
         )
 
         if self.lib == "polars":
-            laps_data = []
+            # Ithome U6: build ONE polars frame from a merged dict-of-lists
+            # instead of a per-driver frame + pl.concat (the pandas single-shot
+            # win; concat of ~20 small frames repeats schema inference per
+            # driver). Failed drivers are skipped exactly like before.
+            merged_laps: list[tuple[dict, str, str]] = []
             for (driver_info, _path), lap_data in zip(driver_requests, payloads):
                 if not isinstance(lap_data, dict) or not lap_data:
                     continue
                 driver_code = driver_info.get("driver", "")
                 try:
-                    lap_df = _create_lap_df(
-                        lap_data,
-                        driver_code,
-                        driver_info.get("team", ""),
-                        self.lib,
-                    )
-                    laps_data.append(lap_df)
+                    normalized_pl = _normalize_lap_payload_polars(lap_data)
                 except (KeyError, TypeError, ValueError, InvalidDataError) as e:
                     logger.warning(f"Failed to process lap data for {driver_code}: {e}")
+                    continue
+                if not normalized_pl:
+                    continue
+                merged_laps.append((normalized_pl, driver_code, driver_info.get("team", "")))
 
-            if not laps_data:
+            if not merged_laps:
                 logger.info(f"No valid lap data: {self.year}/{self.gp}")
                 return _create_empty_df(self.lib)
 
-            self._laps = pl.concat(laps_data, how="vertical_relaxed", rechunk=False)
+            self._laps = pl.DataFrame(_merge_lap_payloads(merged_laps), strict=False)
         else:
             # Build one DataFrame from a single merged dict-of-lists instead of
             # pd.concat of per-driver frames: concat regressed ~2x in pandas 3.0
@@ -3441,9 +3445,9 @@ class Session:
         """Kick off all-laps telemetry prefetch after laps are available."""
         if self._telemetry_background_prefetch_started:
             return
-        if not bool(config.get("prefetch_all_telemetry_after_laps_load", True)):
-            return
         if not bool(config.get("prefetch_all_telemetry_on_first_lap_request", True)):
+            return
+        if not bool(config.get("prefetch_all_telemetry_after_laps_load", True)):
             return
         if self._laps is None or _is_empty_df(self._laps, self.lib):
             return
@@ -4236,14 +4240,23 @@ class Session:
 
         # One bulk write materializes the assembled telemetry frames (payload
         # tier hits and network fetches alike); the next warm load reads them
-        # instead of re-assembling.
+        # instead of re-assembling. Ithome U5: the write runs in a background
+        # daemon thread so the caller receives its frames ~0.4-0.5 s earlier
+        # on cold loads; close()/invalidate() join the writer, and the atexit
+        # cache close guarantees the tier is complete before process exit.
         if materialized_frames:
-            try:
-                get_cache().set_telemetry_frames_batch(
-                    self.year, self.gp, self.session, materialized_frames, lib=self.lib
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
-                logger.debug("Telemetry frame materialization skipped: %s", e)
+            frames_to_write = list(materialized_frames)
+            year, gp, session_name, lib = self.year, self.gp, self.session, self.lib
+
+            def _write_frames() -> None:
+                try:
+                    get_cache().set_telemetry_frames_batch(
+                        year, gp, session_name, frames_to_write, lib=lib
+                    )
+                except (AttributeError, RuntimeError, TypeError, ValueError) as e:
+                    logger.debug("Telemetry frame materialization skipped: %s", e)
+
+            register_frame_writer(_write_frames)
 
         return telemetry_map
 

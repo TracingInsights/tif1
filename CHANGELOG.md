@@ -7,6 +7,45 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Summary — Ithome-series performance work
+
+Ten new hypotheses were measured (full log in `.agents/perf-ithome/RESULTS.md`);
+all ten ran to a verdict, seven shipped, three were rejected by measurement.
+Headline numbers on the 2026 Monaco GP race benchmark (~1452 telemetry frames):
+
+- **`import tif1` 47 → 13.6 ms (−71%)** — `tif1.__version__` resolves lazily
+  via PEP 562; the eager `importlib.metadata` lookup no longer loads the
+  email/parser machinery on import.
+- **Warm pandas telemetry 0.803 → 0.680 s (−15%)** — the materialized frame tier
+  switches from zstd-1 to **lz4** (level 0): decompress 75 → 40 ms and compress
+  170 → 79 ms on the 1452-frame set, at +26% stored bytes; legacy zstd rows stay
+  readable and zstd remains the fallback when lz4 is unavailable.
+- **Cold assembly 2136 → 1677 ms (−21%)** — `_typed_telemetry_frame` converts
+  the `Time` channel through `np.asarray` before `pd.to_timedelta`
+  (790 → 215 µs/frame), verified value-identical on all 1452 frames.
+- **Cold `fetch_all_laps_telemetry()` returns ~1 s sooner** — the frame-tier
+  bulk write (1034 ms: pickle + lz4 + executemany) moves to a background
+  writer joined by `Cache.close()`/`invalidate()`/`clear()` and the atexit
+  cache close; process-exit wall time is unchanged (latency win, not
+  throughput).
+- **Polars laps assembly 20.4 → 9.1 ms (−55%)** — polars laps build one
+  dict-of-lists frame instead of per-driver frames + `pl.concat` (the pandas
+  single-shot pattern; schema/values verified identical).
+- **`Laps.telemetry` gets a frame-first route** — memoized frames, then the
+  materialized frame tier, serve the merge without re-reading payloads
+  (~90-105 → ~65 ms on a 78-lap driver, −35%); the payload-merge path remains
+  the fallback for uncovered refs. A `(len, refs)`-keyed result memo makes
+  repeat access ~30.5 → ~1 ms.
+- **`import tif1.cli` 387 → 59 ms (−85%)** — pandas/rich imports moved into
+  the command bodies; `tif1 --help` and non-data commands start much faster.
+
+Rejected by measurement (documented with numbers in the results log):
+background-prefetch deduplication (premise was an instrumentation artifact —
+corrected live count shows 1465 requests for 1465 unique URLs and the default
+config never starts the background thread), merged-loop numpy concatenation
+(the 4.7 ms list merge has no headroom), and batched prefetch payload
+persistence (−2.5%, within noise).
+
 ### Summary
 
 Rhodes-series performance work (10 hypotheses, all run; full log in
