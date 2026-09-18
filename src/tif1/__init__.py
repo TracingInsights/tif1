@@ -2,7 +2,6 @@
 
 import logging
 from importlib import import_module
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from .exceptions import (
@@ -16,10 +15,6 @@ from .exceptions import (
     TIF1Error,
 )
 
-try:
-    __version__ = version("tif1")
-except PackageNotFoundError:
-    __version__ = "0.0.0"
 __all__ = [
     "BackendType",
     "CircuitInfo",
@@ -155,7 +150,24 @@ _LAZY_EXPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve heavyweight exports on first access."""
+    """Resolve heavyweight exports on first access.
+
+    ``__version__`` is resolved here too: the eager ``importlib.metadata``
+    lookup cost ~37 ms of the ~47 ms ``import tif1`` (importlib.metadata
+    imports email/parser machinery); the lookup runs once on first access
+    and is cached in module globals.
+    """
+    if name == "__version__":
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _version
+
+        try:
+            value = _version("tif1")
+        except PackageNotFoundError:
+            value = "0.0.0"
+        globals()["__version__"] = value
+        return value
+
     target = _LAZY_EXPORTS.get(name)
     if target is None:
         raise AttributeError(f"module 'tif1' has no attribute {name!r}")

@@ -66,6 +66,36 @@ try:  # pragma: no cover - trivial import guard
 except ImportError:  # pragma: no cover - defensive fallback only
     _ZSTD_COMPRESSOR = None
     _ZSTD_DECOMPRESSOR = None
+
+# Materialized-frame codec: lz4 (level 0) halves both compress and decompress
+# time vs zstd-1 on the 1452-frame Monaco set (~2x faster, +26% stored bytes)
+# — the frame tier is write-once/read-many, so read/write speed beats ratio.
+# zstd remains the fallback (and legacy zstd rows stay readable via magic).
+try:  # pragma: no cover - trivial import guard
+    from lz4 import frame as _lz4_frame
+
+    _LZ4_MAGIC = b"\x04\x22\x4d\x18"
+except ImportError:  # pragma: no cover - defensive fallback only
+    _lz4_frame = None
+    _LZ4_MAGIC = b""
+
+
+def _compress_frame_blob(blob: bytes) -> bytes:
+    """Compress a pickled frame for the frame tier (lz4 when available)."""
+    if _lz4_frame is not None:
+        return _lz4_frame.compress(blob, compression_level=0)
+    assert _ZSTD_COMPRESSOR is not None  # callers gate on the zstd tier
+    return _ZSTD_COMPRESSOR.compress(blob)
+
+
+def _decompress_frame_blob(blob: bytes) -> bytes:
+    """Decompress a frame-tier blob; both lz4 and legacy zstd rows read."""
+    if _lz4_frame is not None and blob[:4] == _LZ4_MAGIC:
+        return _lz4_frame.decompress(blob)
+    assert _ZSTD_DECOMPRESSOR is not None  # callers gate on the zstd tier
+    return _ZSTD_DECOMPRESSOR.decompress(blob)
+
+
 # Parsed-object front tiers: bounded small because parsed payloads are far
 # larger than blobs. Repeat hits skip orjson entirely (see RESULTS.md H4).
 _PARSED_CACHE_MAX_ITEMS = 128
@@ -717,6 +747,10 @@ class Cache:
                 JSON payload tier (memory + SQLite); "telemetry" clears the
                 telemetry tier (memory + SQLite).
         """
+        # Ithome U5: a pending background frame write must land (or be
+        # dropped) before rows are wiped, otherwise it would re-insert
+        # cleared rows afterwards.
+        _join_frame_writers()
         if scope == "all":
             self.clear()
             return
@@ -1057,7 +1091,7 @@ class Cache:
         with _suspend_gc():
             for driver_code, lap_num, blob in rows:
                 try:
-                    frame = pickle.loads(_ZSTD_DECOMPRESSOR.decompress(blob))
+                    frame = pickle.loads(_decompress_frame_blob(blob))
                     # A foreign-backend blob (hand-migrated cache) degrades to
                     # a tier miss instead of surfacing in caller maps.
                     if not hasattr(frame, _foreign_marker):
@@ -1114,7 +1148,7 @@ class Cache:
                                 session,
                                 driver,
                                 lap,
-                                _ZSTD_COMPRESSOR.compress(pickle.dumps(frame, protocol=5)),
+                                _compress_frame_blob(pickle.dumps(frame, protocol=5)),
                             )
                             for driver, lap, frame in frames
                         ),
@@ -1213,6 +1247,9 @@ class Cache:
 
     def clear(self) -> None:
         """Clear all cached data."""
+        # Ithome U5: join pending background frame writers first so a
+        # post-return write cannot re-insert rows after the wipe.
+        _join_frame_writers()
         if self.conn is None or self.read_only:
             logger.warning("Cannot clear cache (no connection or read-only mode)")
             return
@@ -1238,6 +1275,10 @@ class Cache:
 
     def close(self) -> None:
         """Close database connection."""
+        # Ithome U5: background frame writers must complete before the
+        # connection closes (atexit calls this), or their writes would be
+        # dropped mid-flight.
+        _join_frame_writers()
         # Acquire both locks to ensure clean shutdown.
         # Snapshot `self.conn` inside the sqlite lock so concurrent close() calls
         # cannot race into `None.close()`.
@@ -1268,6 +1309,33 @@ class Cache:
 
 _cache = None
 _cache_lock = threading.Lock()
+
+# Ithome U5: post-return background frame-tier writes. fetch_all returns as
+# soon as frames are assembled; the bulk tier write runs in a daemon thread
+# and is joined by close()/invalidate() so the connection never closes (nor a
+# clear wipes rows) under a live writer. A writer registered after close
+# finds conn=None and drops out via the existing set_telemetry_frames_batch
+# guard.
+_frame_writers: list[threading.Thread] = []
+_frame_writers_lock = threading.Lock()
+
+
+def register_frame_writer(write_fn) -> None:
+    """Start a daemon frame-tier writer thread and register it for joining."""
+    thread = threading.Thread(target=write_fn, name="tif1-frame-write", daemon=True)
+    with _frame_writers_lock:
+        _frame_writers.append(thread)
+    thread.start()
+
+
+def _join_frame_writers() -> None:
+    """Wait for registered frame writers (close/invalidate paths)."""
+    with _frame_writers_lock:
+        writers = list(_frame_writers)
+        _frame_writers.clear()
+    for writer in writers:
+        if writer.is_alive():
+            writer.join()
 
 
 def get_cache() -> Cache:

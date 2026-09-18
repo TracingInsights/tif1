@@ -96,6 +96,7 @@ class TelemetryProvider(Protocol):
     enable_cache: bool
     lib: Literal["pandas", "polars"]
     _laps: Any
+    _memo: Any
 
     @property
     def _drivers_data(self) -> list[dict]: ...
@@ -570,6 +571,41 @@ class Laps(pd.DataFrame):
             refs: list[tuple[str, int]] = [
                 (str(d), int(n)) for d, n in zip(refs_frame["Driver"], refs_frame["LapNumber"])
             ]
+
+            # Ithome U8: merged result memoization. Slices of Laps do not run
+            # __init__, so the cache is read via getattr and stored lazily; the
+            # (row-count, refs) key invalidates when the laps frame changes.
+            cached = getattr(self, "_merged_telemetry_cache", None)
+            if cached is not None and cached[0] == len(refs) and cached[1] == refs:
+                return cached[2]
+
+            # Ithome U11: when every ref already has an assembled frame
+            # (in-process memo or the materialized frame tier), concat them
+            # exactly like the legacy per-lap fallback below — skipping the
+            # payload merge and the merged-frame rebuild entirely. Falls
+            # through unchanged when frames do not cover every ref.
+            frame_hits: dict[tuple[str, int], Any] = {}
+            missing_frames: list[tuple[str, int]] = []
+            for ref in refs:
+                memoized_df = session._memo.get("telemetry_df", ref)
+                if memoized_df is not None:
+                    frame_hits[ref] = memoized_df
+                else:
+                    missing_frames.append(ref)
+            if missing_frames and not ultra_cold and session.enable_cache:
+                if session._session_cache_available():
+                    tier_hits = get_cache().get_telemetry_frames_batch(
+                        session.year, session.gp, session.session, missing_frames, lib="pandas"
+                    )
+                    for ref, frame in tier_hits.items():
+                        session._memo.set("telemetry_df", ref, frame)
+                        frame_hits[ref] = frame
+            if refs and len(frame_hits) == len(refs):
+                tel = Telemetry(pd.concat([frame_hits[ref] for ref in refs], ignore_index=True))
+                tel.session = session
+                object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
+                return tel
+
             collected: dict[tuple[str, int], dict] = {}
             for driver, lap_num in refs:
                 payload = session._get_telemetry_payload(driver, lap_num)
@@ -622,6 +658,7 @@ class Laps(pd.DataFrame):
             # Fall back to the legacy per-lap path on malformed payloads.
             return None
         tel.session = session
+        object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
         return tel
 
     def iterlaps(

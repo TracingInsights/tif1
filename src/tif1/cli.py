@@ -3,17 +3,34 @@
 import logging
 from typing import cast
 
-import pandas as pd
 import typer
-from rich import print as rprint
-from rich.console import Console
-from rich.progress import Progress
-from rich.table import Table
 
 import tif1
 
+# pandas and rich are deliberately imported inside the command bodies:
+# module-level imports cost ~500 ms of CLI startup for every invocation,
+# while only data-rendering commands actually need them.
+
+
+def _rprint(*args, **kwargs):
+    from rich import print as rprint
+
+    rprint(*args, **kwargs)
+
+
+_console_obj = None
+
+
+def _console():
+    global _console_obj
+    if _console_obj is None:
+        from rich.console import Console
+
+        _console_obj = Console()
+    return _console_obj
+
+
 app = typer.Typer(help="tif1 - Fast F1 data access CLI")
-console = Console()
 
 
 @app.command()
@@ -21,6 +38,8 @@ def events(
     year: int = typer.Argument(..., help="Year (2018-current)"),
 ) -> None:
     """List all events for a year."""
+    from rich.table import Table
+
     events_schedule = tif1.get_events(year)
 
     table = Table(title=f"F1 Events {year}")
@@ -30,8 +49,8 @@ def events(
     for idx, event_name in enumerate(events_schedule["EventName"].tolist(), 1):
         table.add_row(str(idx), event_name)
 
-    console.print(table)
-    console.print(f"\n[bold]Total:[/bold] {len(events_schedule)} events")
+    _console().print(table)
+    _console().print(f"\n[bold]Total:[/bold] {len(events_schedule)} events")
 
 
 @app.command()
@@ -40,6 +59,8 @@ def sessions(
     event: str = typer.Argument(..., help="Event name"),
 ) -> None:
     """List all sessions for an event."""
+    from rich.table import Table
+
     sessions_list = tif1.get_sessions(year, event)
 
     table = Table(title=f"{event} {year}")
@@ -49,7 +70,7 @@ def sessions(
     for idx, session in enumerate(sessions_list, 1):
         table.add_row(str(idx), session)
 
-    console.print(table)
+    _console().print(table)
 
 
 @app.command()
@@ -59,10 +80,14 @@ def drivers(
     session: str = typer.Argument(..., help="Session name"),
 ) -> None:
     """List all drivers in a session."""
+    from rich.progress import Progress
+
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
         sess = tif1.get_session(year, event, session)
         progress.update(task, advance=1)
+
+    from rich.table import Table
 
     table = Table(title=f"{event} {year} - {session}")
     table.add_column("Driver", style="cyan")
@@ -71,8 +96,8 @@ def drivers(
     for driver_info in sess.drivers:
         table.add_row(driver_info["driver"], driver_info["team"])
 
-    console.print(table)
-    console.print(f"\n[bold]Total:[/bold] {len(sess.drivers)} drivers")
+    _console().print(table)
+    _console().print(f"\n[bold]Total:[/bold] {len(sess.drivers)} drivers")
 
 
 @app.command()
@@ -83,6 +108,9 @@ def fastest(
     driver: str | None = typer.Option(None, "--driver", "-d", help="Specific driver"),
 ) -> None:
     """Show fastest laps."""
+    import pandas as pd
+    from rich.progress import Progress
+
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
         sess = tif1.get_session(year, event, session)
@@ -104,11 +132,13 @@ def fastest(
                 time_val = fastest_lap_pl[time_col][0]
 
         if time_val is not None:
-            rprint(f"[bold]{driver}[/bold] fastest lap: [green]{time_val:.3f}s[/green]")
+            _rprint(f"[bold]{driver}[/bold] fastest lap: [green]{time_val:.3f}s[/green]")
         else:
-            rprint(f"[red]No valid laps for {driver}[/red]")
+            _rprint(f"[red]No valid laps for {driver}[/red]")
     else:
         fastest_laps = sess.get_fastest_laps(by_driver=True)
+
+        from rich.table import Table
 
         table = Table(title=f"Fastest Laps - {event} {year} - {session}")
         table.add_column("Pos", style="cyan")
@@ -131,22 +161,22 @@ def fastest(
             for idx, row in enumerate(fastest_laps_pl.iter_rows(named=True), 1):
                 table.add_row(str(idx), row["Driver"], row["Team"], f"{row[time_col]:.3f}s")
 
-        console.print(table)
+        _console().print(table)
 
 
 @app.command()
 def cache_info() -> None:
     """Show cache information."""
     cache = tif1.get_cache()
-    rprint(f"[bold]Cache location:[/bold] {cache.cache_dir}")
+    _rprint(f"[bold]Cache location:[/bold] {cache.cache_dir}")
 
     cache_files = [p for p in cache.cache_dir.glob("cache.sqlite*") if p.is_file()]
     if not cache_files:
         cache_files = [p for p in cache.cache_dir.iterdir() if p.is_file()]
-    rprint(f"[bold]Cache files:[/bold] {len(cache_files)}")
+    _rprint(f"[bold]Cache files:[/bold] {len(cache_files)}")
 
     total_size = sum(f.stat().st_size for f in cache_files)
-    rprint(f"[bold]Total size:[/bold] {total_size / 1024 / 1024:.2f} MB")
+    _rprint(f"[bold]Total size:[/bold] {total_size / 1024 / 1024:.2f} MB")
 
 
 @app.command()
@@ -160,15 +190,15 @@ def cache_clear(
     if confirm:
         cache = tif1.get_cache()
         cache.clear()
-        rprint("[green]Cache cleared successfully![/green]")
+        _rprint("[green]Cache cleared successfully![/green]")
     else:
-        rprint("[yellow]Cache clear cancelled[/yellow]")
+        _rprint("[yellow]Cache clear cancelled[/yellow]")
 
 
 @app.command()
 def version() -> None:
     """Show tif1 version."""
-    rprint(f"[bold]tif1[/bold] version [green]{tif1.__version__}[/green]")
+    _rprint(f"[bold]tif1[/bold] version [green]{tif1.__version__}[/green]")
 
 
 @app.command()
@@ -180,14 +210,16 @@ def debug(
     """Enable debug logging and load session."""
     tif1.setup_logging(logging.DEBUG)
 
+    from rich.progress import Progress
+
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session with debug logging...", total=1)
         sess = tif1.get_session(year, event, session)
         progress.update(task, advance=1)
 
-    rprint("[green]Session loaded successfully![/green]")
-    rprint(f"[bold]Drivers:[/bold] {len(sess.drivers)}")
-    rprint(f"[bold]Laps:[/bold] {len(sess.laps)}")
+    _rprint("[green]Session loaded successfully![/green]")
+    _rprint(f"[bold]Drivers:[/bold] {len(sess.drivers)}")
+    _rprint(f"[bold]Laps:[/bold] {len(sess.laps)}")
 
 
 if __name__ == "__main__":

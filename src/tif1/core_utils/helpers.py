@@ -331,7 +331,13 @@ def _typed_telemetry_frame(
         frame_data: dict[str, Any] = {}
         for k, v in normalized_data.items():
             if k == "Time":
-                frame_data[k] = pd.to_timedelta(v, unit="s")
+                # np.asarray first: pd.to_timedelta on a Python list re-boxes
+                # every element through its object path (~790 us/frame vs
+                # ~215 us on the ndarray path, parity-identical output).
+                try:
+                    frame_data[k] = pd.to_timedelta(np.asarray(v, dtype="float64"), unit="s")
+                except (TypeError, ValueError):
+                    frame_data[k] = pd.to_timedelta(v, unit="s")
             elif k == "Brake" and None not in v:
                 frame_data[k] = np.asarray(v, dtype=bool)
             elif k in ("nGear", "DRS"):
@@ -692,44 +698,56 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalize_lap_payload_polars(lap_data: dict) -> dict:
+    """Normalize a lap payload for polars construction.
+
+    Applies :func:`_normalize_lap_payload` plus the null-like sentinel
+    coercion polars needs to infer proper dtypes (Boolean/Float) instead of
+    stringifying mixed columns. Shared by :func:`_create_lap_df` and the
+    merged-dict polars lap assembly so both paths keep identical semantics.
+    """
+    normalized_data = _normalize_lap_payload(lap_data)
+    if normalized_data and any(
+        isinstance(v, list | tuple)
+        and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
+        for v in normalized_data.values()
+    ):
+        # Normalize null-like string sentinels (e.g. "None" in 2026 data) in
+        # the payload lists so polars infers proper dtypes (Boolean/Float)
+        # instead of stringifying mixed columns. Mirrors validate_lap_data.
+        # Exact-token probe first so clean payloads skip the strip/lowercase
+        # pass entirely (no string allocation on the hot path).
+        normalized_data = {
+            k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
+            for k, v in normalized_data.items()
+        }
+    return normalized_data
+
+
 def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFrame:
     """Create lap DataFrame with driver and team info (zero-copy optimized)."""
-    # Normalize data for both backends to handle mismatched column heights
-    # This is required in Python 3.12+ where both Pandas and Polars are stricter
-    normalized_data = _normalize_lap_payload(lap_data)
-
     if lib == "polars":
         _ensure_polars_available()
-        if normalized_data and any(
-            isinstance(v, list | tuple)
-            and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
-            for v in normalized_data.values()
-        ):
-            # Normalize null-like string sentinels (e.g. "None" in 2026 data) in
-            # the payload lists so polars infers proper dtypes (Boolean/Float)
-            # instead of stringifying mixed columns. Mirrors validate_lap_data.
-            # Exact-token probe first so clean payloads skip the strip/lowercase
-            # pass entirely (no string allocation on the hot path).
-            normalized_data = {
-                k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
-                for k, v in normalized_data.items()
-            }
-        lap_df = pl.DataFrame(normalized_data, strict=False)
+        lap_df = pl.DataFrame(_normalize_lap_payload_polars(lap_data), strict=False)
         lap_df = lap_df.with_columns(
             [pl.lit(driver).alias(COL_DRIVER), pl.lit(team).alias(COL_TEAM)]
         )
-    else:
-        lap_df = pd.DataFrame(normalized_data, copy=False)
-        # Deduplicate columns immediately after creation (safety check)
-        if lap_df.columns.duplicated().any():
-            lap_df = lap_df.loc[:, ~lap_df.columns.duplicated()]
-        # Remove any existing Driver/Team columns before adding them (safety check)
-        if COL_DRIVER in lap_df.columns:
-            lap_df = lap_df.drop(columns=[COL_DRIVER])
-        if COL_TEAM in lap_df.columns:
-            lap_df = lap_df.drop(columns=[COL_TEAM])
-        lap_df[COL_DRIVER] = driver
-        lap_df[COL_TEAM] = team
+        return lap_df
+
+    # Normalize data to handle mismatched column heights
+    # This is required in Python 3.12+ where both Pandas and Polars are stricter
+    normalized_data = _normalize_lap_payload(lap_data)
+    lap_df = pd.DataFrame(normalized_data, copy=False)
+    # Deduplicate columns immediately after creation (safety check)
+    if lap_df.columns.duplicated().any():
+        lap_df = lap_df.loc[:, ~lap_df.columns.duplicated()]
+    # Remove any existing Driver/Team columns before adding them (safety check)
+    if COL_DRIVER in lap_df.columns:
+        lap_df = lap_df.drop(columns=[COL_DRIVER])
+    if COL_TEAM in lap_df.columns:
+        lap_df = lap_df.drop(columns=[COL_TEAM])
+    lap_df[COL_DRIVER] = driver
+    lap_df[COL_TEAM] = team
     return lap_df
 
 
