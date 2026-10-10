@@ -331,8 +331,8 @@ The second cache layer is a SQLite database that provides persistent, disk-based
 The SQLite cache is a single-file database with an optimized schema and indexes:
 
 - **Storage Format**: Single SQLite database file with BLOB storage
-- **Compression**: Zstandard (zstd) compression for 60-80% size reduction
-- **Serialization**: Apache Parquet format for efficient DataFrame storage
+- **Compression**: zstd level 1 for JSON payload rows. Python 3.14+ uses the standard-library `compression.zstd`; 3.11-3.13 use the `zstandard` package. Materialized DataFrame rows use lz4, with zstd as the fallback.
+- **Serialization**: JSON payload rows (orjson) and pickled DataFrames for the materialized frame tier
 - **Indexing**: B-tree indexes on key and access time for fast lookups
 - **Transactions**: ACID-compliant transactions for data integrity
 - **Concurrency**: WAL (Write-Ahead Logging) mode for concurrent reads/writes
@@ -458,17 +458,14 @@ Data is stored using a multi-step pipeline optimized for space and speed:
 
 #### Storage (Write Path)
 
-1. **DataFrame → Parquet Bytes**
-   - Convert pandas/polars DataFrame to Apache Parquet format
-   - Parquet provides columnar storage with built-in compression
-   - Preserves data types, indexes, and metadata
-   - Time: ~10-50ms for typical DataFrame
+1. **DataFrame → pickle bytes**
+   - Serialize the pandas/polars DataFrame with `pickle`
+   - Preserves data types, indexes, and metadata exactly
 
-2. **Compress with Zstandard**
-   - Apply zstd compression (level 3 default)
-   - Achieves 60-80% size reduction
-   - Fast compression (~500 MB/s)
-   - Time: ~5-20ms for typical data
+2. **Compress with lz4**
+   - Apply lz4 frame compression (level 0); the tier is write-once/read-many, so codec speed beats ratio
+   - zstd level 1 is the fallback when lz4 is unavailable (for example on Python 3.15, where lz4 publishes no wheels yet)
+   - Each row starts with its codec's magic prefix, so mixed rows stay readable
 
 3. **Store in SQLite BLOB**
    - Insert compressed bytes into SQLite BLOB column
@@ -486,14 +483,13 @@ Data is stored using a multi-step pipeline optimized for space and speed:
    - Update access metadata
    - Time: ~1-5ms
 
-2. **Decompress with Zstandard**
-   - Decompress zstd bytes to Parquet
-   - Fast decompression (~2 GB/s)
+2. **Decompress**
+   - Detect the codec from the magic prefix (lz4 or zstd) and decompress
    - Time: ~2-10ms
 
-3. **Parquet → DataFrame**
-   - Parse Parquet bytes to DataFrame
-   - Restore data types and indexes
+3. **pickle → DataFrame**
+   - Unpickle the bytes back into the DataFrame
+   - Data types and indexes come back exactly as stored
    - Time: ~10-50ms
 
 **Total read time**: 20-100ms
@@ -1896,9 +1892,11 @@ with timer("Parquet serialization"):
     parquet_bytes = buffer.getvalue()
 
 with timer("Zstd compression"):
-    import zstandard as zstd
-    compressor = zstd.ZstdCompressor(level=3)
-    compressed = compressor.compress(parquet_bytes)
+    try:
+        from compression import zstd  # Python 3.14+
+    except ImportError:
+        import zstandard as zstd  # Python 3.11-3.13
+    compressed = zstd.compress(parquet_bytes, 3)
 
 print(f"Original size: {len(parquet_bytes) / 1024:.2f} KB")
 print(f"Compressed size: {len(compressed) / 1024:.2f} KB")

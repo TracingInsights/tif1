@@ -103,7 +103,7 @@ For permanent settings, create a `.tif1rc` (JSON) file in the home directory:
     "Database is locked" errors show that multiple processes write to the cache at the same time. `tif1` uses WAL mode to reduce this problem. Very high concurrency on slow disks can still trigger the error.
   </Accordion>
   <Accordion title="Polars Version Mismatch">
-    Use `polars>=1.40.1` to avoid compatibility issues with the `tif1` categorical optimization.
+    Use `polars>=1.44.1` (the version `tif1` installs) to avoid compatibility issues with the `tif1` categorical optimization.
   </Accordion>
 </AccordionGroup>
 
