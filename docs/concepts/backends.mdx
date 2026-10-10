@@ -225,7 +225,7 @@ For tif1 workloads, polars typically provides:
 
 ### Installation
 
-Polars is an optional dependency. Install it alongside tif1:
+Polars (`polars>=1.44.1`) is installed with `tif1`. If it is missing, for example after a manual uninstall, reinstall it alongside tif1:
 
 ```bash
 # Install tif1 with polars support
@@ -239,7 +239,7 @@ python -c "import polars as pl; print(pl.__version__)"
 ```
 
 <Note>
-  Polars requires Python 3.8 or later. The library is distributed as pre-built wheels for all major platforms (Linux, macOS, Windows) and architectures (x86_64, ARM64).
+  `tif1` requires Python 3.11 or later (3.11 through 3.15 are tested in CI), which satisfies the Polars requirement. The library is distributed as pre-built wheels for all major platforms (Linux, macOS, Windows) and architectures (x86_64, ARM64).
 </Note>
 
 ### Example Usage

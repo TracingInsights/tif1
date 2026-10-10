@@ -267,7 +267,7 @@ The SQLite cache provides persistent storage that survives process restarts.
 - Implementation: SQLite3 with custom connection pooling
 - Storage: Disk-based database file
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
-- Data format: Compressed JSON (zstd level 1; legacy zlib rows stay readable)
+- Data format: Compressed JSON (zstd level 1; legacy zlib rows stay readable). Python 3.14+ uses the standard-library `compression.zstd` binding, 3.11-3.13 use the `zstandard` package; both write identical frames
 - Capacity: Unlimited (constrained by disk space)
 - Access time: 10-50ms (depends on disk I/O)
 - Thread safety: Connection pooling with thread-local storage
@@ -291,17 +291,29 @@ CREATE INDEX IF NOT EXISTS idx_last_access ON cache(last_access);
 **Compression Strategy:**
 ```python
 import orjson
-import zstandard
+
+# Python 3.14+ ships zstd in the standard library (PEP 784); older
+# interpreters use the `zstandard` package. Same libzstd, same frames.
+try:
+    from compression import zstd
+except ImportError:
+    import zstandard as zstd
 
 # Serialization (write to cache)
 json_bytes = orjson.dumps(data)
-compressed = zstandard.ZstdCompressor(level=1).compress(json_bytes)
+compressed = zstd.compress(json_bytes, 1)
 # Typical compression ratio: ~4:1 (better than zlib-3, ~4.5x faster)
 
 # Deserialization (read from cache)
-json_bytes = zstandard.ZstdDecompressor().decompress(compressed)
+json_bytes = zstd.decompress(compressed)
 data = orjson.loads(json_bytes)
 ```
+
+Materialized telemetry DataFrames (the frame tier) use lz4 instead, because the
+tier is write-once/read-many and lz4 halves both compress and decompress time.
+zstd is the fallback when lz4 is unavailable, for example on Python 3.15 where
+lz4 publishes no wheels yet. Each row carries its codec's magic prefix, so
+both kinds of row stay readable regardless of which codec wrote them.
 
 **TTL (Time-To-Live) Management:**
 ```python
@@ -4488,7 +4500,6 @@ The tif1 data flow architecture is designed to evolve. Planned enhancements incl
 - Streaming data support for live sessions
 - GraphQL API for selective field loading
 - Redis cache tier for distributed systems
-- Compression algorithm selection (zstd, lz4)
 - Automatic cache warming based on ML predictions
 
 **Long Term:**

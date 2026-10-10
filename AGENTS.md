@@ -40,12 +40,12 @@ Key patterns:
 
 Constraints:
 - Never use `https://raw.githubusercontent.com` CDN (rate limits). Use jsDelivr (primary), Hugging Face buckets (fallback), or StaticDelivr (last resort) only.
-- Python >=3.11; use type hints everywhere; Google-style docstrings for public APIs.
+- Python >=3.11 (CI tests 3.11 through 3.15); use type hints everywhere; Google-style docstrings for public APIs.
 - Ruff ruleset (see pyproject.toml for full select/ignore); line length 100, double quotes, space indent.
 - Keep imports sorted (ruff/format), avoid unused imports, prefer explicit names.
 - Handle errors via custom exceptions in `exceptions.py`; never swallow network/data errors.
 - orjson for JSON parsing (not stdlib json).
-- pandas >=2.3 as primary backend; polars >=1.36 optional.
+- pandas >=3.0.6 as primary backend; polars >=1.44.1 is a declared dependency but lazy-loaded (`_ensure_polars_available()` falls back to pandas if it is missing).
 - Always optimize for performance. Entire existence of this library is to focus on optimization, speed and performance. Performance is critical
 
 Documentation (Mintlify):

@@ -6,7 +6,7 @@ Thank you for your interest in contributing to tif1! This document provides guid
 
 ### Prerequisites
 
-- Python 3.11 or higher
+- Python 3.11 or higher (CI tests 3.11 through 3.15)
 - [uv](https://github.com/astral-sh/uv) package manager
 
 ### Installation
