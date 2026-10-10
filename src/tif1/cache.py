@@ -28,15 +28,19 @@ import gc
 import logging
 import pickle
 import sqlite3
+import sys
 import threading
 import time
 import zlib
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .core_utils.constants import MAX_CACHE_SIZE
 from .core_utils.json_utils import json_dumps_bytes, json_loads
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +56,56 @@ FastestLapRefKind = Literal["laps", "drivers"]
 # threshold stay plain TEXT so small rows keep the legacy storage shape.
 # zstd-1 compresses ~4.5x faster than zlib-3 at a slightly better ratio and
 # decompresses ~2x faster (measured on the 1452-payload Monaco set), so it is
-# the codec when ``zstandard`` is importable; zlib remains the fallback and
+# the codec whenever a zstd binding is available; zlib remains the fallback and
 # legacy zlib rows stay readable (zstd frames carry a 4-byte magic prefix).
+#
+# Python 3.14+ ships zstd in the standard library (PEP 784, ``compression.zstd``)
+# and is preferred there; older interpreters use the third-party ``zstandard``
+# wheel. Both bind the same libzstd and emit identical single-frame blobs with
+# the content size in the header, so a cache written under one binding reads
+# under the other (verified: package one-shot decompress of stdlib frames and
+# vice versa; compress/decompress throughput within noise of each other).
 _SQLITE_COMPRESS_MIN_BYTES = 4096
 _SQLITE_COMPRESS_LEVEL = 3
 _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+_ZSTD_LEVEL = 1
 
-try:  # pragma: no cover - trivial import guard
-    import zstandard as _zstandard
+_zstd_compress: Callable[[bytes], bytes] | None
+_zstd_decompress: Callable[[bytes], bytes] | None
+# Exception types a corrupt zstd frame raises; empty when no binding is present
+# so ``except _ZSTD_ERRORS`` stays valid (an empty tuple catches nothing).
+_ZSTD_ERRORS: tuple[type[Exception], ...]
 
-    _ZSTD_COMPRESSOR = _zstandard.ZstdCompressor(level=1)
-    _ZSTD_DECOMPRESSOR = _zstandard.ZstdDecompressor()
-except ImportError:  # pragma: no cover - defensive fallback only
-    _ZSTD_COMPRESSOR = None
-    _ZSTD_DECOMPRESSOR = None
+if sys.version_info >= (3, 14):  # pragma: no cover - interpreter dependent
+    try:
+        from compression import zstd as _stdlib_zstd
+    except ImportError:  # interpreter built without libzstd
+        _stdlib_zstd = None
+else:  # pragma: no cover - interpreter dependent
+    _stdlib_zstd = None
+
+if _stdlib_zstd is not None:  # pragma: no cover - interpreter dependent
+    _STDLIB_ZSTD_COMPRESSOR = _stdlib_zstd.ZstdCompressor(level=_ZSTD_LEVEL)
+    _STDLIB_ZSTD_FLUSH_FRAME = _stdlib_zstd.ZstdCompressor.FLUSH_FRAME
+
+    def _zstd_compress(blob: bytes) -> bytes:
+        # One long-lived compressor (context reuse, internally locked);
+        # FLUSH_FRAME closes the frame so each call yields a standalone blob.
+        return _STDLIB_ZSTD_COMPRESSOR.compress(blob, _STDLIB_ZSTD_FLUSH_FRAME)
+
+    _zstd_decompress = _stdlib_zstd.decompress
+    _ZSTD_ERRORS = (_stdlib_zstd.ZstdError,)
+else:  # pragma: no cover - interpreter dependent
+    try:
+        import zstandard as _zstandard
+
+        _zstd_compress = _zstandard.ZstdCompressor(level=_ZSTD_LEVEL).compress
+        _zstd_decompress = _zstandard.ZstdDecompressor().decompress
+        _ZSTD_ERRORS = (_zstandard.ZstdError,)
+    except ImportError:  # defensive fallback only
+        _zstd_compress = None
+        _zstd_decompress = None
+        _ZSTD_ERRORS = ()
 
 # Materialized-frame codec: lz4 (level 0) halves both compress and decompress
 # time vs zstd-1 on the 1452-frame Monaco set (~2x faster, +26% stored bytes)
@@ -84,16 +124,16 @@ def _compress_frame_blob(blob: bytes) -> bytes:
     """Compress a pickled frame for the frame tier (lz4 when available)."""
     if _lz4_frame is not None:
         return _lz4_frame.compress(blob, compression_level=0)
-    assert _ZSTD_COMPRESSOR is not None  # callers gate on the zstd tier
-    return _ZSTD_COMPRESSOR.compress(blob)
+    assert _zstd_compress is not None  # callers gate on the zstd tier
+    return _zstd_compress(blob)
 
 
 def _decompress_frame_blob(blob: bytes) -> bytes:
     """Decompress a frame-tier blob; both lz4 and legacy zstd rows read."""
     if _lz4_frame is not None and blob[:4] == _LZ4_MAGIC:
         return _lz4_frame.decompress(blob)
-    assert _ZSTD_DECOMPRESSOR is not None  # callers gate on the zstd tier
-    return _ZSTD_DECOMPRESSOR.decompress(blob)
+    assert _zstd_decompress is not None  # callers gate on the zstd tier
+    return _zstd_decompress(blob)
 
 
 # Parsed-object front tiers: bounded small because parsed payloads are far
@@ -131,8 +171,8 @@ def _suspend_gc():
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
     """Serialize a JSON blob for the SQLite tier (compress large payloads)."""
     if len(blob) >= _SQLITE_COMPRESS_MIN_BYTES:
-        if _ZSTD_COMPRESSOR is not None:
-            return _ZSTD_COMPRESSOR.compress(blob)
+        if _zstd_compress is not None:
+            return _zstd_compress(blob)
         return zlib.compress(blob, _SQLITE_COMPRESS_LEVEL)
     return blob.decode("utf-8")
 
@@ -146,10 +186,10 @@ def _decode_sqlite_value(stored: Any) -> Any:
     handling turns it into a cache miss.
     """
     if isinstance(stored, bytes):
-        if _ZSTD_DECOMPRESSOR is not None and len(stored) >= 4 and stored[:4] == _ZSTD_MAGIC:
+        if _zstd_decompress is not None and len(stored) >= 4 and stored[:4] == _ZSTD_MAGIC:
             try:
-                return _ZSTD_DECOMPRESSOR.decompress(stored)
-            except _zstandard.ZstdError as e:
+                return _zstd_decompress(stored)
+            except _ZSTD_ERRORS as e:
                 raise ValueError(f"Corrupt compressed cache entry: {e}") from e
         try:
             return zlib.decompress(stored)
@@ -1067,7 +1107,7 @@ class Cache:
             no (or corrupt) frame rows are absent and fall through to the
             payload tier.
         """
-        if self.conn is None or not driver_laps or _ZSTD_DECOMPRESSOR is None:
+        if self.conn is None or not driver_laps or _zstd_decompress is None:
             return {}
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         results: dict[tuple[str, int], Any] = {}
@@ -1132,7 +1172,7 @@ class Cache:
                     TypeError,
                     ValueError,
                     pickle.UnpicklingError,
-                    _zstandard.ZstdError,
+                    *_ZSTD_ERRORS,
                 ):
                     logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
         return results
@@ -1154,7 +1194,7 @@ class Cache:
         Returns:
             Number of frames written (0 when the tier is unavailable).
         """
-        if self.conn is None or self.read_only or _ZSTD_COMPRESSOR is None or not frames:
+        if self.conn is None or self.read_only or _zstd_compress is None or not frames:
             return 0
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         written = 0

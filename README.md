@@ -97,6 +97,8 @@ One honest trade-off: data becomes available in `tif1` about 2-5 minutes later t
 pip install tif1
 ```
 
+Requires Python 3.11 or newer. Versions 3.11 through 3.15 are tested in CI.
+
 ### Optional Dependencies
 
 ```bash

@@ -7,6 +7,31 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Added — Python 3.15 support
+
+- Python 3.15 is a supported, CI-tested interpreter: the `3.15` trove
+  classifier is declared and the test matrix runs 3.11 through 3.15
+  (`setup-python` falls back to a release candidate when the just-released
+  minor is not yet in its manifest).
+- Runtime lower bounds raised to the first releases that publish 3.15 wheels so
+  `pip install tif1` on 3.15 never builds from source: pandas 3.0.6,
+  pydantic 2.14.0 (pydantic-core 2.50.0), matplotlib 3.11.2. scipy 1.18 dropped
+  Python 3.11, so scipy is split by marker: `>=1.17.1` on 3.11-3.14 and
+  `>=1.18.1` on 3.15. Dev extra allows pyarrow 26 (`<27`).
+- The SQLite cache uses the standard-library `compression.zstd` module
+  (PEP 784) on Python 3.14+ and the `zstandard` wheel only on 3.11-3.13
+  (`python_version < "3.14"` marker). Both bind the same libzstd and emit
+  byte-identical single-frame blobs with the content size in the header, so
+  caches written under either binding read under the other; compress and
+  decompress throughput measured within noise of each other.
+- `lz4` publishes no 3.15 wheels yet, so it is declared for
+  `python_version < "3.15"` only; on 3.15 the materialized-frame tier uses
+  the zstd fallback that was already in place (the pre-Ithome codec). Drop the
+  marker once lz4 ships 3.15 wheels.
+- `uv.lock` refreshed for the above (kiwisolver 1.5.1, msgpack 1.2.3,
+  numpy 2.5.3 on 3.12+, contourpy 1.4.0, fonttools 4.66.1, pyarrow 26.0.0,
+  typing-inspection 0.4.4).
+
 ### Summary — Halikarnassos-series performance work
 
 Eleven new hypotheses were measured (full log in
