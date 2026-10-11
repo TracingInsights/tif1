@@ -1915,7 +1915,7 @@ caller removes them by scope:
 ```python
 cache = tif1.get_cache()
 cache.invalidate("json")        # DELETE FROM cache (+ missing_payloads)
-cache.invalidate("telemetry")   # DELETE FROM telemetry_cache, telemetry_frames
+cache.invalidate("telemetry")   # DELETE FROM telemetry_cache, telemetry_frames, telemetry_frames_pl (+ missing_payloads)
 cache.clear()                   # Every table
 ```
 
@@ -1933,6 +1933,7 @@ import tif1
 
 cache = tif1.get_cache()
 cache.invalidate("memory")  # keep SQLite, drop the in-memory tiers
+tif1.cache.clear_lap_cache()  # the backend lap LRU lives outside Cache
 
 t0 = time.perf_counter()
 laps = tif1.get_session(2024, "Monaco", "Race").laps  # served from SQLite
@@ -3210,6 +3211,7 @@ def test_cache_performance():
     # Clear the in-memory tiers only; SQLite persists. Use a fresh session
     # so the per-session memo does not answer the request.
     cache.invalidate("memory")
+    tif1.cache.clear_lap_cache()  # the backend lap LRU lives outside Cache
     session = tif1.get_session(2025, "Monaco", "Race")
 
     start = time.time()
@@ -3405,9 +3407,8 @@ class MonitoringDashboard:
         print(f"  Memory: {dashboard['system']['memory_mb']:.2f} MB ({dashboard['system']['memory_percent']:.1f}%)")
 
         print("\nCACHE:")
+        print(f"  Directory: {dashboard['cache']['cache_dir']}")
         print(f"  Size: {dashboard['cache']['size_mb']:.2f} MB")
-        print(f"  Entries: {dashboard['cache']['entries']}")
-        print(f"  Hit rate: {dashboard['cache']['hit_rate']:.1%}")
 
         print("\nPERFORMANCE:")
         for key, value in dashboard['performance'].items():

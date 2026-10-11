@@ -13,10 +13,10 @@ keywords:
 
 ### Missing Dependency After a Manual Uninstall
 
-**Error:** `ModuleNotFoundError: No module named 'polars'` (or `timple`, `zstandard`)
+**Error:** `ModuleNotFoundError: No module named 'polars'` (or `timple`; or `zstandard` on Python 3.11 to 3.13)
 
 **Solution:**
-`tif1` declares all of these as dependencies, so a clean install never hits this error. Reinstall `tif1` to restore them:
+`tif1` declares these as dependencies, so a clean install never hits this error. On Python 3.14 and later `zstandard` is not installed because the standard library provides zstd. Reinstall `tif1` to restore the others:
 ```bash
 pip install --force-reinstall tif1
 ```
