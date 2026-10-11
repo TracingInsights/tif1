@@ -9,11 +9,19 @@ import pytest
 _NETWORK_MARKERS = ("integration", "compliance_online", "benchmark")
 
 
+_BLOCK_MESSAGE = (
+    "network access is blocked in the unit suite; mark the test "
+    "'integration' (or 'compliance_online') to allow real connections"
+)
+
+
 def _blocked_connect(self, *args, **kwargs):
-    raise OSError(
-        "network access is blocked in the unit suite; mark the test "
-        "'integration' (or 'compliance_online') to allow real connections"
-    )
+    raise OSError(_BLOCK_MESSAGE)
+
+
+def _blocked_getaddrinfo(*args, **kwargs):
+    # Name resolution can stall long before connect() runs, so block it too.
+    raise socket.gaierror(_BLOCK_MESSAGE)
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +43,7 @@ def block_network(request, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", _blocked_connect)
     monkeypatch.setattr(socket.socket, "sendto", _blocked_connect)
+    monkeypatch.setattr(socket, "getaddrinfo", _blocked_getaddrinfo)
     yield
 
 

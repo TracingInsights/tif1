@@ -408,8 +408,8 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
 export TIF1_HTTP_DISABLE_HTTP3=false
-export TIF1_POOL_CONNECTIONS=256          # unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
-export TIF1_POOL_MAXSIZE=512              # unset by default: auto max(512, pool_connections * 4)
+# export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
+# export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=10000
 export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
