@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,6 +46,10 @@ jobs:
         uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
+          # Resolve to the latest stable patch when one exists; fall back to a
+          # release candidate for a just-released minor (e.g. 3.15) that the
+          # setup-python manifest has not picked up yet.
+          allow-prereleases: true
 
       - name: Install uv
         run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"

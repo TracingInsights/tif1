@@ -170,7 +170,7 @@ Configure matplotlib with Formula 1-optimized defaults including color schemes, 
 #### Parameters
 
 - **`mpl_timedelta_support`** (`bool`, default: `True`)
-  Enable timedelta plotting support via the `timple` library. When enabled, matplotlib can natively plot `pandas.Timedelta` and `datetime.timedelta` objects on axes. Requires the optional `plotting` extra to be installed.
+  Enable timedelta plotting support via the `timple` library. When enabled, matplotlib can natively plot `pandas.Timedelta` and `datetime.timedelta` objects on axes. `timple` is installed with `tif1`.
 
 - **`color_scheme`** (`str | None`, default: `None`)
   Color scheme to apply. Valid values:
@@ -201,13 +201,9 @@ tif1.plotting.setup_mpl(color_scheme="fastf1", mpl_timedelta_support=False)
 
 #### Timedelta Support
 
-For full timedelta plotting capabilities, install the optional plotting extra:
+`timple` is a required dependency of `tif1`, so timedelta plotting works out of the box.
 
-```bash
-uv sync --extra plotting
-```
-
-If `timple` is not available, tif1 will emit a runtime warning and continue with style-only setup. This allows the library to function without the plotting extra, but timedelta axes will not render correctly.
+If `timple` has been removed from the environment, tif1 emits a runtime warning and continues with style-only setup. Timedelta axes will not render correctly until `timple` is reinstalled.
 
 #### Examples
 

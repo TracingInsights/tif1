@@ -15,7 +15,7 @@ keywords:
 
 # Data Backends in tif1
 
-tif1 is built with a flexible backend architecture that supports two DataFrame libraries: **pandas** (default) and **polars** (optional). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
+tif1 is built with a flexible backend architecture that supports two DataFrame libraries: **pandas** (default) and **polars** (installed with tif1, selected with `lib="polars"`). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
 
 The backend system is integrated into the tif1 core architecture. When tif1 loads session data, telemetry, or lap data, it constructs DataFrames with the selected backend. All subsequent operations then use the strengths of that backend. This abstraction enables a backend switch with minimal code changes and a large performance gain.
 
@@ -96,7 +96,7 @@ This architecture applies backend-specific optimizations at the lowest level and
 | **Memory Efficiency** | Baseline | 2-3x better | Polars uses less memory per operation |
 | **Typical Speedup** | 1x | 2-5x | Varies by operation and data size |
 | **Installation Size** | ~50MB | ~30MB | Polars is more compact |
-| **Python Version** | >=3.9 | >=3.8 | Both well-supported |
+| **Python Version** | >=3.11 | >=3.11 | `tif1` requires 3.11 or later on either backend |
 
 ---
 
@@ -225,21 +225,21 @@ For tif1 workloads, polars typically provides:
 
 ### Installation
 
-Polars is an optional dependency. Install it alongside tif1:
+Polars (`polars>=1.44.1`) is installed with `tif1`. If it is missing, for example after a manual uninstall, reinstall it alongside tif1:
 
 ```bash
-# Install tif1 with polars support
-pip install tif1 polars
+# A normal install already includes polars
+pip install tif1
 
-# Or if you already have tif1 installed
-pip install polars
+# Restore polars if it was removed from the environment
+pip install "polars>=1.44.1"
 
 # Verify installation
 python -c "import polars as pl; print(pl.__version__)"
 ```
 
 <Note>
-  Polars requires Python 3.8 or later. The library is distributed as pre-built wheels for all major platforms (Linux, macOS, Windows) and architectures (x86_64, ARM64).
+  `tif1` requires Python 3.11 or later (3.11 through 3.15 are tested in CI), which satisfies the Polars requirement. The library is distributed as pre-built wheels for all major platforms (Linux, macOS, Windows) and architectures (x86_64, ARM64).
 </Note>
 
 ### Example Usage
@@ -921,7 +921,7 @@ Conversion between backends has a cost, so use it strategically:
 
 ### Zero-Copy Conversion (Arrow)
 
-For maximum efficiency, use Apache Arrow as an intermediate format:
+For maximum efficiency, use Apache Arrow as an intermediate format. `pyarrow` is not a `tif1` dependency; install it with `pip install pyarrow` first:
 
 ```python
 import pyarrow as pa
@@ -1033,21 +1033,21 @@ print(type(session.laps))  # <class 'polars.dataframe.frame.DataFrame'>
 
 ### Via Environment Variable
 
-Set the `TIF1_BACKEND` environment variable:
+Set the `TIF1_LIB` environment variable:
 
 <CodeGroup>
 ```bash Linux/macOS
-export TIF1_BACKEND=polars
+export TIF1_LIB=polars
 python your_script.py
 ```
 
 ```powershell Windows PowerShell
-$env:TIF1_BACKEND = "polars"
+$env:TIF1_LIB = "polars"
 python your_script.py
 ```
 
 ```cmd Windows CMD
-set TIF1_BACKEND=polars
+set TIF1_LIB=polars
 python your_script.py
 ```
 </CodeGroup>
@@ -1097,7 +1097,7 @@ session2 = tif1.get_session(2024, "Monaco", "Race", backend="pandas")  # Uses pa
 When multiple configuration sources are present, tif1 uses this precedence order (highest to lowest):
 
 1. **Explicit parameter**: `backend="polars"` in function call
-2. **Environment variable**: `TIF1_BACKEND=polars`
+2. **Environment variable**: `TIF1_LIB=polars`
 3. **Config file**: `~/.tif1rc` setting
 4. **Default**: `pandas`
 
@@ -1111,7 +1111,7 @@ config = tif1.get_config()
 config.set("backend", "polars")
 
 # Environment variable overrides config file
-os.environ["TIF1_BACKEND"] = "pandas"
+os.environ["TIF1_LIB"] = "pandas"
 
 # Explicit parameter overrides everything
 session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
@@ -1264,7 +1264,7 @@ arrow_table = laps.to_arrow()
 import pyarrow.compute as pc
 filtered = arrow_table.filter(pc.field("LapTime") < 90)
 
-# Use with DuckDB for SQL queries
+# Use with DuckDB for SQL queries (third-party: pip install duckdb)
 import duckdb
 result = duckdb.query("SELECT Driver, AVG(LapTime) FROM laps GROUP BY Driver").pl()
 ```
@@ -1985,14 +1985,14 @@ stats2 = get_driver_statistics(2024, "Monaco", "VER")
 
 ## Troubleshooting and Common Issues
 
-### Issue 1: Polars Not Installed
+### Issue 1: Polars Removed From the Environment
 
-**Symptom**: `ImportError: No module named 'polars'` or `BackendNotAvailableError`
+**Symptom**: `ImportError: No module named 'polars'` or `BackendNotAvailableError`. Polars ships with `tif1`, so this means it was uninstalled or the environment is broken.
 
 **Solution**:
 ```bash
-# Install polars
-pip install polars
+# Restore the polars version tif1 declares
+pip install "polars>=1.44.1"
 
 # Verify installation
 python -c "import polars as pl; print(pl.__version__)"
@@ -2214,7 +2214,7 @@ else:  # pandas
     Optimization.
   </Card>
   <Card title="Installation" href="/installation">
-    Install polars.
+    Install tif1 (polars included).
   </Card>
 </CardGroup>
 
@@ -2293,7 +2293,7 @@ else:  # pandas
 
 <CardGroup cols={3}>
   <Card title="Installation Guide" icon="download" href="/installation">
-    Install tif1 with polars support.
+    Install tif1; polars is included.
   </Card>
   <Card title="Performance Guide" icon="gauge-high" href="/guides/best-practices">
     Optimization techniques and best practices.

@@ -145,7 +145,7 @@ def get_session(
   - `"polars"`: Use polars DataFrames (faster for large datasets, requires `polars` package)
   - `None`: Use global config value (defaults to `"pandas"`)
 
-  **Performance note**: Polars can be faster for large datasets (10-100x for some operations), but requires the `polars` package. If polars is requested but not available, tif1 falls back to pandas with a warning.
+  **Performance note**: Polars can be faster for large datasets (10-100x for some operations). Polars is installed with `tif1`. If it has been removed and is requested, tif1 falls back to pandas with a warning.
 </ParamField>
 
 **Returns:**
