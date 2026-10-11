@@ -44,6 +44,12 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   Interpreters with no zstd binding at all log an info message about the
   zlib fallback.
 - Async cache methods use `asyncio.get_running_loop()`.
+- The unit suite is hermetic: an autouse fixture in `tests/conftest.py`
+  blocks real socket connections for every test not marked `integration`,
+  `compliance_online` or `benchmark`. Several unit tests were quietly
+  loading real sessions from the CDN when the network was reachable and
+  could stall the CI matrix on a slow CDN; they now fail the connection
+  fast and exercise the same graceful-degradation paths deterministically.
 - `Cache.clear()` and `invalidate("telemetry")` now also drop the polars
   frame table (`telemetry_frames_pl`); previously polars frame rows survived
   a full clear. `invalidate("memory")` drops the in-memory mirror of the
