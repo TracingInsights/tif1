@@ -22,18 +22,26 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SPEED_TRAP_COLUMNS",
+    "accent_color",
     "add_style_branding",
     "apply_laptime_cutoff",
     "build_save_path",
     "configure_chart_saving",
+    "contrast_ratio",
     "driver_colors",
+    "ensure_readable_text",
     "fastest_lap",
     "finalize_figure",
     "finishing_order",
     "fit_labels_inside_xlim",
+    "foreground_color",
     "get_chart_save_config",
+    "is_dark_background",
+    "keep_bar_labels_inside_axes",
     "load_session",
+    "relative_luminance",
     "resolve_drivers",
+    "resolve_plot_style",
     "setup_theme",
     "set_tight_barh_ylim",
     "team_colors",
@@ -404,13 +412,98 @@ def finalize_figure(
     return fig, ax
 
 
+def relative_luminance(color: Any) -> float:
+    """Return the WCAG relative luminance (0 = black, 1 = white) of a color."""
+    from matplotlib.colors import to_rgb
+
+    def _linear(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_linear(c) for c in to_rgb(color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(foreground: Any, background: Any) -> float:
+    """Return the WCAG contrast ratio (1..21) between two opaque colors."""
+    lum_fg = relative_luminance(foreground)
+    lum_bg = relative_luminance(background)
+    lighter, darker = max(lum_fg, lum_bg), min(lum_fg, lum_bg)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def is_dark_background() -> bool:
+    """Whether the active matplotlib theme draws on a dark figure background."""
+    import matplotlib.pyplot as plt
+
+    return relative_luminance(plt.rcParams["figure.facecolor"]) < 0.5
+
+
+def foreground_color() -> str:
+    """The active theme's text color, used for lines/edges that must stay visible.
+
+    Charts use this instead of hard-coded ``"white"``/``"black"`` for zero
+    lines, bar edges and grid lines so they remain visible on both light and
+    dark themes (white on the ``lightblue`` light background is invisible).
+    """
+    import matplotlib.pyplot as plt
+
+    return str(plt.rcParams["text.color"])
+
+
+#: Brand green used for highlight text on dark backgrounds.
+_ACCENT_DARK = "lime"
+#: Darker green with >= 4.5:1 contrast on the ``lightblue`` light background.
+_ACCENT_LIGHT = "#006400"
+
+
+def accent_color() -> str:
+    """A highlight color that contrasts with the active theme background.
+
+    Returns the TracingInsights brand ``lime`` on dark themes and a dark
+    green on light ones (lime on ``lightblue`` has a contrast ratio of 1.1).
+    """
+    return _ACCENT_DARK if is_dark_background() else _ACCENT_LIGHT
+
+
+def ensure_readable_text(text: Any, *, min_contrast: float = 3.0, linewidth: float = 2.0) -> None:
+    """Outline a text artist when its color blends into the axes background.
+
+    Data-colored annotations (e.g. a compound label drawn in the compound's
+    color) keep their identity color; when the contrast against the axes
+    background falls below ``min_contrast`` a thin stroke in the theme's
+    foreground color is added so the label stays legible (yellow MEDIUM on
+    ``lightblue`` has a contrast ratio of 1.05 without it).
+
+    Args:
+        text: The text artist to check (must belong to an axes).
+        min_contrast: Contrast ratio below which the outline is added.
+        linewidth: Stroke width of the outline in points.
+    """
+    from matplotlib import patheffects
+    from matplotlib.colors import to_rgba
+
+    ax = text.axes
+    if ax is None:
+        return
+    face = to_rgba(ax.patch.get_facecolor())
+    background = face if face[3] > 0 else to_rgba(ax.figure.get_facecolor())
+    if contrast_ratio(text.get_color(), background) >= min_contrast:
+        return
+    text.set_path_effects(
+        [patheffects.withStroke(linewidth=linewidth, foreground=foreground_color())]
+    )
+
+
 def resolve_plot_style(color_scheme: str | None) -> dict[str, Any]:
     """Resolve a plot style dict from a color scheme name.
 
-    ``"default-light"``/``"default-dark"`` map to themselves; any other
-    scheme (e.g. the ``"fastf1"`` charts' default) falls back to
-    ``"default-dark"``, matching the race-launch ratings chart's resolution
-    so every chart shares the same branded look.
+    ``"default-light"``/``"default-dark"`` map to themselves. Any other
+    scheme (``"fastf1"``, ``"light"``, ``None`` ...) picks the style whose
+    polarity matches the *active* matplotlib background: ``default-dark`` on
+    dark figure backgrounds, ``default-light`` on light ones. This keeps the
+    branded footer and the launch chart's label colors readable whatever
+    theme is in effect (a dark-style lime footer on the ``light`` scheme's
+    ``lightblue`` background has a contrast ratio of 1.1).
 
     Args:
         color_scheme: A matplotlib theme name, or ``None``.
@@ -420,9 +513,10 @@ def resolve_plot_style(color_scheme: str | None) -> dict[str, Any]:
     """
     from tif1.plotting import get_plot_style
 
-    style_name = (
-        color_scheme if color_scheme in ("default-light", "default-dark") else "default-dark"
-    )
+    if color_scheme in ("default-light", "default-dark"):
+        style_name = color_scheme
+    else:
+        style_name = "default-dark" if is_dark_background() else "default-light"
     return get_plot_style(style_name)
 
 
@@ -589,6 +683,36 @@ def fit_labels_inside_xlim(ax: Any, labels: Any) -> None:
         # Breathing room so renderer round-off can never push the widest
         # label past the canvas edge.
         ax.set_xlim(right=float(ax.get_xlim()[1]) + 0.05)
+
+
+def keep_bar_labels_inside_axes(ax: Any, labels: Any, *, padding: float) -> None:
+    """Flip inside-bar labels that overflow the axes to the outside of the bar.
+
+    Styles with a negative ``label_padding`` (``default-light``: -330pt) draw
+    bar labels *inside* the bar, measured back from its end. A short bar
+    (e.g. a ``0.0`` rating) pushes such a label past the left edge of the
+    axes, off-canvas and across the y tick labels. Every label whose window
+    extent starts left of the axes is re-anchored just outside the bar end
+    (``|padding|`` capped at 20pt, left aligned) so it stays on the canvas.
+    Positive paddings never overflow left and are left untouched.
+
+    Call after the axes geometry is final (post ``subplots_adjust``).
+
+    Args:
+        ax: The horizontal bar chart axes.
+        labels: The annotations returned by ``ax.bar_label``.
+        padding: The ``padding`` the labels were drawn with, in points.
+    """
+    if padding >= 0:
+        return
+    ax.figure.canvas.draw()
+    renderer = ax.figure.canvas.get_renderer()
+    axes_left = ax.get_window_extent(renderer).x0
+    outside = (min(abs(padding), 20.0), 0.0)
+    for label in labels:
+        if label.get_window_extent(renderer).x0 < axes_left:
+            label.xyann = outside
+            label.set_horizontalalignment("left")
 
 
 def finishing_order(session: Any, n: int) -> list[str]:

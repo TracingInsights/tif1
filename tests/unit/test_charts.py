@@ -7,6 +7,7 @@ the real ``get_session`` is never called.
 
 from __future__ import annotations
 
+import itertools
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 from unittest import mock
@@ -934,8 +935,14 @@ def test_race_launch_ratings_light_scheme(launch_session):
     )
     assert plt.rcParams["figure.facecolor"] == "lightblue"
     assert len(ax.patches) == len(DRIVERS)
-    # light style has no car threshold: every driver gets a car image
-    assert len(ax.artists) == 2 * len(DRIVERS)
+    # The light style has no rating threshold for cars, but a car is still
+    # only drawn where the bar is long enough to hold the artwork: the 0.0
+    # rated driver (zero-width bar) gets a tyre image but no car.
+    n_cars = len(ax.artists) - len(DRIVERS)  # one tyre image per driver
+    assert 0 < n_cars < len(DRIVERS)
+    widths = sorted(p.get_width() for p in ax.patches)
+    assert widths[0] == 0.0
+    assert n_cars == sum(1 for w in widths if w > widths[len(widths) - n_cars - 1])
 
 
 def test_race_launch_ratings_validation(launch_session):
@@ -1061,6 +1068,10 @@ def test_bar_charts_value_labels_fit_inside_xlim(n_drivers, monkeypatch):
         xlim_right = ax.get_xlim()[1]
         for label in ax.texts:
             if not (label.get_text() or "").strip():
+                continue
+            if label.get_fontstyle() == "italic":
+                # The centred caption under the x-axis label is not a value
+                # label; it is wider than the axes by design.
                 continue
             extent = label.get_window_extent()
             data_x = ax.transData.inverted().transform((extent.x1, extent.y0))[0]
@@ -1360,3 +1371,203 @@ def test_all_function_names_are_exposed():
     for name in tif1.charts.__all__:
         assert name in tif1.__all__
         assert name in tif1._LAZY_EXPORTS
+
+
+# ---------------------------------------------------------------------------
+# Theme safety: contrast, overlap and clipping under every color scheme
+# ---------------------------------------------------------------------------
+
+_THEMES = ["fastf1", "default-light", "default-dark"]
+_THEME_CASES = [case[0] for case in CHART_CASES] + [performance.plot_race_launch_ratings]
+
+
+def _visible_texts(fig: Any) -> list[Any]:
+    """Visible, non-empty texts whose own color must carry the contrast."""
+    texts = []
+    for text in fig.findobj(mpl.text.Text):
+        if not text.get_visible() or not (text.get_text() or "").strip():
+            continue
+        if text.get_alpha() == 0 or text.get_path_effects():
+            # Transparent watermarks, and outlined labels whose stroke
+            # (not their fill color) provides the contrast.
+            continue
+        texts.append(text)
+    return texts
+
+
+def _background_behind(fig: Any, bbox: Any, renderer: Any) -> tuple[float, float, float]:
+    """Opaque color behind a text box: the axes patch when inside an axes, else the canvas."""
+    from matplotlib.colors import to_rgb, to_rgba
+
+    canvas = to_rgb(fig.get_facecolor())
+    cx, cy = (bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2
+    for axes in fig.axes:
+        extent = axes.get_window_extent(renderer)
+        if extent.x0 <= cx <= extent.x1 and extent.y0 <= cy <= extent.y1:
+            face = to_rgba(axes.patch.get_facecolor())
+            if axes.patch.get_visible() and face[3] > 0:
+                return tuple(face[3] * f + (1 - face[3]) * c for f, c in zip(face[:3], canvas))
+            return canvas
+    return canvas
+
+
+def _render_under_theme(func: Any, theme: str, session: Any, monkeypatch: Any) -> tuple[Any, Any]:
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+    mpl.rcdefaults()
+    fig, ax = func(2024, "Italian Grand Prix", "Q", color_scheme=theme)
+    fig.canvas.draw()
+    return fig, ax
+
+
+@pytest.mark.parametrize("theme", _THEMES)
+@pytest.mark.parametrize("func", _THEME_CASES, ids=[f.__name__ for f in _THEME_CASES])
+def test_chart_text_readable_under_every_theme(func, theme, monkeypatch):
+    """Every chart is legible under every theme on a full 22-driver grid.
+
+    Each visible text must have a WCAG contrast ratio of at least 3:1 against
+    the background it is drawn on (a hard-coded dark figure background behind
+    the light theme, white colorbar ticks on ``lightblue`` and the dark
+    style's lime footer on a light canvas all failed this), and no two texts
+    of the same axes (or two figure-level texts) may overlap by more than a
+    sliver (32pt theme fonts made tick labels collide). The full-canvas
+    race-launch export must also keep every text inside the figure.
+    """
+    from matplotlib.colors import to_rgba
+
+    launch = func is performance.plot_race_launch_ratings
+    session = _make_big_session(22, launch=launch)
+    fig, _ = _render_under_theme(func, theme, session, monkeypatch)
+    renderer = cast(Any, fig.canvas).get_renderer()
+
+    boxes = []
+    for text in _visible_texts(fig):
+        bbox = text.get_window_extent(renderer)
+        if bbox.width == 0 or bbox.height == 0:
+            continue
+        background = _background_behind(fig, bbox, renderer)
+        rgba = to_rgba(text.get_color())
+        alpha = rgba[3] * (1.0 if text.get_alpha() is None else text.get_alpha())
+        color = tuple(alpha * c + (1 - alpha) * b for c, b in zip(rgba[:3], background))
+        ratio = _common.contrast_ratio(color, background)
+        assert ratio >= 3.0, (
+            f"[{theme}] {text.get_text()!r} has contrast {ratio:.2f} on {background}"
+        )
+        if launch:
+            clipped = f"[{theme}] {text.get_text()!r} clipped"
+            assert bbox.x0 >= -1, clipped
+            assert bbox.y0 >= -1, clipped
+            assert bbox.x1 <= fig.bbox.width + 1, clipped
+            assert bbox.y1 <= fig.bbox.height + 1, clipped
+        boxes.append((text, bbox))
+
+    for (text_a, box_a), (text_b, box_b) in itertools.combinations(boxes, 2):
+        if text_a.axes is not None and text_b.axes is not None and text_a.axes is not text_b.axes:
+            continue
+        overlap_x = min(box_a.x1, box_b.x1) - max(box_a.x0, box_b.x0)
+        overlap_y = min(box_a.y1, box_b.y1) - max(box_a.y0, box_b.y0)
+        if overlap_x <= 2 or overlap_y <= 2:
+            continue
+        smaller = min(box_a.width * box_a.height, box_b.width * box_b.height)
+        fraction = overlap_x * overlap_y / smaller
+        assert fraction <= 0.15, (
+            f"[{theme}] {text_a.get_text()!r} overlaps {text_b.get_text()!r} ({fraction:.0%})"
+        )
+    plt.close("all")
+
+
+def test_race_launch_light_labels_inside_axes_and_clear_of_cars(monkeypatch):
+    """default-light inside-bar labels never leave the axes or hide under cars.
+
+    The light style draws bar labels 330pt back from the bar end. On short
+    bars that ran off the left edge across the driver names, and matplotlib's
+    left alignment made the text run back under the car artwork. Labels must
+    now sit inside the axes and never intersect a car image, and no car may
+    be drawn on a bar too short to hold it (the car would cover the y-axis).
+    """
+    from matplotlib.offsetbox import AnnotationBbox
+
+    session = _make_big_session(22, launch=True)
+    fig, ax = _render_under_theme(
+        performance.plot_race_launch_ratings, "default-light", session, monkeypatch
+    )
+    renderer = cast(Any, fig.canvas).get_renderer()
+    axes_box = ax.get_window_extent(renderer)
+
+    # Cars are the wide AnnotationBbox artists (tyres are ~30px discs).
+    cars = [
+        artist.get_window_extent(renderer)
+        for artist in ax.artists
+        if isinstance(artist, AnnotationBbox) and artist.get_window_extent(renderer).width > 100
+    ]
+    assert cars, "expected car images on the long bars"
+    for car in cars:
+        assert car.x0 >= axes_box.x0 - 1, "car drawn past the y-axis over the driver labels"
+
+    labels = [text for text in ax.texts if text.get_text().endswith("s)")]
+    assert len(labels) == 22
+    for label in labels:
+        box = label.get_window_extent(renderer)
+        assert box.x0 >= axes_box.x0 - 1, f"{label.get_text()!r} runs off the axes"
+        assert box.x1 <= fig.bbox.width + 1, f"{label.get_text()!r} clipped at the right edge"
+        for car in cars:
+            overlap_x = min(box.x1, car.x1) - max(box.x0, car.x0)
+            overlap_y = min(box.y1, car.y1) - max(box.y0, car.y0)
+            assert overlap_x <= 2 or overlap_y <= 2, f"{label.get_text()!r} hidden under a car"
+    plt.close("all")
+
+
+def test_facecolor_default_follows_theme(fake_session):
+    """With no explicit facecolor the saved/returned figure uses the theme background."""
+    from matplotlib.colors import to_rgba
+
+    fig, _ = top_speeds.plot_top_speeds(
+        2023, "Italian Grand Prix", "Q", color_scheme="default-light"
+    )
+    assert fig.get_facecolor() == to_rgba("lightblue")
+    fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    assert fig.get_facecolor() == to_rgba("#292625")  # fastf1 figure background
+
+
+def test_resolve_plot_style_follows_background_polarity():
+    """Non-default schemes pick the style matching the active background's polarity."""
+    from tif1.plotting import setup_mpl
+
+    setup_mpl(color_scheme="fastf1", mpl_timedelta_support=False)
+    assert _common.resolve_plot_style("fastf1")["name"] == "default-dark"
+    setup_mpl(color_scheme="light", mpl_timedelta_support=False)
+    assert _common.resolve_plot_style("light")["name"] == "default-light"
+    # Explicit default-* names win regardless of the background.
+    assert _common.resolve_plot_style("default-dark")["name"] == "default-dark"
+    mpl.rcdefaults()  # white canvas
+    assert _common.resolve_plot_style(None)["name"] == "default-light"
+
+
+def test_theme_colors_follow_background():
+    """Foreground/accent helpers contrast with both the dark and light themes."""
+    from tif1.plotting import setup_mpl
+
+    setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+    assert _common.is_dark_background()
+    assert _common.accent_color() == "lime"
+    assert _common.contrast_ratio(_common.accent_color(), "#011627") >= 4.5
+    assert _common.contrast_ratio(_common.foreground_color(), "#011627") >= 4.5
+
+    setup_mpl(color_scheme="default-light", mpl_timedelta_support=False)
+    assert not _common.is_dark_background()
+    assert _common.contrast_ratio(_common.accent_color(), "lightblue") >= 4.5
+    assert _common.contrast_ratio(_common.foreground_color(), "lightblue") >= 4.5
+    mpl.rcdefaults()
+
+
+def test_ensure_readable_text_outlines_only_low_contrast_labels():
+    """Only labels that blend into the axes background get the contrast stroke."""
+    mpl.rcdefaults()
+    fig, ax = plt.subplots()
+    ax.set_facecolor("lightblue")
+    medium = ax.text(0.5, 0.6, "MEDIUM", color="#ffd12e")  # yellow on lightblue: 1.05
+    soft = ax.text(0.5, 0.3, "SOFT", color="#da291c")  # red on lightblue: 3.4
+    _common.ensure_readable_text(medium)
+    _common.ensure_readable_text(soft)
+    assert medium.get_path_effects()
+    assert not soft.get_path_effects()
+    plt.close(fig)

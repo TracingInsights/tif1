@@ -425,7 +425,9 @@ def test_get_plot_style_dark_matches_race_launch_script():
     style = plotting.get_plot_style("default-dark")
     assert style["colors"]["background"] == "#011627"
     assert style["colors"]["text"] == "lime"
-    assert style["colors"]["grid"] == "black"  # black axvline in the script
+    # The script's black axvline is invisible on the navy background; the
+    # style uses white (the bar-label color) for the zero line instead.
+    assert style["colors"]["grid"] == "white"
     assert style["colors"]["bar_label"] == "white"
     assert style["colors"]["ytick"] == "white"
     assert style["fonts"]["heading"] == "coolvetica rg.otf"
@@ -634,3 +636,38 @@ def test_override_team_constants_session_requires_exact_match():
 
     with pytest.raises(KeyError, match="No team found"):
         plotting.override_team_constants("Ferari", session, fastf1_color="#ff0000")
+
+
+def test_setup_mpl_resets_theme_rcparams_between_schemes():
+    """Switching schemes never inherits the previous scheme's rcParams.
+
+    ``default-dark`` hides the top/right spines and restyles the legend; a
+    following ``fastf1`` call must start from matplotlib's defaults for every
+    key the schemes manage, so charts rendered after a default-* chart look
+    exactly like charts rendered on a fresh interpreter.
+    """
+    import matplotlib as mpl
+
+    plotting.setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+    assert plt.rcParams["axes.spines.top"] is False
+    assert plt.rcParams["ytick.major.size"] == 0
+
+    plotting.setup_mpl(color_scheme="fastf1", mpl_timedelta_support=False)
+    assert plt.rcParams["axes.spines.top"] is True
+    assert plt.rcParams["ytick.major.size"] == mpl.rcParamsDefault["ytick.major.size"]
+    assert plt.rcParams["legend.frameon"] == mpl.rcParamsDefault["legend.frameon"]
+    assert plt.rcParams["figure.facecolor"] == "#292625"
+
+
+def test_default_schemes_do_not_force_large_fonts():
+    """The default-* schemes leave tick/legend/label font sizes at defaults.
+
+    The v2 scripts' 32pt fonts were tuned for 20x20 inch canvases and swamp
+    the 10x8 inch charts (legends covering data, colliding tick labels).
+    """
+    import matplotlib as mpl
+
+    for scheme in ("default-light", "default-dark"):
+        plotting.setup_mpl(color_scheme=scheme, mpl_timedelta_support=False)
+        for key in ("xtick.labelsize", "ytick.labelsize", "legend.fontsize", "axes.labelsize"):
+            assert plt.rcParams[key] == mpl.rcParamsDefault[key], f"{scheme} forces {key}"

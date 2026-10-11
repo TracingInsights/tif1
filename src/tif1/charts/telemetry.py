@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 from scipy.spatial import ConvexHull
 
 from . import _acceleration, _common
@@ -58,7 +59,7 @@ def plot_speed_traces(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -114,7 +115,7 @@ def plot_speed_traces(
     ax.set_xlabel("Distance (m)", fontsize=12)
     ax.set_ylabel("Speed (km/h)", fontsize=12)
     ax.legend(fontsize=11)
-    ax.grid(color="w", which="major", axis="both", alpha=0.3)
+    ax.grid(color=_common.foreground_color(), which="major", axis="both", alpha=0.3)
     fig.suptitle(
         f"Fastest Lap Speed Comparison\n{sess.event['EventName']} {sess.event.year} {sess.name}",
         fontsize=14,
@@ -143,7 +144,7 @@ def plot_annotated_speed_trace(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -203,7 +204,7 @@ def plot_annotated_speed_trace(
     ax.set_xlabel("Distance (m)", fontsize=12)
     ax.set_ylabel("Speed (km/h)", fontsize=12)
     ax.legend(fontsize=11)
-    ax.grid(color="w", which="major", axis="both", alpha=0.3)
+    ax.grid(color=_common.foreground_color(), which="major", axis="both", alpha=0.3)
     ax.set_ylim(v_min - 40, v_max + 20)
     fig.suptitle(
         f"Speed Trace with Corner Annotations\n{sess.event['EventName']} {sess.event.year} {sess.name}",
@@ -326,27 +327,39 @@ def plot_telemetry_comparison(
     fig, ax = plt.subplots(
         4, figsize=figsize if figsize is not None else _COMPARISON_FIGSIZE, sharex=True
     )
+    zero_line_color = _common.foreground_color()
 
     ax[0].plot(tel_d1["Distance"], tel_d1["Speed"], label=driver_1, color=color_d1, linewidth=2)
     ax[0].plot(tel_d2["Distance"], tel_d2["Speed"], label=driver_2, color=color_d2, linewidth=2)
     ax[0].set_ylabel("Speed (km/h)", fontsize=14)
     ax[0].legend(loc="lower right", fontsize=12)
-    ax[0].text(distance_min + 50, 280, speed_text, fontsize=12, color="lime")
+    # A left-aligned panel title rather than text at a fixed 280 km/h data
+    # point: it can never sit on top of the traces, whatever speeds the
+    # window covers, and the accent color contrasts with both the dark and
+    # the light theme backgrounds.
+    ax[0].set_title(speed_text, loc="left", fontsize=12, color=_common.accent_color())
     ax[0].grid(True, alpha=0.3)
 
     ax[1].plot(tel_d1["Distance"], tel_d1["LongAcc"], label=driver_1, color=color_d1, linewidth=2)
     ax[1].plot(tel_d2["Distance"], tel_d2["LongAcc"], label=driver_2, color=color_d2, linewidth=2)
     ax[1].set_ylabel("Long. Acc (g)", fontsize=14)
-    ax[1].axhline(0, color="white", linestyle="--", alpha=0.5)
+    ax[1].axhline(0, color=zero_line_color, linestyle="--", alpha=0.5)
     ax[1].legend(loc="lower right", fontsize=12)
     ax[1].grid(True, alpha=0.3)
 
     ax[2].plot(tel_d1["Distance"], tel_d1["LatAcc"], label=driver_1, color=color_d1, linewidth=2)
     ax[2].plot(tel_d2["Distance"], tel_d2["LatAcc"], label=driver_2, color=color_d2, linewidth=2)
     ax[2].set_ylabel("Lat. Acc (g)", fontsize=14)
-    ax[2].axhline(0, color="white", linestyle="--", alpha=0.5)
+    ax[2].axhline(0, color=zero_line_color, linestyle="--", alpha=0.5)
     ax[2].legend(loc="lower right", fontsize=12)
     ax[2].grid(True, alpha=0.3)
+
+    # Stacked panels share their horizontal edges: the top tick label of one
+    # panel and the bottom tick label of the panel above land on the same
+    # line and overlap. Dropping the outermost tick on each line panel keeps
+    # every tick label readable without widening the gaps between panels.
+    for panel in ax[:3]:
+        panel.yaxis.set_major_locator(MaxNLocator(nbins="auto", prune="both"))
 
     for _driver, actions, y_pos in [(driver_1, actions_d1, 0), (driver_2, actions_d2, 1)]:
         previous_end = 0
@@ -472,8 +485,9 @@ def plot_gg_diagram(
         pad=20,
     )
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.axhline(0, color="white", linestyle="-", alpha=0.5, linewidth=0.8)
-    ax.axvline(0, color="white", linestyle="-", alpha=0.5, linewidth=0.8)
+    zero_line_color = _common.foreground_color()
+    ax.axhline(0, color=zero_line_color, linestyle="-", alpha=0.5, linewidth=0.8)
+    ax.axvline(0, color=zero_line_color, linestyle="-", alpha=0.5, linewidth=0.8)
     ax.set_aspect("equal")
     ax.legend(loc="lower right", fontsize=12)
 
