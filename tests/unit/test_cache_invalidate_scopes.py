@@ -45,8 +45,31 @@ def test_invalidate_telemetry_drops_both_frame_tables_and_keeps_json(tmp_path) -
     cache.set("2024/GP/Race/drivers.json", {"drivers": []})
     cache.invalidate("telemetry")
     assert {_count(cache, t) for t in _FRAME_TABLES.values()} == {0}
-    assert cache.get("2024/GP/Race/drivers.json") == {"drivers": []}
+    # The JSON row must survive in SQLite, not just in the memory tier.
+    assert _count(cache, "cache") == 1
     cache.close()
+    reopened = Cache(tmp_path)
+    assert reopened.get("2024/GP/Race/drivers.json") == {"drivers": []}
+    reopened.close()
+
+
+def test_set_removes_persisted_verdict_before_map_is_loaded(tmp_path) -> None:
+    # Record a verdict in one process, then in a fresh process write the
+    # payload before anything has loaded the verdict map.
+    key = "2024/GP/Race/weather.json"
+    first = Cache(tmp_path)
+    first.record_missing(key)
+    first.close()
+
+    second = Cache(tmp_path)
+    assert second._missing_payloads is None  # map not loaded yet
+    second.set(key, {"ok": True})
+    assert not second.is_known_missing(key)
+    second.close()
+
+    third = Cache(tmp_path)
+    assert not third.is_known_missing(key)
+    third.close()
 
 
 def test_invalidate_memory_keeps_persisted_negative_verdicts(tmp_path) -> None:

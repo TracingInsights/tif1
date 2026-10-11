@@ -914,12 +914,10 @@ class Cache:
             # Update memory cache first (fast operation, <1ms)
             self._memory_cache.set(key, blob)
             # The payload exists: drop any stale everywhere-missing verdict.
-            # The SQLite row is removed too, but only when a verdict was
-            # actually loaded, so the hot path never pays for the extra write.
-            stale_verdict = (
-                self._missing_payloads is not None
-                and self._missing_payloads.pop(key, None) is not None
-            )
+            # The verdict map loads once per process (one SELECT) and the
+            # SQLite row is deleted only when a verdict was present, so the
+            # hot path pays a dict pop and nothing more.
+            stale_verdict = self._load_missing_payloads().pop(key, None) is not None
 
             # Then update SQLite (slower operation)
             with self._sqlite_lock:

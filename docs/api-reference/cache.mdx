@@ -1284,6 +1284,10 @@ cache.invalidate("json")
 
 `invalidate()` has no per-session scope. A per-session purge needs raw SQL and must cover the derived tables too. Otherwise `telemetry_frames`, `telemetry_frames_pl`, and `missing_payloads` keep stale rows for the session.
 
+<Warning>
+Run this only when no `Cache` writer is active in the process. The singleton batches writes and commits every `cache_commit_interval` operations, so a second connection can hit `database is locked` while a batch is open. Call `tif1.get_cache().close()` first in a maintenance script, or run the purge from a separate process.
+</Warning>
+
 ```python
 import sqlite3
 import tif1
