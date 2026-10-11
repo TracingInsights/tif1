@@ -481,7 +481,8 @@ Instead of programmatic configuration, define CDN sources in `~/.tif1rc`:
 export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights,https://backup.cdn.example.com/f1"
 
 # Enable minification
-export TIF1_CDN_USE_MINIFICATION=true
+# cdn_use_minification has no environment variable; set it in code or .tif1rc:
+# python -c 'import tif1; tif1.get_config().set("cdn_use_minification", True)'
 
 # Run your application
 python my_f1_app.py
@@ -670,7 +671,7 @@ import os
 
 # Set CDN sources before importing tif1
 os.environ["TIF1_CDNS"] = "https://cdn.jsdelivr.net/gh/TracingInsights,https://backup.cdn.com/f1"
-os.environ["TIF1_CDN_USE_MINIFICATION"] = "true"
+tif1.get_config().set("cdn_use_minification", True)  # no environment variable exists for this key
 
 # Now import and use
 from tif1.cdn import get_cdn_manager

@@ -72,19 +72,21 @@ graph TD
 - Handles backend selection (pandas vs polars)
 
 **Memory LRU Cache (`cache.py`)**
-- In-memory cache using Python's `functools.lru_cache`
-- Stores fully constructed Python objects (DataFrames, model instances)
-- Default capacity: 1024 items (configurable via `TIF1_CACHE_SIZE` env var)
+- In-memory `LRUCache` built on `collections.OrderedDict`
+- Stores raw JSON bytes plus a parsed-object front tier (not DataFrames)
+- DataFrames live in the per-session `SessionMemo` and the backend lap LRU (`get_backend_lap_cache`)
+- Default capacity: 1024 JSON payloads (`TIF1_MEMORY_CACHE_MAX_ITEMS`) and 2048 telemetry payloads (`TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS`)
 - Eviction policy: Least Recently Used (LRU)
 - Lifetime: Process duration only
 
 **SQLite Persistent Cache (`cache.py`)**
 - Disk-based cache using SQLite database
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
-- Stores compressed JSON representations
-- Schema: `(key TEXT PRIMARY KEY, value BLOB, timestamp REAL)`
-- Supports TTL-based expiration (default: 7 days)
-- Thread-safe with connection pooling
+- Stores JSON payloads (compressed when 4096 bytes or larger) and pickled telemetry frames
+- Tables: `cache`, `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `missing_payloads`
+- No expiry: entries persist until `clear()` or `invalidate()`
+- Only negative "missing on every CDN" verdicts expire, after 7 days
+- Thread-safe: one shared connection guarded by a lock, WAL journal mode
 
 **CDN Manager (`cdn.py`)**
 - Manages multiple CDN sources with automatic fallback
@@ -175,7 +177,7 @@ telemetry = fastest_lap.get_telemetry()  # Triggers telemetry loading
 1. Property access triggers `__getattribute__` or explicit getter method
 2. Session checks if data is already loaded (`self._laps is not None`)
 3. If not loaded, calls internal `_load_laps()` method
-4. `_load_laps()` constructs cache key: `f"laps_{year}_{gp}_{session_type}"`
+4. The loader builds the backend lap LRU key `f"{year}_{gp}_{session}_laps"` and the payload key `f"{year}/{gp}/{session}/session_laptimes.json"`
 5. Passes control to cache layer
 
 **Performance Characteristics:**
@@ -206,31 +208,31 @@ tif1 implements a two-tier caching system that reduces load times for frequently
 
 #### Tier 1: Memory LRU Cache (L1 Cache)
 
-The memory cache is the fastest tier, storing fully constructed Python objects in RAM.
+The memory cache is the fastest tier, holding raw JSON payloads and their parsed objects in RAM.
 
 **Technical Specifications:**
-- Implementation: Python `functools.lru_cache` with custom wrapper
+- Implementation: `LRUCache` built on `collections.OrderedDict` (`cache.py`)
 - Storage: In-process memory (heap)
-- Data format: Native Python objects (DataFrames, model instances)
-- Capacity: 1024 items (default), configurable via `TIF1_CACHE_SIZE`
-- Eviction: Least Recently Used (LRU) algorithm
+- Data format: orjson bytes, plus a parsed-dict front tier that skips re-parsing on repeat hits
+- DataFrames: held only by the per-session `SessionMemo`, the backend lap LRU, and the SQLite frame tier
+- Capacity: 1024 JSON payloads (`TIF1_MEMORY_CACHE_MAX_ITEMS`), 2048 telemetry payloads (`TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS`)
+- Eviction: Least Recently Used (LRU) algorithm, maintained through writes only
 - Access time: < 1ms (typically 0.1-0.5ms)
-- Thread safety: GIL-protected (safe for multi-threaded access)
+- Thread safety: `LRUCache.set` takes a lock; hot-path reads are lock-free
 - Persistence: None (cleared on process exit)
 
 **Cache Key Structure:**
 ```python
-# Lap data key
-key = f"laps_{year}_{gp_name}_{session_type}_{backend}"
-# Example: "laps_2025_monaco_race_pandas"
+# JSON tier: "{year}/{gp}/{session}/{path}" (payload_loader.PayloadLoader.cache_key)
+key = f"{year}/{gp}/{session}/session_laptimes.json"
+# Other paths: drivers.json, rcm.json, weather.json, corners.json,
+#              f"{driver}/laptimes.json", f"{driver}/{lap}_tel.json"
 
-# Telemetry key
-key = f"telemetry_{year}_{gp_name}_{session_type}_{driver}_{backend}"
-# Example: "telemetry_2025_monaco_race_VER_pandas"
+# Telemetry tier: tuple key
+key = (year, gp, session, driver, lap)
 
-# Weather key
-key = f"weather_{year}_{gp_name}_{session_type}"
-# Example: "weather_2025_monaco_race"
+# Backend lap LRU (get_backend_lap_cache): assembled lap DataFrames
+key = f"{year}_{gp}_{session}_laps"
 ```
 
 **Memory Usage Estimation:**
@@ -264,29 +266,48 @@ for analysis in range(10):
 The SQLite cache provides persistent storage that survives process restarts.
 
 **Technical Specifications:**
-- Implementation: SQLite3 with custom connection pooling
-- Storage: Disk-based database file
+- Implementation: `sqlite3` with one shared connection (`check_same_thread=False`)
+- Storage: Disk-based database file (`cache.sqlite`)
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
 - Data format: Compressed JSON (zstd level 1; legacy zlib rows stay readable). Python 3.14+ uses the standard-library `compression.zstd` binding, 3.11-3.13 use the `zstandard` package; both write identical frames
 - Capacity: Unlimited (constrained by disk space)
 - Access time: 10-50ms (depends on disk I/O)
-- Thread safety: Connection pooling with thread-local storage
-- Persistence: Permanent (until manually cleared or TTL expires)
+- Thread safety: every SQLite call runs under `Cache._sqlite_lock`
+- Write batching: writes commit every `cache_commit_interval` (default 100) operations
+- Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, 64 MB page cache
+- Persistence: Permanent (until `clear()` or `invalidate()`; nothing expires)
 
 **Database Schema:**
 ```sql
-CREATE TABLE IF NOT EXISTS cache (
-    key TEXT PRIMARY KEY,
-    value BLOB NOT NULL,           -- Compressed JSON
-    timestamp REAL NOT NULL,       -- Unix timestamp
-    size INTEGER,                  -- Uncompressed size in bytes
-    access_count INTEGER DEFAULT 0,
-    last_access REAL
+-- Session JSON payloads, keyed "{year}/{gp}/{session}/{path}".
+-- `data` holds plain JSON text, or a compressed blob for rows >= 4096 bytes.
+CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT);
+
+-- Per-lap telemetry payloads (same encoding as `cache.data`).
+CREATE TABLE IF NOT EXISTS telemetry_cache (
+    year INTEGER, gp TEXT, session TEXT, driver TEXT, lap INTEGER,
+    data TEXT,
+    PRIMARY KEY (year, gp, session, driver, lap)
 );
 
-CREATE INDEX IF NOT EXISTS idx_timestamp ON cache(timestamp);
-CREATE INDEX IF NOT EXISTS idx_last_access ON cache(last_access);
+-- Materialized telemetry DataFrames (pickle protocol 5, lz4-compressed).
+-- `telemetry_frames` holds pandas frames; `telemetry_frames_pl` holds polars frames.
+CREATE TABLE IF NOT EXISTS telemetry_frames (
+    year INTEGER, gp TEXT, session TEXT, driver TEXT, lap INTEGER,
+    frame BLOB,
+    PRIMARY KEY (year, gp, session, driver, lap)
+);
+CREATE TABLE IF NOT EXISTS telemetry_frames_pl (
+    year INTEGER, gp TEXT, session TEXT, driver TEXT, lap INTEGER,
+    frame BLOB,
+    PRIMARY KEY (year, gp, session, driver, lap)
+);
+
+-- Negative tier: payloads that returned 4xx on every CDN.
+CREATE TABLE IF NOT EXISTS missing_payloads (key TEXT PRIMARY KEY, recorded_at REAL);
 ```
+
+The primary keys are the only indexes; there are no secondary indexes.
 
 **Compression Strategy:**
 ```python
@@ -301,11 +322,15 @@ except ImportError:
 
 # Serialization (write to cache)
 json_bytes = orjson.dumps(data)
-compressed = zstd.compress(json_bytes, 1)
+if len(json_bytes) >= 4096:
+    stored = zstd.compress(json_bytes, 1)  # compressed BLOB row
+else:
+    stored = json_bytes.decode("utf-8")   # small rows stay plain TEXT
 # Typical compression ratio: ~4:1 (better than zlib-3, ~4.5x faster)
+# zlib level 3 is the fallback only when no zstd binding imports.
 
 # Deserialization (read from cache)
-json_bytes = zstd.decompress(compressed)
+json_bytes = zstd.decompress(stored) if isinstance(stored, bytes) else stored
 data = orjson.loads(json_bytes)
 ```
 
@@ -315,36 +340,43 @@ zstd is the fallback when lz4 is unavailable, for example on Python 3.15 where
 lz4 publishes no wheels yet. Each row carries its codec's magic prefix, so
 both kinds of row stay readable regardless of which codec wrote them.
 
-**TTL (Time-To-Live) Management:**
+**Expiry:**
+
+Cached payloads and frames never expire. Session data is immutable once published, so a
+cached row stays valid until `cache.clear()` or `cache.invalidate(scope)` removes it.
+
+The only time-to-live applies to the negative tier. When every CDN returns a 4xx for a
+path, tif1 records the key in `missing_payloads`. Later lookups skip the network for that
+key until the verdict is older than `TIF1_MISSING_PAYLOADS_TTL_DAYS` (default 7.0). A
+successful write for the same key drops the verdict immediately.
+
 ```python
-# Default TTL: 7 days
-# Configurable via TIF1_CACHE_TTL environment variable
-
-# Check if cache entry is expired
+# Negative-tier TTL (the only TTL in the cache)
+# Configurable via TIF1_MISSING_PAYLOADS_TTL_DAYS (default: 7.0 days)
 import time
-current_time = time.time()
-entry_age = current_time - entry_timestamp
-is_expired = entry_age > (7 * 24 * 60 * 60)  # 7 days in seconds
-
-# Automatic cleanup on cache access
-# Expired entries are removed lazily during lookups
+cutoff = time.time() - 7.0 * 86400
+# Verdicts with recorded_at <= cutoff are ignored on load
 ```
 
-**Cache Statistics:**
+**Cache Inspection:**
 ```python
-cache = tif1.get_cache()
+cache = tif1.get_cache()  # tif1.cache.Cache
 
 # Get cache information
 print(f"Cache directory: {cache.cache_dir}")
-print(f"Cache size: {cache.get_size_mb():.2f} MB")
-print(f"Entry count: {cache.get_entry_count()}")
-print(f"Hit rate: {cache.get_hit_rate():.2%}")
+size_mb = cache.db_path.stat().st_size / (1024 * 1024)
+print(f"Cache size: {size_mb:.2f} MB")
+print(f"Monaco cached: {cache.has_session_data(2025, 'Monaco', 'Race')}")
 
 # Clear cache
-cache.clear()  # Remove all entries
-cache.clear_expired()  # Remove only expired entries
-cache.clear_before(date)  # Remove entries older than date
+cache.clear()                   # Remove every tier (memory + SQLite)
+cache.invalidate("memory")      # Drop the in-memory LRU tiers only
+cache.invalidate("json")        # Drop session JSON payloads (memory + SQLite)
+cache.invalidate("telemetry")   # Drop telemetry payloads and frames
 ```
+
+`tif1.get_cache()` returns the `tif1.cache.Cache` instance. `tif1.Cache` is the separate
+FastF1-compatibility helper in `fastf1_compat.py`.
 
 #### Cache Lookup Flow
 
@@ -364,11 +396,13 @@ def get_data(key):
     if sqlite_data is not None:
         logger.debug(f"SQLite cache hit: {key}")
 
-        # Deserialize and reconstruct DataFrame
-        data = deserialize(sqlite_data)
+        # Decompress (if a compressed row) and parse JSON with orjson
+        json_bytes = decode_sqlite_value(sqlite_data)
+        data = orjson.loads(json_bytes)
 
-        # Promote to memory cache (L1)
-        memory_cache[key] = data
+        # Promote to memory cache (L1): raw bytes plus parsed object
+        memory_cache[key] = json_bytes
+        parsed_cache[key] = data
 
         return data
 
@@ -377,9 +411,10 @@ def get_data(key):
     # Step 3: Fetch from CDN (cache miss)
     data = fetch_from_cdn(key)
 
-    # Step 4: Save to both cache tiers
-    sqlite_cache.set(key, serialize(data))
-    memory_cache[key] = data
+    # Step 4: Save to both cache tiers (memory first, then SQLite)
+    json_bytes = orjson.dumps(data)
+    memory_cache[key] = json_bytes
+    sqlite_cache.set(key, encode_sqlite_value(json_bytes))
 
     return data
 ```
@@ -392,7 +427,7 @@ def get_data(key):
 | Throughput | 1000+ req/s | 50-100 req/s | 0.2-0.5 req/s |
 | Persistence | No | Yes | N/A |
 | Capacity | Limited (RAM) | Unlimited (disk) | N/A |
-| Thread Safety | Yes (GIL) | Yes (pooling) | N/A |
+| Thread Safety | Yes (lock-free reads, locked writes) | Yes (shared connection + lock) | N/A |
 
 **Cache Warming Strategies:**
 
@@ -431,16 +466,18 @@ def warm_cache_races_only(year):
 **Cache Invalidation:**
 
 ```python
-# Manual invalidation
+# Manual invalidation by scope (there is no per-key invalidation)
 cache = tif1.get_cache()
-cache.invalidate(key)  # Remove specific entry
+cache.invalidate("memory")     # In-memory LRU tiers only; SQLite persists
+cache.invalidate("json")       # Session JSON payloads, memory + SQLite
+cache.invalidate("telemetry")  # Telemetry payloads and frames, memory + SQLite
+cache.invalidate("all")        # Everything (same as cache.clear())
 
-# Automatic invalidation (TTL-based)
-# Entries older than 7 days are automatically removed
+# No automatic invalidation: cached payloads never expire
 
-# Force refresh (bypass cache)
-session = tif1.get_session(2025, "Monaco", "Race", force_refresh=True)
-# Note: force_refresh not currently implemented, but planned
+# Bypass the cache for a process (no per-call force_refresh flag exists)
+import os
+os.environ["TIF1_ENABLE_CACHE"] = "false"
 ```
 
 ### Stage 3: CDN Fetching with Fallback Strategy
@@ -1752,134 +1789,87 @@ The final stage saves processed data to both cache tiers and returns the DataFra
 
 #### Cache Storage Strategy
 
-**Dual-Tier Write:**
+**Dual-Tier Write (memory first, then SQLite):**
 ```python
 def save_to_cache(key, data):
-    """Save data to both cache tiers."""
+    """Save a JSON payload to both cache tiers (mirrors Cache._store_json_blob)."""
 
-    # Step 1: Save to SQLite (persistent)
-    try:
-        sqlite_cache.set(key, data)
-        logger.debug(f"Saved to SQLite cache: {key}")
-    except Exception as e:
-        logger.error(f"Failed to save to SQLite: {e}")
-        # Continue even if SQLite save fails
+    blob = orjson.dumps(data)
 
-    # Step 2: Save to memory (fast access)
+    # Step 1: Memory tier first (fast, < 1ms); stores the raw bytes
+    memory_cache.set(key, blob)
+
+    # Step 2: SQLite tier under the shared lock; compressed when >= 4096 bytes
     try:
-        memory_cache[key] = data
-        logger.debug(f"Saved to memory cache: {key}")
-    except Exception as e:
-        logger.error(f"Failed to save to memory: {e}")
+        with sqlite_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO cache VALUES (?, ?)",
+                (key, encode_sqlite_value(blob)),
+            )
+            pending_writes += 1
+            if pending_writes >= 100:  # cache_commit_interval
+                conn.commit()
+    except sqlite3.Error:
+        logger.debug(f"Cache write skipped: {key}")  # degrade to a cache miss later
 
     return data
 ```
 
-**Serialization for SQLite:**
+A failed SQLite write is logged at DEBUG level and skipped; it never raises.
+
+**Serialization for SQLite (payload tiers):**
+
+The payload tiers store the CDN JSON, not DataFrames. DataFrames are rebuilt from the
+payload on read, or served from the frame tier when one is materialized.
+
 ```python
 import orjson
 import zlib
 
-def serialize_for_cache(df, backend="pandas"):
-    """Serialize DataFrame for cache storage."""
+COMPRESS_MIN_BYTES = 4096
 
-    if backend == "pandas":
-        # Convert DataFrame to dict (orient='split' for efficiency)
-        data_dict = {
-            "data": df.to_dict(orient="split"),
-            "backend": "pandas",
-            "version": "1.0",
-            "timestamp": time.time()
-        }
-    elif backend == "polars":
-        # Convert to dict
-        data_dict = {
-            "data": df.to_dict(as_series=False),
-            "backend": "polars",
-            "version": "1.0",
-            "timestamp": time.time()
-        }
-
-    # Serialize to JSON
-    json_bytes = orjson.dumps(data_dict)
-
-    # Compress
-    compressed = zlib.compress(json_bytes, level=6)
-
-    logger.debug(f"Serialization: {len(json_bytes)} bytes → {len(compressed)} bytes "
-                f"({len(compressed)/len(json_bytes)*100:.1f}% of original)")
-
-    return compressed
+def encode_sqlite_value(blob: bytes) -> bytes | str:
+    """Encode an orjson payload for the `cache`/`telemetry_cache` tables."""
+    if len(blob) >= COMPRESS_MIN_BYTES:
+        if zstd_compress is not None:
+            return zstd_compress(blob)          # zstd level 1 (preferred)
+        return zlib.compress(blob, 3)           # fallback: no zstd binding importable
+    return blob.decode("utf-8")                 # small rows stay plain TEXT
 ```
 
-**Deserialization from SQLite:**
+**Deserialization from SQLite (payload tiers):**
 ```python
-def deserialize_from_cache(compressed_data):
-    """Deserialize DataFrame from cache storage."""
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
-    # Decompress
-    json_bytes = zlib.decompress(compressed_data)
+def decode_sqlite_value(stored: bytes | str) -> bytes | str:
+    """Invert encode_sqlite_value; both zstd and legacy zlib rows stay readable."""
+    if isinstance(stored, bytes):
+        if stored[:4] == ZSTD_MAGIC:
+            return zstd_decompress(stored)
+        return zlib.decompress(stored)          # legacy zlib row
+    return stored                               # plain TEXT row
 
-    # Parse JSON
-    data_dict = orjson.loads(json_bytes)
-
-    # Reconstruct DataFrame
-    backend = data_dict["backend"]
-
-    if backend == "pandas":
-        import pandas as pd
-        df = pd.DataFrame(**data_dict["data"])
-    elif backend == "polars":
-        import polars as pl
-        df = pl.DataFrame(data_dict["data"])
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
-
-    return df
+data = orjson.loads(decode_sqlite_value(stored))
 ```
 
-#### Cache Metadata Tracking
+A corrupt compressed row raises `ValueError` inside the cache, which the read path logs
+and turns into a cache miss.
 
+**Serialization for SQLite (frame tier):**
 ```python
-class CacheEntry:
-    """Metadata for cache entry."""
+import pickle
+from lz4 import frame as lz4_frame
 
-    def __init__(self, key, data, metadata=None):
-        self.key = key
-        self.data = data
-        self.created_at = time.time()
-        self.accessed_at = time.time()
-        self.access_count = 0
-        self.size_bytes = len(serialize_for_cache(data))
-        self.metadata = metadata or {}
-
-    def access(self):
-        """Record cache access."""
-        self.accessed_at = time.time()
-        self.access_count += 1
-
-    def is_expired(self, ttl_seconds=604800):  # 7 days default
-        """Check if entry is expired."""
-        age = time.time() - self.created_at
-        return age > ttl_seconds
-
-    def to_dict(self):
-        """Convert to dictionary for storage."""
-        return {
-            "key": self.key,
-            "created_at": self.created_at,
-            "accessed_at": self.accessed_at,
-            "access_count": self.access_count,
-            "size_bytes": self.size_bytes,
-            "metadata": self.metadata
-        }
+def encode_frame(df) -> bytes:
+    """Encode a materialized telemetry DataFrame for `telemetry_frames`."""
+    blob = pickle.dumps(df, protocol=5)
+    return lz4_frame.compress(blob, compression_level=0)  # zstd-1 when lz4 is missing
 ```
 
 #### Cache Eviction Policies
 
 **LRU Eviction (Memory Cache):**
 ```python
-from functools import lru_cache
 from collections import OrderedDict
 
 class LRUCache:
@@ -1917,80 +1907,41 @@ class LRUCache:
         self.cache.clear()
 ```
 
-**TTL Eviction (SQLite Cache):**
+**No Eviction (SQLite Cache):**
+
+The SQLite tier has no time-based eviction and never runs `VACUUM`. Rows stay until a
+caller removes them by scope:
+
 ```python
-def cleanup_expired_entries(cache, ttl_seconds=604800):
-    """Remove expired entries from SQLite cache."""
-
-    current_time = time.time()
-    cutoff_time = current_time - ttl_seconds
-
-    # SQL query to delete old entries
-    query = "DELETE FROM cache WHERE timestamp < ?"
-
-    cursor = cache.conn.execute(query, (cutoff_time,))
-    deleted_count = cursor.rowcount
-
-    logger.info(f"Cleaned up {deleted_count} expired cache entries")
-
-    # Vacuum database to reclaim space
-    cache.conn.execute("VACUUM")
-
-    return deleted_count
+cache = tif1.get_cache()
+cache.invalidate("json")        # DELETE FROM cache (+ missing_payloads)
+cache.invalidate("telemetry")   # DELETE FROM telemetry_cache, telemetry_frames
+cache.clear()                   # Every table
 ```
+
+The negative tier is the one exception: `missing_payloads` verdicts older than
+`TIF1_MISSING_PAYLOADS_TTL_DAYS` (default 7.0) are filtered out on load.
 
 #### Cache Statistics and Monitoring
 
+The cache keeps no hit or miss counters and exposes no statistics API. Measure cache effectiveness by timing a cold load against a warm one:
+
 ```python
-class CacheStatistics:
-    """Track cache performance statistics."""
+import time
 
-    def __init__(self):
-        self.hits = 0
-        self.misses = 0
-        self.evictions = 0
-        self.errors = 0
-        self.total_bytes_read = 0
-        self.total_bytes_written = 0
+import tif1
 
-    def record_hit(self, size_bytes=0):
-        """Record cache hit."""
-        self.hits += 1
-        self.total_bytes_read += size_bytes
+cache = tif1.get_cache()
+cache.invalidate("memory")  # keep SQLite, drop the in-memory tiers
 
-    def record_miss(self):
-        """Record cache miss."""
-        self.misses += 1
+t0 = time.perf_counter()
+laps = tif1.get_session(2024, "Monaco", "Race").laps  # served from SQLite
+print(f"warm load: {time.perf_counter() - t0:.3f}s")
 
-    def record_eviction(self):
-        """Record cache eviction."""
-        self.evictions += 1
-
-    def record_error(self):
-        """Record cache error."""
-        self.errors += 1
-
-    def get_hit_rate(self):
-        """Calculate cache hit rate."""
-        total = self.hits + self.misses
-        return self.hits / total if total > 0 else 0.0
-
-    def get_stats(self):
-        """Get all statistics."""
-        return {
-            "hits": self.hits,
-            "misses": self.misses,
-            "hit_rate": self.get_hit_rate(),
-            "evictions": self.evictions,
-            "errors": self.errors,
-            "bytes_read": self.total_bytes_read,
-            "bytes_written": self.total_bytes_written,
-        }
-
-    def reset(self):
-        """Reset all statistics."""
-        self.__init__()
+print(f"database size: {cache.db_path.stat().st_size / 1e6:.1f} MB")
 ```
+
+Set `TIF1_LOG_LEVEL=DEBUG` to see which tier answered each lookup.
 
 #### Final Data Return
 
@@ -2721,11 +2672,12 @@ def warm_cache_intelligent(year):
 ```python
 import os
 
-# Increase memory cache size for better hit rate
-os.environ["TIF1_CACHE_SIZE"] = "2048"  # Default: 1024
+# Increase memory cache capacity for a better hit rate
+os.environ["TIF1_MEMORY_CACHE_MAX_ITEMS"] = "2048"            # Default: 1024
+os.environ["TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS"] = "4096"  # Default: 2048
 
-# Increase SQLite cache TTL
-os.environ["TIF1_CACHE_TTL"] = "1209600"  # 14 days (default: 7 days)
+# Cached payloads never expire; only "missing on every CDN" verdicts have a TTL
+os.environ["TIF1_MISSING_PAYLOADS_TTL_DAYS"] = "14"  # Default: 7.0
 
 # Custom cache directory (e.g., SSD for faster access)
 os.environ["TIF1_CACHE_DIR"] = "/mnt/fast-ssd/tif1-cache"
@@ -2777,49 +2729,51 @@ tif1 implements an error handling system with a hierarchical exception structure
 
 ### Exception Hierarchy
 
+`src/tif1/exceptions.py` defines eight exception classes. Every one is exported from `tif1`:
+
 ```python
 TIF1Error (base exception)
 ├── NetworkError
-│   ├── ConnectionError
-│   ├── TimeoutError
-│   └── CDNError
 ├── DataNotFoundError
 │   ├── DriverNotFoundError
-│   ├── LapNotFoundError
-│   ├── SessionNotFoundError
-│   └── EventNotFoundError
+│   └── LapNotFoundError
 ├── InvalidDataError
-│   ├── JSONParseError
-│   ├── ValidationError
-│   └── SchemaError
 ├── CacheError
-│   ├── CacheReadError
-│   ├── CacheWriteError
-│   └── CacheCorruptionError
-├── SessionNotLoadedError
-└── ConfigurationError
+└── SessionNotLoadedError
 ```
+
+Every exception carries `message` (the formatted text) and `context` (a dict of keyword arguments passed at raise time). The constructors accept extra `**context` keys, so handlers should read `e.context.get(...)` rather than rely on attributes.
+
+| Exception | Context keys set by the constructor |
+|-----------|-------------------------------------|
+| `NetworkError` | `url`, `status_code` |
+| `DataNotFoundError` | `year`, `event`, `session` |
+| `DriverNotFoundError` | `driver` |
+| `LapNotFoundError` | `lap_number`, `driver` |
+| `InvalidDataError` | `reason` |
+| `SessionNotLoadedError` | `attribute` |
+| `CacheError` | none (never raised by `tif1.cache`; see below) |
 
 ### Network Errors
 
-Network errors occur during CDN fetching and HTTP operations.
-
-#### NetworkError (Base)
+`NetworkError` is raised when every CDN source fails or when `offline_mode` is on and the cache misses. The CDN fallback loop in `cdn.py` logs each failed source at `WARNING` before raising.
 
 ```python
+import time
+
+import tif1
+
 try:
     laps = session.laps
 except tif1.NetworkError as e:
-    # All CDN sources failed
-    print(f"Network error: {e}")
-    print(f"URL: {e.url}")
-    print(f"Attempts: {e.attempts}")
-    print(f"Last error: {e.last_error}")
+    print(f"Network error: {e.message}")
+    print(f"URL: {e.context.get('url')}")
+    print(f"Status: {e.context.get('status_code')}")
 
-    # Retry with exponential backoff
+    # Simple retry with backoff; tif1 already retried each CDN per TIF1_MAX_RETRIES
     for attempt in range(3):
         try:
-            time.sleep(2 ** attempt)  # 1s, 2s, 4s
+            time.sleep(2**attempt)
             laps = session.laps
             break
         except tif1.NetworkError:
@@ -2827,206 +2781,84 @@ except tif1.NetworkError as e:
                 raise
 ```
 
-#### ConnectionError
-
-```python
-try:
-    laps = session.laps
-except tif1.ConnectionError as e:
-    # Failed to establish connection
-    print(f"Connection failed: {e}")
-    print(f"Host: {e.host}")
-    print(f"Port: {e.port}")
-
-    # Check network connectivity
-    import socket
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
-        print("Internet connection OK")
-    except OSError:
-        print("No internet connection")
-```
-
-#### TimeoutError
-
-```python
-try:
-    laps = session.laps
-except tif1.TimeoutError as e:
-    # Request timed out
-    print(f"Request timed out: {e}")
-    print(f"Timeout: {e.timeout}s")
-    print(f"Elapsed: {e.elapsed}s")
-
-    # Increase timeout
-    import os
-    os.environ["TIF1_TIMEOUT"] = "60"  # Increase to 60s
-
-    # Retry
-    laps = session.laps
-```
-
-#### CDNError
-
-```python
-try:
-    laps = session.laps
-except tif1.CDNError as e:
-    # CDN returned error status
-    print(f"CDN error: {e}")
-    print(f"Status code: {e.status_code}")
-    print(f"CDN: {e.cdn_name}")
-
-    # Handle specific status codes
-    if e.status_code == 404:
-        print("Data not found on CDN")
-    elif e.status_code == 429:
-        print("Rate limited - wait before retrying")
-        time.sleep(60)
-    elif e.status_code >= 500:
-        print("CDN server error - try again later")
-```
+Timeouts and connection failures surface as `NetworkError` too; raise `TIF1_TIMEOUT` or `TIF1_MAX_RETRIES` through the environment or `tif1.get_config().set(...)` when a slow link needs more headroom.
 
 ### Data Not Found Errors
 
-These errors occur when the requested data does not exist.
-
-#### DataNotFoundError (Base)
+`DataNotFoundError` means every CDN returned a 4xx for the payload, or the negative-verdict tier already knows it is missing.
 
 ```python
+import tif1
+
 try:
-    session = tif1.get_session(2025, "NonexistentGP", "Race")
+    session = tif1.get_session(2025, "Nonexistent Grand Prix", "Race")
+    laps = session.laps
 except tif1.DataNotFoundError as e:
-    print(f"Data not found: {e}")
-    print(f"Year: {e.year}")
-    print(f"Event: {e.event}")
-    print(f"Session: {e.session_type}")
-
-    # List available events
-    events = tif1.get_events(2025)
-    print(f"Available events: {events}")
+    print(f"Data not found: {e.message}")
+    print(e.context)  # {'year': 2025, 'event': ..., 'session': ...}
+    print(tif1.get_events(2025)["EventName"].tolist())
 ```
 
-#### DriverNotFoundError
+`DriverNotFoundError` and `LapNotFoundError` are subclasses, so one `except tif1.DataNotFoundError` handler covers all three.
 
 ```python
 try:
-    driver = session.get_driver("INVALID")
+    driver = session.get_driver("ZZZ")
 except tif1.DriverNotFoundError as e:
-    print(f"Driver not found: {e}")
-    print(f"Requested: {e.driver_code}")
-    print(f"Available: {e.available_drivers}")
+    print(f"Requested: {e.context['driver']}")
+    print(f"Available: {[d['driver'] for d in session.drivers]}")
 
-    # Fuzzy match
-    from difflib import get_close_matches
-    matches = get_close_matches(e.driver_code, e.available_drivers, n=3)
-    print(f"Did you mean: {matches}")
-```
-
-#### LapNotFoundError
-
-```python
 try:
     lap = driver.get_lap(999)
 except tif1.LapNotFoundError as e:
-    print(f"Lap not found: {e}")
-    print(f"Requested lap: {e.lap_number}")
-    print(f"Available laps: {e.min_lap}-{e.max_lap}")
-
-    # Get closest lap
-    closest_lap = min(e.max_lap, max(e.min_lap, e.lap_number))
-    lap = driver.get_lap(closest_lap)
+    print(f"Lap {e.context['lap_number']} not found for {e.context['driver']}")
 ```
 
 ### Invalid Data Errors
 
-These errors occur during data parsing and validation.
-
-#### InvalidDataError (Base)
+`InvalidDataError` is raised when a payload fails pydantic validation in `validation.py` or cannot be parsed. Validation failures always raise; there is no fallback to unvalidated data.
 
 ```python
 try:
     laps = session.laps
 except tif1.InvalidDataError as e:
-    print(f"Invalid data: {e}")
-    print(f"Error type: {e.error_type}")
-    print(f"Field: {e.field}")
-    print(f"Value: {e.value}")
-    print(f"Expected: {e.expected}")
-
-    # Log for debugging
-    logger.error(f"Invalid data encountered: {e.to_dict()}")
+    print(f"Invalid data: {e.context.get('reason')}")
+    print(e.context)  # any extra keys the raiser attached
 ```
 
-#### JSONParseError
+### Session Not Loaded Errors
 
-```python
-try:
-    laps = session.laps
-except tif1.JSONParseError as e:
-    print(f"JSON parsing failed: {e}")
-    print(f"Position: {e.position}")
-    print(f"Line: {e.line}")
-    print(f"Column: {e.column}")
-    print(f"Context: {e.context}")
-
-    # Save raw data for debugging
-    with open("invalid_data.json", "wb") as f:
-        f.write(e.raw_data)
-```
-
-#### ValidationError
-
-```python
-try:
-    laps = session.laps
-except tif1.ValidationError as e:
-    print(f"Validation failed: {e}")
-    print(f"Errors: {e.errors}")
-
-    # Detailed error information
-    for error in e.errors:
-        print(f"  Field: {error['field']}")
-        print(f"  Error: {error['message']}")
-        print(f"  Value: {error['value']}")
-```
+`SessionNotLoadedError` is defined and exported for FastF1-style code paths. tif1 sessions load lazily on attribute access, so the current code never raises it.
 
 ### Cache Errors
 
-These errors occur during cache operations.
+The cache never raises on read or write failures. `tif1.CacheError` exists in the
+hierarchy as a direct `TIF1Error` subclass with no subclasses of its own. `cache.py` does
+not raise it. tif1 logs a failed SQLite read, a corrupt compressed row, or a failed write.
+Each case degrades to a cache miss, so the loader fetches from the CDN instead.
 
-#### CacheError (Base)
-
-```python
-try:
-    cache = tif1.get_cache()
-    cache.clear()
-except tif1.CacheError as e:
-    print(f"Cache error: {e}")
-    print(f"Operation: {e.operation}")
-    print(f"Cache type: {e.cache_type}")
-
-    # Fallback: Disable cache
-    import os
-    os.environ["TIF1_CACHE_ENABLED"] = "false"
-```
-
-#### CacheCorruptionError
+#### Diagnosing cache problems
 
 ```python
-try:
-    laps = session.laps
-except tif1.CacheCorruptionError as e:
-    print(f"Cache corrupted: {e}")
-    print(f"Cache file: {e.cache_file}")
+import logging
+import os
 
-    # Clear corrupted cache
-    cache = tif1.get_cache()
-    cache.clear()
+# Surface cache warnings ("Cache read error for ...", "SQLite cache unavailable: ...")
+logging.getLogger("tif1.cache").setLevel(logging.WARNING)
 
-    # Retry
-    laps = session.laps
+laps = session.laps  # Works even when the cache is unavailable; it fetches instead
+
+# Recover from a damaged database: wipe every tier and reload
+cache = tif1.get_cache()
+cache.clear()
+laps = session.laps
+
+# Last resort: disable the cache for this process
+os.environ["TIF1_ENABLE_CACHE"] = "false"
 ```
+
+If SQLite cannot open `cache.sqlite` at startup, tif1 logs `SQLite cache unavailable`
+and runs with the in-memory tiers only.
 
 ### Error Recovery Strategies
 
@@ -3224,8 +3056,8 @@ tif1.setup_logging(
 **WARNING Level:**
 ```text
 2025-04-19 14:30:16 [WARNING] tif1.validation: Found 3 laps with inconsistent sector times
-2025-04-19 14:30:16 [WARNING] tif1.http: jsDelivr CDN failed, trying GitHub fallback
-2025-04-19 14:30:16 [WARNING] tif1.cache: Cache entry expired, re-fetching data
+2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN jsDelivr failed: HTTPError 503 (falling back to HuggingFace, then StaticDelivr)
+2025-04-19 14:30:16 [WARNING] tif1.cache: Cache read error for 2025/Monaco/Race/weather.json: Corrupt compressed cache entry
 ```
 
 **ERROR Level:**
@@ -3335,22 +3167,25 @@ print(monitor.get_report())
 ```python
 cache = tif1.get_cache()
 
-# Get cache information
+# Get cache information (Cache exposes no hit-rate or entry-count counters)
+db_path = cache.db_path
 stats = {
     "cache_dir": cache.cache_dir,
-    "cache_size_mb": cache.get_size_mb(),
-    "entry_count": cache.get_entry_count(),
-    "hit_rate": cache.get_hit_rate(),
-    "oldest_entry": cache.get_oldest_entry_age(),
-    "newest_entry": cache.get_newest_entry_age(),
+    "cache_size_mb": db_path.stat().st_size / (1024 * 1024),
+    "monaco_cached": cache.has_session_data(2025, "Monaco", "Race"),
 }
 
 print(f"Cache Statistics:")
 print(f"  Location: {stats['cache_dir']}")
 print(f"  Size: {stats['cache_size_mb']:.2f} MB")
-print(f"  Entries: {stats['entry_count']}")
-print(f"  Hit rate: {stats['hit_rate']:.1%}")
-print(f"  Oldest entry: {stats['oldest_entry']:.1f} days")
+print(f"  Monaco 2025 Race cached: {stats['monaco_cached']}")
+
+# Row counts need a direct query against the SQLite file
+import sqlite3
+with sqlite3.connect(db_path) as conn:
+    json_rows = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+    tel_rows = conn.execute("SELECT COUNT(*) FROM telemetry_cache").fetchone()[0]
+print(f"  Entries: {json_rows} JSON payloads, {tel_rows} telemetry payloads")
 ```
 
 #### Cache Performance Testing
@@ -3372,8 +3207,10 @@ def test_cache_performance():
     cold_time = time.time() - start
 
     # Test 2: Warm start (SQLite cache hit)
-    # Clear memory cache only
-    session._laps = None
+    # Clear the in-memory tiers only; SQLite persists. Use a fresh session
+    # so the per-session memo does not answer the request.
+    cache.invalidate("memory")
+    session = tif1.get_session(2025, "Monaco", "Race")
 
     start = time.time()
     laps = session.laps
@@ -3526,9 +3363,8 @@ class MonitoringDashboard:
         # Cache info
         cache = tif1.get_cache()
         cache_stats = {
-            "size_mb": cache.get_size_mb(),
-            "entries": cache.get_entry_count(),
-            "hit_rate": cache.get_hit_rate(),
+            "cache_dir": str(cache.cache_dir),
+            "size_mb": cache.db_path.stat().st_size / (1024 * 1024),
         }
 
         # Performance info
@@ -3684,7 +3520,7 @@ Return DataFrame
 
 **Optimization Tips:**
 - Keep SQLite cache on SSD for faster access
-- Increase cache TTL to reduce re-fetching
+- Keep the cache directory between runs; cached payloads never expire
 - Monitor cache hit rate
 
 ### Pattern 3: Hot Start (Memory Cache Hit)
@@ -4162,24 +3998,23 @@ result = (
 
 Optimize cache storage with compression.
 
+The codec and level are fixed; there is no compression-level setting.
+
 ```python
-import zlib
+# Payload tiers (cache, telemetry_cache):
+#   rows >= 4096 bytes -> zstd level 1 (zlib level 3 only when no zstd binding imports)
+#   smaller rows       -> plain TEXT, no compression
+#
+# Frame tier (telemetry_frames, telemetry_frames_pl):
+#   pickle protocol 5 -> lz4 (zstd level 1 when lz4 is unavailable)
+#
+# zstd-1 was chosen over zlib because it compresses ~4.5x faster at a
+# slightly better ratio and decompresses ~2x faster on telemetry JSON.
 
-# Default compression (level 6)
-# Good balance of speed and compression ratio
-
-# Fast compression (level 1)
-# Use when CPU is bottleneck
-os.environ["TIF1_CACHE_COMPRESSION_LEVEL"] = "1"
-
-# Maximum compression (level 9)
-# Use when disk space is limited
-os.environ["TIF1_CACHE_COMPRESSION_LEVEL"] = "9"
-
-# Compression ratio comparison:
-# Level 1: 3:1 ratio, 5ms compression time
-# Level 6: 7:1 ratio, 15ms compression time
-# Level 9: 9:1 ratio, 45ms compression time
+# The one lever: install a fast binding so the preferred codec is active
+#   Python 3.14+ : compression.zstd ships in the standard library
+#   Python 3.11-3.13: pip install zstandard
+#   Frame tier   : pip install lz4
 ```
 
 ### Strategy 10: Monitoring-Driven Optimization
@@ -4323,7 +4158,7 @@ The tif1 data flow architecture targets maximum performance, reliability, and de
 - L1 (Memory): < 1ms access, 1024 items
 - L2 (SQLite): 30ms access, unlimited capacity
 - Automatic promotion from L2 to L1
-- TTL-based expiration (7 days default)
+- No expiry: cached payloads persist until cleared
 
 **2. Async Parallel Fetching**
 - HTTP/2 multiplexing over single connection
@@ -4402,9 +4237,10 @@ for event in events:
 # 2. Use Polars (50% less memory)
 session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 
-# 3. Clear cache when needed
+# 3. Clear cache tiers when needed
 cache = tif1.get_cache()
-cache.clear_expired()  # Remove old entries
+cache.invalidate("memory")     # Free the in-memory tiers; SQLite persists
+cache.invalidate("telemetry")  # Drop telemetry payloads and frames from disk
 ```
 
 ### Common Pitfalls and Solutions
@@ -4465,7 +4301,7 @@ except tif1.NetworkError as e:
 **Before Deployment:**
 - [ ] Enable appropriate logging level (INFO for production)
 - [ ] Configure cache size based on available memory
-- [ ] Set cache TTL based on data freshness requirements
+- [ ] Set `TIF1_MISSING_PAYLOADS_TTL_DAYS` if missing payloads should re-check sooner
 - [ ] Pre-warm cache for frequently accessed data
 - [ ] Choose appropriate backend (pandas vs polars)
 - [ ] Configure timeouts based on network conditions
@@ -4479,7 +4315,7 @@ except tif1.NetworkError as e:
 - [ ] Monitor circuit breaker state (should be CLOSED)
 - [ ] Check for slow queries (> 5s)
 - [ ] Review error logs regularly
-- [ ] Clear expired cache entries periodically
+- [ ] Clear unused cache tiers with `cache.invalidate(scope)` when disk space matters
 - [ ] Update cache warming strategy based on usage
 
 **For Optimization:**
@@ -4562,19 +4398,19 @@ For questions, issues, or contributions, visit the [GitHub repository](https://g
 ```bash
 # Cache configuration
 export TIF1_CACHE_DIR="/path/to/tif1-cache"
-export TIF1_CACHE_SIZE="1024"
-export TIF1_CACHE_TTL="604800"  # 7 days
-export TIF1_CACHE_ENABLED="true"
-export TIF1_CACHE_COMPRESSION_LEVEL="6"
+export TIF1_ENABLE_CACHE="true"
+export TIF1_MEMORY_CACHE_MAX_ITEMS="1024"
+export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS="2048"
+export TIF1_MISSING_PAYLOADS_TTL_DAYS="7.0"  # only TTL; cached payloads never expire
+export TIF1_CACHE_COMMIT_INTERVAL="100"
 
 # Network configuration
 export TIF1_TIMEOUT="30"
 export TIF1_MAX_RETRIES="3"
-export TIF1_RETRY_DELAY="1.0"
+export TIF1_RETRY_BACKOFF_FACTOR="2.0"
 
 # Logging configuration
 export TIF1_LOG_LEVEL="INFO"
-export TIF1_LOG_FILE="tif1.log"
 ```
 
 ### Common Code Patterns
