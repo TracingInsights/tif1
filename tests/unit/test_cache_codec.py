@@ -18,15 +18,21 @@ from tif1 import cache
 
 pytestmark = pytest.mark.unit
 
+if cache._zstd_compress is None:  # pragma: no cover - CPython built without libzstd
+    pytest.skip(
+        "no zstd binding on this interpreter (built without libzstd); zlib fallback in use",
+        allow_module_level=True,
+    )
+
 LARGE = b'{"speed": [' + b"3," * 9000 + b"3]}"
 
 
 def test_zstd_binding_matches_interpreter() -> None:
     if sys.version_info >= (3, 14):
+        # 3.14+ prefers the standard library; the wheel is not a dependency there.
         assert cache._stdlib_zstd is not None
     else:
         assert cache._stdlib_zstd is None
-    # Every supported interpreter has a zstd binding (stdlib or wheel).
     assert cache._zstd_compress is not None
     assert cache._zstd_decompress is not None
     assert cache._ZSTD_ERRORS
@@ -67,6 +73,33 @@ def test_frame_tier_reads_zstd_rows() -> None:
     legacy = cache._zstd_compress(LARGE)
     assert legacy[:4] == cache._ZSTD_MAGIC
     assert cache._decompress_frame_blob(legacy) == LARGE
+
+
+def test_frame_tier_without_any_codec_degrades_to_corrupt_row(monkeypatch) -> None:
+    # An interpreter with neither lz4 nor a zstd binding must not assert-fail
+    # inside the batch reader; the row reads as corrupt (ValueError) instead.
+    monkeypatch.setattr(cache, "_lz4_frame", None)
+    monkeypatch.setattr(cache, "_zstd_decompress", None)
+    monkeypatch.setattr(cache, "_zstd_compress", None)
+    with pytest.raises(ValueError, match="No codec available"):
+        cache._decompress_frame_blob(cache._ZSTD_MAGIC + b"\xff" * 32)
+    with pytest.raises(ValueError, match="No frame-tier codec"):
+        cache._compress_frame_blob(LARGE)
+
+
+def test_frame_tier_with_lz4_but_no_zstd_reads_lz4_rows_only(monkeypatch) -> None:
+    pytest.importorskip("lz4.frame")
+    import lz4.frame
+
+    monkeypatch.setattr(cache, "_lz4_frame", lz4.frame)
+    monkeypatch.setattr(cache, "_LZ4_MAGIC", b"\x04\x22\x4d\x18")
+    assert cache._zstd_compress is not None
+    legacy_zstd_row = cache._zstd_compress(LARGE)
+    monkeypatch.setattr(cache, "_zstd_decompress", None)
+    # lz4 rows still round-trip; a legacy zstd row becomes a corrupt-row miss.
+    assert cache._decompress_frame_blob(cache._compress_frame_blob(LARGE)) == LARGE
+    with pytest.raises(ValueError, match="No codec available"):
+        cache._decompress_frame_blob(legacy_zstd_row)
 
 
 def test_zstd_frame_header_carries_content_size() -> None:

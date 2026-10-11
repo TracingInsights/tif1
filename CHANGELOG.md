@@ -32,6 +32,35 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   numpy 2.5.3 on 3.12+, contourpy 1.4.0, fonttools 4.66.1, pyarrow 26.0.0,
   typing-inspection 0.4.4).
 
+### Fixed — audit follow-ups
+
+- The wheel now ships the `py.typed` marker that the `Typing :: Typed`
+  classifier and `MANIFEST.in` already promised, so downstream type checkers
+  pick up tif1's annotations.
+- The materialized-frame cache tier is enabled whenever lz4 **or** a zstd
+  binding is importable (previously it required zstd even when lz4 was
+  present). A frame row that no importable codec can read is treated as a
+  corrupt-row miss instead of tripping an assertion inside the batch reader.
+  Interpreters with no zstd binding at all log an info message about the
+  zlib fallback.
+- Async cache methods use `asyncio.get_running_loop()`.
+- `Cache.clear()` and `invalidate("telemetry")` now also drop the polars
+  frame table (`telemetry_frames_pl`); previously polars frame rows survived
+  a full clear. `invalidate("memory")` drops the in-memory mirror of the
+  negative-verdict tier so it reloads from SQLite, and a successful `set()`
+  for a key with a stale all-CDN-missing verdict removes the SQLite row as
+  well as the in-memory entry (only when a verdict existed, so the hot path
+  is unchanged).
+- Documentation audit: `docs/concepts/caching-strategy.mdx` rewritten to
+  describe the real cache (tiers, SQLite schema, codecs, config keys, public
+  API) instead of a fictional one; cache-related corrections in
+  `data-flow.mdx`, the cache API reference, the environment-variable and
+  config references (`TIF1_ENABLE_CACHE`, JSON `.tif1rc`, memory-tier
+  settings, negative-verdict TTL); the CLI reference now documents only the
+  commands that exist; the non-existent `polars` and `plotting` extras are
+  gone from the docs and polars is described as the declared dependency it
+  is; `AGENTS.md` points at the real mintlify skill path.
+
 ### Summary — Halikarnassos-series performance work
 
 Eleven new hypotheses were measured (full log in

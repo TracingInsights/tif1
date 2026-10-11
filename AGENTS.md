@@ -49,5 +49,5 @@ Constraints:
 - Always optimize for performance. Entire existence of this library is to focus on optimization, speed and performance. Performance is critical
 
 Documentation (Mintlify):
-- For all documentation work, use the mintlify skill: `.kiro/skills/mintlify/SKILL.md`
+- For all documentation work, use the mintlify skill: `.agents/skills/mintlify/SKILL.md`
 - All docs in `docs/` directory; configuration in `docs/docs.json`

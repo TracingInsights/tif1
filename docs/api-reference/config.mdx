@@ -330,7 +330,7 @@ python my_analysis.py
 
 ## Environment Variables
 
-All configuration keys can be overridden using environment variables with the `TIF1_` prefix. Environment variables take precedence over configuration files but are overridden by programmatic `config.set()` calls.
+Every configuration key except `cdn_use_minification` can be overridden using environment variables with the `TIF1_` prefix. Environment variables take precedence over configuration files but are overridden by programmatic `config.set()` calls.
 
 ### Environment Variable Naming
 
@@ -408,8 +408,8 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
 export TIF1_HTTP_DISABLE_HTTP3=false
-export TIF1_POOL_CONNECTIONS=256
-export TIF1_POOL_MAXSIZE=512
+export TIF1_POOL_CONNECTIONS=256          # unset by default: auto max(256, concurrency)
+export TIF1_POOL_MAXSIZE=512              # unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=10000
 export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
@@ -431,10 +431,11 @@ export TIF1_CACHE_COMMIT_INTERVAL=100
 export TIF1_SQLITE_TIMEOUT=30.0
 export TIF1_MEMORY_CACHE_MAX_ITEMS=1024
 export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=2048
+export TIF1_MISSING_PAYLOADS_TTL_DAYS=7.0
 
 # CDN Configuration
 export TIF1_CDNS=https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingface.co/buckets/tracinginsights,https://cdn.staticdelivr.com/gh/TracingInsights
-export TIF1_CDN_USE_MINIFICATION=false
+# cdn_use_minification has no environment variable; set it in .tif1rc or with config.set()
 
 # Validation
 export TIF1_VALIDATE_LAP_TIMES=false
@@ -1129,6 +1130,14 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="missing_payloads_ttl_days" type="float" default="7.0">
+  Lifetime in days of an all-CDN-missing verdict (`missing_payloads` table). Within the window, tif1 skips the CDN probe for that payload. Environment variable: `TIF1_MISSING_PAYLOADS_TTL_DAYS`.
+
+  ```python
+  config.set("missing_payloads_ttl_days", 1.0)  # re-probe missing payloads daily
+  ```
+</ResponseField>
+
 </Accordion>
 
 <Accordion title="CDN Configuration">
@@ -1142,7 +1151,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="cdn_use_minification" type="bool" default="False">
-  Use minified CDN resources (reserved for future use).
+  Request `.min.json` payloads from CDNs that serve them. Hugging Face buckets never minify, so tif1 skips minification there. No environment variable maps to this key.
 
   ```python
   config.set("cdn_use_minification", False)
@@ -1395,13 +1404,13 @@ The `.tif1rc` file is a JSON file with key-value pairs:
 
 **Location:**
 - Default: `~/.tif1rc`
-- Custom: Specify path with `TIF1_CONFIG_PATH` environment variable
+- Custom: Specify path with `TIF1_CONFIG_FILE` environment variable
 
 ---
 
 ## Environment Variables
 
-All configuration keys can be set via environment variables with the `TIF1_` prefix:
+Every configuration key except `cdn_use_minification` can be set via environment variables with the `TIF1_` prefix:
 
 ```bash
 # Set lib
@@ -1438,7 +1447,7 @@ export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
 Configuration is loaded in this order (later overrides earlier):
 
 1. **Default values** (hardcoded in library)
-2. **`.tif1rc` file** (`~/.tif1rc` or `TIF1_CONFIG_PATH`)
+2. **`.tif1rc` file** (`~/.tif1rc` or `TIF1_CONFIG_FILE`)
 3. **Environment variables** (`TIF1_*`)
 4. **Programmatic calls** (`config.set()`)
 
@@ -2529,6 +2538,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "sqlite_timeout": 30.0,
   "memory_cache_max_items": 1024,
   "memory_telemetry_cache_max_items": 2048,
+  "missing_payloads_ttl_days": 7.0,
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "connection_stats_log_interval": 60.0,
