@@ -56,6 +56,29 @@ def _driver_team(sess, driver: str) -> str:
     return team.iloc[0] if not team.empty else "Unknown"
 
 
+def _add_axis_caption(ax: Any, text: str) -> Any:
+    """Draw an italic caption directly below the x-axis label.
+
+    The caption is anchored to the x-axis label artist (``xycoords`` accepts
+    an artist), so it follows the label wherever the active theme's tick and
+    label font sizes push it - a fixed axes-fraction offset collided with the
+    label under large-font themes.
+    """
+    return ax.annotate(
+        text,
+        xy=(0.5, 0),
+        xycoords=ax.xaxis.label,
+        xytext=(0, -4),
+        textcoords="offset points",
+        ha="center",
+        va="top",
+        fontsize=9,
+        style="italic",
+        alpha=0.7,
+        annotation_clip=False,
+    )
+
+
 def plot_downforce_levels(
     year: int,
     event: str | int,
@@ -136,7 +159,14 @@ def plot_downforce_levels(
     metrics_actual = [d["Metric"] for d in downforce_data]
     colors = [_team_color_for_driver(sess, d["Driver"]) for d in downforce_data]
 
-    ax.barh(drivers_list, metrics_diff, color=colors, alpha=0.8, edgecolor="white", linewidth=1)
+    ax.barh(
+        drivers_list,
+        metrics_diff,
+        color=colors,
+        alpha=0.8,
+        edgecolor=_common.foreground_color(),
+        linewidth=1,
+    )
     value_labels = []
     for i, metric in enumerate(metrics_actual):
         value_labels.append(
@@ -165,15 +195,8 @@ def plot_downforce_levels(
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.set_xlim(left=0)
-    fig.text(
-        0.5,
-        -0.115,
-        "Higher values indicate more downforce setup (better cornering, lower top speeds)",
-        ha="center",
-        fontsize=9,
-        style="italic",
-        alpha=0.7,
-        transform=ax.transAxes,
+    _add_axis_caption(
+        ax, "Higher values indicate more downforce setup (better cornering, lower top speeds)"
     )
     # Branded footer + watermarks from the plot style (footer_y spacing key).
     _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
@@ -273,7 +296,14 @@ def plot_throttle_distance(
     percentages_actual = [d["ThrottlePercentage"] for d in throttle_data]
     colors = [_team_color_for_driver(sess, d["Driver"]) for d in throttle_data]
 
-    ax.barh(drivers_list, percentages_diff, color=colors, alpha=0.8, edgecolor="white", linewidth=1)
+    ax.barh(
+        drivers_list,
+        percentages_diff,
+        color=colors,
+        alpha=0.8,
+        edgecolor=_common.foreground_color(),
+        linewidth=1,
+    )
     value_labels = []
     for i, percentage in enumerate(percentages_actual):
         value_labels.append(
@@ -302,15 +332,8 @@ def plot_throttle_distance(
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.set_xlim(left=0)
-    fig.text(
-        0.5,
-        -0.115,
-        "Higher values indicate more time at full throttle (power-limited tracks)",
-        ha="center",
-        fontsize=9,
-        style="italic",
-        alpha=0.7,
-        transform=ax.transAxes,
+    _add_axis_caption(
+        ax, "Higher values indicate more time at full throttle (power-limited tracks)"
     )
     # Branded footer + watermarks from the plot style (footer_y spacing key).
     _common.add_style_branding(fig, _common.resolve_plot_style(color_scheme), ax=ax)
@@ -441,7 +464,7 @@ def plot_tire_degradation(
         )
 
         ax.plot(tire_life, smoothed_times, color=color, linewidth=4, label=compound, zorder=2)
-        ax.annotate(
+        annotation = ax.annotate(
             compound,
             xy=(tire_life[-1], smoothed_times[-1]),
             xytext=(tire_life[-1] + 2, smoothed_times[-1]),
@@ -450,6 +473,9 @@ def plot_tire_degradation(
             color=color,
             va="center",
         )
+        # Compound colors are fixed by the sport (yellow MEDIUM, white HARD);
+        # outline the label when it would blend into the theme background.
+        _common.ensure_readable_text(annotation)
 
     ax.set_xlabel("Tire Life (Laps)", fontsize=16, fontweight="bold")
     ax.set_ylabel("Fuel-Corrected Lap Time (s)", fontsize=16, fontweight="bold")
@@ -544,6 +570,36 @@ def _lap1_threshold_times(sess, driver: str) -> dict[int, float] | None:
         if crossing is not None:
             times[threshold] = crossing
     return times
+
+
+def _car_fit_threshold(ax: Any, year: int, team_codes: Any, *, zoom: float, x_offset: int) -> float:
+    """Smallest bar length (data units) that fully contains a car image.
+
+    ``add_car_images`` centres each car ``x_offset`` points back from the bar
+    end, so the artwork spans ``|x_offset| + width/2`` points to the left of
+    the end. Any bar shorter than that pushes the car past the y-axis, over
+    the tyre image and driver label. The width is measured on the widest
+    bundled car among ``team_codes`` (missing artwork is ignored) and
+    converted to data units with the axes' current x-scale, so the result is
+    valid for any figure size, dpi or x-limit. Returns ``0.0`` when no car
+    image is available.
+    """
+    from tif1 import assets
+
+    widest_px = 0
+    for code in set(team_codes):
+        try:
+            widest_px = max(widest_px, int(assets.load_car_image(year, code).shape[1]))
+        except FileNotFoundError:
+            continue
+    if widest_px == 0:
+        return 0.0
+    ax.figure.canvas.draw()
+    axes_width_px = float(ax.get_window_extent().width)
+    xmin, xmax = ax.get_xlim()
+    points_per_unit = axes_width_px / abs(xmax - xmin) * 72.0 / float(ax.figure.dpi)
+    car_points = widest_px * zoom  # OffsetImage renders zoom * image pixels in points
+    return (abs(x_offset) + car_points / 2.0) / points_per_unit
 
 
 def plot_race_launch_ratings(
@@ -744,6 +800,21 @@ def plot_race_launch_ratings(
         fontsize=label_size,
         fontproperties=heading_font,
     )
+    if label_padding < 0:
+        # Inside-bar labels (default-light): matplotlib keeps them left
+        # aligned, so the text runs from ``padding`` back *towards* the bar
+        # end and ends up underneath the car artwork drawn there. Right
+        # aligning makes the label end at the padding point, clear of the car.
+        # The style's thin (0.1) bars (zorder 1000) would otherwise strike
+        # through the text, so the label is lifted above the bars and haloed
+        # in the canvas colour.
+        from matplotlib import patheffects
+
+        halo = patheffects.withStroke(linewidth=6, foreground=fig.get_facecolor())
+        for label in bar_labels:
+            label.set_horizontalalignment("right")
+            label.set_path_effects([halo])
+            label.set_zorder(1002)
 
     # Tight y-limits: without them the default 5% auto-margins leave a wide
     # empty band below the last bar (matching the v2 script's ylim behaviour
@@ -766,19 +837,6 @@ def plot_race_launch_ratings(
         assets.add_tyre_image_at_position(
             ax, 0, i, compound, zoom=tyre_zoom, x_offset=tyre_x_offset
         )
-
-    # Car images only where the bar is wide enough to hold them (style threshold).
-    assets.add_car_images(
-        ax,
-        df,
-        season_year,
-        x_col="Rating",
-        y_col="Driver",
-        team_code_col="Team_code",
-        zoom=car_zoom,
-        x_offset=car_x_offset,
-        threshold=car_threshold,
-    )
 
     labels = [f"{index + 1}. {driver}  " for index, driver in enumerate(df["Driver"])]
     ax.set_yticks(range(len(labels)))
@@ -813,6 +871,31 @@ def plot_race_launch_ratings(
     # labels already fit, e.g. default-light with negative label padding,
     # are left untouched).
     _common.fit_labels_inside_xlim(ax, bar_labels)
+    # Inside-bar labels (negative padding) on short bars would run off the
+    # left edge and across the y tick labels; flip those outside the bar,
+    # then re-fit in case a flipped label now reaches past the right edge.
+    _common.keep_bar_labels_inside_axes(ax, bar_labels, padding=label_padding)
+    _common.fit_labels_inside_xlim(ax, bar_labels)
+
+    # Car images only where the bar is long enough to hold the artwork: the
+    # style threshold (v2: 2.5 on the dark style) is raised to the rating
+    # below which the car - drawn ``car_x_offset`` points back from the bar
+    # end - would spill past the y-axis over the tyre and driver labels. This
+    # needs the final axes geometry, hence it runs after the layout steps.
+    fit_threshold = _car_fit_threshold(
+        ax, season_year, df["Team_code"], zoom=car_zoom, x_offset=car_x_offset
+    )
+    assets.add_car_images(
+        ax,
+        df,
+        season_year,
+        x_col="Rating",
+        y_col="Driver",
+        team_code_col="Team_code",
+        zoom=car_zoom,
+        x_offset=car_x_offset,
+        threshold=fit_threshold if car_threshold is None else max(car_threshold, fit_threshold),
+    )
 
     # The v2 script exports the full canvas with its own subplot margins (no
     # tight_layout, no bbox cropping) - preserve that exact output.

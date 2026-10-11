@@ -357,7 +357,7 @@ def plot_gear_shifts(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -520,8 +520,11 @@ def plot_multi_driver_speed_comparison(
     assert last_lc is not None  # tel_by_driver is guaranteed non-empty above
     legend = fig.colorbar(last_lc, ax=ax, orientation="horizontal", label="Speed (km/h)", pad=0.05)
     legend.ax.xaxis.label.set_fontsize(12)
-    legend.ax.xaxis.set_tick_params(color="white")
-    plt.setp(plt.getp(legend.ax.axes, "xticklabels"), color="white")
+    # Colorbar ticks follow the theme text color (white is invisible on the
+    # light themes' backgrounds).
+    foreground = _common.foreground_color()
+    legend.ax.xaxis.set_tick_params(color=foreground)
+    plt.setp(plt.getp(legend.ax.axes, "xticklabels"), color=foreground)
 
     return _common.finalize_figure(
         fig,

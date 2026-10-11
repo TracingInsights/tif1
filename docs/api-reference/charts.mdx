@@ -89,7 +89,7 @@ def plot_<name>(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",  # None keeps the theme/transparent background
+    facecolor: str | None = None,  # None keeps the theme background
     # theme
     color_scheme: str | None = "fastf1",
     # get_session passthrough
@@ -112,11 +112,13 @@ def plot_<name>(
 - **`auto_save`** (`bool | None`, default: `None`) — per-call override of the global auto-save setting (`True`/`False` force it on/off).
 - **`dpi`** (`int`, default: `150`) — resolution used when saving. Track maps, telemetry charts, heatmaps, and performance charts default to `300`.
 - **`figsize`** (`tuple[float, float] | None`) — override the chart's default figure size.
-- **`facecolor`** (`str | None`, default varies) — figure background. 8 charts default to `"#1a1a1a"` (dark), 13 default to `None` (keep the theme background). Pass `None` explicitly for a transparent/unchanged background.
+- **`facecolor`** (`str | None`, default: `None`) — figure background. `None` keeps the active theme's figure background, so the margins always match the axes and the text colour (a fixed dark background behind a light theme left the title and tick labels unreadable). Pass a colour to override it for the saved file and the returned figure.
 
 ### Theme parameters
 
-- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. Supported values include `"fastf1"`, `"default-light"` and `"default-dark"`. These are the TracingInsights v2 Fastest_Lap-style themes, with bundled car/tyre images available via `tif1.assets`. `None` skips the theme call entirely and leaves `matplotlib.rcParams` untouched.
+- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. Supported values are `"fastf1"`, `"light"`, `"default-light"` and `"default-dark"`. The `default-*` values are the TracingInsights v2 Fastest_Lap-style themes, with bundled car/tyre images available via `tif1.assets`. `None` skips the theme call entirely and leaves `matplotlib.rcParams` untouched.
+
+Every chart is theme-safe: grid lines, zero lines, bar edges and colorbar ticks take the active theme's text colour instead of a fixed white or black, highlight text uses a green that contrasts with the background (brand `lime` on dark themes, dark green on light ones), and data-coloured labels such as the compound names on the tire degradation chart get a thin outline when their colour would blend into the background. The branded `TRACINGINSIGHTS.COM` footer follows the polarity of the active background, so it is black on light themes and lime on dark ones. Switching between named schemes resets every rcParams key the schemes manage, so a `default-dark` chart followed by a `fastf1` one never inherits hidden spines or the dark legend frame.
 
 ### Session passthrough
 
@@ -221,7 +223,7 @@ tif1.plot_track_acceleration_map(2023, "Suzuka", "Q", save_path="accel_map.png")
 def plot_gear_shifts(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "Paired",
@@ -266,7 +268,7 @@ tif1.plot_multi_driver_speed_comparison(
 def plot_speed_traces(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -285,7 +287,7 @@ tif1.plot_speed_traces(2023, "Spanish Grand Prix", "Q", drivers=["VER", "HAM"])
 def plot_annotated_speed_trace(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
 ) -> tuple[Figure, Axes]
@@ -386,7 +388,7 @@ tif1.plot_race_launch_ratings(
 def plot_driver_laptimes(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -407,7 +409,7 @@ tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=["ALO"])
 def plot_laptimes_distribution(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int = 10,
@@ -450,7 +452,7 @@ tif1.plot_laptime_heatmap(2023, "Monaco Grand Prix", "R")
 def plot_qualifying_grid(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int | None = None,
@@ -513,7 +515,7 @@ tif1.plot_position_changes(2024, "Abu Dhabi Grand Prix", "Race", n_drivers=10)
 def plot_track_temperature(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -598,7 +600,7 @@ tif1.plot_tire_degradation(2024, "Abu Dhabi Grand Prix", "Race")
 def plot_top_speeds(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, dpi: int = 150,
-    figsize: tuple[float, float] | None = None, facecolor: str | None = "#1a1a1a",
+    figsize: tuple[float, float] | None = None, facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     teams: list[str] | None = None,
