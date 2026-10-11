@@ -20,7 +20,7 @@ keywords:
 
 # API Overview
 
-The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry processing, and motorsport analytics. Performance is the primary focus of the design. `tif1` is a drop-in replacement for `fastf1` in most common use cases. Load times are faster than `fastf1` (author-measured; see the Introduction benchmarks). The speed comes from async operations, multi-layer caching, parallel HTTP fetching, and an optional Polars backend.
+The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry processing, and motorsport analytics. Performance is the primary focus of the design. `tif1` is a drop-in replacement for `fastf1` in most common use cases. Load times are faster than `fastf1` (author-measured; see the Introduction benchmarks). The speed comes from async operations, multi-layer caching, parallel HTTP fetching, and an opt-in Polars backend.
 
 `tif1` serves data scientists, motorsport engineers, application developers, and racing enthusiasts. These users can work efficiently with Formula 1 data at scale.
 
@@ -28,7 +28,7 @@ The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry
 
 `tif1` stands apart from other F1 data libraries through several key innovations:
 
-- **Performance**: Every component, from HTTP fetching to DataFrame construction, is optimized for speed. Async operations run in parallel. Caching happens at multiple layers (memory + SQLite). The optional Polars backend gives memory-efficient processing for large datasets.
+- **Performance**: Every component, from HTTP fetching to DataFrame construction, is optimized for speed. Async operations run in parallel. Caching happens at multiple layers (memory + SQLite). The opt-in Polars backend gives memory-efficient processing for large datasets.
 
 - **Production Architecture**: `tif1` is built for production use, not only for research. It includes circuit breakers, retry logic, connection pooling, and DNS-over-HTTPS support. Error handling is complete. Loading degrades gracefully when CDN sources fail.
 
@@ -36,7 +36,7 @@ The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry
 
 - **Flexible Data Access**: Load only the data that the task needs. Skip telemetry for faster lap time analysis. Load everything for full session exploration. The API adapts to each use case.
 
-- **Modern Python Practices**: `tif1` supports Python 3.11+. It uses structural pattern matching, improved type hints, and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
+- **Modern Python Practices**: `tif1` supports Python 3.11 through 3.15. It uses structural pattern matching, improved type hints, and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
 
 ## Design Philosophy
 
@@ -52,7 +52,7 @@ Performance is not just a feature—it is the core reason `tif1` exists. Every c
 
 - **Parallel Fetching**: When loading session data, `tif1` fetches lap data, telemetry, weather, and race control messages in parallel. The fetches use asyncio task groups. This reduces total load time from ~10-15 seconds to ~2-3 seconds for uncached sessions.
 
-- **Optional Polars Backend**: The Polars backend serves large datasets, for example multiple seasons and comparative analysis. It provides 2-5x better memory efficiency and faster DataFrame operations than pandas. The backend is lazy-loaded and can be switched at runtime.
+- **Opt-in Polars Backend**: Polars is installed with `tif1`. The Polars backend serves large datasets, for example multiple seasons and comparative analysis. It provides 2-5x better memory efficiency and faster DataFrame operations than pandas. The backend is lazy-loaded and can be switched at runtime.
 
 - **Optimized JSON Parsing**: `tif1` uses `orjson` (written in Rust) instead of Python's stdlib `json`. This gives 2-3x faster JSON parsing. The speed matters when processing megabytes of telemetry data.
 

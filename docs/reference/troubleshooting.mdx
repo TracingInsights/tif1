@@ -11,17 +11,17 @@ keywords:
 
 ## Installation Issues
 
+### Missing Dependency After a Manual Uninstall
 
-
-### DuckDB Import Error
-
-**Error:** `ModuleNotFoundError: No module named 'duckdb'`
+**Error:** `ModuleNotFoundError: No module named 'polars'` (or `timple`; or `zstandard` on Python 3.11 to 3.13)
 
 **Solution:**
-DuckDB is an optional dependency for advanced analytics. Install it separately:
+`tif1` declares these as dependencies, so a clean install never hits this error. On Python 3.14 and later `zstandard` is not installed because the standard library provides zstd. Reinstall `tif1` to restore the others:
 ```bash
-pip install duckdb
+pip install --force-reinstall tif1
 ```
+
+Third-party tools shown in some examples, such as DuckDB or PyArrow, are not `tif1` dependencies. Install them separately when an example needs them.
 
 ---
 

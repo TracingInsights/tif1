@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -34,23 +35,28 @@ keywords = [
     "lap-times",
 ]
 dependencies = [
-    "pandas>=3.0.5,<4",
+    "pandas>=3.0.6,<4",
     "niquests>=3.21.1,<4",
-    "pydantic>=2.13.5,<3",
+    "pydantic>=2.14.0,<3",
     "typer>=0.27.2,<0.28.0",
     "rich>=15.0.0,<16",
     "typing-extensions>=4.16.0,<5",
     "nest-asyncio2>=1.7.2,<2",
-    "matplotlib>=3.11.1,<4",
+    "matplotlib>=3.11.2,<4",
     "seaborn>=0.13.2,<1",
-    "scipy>=1.17.1,<2",
+    # scipy 1.18 dropped Python 3.11; 1.18.1 is the first release with 3.15 wheels.
+    "scipy>=1.17.1,<2; python_version < '3.15'",
+    "scipy>=1.18.1,<2; python_version >= '3.15'",
     "timple==0.1.8",
     "orjson>=3.12.0,<4",
     "rapidfuzz>=3.14.6,<4",
     "polars>=1.44.1,<2",
-    "zstandard>=0.25.0,<0.26",
-    "lz4>=4.4.5,<5",
-
+    # Python 3.14+ ships zstd in the standard library (PEP 784); the wheel is
+    # only needed on older interpreters (see tif1.cache codec selection).
+    "zstandard>=0.25.0,<0.26; python_version < '3.14'",
+    # lz4 publishes no cp315 wheels yet; on 3.15 the frame tier falls back to
+    # zstd. Drop the marker once lz4 ships 3.15 wheels.
+    "lz4>=4.4.5,<5; python_version < '3.15'",
 ]
 
 [project.urls]
@@ -68,7 +74,7 @@ dev = [
     "pytest-asyncio>=1.4.0,<2",
     "pytest-benchmark>=5.3.0,<6",
     "pytest-mock>=3.15.1,<4",
-    "pyarrow>=25.0.1,<26",
+    "pyarrow>=25.0.1,<27",
     "ruff>=0.16.6,<0.17.0",
     "ty>=0.0.78,<0.1.0",
     "prek>=0.5.2,<0.6.0",

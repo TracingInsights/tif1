@@ -363,7 +363,8 @@ export TIF1_HTTP_RESOLVERS="standard,doh://cloudflare,doh://google"
 
 # CDN
 export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights"
-export TIF1_CDN_USE_MINIFICATION=false
+# cdn_use_minification has no environment variable; set it in code or .tif1rc:
+# python -c 'import tif1; tif1.get_config().set("cdn_use_minification", False)'
 
 # Pool exhaustion
 export TIF1_POOL_EXHAUSTION_BACKOFF_BASE=0.5
