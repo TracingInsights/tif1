@@ -3,7 +3,7 @@ Build/lint/test:
 - Tests: `uv run pytest tests/ -v`
 - Single test file: `uv run pytest tests/unit/test_core.py -v`
 - Single test by name: `uv run pytest tests/ -v -k "test_name"`
-- Unit only: `uv run pytest tests/unit/ -v` (real sockets are blocked by an autouse fixture in `tests/conftest.py`; a test that must reach the network needs the `integration` or `compliance_online` marker)
+- Unit only: `uv run pytest tests/unit/ -v` (real sockets are blocked by an autouse fixture in `tests/conftest.py`; a test that must reach the network needs the `integration`, `compliance_online` or `benchmark` marker)
 - Integration only: `uv run pytest tests/integration/ -v`
 - Property-based: `uv run pytest tests/property/ -v`
 - Benchmarks: `uv run pytest tests/benchmarks/ -v -m benchmark`
