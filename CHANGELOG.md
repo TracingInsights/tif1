@@ -27,9 +27,6 @@ race benchmark (~1452 telemetry frames, 1455 laps rows):
   direct `BlockManager` construction. Cold per-frame assembly
   **1447 → 1155 ms median (1.25x)**; offline best-of 940 → 576 µs/frame.
   Falls back to the plain constructor on any pandas-internals drift.
-- Fixed while wiring the tiers: `Cache.clear()` and
-  `invalidate("telemetry")` now also delete `telemetry_frames_pl` (gap since
-  the polars telemetry tier landed).
 - Rejected with numbers: typed merged-dict assembly (+5.6% regression — the
   per-frame win does not transfer to 614k-row merged frames), zstd-1 codec
   re-eval (lz4 wins both directions on current deps), pydantic validation
@@ -37,7 +34,66 @@ race benchmark (~1452 telemetry frames, 1455 laps rows):
   results first-touch (0.7 ms), block-concat of frame hits (13.8 ms),
   laps dtype-pass rework (sub-costs scattered; subsumed by the tier).
 
-### Summary — Halikarnassos-series performance work
+### Added — Python 3.15 support
+
+- Python 3.15 is a supported, CI-tested interpreter: the `3.15` trove
+  classifier is declared and the test matrix runs 3.11 through 3.15
+  (`setup-python` falls back to a release candidate when the just-released
+  minor is not yet in its manifest).
+- Runtime lower bounds raised to the first releases that publish 3.15 wheels so
+  `pip install tif1` on 3.15 never builds from source: pandas 3.0.6,
+  pydantic 2.14.0 (pydantic-core 2.50.0), matplotlib 3.11.2. scipy 1.18 dropped
+  Python 3.11, so scipy is split by marker: `>=1.17.1` on 3.11-3.14 and
+  `>=1.18.1` on 3.15. Dev extra allows pyarrow 26 (`<27`).
+- The SQLite cache uses the standard-library `compression.zstd` module
+  (PEP 784) on Python 3.14+ and the `zstandard` wheel only on 3.11-3.13
+  (`python_version < "3.14"` marker). Both bind the same libzstd and emit
+  byte-identical single-frame blobs with the content size in the header, so
+  caches written under either binding read under the other; compress and
+  decompress throughput measured within noise of each other.
+- `lz4` publishes no 3.15 wheels yet, so it is declared for
+  `python_version < "3.15"` only; on 3.15 the materialized-frame tier uses
+  the zstd fallback that was already in place (the pre-Ithome codec). Drop the
+  marker once lz4 ships 3.15 wheels.
+- `uv.lock` refreshed for the above (kiwisolver 1.5.1, msgpack 1.2.3,
+  numpy 2.5.3 on 3.12+, contourpy 1.4.0, fonttools 4.66.1, pyarrow 26.0.0,
+  typing-inspection 0.4.4).
+
+### Fixed — audit follow-ups
+
+- The wheel now ships the `py.typed` marker that the `Typing :: Typed`
+  classifier and `MANIFEST.in` already promised, so downstream type checkers
+  pick up tif1's annotations.
+- The materialized-frame cache tier is enabled whenever lz4 **or** a zstd
+  binding is importable (previously it required zstd even when lz4 was
+  present). A frame row that no importable codec can read is treated as a
+  corrupt-row miss instead of tripping an assertion inside the batch reader.
+  Interpreters with no zstd binding at all log an info message about the
+  zlib fallback.
+- Async cache methods use `asyncio.get_running_loop()`.
+- The unit suite is hermetic: an autouse fixture in `tests/conftest.py`
+  blocks real socket connections for every test not marked `integration`,
+  `compliance_online` or `benchmark`. Several unit tests were quietly
+  loading real sessions from the CDN when the network was reachable and
+  could stall the CI matrix on a slow CDN; they now fail the connection
+  fast and exercise the same graceful-degradation paths deterministically.
+- `Cache.clear()` and `invalidate("telemetry")` now also drop the polars
+  frame table (`telemetry_frames_pl`); previously polars frame rows survived
+  a full clear. `invalidate("memory")` drops the in-memory mirror of the
+  negative-verdict tier so it reloads from SQLite, and a successful `set()`
+  for a key with a stale all-CDN-missing verdict removes the SQLite row as
+  well as the in-memory entry (only when a verdict existed, so the hot path
+  is unchanged).
+- Documentation audit: `docs/concepts/caching-strategy.mdx` rewritten to
+  describe the real cache (tiers, SQLite schema, codecs, config keys, public
+  API) instead of a fictional one; cache-related corrections in
+  `data-flow.mdx`, the cache API reference, the environment-variable and
+  config references (`TIF1_ENABLE_CACHE`, JSON `.tif1rc`, memory-tier
+  settings, negative-verdict TTL); the CLI reference now documents only the
+  commands that exist; the non-existent `polars` and `plotting` extras are
+  gone from the docs and polars is described as the declared dependency it
+  is; `AGENTS.md` points at the real mintlify skill path.
+
 ### Summary — Halikarnassos-series performance work
 
 Eleven new hypotheses were measured (full log in

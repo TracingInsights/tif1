@@ -59,7 +59,7 @@ def plot_driver_laptimes(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -125,7 +125,7 @@ def plot_driver_laptimes(
     else:
         title = f"Top {len(drivers)} Finishers - {sess.event['EventName']} {sess.event.year}"
     fig.suptitle(title, fontsize=14, fontweight="bold")
-    ax.grid(color="w", which="major", axis="both", alpha=0.3)
+    ax.grid(color=_common.foreground_color(), which="major", axis="both", alpha=0.3)
     sns.despine(left=True, bottom=True)
 
     return _common.finalize_figure(
@@ -151,7 +151,7 @@ def plot_laptimes_distribution(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -317,7 +317,9 @@ def plot_laptime_heatmap(
         vmax=fastest_lap * vmax_multiplier,
         cbar_kws={"label": "Lap Time (seconds)", "aspect": 40},
         linewidths=0.5,
-        linecolor="#1a1a1a",
+        # Cell separators show the canvas through the gaps: use the theme's
+        # figure background rather than a fixed dark grey.
+        linecolor=plt.rcParams["figure.facecolor"],
         xticklabels=xticklabels,
         ax=ax,
     )
@@ -356,7 +358,7 @@ def plot_qualifying_grid(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -427,7 +429,14 @@ def plot_qualifying_grid(
     _common.set_tight_barh_ylim(ax, len(fastest_laps))
     ax.invert_yaxis()
     ax.set_axisbelow(True)
-    ax.xaxis.grid(True, which="major", linestyle="--", color="white", alpha=0.3, zorder=-1000)
+    ax.xaxis.grid(
+        True,
+        which="major",
+        linestyle="--",
+        color=_common.foreground_color(),
+        alpha=0.3,
+        zorder=-1000,
+    )
     ax.set_xlabel("Gap to Pole (seconds)", fontsize=11)
     ax.set_ylabel("Driver", fontsize=11)
 
@@ -541,15 +550,16 @@ def plot_lap_delta(
     merged["Color"] = merged["Delta"].apply(lambda x: color_1 if x < 0 else color_2)
 
     fig, ax = plt.subplots(figsize=figsize if figsize is not None else _LAP_DELTA_FIGSIZE)
+    foreground = _common.foreground_color()
     ax.bar(
         merged["LapNumber"],
         merged["Delta"],
         color=merged["Color"],
         width=0.8,
-        edgecolor="white",
+        edgecolor=foreground,
         linewidth=0.5,
     )
-    ax.axhline(0, color="white", linestyle="--", linewidth=1, alpha=0.7)
+    ax.axhline(0, color=foreground, linestyle="--", linewidth=1, alpha=0.7)
     ax.set_xlabel("Lap Number", fontsize=14)
     ax.set_ylabel("Time Delta (seconds)", fontsize=14)
     ax.set_title(
@@ -692,7 +702,7 @@ def plot_track_temperature(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -765,7 +775,7 @@ def plot_track_temperature(
         fontsize=11,
         ncol=2 if n_entries > 10 else 1,
     )
-    ax.grid(color="w", which="major", axis="both", alpha=0.3)
+    ax.grid(color=_common.foreground_color(), which="major", axis="both", alpha=0.3)
     fig.suptitle(
         f"Track Temperature - {sess.event['EventName']} {sess.event.year}",
         fontsize=14,
