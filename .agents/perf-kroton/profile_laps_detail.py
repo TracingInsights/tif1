@@ -17,7 +17,7 @@ s.load(telemetry=False, weather=True, messages=True)
 for label, attr in (("results", "results"),):
     t0 = time.perf_counter()
     r = getattr(s, attr)
-    print(f"first-touch {label}: {(time.perf_counter() - t0)*1000:.1f} ms")
+    print(f"first-touch {label}: {(time.perf_counter() - t0) * 1000:.1f} ms")
 
 # laps first-touch with sub-profile
 pr = cProfile.Profile()

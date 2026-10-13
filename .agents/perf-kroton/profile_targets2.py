@@ -7,10 +7,15 @@ import os
 import pstats
 import time
 
+import orjson
+
+import tif1
+from tif1.cache import _decode_sqlite_value, get_cache
+from tif1.validation import validate_telemetry_data
+
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
 # First get_session in this fresh process (includes events schedule load).
-import tif1
 
 t0 = time.perf_counter()
 s = tif1.get_session(2026, "Monaco Grand Prix", "Race")
@@ -18,13 +23,7 @@ first_gs = time.perf_counter() - t0
 t0 = time.perf_counter()
 s2 = tif1.get_session(2026, "Monaco Grand Prix", "Race")
 warm_gs = time.perf_counter() - t0
-print(f"get_session first call: {first_gs*1000:.1f} ms, second: {warm_gs*1000:.1f} ms")
-
-# Per-payload pydantic validation (imports warmed outside the profile).
-import orjson
-
-from tif1.cache import _decode_sqlite_value, get_cache
-from tif1.validation import validate_telemetry_data
+print(f"get_session first call: {first_gs * 1000:.1f} ms, second: {warm_gs * 1000:.1f} ms")
 
 c = get_cache()
 rows = c.conn.execute(
@@ -34,7 +33,7 @@ rows = c.conn.execute(
 payloads = []
 for r in rows:
     data = orjson.loads(_decode_sqlite_value(r[0]))
-    payloads.append(data["tel"] if "tel" in data else data)
+    payloads.append(data.get("tel", data))
 
 t0 = time.perf_counter()
 ok = 0

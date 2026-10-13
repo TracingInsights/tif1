@@ -1,4 +1,5 @@
 """Phase-level + cProfile breakdown of the current warm load path (fresh process)."""
+
 import cProfile
 import io
 import os
@@ -12,6 +13,7 @@ sys.path.insert(0, "src")
 
 t0 = time.perf_counter()
 import tif1  # noqa: E402
+
 t_import = time.perf_counter() - t0
 
 t0 = time.perf_counter()
@@ -25,7 +27,7 @@ t_laps = time.perf_counter() - t0
 # component timings inside fetch_all via manual batch-read reproduction
 import pickle  # noqa: E402
 
-from tif1.cache import get_cache, _decompress_frame_blob  # noqa: E402
+from tif1.cache import _decompress_frame_blob, get_cache  # noqa: E402
 
 gp = session.gp
 t_sql = 0.0
@@ -53,17 +55,17 @@ t_tel = time.perf_counter() - t0
 
 # pandas import cost isolated (separate process measures it too; here it's inside get_session)
 print(
-    dict(
-        import_s=round(t_import, 4),
-        get_session_s=round(t_get, 4),
-        laps_s=round(t_laps, 4),
-        rows=len(rows),
-        sql_s=round(t_sql, 4),
-        lz4_s=round(t_lz4, 4),
-        unpickle_s=round(t_unpickle, 4),
-        fetch_all_s=round(t_tel, 4),
-        frames=len(tel),
-    )
+    {
+        "import_s": round(t_import, 4),
+        "get_session_s": round(t_get, 4),
+        "laps_s": round(t_laps, 4),
+        "rows": len(rows),
+        "sql_s": round(t_sql, 4),
+        "lz4_s": round(t_lz4, 4),
+        "unpickle_s": round(t_unpickle, 4),
+        "fetch_all_s": round(t_tel, 4),
+        "frames": len(tel),
+    }
 )
 
 # cProfile the three phases in a FRESH-equivalent state: use a second session instance

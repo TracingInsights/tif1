@@ -1,15 +1,14 @@
 """KR-2 workload: payload tier -> all 1452 telemetry frames (pure assembly)."""
 
 import os
-
 import time
 
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
-import orjson  # noqa: E402
+import orjson
 
-from tif1.cache import _decode_sqlite_value, get_cache  # noqa: E402
-from tif1.core_utils.helpers import _create_telemetry_df  # noqa: E402
+from tif1.cache import _decode_sqlite_value, get_cache
+from tif1.core_utils.helpers import _create_telemetry_df
 
 
 def main():
@@ -21,7 +20,7 @@ def main():
     payloads = []
     for driver, lap, blob in rows:
         data = orjson.loads(_decode_sqlite_value(blob))
-        payloads.append((driver, lap, data["tel"] if "tel" in data else data))
+        payloads.append((driver, lap, data.get("tel", data)))
 
     t0 = time.perf_counter()
     n = 0

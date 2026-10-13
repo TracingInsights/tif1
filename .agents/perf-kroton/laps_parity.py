@@ -1,8 +1,6 @@
 """KR-1 parity: laps frame via payload path (baseline src) vs tier (main src)."""
 
 import os
-
-import pandas as pd
 import pickle
 import subprocess
 

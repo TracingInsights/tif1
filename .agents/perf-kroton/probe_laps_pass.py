@@ -8,12 +8,12 @@ import time
 
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
-import orjson  # noqa: E402
-import pandas as pd  # noqa: E402
+import orjson
+import pandas as pd
 
-from tif1.cache import _decode_sqlite_value, get_cache  # noqa: E402
-from tif1.core import _merge_lap_payloads  # noqa: E402
-from tif1.core_utils.helpers import _normalize_lap_payload, _process_lap_df  # noqa: E402
+from tif1.cache import _decode_sqlite_value, get_cache
+from tif1.core import _merge_lap_payloads
+from tif1.core_utils.helpers import _normalize_lap_payload, _process_lap_df
 
 
 def merged_dict():

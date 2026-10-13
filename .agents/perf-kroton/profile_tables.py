@@ -14,7 +14,7 @@ import tif1
 
 t0 = time.perf_counter()
 session = tif1.get_session(2026, "Monaco Grand Prix", "Race")
-print(f"get_session: {time.perf_counter()-t0:.4f} s")
+print(f"get_session: {time.perf_counter() - t0:.4f} s")
 
 for attr, label in (("laps", "laps"), ("weather", "weather"), ("race_control_messages", "rcm")):
     t0 = time.perf_counter()
