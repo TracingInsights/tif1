@@ -28,15 +28,19 @@ import gc
 import logging
 import pickle
 import sqlite3
+import sys
 import threading
 import time
 import zlib
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .core_utils.constants import MAX_CACHE_SIZE
 from .core_utils.json_utils import json_dumps_bytes, json_loads
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +56,60 @@ FastestLapRefKind = Literal["laps", "drivers"]
 # threshold stay plain TEXT so small rows keep the legacy storage shape.
 # zstd-1 compresses ~4.5x faster than zlib-3 at a slightly better ratio and
 # decompresses ~2x faster (measured on the 1452-payload Monaco set), so it is
-# the codec when ``zstandard`` is importable; zlib remains the fallback and
+# the codec whenever a zstd binding is available; zlib remains the fallback and
 # legacy zlib rows stay readable (zstd frames carry a 4-byte magic prefix).
+#
+# Python 3.14+ ships zstd in the standard library (PEP 784, ``compression.zstd``)
+# and is preferred there; older interpreters use the third-party ``zstandard``
+# wheel. Both bind the same libzstd and emit identical single-frame blobs with
+# the content size in the header, so a cache written under one binding reads
+# under the other (verified: package one-shot decompress of stdlib frames and
+# vice versa; compress/decompress throughput within noise of each other).
 _SQLITE_COMPRESS_MIN_BYTES = 4096
 _SQLITE_COMPRESS_LEVEL = 3
 _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+_ZSTD_LEVEL = 1
 
-try:  # pragma: no cover - trivial import guard
-    import zstandard as _zstandard
+_zstd_compress: Callable[[bytes], bytes] | None
+_zstd_decompress: Callable[[bytes], bytes] | None
+# Exception types a corrupt zstd frame raises; empty when no binding is present
+# so ``except _ZSTD_ERRORS`` stays valid (an empty tuple catches nothing).
+_ZSTD_ERRORS: tuple[type[Exception], ...]
 
-    _ZSTD_COMPRESSOR = _zstandard.ZstdCompressor(level=1)
-    _ZSTD_DECOMPRESSOR = _zstandard.ZstdDecompressor()
-except ImportError:  # pragma: no cover - defensive fallback only
-    _ZSTD_COMPRESSOR = None
-    _ZSTD_DECOMPRESSOR = None
+if sys.version_info >= (3, 14):  # pragma: no cover - interpreter dependent
+    try:
+        from compression import zstd as _stdlib_zstd
+    except ImportError:  # interpreter built without libzstd
+        _stdlib_zstd = None
+else:  # pragma: no cover - interpreter dependent
+    _stdlib_zstd = None
+
+if _stdlib_zstd is not None:  # pragma: no cover - interpreter dependent
+    _STDLIB_ZSTD_COMPRESSOR = _stdlib_zstd.ZstdCompressor(level=_ZSTD_LEVEL)
+    _STDLIB_ZSTD_FLUSH_FRAME = _stdlib_zstd.ZstdCompressor.FLUSH_FRAME
+
+    def _zstd_compress(blob: bytes) -> bytes:
+        # One long-lived compressor (context reuse, internally locked);
+        # FLUSH_FRAME closes the frame so each call yields a standalone blob.
+        return _STDLIB_ZSTD_COMPRESSOR.compress(blob, _STDLIB_ZSTD_FLUSH_FRAME)
+
+    _zstd_decompress = _stdlib_zstd.decompress
+    _ZSTD_ERRORS = (_stdlib_zstd.ZstdError,)
+else:  # pragma: no cover - interpreter dependent
+    try:
+        import zstandard as _zstandard
+
+        _zstd_compress = _zstandard.ZstdCompressor(level=_ZSTD_LEVEL).compress
+        _zstd_decompress = _zstandard.ZstdDecompressor().decompress
+        _ZSTD_ERRORS = (_zstandard.ZstdError,)
+    except ImportError:  # defensive fallback only
+        _zstd_compress = None
+        _zstd_decompress = None
+        _ZSTD_ERRORS = ()
+        # Reached only on an interpreter built without libzstd (3.14+) or with
+        # the zstandard wheel removed (3.11-3.13): payload rows fall back to
+        # zlib-3, which is measurably slower. Surface it instead of hiding it.
+        logger.info("No zstd binding available; SQLite cache falls back to zlib compression")
 
 # Materialized-frame codec: lz4 (level 0) halves both compress and decompress
 # time vs zstd-1 on the 1452-frame Monaco set (~2x faster, +26% stored bytes)
@@ -79,21 +123,33 @@ except ImportError:  # pragma: no cover - defensive fallback only
     _lz4_frame = None
     _LZ4_MAGIC = b""
 
+# The frame tier needs at least one of its codecs; zlib is deliberately not a
+# frame-tier fallback (the tier is a pure speed optimization over the payload
+# tier, and zlib would make it slower than re-parsing the payload).
+_FRAME_CODEC_AVAILABLE = _lz4_frame is not None or _zstd_compress is not None
+
 
 def _compress_frame_blob(blob: bytes) -> bytes:
     """Compress a pickled frame for the frame tier (lz4 when available)."""
     if _lz4_frame is not None:
         return _lz4_frame.compress(blob, compression_level=0)
-    assert _ZSTD_COMPRESSOR is not None  # callers gate on the zstd tier
-    return _ZSTD_COMPRESSOR.compress(blob)
+    if _zstd_compress is None:  # pragma: no cover - callers gate on the tier
+        raise ValueError("No frame-tier codec available")
+    return _zstd_compress(blob)
 
 
 def _decompress_frame_blob(blob: bytes) -> bytes:
-    """Decompress a frame-tier blob; both lz4 and legacy zstd rows read."""
+    """Decompress a frame-tier blob; both lz4 and legacy zstd rows read.
+
+    Raises ``ValueError`` when no importable codec can read the row (for
+    example a legacy zstd row on an interpreter with lz4 but no zstd binding),
+    so the batch reader treats it as a corrupt-row miss instead of aborting.
+    """
     if _lz4_frame is not None and blob[:4] == _LZ4_MAGIC:
         return _lz4_frame.decompress(blob)
-    assert _ZSTD_DECOMPRESSOR is not None  # callers gate on the zstd tier
-    return _ZSTD_DECOMPRESSOR.decompress(blob)
+    if _zstd_decompress is None:
+        raise ValueError("No codec available for frame-tier row")
+    return _zstd_decompress(blob)
 
 
 # Parsed-object front tiers: bounded small because parsed payloads are far
@@ -139,8 +195,8 @@ def _suspend_gc():
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
     """Serialize a JSON blob for the SQLite tier (compress large payloads)."""
     if len(blob) >= _SQLITE_COMPRESS_MIN_BYTES:
-        if _ZSTD_COMPRESSOR is not None:
-            return _ZSTD_COMPRESSOR.compress(blob)
+        if _zstd_compress is not None:
+            return _zstd_compress(blob)
         return zlib.compress(blob, _SQLITE_COMPRESS_LEVEL)
     return blob.decode("utf-8")
 
@@ -154,10 +210,10 @@ def _decode_sqlite_value(stored: Any) -> Any:
     handling turns it into a cache miss.
     """
     if isinstance(stored, bytes):
-        if _ZSTD_DECOMPRESSOR is not None and len(stored) >= 4 and stored[:4] == _ZSTD_MAGIC:
+        if _zstd_decompress is not None and len(stored) >= 4 and stored[:4] == _ZSTD_MAGIC:
             try:
-                return _ZSTD_DECOMPRESSOR.decompress(stored)
-            except _zstandard.ZstdError as e:
+                return _zstd_decompress(stored)
+            except _ZSTD_ERRORS as e:
                 raise ValueError(f"Corrupt compressed cache entry: {e}") from e
         try:
             return zlib.decompress(stored)
@@ -790,6 +846,9 @@ class Cache:
                 self._memory_telemetry_cache.clear()
                 self._parsed_cache.clear()
                 self._parsed_telemetry_cache.clear()
+                # The missing-verdict map mirrors SQLite; drop the mirror so
+                # the next probe reloads it (the rows themselves persist).
+                self._missing_payloads = None
             logger.info("Memory cache tiers invalidated")
             return
         if scope not in ("json", "telemetry"):
@@ -810,9 +869,9 @@ class Cache:
             for laps_table in _LAPS_FRAME_TABLES.values():
                 self.conn.execute(f"DELETE FROM {laps_table}")
             if scope == "telemetry":
-                # Frames are derived from telemetry payloads.
-                self.conn.execute("DELETE FROM telemetry_frames")
-                self.conn.execute("DELETE FROM telemetry_frames_pl")
+                # Frames are derived from telemetry payloads (both backends).
+                for frame_table in _FRAME_TABLES.values():
+                    self.conn.execute(f"DELETE FROM {frame_table}")
             self.conn.commit()
             self._pending_writes = 0
         with self._memory_cache_lock:
@@ -873,7 +932,7 @@ class Cache:
 
     async def get_async(self, key: str) -> Any | None:
         """Get cached data asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get, key)
 
     def _store_json_blob(self, key: str, blob: bytes) -> None:
@@ -888,14 +947,18 @@ class Cache:
             # Update memory cache first (fast operation, <1ms)
             self._memory_cache.set(key, blob)
             # The payload exists: drop any stale everywhere-missing verdict.
-            if self._missing_payloads is not None:
-                self._missing_payloads.pop(key, None)
+            # The verdict map loads once per process (one SELECT) and the
+            # SQLite row is deleted only when a verdict was present, so the
+            # hot path pays a dict pop and nothing more.
+            stale_verdict = self._load_missing_payloads().pop(key, None) is not None
 
             # Then update SQLite (slower operation)
             with self._sqlite_lock:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, _encode_sqlite_value(blob))
                 )
+                if stale_verdict:
+                    self.conn.execute("DELETE FROM missing_payloads WHERE key = ?", (key,))
                 self._pending_writes += 1
                 self._commit_if_needed()
 
@@ -934,7 +997,7 @@ class Cache:
 
     async def set_async(self, key: str, data: Any) -> None:
         """Set cached data asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.set, key, data)
 
     def _get_telemetry(self, year: int, gp: str, session: str, driver: str, lap: int) -> Any | None:
@@ -1004,7 +1067,7 @@ class Cache:
         self, year: int, gp: str, session: str, driver: str, lap: int
     ) -> Any | None:
         """Get cached telemetry data asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_telemetry, year, gp, session, driver, lap)
 
     def get_telemetry_batch(
@@ -1101,7 +1164,7 @@ class Cache:
             no (or corrupt) frame rows are absent and fall through to the
             payload tier.
         """
-        if self.conn is None or not driver_laps or _ZSTD_DECOMPRESSOR is None:
+        if self.conn is None or not driver_laps or not _FRAME_CODEC_AVAILABLE:
             return {}
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         results: dict[tuple[str, int], Any] = {}
@@ -1166,7 +1229,7 @@ class Cache:
                     TypeError,
                     ValueError,
                     pickle.UnpicklingError,
-                    _zstandard.ZstdError,
+                    *_ZSTD_ERRORS,
                 ):
                     logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
         return results
@@ -1188,7 +1251,7 @@ class Cache:
         Returns:
             Number of frames written (0 when the tier is unavailable).
         """
-        if self.conn is None or self.read_only or _ZSTD_COMPRESSOR is None or not frames:
+        if self.conn is None or self.read_only or not _FRAME_CODEC_AVAILABLE or not frames:
             return 0
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         written = 0
@@ -1235,7 +1298,7 @@ class Cache:
             The unpickled pandas DataFrame, or None on a miss / corrupt row /
             foreign-backend row (the caller falls back to the payload path).
         """
-        if self.conn is None or _ZSTD_DECOMPRESSOR is None:
+        if self.conn is None or not _FRAME_CODEC_AVAILABLE:
             return None
         table = _LAPS_FRAME_TABLES.get(lib, "laps_frames")
         try:
@@ -1266,7 +1329,7 @@ class Cache:
             TypeError,
             ValueError,
             pickle.UnpicklingError,
-            _zstandard.ZstdError,
+            *_ZSTD_ERRORS,
         ):
             logger.debug("Corrupt laps frame row skipped: %s/%s/%s", year, gp, session)
             return None
@@ -1284,7 +1347,7 @@ class Cache:
         Returns:
             Number of rows written (0 when the tier is unavailable).
         """
-        if self.conn is None or self.read_only or _ZSTD_COMPRESSOR is None:
+        if self.conn is None or self.read_only or not _FRAME_CODEC_AVAILABLE:
             return 0
         table = _LAPS_FRAME_TABLES.get(lib, "laps_frames")
         try:
@@ -1345,7 +1408,7 @@ class Cache:
         self, year: int, gp: str, session: str, driver: str, lap: int, data: Any
     ) -> None:
         """Set cached telemetry data asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.set_telemetry, year, gp, session, driver, lap, data
         )
@@ -1399,10 +1462,10 @@ class Cache:
         with self._sqlite_lock:
             self.conn.execute("DELETE FROM cache")
             self.conn.execute("DELETE FROM telemetry_cache")
-            self.conn.execute("DELETE FROM telemetry_frames")
-            self.conn.execute("DELETE FROM telemetry_frames_pl")
-            self.conn.execute("DELETE FROM laps_frames")
-            self.conn.execute("DELETE FROM laps_frames_pl")
+            for frame_table in _FRAME_TABLES.values():
+                self.conn.execute(f"DELETE FROM {frame_table}")
+            for laps_table in _LAPS_FRAME_TABLES.values():
+                self.conn.execute(f"DELETE FROM {laps_table}")
             self.conn.execute("DELETE FROM missing_payloads")
             self.conn.commit()
             self._pending_writes = 0

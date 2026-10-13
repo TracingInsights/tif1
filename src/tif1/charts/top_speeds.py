@@ -26,7 +26,7 @@ def plot_top_speeds(
     auto_save: bool | None = None,
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
-    facecolor: str | None = "#1a1a1a",
+    facecolor: str | None = None,
     color_scheme: str | None = "fastf1",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",

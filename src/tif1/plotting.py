@@ -138,7 +138,9 @@ PLOT_STYLES: dict[str, dict[str, Any]] = {
         "colors": {
             "background": "#011627",
             "text": "lime",
-            "grid": "black",
+            # The v2 script drew a black zero line, which is invisible on the
+            # navy background; the dark style uses the bar-label white instead.
+            "grid": "white",
             "bar_label": "white",
             "ytick": "white",
         },
@@ -228,9 +230,10 @@ def setup_mpl(
         color_scheme: Color scheme to use ('fastf1', 'light', 'default-light',
             'default-dark', or None). 'default-light' reproduces the
             TracingInsights v2 Fastest_Lap.py theme (lightblue background, black
-            text, 32pt labels, hidden top/right spines) and 'default-dark' is
-            its TracingInsights-brand dark counterpart (``#011627`` background,
-            lime text).
+            text, hidden top/right spines) and 'default-dark' is its
+            TracingInsights-brand dark counterpart (``#011627`` background,
+            lime text). Every named scheme first resets the rcParams keys the
+            schemes manage, so themes never leak into one another.
         misc_mpl_mods: Apply style-related matplotlib changes
         **kwargs: Additional configuration overrides
 
@@ -247,6 +250,12 @@ def setup_mpl(
 
     if not misc_mpl_mods:
         return
+
+    if color_scheme in _COLOR_SCHEMES:
+        # Every scheme starts from matplotlib's defaults for the keys the
+        # schemes manage, so switching e.g. from ``default-dark`` back to
+        # ``fastf1`` does not keep hidden spines or the dark legend frame.
+        _reset_theme_rcparams()
 
     if color_scheme == "fastf1":
         _enable_fastf1_color_scheme()
@@ -360,6 +369,48 @@ def set_default_colormap(colormap: Literal["fastf1", "official"]) -> None:
     _DEFAULT_COLORMAP = colormap
 
 
+#: Color scheme names accepted by :func:`setup_mpl`.
+_COLOR_SCHEMES = ("fastf1", "light", "default-light", "default-dark")
+
+#: Every rcParams key written by any color scheme. Reset to matplotlib's
+#: defaults before a scheme is applied so themes never leak into each other.
+_THEME_RCPARAMS = (
+    "figure.facecolor",
+    "axes.facecolor",
+    "axes.edgecolor",
+    "axes.labelcolor",
+    "axes.titlesize",
+    "axes.titlepad",
+    "axes.titleweight",
+    "axes.labelsize",
+    "axes.prop_cycle",
+    "axes.axisbelow",
+    "axes.spines.top",
+    "axes.spines.right",
+    "axes.spines.left",
+    "axes.spines.bottom",
+    "xtick.color",
+    "ytick.color",
+    "xtick.labelsize",
+    "ytick.labelsize",
+    "ytick.major.size",
+    "text.color",
+    "font.weight",
+    "legend.frameon",
+    "legend.fancybox",
+    "legend.facecolor",
+    "legend.edgecolor",
+    "legend.fontsize",
+    "savefig.transparent",
+)
+
+
+def _reset_theme_rcparams() -> None:
+    """Restore matplotlib defaults for every rcParams key a color scheme sets."""
+    for key in _THEME_RCPARAMS:
+        plt.rcParams[key] = mpl.rcParamsDefault[key]
+
+
 def _enable_fastf1_color_scheme() -> None:
     """Apply FastF1's plotting color scheme."""
     plt.rcParams["figure.facecolor"] = "#292625"
@@ -396,13 +447,17 @@ def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
     """Apply the TracingInsights v2 matplotlib theme (from ``Fastest_Lap.py``).
 
     Reproduces ``utils.setup_plot_style`` from the v2 analysis scripts: it
-    layers the v2-specific settings (32pt labels, hidden top/right spines,
-    legend styling) on top of the base light theme.
+    layers the v2-specific settings (hidden top/right spines, legend styling,
+    no y tick marks) on top of the base light theme.
+
+    The v2 scripts also forced 32pt tick, legend and axis-label fonts. Those
+    sizes were tuned for 20x20 inch canvases and swamp the 10x8 inch charts
+    (legends covering the data, tick labels colliding), so they are *not*
+    applied globally. The 20x20 race-launch chart still draws its labels at
+    the style's 32pt ``label_size`` explicitly.
     """
     _enable_light_color_scheme(background=background, text_color=text_color)
 
-    plt.rcParams["xtick.labelsize"] = 32
-    plt.rcParams["ytick.labelsize"] = 32
     plt.rcParams["axes.spines.top"] = False
     plt.rcParams["axes.spines.right"] = False
     plt.rcParams["axes.spines.left"] = True
@@ -411,9 +466,6 @@ def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
     plt.rcParams["legend.facecolor"] = background
     plt.rcParams["legend.edgecolor"] = text_color
     plt.rcParams["legend.fancybox"] = True
-    plt.rcParams["legend.fontsize"] = 32
-    plt.rcParams["axes.titlesize"] = 32
-    plt.rcParams["axes.labelsize"] = 32
     plt.rcParams["ytick.major.size"] = 0
 
 

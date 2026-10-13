@@ -14,7 +14,7 @@ keywords:
 
 ## Requirements
 
-- **Python:** 3.11 or higher
+- **Python:** 3.11 or higher (3.11 through 3.15 are tested in CI)
 - **OS:** Windows, macOS, or Linux
 
 ## Quick Install
@@ -34,17 +34,16 @@ keywords:
       ```
     </CodeGroup>
   </Step>
-  <Step title="Install the optional extras">
-    Add the `polars` extra for the Polars backend.
+  <Step title="Check what comes with it">
+    `tif1` installs pandas and polars together with its plotting dependencies. There is no separate extra for the Polars backend. Select it at runtime with `lib="polars"` or `TIF1_LIB=polars`.
+
+    The only extra is `dev`. It adds the test and lint toolchain for contributors:
     <CodeGroup>
       ```bash pip
-      pip install tif1[polars]
+      pip install "tif1[dev]"
       ```
       ```bash uv
-      uv add tif1[polars]
-      ```
-      ```bash poetry
-      poetry add tif1[polars]
+      uv add "tif1[dev]"
       ```
     </CodeGroup>
   </Step>
@@ -103,7 +102,7 @@ For permanent settings, create a `.tif1rc` (JSON) file in the home directory:
     "Database is locked" errors show that multiple processes write to the cache at the same time. `tif1` uses WAL mode to reduce this problem. Very high concurrency on slow disks can still trigger the error.
   </Accordion>
   <Accordion title="Polars Version Mismatch">
-    Use `polars>=1.40.1` to avoid compatibility issues with the `tif1` categorical optimization.
+    Use `polars>=1.44.1` (the version `tif1` installs) to avoid compatibility issues with the `tif1` categorical optimization.
   </Accordion>
 </AccordionGroup>
 

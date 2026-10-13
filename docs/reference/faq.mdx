@@ -54,7 +54,9 @@ pip install tif1
 
 ### What Python version do I need?
 
-Python 3.11 or higher is required.
+Python 3.11 or higher is required. Versions 3.11 through 3.15 are tested in CI.
+
+On Python 3.14 and later, the cache uses the standard-library `compression.zstd` module instead of the `zstandard` package. On Python 3.15, the `lz4` package is not installed because it has no 3.15 wheels yet, so the telemetry frame cache uses zstd instead. Cached data stays compatible across these versions.
 
 ### Do I need an API key?
 

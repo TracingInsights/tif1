@@ -9,7 +9,9 @@ keywords:
   - "documentation"
 ---
 
-`tif1` can be configured using environment variables or a `.tif1rc` configuration file. Environment variables take precedence over file-based configuration.
+`tif1` can be configured using environment variables or a `.tif1rc` configuration file. Environment variables take precedence over file-based configuration. `Config._load_env` in `config.py` reads every variable on this page. The two exceptions are `TIF1_CONFIG_FILE` and `TIF1_TRUST_CWD_CONFIG`, which `Config._load_config` reads to locate the file.
+
+**Value parsing.** Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive). Lists are comma-separated. An unparseable value logs a warning and leaves the previous value in place.
 
 ## Core Configuration
 
@@ -22,19 +24,43 @@ export TIF1_CACHE_DIR="/path/to/cache"
 ```
 
 <Info>
-  Default: Windows `%LOCALAPPDATA%/Temp/tif1`; macOS `~/Library/Caches/tif1`; Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`.
+  Type: `str`. Default: Windows `%LOCALAPPDATA%/Temp/tif1`; macOS `~/Library/Caches/tif1`; Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`.
 </Info>
 
-### TIF1_CACHE_ENABLED
+### TIF1_ENABLE_CACHE
 
 Enable or disable caching globally.
 
 ```bash
-export TIF1_CACHE_ENABLED=false
+export TIF1_ENABLE_CACHE=false
 ```
 
 <Info>
-  Default: `true`
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_OFFLINE_MODE
+
+Serve payloads from the cache only. A cache miss raises `NetworkError` instead of contacting a CDN.
+
+```bash
+export TIF1_OFFLINE_MODE=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_CI_MODE
+
+Bypass the payload cache for reads and writes, so every fetch hits the CDN.
+
+```bash
+export TIF1_CI_MODE=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
 </Info>
 
 ### TIF1_LIB
@@ -46,91 +72,163 @@ export TIF1_LIB=polars
 ```
 
 <Info>
-  Default: `pandas`
+  Type: `str`. Default: `pandas`
 
   Options: `pandas`, `polars`
+</Info>
+
+### TIF1_POLARS_LAP_CATEGORICAL
+
+Use categorical dtypes for string columns in polars lap frames.
+
+```bash
+export TIF1_POLARS_LAP_CATEGORICAL=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_LOG_LEVEL
+
+Set the logging verbosity.
+
+```bash
+export TIF1_LOG_LEVEL=DEBUG
+```
+
+<Info>
+  Type: `str`. Default: `WARNING`
+
+  Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 </Info>
 
 ## Network Configuration
 
 ### TIF1_CDNS
 
-Configure multiple CDN sources for data fetching with automatic fallback.
+Configure the CDN sources for data fetching with automatic fallback. The value is a comma-separated list, not JSON. Only `https://` URLs are accepted; `raw.githubusercontent.com` is skipped.
 
 ```bash
-export TIF1_CDNS='["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"]'
+export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingface.co/buckets/tracinginsights,https://cdn.staticdelivr.com/gh/TracingInsights"
 ```
 
 <Info>
-  Default: jsDelivr (primary), Hugging Face buckets (fallback), StaticDelivr (last resort)
+  Type: `list[str]`. Default: jsDelivr (primary), Hugging Face buckets (fallback), StaticDelivr (last resort)
 
   The system tries CDNs in order and automatically falls back on failures.
 </Info>
 
-### TIF1_CDN_USE_MINIFICATION
+<Note>
+  The `cdn_use_minification` config key has no environment variable. Set it in `.tif1rc` or with `config.set("cdn_use_minification", True)`.
+</Note>
 
-Enable JSON minification for reduced file sizes.
-
-```bash
-export TIF1_CDN_USE_MINIFICATION=true
-```
-
-<Info>
-  Default: `false`
-
-  When enabled, tif1 requests `.min.json` files which are 20-40% smaller.
-</Info>
-
-### TIF1_CDN_BASE_URL
-
-Legacy single CDN configuration (deprecated: use `TIF1_CDNS` instead).
-
-```bash
-export TIF1_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/TracingInsights"
-```
-
-<Warning>
-  Change this variable only for a privately hosted data mirror. Never use `raw.githubusercontent.com` because of rate limits.
-
-  Use `TIF1_CDNS` for multi-CDN support with automatic fallback.
-</Warning>
-
-### TIF1_REQUEST_TIMEOUT
+### TIF1_TIMEOUT
 
 Timeout for HTTP requests in seconds.
 
 ```bash
-export TIF1_REQUEST_TIMEOUT=30
+export TIF1_TIMEOUT=60
 ```
 
 <Info>
-  Default: `10` seconds
+  Type: `int`. Default: `30` seconds
 </Info>
 
 ### TIF1_MAX_RETRIES
 
-Maximum number of retries for failed requests.
+Maximum number of retries for failed requests. `0` disables retries.
 
 ```bash
 export TIF1_MAX_RETRIES=5
 ```
 
 <Info>
-  Default: `3`
+  Type: `int`. Default: `3`
 </Info>
 
-### TIF1_RETRY_BACKOFF
+### TIF1_RETRY_BACKOFF_FACTOR
 
-Backoff multiplier for exponential retry delays.
+Backoff multiplier for exponential retry delays. Values below `1.0` are rejected on read.
 
 ```bash
-export TIF1_RETRY_BACKOFF=2.0
+export TIF1_RETRY_BACKOFF_FACTOR=3.0
 ```
 
 <Info>
-  Default: `1.5`
+  Type: `float`. Default: `2.0`
+</Info>
 
-  Formula: `delay = base_delay * (backoff ^ attempt)`
+### TIF1_RETRY_JITTER
+
+Add random jitter to retry delays.
+
+```bash
+export TIF1_RETRY_JITTER=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_RETRY_JITTER_MAX
+
+Maximum jitter in seconds. `0.0` disables jitter.
+
+```bash
+export TIF1_RETRY_JITTER_MAX=1.0
+```
+
+<Info>
+  Type: `float`. Default: `0.0`
+</Info>
+
+### TIF1_MAX_RETRY_DELAY
+
+Upper bound for a single retry delay in seconds.
+
+```bash
+export TIF1_MAX_RETRY_DELAY=120.0
+```
+
+<Info>
+  Type: `float`. Default: `60.0`
+</Info>
+
+### TIF1_MAX_WORKERS
+
+Maximum number of worker threads for parallel requests.
+
+```bash
+export TIF1_MAX_WORKERS=50
+```
+
+<Info>
+  Type: `int`. Default: `20`
+</Info>
+
+### TIF1_MAX_CONCURRENT_REQUESTS
+
+Maximum number of in-flight HTTP requests in the async fetch pipeline.
+
+```bash
+export TIF1_MAX_CONCURRENT_REQUESTS=32
+```
+
+<Info>
+  Type: `int`. Default: `22`
+</Info>
+
+### TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS
+
+Maximum in-flight requests while prefetching telemetry.
+
+```bash
+export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=64
+```
+
+<Info>
+  Type: `int`. Default: `32`
 </Info>
 
 ## Circuit Breaker
@@ -144,7 +242,7 @@ export TIF1_CIRCUIT_BREAKER_THRESHOLD=10
 ```
 
 <Info>
-  Default: `5`
+  Type: `int`. Default: `5`
 </Info>
 
 ### TIF1_CIRCUIT_BREAKER_TIMEOUT
@@ -156,149 +254,426 @@ export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
 ```
 
 <Info>
-  Default: `60` seconds
+  Type: `int`. Default: `60` seconds
 </Info>
 
-## Logging
+## HTTP Session
 
-### TIF1_LOG_LEVEL
+### TIF1_HTTP_MULTIPLEXED
 
-Set the logging verbosity.
+Enable HTTP/2 multiplexing for multiple requests over one connection.
 
 ```bash
-export TIF1_LOG_LEVEL=DEBUG
+export TIF1_HTTP_MULTIPLEXED=false
 ```
 
 <Info>
-  Default: `INFO`
+  Type: `bool`. Default: `true`
 
-  Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+  Disable this option only when a proxy or CDN causes connection problems.
 </Info>
 
-### TIF1_LOG_FILE
+### TIF1_HTTP_DISABLE_HTTP3
 
-Write logs to a file instead of stdout.
+Disable HTTP/3 (QUIC) support.
 
 ```bash
-export TIF1_LOG_FILE="/var/log/tif1.log"
+export TIF1_HTTP_DISABLE_HTTP3=true
 ```
 
 <Info>
-  Default: None (logs to stdout)
+  Type: `bool`. Default: `false`
 </Info>
 
-## Performance Tuning
+### TIF1_HTTP2_MAX_CONNECTIONS
 
-### TIF1_ASYNC_WORKERS
-
-Number of concurrent workers for async operations.
+Maximum HTTP/2 connections per host.
 
 ```bash
-export TIF1_ASYNC_WORKERS=20
+export TIF1_HTTP2_MAX_CONNECTIONS=20
 ```
 
 <Info>
-  Default: `10`
-
-  Higher values give more parallelism and more memory usage.
+  Type: `int`. Default: `10`
 </Info>
 
-### TIF1_MEMORY_CACHE_SIZE
+### TIF1_HTTP2_MAX_POOL_SIZE
 
-Size of the in-memory LRU cache (number of items).
+HTTP/2 connection pool size.
 
 ```bash
-export TIF1_MEMORY_CACHE_SIZE=200
+export TIF1_HTTP2_MAX_POOL_SIZE=40
 ```
 
 <Info>
-  Default: `100`
+  Type: `int`. Default: `20`
 </Info>
 
-### TIF1_HTTP2_ENABLED
+### TIF1_POOL_CONNECTIONS
 
-Enable HTTP/2 for network requests.
+Number of connection pools. The library clamps explicit values to a minimum of `10`.
 
 ```bash
-export TIF1_HTTP2_ENABLED=true
+export TIF1_POOL_CONNECTIONS=512
 ```
 
 <Info>
-  Default: `true`
-
-  Disable this option only when connection problems occur.
+  Type: `int`. Default: unset; the library computes `max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)`.
 </Info>
 
-## Data Processing
+### TIF1_POOL_MAXSIZE
 
-### TIF1_USE_CATEGORICAL
-
-Convert string columns to categorical types for memory savings.
+Maximum connections per pool. The library clamps explicit values to a minimum of `512`.
 
 ```bash
-export TIF1_USE_CATEGORICAL=true
+export TIF1_POOL_MAXSIZE=2048
 ```
 
 <Info>
-  Default: `true`
-
-  This option can reduce memory usage by 30-50%.
+  Type: `int`. Default: unset; the library computes `max(512, pool_connections * 4)`.
 </Info>
 
-### TIF1_TELEMETRY_FREQUENCY
+### TIF1_KEEPALIVE_TIMEOUT
 
-Telemetry sampling frequency in Hz.
+Keep-alive timeout in seconds.
 
 ```bash
-export TIF1_TELEMETRY_FREQUENCY=4
+export TIF1_KEEPALIVE_TIMEOUT=300
 ```
 
 <Info>
-  Default: `4` Hz
-
-  Higher values give more data points and larger files.
+  Type: `int`. Default: `120`
 </Info>
+
+### TIF1_KEEPALIVE_MAX_REQUESTS
+
+Maximum requests per keep-alive connection.
+
+```bash
+export TIF1_KEEPALIVE_MAX_REQUESTS=5000
+```
+
+<Info>
+  Type: `int`. Default: `10000`
+</Info>
+
+### TIF1_HTTP_RESOLVERS
+
+DNS resolver chain, tried in order. Comma-separated.
+
+```bash
+export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+```
+
+<Info>
+  Type: `list[str]`. Default: `standard,doh://cloudflare,doh://google`
+</Info>
+
+### TIF1_CONNECTION_STATS_LOG_INTERVAL
+
+Interval in seconds between connection pool statistics log lines.
+
+```bash
+export TIF1_CONNECTION_STATS_LOG_INTERVAL=120.0
+```
+
+<Info>
+  Type: `float`. Default: `60.0`
+</Info>
+
+### TIF1_POOL_EXHAUSTION_BACKOFF_BASE
+
+Base delay in seconds when the connection pool is exhausted.
+
+```bash
+export TIF1_POOL_EXHAUSTION_BACKOFF_BASE=0.02
+```
+
+<Info>
+  Type: `float`. Default: `0.01`
+</Info>
+
+### TIF1_POOL_EXHAUSTION_BACKOFF_MAX
+
+Maximum pool-exhaustion backoff delay in seconds.
+
+```bash
+export TIF1_POOL_EXHAUSTION_BACKOFF_MAX=1.0
+```
+
+<Info>
+  Type: `float`. Default: `0.5`
+</Info>
+
+### TIF1_POOL_EXHAUSTION_BACKOFF_JITTER
+
+Jitter added to the pool-exhaustion backoff, in seconds.
+
+```bash
+export TIF1_POOL_EXHAUSTION_BACKOFF_JITTER=0.02
+```
+
+<Info>
+  Type: `float`. Default: `0.01`
+</Info>
+
+## Cache Tuning
+
+### TIF1_MEMORY_CACHE_MAX_ITEMS
+
+Size of the in-memory JSON blob LRU (number of items).
+
+```bash
+export TIF1_MEMORY_CACHE_MAX_ITEMS=4096
+```
+
+<Info>
+  Type: `int`. Default: `1024`
+</Info>
+
+### TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS
+
+Size of the in-memory telemetry blob LRU (number of items).
+
+```bash
+export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=8192
+```
+
+<Info>
+  Type: `int`. Default: `2048`
+</Info>
+
+### TIF1_CACHE_COMMIT_INTERVAL
+
+Number of cache writes between SQLite commits.
+
+```bash
+export TIF1_CACHE_COMMIT_INTERVAL=50
+```
+
+<Info>
+  Type: `int`. Default: `100`
+</Info>
+
+### TIF1_SQLITE_TIMEOUT
+
+SQLite busy timeout in seconds.
+
+```bash
+export TIF1_SQLITE_TIMEOUT=60.0
+```
+
+<Info>
+  Type: `float`. Default: `30.0`
+</Info>
+
+### TIF1_MISSING_PAYLOADS_TTL_DAYS
+
+Lifetime in days of an all-CDN-missing verdict. Within the window, tif1 skips the CDN probe for that payload.
+
+```bash
+export TIF1_MISSING_PAYLOADS_TTL_DAYS=1.0
+```
+
+<Info>
+  Type: `float`. Default: `7.0`
+</Info>
+
+## Data Loading and Validation
+
+### TIF1_ULTRA_COLD_START
+
+Enable the low-latency path for first-time loads.
+
+```bash
+export TIF1_ULTRA_COLD_START=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_ULTRA_COLD_BACKGROUND_CACHE_FILL
+
+Fill the cache in a background thread during an ultra cold start.
+
+```bash
+export TIF1_ULTRA_COLD_BACKGROUND_CACHE_FILL=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_ULTRA_COLD_SKIP_RETRIES
+
+Skip retries during an ultra cold start.
+
+```bash
+export TIF1_ULTRA_COLD_SKIP_RETRIES=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_PREFETCH_DRIVER_LAPS_ON_GET_DRIVER
+
+Prefetch a driver's lap data when the driver is first accessed.
+
+```bash
+export TIF1_PREFETCH_DRIVER_LAPS_ON_GET_DRIVER=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_PREFETCH_ALL_TELEMETRY_ON_FIRST_LAP_REQUEST
+
+Prefetch every telemetry payload on the first lap telemetry request.
+
+```bash
+export TIF1_PREFETCH_ALL_TELEMETRY_ON_FIRST_LAP_REQUEST=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD
+
+Prefetch every telemetry payload as soon as laps are loaded.
+
+```bash
+export TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_VALIDATE_DATA
+
+Enable Pydantic validation of incoming JSON payloads.
+
+```bash
+export TIF1_VALIDATE_DATA=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_VALIDATE_LAP_TIMES
+
+Enable validation of lap time payloads.
+
+```bash
+export TIF1_VALIDATE_LAP_TIMES=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_VALIDATE_TELEMETRY
+
+Enable validation of telemetry payloads.
+
+```bash
+export TIF1_VALIDATE_TELEMETRY=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_JSON_PARSE_WORKERS
+
+Number of worker processes for JSON parsing. `0` parses in-process.
+
+```bash
+export TIF1_JSON_PARSE_WORKERS=4
+```
+
+<Info>
+  Type: `int`. Default: `0`
+
+  Process-pool parsing adds IPC overhead on telemetry-heavy cold starts. Keep it at `0` unless a benchmark shows a gain.
+</Info>
+
+## Configuration File Control
+
+### TIF1_CONFIG_FILE
+
+Explicit path to a `.tif1rc` JSON file. It is checked first in the lookup order.
+
+```bash
+export TIF1_CONFIG_FILE="/path/to/config.json"
+```
+
+<Info>
+  Type: `str`. Default: unset
+</Info>
+
+### TIF1_TRUST_CWD_CONFIG
+
+Allow tif1 to read `.tif1rc` from the current working directory.
+
+```bash
+export TIF1_TRUST_CWD_CONFIG=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+<Warning>
+  Set `TIF1_TRUST_CWD_CONFIG=true` only in trusted directories. A `.tif1rc` in an untrusted checkout could redirect the CDN list or the cache directory.
+</Warning>
 
 ## Configuration File
 
-Instead of environment variables, create a `.tif1rc` file in the home directory or the project root.
+Instead of environment variables, create a `.tif1rc` file. The file is a JSON object keyed by configuration key. A configuration key is the environment variable name without the `TIF1_` prefix, in lowercase. tif1 loads the first file found in this order:
+
+1. The path in `TIF1_CONFIG_FILE`, when set
+2. `./.tif1rc` in the current working directory, only when `TIF1_TRUST_CWD_CONFIG=true`
+3. `~/.tif1rc` in the home directory
+
+A file whose root is not a JSON object is skipped with a warning.
 
 ### Example .tif1rc
 
-```ini
-[cache]
-enabled = true
-directory = <platform-specific default>
-memory_size = 100
-
-[network]
-cdns = ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"]
-cdn_use_minification = false
-request_timeout = 10
-max_retries = 3
-retry_backoff = 1.5
-http2_enabled = true
-
-[circuit_breaker]
-threshold = 5
-timeout = 60
-
-[lib]
-default = pandas
-use_categorical = true
-
-[logging]
-level = INFO
-file =
-
-[performance]
-async_workers = 10
-telemetry_frequency = 4
+```json
+{
+  "enable_cache": true,
+  "cache_dir": "/path/to/cache",
+  "memory_cache_max_items": 1024,
+  "memory_telemetry_cache_max_items": 2048,
+  "cdns": [
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://huggingface.co/buckets/tracinginsights",
+    "https://cdn.staticdelivr.com/gh/TracingInsights"
+  ],
+  "cdn_use_minification": false,
+  "timeout": 30,
+  "max_retries": 3,
+  "retry_backoff_factor": 2.0,
+  "http_multiplexed": true,
+  "circuit_breaker_threshold": 5,
+  "circuit_breaker_timeout": 60,
+  "lib": "pandas",
+  "polars_lap_categorical": false,
+  "log_level": "WARNING",
+  "max_workers": 20,
+  "max_concurrent_requests": 22
+}
 ```
 
 ## Programmatic Configuration
 
-Configure tif1 directly in code as an alternative.
+Configure tif1 directly in code as an alternative. The `Config` object exposes `get(key, default=None)`, `set(key, value)`, and `save(path=None)`; there is no attribute API, and `tif1` does not export the `Config` class.
 
 ```python
 import tif1
@@ -307,46 +682,45 @@ import tif1
 config = tif1.get_config()
 
 # Update settings
-config.cache_enabled = False
-config.lib = "polars"
-config.log_level = "DEBUG"
+config.set("enable_cache", False)
+config.set("lib", "polars")
+config.set("log_level", "DEBUG")
 
 # Configure multiple CDNs
-config.cdns = [
+config.set("cdns", [
     "https://cdn.jsdelivr.net/gh/TracingInsights",
     "https://huggingface.co/buckets/tracinginsights",
-    "https://cdn.staticdelivr.com/gh/TracingInsights"
-]
-config.cdn_use_minification = True
+    "https://cdn.staticdelivr.com/gh/TracingInsights",
+])
+config.set("cdn_use_minification", True)
 
-# Or use the Config class directly
-from tif1 import Config
+# Read settings back
+print(config.get("cache_dir"))
+print(config.get("max_retries"))
 
-Config.CACHE_DIR = "/custom/cache/path"
-Config.MAX_RETRIES = 5
+# Persist the whole configuration to ~/.tif1rc
+config.save()
 ```
 
 ## Priority Order
 
 Configuration is resolved in this order (highest to lowest priority):
 
-1. Programmatic configuration in code
+1. Programmatic `config.set()` calls
 2. Environment variables
-3. `.tif1rc` in current directory
-4. `.tif1rc` in home directory
-5. Default values
+3. The first `.tif1rc` found: `TIF1_CONFIG_FILE`, then `./.tif1rc` (only with `TIF1_TRUST_CWD_CONFIG=true`), then `~/.tif1rc`
+4. Default values
 
 ## Validation
 
-Invalid configuration values raise a `ConfigError` at startup.
+tif1 raises no configuration exception at startup. A value that fails type conversion logs a warning and keeps the previous value. Range checks run on read: `config.get()` logs a warning and returns the supplied default for an invalid value.
 
 ```python
 import tif1
 
-try:
-    config = tif1.get_config()
-except tif1.ConfigError as e:
-    print(f"Configuration error: {e}")
+config = tif1.get_config()
+config.set("timeout", -1)
+print(config.get("timeout", 30))  # 30, with a warning in the log
 ```
 
 ## Best Practices
