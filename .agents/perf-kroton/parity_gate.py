@@ -54,7 +54,11 @@ def main():
         for driver, lap, tel in payloads:
             frame = _create_telemetry_df(tel, driver, lap, "pandas")
             if frame is not None:
-                frames[(driver, lap)] = (frame.columns.tolist(), frame.dtypes.astype(str).tolist(), frame)
+                frames[(driver, lap)] = (
+                    frame.columns.tolist(),
+                    frame.dtypes.astype(str).tolist(),
+                    frame,
+                )
         with open(SNAP, "wb") as f:
             pickle.dump([(k, c, dt, fr) for k, (c, dt, fr) in frames.items()], f)
         print(f"snapshot: {len(frames)} frames pickled to {SNAP}")
@@ -64,8 +68,8 @@ def main():
         snap = pickle.load(f)
     mismatch = 0
     checked = 0
-    for (driver, lap), cols, dtypes, ref in snap:
-        src = next((t for d, l, t in payloads if d == driver and l == lap), None)
+    for (driver, lap), _cols, _dtypes, ref in snap:
+        src = next((t for d, lap_n, t in payloads if d == driver and lap_n == lap), None)
         if src is None:
             continue
         frame = _create_telemetry_df(src, driver, lap, "pandas")
@@ -74,8 +78,7 @@ def main():
             mismatch += 1
             if mismatch <= 3:
                 print(f"MISMATCH {driver} lap {lap}")
-    print(f"parity check: {checked - mismatch}/{checked} frames identical"
-          f" ({mismatch} mismatches)")
+    print(f"parity check: {checked - mismatch}/{checked} frames identical ({mismatch} mismatches)")
     sys.exit(1 if mismatch else 0)
 
 

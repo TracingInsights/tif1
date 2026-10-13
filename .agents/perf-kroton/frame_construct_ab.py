@@ -120,9 +120,7 @@ def build_candidate(normalized, max_len, driver, lap_num):
                 frame_data[k] = fast_td_ns(arr)
             else:
                 # Fallback: replicate current behavior incl. exceptions on inf.
-                frame_data[k] = pd.to_timedelta(
-                    arr if arr is not None else v, unit="s"
-                )
+                frame_data[k] = pd.to_timedelta(arr if arr is not None else v, unit="s")
         else:
             frame_data[k] = None  # placeholder replaced below
             frame_data[k] = _typed_other(k, v)
@@ -244,7 +242,9 @@ def main():
         res.setdefault(arm, []).append(run_arm(arm, payloads, 3))
     for arm in ("current", "candidate"):
         best = min(res[arm])
-        print(f"{arm:10} best-of {best:.4f}s for {len(payloads)} frames = {best/len(payloads)*1e6:.0f} us/frame")
+        print(
+            f"{arm:10} best-of {best:.4f}s for {len(payloads)} frames = {best / len(payloads) * 1e6:.0f} us/frame"
+        )
     ratio = min(res["current"]) / min(res["candidate"])
     print(f"speedup: {ratio:.2f}x")
 

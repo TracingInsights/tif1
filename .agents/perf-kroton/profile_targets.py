@@ -6,9 +6,13 @@ import io
 import os
 import pstats
 
-os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
+import orjson
 
 import tif1
+from tif1.cache import _decode_sqlite_value, get_cache
+from tif1.validation import validate_telemetry_data
+
+os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
 
 def top(profiler, label, n=18, strip=True):
@@ -19,9 +23,7 @@ def top(profiler, label, n=18, strip=True):
     if strip:
         lines = text.splitlines()
         keep = [
- ln
-            for ln in lines
-            if "tif1" in ln or "pstats" in ln or "{" in ln or "seconds" in ln
+            ln for ln in lines if "tif1" in ln or "pstats" in ln or "{" in ln or "seconds" in ln
         ]
         text = "\n".join(keep)
     print(f"===== {label} =====")
@@ -40,11 +42,6 @@ for _ in range(10):
 pr.disable()
 top(pr, "get_session x10 (warm)")
 
-# Section B: cold-path assembly + validation share (payload tier, no network).
-import orjson
-
-from tif1.cache import _decode_sqlite_value, get_cache
-
 c = get_cache()
 rows = c.conn.execute(
     "SELECT data FROM telemetry_cache WHERE year=2026 AND gp='Monaco%20Grand%20Prix'"
@@ -53,15 +50,12 @@ rows = c.conn.execute(
 
 pr = cProfile.Profile()
 pr.enable()
-payloads = []
-for r in rows:
-    payloads.append(orjson.loads(_decode_sqlite_value(r[0])))
+payloads = [orjson.loads(_decode_sqlite_value(r[0])) for r in rows]
 pr.disable()
 top(pr, "payload-tier decode (orjson+zstd) x1452")
 
 pr = cProfile.Profile()
 pr.enable()
-from tif1.validation import validate_telemetry_data
 
 ok = 0
 for p in payloads:

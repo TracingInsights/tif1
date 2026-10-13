@@ -5,7 +5,7 @@ import time
 
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
-import tif1  #
+import tif1
 
 s = tif1.get_session(2026, "Monaco Grand Prix", "Race")
 t0 = time.perf_counter()

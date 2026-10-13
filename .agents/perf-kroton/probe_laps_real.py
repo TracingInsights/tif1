@@ -7,7 +7,7 @@ import pstats
 
 os.environ["TIF1_CACHE_DIR"] = "/tmp/tif1-warm-cache"
 
-import tif1  # noqa: E402
+import tif1
 
 pr = cProfile.Profile()
 pr.enable()
