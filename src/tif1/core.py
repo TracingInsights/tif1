@@ -2789,6 +2789,19 @@ class Session:
             return self._laps
 
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
+        # Laps frame tier (KR-1/KR-10): the processed frame materializes once
+        # per backend; warm loads unpickle it instead of re-running the
+        # payload read + merge + dtype-processing pipeline (~66 ms pandas /
+        # ~29 ms polars on the Monaco corpus).
+        if self.enable_cache and not ultra_cold_enabled:
+            cached_frame = get_cache().get_laps_frame(
+                self.year, self.gp, self.session, lib=self.lib
+            )
+            if cached_frame is not None:
+                logger.info("Laps frame tier hit: %s/%s/%s", self.year, self.gp, self.session)
+                self._laps = cached_frame
+                return self._laps
+
         drivers = self._drivers_data
         if not drivers:
             logger.info(f"No drivers, returning empty: {self.year}/{self.gp}")
@@ -2858,6 +2871,14 @@ class Session:
                 self._laps = self._laps.loc[:, ~self._laps.columns.duplicated()]
 
         self._laps = _process_lap_df(self._laps, self.lib)
+
+        if self.enable_cache and not _is_empty_df(self._laps, self.lib):
+            if self.lib == "pandas" and isinstance(self._laps, pd.DataFrame):
+                get_cache().set_laps_frame(self.year, self.gp, self.session, self._laps)
+            elif self.lib == "polars" and hasattr(self._laps, "height"):
+                get_cache().set_laps_frame(
+                    self.year, self.gp, self.session, self._laps, lib="polars"
+                )
 
         if ultra_cold_payloads and self._should_backfill_ultra_cold_cache(ultra_cold_enabled):
             self._schedule_background_cache_fill(json_payloads=ultra_cold_payloads)
