@@ -163,6 +163,14 @@ _PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
 # without migrating existing caches.
 _FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "telemetry_frames_pl"}
 
+# Laps frame tier (Kroton KR-1/KR-10): one processed laps DataFrame per
+# (year, gp, session) per backend, mirroring the telemetry frame tier's
+# blob format.
+_LAPS_FRAME_TABLES: dict[str, str] = {
+    "pandas": "laps_frames",
+    "polars": "laps_frames_pl",
+}
+
 
 @contextlib.contextmanager
 def _suspend_gc():
@@ -614,6 +622,28 @@ class Cache:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS laps_frames (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS laps_frames_pl (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session)
+                )
+                """
+            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS telemetry_cache (
                     year INTEGER,
@@ -835,6 +865,9 @@ class Cache:
             # Missing-verdict keys are JSON-tier-shaped even for telemetry
             # paths, so dropping either tier must also drop its verdicts.
             self.conn.execute("DELETE FROM missing_payloads")
+            # Laps frames are derived from the laps payloads of either tier.
+            for laps_table in _LAPS_FRAME_TABLES.values():
+                self.conn.execute(f"DELETE FROM {laps_table}")
             if scope == "telemetry":
                 # Frames are derived from telemetry payloads (both backends).
                 for frame_table in _FRAME_TABLES.values():
@@ -1252,6 +1285,86 @@ class Cache:
             return 0
         return written
 
+    def get_laps_frame(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        lib: Literal["pandas", "polars"] = "pandas",
+    ) -> Any:
+        """Read the materialized processed-laps DataFrame (KR-1 tier).
+
+        Returns:
+            The unpickled pandas DataFrame, or None on a miss / corrupt row /
+            foreign-backend row (the caller falls back to the payload path).
+        """
+        if self.conn is None or not _FRAME_CODEC_AVAILABLE:
+            return None
+        table = _LAPS_FRAME_TABLES.get(lib, "laps_frames")
+        try:
+            with self._sqlite_lock:
+                row = self.conn.execute(
+                    f"SELECT frame FROM {table} WHERE year = ? AND gp = ? AND session = ?",
+                    (year, gp, session),
+                ).fetchone()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Laps frame read error: %s", e)
+            return None
+        if row is None:
+            return None
+        try:
+            # Same blob format and trust model as the telemetry frame tier:
+            # unpickling trusts the 0o700 user-local cache dir; a corrupt or
+            # foreign blob degrades to a tier miss, never a crash.
+            with _suspend_gc():
+                frame = pickle.loads(_decompress_frame_blob(row[0]))
+            if not hasattr(frame, "_df" if lib == "polars" else "_mgr"):
+                raise TypeError("foreign frame object")
+            return frame
+        except (
+            AttributeError,
+            EOFError,
+            ImportError,
+            IndexError,
+            TypeError,
+            ValueError,
+            pickle.UnpicklingError,
+            *_ZSTD_ERRORS,
+        ):
+            logger.debug("Corrupt laps frame row skipped: %s/%s/%s", year, gp, session)
+            return None
+
+    def set_laps_frame(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        frame: Any,
+        lib: Literal["pandas", "polars"] = "pandas",
+    ) -> int:
+        """Materialize the processed laps DataFrame in the KR-1 tier.
+
+        Returns:
+            Number of rows written (0 when the tier is unavailable).
+        """
+        if self.conn is None or self.read_only or not _FRAME_CODEC_AVAILABLE:
+            return 0
+        table = _LAPS_FRAME_TABLES.get(lib, "laps_frames")
+        try:
+            with self._sqlite_lock:
+                with _suspend_gc():
+                    blob = _compress_frame_blob(pickle.dumps(frame, protocol=5))
+                    self.conn.execute(
+                        f"INSERT OR REPLACE INTO {table} VALUES (?, ?, ?, ?)",
+                        (year, gp, session, blob),
+                    )
+                self._pending_writes += 1
+                self._commit_if_needed()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Laps frame write skipped: %s", e)
+            return 0
+        return 1
+
     def _set_telemetry(
         self, year: int, gp: str, session: str, driver: str, lap: int, data: Any
     ) -> None:
@@ -1351,6 +1464,8 @@ class Cache:
             self.conn.execute("DELETE FROM telemetry_cache")
             for frame_table in _FRAME_TABLES.values():
                 self.conn.execute(f"DELETE FROM {frame_table}")
+            for laps_table in _LAPS_FRAME_TABLES.values():
+                self.conn.execute(f"DELETE FROM {laps_table}")
             self.conn.execute("DELETE FROM missing_payloads")
             self.conn.commit()
             self._pending_writes = 0
