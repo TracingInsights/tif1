@@ -40,16 +40,18 @@ class CDNSource:
     use_minification: bool = False
 
     def format_url(self, year: int, gp: str, session: str, path: str) -> str:
-        """Format URL for this CDN with optional minification support.
+        """Format URL for this CDN.
 
         jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
         StaticDelivr format: https://cdn.staticdelivr.com/gh/user/repo/branch/path
         Hugging Face bucket format: https://huggingface.co/buckets/user/bucket/resolve/path
 
-        jsDelivr supports automatic minification by appending .min before the extension.
-        This can reduce file sizes by 20-40% for JSON files.
+        ``use_minification`` requests ``file.min.json`` instead of ``file.json``;
+        it is meant for a custom mirror that serves minified copies. The
+        default CDNs ignore the global ``cdn_use_minification`` option (see
+        ``CDNManager``): jsDelivr minifies only JavaScript and CSS, so the
+        request would answer 404 everywhere and only add a wasted round trip.
         """
-        # jsDelivr minification: file.json -> file.min.json
         if self.use_minification and path.endswith(".json"):
             path = path.replace(".json", ".min.json")
 
@@ -65,9 +67,18 @@ class CDNSource:
 
 
 class CDNManager:
-    """Manage multiple CDN sources with fallback and rate limiting."""
+    """Manage multiple CDN sources with fallback and rate limiting.
+
+    The module-level manager (:func:`get_cdn_manager`) reads ``cdns`` and
+    ``cdn_use_minification`` from the config when ``tif1.cdn`` is imported;
+    call :meth:`reload` after ``config.set(...)`` to apply a change.
+    """
 
     def __init__(self):
+        self.reload()
+
+    def reload(self) -> None:
+        """Rebuild the source list from the current config and reset failure counts."""
         from .config import get_config
 
         config = get_config()
@@ -90,9 +101,11 @@ class CDNManager:
             name = self._name_for_url(base_url, i)
             if any(s.name == name for s in self.sources):
                 name = f"{name} {i}"
-            # Hugging Face does not minify; a .min.json request would 404 and
-            # DataNotFoundError aborts the fallback chain, so never minify there.
-            source_minification = use_minification and "huggingface" not in base_url.lower()
+            # None of the default CDNs serves .min.json (jsDelivr minifies only
+            # JS/CSS; Hugging Face and StaticDelivr mirror the repo as-is), so a
+            # minified request is a guaranteed 404 and a wasted round trip there.
+            # The option only applies to custom mirrors.
+            source_minification = use_minification and not self._is_default_cdn(base_url)
             self.sources.append(
                 CDNSource(
                     name=name,
@@ -109,7 +122,7 @@ class CDNManager:
                     name="jsDelivr",
                     base_url=default_sources[0],
                     priority=1,
-                    use_minification=use_minification,
+                    use_minification=False,
                 ),
                 CDNSource(
                     name="HuggingFace",
@@ -121,12 +134,18 @@ class CDNManager:
                     name="StaticDelivr",
                     base_url=default_sources[2],
                     priority=3,
-                    use_minification=use_minification,
+                    use_minification=False,
                 ),
             ]
 
         self._failure_counts = {source.name: 0 for source in self.sources}
         self._max_failures = 3
+
+    @staticmethod
+    def _is_default_cdn(base_url: str) -> bool:
+        """True for jsDelivr, Hugging Face and StaticDelivr, none of which serves ``.min.json``."""
+        lowered = base_url.lower()
+        return any(host in lowered for host in ("jsdelivr", "huggingface", "staticdelivr"))
 
     @staticmethod
     def _name_for_url(base_url: str, index: int) -> str:

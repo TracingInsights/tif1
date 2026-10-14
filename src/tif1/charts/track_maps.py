@@ -1,6 +1,6 @@
 """Track-layout maps colored by telemetry channels.
 
-Contains the five ``plot_track_*`` charts, the gear shift visualization and
+Contains the four ``plot_track_*`` charts, the gear shift visualization and
 the multi-driver speed comparison, all of which draw a ``LineCollection``
 along the track geometry.
 """
@@ -418,7 +418,7 @@ def plot_gear_shifts(
 
     cbar = plt.colorbar(mappable=lc, label="Gear", boundaries=np.arange(1, max_gear + 2))
     cbar.set_ticks(np.arange(1.5, max_gear + 1.5).tolist())
-    cbar.set_ticklabels(np.arange(1, max_gear + 1).tolist())
+    cbar.set_ticklabels([str(gear) for gear in range(1, max_gear + 1)])
 
     return _common.finalize_figure(
         fig,

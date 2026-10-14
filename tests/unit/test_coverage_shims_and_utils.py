@@ -158,7 +158,7 @@ def test_json_utils_fallback_paths(monkeypatch):
     )
 
     assert json_utils.json_loads('{"x":1}') == {"x": 1}
-    assert json_utils.json_dumps({"x": 1}) == '{"x": 1}'
+    assert json_utils.json_dumps({"x": 1}) == '{"x":1}'  # compact, like orjson
 
     response = MagicMock()
     response.content = b"not-json"

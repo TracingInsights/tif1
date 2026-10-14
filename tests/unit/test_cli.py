@@ -36,15 +36,20 @@ class TestCLI:
     def test_drivers_command(self, mock_get_session):
         """Test drivers command."""
         mock_session = Mock()
-        mock_session.drivers = [
-            {"driver": "VER", "team": "Red Bull Racing"},
-            {"driver": "HAM", "team": "Mercedes"},
-        ]
+        mock_session.drivers_df = pd.DataFrame(
+            {
+                "Driver": ["VER", "HAM"],
+                "Team": ["Red Bull Racing", "Mercedes"],
+                "DriverNumber": ["1", "44"],
+            }
+        )
         mock_get_session.return_value = mock_session
 
         result = runner.invoke(app, ["drivers", "2025", "Abu Dhabi Grand Prix", "Race"])
         assert result.exit_code == 0
         assert "VER" in result.stdout
+        assert "44" in result.stdout
+        assert "2 drivers" in result.stdout
 
     @patch("tif1.get_session")
     def test_fastest_command_all_drivers(self, mock_get_session):

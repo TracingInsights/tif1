@@ -20,7 +20,6 @@ This example uses the 2024 Abu Dhabi Grand Prix. Use the `polars` lib for faster
 ```python
 import tif1
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # Load the session with polars lib
 session = tif1.get_session(2024, "Abu Dhabi Grand Prix", "Race", lib="polars")
@@ -34,7 +33,7 @@ In a race, lap times can be skewed by:
 - Pit stops (very slow laps)
 - Lap 1 (standing start)
 
-Filter these laps out to get a "true" race pace.
+Filter these laps out to get a "true" race pace. On the polars backend, `LapTime` holds float seconds, so the comparison below works directly.
 
 ```python
 # Convert to pandas for easier plotting
@@ -52,7 +51,7 @@ clean_laps = df[
 
 ## Comparing Drivers
 
-Compare the pace of the top two finishers.
+Compare the race pace of two drivers.
 
 ```python
 # Filter for specific drivers
@@ -60,10 +59,14 @@ drivers = ["VER", "LEC"]
 comparison_df = clean_laps[clean_laps["Driver"].isin(drivers)]
 
 # Create a boxplot to see distribution of lap times
-plt.figure(figsize=(10, 6))
-sns.boxplot(x="Driver", y="LapTime", data=comparison_df, palette="viridis")
-plt.title("Race Pace Comparison: VER vs LEC")
-plt.ylabel("Lap Time (s)")
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.boxplot(
+    [comparison_df.loc[comparison_df["Driver"] == d, "LapTime"] for d in drivers],
+    tick_labels=drivers,
+    patch_artist=True,
+)
+ax.set_title("Race Pace Comparison: VER vs LEC")
+ax.set_ylabel("Lap Time (s)")
 plt.show()
 ```
 

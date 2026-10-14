@@ -61,15 +61,12 @@ def smooth_derivative(t_in, v_in):
     t = t_in.copy()
     v = v_in.copy()
 
-    # Transform time to seconds
-    try:
-        for i in range(0, t.size):
-            t.iloc[i] = t.iloc[i].total_seconds()
-    except Exception:
-        pass
+    # Transform time to seconds (Time is a timedelta column on pandas)
+    if hasattr(t, "dt"):
+        t = t.dt.total_seconds()
 
-    t = np.array(t)
-    v = np.array(v)
+    t = np.asarray(t, dtype=float)
+    v = np.asarray(v, dtype=float)
 
     dvdt = np.zeros(t.size)
 

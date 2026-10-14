@@ -1,7 +1,7 @@
 ---
 title: "Introduction"
 icon: "flag-checkered"
-description: "tif1 is a fast alternative to fastf1 with the same API bindings"
+description: "tif1 is a fast alternative to fastf1 with a compatible API"
 keywords:
   - "tif1"
   - "Formula 1 data"
@@ -19,7 +19,7 @@ keywords:
 
 `tif1` is a high-performance Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current).
 
-`tif1` is a faster alternative to `fastf1` with the same API bindings. The speed increase comes from asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
+`tif1` is a faster alternative to `fastf1` with a compatible API. The speed increase comes from asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
 
 ## Why tif1?
 
@@ -28,7 +28,7 @@ keywords:
     Parallel loading is more than 3x faster than sequential fetching (benchmark-validated). It uses HTTP/2 multiplexing.
   </Card>
   <Card title="API Compatible" icon="code">
-    The bindings match `fastf1`. Migration needs few code changes.
+    The API follows `fastf1` conventions. Most scripts migrate with few code changes.
   </Card>
   <Card title="Flexible Backends" icon="database">
     Choose **Pandas** for compatibility, or **Polars** for about 2x faster processing.
@@ -61,7 +61,7 @@ keywords:
 - **Async**: Parallel data fetching for better performance
 - **HTTP/2**: Uses niquests for multiplexed, connection-efficient network requests
 - **Flexible**: Supports both pandas and polars backends
-- **Type-Safe**: Comprehensive type hints for IDE support
+- **Type-Safe**: Type hints on the public API for IDE support
 - **Jupyter-Ready**: Rich HTML display in notebooks
 - **Native Charts**: 22 one-call chart functions in `tif1.charts` for track maps, telemetry comparisons, and performance analysis
 
@@ -97,9 +97,9 @@ graph TD
 
 ## Data Available
 
-- Lap times and sectors (S1, S2, S3) with LapTime as Timedelta and LapTimeSeconds as numeric helper
+- Lap times and sectors (S1, S2, S3). `LapTime` is a Timedelta on pandas and float seconds on polars. `LapTimeSeconds` is float seconds on both.
 - Tire compounds and stint information
-- Telemetry: speed, throttle, brake, RPM, gear, DRS
+- Telemetry: speed, throttle, brake, RPM, gear, and DRS as a 0/1 flag
 - Position data (X, Y, Z coordinates)
 - Acceleration data (X, Y, Z axes)
 - Weather data automatically included in laps

@@ -62,7 +62,7 @@ In `tif1`, a session is a lightweight object. Data is fetched only when a proper
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 
 # No session.load() needed — this pulls a single, small JSON file.
 telemetry = session.get_driver("VER").get_lap(19).telemetry
@@ -138,11 +138,11 @@ fig, ax = tif1.plot_top_speeds(2023, "Italian Grand Prix", "Q")
 plt.show()
 
 # Alonso's lap times at the 2023 Azerbaijan Grand Prix, colored by tire compound.
-fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", "R", drivers=["ALO"])
+fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=["ALO"])
 plt.show()
 
 # 4-panel speed / longitudinal-g / lateral-g / driver-actions comparison.
-fig, ax = tif1.plot_telemetry_comparison(2024, "Monaco", "Q", drivers=["VER", "LEC"])
+fig, ax = tif1.plot_telemetry_comparison(2024, "Monaco Grand Prix", "Q", drivers=["VER", "LEC"])
 plt.show()
 
 # Or save straight to a file — no interactive session required.
@@ -158,7 +158,7 @@ tif1.plot_laptime_heatmap(2023, "Monaco Grand Prix", "R", save_path="monaco_heat
 | **Track maps** | `plot_track_speed_map`, `plot_track_throttle_map`, `plot_track_brake_zones`, `plot_track_acceleration_map`, `plot_gear_shifts`, `plot_multi_driver_speed_comparison` |
 | **Telemetry** | `plot_speed_traces`, `plot_annotated_speed_trace`, `plot_telemetry_comparison`, `plot_gg_diagram` |
 | **Lap analysis** | `plot_driver_laptimes`, `plot_laptime_heatmap`, `plot_laptimes_distribution`, `plot_lap_delta`, `plot_position_changes` |
-| **Performance** | `plot_downforce_levels`, `plot_throttle_distance`, `plot_tire_degradation`, `plot_qualifying_grid`, `plot_track_temperature` |
+| **Performance** | `plot_downforce_levels`, `plot_throttle_distance`, `plot_tire_degradation`, `plot_race_launch_ratings`, `plot_qualifying_grid`, `plot_track_temperature` |
 | **Speeds** | `plot_top_speeds` |
 
 Every chart accepts shared filters: year, event, session, drivers/teams, save path, and DPI. Every chart also has a matching tutorial in the [Tutorials](/tutorials/race-analysis) section.
@@ -179,7 +179,7 @@ These blocks do not affect every user. Users who encounter them see the benefit 
 
 ### The tif1 approach: global CDNs, no IP checks
 
-`tif1` serves files from **StaticDelivr** and **jsDelivr**, with **Hugging Face buckets** as a last-resort backup. These free CDNs serve millions of websites every day. CDNs are built to serve content to the entire internet, so there are:
+`tif1` serves files from **jsDelivr** (primary) and **Hugging Face buckets** (fallback), with **StaticDelivr** as a last-resort backup. These free CDNs serve millions of websites every day. CDNs are built to serve content to the entire internet, so there are:
 
 - No IP allowlists or blocks
 - No VPN/proxy detection
@@ -238,10 +238,10 @@ Both libraries have strengths, and fastf1 remains the better choice in a few sit
 
 ## Migration
 
-Because tif1 keeps the fastf1-compatible schema (same column names, types, and ordering), migrating is typically a one-line import change:
+tif1 keeps the fastf1 column names for laps and telemetry, so many scripts need only an import change. The [migration guide](/migration-from-fastf1) lists the differences, such as the 0/1 `DRS` flag and the lap-relative telemetry `Time`.
 
 ```python
-import tif1 as ff1  # keep the rest of your code untouched
+import tif1 as ff1  # many scripts need no other change
 ```
 
 See the [Migration from fastf1](/migration-from-fastf1) guide for the step-by-step walkthrough, or jump straight into the [Quickstart](/quickstart).

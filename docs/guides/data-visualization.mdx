@@ -14,7 +14,7 @@ keywords:
 
 ## Built-in Plotting
 
-The `plotting` module provides quick visualization methods for common F1 analysis tasks.
+The `charts` module provides 22 one-call chart functions. They are re-exported at the top level as `tif1.plot_*`.
 
 ### Speed Comparison
 
@@ -102,7 +102,7 @@ For custom visualizations, use matplotlib directly.
 import matplotlib.pyplot as plt
 import tif1
 
-session = tif1.get_session(2025, "Silverstone", "Race")
+session = tif1.get_session(2025, "British Grand Prix", "Race")
 ver = session.get_driver("VER")
 lap = ver.get_lap(15)
 tel = lap.telemetry
@@ -125,7 +125,7 @@ ax3.set_ylabel("Brake")
 ax3.set_xlabel("Distance (m)")
 ax3.grid(True, alpha=0.3)
 
-plt.suptitle(f"VER Lap {lap['LapNumber']} Telemetry", fontsize=14, fontweight="bold")
+plt.suptitle(f"VER Lap {int(lap['LapNumber'])} Telemetry", fontsize=14, fontweight="bold")
 plt.tight_layout()
 plt.show()
 ```
@@ -136,7 +136,7 @@ plt.show()
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-session = tif1.get_session(2025, "Monza", "Race")
+session = tif1.get_session(2025, "Italian Grand Prix", "Race")
 laps = session.laps
 
 # Season-aware compound colors
@@ -155,7 +155,7 @@ for i, driver in enumerate(drivers):
 ax.set_yticks(range(len(drivers)))
 ax.set_yticklabels(drivers)
 ax.set_xlabel("Lap Number")
-ax.set_title("Tire Strategy - 2025 Monza GP")
+ax.set_title("Tire Strategy - 2025 Italian GP")
 
 # Legend
 patches = [mpatches.Patch(color=color, label=compound)
@@ -180,7 +180,7 @@ This section requires the optional plotting library. Install it with `pip instal
 import plotly.graph_objects as go
 import tif1
 
-session = tif1.get_session(2025, "Spa", "Qualifying")
+session = tif1.get_session(2025, "Belgian Grand Prix", "Qualifying")
 ver = session.get_driver("VER")
 # get_fastest_lap_tel() returns the telemetry of the fastest lap
 tel = ver.get_fastest_lap_tel()
@@ -212,7 +212,7 @@ fig.show()
 ```python
 import plotly.graph_objects as go
 
-session = tif1.get_session(2025, "Suzuka", "Race")
+session = tif1.get_session(2025, "Japanese Grand Prix", "Race")
 ver = session.get_driver("VER")
 lap = ver.get_lap(1)
 tel = lap.telemetry
@@ -255,14 +255,15 @@ Seaborn excels at statistical visualizations.
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-session = tif1.get_session(2025, "Barcelona", "Race")
+session = tif1.get_session(2025, "Spanish Grand Prix", "Race")
 laps = session.laps
 
 # Clean data
 clean = laps[~laps["Deleted"] & (laps["LapNumber"] > 1)]
 
+# Plot LapTimeSeconds (float); LapTime is a Timedelta and would plot in nanoseconds
 plt.figure(figsize=(12, 6))
-sns.violinplot(data=clean, x="Driver", y="LapTime", hue="Compound", split=False)
+sns.violinplot(data=clean, x="Driver", y="LapTimeSeconds", hue="Compound", split=False)
 plt.xticks(rotation=45)
 plt.title("Lap Time Distribution by Driver and Compound")
 plt.ylabel("Lap Time (s)")
@@ -276,7 +277,7 @@ plt.show()
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-session = tif1.get_session(2025, "Singapore", "Race")
+session = tif1.get_session(2025, "Singapore Grand Prix", "Race")
 laps = session.laps
 
 # Select numeric columns
@@ -299,16 +300,17 @@ plt.show()
 Make plots more recognizable by using official team colors.
 
 ```python
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps
 drivers_df = session.drivers_df
 
-# Create color map
+# Create color map (TeamColor has no leading "#")
 color_map = dict(zip(drivers_df["Driver"], drivers_df["TeamColor"]))
 
-# Use in plots
+# Use in plots (LapTimeSeconds keeps the y-axis in seconds)
 for driver in ["VER", "HAM", "LEC"]:
     driver_laps = laps[laps["Driver"] == driver]
-    plt.plot(driver_laps["LapNumber"], driver_laps["LapTime"],
+    plt.plot(driver_laps["LapNumber"], driver_laps["LapTimeSeconds"],
              color=f"#{color_map[driver]}", label=driver)
 ```
 
@@ -361,7 +363,7 @@ laps.to_csv("race_laps.csv", index=False)
 # Export to Parquet (smaller, faster)
 laps.to_parquet("race_laps.parquet")
 
-# Export to Excel
+# Export to Excel (requires openpyxl)
 with pd.ExcelWriter("race_analysis.xlsx") as writer:
     laps.to_excel(writer, sheet_name="Laps", index=False)
     session.weather.to_excel(writer, sheet_name="Weather", index=False)

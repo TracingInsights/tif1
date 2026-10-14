@@ -61,7 +61,7 @@ Load and analyze data from a recent race.
 ```python
 import tif1
 
-# Load the 2025 monaco grand prix race
+# Load the 2025 Monaco Grand Prix race
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 
 print(f"Loaded session: {session.event['EventName']} {session.name}")
@@ -82,12 +82,16 @@ print(drivers[["Driver", "Team", "DriverNumber"]])
 
 Output:
 ```text
-  Driver                Team  DriverNumber
-0    VER  Red Bull Racing            33
-1    HAM         Mercedes            44
-2    LEC          Ferrari            16
+  Driver             Team DriverNumber
+0    VER  Red Bull Racing            1
+1    GAS           Alpine           10
+2    ANT         Mercedes           12
 ...
 ```
+
+<Note>
+  `session.drivers` holds driver numbers as strings. `session.drivers_df["Driver"]` holds the 3-letter codes that `get_driver` expects.
+</Note>
 
 ### Step 3: Analyze lap times
 
@@ -99,6 +103,10 @@ laps = session.laps
 fastest = laps.nsmallest(10, "LapTime")
 print(fastest[["Driver", "LapNumber", "LapTime", "Compound"]])
 ```
+
+<Note>
+  `LapTime` and the sector times are pandas `Timedelta` values. Use `LapTimeSeconds` for arithmetic with plain numbers.
+</Note>
 
 ### Step 4: Compare drivers
 
@@ -171,8 +179,10 @@ soft_laps = clean[clean["Compound"] == "SOFT"]
 ### Analyzing tire strategy
 
 ```python
-# Group by driver and stint
-strategy = laps.groupby(["Driver", "Stint"]).agg({
+import pandas as pd
+
+# Group by driver and stint on a plain DataFrame, so reset_index keeps the key names
+strategy = pd.DataFrame(laps).groupby(["Driver", "Stint"]).agg({
     "Compound": "first",
     "LapNumber": ["min", "max", "count"]
 }).reset_index()
@@ -186,11 +196,13 @@ print(strategy)
 # Get weather data
 weather = session.weather
 
-# Check for rain
+# Check for rain (Time is a Timedelta from the session start)
 if weather["Rainfall"].any():
     print("Rain detected during session")
-    rain_laps = weather[weather["Rainfall"]]["Time"]
-    print(f"Rain from {rain_laps.min():.0f}s to {rain_laps.max():.0f}s")
+    rain_times = weather.loc[weather["Rainfall"].fillna(False), "Time"].dt.total_seconds()
+    print(f"Rain from {rain_times.min():.0f}s to {rain_times.max():.0f}s")
+else:
+    print("No rain during session")
 ```
 
 ## Performance Tips
@@ -204,7 +216,7 @@ import asyncio
 import tif1
 
 async def load_data():
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     laps = await session.laps_async()
     return laps
 
@@ -220,13 +232,14 @@ Never fetch telemetry in a loop:
 # Fetch all telemetry in parallel (validated at 3x+ vs sequential)
 tels = session.get_fastest_laps_tels(by_driver=True)
 
-for driver, tel in tels.items():
+# tels is one DataFrame with a Driver column, not a dict
+for driver, tel in tels.groupby("Driver"):
     print(f"{driver}: {tel['Speed'].max()} km/h")
 ```
 
 ```python Bad - Sequential Loop
 # Slow - fetches one at a time
-for driver_code in session.drivers:
+for driver_code in session.drivers_df["Driver"]:
     driver = session.get_driver(driver_code)
     fastest = driver.get_fastest_lap()
     # This is very slow!
@@ -239,7 +252,7 @@ for driver_code in session.drivers:
 # Use polars lib for 2x faster processing
 session_pl = tif1.get_session(
     2025,
-    "Monaco",
+    "Monaco Grand Prix",
     "Race",
     lib="polars"
 )
@@ -275,7 +288,7 @@ Handle the common errors:
 import tif1
 
 try:
-    session = tif1.get_session(2025, "Monaco", "Race")
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     laps = session.laps
 except tif1.DataNotFoundError:
     print("Session data not available")
@@ -296,13 +309,13 @@ import tif1
 config = tif1.get_config()
 
 # Change cache directory
-config.cache_dir = "/custom/cache/path"
+config.set("cache_dir", "/custom/cache/path")
 
 # Use polars by default
-config.lib = "polars"
+config.set("lib", "polars")
 
 # Enable debug logging
-config.log_level = "DEBUG"
+config.set("log_level", "DEBUG")
 ```
 
 ## Next Steps
@@ -347,7 +360,7 @@ If requests time out:
 import tif1
 
 config = tif1.get_config()
-config.request_timeout = 30  # Increase timeout to 30s
+config.set("timeout", 60)  # Increase the HTTP timeout to 60s
 ```
 
 ### Memory Issues
@@ -356,10 +369,10 @@ For large datasets:
 
 ```python
 # Use polars (50% less memory)
-session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
 
 # Or process drivers one at a time
-for driver_code in session.drivers:
+for driver_code in session.drivers_df["Driver"]:
     driver = session.get_driver(driver_code)
     laps = driver.laps
     # Process laps

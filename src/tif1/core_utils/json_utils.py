@@ -37,7 +37,8 @@ def json_dumps(data: Any) -> str:
     try:
         return _ORJSON.dumps(data).decode("utf-8")
     except Exception:
-        return json.dumps(data)
+        # Same compact shape as orjson so callers see one format.
+        return json.dumps(data, separators=(",", ":"))
 
 
 def json_dumps_bytes(data: Any) -> bytes:
@@ -50,7 +51,7 @@ def json_dumps_bytes(data: Any) -> bytes:
         blob = _ORJSON.dumps(data)
         return blob if isinstance(blob, bytes) else blob.encode("utf-8")
     except Exception:
-        return json.dumps(data).encode("utf-8")
+        return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
 
 def parse_response_json(response: Any) -> Any:

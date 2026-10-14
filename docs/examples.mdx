@@ -67,6 +67,7 @@ print(fastest_by_driver[["Driver", "LapTime", "Compound"]])
 overall_fastest = session.get_fastest_laps(by_driver=False)
 
 # Get telemetry for fastest laps (parallel fetching)
+# The result is one DataFrame with a Driver column, not a dict
 fastest_tels = session.get_fastest_laps_tels(by_driver=True)
 
 # Get telemetry for specific drivers
@@ -74,6 +75,10 @@ top3_tels = session.get_fastest_laps_tels(
     by_driver=True,
     drivers=["VER", "HAM", "LEC"]
 )
+
+# Iterate per driver
+for driver, tel in top3_tels.groupby("Driver"):
+    print(f"{driver}: {tel['Speed'].max()} km/h")
 ```
 
 ## Async loading for speed
@@ -112,13 +117,15 @@ laps_pl = session_pl.laps  # Returns polars DataFrame
 config = tif1.get_config()
 print(f"Max retries: {config.get('max_retries')}")
 
-# Update configuration
-config.set("validate_data", True)
-config.save()
+# Update a setting for this process
+config.set("timeout", 60)
 
 # Switch the default backend globally (persists via config.save();
 # pass lib="polars" to get_session for a one-off switch instead)
 config.set("lib", "pandas")
+
+# Write the current settings to ~/.tif1rc
+config.save()
 ```
 
 ## Cache Management
@@ -146,22 +153,27 @@ session = tif1.get_session(
 import tif1
 
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
-    laps = session.laps
+    # Lap 999 does not exist, so get_lap raises LapNotFoundError
+    lap = session.get_driver("VER").get_lap(999)
 except tif1.DataNotFoundError as e:
     print(f"Data not found: {e}")
+    print(f"Context: {e.context}")  # {'lap_number': 999, 'driver': 'VER', ...}
 except tif1.NetworkError as e:
     print(f"Network error: {e}")
 except tif1.InvalidDataError as e:
     print(f"Invalid data: {e}")
 ```
 
+<Note>
+  An unknown event name does not raise `DataNotFoundError`. `get_session` maps it to the closest event name with fuzzy matching. An unknown session name raises `ValueError`.
+</Note>
+
 ## Event and session discovery
 
 ```python
-# Get all events for a year
+# Get all events for a year (a DataFrame with an EventName column)
 events = tif1.get_events(2025)
-print(f"Events in 2025: {events}")
+print(f"Events in 2025: {events['EventName'].tolist()}")
 
 # Get sessions for an event
 sessions = tif1.get_sessions(2025, "Chinese Grand Prix")
@@ -358,7 +370,7 @@ if len(sc_laps) > 0:
 
 ```python
 # Load qualifying session
-quali = tif1.get_session(2025, "Monaco", "Qualifying")
+quali = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
 quali_laps = quali.laps
 
 # Get best lap per driver
@@ -379,23 +391,23 @@ laps.to_csv("race_laps.csv", index=False)
 # Export to Parquet (smaller, faster)
 laps.to_parquet("race_laps.parquet")
 
-# Export to Excel
+# Export to JSON (ISO strings for the timedelta and datetime columns)
+laps.to_json("race_laps.json", orient="records", indent=2, date_format="iso")
+
+# Export to Excel (requires openpyxl)
 import pandas as pd
 
 with pd.ExcelWriter("race_analysis.xlsx") as writer:
     laps.to_excel(writer, sheet_name="Laps", index=False)
     session.weather.to_excel(writer, sheet_name="Weather", index=False)
     session.drivers_df.to_excel(writer, sheet_name="Drivers", index=False)
-
-# Export to JSON
-laps.to_json("race_laps.json", orient="records", indent=2)
 ```
 
 ## Batch Processing
 
 ```python
 # Process multiple sessions
-events = ["Monaco", "Silverstone", "Spa", "Monza"]
+events = ["Monaco Grand Prix", "British Grand Prix", "Belgian Grand Prix", "Italian Grand Prix"]
 
 results = []
 for event in events:

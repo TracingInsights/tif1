@@ -73,19 +73,15 @@ class TestFuzzing:
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_corrupted_lap_data(self, mock_fetch):
-        """Test handling of corrupted lap data."""
-        call_count = [0]
+        """Corrupted lap payloads degrade to NaN rows; nothing raises."""
+        mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]}
 
-        def side_effect(path):
-            call_count[0] += 1
-            if "drivers.json" in path:
-                return {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]}
-            return {"time": "invalid", "lap": "not_a_number"}
-
-        mock_fetch.side_effect = side_effect
+        async def corrupted(requests, **_kwargs):
+            return [{"time": "invalid", "lap": "not_a_number"} for _ in requests]
 
         session = Session(2025, "Test GP", "Race", enable_cache=False)
-        laps = session.laps
+        with patch("tif1.core.fetch_multiple_async", new=corrupted):
+            laps = session.laps
         assert isinstance(laps, pd.DataFrame)
 
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)

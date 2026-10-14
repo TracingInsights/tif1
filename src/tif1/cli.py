@@ -1,7 +1,7 @@
 """CLI tool for tif1."""
 
 import logging
-from typing import cast
+from typing import Any, cast
 
 import typer
 
@@ -93,11 +93,22 @@ def drivers(
     table.add_column("Driver", style="cyan")
     table.add_column("Team", style="green")
 
-    for driver_info in sess.drivers:
-        table.add_row(driver_info["driver"], driver_info["team"])
+    # drivers_df is one row per driver in classification order.
+    drivers_df = sess.drivers_df
+    table.add_column("No.", style="magenta")
+    for row in drivers_df.itertuples(index=False):
+        table.add_row(str(row.Driver), str(row.Team), str(row.DriverNumber))
 
     _console().print(table)
-    _console().print(f"\n[bold]Total:[/bold] {len(sess.drivers)} drivers")
+    _console().print(f"\n[bold]Total:[/bold] {len(drivers_df)} drivers")
+
+
+def _seconds(value: Any) -> float:
+    """Lap time as float seconds (pandas keeps ``LapTime`` as a Timedelta)."""
+    total_seconds = getattr(value, "total_seconds", None)
+    if callable(total_seconds):
+        return float(total_seconds())
+    return float(value)
 
 
 @app.command()
@@ -132,7 +143,7 @@ def fastest(
                 time_val = fastest_lap_pl[time_col][0]
 
         if time_val is not None:
-            _rprint(f"[bold]{driver}[/bold] fastest lap: [green]{time_val:.3f}s[/green]")
+            _rprint(f"[bold]{driver}[/bold] fastest lap: [green]{_seconds(time_val):.3f}s[/green]")
         else:
             _rprint(f"[red]No valid laps for {driver}[/red]")
     else:
@@ -153,7 +164,9 @@ def fastest(
             fastest_laps_pd = fastest_laps_pd.sort_values(time_col)
             for idx, row in enumerate(fastest_laps_pd.itertuples(), 1):
                 time_val = getattr(row, time_col)
-                table.add_row(str(idx), str(row.Driver), str(row.Team), f"{time_val:.3f}s")
+                table.add_row(
+                    str(idx), str(row.Driver), str(row.Team), f"{_seconds(time_val):.3f}s"
+                )
         else:
             fastest_laps_pl = fastest_laps
             time_col = "LapTime" if "LapTime" in fastest_laps_pl.columns else "time"
