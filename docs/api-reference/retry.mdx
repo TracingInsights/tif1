@@ -113,12 +113,12 @@ The Closed state is the default, healthy operating mode where everything is work
 **Behavior**:
 - All requests are allowed through to the downstream service without any blocking
 - The circuit breaker acts as a passive observer, monitoring each request's outcome
-- Successful requests have no impact on the failure counter
+- A successful request resets the failure counter to 0
 - Failed requests increment the failure counter atomically
 
 **Monitoring**:
 - Tracks the failure count for each request using thread-safe atomic operations
-- The failure counter persists across requests, accumulating failures over time
+- The failure counter counts consecutive failures: it accumulates until a request succeeds
 - The `last_failure_time` property records when the most recent failure occurred
 
 **Transition Conditions**:
@@ -137,7 +137,7 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 **Behavior**:
 - All requests are immediately blocked without attempting to contact the downstream service
 - No network calls are made, no timeouts are waited for, and no resources are consumed
-- Requests fail instantly with `Exception("Circuit breaker is open")`
+- Requests fail instantly with `CircuitBreakerOpenError("Circuit breaker is open")`, a `NetworkError` subclass
 - The circuit breaker starts a timeout timer using monotonic time
 
 **Duration**:
@@ -152,7 +152,7 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 - Cannot transition back to Closed state directly; must go through Half-Open first
 
 **Error Handling**:
-- Raises `Exception("Circuit breaker is open")` immediately for all requests
+- Raises `CircuitBreakerOpenError` ("Circuit breaker is open") immediately for all requests
 - This exception is distinct from network errors, so code can handle circuit breaker failures differently
 - The immediate failure prevents resource waste and provides fast feedback
 
@@ -165,10 +165,10 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 The Half-Open state is the circuit breaker's recovery mechanism, cautiously testing whether the service has recovered.
 
 **Behavior**:
-- Allows exactly one test request through to the downstream service
-- This single request acts as a "canary" to check service health
-- All other concurrent requests are blocked and fail immediately
-- The outcome of this test request determines the next state transition
+- Lets requests through to the downstream service again
+- The next request acts as a "canary" to check service health
+- `CircuitBreaker` does not limit the number of requests in this state: concurrent calls also go through
+- Each outcome moves the state: a success closes the circuit, a failure opens it again
 
 **Success Path**:
 - If the test request succeeds, the circuit breaker transitions to Closed state
@@ -183,12 +183,12 @@ The Half-Open state is the circuit breaker's recovery mechanism, cautiously test
 - The circuit breaker will try again after another timeout period
 
 **Thread Safety**:
-- Only one thread's request is allowed through as the test request
-- Other concurrent threads' requests are blocked and fail immediately
+- Only one thread moves the state from Open to Half-Open
+- Requests from other threads are not blocked in Half-Open state
 - The state transition (Half-Open → Closed or Half-Open → Open) is atomic
-- No race conditions occur even with many concurrent threads
+- To send only one probe request, serialize the calls in application code
 
-**Use Case**: This state automatically tests service recovery without manual intervention and without flooding the service with requests. It provides a controlled, gradual recovery path that protects both the application and the downstream service.
+**Use Case**: This state automatically tests service recovery without manual intervention. The first outcome decides if normal operation resumes or if the circuit opens again.
 
 **Example Scenario**: After 60 seconds in Open state, the circuit breaker transitions to Half-Open. The next request is allowed through as a test. If the CDN responds successfully, the circuit closes and normal operation resumes. If the CDN is still down, the circuit opens again for another 60 seconds. This continues automatically until the service recovers, with no manual intervention required.
 
@@ -283,7 +283,7 @@ The circuit breaker provides these concrete guarantees in concurrent environment
 
 3. **Accurate Failure Counting**: The failure count always reflects the number of failures. This holds true even with concurrent failures from multiple threads.
 
-4. **Single Test Request in Half-Open**: Only one thread's request passes as the test request. This applies even if many threads make requests simultaneously.
+4. **Single Open to Half-Open Transition**: Only one thread moves the state to Half-Open, even under concurrent load.
 
 5. **No Deadlocks**: The reentrant lock prevents deadlocks from nested calls within the same thread.
 
@@ -426,22 +426,24 @@ class CircuitBreaker:
 **Properties:**
 
 <ResponseField name="state" type="str">
-  Current circuit breaker state - one of `"closed"`, `"open"`, or `"half_open"`.
+  Current circuit breaker state - one of `"closed"`, `"open"`, or `"half-open"`.
 
   This is a read-only property that is thread-safe. The state reflects the current operational mode:
   - `"closed"`: Normal operation, all requests allowed through
   - `"open"`: Failure mode, all requests blocked immediately
-  - `"half_open"`: Recovery testing, one test request allowed through
+  - `"half-open"`: Recovery testing, requests allowed through, the next outcome decides the state
 
   **Usage:**
   ```python
+  from tif1.retry import get_circuit_breaker
+
   cb = get_circuit_breaker()
   if cb.state == "open":
-      # Use fallback strategy
-      return load_from_cache()
-  elif cb.state == "half_open":
-      # Circuit is testing recovery
-      logger.info("Circuit breaker testing recovery")
+      print("Circuit breaker is open: use cached data")
+  elif cb.state == "half-open":
+      print("Circuit breaker is testing recovery")
+  else:
+      print("Circuit breaker is closed: requests go through")
   ```
 </ResponseField>
 
@@ -456,6 +458,12 @@ class CircuitBreaker:
 
   **Usage:**
   ```python
+  import logging
+
+  from tif1.retry import get_circuit_breaker
+
+  logger = logging.getLogger(__name__)
+
   cb = get_circuit_breaker()
   print(f"Current failures: {cb.failures}/{cb.threshold}")
 
@@ -472,6 +480,13 @@ class CircuitBreaker:
 
   **Usage:**
   ```python
+  import logging
+  from datetime import datetime
+
+  from tif1.retry import get_circuit_breaker
+
+  logger = logging.getLogger(__name__)
+
   cb = get_circuit_breaker()
   if cb.last_failure_time:
       elapsed = datetime.now() - cb.last_failure_time
@@ -480,6 +495,8 @@ class CircuitBreaker:
       # Alert if failures are recent
       if elapsed.total_seconds() < 60:
           logger.error("Recent failures detected in circuit breaker")
+  else:
+      print("No failures recorded")
   ```
 </ResponseField>
 
@@ -522,22 +539,25 @@ The `CircuitBreaker` class provides these concrete guarantees in concurrent envi
 **Example - Basic Usage:**
 
 ```python
+import niquests
+
 from tif1.retry import CircuitBreaker
 
 # Create circuit breaker with custom thresholds
 cb = CircuitBreaker(threshold=3, timeout=30)
 
+URL = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+
 def fetch_data(url):
     """Fetch data from URL."""
-    import requests
-    response = requests.get(url, timeout=10)
+    response = niquests.get(url, timeout=10)
     response.raise_for_status()
     return response.json()
 
 # Use circuit breaker to protect requests
 try:
-    result = cb.call(fetch_data, "https://example.com/data.json")
-    print(f"Success: {result}")
+    result = cb.call(fetch_data, URL)
+    print(f"Success: {len(result['drivers'])} drivers")
 except Exception as e:
     print(f"Failed: {e}")
     print(f"Circuit breaker state: {cb.state}")
@@ -590,6 +610,16 @@ critical_cb = CircuitBreaker(threshold=2, timeout=120)
 # Opens after 10 failures, waits only 30 seconds before testing recovery
 lenient_cb = CircuitBreaker(threshold=10, timeout=30)
 
+# Stand-ins for application functions
+def fetch_from_critical_service():
+    return {"source": "critical"}
+
+def fetch_from_optional_service():
+    raise ConnectionError("optional service unavailable")
+
+def load_from_cache():
+    return {"source": "cache"}
+
 def fetch_critical_data():
     """Fetch from highly reliable service."""
     return critical_cb.call(fetch_from_critical_service)
@@ -601,55 +631,54 @@ def fetch_optional_data():
 # Critical service: fast failure detection, patient recovery
 try:
     data = fetch_critical_data()
-except Exception as e:
+except Exception:
     # Use fallback immediately
     data = load_from_cache()
+print(f"Critical data: {data}")
 
 # Optional service: tolerant of failures, quick recovery testing
 try:
     data = fetch_optional_data()
-except Exception as e:
+except Exception:
     # Can skip this data if unavailable
     data = None
+print(f"Optional data: {data} (failures: {lenient_cb.failures}/{lenient_cb.threshold})")
 ```
 
 **Example - Integration with Logging:**
 
+`call()` records each outcome through internal methods, not through `record_failure()` or `record_success()`. To observe the state changes that `call()` makes, override `call()`.
+
 ```python
-from tif1.retry import CircuitBreaker
 import logging
+
+from tif1.retry import CircuitBreaker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class MonitoredCircuitBreaker(CircuitBreaker):
-    """Circuit breaker with detailed logging."""
+    """Circuit breaker that logs every state change made by call()."""
 
-    def record_failure(self):
-        """Record failure with logging."""
-        super().record_failure()
-        logger.warning(
-            f"Circuit breaker failure recorded: "
-            f"failures={self.failures}/{self.threshold}, "
-            f"state={self.state}"
-        )
-
-        if self.state == "open":
-            logger.error(
-                f"Circuit breaker OPENED after {self.failures} failures. "
-                f"Will test recovery in {self.timeout} seconds."
-            )
-
-    def record_success(self):
-        """Record success with logging."""
+    def call(self, func, *args, **kwargs):
         old_state = self.state
-        super().record_success()
-
-        if old_state == "half_open" and self.state == "closed":
-            logger.info("Circuit breaker CLOSED - service recovered")
+        try:
+            return super().call(func, *args, **kwargs)
+        finally:
+            if self.state != old_state:
+                logger.warning(
+                    f"Circuit breaker {old_state} -> {self.state} "
+                    f"(failures={self.failures}/{self.threshold})"
+                )
 
 # Use monitored circuit breaker
-cb = MonitoredCircuitBreaker(threshold=3, timeout=60)
+cb = MonitoredCircuitBreaker(threshold=2, timeout=60)
+for _ in range(2):
+    try:
+        cb.call(lambda: 1 / 0)
+    except ZeroDivisionError:
+        pass
+print(f"State: {cb.state}")
 ```
 
 ---
@@ -737,12 +766,11 @@ def load_session_intelligently(year, gp, session_name):
     if cb.state == "open":
         # Circuit is open, don't even try network requests
         print("Circuit breaker is open, using cache-only mode")
-        return load_from_cache(year, gp, session_name)
+        return load_from_cache(year, gp, session_name)  # application-defined fallback
 
-    elif cb.state == "half_open":
+    elif cb.state == "half-open":
         # Circuit is testing recovery, be cautious
-        print("Circuit breaker is testing recovery, using short timeout")
-        # Could set a shorter timeout for this request
+        print("Circuit breaker is testing recovery")
         return tif1.get_session(year, gp, session_name)
 
     else:  # closed
@@ -786,12 +814,13 @@ class CircuitBreakerMetrics:
             "state_changes": len(self.state_changes)
         }
 
-# Usage
+# Usage: sample the state three times, one second apart
+# (a monitoring service runs this loop for as long as it runs)
 metrics = CircuitBreakerMetrics()
-while True:
+for _ in range(3):
     data = metrics.collect()
     print(f"Circuit breaker: {data['state']}, failures: {data['failures']}")
-    time.sleep(5)
+    time.sleep(1)
 ```
 
 ---
@@ -964,8 +993,8 @@ def call(
 
 **Raises:**
 
-<ResponseField name="Exception" type="Exception">
-  Raises `Exception("Circuit breaker is open")` if the circuit breaker is in Open state and the timeout has not elapsed.
+<ResponseField name="CircuitBreakerOpenError" type="NetworkError">
+  Raises `CircuitBreakerOpenError` if the circuit breaker is in Open state and the timeout has not elapsed. The error is a `NetworkError` subclass with the message "Circuit breaker is open".
 
   Also raises any exception that `func` raises during execution. These exceptions are propagated after recording the failure in the circuit breaker.
 </ResponseField>
@@ -984,25 +1013,31 @@ def call(
 - All state checks and updates are atomic
 - Function execution happens outside the lock
 - Multiple threads can safely call this method concurrently
-- Only one thread's request succeeds in half-open state (others are blocked)
+- In half-open state, every call goes through: a success closes the circuit, a failure opens it again
 
 **Example - Basic Usage:**
 
 ```python
 from tif1.retry import get_circuit_breaker
-import requests
+import niquests
 
 cb = get_circuit_breaker()
 
+URL = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+
 def fetch_data(url):
     """Fetch data from URL."""
-    response = requests.get(url, timeout=10)
+    response = niquests.get(url, timeout=10)
     response.raise_for_status()
     return response.json()
 
+def load_from_cache():
+    """Application fallback (stand-in)."""
+    return {"drivers": []}
+
 try:
-    result = cb.call(fetch_data, "https://example.com/data.json")
-    print(f"Success: {result}")
+    result = cb.call(fetch_data, URL)
+    print(f"Success: {len(result['drivers'])} drivers")
 except Exception as e:
     if "Circuit breaker is open" in str(e):
         print("Circuit breaker is open, service unavailable")
@@ -1022,9 +1057,9 @@ cb = get_circuit_breaker()
 
 def fetch_with_auth(url, api_key, timeout=30):
     """Fetch data with authentication."""
-    import requests
+    import niquests
     headers = {"Authorization": f"Bearer {api_key}"}
-    response = requests.get(url, headers=headers, timeout=timeout)
+    response = niquests.get(url, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response.json()
 
@@ -1045,16 +1080,16 @@ except Exception as e:
 
 ```python
 from tif1.retry import get_circuit_breaker
-import requests
+import niquests
 
 cb = get_circuit_breaker()
 
+URL = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+
 # Use lambda for simple operations
 try:
-    result = cb.call(
-        lambda: requests.get("https://example.com/data.json").json()
-    )
-    print(f"Success: {result}")
+    result = cb.call(lambda: niquests.get(URL, timeout=10).json())
+    print(f"Success: {len(result['drivers'])} drivers")
 except Exception as e:
     print(f"Failed: {e}")
 ```
@@ -1072,9 +1107,9 @@ class DataFetcher:
 
     def fetch(self, endpoint):
         """Fetch data from endpoint."""
-        import requests
+        import niquests
         url = f"{self.base_url}/{endpoint}"
-        response = requests.get(url, timeout=10)
+        response = niquests.get(url, timeout=10)
         response.raise_for_status()
         return response.json()
 
@@ -1095,6 +1130,7 @@ from tif1.retry import get_circuit_breaker
 
 cb = get_circuit_breaker()
 
+# fetch_data and load_from_cache are application functions
 def fetch_with_state_aware_handling(url):
     """Fetch data with state-aware error handling."""
     try:
@@ -1108,8 +1144,8 @@ def fetch_with_state_aware_handling(url):
         else:
             # Actual request failure
             print(f"Request failed: {e}")
-            if cb.state == "half_open":
-                print("Failed during recovery test, circuit will reopen")
+            if cb.state == "open":
+                print("Failure opened the circuit (threshold reached or recovery test failed)")
             elif cb.failures >= cb.threshold - 1:
                 print(f"Warning: One more failure will open the circuit")
             raise
@@ -1127,14 +1163,21 @@ def record_success() -> None
 
 **Example:**
 ```python
+from tif1.retry import get_circuit_breaker
+
 cb = get_circuit_breaker()
 
+def fetch_data():
+    """Stand-in for an operation that runs outside cb.call()."""
+    return {"status": "ok"}
+
 try:
-    # Your operation
     result = fetch_data()
     cb.record_success()
 except Exception:
     cb.record_failure()
+
+print(f"State: {cb.state}, failures: {cb.failures}")
 ```
 
 ---
@@ -1149,14 +1192,21 @@ def record_failure() -> None
 
 **Example:**
 ```python
-cb = get_circuit_breaker()
+from tif1.exceptions import NetworkError
+from tif1.retry import CircuitBreaker
+
+cb = CircuitBreaker(threshold=3, timeout=30)
+
+def fetch_data():
+    """Stand-in for a request that fails."""
+    raise NetworkError(url="https://example.com/data.json", status_code=503)
 
 try:
     result = fetch_data()
     cb.record_success()
-except NetworkError:
+except NetworkError as e:
     cb.record_failure()
-    raise
+    print(f"{e.message} (failures: {cb.failures}/{cb.threshold})")
 ```
 
 ---
@@ -1174,12 +1224,14 @@ def check_and_update_state() -> tuple[bool, str]
 
 **Example:**
 ```python
+from tif1.retry import get_circuit_breaker
+
 cb = get_circuit_breaker()
 
 should_proceed, state = cb.check_and_update_state()
 if should_proceed:
     # Make request
-    pass
+    print(f"Circuit breaker is {state}, request allowed")
 else:
     print(f"Circuit breaker is {state}, request blocked")
 ```
@@ -1202,30 +1254,47 @@ def retry_with_backoff(
 ```
 
 **Parameters:**
-- `max_retries`: Maximum number of retries (default: 3)
+- `max_retries`: Total number of attempts, including the first call (default: 3)
 - `backoff_factor`: Exponential backoff multiplier (default: 2.0)
 - `jitter`: Add random jitter to backoff (default: True)
 - `exceptions`: Tuple of exceptions to catch (default: all exceptions)
 
+Each call that the decorator makes goes through the global circuit breaker (`get_circuit_breaker()`). Failures in decorated functions also count toward the breaker that `tif1` uses for its own CDN requests. The decorator does not read the `retry_*` configuration keys: pass the values as arguments.
+
 **Backoff Formula:**
 ```python
-wait_time = backoff_factor**attempt * (0.5 + random()) if jitter else backoff_factor**attempt
+import random
+
+backoff_factor = 2.0
+jitter = True
+max_retries = 3
+
+# Sleep before attempt n + 1 (no sleep after the last attempt)
+for attempt in range(max_retries - 1):
+    wait_time = backoff_factor**attempt
+    if jitter:
+        wait_time *= 0.5 + random.random()  # 50% to 150% of the base delay
+    print(f"After attempt {attempt + 1}: wait {wait_time:.2f}s")
 ```
 
 **Example:**
 ```python
+import niquests
+
 from tif1.retry import retry_with_backoff
-from tif1.exceptions import NetworkError
+
+URL = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
 
 @retry_with_backoff(max_retries=5, backoff_factor=2.0)
 def fetch_data(url):
     # Network request that might fail
-    response = requests.get(url)
+    response = niquests.get(url, timeout=10)
     response.raise_for_status()
     return response.json()
 
-# Automatically retries up to 5 times with exponential backoff
-data = fetch_data("https://example.com/data.json")
+# Makes up to 5 attempts, with exponential backoff between them
+data = fetch_data(URL)
+print(f"{len(data['drivers'])} drivers")
 ```
 
 ---
@@ -1233,8 +1302,12 @@ data = fetch_data("https://example.com/data.json")
 ### Custom exception handling
 
 ```python
+import niquests
+
+from tif1.exceptions import DataNotFoundError, NetworkError
 from tif1.retry import retry_with_backoff
-from tif1.exceptions import NetworkError, DataNotFoundError
+
+BASE = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race"
 
 @retry_with_backoff(
     max_retries=3,
@@ -1242,26 +1315,35 @@ from tif1.exceptions import NetworkError, DataNotFoundError
 )
 def fetch_data(url):
     try:
-        return requests.get(url).json()
-    except requests.ConnectionError as e:
-        raise NetworkError(url=url) from e
-    except requests.HTTPError as e:
+        response = niquests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except niquests.HTTPError as e:
         if e.response.status_code == 404:
             raise DataNotFoundError(url=url) from e
         raise NetworkError(url=url, status_code=e.response.status_code) from e
+    except niquests.RequestException as e:
+        raise NetworkError(url=url) from e
 
 # Retries on NetworkError, fails immediately on DataNotFoundError
-data = fetch_data("https://example.com/data.json")
+data = fetch_data(f"{BASE}/drivers.json")
+print(f"{len(data['drivers'])} drivers")
+
+try:
+    fetch_data(f"{BASE}/missing.json")
+except DataNotFoundError as e:
+    print(f"Not retried: {e.context['url']}")
 ```
 
 ---
 
 ## Configuration
 
-Configure circuit breaker and retry behavior via global config:
+Configure the global circuit breaker and the retry behavior of `tif1` data fetches through the global config. The global circuit breaker reads its settings when it is created, so call `reset_circuit_breaker()` to apply new values:
 
 ```python
 import tif1
+from tif1.retry import reset_circuit_breaker
 
 config = tif1.get_config()
 
@@ -1270,6 +1352,9 @@ config.set("circuit_breaker_threshold", 10)
 
 # Set circuit breaker timeout
 config.set("circuit_breaker_timeout", 120)
+
+# Apply the circuit breaker settings (the global instance reads them when it is created)
+reset_circuit_breaker()
 
 # Set retry backoff factor
 config.set("retry_backoff_factor", 1.5)
@@ -1290,6 +1375,7 @@ config.save()
 | `retry_backoff_factor` | `float` | `2.0` | Exponential backoff multiplier |
 | `retry_jitter` | `bool` | `True` | Add random jitter to backoff |
 | `max_retry_delay` | `float` | `60.0` | Maximum retry delay in seconds |
+| `max_retries` | `int` | `3` | Attempts for each payload fetch |
 
 ---
 
@@ -1334,9 +1420,12 @@ monitor_circuit_breaker()
 from tif1.retry import retry_with_backoff, get_circuit_breaker
 from tif1.exceptions import NetworkError
 import logging
+import niquests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+URL = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
 
 @retry_with_backoff(
     max_retries=5,
@@ -1350,17 +1439,16 @@ def fetch_with_logging(url):
     logger.info(f"Fetching {url} (CB state: {cb.state})")
 
     try:
-        # Your fetch logic
-        response = requests.get(url, timeout=30)
+        response = niquests.get(url, timeout=30)
         response.raise_for_status()
         logger.info(f"Success! (CB failures: {cb.failures})")
         return response.json()
-    except requests.RequestException as e:
+    except niquests.RequestException as e:
         logger.warning(f"Request failed: {e}")
         raise NetworkError(url=url) from e
 
 # Usage
-data = fetch_with_logging("https://example.com/data.json")
+data = fetch_with_logging(URL)
 ```
 
 ---
@@ -1369,9 +1457,9 @@ data = fetch_with_logging("https://example.com/data.json")
 
 ```python
 import tif1
-from tif1.retry import get_circuit_breaker, reset_circuit_breaker
+from tif1.retry import get_circuit_breaker
 from tif1.exceptions import NetworkError
-import time
+from urllib.parse import quote
 
 def load_session_with_fallback(year, gp, session_name):
     """Load session with fallback to cached data."""
@@ -1380,9 +1468,6 @@ def load_session_with_fallback(year, gp, session_name):
     # Check circuit breaker state
     if cb.state == "open":
         print("Circuit breaker open, using cached data only")
-        config = tif1.get_config()
-        config.set("enable_cache", True)
-        # Disable network requests
         return load_from_cache_only(year, gp, session_name)
 
     try:
@@ -1398,21 +1483,21 @@ def load_session_with_fallback(year, gp, session_name):
         raise
 
 def load_from_cache_only(year, gp, session_name):
-    """Load session from cache without network requests."""
+    """Load a session only when the cache already holds its data."""
     cache = tif1.get_cache()
 
-    # Check if data exists in cache
-    if not cache.has_session_data(year, gp, session_name):
+    # Cache keys use the URL-encoded event and session names
+    if not cache.has_session_data(year, quote(gp), quote(session_name)):
         raise ValueError("No cached data available")
 
-    # Load from cache
+    # Cached payloads load without network requests
     session = tif1.get_session(year, gp, session_name)
     return session
 
 # Usage
 try:
     session = load_session_with_fallback(2021, "Belgian Grand Prix", "Race")
-    print(f"Loaded session: {session.name}")
+    print(f"Loaded session: {session.event_name} - {session.session_name}")
 except Exception as e:
     print(f"Failed to load session: {e}")
 ```
@@ -1469,6 +1554,8 @@ data = fetch_data("https://example.com/data.json")
 1. **Monitor circuit breaker state**: Check before critical operations.
 
 ```python
+from tif1.retry import get_circuit_breaker
+
 cb = get_circuit_breaker()
 if cb.state == "open":
     # Use fallback or wait
@@ -1478,18 +1565,27 @@ if cb.state == "open":
 2. **Reset after fixing issues**: Do not wait for the timeout when the service is back.
 
 ```python
+from tif1.retry import reset_circuit_breaker
+
 reset_circuit_breaker()
 ```
 
 3. **Use appropriate thresholds**: Higher for transient errors, lower for persistent failures.
 
 ```python
+import tif1
+from tif1.retry import reset_circuit_breaker
+
+config = tif1.get_config()
 config.set("circuit_breaker_threshold", 10)  # More tolerant
+reset_circuit_breaker()  # Apply the new threshold
 ```
 
 4. **Add jitter to retries**: Prevents thundering herd problem.
 
 ```python
+from tif1.retry import retry_with_backoff
+
 @retry_with_backoff(jitter=True)
 def fetch_data():
     pass
@@ -1505,6 +1601,9 @@ logging.basicConfig(level=logging.WARNING)
 6. **Catch specific exceptions**: Do not retry on client errors (4xx).
 
 ```python
+from tif1.exceptions import NetworkError
+from tif1.retry import retry_with_backoff
+
 @retry_with_backoff(exceptions=(NetworkError,))
 def fetch_data():
     pass
@@ -1515,6 +1614,8 @@ def fetch_data():
 8. **Test circuit breaker behavior**: Verify it works as expected.
 
 ```python
+from tif1.retry import CircuitBreaker
+
 def test_circuit_breaker():
     cb = CircuitBreaker(threshold=2, timeout=5)
 
@@ -1522,11 +1623,13 @@ def test_circuit_breaker():
     for i in range(3):
         try:
             cb.call(lambda: 1/0)
-        except:
+        except Exception:
             pass
 
     assert cb.state == "open"
     print("Circuit breaker test passed")
+
+test_circuit_breaker()
 ```
 
 ---
@@ -1552,6 +1655,8 @@ if cb.state == "open":
 Adjust the `max_retries` parameter when using the `@retry_with_backoff` decorator:
 
 ```python
+from tif1.retry import retry_with_backoff
+
 @retry_with_backoff(max_retries=2)  # Reduce from default of 3
 def fetch_data():
     pass
@@ -1562,7 +1667,10 @@ def fetch_data():
 Reduce the backoff factor globally or per-function:
 
 ```python
-# Global configuration
+import tif1
+from tif1.retry import retry_with_backoff
+
+# Global configuration (tif1 data fetches)
 config = tif1.get_config()
 config.set("retry_backoff_factor", 1.5)
 
@@ -1575,7 +1683,11 @@ def fetch_data():
 ### Circuit breaker too sensitive
 
 ```python
+import tif1
+from tif1.retry import reset_circuit_breaker
+
 # Increase threshold
 config = tif1.get_config()
 config.set("circuit_breaker_threshold", 10)
+reset_circuit_breaker()  # Apply the new threshold
 ```

@@ -111,7 +111,7 @@ graph TD
 
 **Circuit Breaker (`retry.py`)**
 - Prevents cascading failures during network issues
-- States: CLOSED (normal), OPEN (failing), HALF_OPEN (testing recovery)
+- States: `"closed"` (normal), `"open"` (failing), `"half-open"` (testing recovery)
 - Failure threshold: 5 consecutive failures
 - Recovery timeout: 60 seconds
 - Automatic state transitions
@@ -123,28 +123,28 @@ graph TD
 - Strict validation mode enabled
 
 **Schema Validator (`validation.py`)**
-- Pydantic-based validation of JSON structure
+- Pydantic-based validation of JSON structure (off by default; turn it on with the `validate_data`, `validate_lap_times`, and `validate_telemetry` config keys)
 - Ensures data integrity before DataFrame construction
 - Type coercion and default value handling
 - Detailed error messages for debugging
 
 **DataFrame Constructor (`core.py` / `core_utils`)**
-- Converts validated JSON to pandas/polars DataFrames
-- Column renaming (snake_case → PascalCase)
-- Type inference and optimization
-- Index management
+- Converts the columnar JSON payloads (one list per field) to pandas/polars DataFrames
+- Renames the short upstream keys (`time`, `s1`, `sesT`, `wAT`, ...) to FastF1 names
+- Example: `s1` becomes `Sector1Time`, and `wAT` becomes `AirTemp`
+- Column order follows FastF1, plus the tif1 columns at the end
+- pandas laps keep a `RangeIndex` (no `LapNumber` index)
 
 **Data Enrichment (`core.py`)**
-- Adds computed columns (LapTimeSeconds, IsPersonalBest, etc.)
-- Merges weather data with lap data
-- Calculates stint information
-- Adds driver metadata
+- Adds the computed `LapTimeSeconds` column (float seconds on both backends)
+- Keeps the per-lap weather fields of the payload as `WeatherTime`, `AirTemp`, ..., `WindSpeed`
+- Takes `Stint`, `IsPersonalBest`, `Driver`, `Team`, and `DriverNumber` from the payload as delivered
 
 **Type Optimizer (`core_utils/helpers.py`)**
-- Converts string columns to categoricals (50-90% memory reduction)
-- Downcasts numeric types where safe (float64 → float32)
-- Optimizes datetime representations
-- Handles missing data efficiently
+- Applies the dtype contract of each backend (see [Column types by backend](/concepts/backends#column-types-by-backend))
+- pandas: converts time columns to `timedelta64[ns]` and `Driver`, `Team`, `Compound`, `TrackStatus` to `category`
+- polars: keeps time columns as `Float64` seconds and text columns as `String`
+- Replaces sentinel strings such as `"None"` with missing values; numeric columns stay 64-bit (no `float32` downcast)
 
 ## Complete Data Loading Pipeline
 
@@ -167,16 +167,17 @@ laps = session.laps  # Returns pandas/polars DataFrame
 verstappen = session.get_driver("VER")
 verstappen_laps = verstappen.laps  # Filtered view, no additional loading
 
-# Access telemetry (separate loading pipeline)
+# Access telemetry (separate loading pipeline). pandas shown; on polars,
+# get_fastest_lap() returns a plain DataFrame, so call verstappen.get_fastest_lap_tel()
 fastest_lap = verstappen.get_fastest_lap()
 telemetry = fastest_lap.get_telemetry()  # Triggers telemetry loading
 ```
 
 **What Happens Internally:**
 
-1. Property access triggers `__getattribute__` or explicit getter method
+1. Property access runs the `Session.laps` property
 2. Session checks if data is already loaded (`self._laps is not None`)
-3. If not loaded, calls internal `_load_laps()` method
+3. If not loaded, the property builds the laps table (there is no public loader method to call)
 4. The loader builds the backend lap LRU key `f"{year}_{gp}_{session}_laps"` and the payload key `f"{year}/{gp}/{session}/session_laptimes.json"`
 5. Passes control to cache layer
 
@@ -188,9 +189,10 @@ telemetry = fastest_lap.get_telemetry()  # Triggers telemetry loading
 **Configuration Options:**
 
 ```python
-# Control what data gets loaded
-session = tif1.get_session(
-    2025, "Monaco", "Race",
+# Control what data gets loaded: get_session() only selects the session;
+# session.load() picks the tables
+session = tif1.get_session(2025, "Monaco", "Race")
+session.load(
     laps=True,        # Load lap data
     telemetry=False,  # Skip telemetry (faster)
     weather=True,     # Load weather data
@@ -223,6 +225,9 @@ The memory cache is the fastest tier, holding raw JSON payloads and their parsed
 
 **Cache Key Structure:**
 ```python
+# gp and session are URL-encoded, as in session.gp and session.session
+year, gp, session, driver, lap = 2025, "Monaco%20Grand%20Prix", "Race", "VER", 10
+
 # JSON tier: "{year}/{gp}/{session}/{path}" (payload_loader.PayloadLoader.cache_key)
 key = f"{year}/{gp}/{session}/session_laptimes.json"
 # Other paths: drivers.json, rcm.json, weather.json, corners.json,
@@ -237,14 +242,14 @@ key = f"{year}_{gp}_{session}_laps"
 
 **Memory Usage Estimation:**
 ```python
-# Typical memory footprint per cached item:
-# - Lap data (20 drivers, 60 laps each): ~2-5 MB
-# - Telemetry (single driver, full lap): ~10-20 MB
-# - Weather data: ~0.1-0.5 MB
-# - Race control messages: ~0.5-1 MB
+# Typical JSON payload sizes (2025 Bahrain Grand Prix race):
+# - session_laptimes.json (20 drivers, 1128 laps): ~340 KB
+# - {driver}/{lap}_tel.json (one lap, 700-800 samples): ~150 KB
+# - weather.json (158 samples): ~7 KB
+# - rcm.json (91 messages): ~13 KB
 
-# Total memory for 1024 items (worst case): ~10-20 GB
-# Typical usage (mixed data): ~2-5 GB
+# The telemetry payloads dominate: 2048 cached laps x ~150 KB ≈ 300 MB
+# Lap and session tables stay small (well under 100 MB for 1024 payloads)
 ```
 
 **Cache Hit Rate Optimization:**
@@ -320,6 +325,9 @@ try:
 except ImportError:
     import zstandard as zstd
 
+# A payload in the upstream layout (one list per field)
+data = {"lap": list(range(1, 58)), "time": [95.0 + i / 10 for i in range(57)]}
+
 # Serialization (write to cache)
 json_bytes = orjson.dumps(data)
 if len(json_bytes) >= 4096:
@@ -334,8 +342,8 @@ json_bytes = zstd.decompress(stored) if isinstance(stored, bytes) else stored
 data = orjson.loads(json_bytes)
 ```
 
-Materialized telemetry DataFrames (the frame tier) use lz4 instead, because the
-tier is write-once/read-many and lz4 halves both compress and decompress time.
+Materialized telemetry DataFrames (the frame tier) use lz4 instead. The tier is
+write-once/read-many, and lz4 halves both compress and decompress time.
 zstd is the fallback when lz4 is unavailable, for example on Python 3.15 where
 lz4 publishes no wheels yet. Each row carries its codec's magic prefix, so
 both kinds of row stay readable regardless of which codec wrote them.
@@ -366,7 +374,8 @@ cache = tif1.get_cache()  # tif1.cache.Cache
 print(f"Cache directory: {cache.cache_dir}")
 size_mb = cache.db_path.stat().st_size / (1024 * 1024)
 print(f"Cache size: {size_mb:.2f} MB")
-print(f"Monaco cached: {cache.has_session_data(2025, 'Monaco', 'Race')}")
+# Pass gp and session URL-encoded, as the cache keys store them (session.gp, session.session)
+print(f"Monaco cached: {cache.has_session_data(2025, 'Monaco%20Grand%20Prix', 'Race')}")
 
 # Clear cache
 cache.clear()                   # Remove every tier (memory + SQLite)
@@ -432,17 +441,24 @@ def get_data(key):
 **Cache Warming Strategies:**
 
 ```python
+import logging
+
+import tif1
+
+logger = logging.getLogger(__name__)
+
 # Strategy 1: Pre-warm on application startup
 def warm_cache_for_season(year):
     """Load all race data for a season into cache."""
-    events = tif1.get_events(year)
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
     for event in events:
         for session_type in ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]:
             try:
                 session = tif1.get_session(year, event, session_type)
                 _ = session.laps  # Trigger load
                 logger.info(f"Cached: {year} {event} {session_type}")
-            except tif1.DataNotFoundError:
+            except (tif1.DataNotFoundError, ValueError):
+                # ValueError: the event has no such session (sprint weekends have no FP2/FP3)
                 continue
 
 # Strategy 2: Background cache warming
@@ -457,7 +473,7 @@ def warm_cache_background(year):
 # Strategy 3: Selective warming (only races)
 def warm_cache_races_only(year):
     """Load only race sessions (fastest to load)."""
-    events = tif1.get_events(year)
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
     for event in events:
         session = tif1.get_session(year, event, "Race")
         _ = session.laps
@@ -511,31 +527,39 @@ When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a mul
 - Used when both jsDelivr and Hugging Face fail or are unavailable
 
 **Forbidden Source: raw.githubusercontent.com**
-- Never used due to strict rate limits (10 requests/hour)
-- Causes `NetworkError` when all other sources fail
+- Never used due to strict rate limits
+- When all three sources fail, tif1 raises `NetworkError` (or `DataNotFoundError` when every source returned a 4xx) instead of trying it
 
 #### URL Construction
 
 ```python
-# Lap data URL construction
+from urllib.parse import quote
+
+# Every payload lives under {year}/{event name}/{session name}/ in the season repo.
+# The event and session names are URL-encoded, not normalized.
 year = 2025
-gp_name = "monaco"  # Normalized (lowercase, no spaces)
-session_type = "race"  # Normalized
+gp = quote("Monaco Grand Prix")  # "Monaco%20Grand%20Prix"
+session_name = quote("Race")
 driver = "VER"
+lap_number = 10
 
 # Primary URL (jsDelivr)
-base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main"
-lap_url = f"{base_url}/laps/{gp_name}/{session_type}/driver_{driver}.json"
-# Result: https://cdn.staticdelivr.com/gh/TracingInsights/2025/main/laps/monaco/race/driver_VER.json
+base_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{gp}/{session_name}"
+session_laps_url = f"{base_url}/session_laptimes.json"  # Laps of all drivers
+driver_laps_url = f"{base_url}/{driver}/laptimes.json"  # Laps of one driver
+# Result: https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco%20Grand%20Prix/Race/VER/laptimes.json
 
-# Telemetry URL
-telemetry_url = f"{base_url}/telemetry/{gp_name}/{session_type}/driver_{driver}_lap_{lap_number}.json"
+# Telemetry URL (one file per lap)
+telemetry_url = f"{base_url}/{driver}/{lap_number}_tel.json"
 
-# Weather URL
-weather_url = f"{base_url}/weather/{gp_name}/{session_type}/weather.json"
+# Session tables
+drivers_url = f"{base_url}/drivers.json"
+weather_url = f"{base_url}/weather.json"
+messages_url = f"{base_url}/rcm.json"  # Race control messages
 
-# Race control messages URL
-messages_url = f"{base_url}/messages/{gp_name}/{session_type}/messages.json"
+# The fallbacks use the same path after their own prefix:
+# https://huggingface.co/buckets/tracinginsights/2025/resolve/Monaco%20Grand%20Prix/Race/...
+# https://cdn.staticdelivr.com/gh/TracingInsights/2025/main/Monaco%20Grand%20Prix/Race/...
 ```
 
 #### Fallback Logic
@@ -546,17 +570,6 @@ async def fetch_with_fallback(url_path):
 
     # Attempt 1: jsDelivr CDN (primary)
     try:
-        staticdelivr_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{url_path}"
-        response = await http_client.get(staticdelivr_url, timeout=30)
-        if response.status_code == 200:
-            logger.info(f"StaticDelivr success: {url_path}")
-            return response.content
-        logger.warning(f"StaticDelivr returned {response.status_code}")
-    except Exception as e:
-        logger.warning(f"StaticDelivr failed: {e}")
-
-    # Attempt 2: jsDelivr CDN (fallback)
-    try:
         jsdelivr_url = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{url_path}"
         response = await http_client.get(jsdelivr_url, timeout=30)
         if response.status_code == 200:
@@ -566,7 +579,7 @@ async def fetch_with_fallback(url_path):
     except Exception as e:
         logger.warning(f"jsDelivr failed: {e}")
 
-    # Attempt 3: Hugging Face bucket (backup)
+    # Attempt 2: Hugging Face bucket (fallback)
     try:
         hf_url = f"https://huggingface.co/buckets/tracinginsights/{year}/resolve/{url_path}"
         response = await http_client.get(hf_url, timeout=30)
@@ -577,12 +590,19 @@ async def fetch_with_fallback(url_path):
     except Exception as e:
         logger.warning(f"Hugging Face failed: {e}")
 
-    # All sources failed
-    raise tif1.NetworkError(
-        f"Failed to fetch {url_path} from all CDN sources",
-        url=url_path,
-        attempts=3
-    )
+    # Attempt 3: StaticDelivr CDN (last-resort backup)
+    try:
+        staticdelivr_url = f"https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{url_path}"
+        response = await http_client.get(staticdelivr_url, timeout=30)
+        if response.status_code == 200:
+            logger.info(f"StaticDelivr success: {url_path}")
+            return response.content
+        logger.warning(f"StaticDelivr returned {response.status_code}")
+    except Exception as e:
+        logger.warning(f"StaticDelivr failed: {e}")
+
+    # All sources failed (NetworkError takes the URL and extra context keys)
+    raise tif1.NetworkError(url=url_path, attempts=3)
 ```
 
 #### Circuit Breaker Pattern
@@ -591,103 +611,111 @@ tif1 implements a circuit breaker to prevent cascading failures during network i
 
 **Circuit Breaker States:**
 
-1. **CLOSED (Normal Operation)**
+1. **`"closed"` (Normal Operation)**
    - All requests pass through
    - Failures are counted
-   - Threshold: 5 consecutive failures
+   - Threshold: 5 consecutive failures (`circuit_breaker_threshold`)
 
-2. **OPEN (Failing)**
+2. **`"open"` (Failing)**
    - Requests fail immediately, without a network call
    - Prevents overload of the failing service
-   - Duration: 60 seconds
+   - Duration: 60 seconds (`circuit_breaker_timeout`)
 
-3. **HALF_OPEN (Testing Recovery)**
-   - Limited requests allowed through
-   - Success → transition to CLOSED
-   - Failure → transition back to OPEN
+3. **`"half-open"` (Testing Recovery)**
+   - The next request is allowed through
+   - Success → transition to `"closed"`
+   - Failure → transition back to `"open"`
+
+The block below is a simplified, single-threaded copy of `tif1.retry.CircuitBreaker`. The real class adds a lock and uses `time.monotonic()`. Read the live instance with `tif1.get_circuit_breaker()`.
 
 ```python
+import time
+
+from tif1.exceptions import CircuitBreakerOpenError
+
+
 class CircuitBreaker:
-    """Circuit breaker for network requests."""
+    """Circuit breaker for network requests (simplified)."""
 
-    def __init__(self, failure_threshold=5, recovery_timeout=60):
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.failure_count = 0
-        self.last_failure_time = None
-        self.state = "CLOSED"
+    def __init__(self, threshold=5, timeout=60):
+        self.threshold = threshold  # Failures before the breaker opens
+        self.timeout = timeout  # Seconds the breaker stays open
+        self.failures = 0
+        self.opened_at = None
+        self.state = "closed"
 
-    async def call(self, func, *args, **kwargs):
+    def call(self, func, *args, **kwargs):
         """Execute function with circuit breaker protection."""
 
         # Check if circuit is open
-        if self.state == "OPEN":
-            if time.time() - self.last_failure_time > self.recovery_timeout:
-                self.state = "HALF_OPEN"
-                logger.info("Circuit breaker: OPEN → HALF_OPEN")
+        if self.state == "open":
+            if time.monotonic() - self.opened_at > self.timeout:
+                self.state = "half-open"
             else:
-                raise tif1.NetworkError("Circuit breaker is OPEN")
+                # CircuitBreakerOpenError is a NetworkError subclass
+                raise CircuitBreakerOpenError
 
         # Attempt request
         try:
-            result = await func(*args, **kwargs)
-
-            # Success - reset failure count
-            if self.state == "HALF_OPEN":
-                self.state = "CLOSED"
-                logger.info("Circuit breaker: HALF_OPEN → CLOSED")
-            self.failure_count = 0
-
-            return result
-
-        except Exception as e:
+            result = func(*args, **kwargs)
+        except Exception:
             # Failure - increment count
-            self.failure_count += 1
-            self.last_failure_time = time.time()
-
-            if self.failure_count >= self.failure_threshold:
-                self.state = "OPEN"
-                logger.error(f"Circuit breaker: CLOSED → OPEN (failures: {self.failure_count})")
-
+            self.failures += 1
+            self.opened_at = time.monotonic()
+            if self.failures >= self.threshold:
+                self.state = "open"
             raise
+
+        # Success - close the breaker and reset the failure count
+        self.state = "closed"
+        self.failures = 0
+        return result
 ```
 
 #### Retry Strategy
 
+Each CDN source gets its own retry loop (`tif1.retry.retry_with_backoff`, wrapped around the circuit breaker). Only `NetworkError` is retried; a 404 moves on to the next source at once. The block below is a simplified copy:
+
 ```python
-# Exponential backoff with jitter
-max_retries = 3
-base_delay = 1.0  # seconds
+import logging
+import random
+import time
 
-for attempt in range(max_retries):
-    try:
-        return await fetch_data(url)
-    except NetworkError as e:
-        if attempt == max_retries - 1:
-            raise  # Final attempt failed
+from tif1 import NetworkError
 
-        # Calculate delay with exponential backoff and jitter
-        delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
-        jitter = random.uniform(0, 0.1 * delay)  # ±10% jitter
-        total_delay = delay + jitter
+logger = logging.getLogger(__name__)
 
-        logger.warning(f"Retry {attempt + 1}/{max_retries} after {total_delay:.2f}s")
-        await asyncio.sleep(total_delay)
+
+def fetch_with_retry(fetch_from_url, url, max_retries=3, backoff_factor=2.0):
+    """Exponential backoff with jitter (sync, per CDN source)."""
+    # max_retries: TIF1_MAX_RETRIES; backoff_factor: TIF1_RETRY_BACKOFF_FACTOR
+    for attempt in range(max_retries):
+        try:
+            return fetch_from_url(url)  # Goes through the circuit breaker
+        except NetworkError as e:
+            if attempt == max_retries - 1:
+                raise  # Final attempt failed: try_sources moves on to the next CDN
+
+            # 1s, 2s, 4s ... multiplied by a random factor between 0.5 and 1.5
+            backoff = backoff_factor ** attempt
+            backoff *= 0.5 + random.random()  # TIF1_RETRY_JITTER=false turns this off
+
+            logger.warning(f"Retry {attempt + 1}/{max_retries} after {backoff:.2f}s: {e}")
+            time.sleep(backoff)
 ```
 
 #### Request Timeout Management
 
-```python
-# Timeout configuration
-TIMEOUTS = {
-    "connect": 10,      # Connection establishment timeout
-    "read": 30,         # Read timeout (per chunk)
-    "total": 60,        # Total request timeout
-}
+tif1 uses one timeout value in seconds for every request (`timeout`, default 30). There are no separate connect, read, or total timeouts.
 
-# Usage
-async with http_client.get(url, timeout=TIMEOUTS) as response:
-    content = await response.read()
+```python
+import tif1
+
+config = tif1.get_config()
+print(config.get("timeout"))  # 30 (seconds per request)
+
+# Raise it for a slow link (or set TIF1_TIMEOUT=60 in the environment)
+config.set("timeout", 60)
 ```
 
 ### Stage 4: Async Parallel Fetching
@@ -712,26 +740,32 @@ for driver in drivers:
 ```
 
 **Parallel Fetching (tif1 Approach):**
+
+`async_fetch.py` runs the blocking requests of the shared `niquests.Session` in a thread pool. An `asyncio.Semaphore` caps the number of requests in flight (`max_concurrent_requests`). The block below is a simplified copy:
+
 ```python
 # Parallel fetching - FAST
 import asyncio
-import niquests
 
-async def fetch_all_drivers(drivers):
+from tif1.http_session import get_session as get_http_session
+
+
+async def fetch_all_drivers(drivers, max_concurrent=20):
     """Fetch data for all drivers in parallel."""
+    http = get_http_session()  # Shared niquests.Session (pooled, multiplexed)
+    loop = asyncio.get_running_loop()
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     async def fetch_driver(driver):
         url = construct_url(driver)
-        async with http_client.get(url) as response:
-            return await response.json()
-
-    # Create tasks for all drivers
-    tasks = [fetch_driver(driver) for driver in drivers]
+        async with semaphore:
+            response = await loop.run_in_executor(None, http.get, url)
+        response.raise_for_status()
+        return response.json()
 
     # Execute all tasks concurrently
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    return results
+    tasks = [fetch_driver(driver) for driver in drivers]
+    return await asyncio.gather(*tasks, return_exceptions=True)
 
 # Time: max(500ms across all drivers) ≈ 500-800ms
 # Speedup: 10-15x faster
@@ -755,19 +789,19 @@ tif1 uses the `niquests` library. `niquests` supports HTTP/2 and multiplexes req
 - Stream prioritization
 
 ```python
-# HTTP/2 connection reuse
-async with niquests.AsyncSession() as session:
-    # Single TCP connection established
-    # All subsequent requests reuse this connection
+# HTTP/2 connection reuse with niquests
+import niquests
 
-    tasks = []
-    for driver in drivers:
-        task = session.get(construct_url(driver))
-        tasks.append(task)
+with niquests.Session(multiplexed=True) as http:
+    # One connection per host; HTTP/2 is negotiated when the server offers it
+    responses = [http.get(construct_url(driver)) for driver in drivers]
 
-    # All requests multiplexed over single connection
-    responses = await asyncio.gather(*tasks)
+    # multiplexed=True returns lazy responses: the requests share the
+    # connection, and gather() waits for all of them
+    http.gather()
 ```
+
+tif1 builds this session once per process in `tif1.http_session` (`TIF1_HTTP_MULTIPLEXED`, default `true`).
 
 **Performance Comparison:**
 
@@ -781,20 +815,29 @@ async with niquests.AsyncSession() as session:
 
 #### Connection Pooling
 
+`tif1.http_session.get_session()` mounts one `HTTPAdapter` for `https://` with these sizes:
+
 ```python
-# Connection pool configuration
-http_client = niquests.AsyncSession(
-    pool_connections=10,      # Number of connection pools
-    pool_maxsize=100,         # Max connections per pool
-    pool_block=False,         # Don't block when pool is full
-    max_redirects=3,          # Follow up to 3 redirects
-    timeout=30,               # Default timeout
+# Connection pool configuration (simplified from tif1.http_session)
+import niquests
+
+http = niquests.Session(multiplexed=True)
+http.mount(
+    "https://",
+    niquests.adapters.HTTPAdapter(
+        pool_connections=256,  # max(256, concurrency); TIF1_POOL_CONNECTIONS overrides
+        pool_maxsize=1024,     # max(512, 4 x pool_connections); TIF1_POOL_MAXSIZE overrides
+        pool_block=False,      # Do not block when the pool is full
+    ),
 )
+http.trust_env = False  # Skip proxy and netrc lookups on every request
 
 # Connection reuse
 # First request: TCP + TLS handshake (100-200ms overhead)
 # Subsequent requests: No handshake (0ms overhead)
 ```
+
+The request timeout is not a session setting: tif1 passes `timeout` (default 30 seconds) to each request.
 
 #### Progress Tracking
 
@@ -942,7 +985,7 @@ async def parse_json_response(response_bytes):
         data = orjson.loads(response_bytes)
     except orjson.JSONDecodeError as e:
         raise tif1.InvalidDataError(
-            f"Failed to parse JSON: {e}",
+            f"Failed to parse JSON: {e}",  # The first argument is the reason
             raw_data=response_bytes[:1000]  # First 1KB for debugging
         )
 
@@ -953,8 +996,8 @@ async def parse_json_response(response_bytes):
             data_type=type(data).__name__
         )
 
-    # Step 3: Check required fields
-    required_fields = ["laps", "metadata"]
+    # Step 3: Check required fields (a laptimes payload has one list per field)
+    required_fields = ["lap", "time"]
     missing_fields = [f for f in required_fields if f not in data]
     if missing_fields:
         raise tif1.InvalidDataError(
@@ -968,111 +1011,94 @@ async def parse_json_response(response_bytes):
 
 #### Data Structure Examples
 
-**Lap Data JSON Structure:**
+Every payload is columnar: one JSON list per field, with the same length for every list. Missing values arrive as the string `"None"`, which tif1 turns into `NaN`, `NaT`, or `null`. The examples show the first two entries of each list, from the 2025 Bahrain Grand Prix race.
+
+**Lap Data JSON Structure** (`{driver}/laptimes.json`; `session_laptimes.json` has the same fields for every driver):
 ```json
 {
-  "metadata": {
-    "year": 2025,
-    "grand_prix": "Monaco Grand Prix",
-    "session_type": "Race",
-    "driver": "VER",
-    "total_laps": 78,
-    "generated_at": "2025-05-25T15:30:00Z"
-  },
-  "laps": [
-    {
-      "lap_number": 1,
-      "lap_time": 95.234,
-      "sector_1_time": 28.456,
-      "sector_2_time": 35.123,
-      "sector_3_time": 31.655,
-      "speed_i1": 285.4,
-      "speed_i2": 312.7,
-      "speed_fl": 298.3,
-      "speed_st": 276.8,
-      "compound": "SOFT",
-      "tyre_life": 1,
-      "stint": 1,
-      "is_personal_best": false,
-      "position": 1,
-      "track_status": "1",
-      "is_accurate": true,
-      "deleted": false,
-      "deleted_reason": null
-    },
-    // ... more laps
-  ]
+  "time": [103.877, 98.403],
+  "lap": [1, 2],
+  "compound": ["SOFT", "SOFT"],
+  "stint": [1, 1],
+  "s1": ["None", 31.183],
+  "s2": [43.964, 42.971],
+  "s3": [24.393, 24.249],
+  "life": [4, 5],
+  "pos": [8, 8],
+  "status": ["1", "1"],
+  "pb": [false, true],
+  "sesT": [3439.011, 3537.414],
+  "drv": ["VER", "VER"],
+  "dNum": ["1", "1"],
+  "pout": ["None", "None"],
+  "pin": ["None", "None"],
+  "vi1": [209.0, 229.0],
+  "vst": [258.0, 296.0],
+  "team": ["Red Bull Racing", "Red Bull Racing"],
+  "lSD": ["2025-04-13T15:03:49.174000000", "2025-04-13T15:05:33.278000000"],
+  "del": [false, false],
+  "wAT": [27.2, 27.2],
+  "wTT": [31.9, 31.9]
 }
 ```
 
-**Telemetry Data JSON Structure:**
+The payload has more fields than shown. Examples are `ms1` to `ms3` (mini-sector strings), `s1T` to `s3T`, `vi2`, `vfl`, `fresh`, `lST`, `delR`, `ff1G`, and `iacc`. The other per-lap weather fields are `wT`, `wH`, `wP`, `wR`, `wWD`, and `wWS`. Times are float seconds.
+
+**Telemetry Data JSON Structure** (`{driver}/{lap}_tel.json`, one file per lap):
 ```json
 {
-  "metadata": {
-    "year": 2025,
-    "grand_prix": "Monaco Grand Prix",
-    "session_type": "Race",
-    "driver": "VER",
-    "lap_number": 45,
-    "samples": 15234,
-    "frequency": 50
-  },
-  "telemetry": [
-    {
-      "time": 0.0,
-      "distance": 0.0,
-      "speed": 285.4,
-      "rpm": 11250,
-      "gear": 8,
-      "throttle": 100,
-      "brake": 0,
-      "drs": 0,
-      "x": 1234.56,
-      "y": 5678.90,
-      "z": 12.34
-    },
-    // ... 15,000+ samples
-  ]
+  "tel": {
+    "time": [0.0, 0.038],
+    "rpm": [11226.47, 11245.0],
+    "speed": [282.64, 283.0],
+    "gear": [7, 7],
+    "throttle": [100.0, 100.0],
+    "brake": [0, 0],
+    "drs": [0, 0],
+    "distance": [0.22, 3.22],
+    "rel_distance": [0.00004, 0.0006],
+    "DriverAhead": ["None", "None"],
+    "DistanceToDriverAhead": [101.165, 101.165],
+    "acc_x": [1.68, 2.45],
+    "acc_y": [-0.07, -0.09],
+    "acc_z": [10.19, 12.74],
+    "x": [-360.34, -359.04],
+    "y": [1239.32, 1269.65],
+    "z": [-160.66, -160.85],
+    "dataKey": "20"
+  }
 }
 ```
 
-**Weather Data JSON Structure:**
+**Weather Data JSON Structure** (`weather.json`):
 ```json
 {
-  "metadata": {
-    "year": 2025,
-    "grand_prix": "Monaco Grand Prix",
-    "session_type": "Race",
-    "samples": 156
-  },
-  "weather": [
-    {
-      "time": "2025-05-25T14:00:00Z",
-      "air_temp": 28.5,
-      "track_temp": 42.3,
-      "humidity": 45,
-      "pressure": 1013.2,
-      "wind_speed": 3.2,
-      "wind_direction": 180,
-      "rainfall": false
-    },
-    // ... more samples
-  ]
+  "wT": [14.542, 74.57],
+  "wAT": [27.9, 27.8],
+  "wH": [45.0, 45.0],
+  "wP": [1007.9, 1007.9],
+  "wR": [false, false],
+  "wTT": [34.5, 34.4],
+  "wWD": [29, 9],
+  "wWS": [2.9, 2.9]
 }
 ```
 
 #### Parsing Performance Optimization
 
 **Lazy Parsing for Large Files:**
+
+tif1 payloads are small (one telemetry file per lap, about 150 KB), so tif1 parses each one whole with orjson. To read a large JSON file made outside tif1, stream it with the third-party `ijson` package:
+
 ```python
-# For very large telemetry files (100MB+), consider streaming
-import ijson  # Iterative JSON parser
+# For very large JSON files made outside tif1 (100MB+), consider streaming
+import ijson  # Iterative JSON parser (pip install ijson)
 
 def parse_large_telemetry(file_path):
-    """Stream parse large telemetry files."""
+    """Stream parse a large JSON array of telemetry records."""
     with open(file_path, 'rb') as f:
-        # Parse telemetry array incrementally
-        telemetry_points = ijson.items(f, 'telemetry.item')
+        # Parse the top-level array incrementally
+        telemetry_points = ijson.items(f, 'item')
 
         # Process in chunks
         chunk_size = 10000
@@ -1131,7 +1157,8 @@ def parse_with_recovery(response_bytes):
         # Issue 2: Incomplete JSON (truncated response)
         if "unexpected end" in str(e).lower():
             logger.error("JSON appears truncated - re-fetching")
-            raise tif1.NetworkError("Incomplete response received")
+            # NetworkError takes url and status_code; extra keywords go to e.context
+            raise tif1.NetworkError(reason="Incomplete response received")
 
         # Issue 3: Invalid UTF-8
         if "utf" in str(e).lower():
@@ -1149,46 +1176,51 @@ def parse_with_recovery(response_bytes):
 
 #### Validation After Parsing
 
+Validation is off by default (`validate_data`, `validate_lap_times`, `validate_telemetry`). When on, the models in `tif1.validation` check the columnar payload. Every list must have the same length. Stints must be 1 or more, and tyre life 0 or more. The block below is a cut-down version of `tif1.validation.LapData`:
+
 ```python
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+
+import tif1
+
 
 class LapData(BaseModel):
-    """Pydantic model for lap data validation."""
+    """Columnar lap payload: one list per field (cut-down tif1.validation.LapData)."""
 
-    lap_number: int = Field(ge=1, le=100)
-    lap_time: Optional[float] = Field(None, gt=0)
-    sector_1_time: Optional[float] = Field(None, gt=0)
-    sector_2_time: Optional[float] = Field(None, gt=0)
-    sector_3_time: Optional[float] = Field(None, gt=0)
-    compound: str = Field(pattern=r'^(SOFT|MEDIUM|HARD|INTERMEDIATE|WET)$')
-    position: int = Field(ge=1, le=20)
+    time: list[float | None] = Field(..., min_length=1)
+    lap: list[float | None] = Field(..., min_length=1)
+    stint: list[int | None] = Field(..., min_length=1)
+    life: list[int | None] = Field(..., min_length=1)
+    session_time: list[float | None] = Field(default_factory=list, alias="sesT")
 
-    @validator('lap_time')
-    def validate_lap_time(cls, v, values):
-        """Ensure lap time matches sum of sectors."""
-        if v is not None and all(k in values for k in ['sector_1_time', 'sector_2_time', 'sector_3_time']):
-            sector_sum = values['sector_1_time'] + values['sector_2_time'] + values['sector_3_time']
-            if abs(v - sector_sum) > 0.1:  # Allow 100ms tolerance
-                raise ValueError(f"Lap time {v} doesn't match sector sum {sector_sum}")
+    model_config = {"populate_by_name": True}
+
+    @field_validator("stint")
+    @classmethod
+    def validate_stint(cls, v):
+        if any(s is not None and s < 1 for s in v):
+            raise ValueError("Stint numbers must be >= 1")
         return v
 
-class LapDataResponse(BaseModel):
-    """Complete lap data response."""
-    metadata: dict
-    laps: List[LapData]
+    @model_validator(mode="after")
+    def validate_consistent_lengths(self):
+        lengths = {len(self.time), len(self.lap), len(self.stint), len(self.life)}
+        if len(lengths) > 1:
+            raise ValueError("lap data lists have different lengths")
+        return self
 
-# Usage
+
 def validate_lap_data(data):
-    """Validate parsed lap data."""
+    """Validate parsed lap data ("None" strings must already be None)."""
     try:
-        validated = LapDataResponse(**data)
-        return validated.dict()
+        return LapData(**data).model_dump()
     except ValidationError as e:
-        raise tif1.InvalidDataError(
-            f"Data validation failed: {e}",
-            errors=e.errors()
-        )
+        raise tif1.InvalidDataError(f"Data validation failed: {e}", errors=e.errors())
+
+
+payload = {"time": [103.877, 98.403], "lap": [1, 2], "stint": [1, 1], "life": [4, 5],
+           "sesT": [3439.011, 3537.414]}
+print(validate_lap_data(payload)["session_time"])  # [3439.011, 3537.414]
 ```
 
 ### Stage 6: DataFrame Construction and Transformation
@@ -1197,198 +1229,182 @@ After parsing and validating JSON, tif1 constructs DataFrames with optimized col
 
 #### DataFrame Construction Pipeline
 
+The block below is a simplified view of `core_utils/helpers.py` (`_create_lap_df` and `_process_lap_df`):
+
 ```python
-def construct_lap_dataframe(lap_data, backend="pandas"):
-    """Construct DataFrame from validated lap data."""
+from tif1.core_utils.constants import LAP_RENAME_MAP
 
-    # Step 1: Create initial DataFrame
-    if backend == "pandas":
+
+def construct_lap_dataframe(lap_data, lib="pandas"):
+    """Construct a laps DataFrame from a columnar lap payload (simplified)."""
+
+    # Step 0: The payload marks missing values with the string "None"
+    lap_data = {
+        key: [None if v == "None" else v for v in values]
+        for key, values in lap_data.items()
+        if isinstance(values, list)
+    }
+
+    # Step 1: Create the DataFrame straight from the lists (one column per key)
+    if lib == "pandas":
         import pandas as pd
-        df = pd.DataFrame(lap_data["laps"])
-    elif backend == "polars":
-        import polars as pl
-        df = pl.DataFrame(lap_data["laps"])
+        df = pd.DataFrame(lap_data)
+        # Step 2: Rename the short upstream keys to FastF1 names
+        df = df.rename(columns=LAP_RENAME_MAP)
     else:
-        raise ValueError(f"Unknown backend: {backend}")
+        import polars as pl
+        df = pl.DataFrame(lap_data)
+        df = df.rename({k: v for k, v in LAP_RENAME_MAP.items() if k in df.columns})
 
-    # Step 2: Rename columns (snake_case → PascalCase)
-    df = df.rename(columns=COLUMN_RENAME_MAP)
-
-    # Step 3: Set data types
-    df = optimize_dtypes(df)
-
-    # Step 4: Reorder columns
-    df = df[COLUMN_ORDER]
-
-    # Step 5: Set index (optional)
-    if backend == "pandas":
-        df = df.set_index("LapNumber")
-
+    # Step 3: Apply the dtype contract of the backend (see Type Optimization)
+    # Step 4: Add LapTimeSeconds and reorder to the FastF1 column order
+    # There is no index step: pandas laps keep a RangeIndex
     return df
 ```
 
 #### Column Naming Convention
 
-tif1 uses PascalCase for all column names to maintain consistency with F1 terminology and improve readability.
+tif1 uses the FastF1 column names (PascalCase), so FastF1 code reads tif1 frames without changes.
 
-**Rename Mapping:**
+**Rename Mapping** (an excerpt of `LAP_RENAME_MAP` in `core_utils/constants.py`):
 ```python
-COLUMN_RENAME_MAP = {
+LAP_RENAME_MAP = {
     # Lap identification
-    "lap_number": "LapNumber",
-    "driver": "Driver",
+    "lap": "LapNumber",
+    "drv": "Driver",
+    "dNum": "DriverNumber",
     "team": "Team",
 
-    # Timing
-    "lap_time": "LapTime",
-    "sector_1_time": "Sector1Time",
-    "sector_2_time": "Sector2Time",
-    "sector_3_time": "Sector3Time",
+    # Timing (float seconds in the payload)
+    "time": "LapTime",
+    "s1": "Sector1Time",
+    "s2": "Sector2Time",
+    "s3": "Sector3Time",
+    "sesT": "Time",
+    "pout": "PitOutTime",
+    "pin": "PitInTime",
 
     # Speed traps
-    "speed_i1": "SpeedI1",
-    "speed_i2": "SpeedI2",
-    "speed_fl": "SpeedFL",
-    "speed_st": "SpeedST",
+    "vi1": "SpeedI1",
+    "vi2": "SpeedI2",
+    "vfl": "SpeedFL",
+    "vst": "SpeedST",
 
     # Tyre information
     "compound": "Compound",
-    "tyre_life": "TyreLife",
+    "life": "TyreLife",
     "stint": "Stint",
+    "fresh": "FreshTyre",
 
     # Position and status
-    "position": "Position",
-    "track_status": "TrackStatus",
+    "pos": "Position",
+    "status": "TrackStatus",
 
     # Flags
-    "is_personal_best": "IsPersonalBest",
-    "is_accurate": "IsAccurate",
-    "deleted": "Deleted",
-    "deleted_reason": "DeletedReason",
+    "pb": "IsPersonalBest",
+    "iacc": "IsAccurate",
+    "del": "Deleted",
+    "delR": "DeletedReason",
+
+    # Per-lap weather
+    "wT": "WeatherTime",
+    "wAT": "AirTemp",
+    "wTT": "TrackTemp",
+    # ... plus the long names ("speed_i1", "pit_out_time", ...) that validation produces
 }
 ```
 
 #### Type Optimization
 
-**Pandas Type Optimization:**
+tif1 applies a fixed dtype contract per backend. It does not downcast: numeric columns stay 64-bit.
+
+**Pandas Type Optimization** (simplified from `_apply_laps_dtypes`):
 ```python
-def optimize_dtypes_pandas(df):
-    """Optimize pandas DataFrame dtypes for memory efficiency."""
+import pandas as pd
 
-    # Numeric columns - use smallest safe type
-    numeric_optimizations = {
-        "LapNumber": "uint8",        # 1-100 laps
-        "Sector1Time": "float32",    # Sufficient precision
-        "Sector2Time": "float32",
-        "Sector3Time": "float32",
-        "LapTime": "float32",
-        "SpeedI1": "float32",
-        "SpeedI2": "float32",
-        "SpeedFL": "float32",
-        "SpeedST": "float32",
-        "TyreLife": "uint8",         # 1-50 laps
-        "Stint": "uint8",            # 1-5 stints
-        "Position": "uint8",         # 1-20 positions
-    }
 
-    for col, dtype in numeric_optimizations.items():
+def apply_laps_dtypes_pandas(df):
+    """Apply the pandas dtype contract to a renamed laps DataFrame (simplified)."""
+
+    # "None" strings from the payload become missing values first
+    df = df.replace("None", None)
+
+    # Time columns: float seconds -> timedelta64[ns]
+    for col in ["LapTime", "Time", "Sector1Time", "Sector2Time", "Sector3Time",
+                "PitInTime", "PitOutTime", "LapStartTime", "WeatherTime"]:
         if col in df.columns:
-            df[col] = df[col].astype(dtype)
+            df[col] = pd.to_timedelta(pd.to_numeric(df[col], errors="coerce"), unit="s")
+    df["LapTimeSeconds"] = df["LapTime"].dt.total_seconds()
 
-    # Categorical columns - huge memory savings
-    categorical_columns = [
-        "Driver",        # 20 unique values
-        "Team",          # 10 unique values
-        "Compound",      # 5 unique values
-        "TrackStatus",   # 4 unique values
-    ]
+    # Counters and speeds: float64 (FastF1 convention, NaN for missing)
+    for col in ["LapNumber", "Stint", "TyreLife", "Position", "SpeedI1", "SpeedST"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
-    for col in categorical_columns:
+    # Flags: bool, and nullable boolean for Deleted
+    for col in ["IsPersonalBest", "FreshTyre", "IsAccurate"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(False).astype(bool)
+    if "Deleted" in df.columns:
+        df["Deleted"] = df["Deleted"].astype("boolean")
+
+    # Low-cardinality text: category
+    for col in ["Driver", "Team", "Compound", "TrackStatus"]:
         if col in df.columns:
             df[col] = df[col].astype("category")
 
-    # Boolean columns
-    boolean_columns = ["IsPersonalBest", "IsAccurate", "Deleted"]
-    for col in boolean_columns:
-        if col in df.columns:
-            df[col] = df[col].astype(bool)
-
     return df
+```
 
-# Memory savings example:
-# Before optimization: 15 MB
-# After optimization: 4 MB (73% reduction)
+The result matches the dtypes of `session.laps`:
+
+```python
+laps = session.laps  # pandas backend
+print(laps.dtypes[["LapTime", "LapTimeSeconds", "LapNumber", "Driver", "IsPersonalBest", "Deleted"]])
+# LapTime           timedelta64[ns]
+# LapTimeSeconds            float64
+# LapNumber                 float64
+# Driver                   category
+# IsPersonalBest               bool
+# Deleted                   boolean
 ```
 
 **Polars Type Optimization:**
 ```python
-def optimize_dtypes_polars(df):
-    """Optimize polars DataFrame dtypes."""
+import polars as pl
 
-    import polars as pl
 
-    # Polars has better default type inference, but we can still optimize
-    type_mapping = {
-        "LapNumber": pl.UInt8,
-        "Sector1Time": pl.Float32,
-        "Sector2Time": pl.Float32,
-        "Sector3Time": pl.Float32,
-        "LapTime": pl.Float32,
-        "Driver": pl.Categorical,
-        "Team": pl.Categorical,
-        "Compound": pl.Categorical,
-        "TrackStatus": pl.Categorical,
-        "IsPersonalBest": pl.Boolean,
-        "IsAccurate": pl.Boolean,
-        "Deleted": pl.Boolean,
-    }
+def apply_laps_dtypes_polars(df):
+    """Apply the polars dtype contract to a renamed laps DataFrame (simplified)."""
 
-    for col, dtype in type_mapping.items():
-        if col in df.columns:
-            df = df.with_columns(pl.col(col).cast(dtype))
+    # Time columns stay Float64 seconds; LapTimeSeconds is a copy of LapTime
+    df = df.with_columns(pl.col("LapTime").cast(pl.Float64, strict=False).alias("LapTimeSeconds"))
 
+    # Counters stay Int64, flags Boolean, text String
+    # Categorical text columns only with TIF1_POLARS_LAP_CATEGORICAL=true
     return df
 ```
 
 #### Column Ordering
 
-tif1 orders columns logically for better readability:
+tif1 orders lap columns as FastF1 does (`FASTF1_LAPS_COLUMN_ORDER` in `core_utils/constants.py`). The tif1 columns `LapTimeSeconds` and `QualifyingSession` come after the FastF1 columns:
 
 ```python
 COLUMN_ORDER = [
-    # Identification (first)
-    "LapNumber",
-    "Driver",
-    "Team",
-
-    # Timing (core data)
-    "LapTime",
-    "Sector1Time",
-    "Sector2Time",
-    "Sector3Time",
-
-    # Speed traps
-    "SpeedI1",
-    "SpeedI2",
-    "SpeedFL",
-    "SpeedST",
-
-    # Tyre strategy
-    "Compound",
-    "TyreLife",
-    "Stint",
-
-    # Position
-    "Position",
-
-    # Status flags
-    "TrackStatus",
-    "IsPersonalBest",
-    "IsAccurate",
-
-    # Metadata (last)
-    "Deleted",
-    "DeletedReason",
+    "index",  # pandas only (FastF1 compatibility column)
+    "Time", "Driver", "DriverNumber", "LapTime", "LapNumber", "Stint",
+    "PitOutTime", "PitInTime",
+    "Sector1Time", "Sector2Time", "Sector3Time",
+    "Sector1SessionTime", "Sector2SessionTime", "Sector3SessionTime",
+    "SpeedI1", "SpeedI2", "SpeedFL", "SpeedST",
+    "IsPersonalBest", "Compound", "TyreLife", "FreshTyre", "Team",
+    "LapStartTime", "LapStartDate", "TrackStatus", "Position",
+    "Deleted", "DeletedReason", "FastF1Generated", "IsAccurate",
+    # Per-lap weather
+    "WeatherTime", "AirTemp", "Humidity", "Pressure", "Rainfall",
+    "TrackTemp", "WindDirection", "WindSpeed",
+    # tif1 columns
+    "LapTimeSeconds", "QualifyingSession",
 ]
 
 def reorder_columns(df, column_order):
@@ -1406,25 +1422,30 @@ def reorder_columns(df, column_order):
 
 **Pandas Index Strategy:**
 ```python
-# Option 1: LapNumber as index (default)
-df = df.set_index("LapNumber")
+df = session.laps  # pandas backend
+
+# Option 1: LapNumber as index
+by_lap = df.set_index("LapNumber")
 # Pros: Fast lap lookup, natural ordering
 # Cons: Loses LapNumber as regular column
 
 # Option 2: MultiIndex (Driver + LapNumber)
-df = df.set_index(["Driver", "LapNumber"])
+by_driver_lap = df.set_index(["Driver", "LapNumber"])
 # Pros: Fast driver + lap lookup, hierarchical grouping
 # Cons: More complex indexing
 
-# Option 3: RangeIndex (default)
+# Option 3: RangeIndex
 # Pros: Simple, fast integer indexing
 # Cons: No semantic meaning
 
-# tif1 uses Option 1 by default
+# tif1 uses Option 3: laps keep a RangeIndex, plus a FastF1-style "index" column.
+# Set Option 1 or 2 yourself when the lookup pattern needs it.
 ```
 
 **Polars Index Strategy:**
 ```python
+df = session.laps  # polars backend (lib="polars")
+
 # Polars doesn't have traditional indexes
 # Instead, use efficient filtering and sorting
 
@@ -1446,11 +1467,12 @@ verstappen_lap_45 = df.filter(
 def handle_missing_data(df):
     """Handle missing data appropriately."""
 
-    # Strategy 1: Fill with sentinel values
-    df["LapTime"] = df["LapTime"].fillna(-1.0)  # -1 indicates missing
+    # Strategy 1: Fill with sentinel values (LapTime is a timedelta on pandas,
+    # so fill the float LapTimeSeconds column instead)
+    df["LapTimeSeconds"] = df["LapTimeSeconds"].fillna(-1.0)  # -1 indicates missing
 
     # Strategy 2: Forward fill (for cumulative data)
-    df["Position"] = df["Position"].fillna(method="ffill")
+    df["Position"] = df["Position"].ffill()
 
     # Strategy 3: Interpolate (for continuous data)
     df["SpeedI1"] = df["SpeedI1"].interpolate(method="linear")
@@ -1464,8 +1486,16 @@ def handle_missing_data(df):
 #### DataFrame Validation
 
 ```python
+import logging
+
+import pandas as pd
+import tif1
+
+logger = logging.getLogger(__name__)
+
+
 def validate_dataframe(df):
-    """Validate DataFrame structure and content."""
+    """Validate a pandas laps DataFrame (structure and content)."""
 
     # Check required columns
     required_columns = ["LapNumber", "Driver", "LapTime"]
@@ -1480,8 +1510,8 @@ def validate_dataframe(df):
     if (df["LapNumber"] < 1).any() or (df["LapNumber"] > 100).any():
         raise tif1.InvalidDataError("LapNumber out of valid range (1-100)")
 
-    if (df["Position"] < 1).any() or (df["Position"] > 20).any():
-        raise tif1.InvalidDataError("Position out of valid range (1-20)")
+    if (df["Position"] < 1).any() or (df["Position"] > 22).any():  # NaN passes both checks
+        raise tif1.InvalidDataError("Position out of valid range (1-22)")
 
     # Check for duplicates
     duplicates = df.duplicated(subset=["Driver", "LapNumber"])
@@ -1493,9 +1523,9 @@ def validate_dataframe(df):
         )
 
     # Check data consistency
-    # Lap time should approximately equal sum of sectors
-    df["SectorSum"] = df["Sector1Time"] + df["Sector2Time"] + df["Sector3Time"]
-    inconsistent = (df["LapTime"] - df["SectorSum"]).abs() > 0.5
+    # Lap time should approximately equal sum of sectors (timedeltas on pandas)
+    sector_sum = df["Sector1Time"] + df["Sector2Time"] + df["Sector3Time"]
+    inconsistent = (df["LapTime"] - sector_sum).abs() > pd.Timedelta(seconds=0.5)
     if inconsistent.any():
         logger.warning(f"Found {inconsistent.sum()} laps with inconsistent sector times")
 
@@ -1512,46 +1542,45 @@ def validate_dataframe(df):
 | Rename columns | 8ms | 2ms | 4.0x |
 | Type conversion | 25ms | 5ms | 5.0x |
 | Reorder columns | 3ms | 1ms | 3.0x |
-| Set index | 5ms | N/A | N/A |
-| **Total** | **86ms** | **20ms** | **4.3x** |
+| **Total** | **81ms** | **20ms** | **4.0x** |
 
-**Memory Usage:**
+**Memory Usage** (2025 Bahrain Grand Prix race, as loaded; pandas `memory_usage(deep=True)`, polars `estimated_size()`):
 
-| Data Type | Before Optimization | After Optimization | Savings |
-|-----------|---------------------|-------------------|---------|
-| Lap data (1500 laps) | 15 MB | 4 MB | 73% |
-| Telemetry (15k samples) | 45 MB | 18 MB | 60% |
-| Weather (150 samples) | 0.8 MB | 0.3 MB | 63% |
+| Data Type | pandas | polars |
+|-----------|--------|--------|
+| Lap data (1128 laps, 46 columns on pandas) | 0.46 MB | 0.35 MB |
+| Telemetry (one lap, 710 samples) | 148 KB | 91 KB |
+| Weather (158 samples) | 9.5 KB | 8.9 KB |
 
 ### Stage 7: Data Enrichment and Augmentation
 
-After constructing the base DataFrame, tif1 automatically enriches data with computed columns, merged weather information, and derived metrics.
+After the dtype step, tif1 adds one computed column to the laps: `LapTimeSeconds`. The other analysis columns arrive with the payload. Examples are the per-lap weather columns, `Stint`, `IsPersonalBest`, and the telemetry channels `RelativeDistance`, `DriverAhead`, `DistanceToDriverAhead`, and `AccelerationX/Y/Z`.
+
+The functions in this stage are recipes for extra columns that tif1 does not add. They run on the pandas backend: pass `session.laps` or a telemetry frame such as `session.get_fastest_lap_tel()`. On pandas, `LapTime` and the sector times are timedeltas, so the recipes use `LapTimeSeconds` for arithmetic with plain numbers.
 
 #### Lap Data Enrichment
 
 **Computed Time Columns:**
 ```python
 def enrich_lap_times(df):
-    """Add computed time columns."""
+    """Add computed time columns (pandas laps)."""
 
-    # LapTimeSeconds - helper for time-based calculations
-    df["LapTimeSeconds"] = df["LapTime"]
+    lap_s = df["LapTimeSeconds"]  # Float seconds; LapTime is a timedelta
 
-    # Sector percentages
+    # Sector percentages (timedelta / timedelta gives a float)
     df["Sector1Percent"] = (df["Sector1Time"] / df["LapTime"]) * 100
     df["Sector2Percent"] = (df["Sector2Time"] / df["LapTime"]) * 100
     df["Sector3Percent"] = (df["Sector3Time"] / df["LapTime"]) * 100
 
-    # Delta to personal best
-    personal_best = df.groupby("Driver")["LapTime"].transform("min")
-    df["DeltaToPersonalBest"] = df["LapTime"] - personal_best
+    # Delta to personal best (seconds)
+    personal_best = df.groupby("Driver", observed=True)["LapTimeSeconds"].transform("min")
+    df["DeltaToPersonalBest"] = lap_s - personal_best
 
-    # Delta to session best
-    session_best = df["LapTime"].min()
-    df["DeltaToSessionBest"] = df["LapTime"] - session_best
+    # Delta to session best (seconds)
+    df["DeltaToSessionBest"] = lap_s - lap_s.min()
 
-    # Cumulative time
-    df["CumulativeTime"] = df.groupby("Driver")["LapTime"].cumsum()
+    # Cumulative time (seconds)
+    df["CumulativeTime"] = df.groupby("Driver", observed=True)["LapTimeSeconds"].cumsum()
 
     return df
 ```
@@ -1559,14 +1588,15 @@ def enrich_lap_times(df):
 **Position and Strategy Analysis:**
 ```python
 def enrich_position_data(df):
-    """Add position-related computed columns."""
+    """Add position-related computed columns (run enrich_lap_times first)."""
 
     # Position changes
-    df["PositionChange"] = df.groupby("Driver")["Position"].diff()
-    df["StartPosition"] = df.groupby("Driver")["Position"].transform("first")
+    by_driver = df.groupby("Driver", observed=True)["Position"]
+    df["PositionChange"] = by_driver.diff()
+    df["StartPosition"] = by_driver.transform("first")
     df["CurrentPositionChange"] = df["StartPosition"] - df["Position"]
 
-    # Gaps (requires sorting by position within each lap)
+    # Gaps in seconds (requires sorting by position within each lap)
     df = df.sort_values(["LapNumber", "Position"])
     df["GapToLeader"] = df.groupby("LapNumber")["CumulativeTime"].transform(
         lambda x: x - x.iloc[0]
@@ -1579,25 +1609,21 @@ def enrich_position_data(df):
 **Tyre Strategy Enrichment:**
 ```python
 def enrich_tyre_data(df):
-    """Add tyre strategy computed columns."""
+    """Add tyre strategy computed columns (Stint comes from the payload)."""
 
-    # Stint identification (already in data, but validate)
-    df["Stint"] = (df.groupby("Driver")["Compound"].shift() != df["Compound"]).groupby(df["Driver"]).cumsum() + 1
+    by_stint = df.groupby(["Driver", "Stint"], observed=True)
 
-    # Stint length
-    df["StintLength"] = df.groupby(["Driver", "Stint"]).cumcount() + 1
-
-    # Tyre age at lap start
-    df["TyreAge"] = df["TyreLife"]
+    # Stint length so far
+    df["StintLength"] = by_stint.cumcount() + 1
 
     # Compound history
-    df["PreviousCompound"] = df.groupby("Driver")["Compound"].shift()
+    df["PreviousCompound"] = df.groupby("Driver", observed=True)["Compound"].shift()
 
-    # Pit stop detection
-    df["IsPitLap"] = df.groupby("Driver")["Stint"].diff() == 1
+    # Pit stop detection: the first lap of a new stint
+    df["IsPitLap"] = df.groupby("Driver", observed=True)["Stint"].diff() == 1
 
     # Laps since pit
-    df["LapsSincePit"] = df.groupby(["Driver", "Stint"]).cumcount()
+    df["LapsSincePit"] = by_stint.cumcount()
 
     return df
 ```
@@ -1605,62 +1631,66 @@ def enrich_tyre_data(df):
 **Performance Flags:**
 ```python
 def enrich_performance_flags(df):
-    """Add performance-related boolean flags."""
+    """Add performance-related boolean flags (LapTimeSeconds based)."""
 
-    # Personal best lap
-    df["IsPersonalBest"] = df.groupby("Driver")["LapTime"].transform(
-        lambda x: x == x.min()
-    )
+    lap_s = df["LapTimeSeconds"]
+    by_driver = df.groupby("Driver", observed=True)["LapTimeSeconds"]
+
+    # Fastest lap of each driver (IsPersonalBest from the payload marks every
+    # lap that was a personal best when it was set)
+    df["IsDriverBest"] = lap_s == by_driver.transform("min")
 
     # Session best lap
-    df["IsSessionBest"] = df["LapTime"] == df["LapTime"].min()
+    df["IsSessionBest"] = lap_s == lap_s.min()
 
     # Top 3 lap
-    df["IsTop3Lap"] = df["LapTime"] <= df["LapTime"].nsmallest(3).max()
+    df["IsTop3Lap"] = lap_s <= lap_s.nsmallest(3).max()
 
-    # Outlier detection (lap time > 3 std dev from mean)
-    mean_time = df.groupby("Driver")["LapTime"].transform("mean")
-    std_time = df.groupby("Driver")["LapTime"].transform("std")
-    df["IsOutlier"] = (df["LapTime"] - mean_time).abs() > (3 * std_time)
+    # Outlier detection (lap time > 3 std dev from the driver mean)
+    mean_time = by_driver.transform("mean")
+    std_time = by_driver.transform("std")
+    df["IsOutlier"] = (lap_s - mean_time).abs() > (3 * std_time)
 
     # Consistent lap (within 0.5s of personal average)
-    df["IsConsistent"] = (df["LapTime"] - mean_time).abs() < 0.5
+    df["IsConsistent"] = (lap_s - mean_time).abs() < 0.5
 
     return df
 ```
 
 #### Weather Data Integration
 
+`session.laps` already carries the weather sample of each lap (`WeatherTime`, `AirTemp`, ..., `WindSpeed`). To attach the nearest sample of `session.weather` to a time column, use `pd.merge_asof`. Both `LapStartTime` and the weather `Time` are timedeltas from the session start on pandas:
+
 ```python
+import pandas as pd
+
+
 def merge_weather_data(lap_df, weather_df):
-    """Merge weather data with lap data."""
+    """Attach the nearest weather sample to each lap start (pandas)."""
 
-    # Weather data is sampled every minute
-    # Need to match each lap to closest weather sample
+    # merge_asof needs sorted keys without missing values
+    laps_sorted = pd.DataFrame(lap_df).dropna(subset=["LapStartTime"]).sort_values("LapStartTime")
 
-    # Convert lap times to timestamps
-    lap_df["Timestamp"] = lap_df["LapStartTime"]  # Assuming this exists
-
-    # Merge using nearest timestamp
-    lap_df = pd.merge_asof(
-        lap_df.sort_values("Timestamp"),
-        weather_df.sort_values("Timestamp"),
-        on="Timestamp",
+    merged = pd.merge_asof(
+        laps_sorted,
+        weather_df.sort_values("Time"),
+        left_on="LapStartTime",
+        right_on="Time",
         direction="nearest",
-        suffixes=("", "_weather")
+        suffixes=("", "_weather"),  # AirTemp_weather, TrackTemp_weather, ...
     )
 
     # Add weather-related computed columns
-    lap_df["TrackTempChange"] = lap_df.groupby("Driver")["TrackTemp"].diff()
-    lap_df["AirTempChange"] = lap_df.groupby("Driver")["AirTemp"].diff()
+    merged["TrackTempChange"] = merged.groupby("Driver", observed=True)["TrackTemp"].diff()
+    merged["AirTempChange"] = merged.groupby("Driver", observed=True)["AirTemp"].diff()
 
-    # Weather condition categories
-    lap_df["WeatherCondition"] = "Dry"
-    lap_df.loc[lap_df["Rainfall"] == True, "WeatherCondition"] = "Wet"
-    lap_df.loc[lap_df["TrackTemp"] < 20, "WeatherCondition"] = "Cold"
-    lap_df.loc[lap_df["TrackTemp"] > 50, "WeatherCondition"] = "Hot"
+    # Weather condition categories (Rainfall is a boolean)
+    merged["WeatherCondition"] = "Dry"
+    merged.loc[merged["Rainfall"], "WeatherCondition"] = "Wet"
+    merged.loc[merged["TrackTemp"] < 20, "WeatherCondition"] = "Cold"
+    merged.loc[merged["TrackTemp"] > 50, "WeatherCondition"] = "Hot"
 
-    return lap_df
+    return merged
 ```
 
 #### Telemetry Enrichment
@@ -1668,31 +1698,21 @@ def merge_weather_data(lap_df, weather_df):
 **Acceleration Calculation:**
 ```python
 def enrich_telemetry_acceleration(tel_df):
-    """Calculate acceleration from speed data."""
+    """Calculate acceleration from speed data (pandas telemetry)."""
 
-    # Time delta between samples (typically 0.02s for 50Hz)
-    tel_df["TimeDelta"] = tel_df["Time"].diff()
+    # Time is a timedelta from the lap start on pandas (float seconds on polars)
+    tel_df["TimeDelta"] = tel_df["Time"].dt.total_seconds().diff()
 
-    # Speed delta
-    tel_df["SpeedDelta"] = tel_df["Speed"].diff()
+    # Speed delta, converted from km/h to m/s
+    tel_df["SpeedDelta"] = tel_df["Speed"].diff() / 3.6
 
-    # Acceleration (m/s²)
-    # Convert km/h to m/s: speed / 3.6
-    # Acceleration = (v2 - v1) / dt
-    tel_df["Acceleration"] = (
-        (tel_df["SpeedDelta"] / 3.6) / tel_df["TimeDelta"]
-    )
+    # Longitudinal acceleration (m/s²) = (v2 - v1) / dt
+    tel_df["Acceleration"] = tel_df["SpeedDelta"] / tel_df["TimeDelta"]
 
-    # Lateral acceleration (from X, Y coordinates)
-    tel_df["XDelta"] = tel_df["X"].diff()
-    tel_df["YDelta"] = tel_df["Y"].diff()
-    tel_df["LateralAcceleration"] = (
-        ((tel_df["XDelta"]**2 + tel_df["YDelta"]**2)**0.5) / tel_df["TimeDelta"]**2
-    )
-
-    # G-force (1g = 9.81 m/s²)
+    # G-force (1g = 9.81 m/s²). tif1 also ships smoothed channels in m/s²:
+    # AccelerationX (longitudinal), AccelerationY (lateral), AccelerationZ (vertical)
     tel_df["AccelerationG"] = tel_df["Acceleration"] / 9.81
-    tel_df["LateralG"] = tel_df["LateralAcceleration"] / 9.81
+    tel_df["LateralG"] = tel_df["AccelerationY"] / 9.81
 
     return tel_df
 ```
@@ -1702,7 +1722,8 @@ def enrich_telemetry_acceleration(tel_df):
 def normalize_telemetry_distance(tel_df):
     """Normalize distance to 0.0-1.0 range."""
 
-    # Original distance is in meters
+    # Distance is in meters from the lap start. tif1 already provides the
+    # 0-1 fraction as RelativeDistance; this recipe shows the calculation
     max_distance = tel_df["Distance"].max()
     tel_df["NormalizedDistance"] = tel_df["Distance"] / max_distance
 
@@ -1713,75 +1734,50 @@ def normalize_telemetry_distance(tel_df):
 ```
 
 **Driver Ahead Information:**
+
+tif1 telemetry already has `DriverAhead` (the car number of the car ahead, missing when no car is ahead) and `DistanceToDriverAhead` (meters). The recipe below adds the 3-letter code of the car ahead at the lap start, from the lap positions:
+
 ```python
-def add_driver_ahead_info(tel_df, lap_df):
-    """Add information about driver ahead."""
+def add_driver_ahead_code(tel_df, lap_df):
+    """Add the code of the driver one position ahead on this lap (pandas)."""
 
-    # Get position from lap data
-    position = lap_df.loc[lap_df["LapNumber"] == tel_df["LapNumber"].iloc[0], "Position"].iloc[0]
+    lap_number = tel_df["LapNumber"].iloc[0]
+    driver = tel_df["Driver"].iloc[0]
+    lap_rows = lap_df[lap_df["LapNumber"] == lap_number]
 
-    if position > 1:
-        # Find driver ahead
-        driver_ahead = lap_df.loc[
-            (lap_df["LapNumber"] == tel_df["LapNumber"].iloc[0]) &
-            (lap_df["Position"] == position - 1),
-            "Driver"
-        ].iloc[0]
+    position = lap_rows.loc[lap_rows["Driver"] == driver, "Position"].iloc[0]
+    ahead = lap_rows.loc[lap_rows["Position"] == position - 1, "Driver"]
 
-        tel_df["DriverAhead"] = driver_ahead
-    else:
-        tel_df["DriverAhead"] = None
-
+    tel_df["DriverAheadCode"] = ahead.iloc[0] if len(ahead) else None
     return tel_df
 ```
 
 **Corner Detection:**
 ```python
 def detect_corners(tel_df, speed_threshold=200):
-    """Detect corners based on speed and steering."""
+    """Detect corners from speed and lateral G (run enrich_telemetry_acceleration first)."""
 
-    # Corner = low speed + high steering angle
-    # Approximate steering from lateral G
+    # Corner = low speed + high lateral acceleration
     tel_df["IsCorner"] = (
         (tel_df["Speed"] < speed_threshold) &
         (tel_df["LateralG"].abs() > 1.5)
     )
 
-    # Corner number (sequential numbering)
-    tel_df["CornerNumber"] = (
-        tel_df["IsCorner"].diff() == 1
-    ).cumsum()
+    # Corner number (sequential numbering, a new corner starts on each False -> True step)
+    corner_start = tel_df["IsCorner"] & ~tel_df["IsCorner"].shift(fill_value=False)
+    tel_df["CornerNumber"] = corner_start.cumsum().astype("float64")
 
     # Only keep corner number where IsCorner=True
-    tel_df.loc[~tel_df["IsCorner"], "CornerNumber"] = None
+    tel_df.loc[~tel_df["IsCorner"], "CornerNumber"] = float("nan")
 
     return tel_df
 ```
 
+`session.get_circuit_info().corners` lists the official corner numbers and their distances, which give a more reliable corner map than speed thresholds.
+
 #### Enrichment Performance
 
-**Enrichment Timing:**
-
-| Enrichment Type | Time (1500 laps) | Time (Single Lap Telemetry) |
-|-----------------|------------------|----------------------------|
-| Time calculations | 15ms | N/A |
-| Position analysis | 25ms | N/A |
-| Tyre strategy | 20ms | N/A |
-| Performance flags | 30ms | N/A |
-| Weather merge | 40ms | N/A |
-| Telemetry acceleration | N/A | 50ms |
-| Distance normalization | N/A | 5ms |
-| Corner detection | N/A | 30ms |
-| **Total** | **130ms** | **85ms** |
-
-**Memory Impact:**
-
-| Data Type | Before Enrichment | After Enrichment | Increase |
-|-----------|-------------------|------------------|----------|
-| Lap data | 4 MB | 7 MB | +75% |
-| Telemetry | 18 MB | 25 MB | +39% |
-
-The memory increase is acceptable because enrichment adds analytical value.
+The recipes are vectorized pandas operations. On a full race (about 1,100 laps) or one lap of telemetry, each recipe runs in milliseconds. The extra columns add memory in proportion to their count: each float64 column costs 8 bytes per row.
 
 ### Stage 8: Cache Storage and Finalization
 
@@ -1946,28 +1942,15 @@ Set `TIF1_LOG_LEVEL=DEBUG` to see which tier answered each lookup.
 
 #### Final Data Return
 
+On pandas, the `laps` property wraps the frame in the `Laps` class and links it to its session. tif1 does not set `DataFrame.attrs`. On polars, `session.laps` is a plain `pl.DataFrame`.
+
 ```python
-def finalize_and_return(df, session_info):
-    """Finalize DataFrame and return to user."""
+laps = session.laps  # pandas backend
 
-    # Step 1: Final validation
-    validate_dataframe(df)
-
-    # Step 2: Add metadata attributes (pandas only)
-    if hasattr(df, 'attrs'):
-        df.attrs['session_info'] = session_info
-        df.attrs['loaded_at'] = time.time()
-        df.attrs['tif1_version'] = tif1.__version__
-
-    # Step 3: Log completion
-    logger.info(
-        f"Data loading complete: {len(df)} rows, "
-        f"{len(df.columns)} columns, "
-        f"{df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB"
-    )
-
-    # Step 4: Return DataFrame
-    return df
+print(type(laps).__name__)     # Laps (a pd.DataFrame subclass)
+print(laps.session is session)  # True: laps.pick_driver(...).get_telemetry() uses it
+print(laps.attrs)               # {} (no metadata attributes)
+print(session.session_info)     # {'Year': 2025, 'EventName': ..., 'SessionName': 'Race'}
 ```
 
 #### Complete Pipeline Timing
@@ -1981,10 +1964,10 @@ def finalize_and_return(df, session_info):
 | 3. CDN Fetching | 2000ms | 2002ms |
 | 4. Async Parallel Fetch | 500ms | 2502ms |
 | 5. JSON Parsing | 100ms | 2602ms |
-| 6. DataFrame Construction | 86ms | 2688ms |
-| 7. Data Enrichment | 130ms | 2818ms |
-| 8. Cache Storage | 50ms | 2868ms |
-| **Total** | | **~2.9s** |
+| 6. DataFrame Construction | 81ms | 2683ms |
+| 7. Data Enrichment (`LapTimeSeconds`) | < 5ms | 2688ms |
+| 8. Cache Storage | 50ms | 2738ms |
+| **Total** | | **~2.7s** |
 
 **End-to-End Performance (Warm Start - SQLite):**
 
@@ -2006,8 +1989,8 @@ def finalize_and_return(df, session_info):
 | **Total** | | **< 1ms** |
 
 **Speedup Summary:**
-- Warm vs Cold: **93x faster** (31ms vs 2868ms)
-- Hot vs Cold: **2868x faster** (< 1ms vs 2868ms)
+- Warm vs Cold: **88x faster** (31ms vs 2738ms)
+- Hot vs Cold: **2700x faster** (< 1ms vs 2738ms)
 - Hot vs Warm: **31x faster** (< 1ms vs 31ms)
 
 ## Data Transformation Through the Pipeline
@@ -2017,253 +2000,162 @@ This section follows data through each transformation stage. The details help wi
 ### Stage-by-Stage Data Evolution
 
 #### Stage 1: Raw JSON (from CDN)
+
+The examples follow `VER/laptimes.json` of the 2025 Bahrain Grand Prix race (57 laps). The payload is columnar: one list per field, one entry per lap.
+
 ```json
 {
-  "metadata": {
-    "year": 2025,
-    "grand_prix": "Monaco Grand Prix",
-    "session_type": "Race",
-    "driver": "VER",
-    "total_laps": 78,
-    "generated_at": "2025-05-25T15:30:00Z",
-    "data_version": "2.0"
-  },
-  "laps": [
-    {
-      "lap_number": 1,
-      "lap_time": 95.234,
-      "sector_1_time": 28.456,
-      "sector_2_time": 35.123,
-      "sector_3_time": 31.655,
-      "speed_i1": 285.4,
-      "speed_i2": 312.7,
-      "speed_fl": 298.3,
-      "speed_st": 276.8,
-      "compound": "SOFT",
-      "tyre_life": 1,
-      "stint": 1,
-      "is_personal_best": false,
-      "position": 1,
-      "track_status": "1",
-      "is_accurate": true,
-      "deleted": false,
-      "deleted_reason": null
-    },
-    {
-      "lap_number": 2,
-      "lap_time": 93.567,
-      "sector_1_time": 27.234,
-      "sector_2_time": 34.456,
-      "sector_3_time": 31.877,
-      "speed_i1": 287.2,
-      "speed_i2": 314.5,
-      "speed_fl": 299.8,
-      "speed_st": 278.3,
-      "compound": "SOFT",
-      "tyre_life": 2,
-      "stint": 1,
-      "is_personal_best": true,
-      "position": 1,
-      "track_status": "1",
-      "is_accurate": true,
-      "deleted": false,
-      "deleted_reason": null
-    }
-  ]
+  "time": [103.877, 98.403, 98.475],
+  "lap": [1, 2, 3],
+  "compound": ["SOFT", "SOFT", "SOFT"],
+  "s1": ["None", 31.183, 30.952],
+  "s2": [43.964, 42.971, 43.091],
+  "pb": [false, true, false],
+  "drv": ["VER", "VER", "VER"]
 }
 ```
 
 **Characteristics:**
-- Format: UTF-8 encoded JSON
-- Size: ~2-5 KB per driver (compressed), ~10-20 KB (uncompressed)
-- Naming: snake_case
-- Types: Mixed (strings, numbers, booleans, nulls)
+- Format: UTF-8 encoded JSON, one list per field (about 45 fields)
+- Size: ~18 KB for one driver, ~340 KB for `session_laptimes.json` (all 20 drivers)
+- Naming: short upstream keys (`s1`, `sesT`, `wAT`, ...)
+- Types: Mixed (strings, numbers, booleans); missing values are the string `"None"`
 
 #### Stage 2: Python Dictionary (after orjson parsing)
 ```python
 {
-    "metadata": {
-        "year": 2025,
-        "grand_prix": "Monaco Grand Prix",
-        "session_type": "Race",
-        "driver": "VER",
-        "total_laps": 78,
-        "generated_at": "2025-05-25T15:30:00Z",
-        "data_version": "2.0"
-    },
-    "laps": [
-        {
-            "lap_number": 1,
-            "lap_time": 95.234,
-            "sector_1_time": 28.456,
-            # ... (same structure as JSON)
-        },
-        # ...
-    ]
+    "time": [103.877, 98.403, 98.475],  # ... 57 entries
+    "lap": [1, 2, 3],
+    "s1": ["None", 31.183, 30.952],
+    # ... (same structure as JSON)
 }
 ```
 
 **Characteristics:**
-- Format: Native Python dict
-- Size: ~3x JSON size in memory (~30-60 KB)
-- Types: Python native (int, float, str, bool, None)
+- Format: Native Python dict of lists
+- Types: Python native (int, float, str, bool)
 - Access: O(1) dictionary lookups
 
 #### Stage 3: Initial DataFrame (after construction)
 ```python
 import pandas as pd
 
-# Initial DataFrame (before renaming)
-   lap_number  lap_time  sector_1_time  sector_2_time  sector_3_time  speed_i1  ...
-0           1    95.234         28.456         35.123         31.655     285.4  ...
-1           2    93.567         27.234         34.456         31.877     287.2  ...
-2           3    94.123         27.567         34.789         31.767     286.8  ...
+df = pd.DataFrame(payload)  # One column per key
+print(df[["lap", "time", "s1", "s2", "compound", "pb"]].head(3))
+#    lap     time      s1      s2 compound     pb
+# 0    1  103.877    None  43.964     SOFT  False
+# 1    2   98.403  31.183  42.971     SOFT   True
+# 2    3   98.475  30.952  43.091     SOFT  False
 
-# Data types (before optimization)
-lap_number          int64    # 8 bytes per value
-lap_time          float64    # 8 bytes per value
-sector_1_time     float64    # 8 bytes per value
-driver             object    # ~50 bytes per value (string overhead)
-compound           object    # ~50 bytes per value
+# Data types (before the dtype contract)
+# lap           int64
+# time        float64
+# s1           object    # Floats mixed with the "None" string
+# drv             str
+# compound        str
+# pb             bool
 ```
 
 **Characteristics:**
 - Format: pandas DataFrame
-- Size: ~15 MB for 1500 laps (before optimization)
-- Column names: snake_case
-- Types: Default pandas types (int64, float64, object)
+- Size: ~31 KB for one driver (57 laps)
+- Column names: short upstream keys
+- Types: Default pandas types; columns with `"None"` entries are `object`
 
 #### Stage 4: Renamed DataFrame (after column renaming)
 ```python
-# After renaming to PascalCase
-   LapNumber  LapTime  Sector1Time  Sector2Time  Sector3Time  SpeedI1  ...
-0          1   95.234       28.456       35.123       31.655    285.4  ...
-1          2   93.567       27.234       34.456       31.877    287.2  ...
-2          3   94.123       27.567       34.789       31.767    286.8  ...
+df = df.rename(columns=LAP_RENAME_MAP)
+print(df[["LapNumber", "LapTime", "Sector1Time", "Sector2Time", "Compound"]].head(3))
+#    LapNumber  LapTime Sector1Time  Sector2Time Compound
+# 0          1  103.877        None       43.964     SOFT
+# 1          2   98.403      31.183       42.971     SOFT
+# 2          3   98.475      30.952       43.091     SOFT
 ```
 
 **Characteristics:**
 - Format: pandas DataFrame
 - Size: Same as Stage 3
-- Column names: PascalCase (tif1 convention)
+- Column names: FastF1 names (PascalCase)
 - Types: Still default types
 
-#### Stage 5: Optimized DataFrame (after type optimization)
+#### Stage 5: Typed DataFrame (after the dtype contract)
 ```python
-# After type optimization
-   LapNumber  LapTime  Sector1Time  Sector2Time  Sector3Time  SpeedI1  ...
-0          1   95.234       28.456       35.123       31.655    285.4  ...
-1          2   93.567       27.234       34.456       31.877    287.2  ...
-2          3   94.123       27.567       34.789       31.767    286.8  ...
+laps = session.laps.pick_driver("VER")
+print(laps[["LapNumber", "LapTime", "Sector1Time", "LapTimeSeconds"]].head(3))
+#      LapNumber                LapTime            Sector1Time  LapTimeSeconds
+# 285        1.0 0 days 00:01:43.877000                    NaT         103.877
+# 286        2.0 0 days 00:01:38.403000 0 days 00:00:31.183000          98.403
+# 287        3.0 0 days 00:01:38.475000 0 days 00:00:30.952000          98.475
 
-# Data types (after optimization)
-LapNumber            uint8    # 1 byte per value (was 8)
-LapTime            float32    # 4 bytes per value (was 8)
-Sector1Time        float32    # 4 bytes per value (was 8)
-Driver          category     # ~1 byte per value + category table (was ~50)
-Compound        category     # ~1 byte per value + category table (was ~50)
-IsPersonalBest      bool     # 1 byte per value (was 8 as int64)
+# Data types (pandas)
+# LapNumber                 float64
+# LapTime           timedelta64[ns]   # Float seconds converted
+# Sector1Time       timedelta64[ns]   # "None" became NaT
+# Driver                   category
+# Compound                 category
+# IsPersonalBest               bool
+# LapTimeSeconds            float64   # The one computed column
 ```
 
-**Memory Savings:**
-- Before: 15 MB
-- After: 4 MB
-- Reduction: 73%
-
-#### Stage 6: Enriched DataFrame (after enrichment)
-```python
-# After enrichment (additional computed columns)
-   LapNumber  LapTime  ...  DeltaToPersonalBest  DeltaToSessionBest  CumulativeTime  ...
-0          1   95.234  ...                1.667                2.134          95.234  ...
-1          2   93.567  ...                0.000                0.467         188.801  ...
-2          3   94.123  ...                0.556                1.023         282.924  ...
-
-# Additional columns from enrichment:
-# - LapTimeSeconds (helper)
-# - Sector1Percent, Sector2Percent, Sector3Percent
-# - DeltaToPersonalBest, DeltaToSessionBest
-# - CumulativeTime
-# - PositionChange, GapToLeader, GapToAhead
-# - StintLength, LapsSincePit, IsPitLap
-# - IsSessionBest, IsTop3Lap, IsOutlier, IsConsistent
-# - AirTemp, TrackTemp, Humidity (from weather merge)
-```
+The row labels (285, 286, ...) come from the full `session.laps` table, which has a `RangeIndex`. `pick_driver()` keeps them.
 
 **Characteristics:**
-- Format: pandas DataFrame
-- Size: ~7 MB (75% increase from Stage 5)
-- Columns: Original + ~20 computed columns
+- Format: `Laps` (pandas) or `pl.DataFrame` (polars)
+- Size: ~25 KB for one driver (46 columns on pandas, including the FastF1 `index` column)
+- Columns: FastF1 order, then `LapTimeSeconds` and the tif1 extras
 - Ready for analysis
 
-#### Stage 7: Final DataFrame (cached and returned)
+#### Stage 6: Final DataFrame (cached and returned)
 ```python
-# Final DataFrame with metadata
 df = session.laps
-
-# DataFrame attributes (pandas only)
-df.attrs = {
-    'session_info': {
-        'year': 2025,
-        'grand_prix': 'Monaco Grand Prix',
-        'session_type': 'Race'
-    },
-    'loaded_at': 1716649800.123,
-    'tif1_version': '0.1.0'
-}
 
 # Access data
 print(df.head())
-print(df.info())
 print(df.describe())
+df.info()  # pandas; on polars use df.glimpse()
 ```
 
 **Characteristics:**
 - Format: pandas/polars DataFrame
-- Size: ~7 MB (in memory)
-- Cached: Yes (both memory and SQLite)
+- Size: ~0.46 MB (pandas) or ~0.35 MB (polars) for the full race (1128 laps)
+- Cached: the JSON payload (memory and SQLite tiers) and the built frame (backend lap LRU)
 - Ready: For immediate analysis
 
 ### Data Type Comparison: Pandas vs Polars
 
-**Pandas Types:**
-```python
-# Pandas DataFrame types
-LapNumber            uint8
-LapTime            float32
-Driver          category
-Compound        category
-IsPersonalBest      bool
-```
+tif1 applies a dtype contract per backend after construction. The table lists the types of the main `laps` columns, as loaded for the 2025 Bahrain Grand Prix race.
 
-**Polars Types:**
-```python
-# Polars DataFrame types
-LapNumber            UInt8
-LapTime            Float32
-Driver          Categorical
-Compound        Categorical
-IsPersonalBest      Boolean
-```
+| Column | pandas | polars |
+| :--- | :--- | :--- |
+| `LapTime`, `Sector1Time` to `Sector3Time`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time` | `timedelta64[ns]` | `Float64` (seconds) |
+| `LapTimeSeconds` | `float64` | `Float64` |
+| `LapNumber`, `Stint`, `TyreLife`, `Position` | `float64` | `Int64` |
+| `Driver`, `Team`, `Compound`, `TrackStatus` | `category` | `String` |
+| `IsPersonalBest`, `FreshTyre`, `IsAccurate`, `FastF1Generated`, `Rainfall` | `bool` | `Boolean` |
+| `Deleted` | `boolean` (nullable) | `Boolean` |
+| `LapStartDate` | `datetime64[ns]` | `String` (ISO 8601) |
+| `WindDirection` | `Int64` (nullable) | `Int64` |
+| `index` | `int64` (FastF1 compatibility column) | not present |
 
 **Key Differences:**
-- Polars uses more efficient internal representation
-- Polars strings are always UTF-8 validated
-- Polars categoricals use dictionary encoding by default
-- Polars has better null handling (no NaN vs None confusion)
+- Time columns: pandas converts the upstream float seconds to `timedelta64[ns]`; polars keeps the float. `LapTimeSeconds` is a float on both backends.
+- String columns: pandas uses `category`; polars uses `String`. Set `TIF1_POLARS_LAP_CATEGORICAL=true` to get `Categorical` on polars.
+- Missing values: polars uses `null` for every type; pandas uses `NaN`, `NaT`, or `<NA>`, depending on the column type.
+- Integer columns with no missing values are `Int64` on polars and `float64` on pandas (FastF1 convention).
+
+See [Column types by backend](/concepts/backends#column-types-by-backend) for the weather, race control, and telemetry tables.
 
 ### Memory Usage Comparison
 
-**Full Pipeline Memory Usage (1500 laps):**
+**Full Pipeline Memory Usage** (`session_laptimes.json` of the 2025 Bahrain Grand Prix race, 1128 laps):
 
 | Stage | Pandas | Polars | Difference |
 |-------|--------|--------|------------|
-| Raw JSON | 15 KB | 15 KB | 0% |
-| Python dict | 45 KB | 45 KB | 0% |
-| Initial DataFrame | 15 MB | 8 MB | -47% |
-| Optimized DataFrame | 4 MB | 2 MB | -50% |
-| Enriched DataFrame | 7 MB | 3.5 MB | -50% |
+| Raw JSON | 343 KB | 343 KB | 0% |
+| Initial DataFrame (default types) | 718 KB | 324 KB | -55% |
+| Final `session.laps` | 462 KB | 348 KB | -25% |
 
-Polars consistently uses ~50% less memory than pandas for the same data.
+On pandas, the dtype contract shrinks the frame: text columns become `category`, and the `"None"` strings leave the `object` columns. Polars stores the same data in about a quarter less memory.
 
 ## Advanced Performance Optimizations
 
@@ -2314,29 +2206,26 @@ tif1 implements many performance optimizations throughout the data pipeline. Thi
 
 #### Implementation in tif1
 
+`tif1.http_session.get_session()` returns the process-wide session. It is built once, with the settings below:
+
 ```python
-import niquests
+from tif1.http_session import get_session
 
-# Create session with HTTP/2 support
-session = niquests.Session()
+http = get_session()  # Shared niquests.Session
 
-# Automatic HTTP/2 upgrade
-# If server supports HTTP/2, connection is upgraded
-# Otherwise, falls back to HTTP/1.1
+# What tif1 configured on it (see the connection pooling section):
+# - niquests.Session(multiplexed=True): HTTP/2 when the CDN offers it,
+#   HTTP/1.1 otherwise; HTTP/3 stays on unless TIF1_HTTP_DISABLE_HTTP3=true
+# - DNS: the system resolver; DNS over HTTPS (Cloudflare, then Google) only
+#   when a session with the system resolver cannot be created (TIF1_HTTP_RESOLVERS)
+# - HTTPAdapter(pool_connections=256, pool_maxsize=1024, pool_block=False)
+# - Keep-alive headers and trust_env=False
 
-# Connection pooling
-session.mount('https://', niquests.adapters.HTTPAdapter(
-    pool_connections=10,
-    pool_maxsize=100,
-    pool_block=False
-))
+adapter = http.get_adapter("https://cdn.jsdelivr.net/")
+print(type(adapter).__name__)  # HTTPAdapter
 
-# All requests reuse connections
-async def fetch_all_drivers(drivers):
-    async with niquests.AsyncSession() as session:
-        tasks = [session.get(url) for url in urls]
-        responses = await asyncio.gather(*tasks)
-    # Single TCP connection, all requests multiplexed
+# The async pipeline (async_fetch.py) reuses this session from a thread pool,
+# so every request shares the same connection pool
 ```
 
 ### 2. Lazy Loading and On-Demand Data Fetching
@@ -2345,36 +2234,39 @@ Lazy loading fetches data only when the code needs it. This reduces unnecessary 
 
 #### Implementation
 
+The block below is a simplified view of `tif1.core.Session`. The attribute names match the real class; the `_build_*` helpers stand for the property bodies.
+
 ```python
 class Session:
-    """Session with lazy loading."""
+    """Session with lazy loading (simplified)."""
 
-    def __init__(self, year, gp, session_type):
+    def __init__(self, year, gp, session):
         self.year = year
-        self.gp = gp
-        self.session_type = session_type
+        self.gp = gp            # URL-encoded event name
+        self.session = session  # URL-encoded session name
 
         # Data not loaded yet
         self._laps = None
-        self._telemetry = None
         self._weather = None
-        self._messages = None
+        self._race_control_messages = None
+        self._car_data = None  # Telemetry of every lap
 
     @property
     def laps(self):
         """Lazy load lap data."""
         if self._laps is None:
-            self._laps = self._load_laps()
+            self._laps = self._build_laps()
         return self._laps
 
     @property
     def weather(self):
         """Lazy load weather data."""
         if self._weather is None:
-            self._weather = self._load_weather()
+            self._weather = self._build_weather()
         return self._weather
 
-    # Similar for telemetry, messages, etc.
+    # Same pattern for race_control_messages and car_data.
+    # Lap telemetry loads per lap on first access (lap.telemetry).
 ```
 
 #### Performance Benefits
@@ -2432,6 +2324,12 @@ print(f"Savings: {(1 - memory_categorical / memory_string) * 100:.1f}%")
 ```python
 import time
 
+import pandas as pd
+
+drivers = ["VER", "HAM", "LEC", "NOR", "PIA"] * 300
+df_string = pd.DataFrame({"Driver": drivers})
+df_categorical = pd.DataFrame({"Driver": pd.Categorical(drivers)})
+
 # Groupby performance
 # String column
 start = time.time()
@@ -2452,13 +2350,13 @@ print(f"Speedup: {time_string / time_categorical:.1f}x")
 #### Automatic Categorization in tif1
 
 ```python
-# tif1 automatically categorizes these columns:
+# On the pandas backend, tif1 categorizes these lap columns
+# (polars keeps them as String unless TIF1_POLARS_LAP_CATEGORICAL=true):
 CATEGORICAL_COLUMNS = [
-    "Driver",        # 20 unique values
+    "Driver",        # About 20 unique values
     "Team",          # 10 unique values
-    "Compound",      # 5 unique values (SOFT, MEDIUM, HARD, INTERMEDIATE, WET)
-    "TrackStatus",   # 4 unique values (1, 2, 4, 5)
-    "SessionType",   # 5 unique values (FP1, FP2, FP3, Q, R)
+    "Compound",      # A few unique values (SOFT, MEDIUM, HARD, INTERMEDIATE, WET)
+    "TrackStatus",   # Track status codes such as "1", "2", "4"
 ]
 
 # Columns NOT categorized (too many unique values):
@@ -2599,8 +2497,8 @@ async def fetch_with_limit(drivers, max_concurrent=10):
     return results
 
 # Limit to 10 concurrent requests
-# Prevents overwhelming the CDN
-results = await fetch_with_limit(drivers, max_concurrent=10)
+# Prevents overwhelming the CDN (tif1 itself uses max_concurrent_requests, default 22)
+results = asyncio.run(fetch_with_limit(drivers, max_concurrent=10))
 ```
 
 ### 6. JSON Parsing Optimization
@@ -2646,7 +2544,7 @@ print(f"Speedup: {time_json / time_orjson:.1f}x")
 def warm_cache_intelligent(year):
     """Intelligently pre-warm cache."""
 
-    events = tif1.get_events(year)
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
 
     # Priority 1: Race sessions (most commonly accessed)
     for event in events:
@@ -2664,7 +2562,7 @@ def warm_cache_intelligent(year):
             try:
                 session = tif1.get_session(year, event, practice)
                 _ = session.laps
-            except tif1.DataNotFoundError:
+            except (tif1.DataNotFoundError, ValueError):  # ValueError: no such session
                 continue
 ```
 
@@ -2690,14 +2588,14 @@ Process multiple items together for better performance.
 
 ```python
 # Bad: Individual operations
-for driver in drivers:
-    lap = driver.get_fastest_lap()
+for code in session.drivers_df["Driver"]:
+    lap = session.get_driver(code).get_fastest_lap()
     telemetry = lap.get_telemetry()
     # 20 drivers × 500ms = 10s
 
-# Good: Batch operation
+# Good: Batch operation (one DataFrame with a Driver column)
 fastest_laps = session.get_fastest_laps(by_driver=True)
-telemetries = session.get_fastest_laps_telemetry(by_driver=True)
+telemetries = session.get_fastest_laps_tels(by_driver=True)
 # Single batch operation: 600ms
 
 # Speedup: 16.7x faster
@@ -2715,7 +2613,7 @@ telemetries = session.get_fastest_laps_telemetry(by_driver=True)
 | Categorical Types | 1.2x | 90% |
 | orjson Parsing | 3x | - |
 | Polars Backend | 4x | 50% |
-| Multi-tier Caching | 2868x | - |
+| Multi-tier Caching | 2700x | - |
 | Batch Operations | 16x | - |
 
 **Combined Impact:**
@@ -2730,9 +2628,9 @@ tif1 implements an error handling system with a hierarchical exception structure
 
 ### Exception Hierarchy
 
-`src/tif1/exceptions.py` defines eight exception classes. Every one is exported from `tif1`:
+`src/tif1/exceptions.py` defines nine exception classes. Every one is exported from `tif1`. Eight of them form the `TIF1Error` hierarchy:
 
-```python
+```text
 TIF1Error (base exception)
 ├── NetworkError
 ├── DataNotFoundError
@@ -2742,6 +2640,8 @@ TIF1Error (base exception)
 ├── CacheError
 └── SessionNotLoadedError
 ```
+
+The ninth, `EventNotInSeasonError`, is a `ValueError` subclass, not a `TIF1Error`. `get_session()` and `get_event_by_name()` raise it when a circuit or country alias names an event that is not on that season's calendar. An example is `"Suzuka"` in 2021.
 
 Every exception carries `message` (the formatted text) and `context` (a dict of keyword arguments passed at raise time). The constructors accept extra `**context` keys, so handlers should read `e.context.get(...)` rather than rely on attributes.
 
@@ -2791,14 +2691,15 @@ Timeouts and connection failures surface as `NetworkError` too; raise `TIF1_TIME
 ```python
 import tif1
 
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 try:
-    session = tif1.get_session(2025, "Nonexistent Grand Prix", "Race")
-    laps = session.laps
-except tif1.DataNotFoundError as e:
+    lap = session.get_driver("VER").get_lap(999)
+except tif1.DataNotFoundError as e:  # LapNotFoundError is a subclass
     print(f"Data not found: {e.message}")
-    print(e.context)  # {'year': 2025, 'event': ..., 'session': ...}
-    print(tif1.get_events(2025)["EventName"].tolist())
+    print(e.context)  # {'lap_number': 999, 'driver': 'VER', 'year': 2025, 'event': ..., 'session': 'Race'}
 ```
+
+An unknown event name does not raise `DataNotFoundError`. tif1 resolves the name with fuzzy matching, so `"Nonexistent Grand Prix"` loads the Japanese Grand Prix. Check `session.event["EventName"]` after the call.
 
 `DriverNotFoundError` and `LapNotFoundError` are subclasses, so one `except tif1.DataNotFoundError` handler covers all three.
 
@@ -2807,10 +2708,10 @@ try:
     driver = session.get_driver("ZZZ")
 except tif1.DriverNotFoundError as e:
     print(f"Requested: {e.context['driver']}")
-    print(f"Available: {[d['driver'] for d in session.drivers]}")
+    print(f"Available: {session.drivers_df['Driver'].tolist()}")  # session.drivers holds numbers
 
 try:
-    lap = driver.get_lap(999)
+    lap = session.get_driver("VER").get_lap(999)
 except tif1.LapNotFoundError as e:
     print(f"Lap {e.context['lap_number']} not found for {e.context['driver']}")
 ```
@@ -2906,6 +2807,14 @@ def load_session_data():
 #### Fallback to Alternative Data Source
 
 ```python
+import logging
+
+import pandas as pd
+import tif1
+
+logger = logging.getLogger(__name__)
+
+
 def load_with_fallback(year, event, session_type):
     """Load data with fallback to alternative sources."""
 
@@ -2918,19 +2827,13 @@ def load_with_fallback(year, event, session_type):
 
     # Try fallback source (e.g., local files)
     try:
-        import pandas as pd
         file_path = f"data/{year}/{event}_{session_type}.csv"
         return pd.read_csv(file_path)
     except FileNotFoundError:
         logger.error("Fallback source also failed")
 
-    # No data available
-    raise tif1.DataNotFoundError(
-        f"No data available for {year} {event} {session_type}",
-        year=year,
-        event=event,
-        session_type=session_type
-    )
+    # No data available (the constructor builds the message from these keys)
+    raise tif1.DataNotFoundError(year=year, event=event, session=session_type)
 ```
 
 #### Graceful Degradation
@@ -2951,16 +2854,17 @@ def load_with_degradation(year, event, session_type):
         logger.error(f"Failed to load laps: {e}")
         raise  # Laps are critical, don't continue
 
-    # Weather (optional)
+    # Weather (optional). A weather payload that cannot be converted gives
+    # an empty DataFrame and a logged warning, not an exception
     try:
         data["weather"] = session.weather
     except Exception as e:
         logger.warning(f"Failed to load weather: {e}")
         data["weather"] = None  # Continue without weather
 
-    # Telemetry (optional)
+    # Telemetry (optional): the fastest lap only; session.car_data loads every lap
     try:
-        data["telemetry"] = session.telemetry
+        data["telemetry"] = session.get_fastest_lap_tel()
     except Exception as e:
         logger.warning(f"Failed to load telemetry: {e}")
         data["telemetry"] = None  # Continue without telemetry
@@ -2976,22 +2880,29 @@ All tif1 exceptions include detailed context for debugging.
 try:
     laps = session.laps
 except tif1.TIF1Error as e:
-    # Get error context
-    context = e.to_dict()
+    # e.message is the formatted text; e.context holds the keyword arguments
+    # passed at raise time (for example year, event, session, driver, url)
+    from datetime import datetime, timezone
 
-    print(f"Error type: {context['error_type']}")
-    print(f"Message: {context['message']}")
-    print(f"Timestamp: {context['timestamp']}")
-    print(f"Context: {context['context']}")
+    record = {
+        "error_type": type(e).__name__,
+        "message": e.message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "context": e.context,
+    }
+    print(f"Error type: {record['error_type']}")
+    print(f"Message: {record['message']}")
+    print(f"Timestamp: {record['timestamp']}")
+    print(f"Context: {record['context']}")
 
     # Log to file
     import json
     with open("error_log.json", "a") as f:
-        json.dump(context, f)
+        json.dump(record, f, default=str)
         f.write("\n")
 
     # Send to monitoring service
-    # send_to_sentry(context)
+    # send_to_sentry(record)
 ```
 
 ## Monitoring and Observability
@@ -3012,60 +2923,60 @@ tif1.setup_logging(logging.INFO)   # Normal operation
 tif1.setup_logging(logging.WARNING)  # Warnings only
 tif1.setup_logging(logging.ERROR)  # Errors only
 
-# Custom log format
-tif1.setup_logging(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+# setup_logging() takes only a level. For a custom format or a log file,
+# attach a handler to the "tif1" logger with the standard logging module
+handler = logging.FileHandler("tif1.log", mode="a")  # Append mode
+handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 )
-
-# Log to file
-tif1.setup_logging(
-    level=logging.DEBUG,
-    filename="tif1.log",
-    filemode="a"  # Append mode
-)
+tif1_logger = logging.getLogger("tif1")
+tif1_logger.addHandler(handler)
+tif1_logger.setLevel(logging.DEBUG)
 ```
 
 #### What Gets Logged
 
-**DEBUG Level:**
+The lines below use the custom format from the previous example. The messages come from the tif1 source. The exact set depends on the tif1 version and on which cache tiers answer. Cache keys use the URL-encoded event name.
+
+**DEBUG Level** (a session served from the SQLite cache):
 ```text
-2025-04-19 14:30:15 [DEBUG] tif1.cache: Memory cache miss: laps_2025_monaco_race_pandas
-2025-04-19 14:30:15 [DEBUG] tif1.cache: SQLite cache miss: laps_2025_monaco_race_pandas
-2025-04-19 14:30:15 [DEBUG] tif1.cdn: Constructing URL: https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/laps/monaco/race/driver_VER.json
-2025-04-19 14:30:15 [DEBUG] tif1.http: Starting async fetch for 20 drivers
-2025-04-19 14:30:16 [DEBUG] tif1.http: Fetch complete: VER (523ms)
-2025-04-19 14:30:16 [DEBUG] tif1.http: Fetch complete: HAM (534ms)
-...
-2025-04-19 14:30:16 [DEBUG] tif1.parser: Parsing JSON (15234 bytes)
-2025-04-19 14:30:16 [DEBUG] tif1.parser: Parse complete (45ms)
-2025-04-19 14:30:16 [DEBUG] tif1.dataframe: Constructing DataFrame (1500 rows)
-2025-04-19 14:30:16 [DEBUG] tif1.dataframe: Type optimization (15MB → 4MB, 73% reduction)
-2025-04-19 14:30:16 [DEBUG] tif1.enrichment: Adding computed columns (20 columns)
-2025-04-19 14:30:16 [DEBUG] tif1.cache: Saved to SQLite cache: laps_2025_monaco_race_pandas
-2025-04-19 14:30:16 [DEBUG] tif1.cache: Saved to memory cache: laps_2025_monaco_race_pandas
+2025-04-19 14:30:15 [DEBUG] tif1.core: Session initialized: year=2025, gp=Monaco Grand Prix, session=Race, lib=pandas
+2025-04-19 14:30:15 [DEBUG] tif1.cache: SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
+2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/drivers.json
+2025-04-19 14:30:15 [DEBUG] tif1.async_fetch: Thread pool executor initialized (max_workers=32)
+2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/session_laptimes.json
+2025-04-19 14:30:16 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/weather.json
+```
+
+On a cache miss, the CDN lines appear instead:
+```text
+2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache miss: 2025/Monaco%20Grand%20Prix/Race/weather.json
+2025-04-19 14:30:15 [DEBUG] tif1.cdn: Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco%20Grand%20Prix/Race/weather.json
+2025-04-19 14:30:16 [INFO] tif1.payload_loader: Fetched: 2025/Monaco%20Grand%20Prix/Race/weather.json
+2025-04-19 14:30:16 [DEBUG] tif1.cache: Cached: 2025/Monaco%20Grand%20Prix/Race/weather.json
 ```
 
 **INFO Level:**
 ```text
-2025-04-19 14:30:15 [INFO] tif1.session: Loading session: 2025 Monaco Grand Prix Race
-2025-04-19 14:30:16 [INFO] tif1.http: Fetched data for 20 drivers (580ms)
-2025-04-19 14:30:16 [INFO] tif1.session: Data loading complete: 1500 rows, 35 columns, 7.2 MB
+2025-04-19 14:30:15 [INFO] tif1.core: Loading laps async (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
+2025-04-19 14:30:16 [INFO] tif1.core: Lap cache hit (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
+2025-04-19 14:30:16 [INFO] tif1.cache: Cache tier invalidated: telemetry
 ```
 
 **WARNING Level:**
 ```text
-2025-04-19 14:30:16 [WARNING] tif1.validation: Found 3 laps with inconsistent sector times
-2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN jsDelivr failed: HTTPError 503 (falling back to HuggingFace, then StaticDelivr)
-2025-04-19 14:30:16 [WARNING] tif1.cache: Cache read error for 2025/Monaco/Race/weather.json: Corrupt compressed cache entry
+2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN jsDelivr failed: NetworkError: Network request failed: url='https://cdn.jsdelivr.net/...', status=503
+2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN source 'jsDelivr' disabled after 3 failures
+2025-04-19 14:30:16 [WARNING] tif1.cache: Cache read error for 2025/Monaco%20Grand%20Prix/Race/weather.json: Corrupt compressed cache entry: ...
+2025-04-19 14:30:16 [WARNING] tif1.retry: Circuit breaker opened after 5 failures
 ```
 
 **ERROR Level:**
 ```text
-2025-04-19 14:30:16 [ERROR] tif1.http: All CDN sources failed for driver VER
-2025-04-19 14:30:16 [ERROR] tif1.parser: JSON parsing failed at position 1234
-2025-04-19 14:30:16 [ERROR] tif1.cache: Failed to write to SQLite cache: disk full
+2025-04-19 14:30:16 [ERROR] tif1.payload_loader: Failed to fetch 2025/Monaco%20Grand%20Prix/Race/weather.json: Network request failed: ...
 ```
 
 ### Performance Monitoring
@@ -3173,7 +3084,8 @@ db_path = cache.db_path
 stats = {
     "cache_dir": cache.cache_dir,
     "cache_size_mb": db_path.stat().st_size / (1024 * 1024),
-    "monaco_cached": cache.has_session_data(2025, "Monaco", "Race"),
+    # gp and session as the cache keys store them (URL-encoded, like session.gp)
+    "monaco_cached": cache.has_session_data(2025, "Monaco%20Grand%20Prix", "Race"),
 }
 
 print(f"Cache Statistics:")
@@ -3232,24 +3144,28 @@ def test_cache_performance():
 ### Circuit Breaker Monitoring
 
 ```python
+from datetime import datetime
+
+import tif1
+
 cb = tif1.get_circuit_breaker()
 
 # Get circuit breaker state
 state_info = {
-    "state": cb.state,  # CLOSED, OPEN, or HALF_OPEN
-    "failure_count": cb.failure_count,
-    "failure_threshold": cb.failure_threshold,
-    "last_failure_time": cb.last_failure_time,
-    "recovery_timeout": cb.recovery_timeout,
+    "state": cb.state,  # "closed", "open", or "half-open"
+    "failures": cb.failures,
+    "threshold": cb.threshold,
+    "last_failure_time": cb.last_failure_time,  # datetime, or None before the first failure
+    "timeout": cb.timeout,  # Seconds the breaker stays open
 }
 
-print(f"Circuit Breaker Status:")
+print("Circuit Breaker Status:")
 print(f"  State: {state_info['state']}")
-print(f"  Failures: {state_info['failure_count']}/{state_info['failure_threshold']}")
+print(f"  Failures: {state_info['failures']}/{state_info['threshold']}")
 
-if state_info['state'] == "OPEN":
-    time_until_recovery = state_info['recovery_timeout'] - (time.time() - state_info['last_failure_time'])
-    print(f"  Recovery in: {time_until_recovery:.1f}s")
+if state_info["state"] == "open":
+    elapsed = (datetime.now() - state_info["last_failure_time"]).total_seconds()
+    print(f"  Recovery in: {state_info['timeout'] - elapsed:.1f}s")
 ```
 
 ### Network Monitoring
@@ -3257,6 +3173,9 @@ if state_info['state'] == "OPEN":
 #### Request Tracking
 
 ```python
+import time
+
+
 class RequestTracker:
     """Track HTTP requests."""
 
@@ -3301,8 +3220,11 @@ class RequestTracker:
 
 # Usage
 tracker = RequestTracker()
-# ... record requests ...
-summary = tracker.get_summary()
+tracker.record_request(
+    url="https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco%20Grand%20Prix/Race/drivers.json",
+    method="GET", status_code=200, duration=0.523, size=4965,
+)
+summary = tracker.get_summary()  # {} until at least one request is recorded
 print(f"Network Summary:")
 print(f"  Total requests: {summary['total_requests']}")
 print(f"  Success rate: {summary['success_rate']:.1%}")
@@ -3379,7 +3301,7 @@ class MonitoringDashboard:
         cb = tif1.get_circuit_breaker()
         cb_stats = {
             "state": cb.state,
-            "failures": cb.failure_count,
+            "failures": cb.failures,
         }
 
         return {
@@ -3462,15 +3384,15 @@ Async HTTP Fetch - jsDelivr (500-800ms)
     ↓
 JSON Parsing - orjson (100ms)
     ↓
-Schema Validation (20ms)
+Schema Validation (off by default)
     ↓
-DataFrame Construction (86ms)
+DataFrame Construction (81ms)
     ↓
 Column Renaming (8ms)
     ↓
 Type Optimization (25ms)
     ↓
-Data Enrichment (130ms)
+LapTimeSeconds Column (< 5ms)
     ↓
 SQLite Cache Save (50ms)
     ↓
@@ -3481,7 +3403,7 @@ Return DataFrame
 
 **Total Time:** ~2.5-3.0 seconds
 **Network I/O:** ~500-800ms (parallel)
-**CPU Processing:** ~370ms
+**CPU Processing:** ~220ms
 **Cache Operations:** ~52ms
 **Overhead:** ~5ms
 
@@ -3522,7 +3444,7 @@ Return DataFrame
 **Optimization Tips:**
 - Keep SQLite cache on SSD for faster access
 - Keep the cache directory between runs; cached payloads never expire
-- Monitor cache hit rate
+- Compare warm and cold load times (the cache keeps no hit counters)
 
 ### Pattern 3: Hot Start (Memory Cache Hit)
 
@@ -3584,7 +3506,7 @@ Memory Cache Check
 
 ### Pattern 5: Network Failure with Retry
 
-**Scenario:** Network request fails, automatic retry with backoff.
+**Scenario:** jsDelivr times out, so tif1 retries it with backoff and then falls back to Hugging Face. The timings assume the default settings (`timeout` 30 s, `max_retries` 3, `retry_backoff_factor` 2.0, jitter on).
 
 ```text
 User Request
@@ -3593,46 +3515,55 @@ Memory Cache Miss
     ↓
 SQLite Cache Miss
     ↓
-CDN Fetch Attempt 1 - jsDelivr
+jsDelivr - Attempt 1
+    ↓
+FAILURE (timeout after 30s, NetworkError)
+    ↓
+Exponential Backoff (~1s, randomized 0.5-1.5s)
+    ↓
+jsDelivr - Attempt 2
     ↓
 FAILURE (timeout after 30s)
     ↓
-Exponential Backoff (1s delay)
+Exponential Backoff (~2s, randomized 1-3s)
     ↓
-CDN Fetch Attempt 2 - GitHub Fallback
+jsDelivr - Attempt 3
     ↓
-FAILURE (404 Not Found)
+FAILURE (timeout after 30s): jsDelivr is marked failed
     ↓
-Exponential Backoff (2s delay)
-    ↓
-CDN Fetch Attempt 3 - jsDelivr Retry
+Hugging Face - Attempt 1
     ↓
 SUCCESS (500ms)
     ↓
-Process & Cache (370ms)
+Process & Cache
     ↓
 Return DataFrame
 ```
 
-**Total Time:** ~34 seconds (with failures)
+**Total Time:** ~94 seconds (with failures)
 **Breakdown:**
-- Try 1: 30s (timeout)
-- Backoff 1: 1s
-- Try 2: 500ms (fast fail)
-- Backoff 2: 2s
-- Try 3: 500ms (success)
-- Processing: 370ms
+- jsDelivr: 3 tries × 30s (timeouts) + ~3s of backoff
+- Hugging Face: 500ms (success)
+- Processing: well under 1s
+
+A 404 does not trigger this loop. tif1 moves to the next CDN at once, and raises `DataNotFoundError` when every CDN returns 404.
 
 **Optimization Tips:**
-- Reduce timeout for faster failure detection
-- Implement circuit breaker to fail fast
-- Use fallback data sources
+- Reduce `timeout` (`TIF1_TIMEOUT`) or `max_retries` (`TIF1_MAX_RETRIES`) for faster failure detection
+- After 3 failed fetches, tif1 skips a CDN source
+- After 5 consecutive failures, the circuit breaker fails fast for 60 seconds
 
 ### Pattern 6: Batch Loading Multiple Sessions
 
 **Scenario:** Load data for multiple sessions efficiently.
 
 ```python
+import asyncio
+
+import tif1
+
+events = tif1.get_event_schedule(2025, include_testing=False)["EventName"]
+
 # Sequential loading (slow)
 sessions = []
 for event in events:
@@ -3642,16 +3573,15 @@ for event in events:
 # Total: 3s × 20 events = 60s
 
 # Parallel loading (fast)
-import asyncio
-
 async def load_session_async(event):
     session = tif1.get_session(2025, event, "Race")
     laps = await session.laps_async()
     return (session, laps)
 
-sessions = await asyncio.gather(*[
-    load_session_async(event) for event in events
-])
+async def load_all():
+    return await asyncio.gather(*[load_session_async(event) for event in events])
+
+sessions = asyncio.run(load_all())  # In Jupyter, use: sessions = await load_all()
 # Total: ~5s (parallel loading)
 
 # Speedup: 12x faster
@@ -3682,13 +3612,18 @@ telemetry = fastest_lap.get_telemetry()
 **Scenario:** Pre-warm cache for better user experience.
 
 ```python
+import logging
 import threading
+
+import tif1
+
+logger = logging.getLogger(__name__)
 
 def warm_cache_background(year):
     """Warm cache in background thread."""
 
     def warm():
-        events = tif1.get_events(year)
+        events = tif1.get_event_schedule(year, include_testing=False)["EventName"].tolist()
 
         # Priority 1: Recent races (most likely to be accessed)
         recent_events = events[-5:]  # Last 5 races
@@ -3725,6 +3660,13 @@ These strategies achieve maximum performance in production environments.
 Pre-warm cache strategically based on usage patterns.
 
 ```python
+import logging
+
+import tif1
+
+logger = logging.getLogger(__name__)
+
+
 class IntelligentCacheWarmer:
     """Intelligent cache warming based on usage patterns."""
 
@@ -3774,6 +3716,9 @@ warmer.warm_cache_intelligent()
 Adjust timeouts based on network conditions.
 
 ```python
+import tif1
+
+
 class AdaptiveTimeout:
     """Adaptive timeout based on network performance."""
 
@@ -3799,14 +3744,20 @@ class AdaptiveTimeout:
         return self.timeout
 
 # Usage
+import niquests
+
 adaptive_timeout = AdaptiveTimeout()
+url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco%20Grand%20Prix/Race/drivers.json"
 
 # Make request with adaptive timeout
 timeout = adaptive_timeout.get_timeout()
-response = await http_client.get(url, timeout=timeout)
+response = niquests.get(url, timeout=timeout)
 
 # Record duration
 adaptive_timeout.record_request(response.elapsed.total_seconds())
+
+# Apply it to tif1 (the timeout setting takes whole seconds)
+tif1.get_config().set("timeout", int(adaptive_timeout.get_timeout()))
 ```
 
 ### Strategy 3: Selective Data Loading
@@ -3817,9 +3768,9 @@ Load only the required data.
 # Bad: Load everything (slow, high memory)
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps  # Loads all drivers
-telemetry = session.telemetry  # Loads all telemetry
+telemetry = session.car_data  # Loads telemetry for every lap of every driver
 weather = session.weather
-messages = session.messages
+messages = session.race_control_messages
 # Total: ~5s, ~100 MB
 
 # Good: Load selectively (fast, low memory)
@@ -3845,18 +3796,22 @@ telemetry = fastest_lap.get_telemetry()  # 200ms, ~25 MB
 Batch operations to minimize overhead.
 
 ```python
+def analyze_telemetry(tel):
+    return tel["Speed"].max()  # Stands in for your own analysis
+
 # Bad: Individual operations
 results = []
-for driver in drivers:
-    fastest_lap = driver.get_fastest_lap()
+for code in session.drivers_df["Driver"]:
+    fastest_lap = session.get_driver(code).get_fastest_lap()
     telemetry = fastest_lap.get_telemetry()
     results.append(analyze_telemetry(telemetry))
 # Time: 20 drivers × 200ms = 4s
 
-# Good: Batch operation
+# Good: Batch operation. get_fastest_laps_tels() returns one DataFrame
+# with a Driver column (polars: for (driver,), tel in telemetries.group_by("Driver"))
 fastest_laps = session.get_fastest_laps(by_driver=True)
-telemetries = session.get_fastest_laps_telemetry(by_driver=True)
-results = [analyze_telemetry(tel) for tel in telemetries.values()]
+telemetries = session.get_fastest_laps_tels(by_driver=True)
+results = [analyze_telemetry(tel) for _, tel in telemetries.groupby("Driver")]
 # Time: 600ms (parallel fetching)
 # Speedup: 6.7x faster
 ```
@@ -3866,6 +3821,16 @@ results = [analyze_telemetry(tel) for tel in telemetries.values()]
 Process large datasets without loading everything into memory.
 
 ```python
+events = tif1.get_event_schedule(2025, include_testing=False)["EventName"]
+
+results = {}
+
+def analyze_laps(laps):
+    return laps["LapTimeSeconds"].min()  # Stands in for the real analysis
+
+def save_result(result):
+    results[len(results)] = result  # Stands in for a database or file write
+
 # Bad: Load all data into memory
 all_sessions = []
 for event in events:
@@ -4083,6 +4048,9 @@ class PerformanceProfiler:
             print()
 
 # Usage
+def analyze_laps(laps):
+    return laps["LapTimeSeconds"].describe()  # Stands in for the real analysis
+
 profiler = PerformanceProfiler()
 
 with profiler.time_section("Load session"):
@@ -4115,7 +4083,7 @@ The tif1 data flow architecture targets maximum performance, reliability, and de
 **2. Resilience and Reliability**
 - Circuit breaker prevents cascading failures
 - Automatic retry with exponential backoff
-- Multi-source CDN fallback (jsDelivr → GitHub)
+- Multi-source CDN fallback (jsDelivr → Hugging Face → StaticDelivr)
 - Comprehensive error handling with detailed context
 - Graceful degradation for non-critical data
 
@@ -4168,16 +4136,15 @@ The tif1 data flow architecture targets maximum performance, reliability, and de
 - Automatic error handling and retry
 
 **3. Type Optimization**
-- Categorical encoding for string columns
-- Downcast numeric types (float64 → float32)
-- Boolean optimization (int64 → bool)
-- 73% memory reduction on average
+- Categorical encoding for string columns (pandas)
+- Time columns as `timedelta64[ns]` (pandas) or `Float64` seconds (polars)
+- Boolean flags as `bool`/`Boolean`; numeric columns stay 64-bit
+- The pandas laps frame shrinks by about a third (718 KB to 462 KB for a full race)
 
 **4. Data Enrichment**
-- Automatic computed columns (20+ fields)
-- Weather data integration
-- Performance flags and metrics
-- Minimal overhead (130ms for 1500 laps)
+- One computed column (`LapTimeSeconds`); per-lap weather comes with the payload
+- Telemetry channels such as `RelativeDistance`, `DriverAhead`, and `AccelerationX/Y/Z` come with the payload
+- The Stage 7 recipes add more columns in a few milliseconds
 
 ### Best Practices
 
@@ -4199,13 +4166,20 @@ laps = session.laps  # Don't load telemetry if not needed
 # 4. Batch operations
 fastest_laps = session.get_fastest_laps(by_driver=True)  # Parallel
 
-# 5. Pre-warm cache
-warm_cache_for_season(2025)  # Background thread
+# 5. Pre-warm cache (warm_cache_background from the cache warming strategies above)
+warm_cache_background(2025)  # Background thread
 ```
 
 **For Reliability:**
 
 ```python
+import logging
+import os
+
+import tif1
+
+logger = logging.getLogger(__name__)
+
 # 1. Handle errors gracefully
 try:
     laps = session.laps
@@ -4213,9 +4187,9 @@ except tif1.NetworkError as e:
     # Retry or use fallback
     logger.error(f"Network error: {e}")
 
-# 2. Monitor circuit breaker
+# 2. Monitor circuit breaker (states are "closed", "open", "half-open")
 cb = tif1.get_circuit_breaker()
-if cb.state == "OPEN":
+if cb.state == "open":
     logger.warning("Circuit breaker open, waiting for recovery")
 
 # 3. Enable logging
@@ -4228,8 +4202,11 @@ os.environ["TIF1_TIMEOUT"] = "30"
 **For Memory Efficiency:**
 
 ```python
-# 1. Process iteratively (don't load all at once)
-for event in events:
+def process(laps):
+    print(len(laps))  # Stands in for the real processing
+
+# 1. Process iteratively (do not load all at once)
+for event in tif1.get_event_schedule(2025, include_testing=False)["EventName"]:
     session = tif1.get_session(2025, event, "Race")
     laps = session.laps
     process(laps)
@@ -4264,7 +4241,7 @@ for i in range(10):
 # Bad: Load everything (5s)
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps
-telemetry = session.telemetry  # Not needed
+telemetry = session.car_data  # Not needed: telemetry for every lap
 weather = session.weather  # Not needed
 
 # Good: Load only laps (500ms)
@@ -4275,13 +4252,13 @@ laps = session.laps
 **Pitfall 3: Sequential Operations**
 ```python
 # Bad: Sequential (10s)
-for driver in drivers:
-    lap = driver.get_fastest_lap()
+for code in session.drivers_df["Driver"]:
+    lap = session.get_driver(code).get_fastest_lap()
     tel = lap.get_telemetry()
 
 # Good: Batch (600ms)
 fastest_laps = session.get_fastest_laps(by_driver=True)
-telemetries = session.get_fastest_laps_telemetry(by_driver=True)
+telemetries = session.get_fastest_laps_tels(by_driver=True)
 ```
 
 **Pitfall 4: Not Handling Network Errors**
@@ -4310,10 +4287,10 @@ except tif1.NetworkError as e:
 - [ ] Test error handling and recovery
 
 **During Operation:**
-- [ ] Monitor cache hit rate (target: > 80%)
+- [ ] Watch the `Cache hit` and `Cache miss` DEBUG log lines (the cache keeps no hit counters)
 - [ ] Monitor network success rate (target: > 95%)
 - [ ] Monitor memory usage (should be stable)
-- [ ] Monitor circuit breaker state (should be CLOSED)
+- [ ] Monitor circuit breaker state (should be `"closed"`)
 - [ ] Check for slow queries (> 5s)
 - [ ] Review error logs regularly
 - [ ] Clear unused cache tiers with `cache.invalidate(scope)` when disk space matters
@@ -4321,7 +4298,7 @@ except tif1.NetworkError as e:
 
 **For Optimization:**
 - [ ] Profile code to identify bottlenecks
-- [ ] Increase cache size if hit rate is low
+- [ ] Increase the memory cache size if repeated loads still miss
 - [ ] Use Polars for large datasets
 - [ ] Batch operations where possible
 - [ ] Use async loading for non-blocking operations
@@ -4352,7 +4329,7 @@ The tif1 data flow architecture takes a complete approach to high-performance da
 
 - **93-2800x faster** data access through caching
 - **17x faster** multi-driver operations through parallelization
-- **50-73% less** memory usage through type optimization
+- **About a third less** memory for pandas laps through the dtype contract
 - **4x faster** operations through Polars backend
 - **99%+ reliability** through error handling and circuit breakers
 

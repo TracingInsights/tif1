@@ -482,10 +482,9 @@ async def fetch_json_async(
                 executor, partial(session_client.get, url, timeout=timeout)
             )
 
-            # Track connection reuse (niquests reuses connections from pool)
-            from .http_session import _track_request
+            from .http_session import _response_reused_connection, _track_request
 
-            _track_request(reused=True)
+            _track_request(reused=_response_reused_connection(response))
 
             if response.status_code == 404:
                 raise DataNotFoundError(year=year, event=gp, session=session)
@@ -610,9 +609,9 @@ async def fetch_json_async(
                     f"Connection pool exhaustion detected for {cdn_source.name}: {e}. "
                     f"Will retry with backoff."
                 )
-                pool_backoff_base = config.get("pool_exhaustion_backoff_base", 0.5)
-                pool_backoff_max = config.get("pool_exhaustion_backoff_max", 5.0)
-                pool_backoff_jitter = config.get("pool_exhaustion_backoff_jitter", 0.5)
+                pool_backoff_base = config.get("pool_exhaustion_backoff_base", 0.01)
+                pool_backoff_max = config.get("pool_exhaustion_backoff_max", 0.5)
+                pool_backoff_jitter = config.get("pool_exhaustion_backoff_jitter", 0.01)
                 pool_backoff = min(pool_backoff_base * (2**attempt_num), pool_backoff_max)
                 if use_jitter:
                     pool_backoff += random.uniform(0, pool_backoff_jitter)

@@ -61,14 +61,14 @@ Control what data gets fetched to optimize performance. Load only the necessary 
 import tif1
 
 # Load only laps data, skip telemetry/weather/messages
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-#session.load(laps=True, telemetry=False, weather=False, messages=False) - loading the data is not necessary, you can directly use `session.laps`
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
+# session.load() is optional: session.laps fetches only the laps on first access
 laps = session.laps  # Fast - only laps fetched
 ```
 
 ```python Avoid - Loading Everything
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-session.load()  # Fetches everything by default
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
+session.load()  # Fetches laps, telemetry, weather, and messages
 laps = session.laps  # Slower - unnecessary data fetched
 ```
 </CodeGroup>
@@ -80,22 +80,21 @@ Never fetch telemetry in a loop. Use batch methods instead.
 <CodeGroup>
 ```python Good - Batch Fetching
 # Parallel fetch - validated at 3x+ vs sequential
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 tels = session.get_fastest_laps_tels(by_driver=True)
 
-# tels is a DataFrame with all drivers' fastest lap telemetry
-for driver in tels["Driver"].unique():
-    driver_tel = tels[tels["Driver"] == driver]
-    analyze_telemetry(driver_tel)
+# tels is one DataFrame with all drivers' fastest lap telemetry (not a dict)
+for driver, driver_tel in tels.groupby("Driver"):
+    print(f"{driver}: {driver_tel['Speed'].max()} km/h")
 ```
 
 ```python Avoid - Sequential Loop
 # Very slow - fetches one at a time
-for driver in session.drivers:
+for driver in session.drivers_df["Driver"]:
     driver_obj = session.get_driver(driver)
     fastest = driver_obj.get_fastest_lap()
     tel = driver_obj.get_lap(int(fastest["LapNumber"].iloc[0])).telemetry
-    analyze_telemetry(tel)
+    print(f"{driver}: {tel['Speed'].max()} km/h")
 ```
 </CodeGroup>
 
@@ -108,7 +107,7 @@ import tif1
 
 # For large datasets or batch processing
 session = tif1.get_session(
-    2021,
+    2024,
     "Belgian Grand Prix",
     "Race",
     lib="polars"  # 2x faster, 50% less memory
@@ -121,12 +120,12 @@ Never disable caching unless absolutely necessary.
 
 <CodeGroup>
 ```python Good - Cache Enabled (Default)
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 # Subsequent loads are instant
 ```
 
 ```python Avoid - Cache Disabled
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=False)
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race", enable_cache=False)
 # Every load hits the network
 ```
 </CodeGroup>
@@ -137,7 +136,7 @@ session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=Fals
 
 ### Use Type Hints
 
-tif1 provides comprehensive type hints. Use them for better IDE support.
+tif1 ships type hints for the public API. Use them for better IDE support.
 
 ```python
 from tif1 import Session
@@ -147,12 +146,13 @@ def analyze_session(session: Session) -> dict[str, float]:
     """Analyze session and return metrics."""
     laps = session.laps  # Type is inferred as DataFrame
 
+    # LapTime is a Timedelta; LapTimeSeconds is the float the annotation promises
     return {
         "total_laps": len(laps),
-        "avg_lap_time": laps["LapTime"].mean(),
+        "avg_lap_time": laps["LapTimeSeconds"].mean(),
     }
 
-session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session: Session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 metrics = analyze_session(session)
 ```
 ### Handle errors gracefully
@@ -188,16 +188,14 @@ When working with exports or databases, use context managers.
 ```python
 import sqlite3
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 laps = session.laps
 
-# Good - automatic cleanup
-# index=False skips the row labels; the Laps reset_index override does not
-# support the in-place reset_index that pandas to_sql uses for the index
+# Good - the with block commits the transaction, or rolls it back on error
 with sqlite3.connect("f1_data.db") as conn:
-    # SQLite column names are case-insensitive, so drop the duplicate
-    # "Team"/"team" and "Driver"/"drv" source columns before writing
+    # SQLite column names are case-insensitive: drop "team", the duplicate of "Team"
     laps_sql = laps.loc[:, ~laps.columns.str.lower().duplicated()]
+    # index=False is required: Laps.to_sql fails with the default index=True
     laps_sql.to_sql("laps", conn, if_exists="replace", index=False)
 ```
 
@@ -289,7 +287,8 @@ Before processing multiple sessions, check the data that is available.
 ```python
 def process_season(year: int):
     """Process all races in a season."""
-    events = tif1.get_events(year)
+    # get_events() returns a DataFrame; iterate the EventName column
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
 
     for event in events:
         sessions = tif1.get_sessions(year, event)
@@ -300,7 +299,7 @@ def process_season(year: int):
 
         try:
             session = tif1.get_session(year, event, "Race")
-            process_race(session)
+            print(f"{event}: {len(session.laps)} laps")
         except Exception as e:
             print(f"Failed to process {event}: {e}")
             continue
@@ -312,18 +311,19 @@ Check circuit breaker status for long-running jobs.
 ```python
 import tif1
 
-def batch_process():
+def batch_process(year: int):
     """Process multiple sessions with circuit breaker awareness."""
     cb = tif1.get_circuit_breaker()
 
     if cb.state == "open":
-        print("Circuit breaker is open, waiting...")
+        print("Circuit breaker is open, resetting...")
         tif1.reset_circuit_breaker()
 
     # Continue processing
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
     for event in events:
-        session = tif1.get_session(2021, event, "Race")
-        process(session)
+        session = tif1.get_session(year, event, "Race")
+        print(f"{event}: {len(session.laps)} laps")
 ```
 
 ### Enable debug logging for troubleshooting
@@ -338,7 +338,7 @@ import logging
 tif1.setup_logging(logging.DEBUG)
 
 # Now all operations show detailed logs
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 ```
 
 ---
@@ -354,15 +354,15 @@ def analyze_all_drivers(session):
     """Analyze drivers without loading all data at once."""
     results = []
 
-    for driver_code in session.drivers:
+    for driver_code in session.drivers_df["Driver"]:
         driver = session.get_driver(driver_code)
         laps = driver.laps
 
-        # Analyze
+        # Analyze (LapTimeSeconds keeps the metrics as plain floats)
         result = {
             "driver": driver_code,
-            "avg_time": laps["LapTime"].mean(),
-            "fastest": laps["LapTime"].min(),
+            "avg_time": laps["LapTimeSeconds"].mean(),
+            "fastest": laps["LapTimeSeconds"].min(),
         }
         results.append(result)
 
@@ -379,7 +379,7 @@ Polars uses significantly less memory than pandas.
 ```python
 # For processing entire seasons
 session = tif1.get_session(
-    2021,
+    2024,
     "Belgian Grand Prix",
     "Race",
     lib="polars"  # 50% less memory
@@ -417,12 +417,15 @@ import tif1
 
 def test_session_loading():
     """Test session loading with mocked network."""
-    mock_data = {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
+    mock_data = {"drivers": [{"driver": "VER", "team": "Red Bull", "dn": 1}]}
 
-    with patch.object(tif1.Session, "_fetch_from_cdn", return_value=mock_data):
-        session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-        drivers = session.drivers
-        assert len(drivers) > 0
+    # Patch both fetch seams (retry and fast path) and skip the cache
+    with (
+        patch.object(tif1.Session, "_fetch_from_cdn", return_value=mock_data),
+        patch.object(tif1.Session, "_fetch_from_cdn_fast", return_value=mock_data),
+    ):
+        session = tif1.get_session(2024, "Belgian Grand Prix", "Race", enable_cache=False)
+        assert session.drivers_df["Driver"].tolist() == ["VER"]
 ```
 
 ### Use small datasets for tests
@@ -433,11 +436,11 @@ Test with minimal data to keep tests fast.
 def test_lap_filtering():
     """Test lap filtering logic."""
     # Use a small session (Practice 1) for faster tests
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Practice 1")
+    session = tif1.get_session(2024, "Belgian Grand Prix", "Practice 1")
     laps = session.laps
 
-    # Test filtering
-    fast_laps = laps[laps["LapTime"] < 90]
+    # Test filtering (LapTime is a Timedelta; compare LapTimeSeconds with a number)
+    fast_laps = laps[laps["LapTimeSeconds"] < 110]
     assert len(fast_laps) >= 0
 ```
 
@@ -468,11 +471,12 @@ def calculate_tire_degradation(laps, compound="SOFT"):
     """
     compound_laps = laps[laps["Compound"] == compound]
 
-    # Linear regression on TyreLife vs LapTime
+    # Linear regression on TyreLife vs LapTimeSeconds (scipy needs floats)
     from scipy import stats
+    data = compound_laps[["TyreLife", "LapTimeSeconds"]].dropna()
     slope, _, _, _, _ = stats.linregress(
-        compound_laps["TyreLife"],
-        compound_laps["LapTime"]
+        data["TyreLife"],
+        data["LapTimeSeconds"]
     )
 
     return slope

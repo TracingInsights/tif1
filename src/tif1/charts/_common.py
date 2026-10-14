@@ -725,7 +725,14 @@ def finishing_order(session: Any, n: int) -> list[str]:
     Returns:
         Driver abbreviations ordered by finishing position.
     """
-    return [session.get_driver(i)["Abbreviation"] for i in session.drivers[:n]]
+    numbers = [str(number) for number in session.drivers[:n]]
+    drivers_df = getattr(session, "drivers_df", None)
+    if drivers_df is not None and {"Driver", "DriverNumber"} <= set(drivers_df.columns):
+        codes = dict(
+            zip(drivers_df["DriverNumber"].astype(str), drivers_df["Driver"], strict=False)
+        )
+        return [codes.get(number, number) for number in numbers]
+    return [session.get_driver(number)["Abbreviation"] for number in numbers]
 
 
 def resolve_drivers(session: Any, drivers: list[str] | None, n: int) -> list[str]:

@@ -362,11 +362,11 @@ export TIF1_KEEPALIVE_MAX_REQUESTS=5000
 DNS resolver chain, tried in order. Comma-separated.
 
 ```bash
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://,doh+google://
 ```
 
 <Info>
-  Type: `list[str]`. Default: `standard,doh://cloudflare,doh://google`
+  Type: `list[str]`. Default: `standard,doh+cloudflare://,doh+google://`
 </Info>
 
 ### TIF1_CONNECTION_STATS_LOG_INTERVAL

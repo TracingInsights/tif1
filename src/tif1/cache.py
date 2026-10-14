@@ -25,6 +25,7 @@ import asyncio
 import atexit
 import contextlib
 import gc
+import importlib
 import logging
 import pickle
 import sqlite3
@@ -34,7 +35,9 @@ import time
 import zlib
 from collections import OrderedDict
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import quote, unquote
 
 from .core_utils.constants import MAX_CACHE_SIZE
 from .core_utils.json_utils import json_dumps_bytes, json_loads
@@ -97,7 +100,10 @@ if _stdlib_zstd is not None:  # pragma: no cover - interpreter dependent
     _ZSTD_ERRORS = (_stdlib_zstd.ZstdError,)
 else:  # pragma: no cover - interpreter dependent
     try:
-        import zstandard as _zstandard
+        # importlib keeps the static checker out of it: the wheel is only
+        # declared for python_version < "3.14", so a plain import statement is
+        # unresolvable on newer interpreters.
+        _zstandard = importlib.import_module("zstandard")
 
         _zstd_compress = _zstandard.ZstdCompressor(level=_ZSTD_LEVEL).compress
         _zstd_decompress = _zstandard.ZstdDecompressor().decompress
@@ -115,9 +121,10 @@ else:  # pragma: no cover - interpreter dependent
 # time vs zstd-1 on the 1452-frame Monaco set (~2x faster, +26% stored bytes)
 # — the frame tier is write-once/read-many, so read/write speed beats ratio.
 # zstd remains the fallback (and legacy zstd rows stay readable via magic).
+_lz4_frame: ModuleType | None
 try:  # pragma: no cover - trivial import guard
-    from lz4 import frame as _lz4_frame
-
+    # importlib for the same reason as zstandard: no lz4 wheels on 3.15 yet.
+    _lz4_frame = importlib.import_module("lz4.frame")
     _LZ4_MAGIC = b"\x04\x22\x4d\x18"
 except ImportError:  # pragma: no cover - defensive fallback only
     _lz4_frame = None
@@ -162,6 +169,13 @@ _PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
 # so both backends can keep a warm frame tier without PK collisions and
 # without migrating existing caches.
 _FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "telemetry_frames_pl"}
+# Schema version of the materialized-frame tier, stored in SQLite's
+# ``user_version``. Frame rows carry no per-row version, so when the stored
+# version is older the frame tables are dropped once and rebuild from the
+# payload tier (which is untouched). History:
+#   1 — telemetry "None" sentinels re-typed (DistanceToDriverAhead float, not
+#       str); frames written before that hold the stringified column.
+_FRAME_TIER_SCHEMA_VERSION = 1
 
 
 @contextlib.contextmanager
@@ -511,11 +525,15 @@ class Cache:
             cache_dir: Cache directory path
         """
         if cache_dir is None:
-            from .config import get_config
+            from .config import _default_cache_dir, get_config
 
             config = get_config()
             configured_path = config.get("cache_dir")
-            cache_dir = Path(str(configured_path)).expanduser()
+            # Never stringify a missing value: Path(str(None)) is a literal
+            # "./None" cache directory (stub configs in tests returned None).
+            cache_dir = (
+                Path(str(configured_path)).expanduser() if configured_path else _default_cache_dir()
+            )
 
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -582,6 +600,15 @@ class Cache:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+
+            cursor = conn.execute("PRAGMA user_version")
+            version_row = cursor.fetchone() if cursor is not None else None
+            stored_version = int(version_row[0]) if version_row else 0
+            if stored_version < _FRAME_TIER_SCHEMA_VERSION:
+                # Derived tier only: dropping it costs one rebuild, never a fetch.
+                conn.execute("DROP TABLE IF EXISTS telemetry_frames")
+                conn.execute("DROP TABLE IF EXISTS telemetry_frames_pl")
+                conn.execute(f"PRAGMA user_version = {_FRAME_TIER_SCHEMA_VERSION}")
 
             conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT)")
             conn.execute(
@@ -1179,6 +1206,23 @@ class Cache:
         # ~100 MB of short-lived allocations; GC suspension halves this loop
         # (Rhodes R3) and pickle data holds no reference cycles.
         _foreign_marker = "_df" if lib == "polars" else "_mgr"
+        frame_errors: tuple[type[BaseException], ...] = (
+            AttributeError,
+            EOFError,
+            ImportError,
+            IndexError,
+            TypeError,
+            ValueError,
+            pickle.UnpicklingError,
+            *_ZSTD_ERRORS,
+        )
+        if lib == "polars":
+            # polars raises its own ComputeError (a PolarsError, not a
+            # ValueError) for a frame state it cannot deserialize, e.g. one
+            # written by a polars release with an incompatible format.
+            from polars.exceptions import PolarsError
+
+            frame_errors = (*frame_errors, PolarsError)
         with _suspend_gc():
             for driver_code, lap_num, blob in rows:
                 try:
@@ -1188,16 +1232,7 @@ class Cache:
                     if not hasattr(frame, _foreign_marker):
                         raise TypeError("foreign frame object")
                     results[(driver_code, lap_num)] = frame
-                except (
-                    AttributeError,
-                    EOFError,
-                    ImportError,
-                    IndexError,
-                    TypeError,
-                    ValueError,
-                    pickle.UnpicklingError,
-                    *_ZSTD_ERRORS,
-                ):
+                except frame_errors:
                     logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
         return results
 
@@ -1301,10 +1336,16 @@ class Cache:
         )
 
     def has_session_data(self, year: int, gp: str, session: str) -> bool:
-        """Return True when JSON or telemetry cache contains entries for a session."""
+        """Return True when JSON or telemetry cache contains entries for a session.
+
+        Keys are stored with the URL-encoded event and session names, so both
+        spellings are accepted (``"Monaco Grand Prix"`` and ``"Monaco%20Grand%20Prix"``).
+        """
         if self.conn is None:
             return False
 
+        gp = quote(unquote(gp), safe="")
+        session = quote(unquote(session), safe="")
         prefix = f"{year}/{gp}/{session}/"
         try:
             # Check memory cache first (lock-free read)

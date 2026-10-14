@@ -130,6 +130,33 @@ class TestR4PolarsFrameTier:
             cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
         )
 
+    def test_undeserializable_polars_state_degrades_to_miss(self, tmp_path):
+        """A frame state polars cannot read (e.g. written by a polars release
+        with an incompatible format) raises polars' ComputeError, which is not
+        a ValueError; it must degrade to a per-row tier miss, not crash."""
+        import pickle
+
+        from tif1.cache import _compress_frame_blob
+
+        cache = Cache(tmp_path)
+        good = _make_polars_frame()
+        cache.set_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1, good)], lib="polars")
+        state = good.__getstate__()
+        bad_blob = pickle.dumps(good, protocol=5).replace(state, bytes(len(state)))
+        with pytest.raises(polars.exceptions.PolarsError):
+            pickle.loads(bad_blob)
+        with cache._sqlite_lock:
+            cache.conn.execute(
+                "INSERT OR REPLACE INTO telemetry_frames_pl VALUES (?, ?, ?, ?, ?, ?)",
+                (2026, "GP", "Race", "HAM", 1, _compress_frame_blob(bad_blob)),
+            )
+            cache.conn.commit()
+        hits = cache.get_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 1), ("HAM", 1)], lib="polars"
+        )
+        assert set(hits) == {("VER", 1)}
+        assert hits[("VER", 1)].equals(good)
+
     def test_polars_warm_load_uses_frame_tier(self, tmp_path, monkeypatch):
         """R4: a warm polars session reads materialized frames instead of
         re-parsing the payload tier on every load."""

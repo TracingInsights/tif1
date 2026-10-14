@@ -419,3 +419,20 @@ class TestParseResponseJson:
         response = MagicMock(spec=[])
         response.json = MagicMock(return_value={"no_content": True})
         assert parse_response_json(response) == {"no_content": True}
+
+
+class TestCoerceNullLikePayload:
+    def test_clean_payload_is_returned_unchanged(self):
+        payload = {"wR": [True, False], "wWD": [120, 90], "scalar": 3}
+        assert helpers_module._coerce_null_like_payload(payload) is payload
+        assert helpers_module._coerce_null_like_payload({}) == {}
+
+    def test_sentinels_become_none_in_list_fields_only(self):
+        payload = {"wR": [True, "None", False], "wWD": (120, " null ", 90), "scalar": "None"}
+        out = helpers_module._coerce_null_like_payload(payload)
+        assert out == {"wR": [True, None, False], "wWD": [120, None, 90], "scalar": "None"}
+        assert payload["wR"] == [True, "None", False]  # input not mutated
+
+    def test_lap_payload_polars_uses_the_shared_coercion(self):
+        out = helpers_module._normalize_lap_payload_polars({"deleted": [False, "None"], "lap": [1]})
+        assert out == {"deleted": [False, None], "lap": [1, None]}

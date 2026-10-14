@@ -66,7 +66,9 @@ Write a custom transport to route fetches through a proxy, a recording layer, or
 from tif1.payload_loader import NiquestsTransport
 
 transport = NiquestsTransport()
-data = transport.get_json("https://example.com/payload.json", timeout=10.0)
+url = "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+data = transport.get_json(url, timeout=10.0)
+print(len(data["drivers"]))  # 20
 ```
 
 ### Methods
@@ -185,7 +187,7 @@ CDN fallback manager. Defaults to the process-global `tif1.cdn.get_cdn_manager()
 </ResponseField>
 
 <ResponseField name="memo" type="SessionMemo | None" default="None">
-Per-session memo tier used by the default memo callables.
+Per-session memo tier used by the default memo callables. When `None` and no `memo_get`/`memo_set` override is given, the memo step is skipped.
 </ResponseField>
 
 <ResponseField name="enable_cache" type="bool" default="True">
@@ -288,7 +290,7 @@ async get_many(
 ) -> list[dict[str, Any] | None]
 ```
 
-Fetch many session-relative payloads concurrently. This coroutine delegates to `tif1.async_fetch.fetch_multiple_async`. Every keyword argument defaults to the configured value when `None`. The returned list has one entry per requested path; a failed fetch produces `None` at its position.
+Fetch many session-relative payloads concurrently. This coroutine delegates to `tif1.async_fetch.fetch_multiple_async`. When `max_retries`, `timeout`, or `max_concurrent_requests` is `None`, the configured value applies. The returned list has one entry per requested path; a failed fetch produces `None` at its position.
 
 #### `cache_key`
 
@@ -318,9 +320,10 @@ Return the shared `PayloadLoader` for absolute-URL payloads. The loader is creat
 
 ### Offline pipeline run with InMemoryTransport
 
-This example runs the full `get` pipeline without network access. The `enable_cache=False` argument keeps the run off the persistent cache. Validation is disabled because the fixture payload is not a real `drivers.json` document.
+This example runs the full `get` pipeline without network access. The `enable_cache=False` argument keeps the run off the persistent cache. Validation is disabled because the fixture payload is not a real `drivers.json` document. The memo tier is active only when a `SessionMemo` is passed; without one, every `get` call reaches the transport.
 
 ```python
+from tif1.cache import SessionMemo
 from tif1.payload_loader import InMemoryTransport, PayloadLoader
 
 transport = InMemoryTransport({"drivers.json": {"drivers": []}})
@@ -329,24 +332,28 @@ loader = PayloadLoader(
     "Abu%20Dhabi%20Grand%20Prix",
     "Race",
     transport=transport,
+    memo=SessionMemo(),
     enable_cache=False,
 )
 
 data = loader.get("drivers.json", validate=False)
 data = loader.get("drivers.json", validate=False)  # served from the memo
 
+print(len(transport.calls))  # 1
 print(transport.calls[0])
-# https://cdn.staticdelivr.com/gh/TracingInsights/2025/main/Abu%20Dhabi%20Grand%20Prix/Race/drivers.json
+# https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Abu%20Dhabi%20Grand%20Prix/Race/drivers.json
 ```
 
 ### Absolute-URL fetch
 
-This example requires network access.
+This example requires network access. It fetches the f1schedule payload that `tif1.events` also reads through this loader.
 
 ```python
 from tif1.payload_loader import get_url_loader
 
-data = get_url_loader().get_url("https://example.com/data.json", timeout=15.0)
+url = "https://cdn.jsdelivr.net/gh/theOehrly/f1schedule@master/schedule_2025.json"
+data = get_url_loader().get_url(url, timeout=15.0)
+print(type(data).__name__, list(data)[:3])
 ```
 
 ## Related APIs

@@ -2,7 +2,7 @@
 
 **Status:** Draft for owner approval — no documentation files have been changed yet.
 **Reference standard:** ASD-STE100 Simplified Technical English, Issue 9 (2025-01-15). Issue 9 fully replaces all earlier issues. It contains 53 writing rules (31 reworded in Issue 9) and an updated dictionary (555 entries revised, terminology aligned with ISO 1087-1:2019).
-**Standard owner:** ASD, Brussels. Free official copy via request form at <https://www.asd-ste100.org/STE_downloads.html>.
+**Standard owner:** ASD, Brussels. Free official copy via request form at https://www.asd-ste100.org/STE_downloads.html.
 
 ---
 

@@ -6,10 +6,7 @@ import logging
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Union, cast
 
-try:
-    import pandas as pd
-except ImportError:  # pragma: no cover - pandas is required in runtime deps
-    pd = None  # type: ignore[ty:invalid-assignment]
+import pandas as pd
 
 if TYPE_CHECKING:
     import polars as pl
@@ -120,14 +117,36 @@ def display_driver_info(driver) -> str:
     return html_content
 
 
+def _lap_telemetry_loaded(lap) -> bool:
+    """Whether a lap's telemetry is already in memory.
+
+    ``Driver.get_lap`` returns a ``Lap`` series, which keeps no ``_telemetry``
+    slot: its telemetry lives in the session memo, so that is probed instead.
+    """
+    if getattr(lap, "_telemetry", None) is not None:
+        return True
+    probe = getattr(getattr(lap, "session", None), "_get_telemetry_payload", None)
+    if probe is None:
+        return False
+    try:
+        return probe(str(lap.driver), int(lap.lap_number)) is not None
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def display_lap_info(lap) -> str:
     """Generate HTML display for Lap."""
-    lap_num = html.escape(str(lap.lap_number))
+    lap_number = lap.lap_number
+    try:
+        lap_number = int(lap_number)  # pandas stores LapNumber as float64 ("10.0")
+    except (TypeError, ValueError):
+        pass
+    lap_num = html.escape(str(lap_number))
     driver_code = html.escape(str(lap.driver))
     year = html.escape(str(lap.session.year))
     gp_name = html.escape(urllib.parse.unquote(str(lap.session.gp)))
     session_name = html.escape(urllib.parse.unquote(str(lap.session.session)))
-    telemetry_loaded = "Yes" if lap._telemetry is not None else "No"
+    telemetry_loaded = "Yes" if _lap_telemetry_loaded(lap) else "No"
 
     html_content = f"""
     <div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #fff8dc;">
@@ -153,9 +172,7 @@ def display_lap_info(lap) -> str:
 
 def display_dataframe_summary(df: Union["pd.DataFrame", "pl.DataFrame"]) -> str:
     """Generate summary display for DataFrame."""
-    is_pandas = pd is not None and isinstance(df, pd.DataFrame)
-
-    if is_pandas:
+    if isinstance(df, pd.DataFrame):
         df_pd = df
         rows, cols = df_pd.shape
         memory = df_pd.memory_usage(deep=True).sum() / 1024 / 1024

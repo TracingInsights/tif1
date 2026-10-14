@@ -17,7 +17,7 @@ A session is the entry point for all data in `tif1`. Specify the year, the Grand
 ```python
 import tif1
 
-# Get the 2025 abu dhabi grand prix race session
+# Get the 2025 Abu Dhabi Grand Prix race session
 session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
 ```
 
@@ -37,9 +37,11 @@ fastest_5 = laps.nsmallest(5, "LapTime")
 print(fastest_5[["Driver", "LapTime", "Compound"]])
 ```
 
+`LapTime` is a pandas `Timedelta`. `LapTimeSeconds` holds the same value as a float in seconds.
+
 ## 3. Analyze a Specific Driver
 
-Examine the data for one driver with the 3-letter driver code.
+Examine the data for one driver with the 3-letter driver code. `session.drivers` lists driver numbers; `session.drivers_df["Driver"]` lists the codes.
 
 ```python
 # Get driver data for Max Verstappen

@@ -30,7 +30,7 @@ else:
     # Polars is optional: importing it eagerly costs ~260 ms on every cold
     # start for pandas-only users. It loads lazily via
     # _ensure_polars_available() on the first polars backend use.
-    pl = None  # type: ignore[ty:invalid-assignment]
+    pl = None
 
 POLARS_AVAILABLE = False
 
@@ -270,9 +270,14 @@ def _create_telemetry_df(
 
     try:
         if lib == "polars" and _ensure_polars_available():
+            if _DRIVER_AHEAD_CHANNEL in col_data:
+                col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(
+                    col_data[_DRIVER_AHEAD_CHANNEL]
+                )
             telemetry_df = pl.DataFrame(col_data, strict=False)
             if telemetry_df.is_empty():
                 return None
+            telemetry_df = _coerce_polars_telemetry_sentinels(telemetry_df)
             for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
                 if col not in telemetry_df.columns:
                     telemetry_df = telemetry_df.with_columns(pl.lit(None).alias(col))
@@ -349,17 +354,21 @@ def _typed_telemetry_frame(
                     frame_data[k] = pd.arrays.IntegerArray(arr, np.zeros(len(arr), dtype=bool))
                 else:
                     frame_data[k] = pd.array(v, dtype="Int64")
-            else:
+            elif k in _NUMERIC_TELEMETRY_CHANNELS:
                 # Numeric channels pass ndarray straight to the constructor:
                 # pandas' list path re-validates per element (~150 us/frame
-                # extra on 19-column Monaco frames). Strings/None keep the
-                # raw list so dtype inference is unchanged.
-                first = v[0] if v else None
-                if isinstance(first, (int, float)) and not isinstance(first, bool):
-                    arr = np.asarray(v)
-                    frame_data[k] = arr if arr.dtype.kind in "if" else v
-                else:
-                    frame_data[k] = v
+                # extra on 19-column Monaco frames). A "None" sentinel in the
+                # list makes numpy build a str array; that column is coerced
+                # to float64 NaN instead of being stringified.
+                arr = np.asarray(v)
+                frame_data[k] = arr if arr.dtype.kind in "if" else _coerce_numeric_channel(v, arr)
+            elif k == _DRIVER_AHEAD_CHANNEL:
+                # Driver numbers as strings; "None" means nobody ahead.
+                frame_data[k] = _without_null_tokens(v)
+            else:
+                # Unknown channels keep the raw list so dtype inference is
+                # unchanged.
+                frame_data[k] = v
         # pandas 3 infers str dtype from object arrays at construction; the
         # FastF1-compatible Driver contract is object.
         frame_data["Driver"] = pd.Series(np.full(max_len, driver, dtype=object), dtype=object)
@@ -386,6 +395,8 @@ def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
     - ``Brake``: int (0/1) → ``bool`` (skipped when missing values are present;
       ``astype(bool)`` would coerce NaN → ``True``)
     - ``nGear``/``DRS``: int → nullable ``Int64``
+    - Numeric channels stringified by a ``"None"`` sentinel → ``float64`` (NaN)
+    - ``DriverAhead``: ``"None"`` sentinel → missing
     - Missing ``Time``/``Speed``/``nGear``/``X``/``Y``/``Z`` → ``pd.NA``
     - ``Driver`` stays ``object`` (FastF1 compatibility), ``LapNumber`` → ``Int64``
 
@@ -408,6 +419,18 @@ def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
         telemetry_df["nGear"] = telemetry_df["nGear"].astype("Int64")
     if "DRS" in telemetry_df.columns:
         telemetry_df["DRS"] = telemetry_df["DRS"].astype("Int64")
+
+    # A "None" sentinel (a race leader's DistanceToDriverAhead) turns a numeric
+    # channel into object/str; the merged-dict build sees it from any lap.
+    for col in _NUMERIC_TELEMETRY_CHANNELS:
+        if col in telemetry_df.columns and not pd.api.types.is_numeric_dtype(telemetry_df[col]):
+            telemetry_df[col] = pd.to_numeric(telemetry_df[col], errors="coerce").astype("float64")
+    if _DRIVER_AHEAD_CHANNEL in telemetry_df.columns:
+        ahead = telemetry_df[_DRIVER_AHEAD_CHANNEL]
+        if pd.api.types.is_object_dtype(ahead) or pd.api.types.is_string_dtype(ahead):
+            sentinel = ahead.isin(_NULL_LIKE_TOKEN_PROBE)
+            if sentinel.any():
+                telemetry_df[_DRIVER_AHEAD_CHANNEL] = ahead.mask(sentinel, None)
 
     # Keep object dtype for FastF1 compatibility (pandas 3.0 infers str dtype
     # by default for string columns; the laps contract uses object).
@@ -567,6 +590,89 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
 
 
 _NULL_LIKE_TOKEN_PROBE = _NULL_LIKE_STRINGS | {"None"}
+_NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
+
+# Telemetry channels that are numeric by contract. Upstream encodes a missing
+# value as the literal string "None" (e.g. ``DistanceToDriverAhead`` on a race
+# leader's lap, where nobody is ahead); left alone, one sentinel stringifies
+# the whole column on both backends. The frame builders coerce it to NaN/null.
+_NUMERIC_TELEMETRY_CHANNELS = frozenset(
+    {
+        "RPM",
+        "Speed",
+        "Throttle",
+        "Distance",
+        "RelativeDistance",
+        "DistanceToDriverAhead",
+        "AccelerationX",
+        "AccelerationY",
+        "AccelerationZ",
+        "X",
+        "Y",
+        "Z",
+    }
+)
+# String channel (driver number ahead) whose missing values arrive as "None".
+_DRIVER_AHEAD_CHANNEL = "DriverAhead"
+
+
+def _coerce_numeric_channel(values: list[Any], arr: np.ndarray | None = None) -> np.ndarray:
+    """float64 array for a numeric channel list; sentinels/None become NaN.
+
+    ``arr`` is the ``np.asarray(values)`` the caller already built. A str
+    array (the sentinel case) is masked with a vectorized ``isin`` and parsed
+    by numpy, several times cheaper than ``pd.to_numeric`` on an object
+    Series; that pandas path stays the fallback for anything numpy cannot
+    parse.
+    """
+    if arr is not None and arr.dtype.kind == "U":
+        sentinel = np.isin(arr, _NULL_LIKE_TOKEN_ARRAY)
+        out = np.full(arr.shape[0], np.nan, dtype="float64")
+        try:
+            out[~sentinel] = arr[~sentinel].astype("float64")
+        except ValueError:
+            pass
+        else:
+            return out
+    return pd.to_numeric(pd.Series(values, dtype=object), errors="coerce").to_numpy(
+        dtype="float64", na_value=np.nan
+    )
+
+
+def _without_null_tokens(values: list[Any]) -> list[Any]:
+    """``values`` with exact null-like tokens (``"None"``, ``"null"``, ...) as None.
+
+    The probe is ``set.isdisjoint`` (C-level hashing, no Python iteration), so
+    a clean list is returned as the same object for a few microseconds.
+    """
+    try:
+        clean = _NULL_LIKE_TOKEN_PROBE.isdisjoint(values)
+    except TypeError:  # unhashable element: not a string channel
+        return values
+    if clean:
+        return values
+    return [None if isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE else x for x in values]
+
+
+def _coerce_polars_telemetry_sentinels(frame):
+    """Cast numeric telemetry channels polars stringified because of a sentinel.
+
+    Schema lookups only on a clean frame; the non-strict Float64 cast
+    (sentinel -> null) runs just for a channel that came out as String.
+    ``DriverAhead`` is cleaned on the Python list before construction, so
+    polars infers a String column with nulls directly.
+    """
+    schema = frame.schema
+    exprs = [
+        pl.col(col).cast(pl.Float64, strict=False)
+        for col in _NUMERIC_TELEMETRY_CHANNELS
+        if schema.get(col) == pl.String
+    ]
+    if schema.get(_DRIVER_AHEAD_CHANNEL) == pl.Null:
+        # Every sample was a sentinel (a race leader's lap): keep the String
+        # contract rather than polars' Null dtype for an all-null list.
+        exprs.append(pl.col(_DRIVER_AHEAD_CHANNEL).cast(pl.String))
+    return frame.with_columns(exprs) if exprs else frame
 
 
 def _replace_null_like_strings(df: pd.DataFrame) -> pd.DataFrame:
@@ -724,22 +830,29 @@ def _normalize_lap_payload_polars(lap_data: dict) -> dict:
     stringifying mixed columns. Shared by :func:`_create_lap_df` and the
     merged-dict polars lap assembly so both paths keep identical semantics.
     """
-    normalized_data = _normalize_lap_payload(lap_data)
-    if normalized_data and any(
+    return _coerce_null_like_payload(_normalize_lap_payload(lap_data))
+
+
+def _coerce_null_like_payload(data: dict) -> dict:
+    """Replace null-like string sentinels with ``None`` in a payload's list fields.
+
+    polars infers a String column from a list that mixes real values with
+    sentinels such as ``"None"`` (2026 data), and no later cast can recover
+    the Boolean/Float/Int dtype; coercing before construction lets polars
+    infer it directly. Mirrors validate_lap_data. Exact-token probe first so
+    clean payloads skip the strip/lowercase pass entirely (no string
+    allocation on the hot path) and are returned as the same object.
+    """
+    if data and any(
         isinstance(v, list | tuple)
         and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
-        for v in normalized_data.values()
+        for v in data.values()
     ):
-        # Normalize null-like string sentinels (e.g. "None" in 2026 data) in
-        # the payload lists so polars infers proper dtypes (Boolean/Float)
-        # instead of stringifying mixed columns. Mirrors validate_lap_data.
-        # Exact-token probe first so clean payloads skip the strip/lowercase
-        # pass entirely (no string allocation on the hot path).
-        normalized_data = {
+        return {
             k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
-            for k, v in normalized_data.items()
+            for k, v in data.items()
         }
-    return normalized_data
+    return data
 
 
 def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFrame:
