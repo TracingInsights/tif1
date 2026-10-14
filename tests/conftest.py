@@ -70,12 +70,16 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
 
     cache_dir = tmp_path_factory.mktemp("tif1_cache")
     monkeypatch.setenv("TIF1_CACHE_DIR", str(cache_dir))
+    # Argos A8: never spawn the background CDN pre-connect thread in tests.
+    monkeypatch.setenv("TIF1_CDN_PRECONNECT", "false")
     monkeypatch.setattr(config_module, "_default_cache_dir", lambda: cache_dir)
     monkeypatch.setattr(cache_module, "_default_cache_dir", lambda: cache_dir, raising=False)
     monkeypatch.setattr(fastf1_compat, "_default_cache_dir", lambda: cache_dir, raising=False)
     config = config_module.get_config()
     previous = config.get("cache_dir")
     config.set("cache_dir", str(cache_dir))
+    previous_preconnect = config.get("cdn_preconnect")
+    config.set("cdn_preconnect", False)
     monkeypatch.setattr(fastf1_compat.Cache, "_cache_dir", None)
     stale = cache_module._cache
     cache_module._cache = None
@@ -90,6 +94,7 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
                 pass
         cache_module._cache = stale
         config.set("cache_dir", previous)
+        config.set("cdn_preconnect", previous_preconnect)
 
 
 @pytest.fixture(autouse=True)

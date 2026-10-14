@@ -203,6 +203,11 @@ class TestK4K1DeferredSingleTierWrites:
         )
 
         assert isinstance(results[0], dict)
+        # Argos A3: the deferred flush runs post-return in a background
+        # writer; it is joined by Cache.close()/invalidate()/atexit.
+        from tif1.cache import _join_frame_writers
+
+        _join_frame_writers()
         assert calls == ["telemetry"]
         assert cache.get_telemetry(2026, "GP", "Race", "VER", 1) == tel
 
