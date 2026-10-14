@@ -193,6 +193,19 @@ def test_ultra_cold_env_overrides(monkeypatch):
     assert config.get("ultra_cold_background_cache_fill") is False
 
 
+def test_schedule_ttl_env_override(monkeypatch):
+    """The live schedule TTL loads from the environment; negatives fall back."""
+    monkeypatch.setenv("TIF1_SCHEDULE_TTL_HOURS", "0.5")
+
+    config = config_module.Config()
+    assert config.get("schedule_ttl_hours") == 0.5
+
+    config.set("schedule_ttl_hours", 0)
+    assert config.get("schedule_ttl_hours", 6.0) == 0
+    config.set("schedule_ttl_hours", -1)
+    assert config.get("schedule_ttl_hours", 6.0) == 6.0
+
+
 def test_driver_prefetch_env_override(monkeypatch):
     """Driver prefetch flag should be configurable from environment variables."""
     monkeypatch.setenv("TIF1_PREFETCH_DRIVER_LAPS_ON_GET_DRIVER", "false")

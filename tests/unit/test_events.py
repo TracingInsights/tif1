@@ -536,30 +536,229 @@ class TestEventSessionName:
             event.get_session_date(1)
 
 
-def test_cdn_fallback_for_missing_year(monkeypatch):
+_RAW_SCHEDULE_URL = (
+    "https://raw.githubusercontent.com/theOehrly/f1schedule/master/schedule_{year}.json"
+)
+
+
+def _raw_f1schedule_year(year: int, *events: tuple[int, str]) -> dict:
+    """Build a columnar f1schedule payload (the upstream repository format)."""
+    raw: dict = {
+        "round_number": {},
+        "event_name": {},
+        "event_date": {},
+        "location": {},
+        "country": {},
+        "session1": {},
+        "session2": {},
+        "session3": {},
+    }
+    for index, (round_number, name) in enumerate(events):
+        key = str(index)
+        raw["round_number"][key] = round_number
+        raw["event_name"][key] = name
+        raw["event_date"][key] = f"{year}-03-{index + 1:02d}T00:00:00"
+        raw["location"][key] = "Somewhere"
+        raw["country"][key] = "Nowhere"
+        raw["session1"][key] = "Practice 1"
+        raw["session2"][key] = "Qualifying"
+        raw["session3"][key] = "Race"
+    return raw
+
+
+@pytest.fixture
+def live_schedule(monkeypatch):
+    """Route the f1schedule fetch through an in-memory transport.
+
+    Returns the transport; the memo is cleared before and after the test so a
+    season resolved earlier in the worker process cannot leak in. 2026 is
+    treated as a live season regardless of the real clock.
+    """
     import tif1.events as events_mod
+    from tif1.payload_loader import InMemoryTransport, PayloadLoader
 
-    events_mod._load_schedule_payload.cache_clear()
-    events_mod._load_f1schedule_year_from_cdn.cache_clear()
-    events_mod._get_events_cached.cache_clear()
-    events_mod._get_sessions_cached.cache_clear()
+    transport = InMemoryTransport()
+    monkeypatch.setattr(events_mod, "get_url_loader", lambda: PayloadLoader(transport=transport))
+    monkeypatch.setattr(events_mod, "_is_current_or_future_season", lambda year: year >= 2026)
+    events_mod._clear_schedule_memo()
+    yield transport
+    events_mod._clear_schedule_memo()
 
-    monkeypatch.setattr(
-        events_mod, "_load_schedule_payload", lambda: {"schema_version": 1, "years": {}}
-    )
-    monkeypatch.setattr(
-        events_mod,
-        "_load_f1schedule_year_from_cdn",
-        lambda year: (
+
+def _cache_row(year: int):
+    from tif1.cache import get_cache
+
+    return get_cache().get_entry("json", f"f1schedule/schedule_{year}.json")
+
+
+class TestLiveSchedule:
+    """The current and future seasons come from the f1schedule repository."""
+
+    def test_live_season_fetches_raw_github_file(self, live_schedule):
+        import time
+
+        live_schedule.add(
+            _RAW_SCHEDULE_URL.format(year=2026),
+            _raw_f1schedule_year(2026, (1, "Live Grand Prix"), (2, "Second Grand Prix")),
+        )
+
+        events = get_events(2026)
+
+        assert _event_names(events) == ["Live Grand Prix", "Second Grand Prix"]
+        assert live_schedule.calls == [_RAW_SCHEDULE_URL.format(year=2026)]
+        assert get_sessions(2026, "Live Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+        row = _cache_row(2026)
+        assert row["schedule"]["event_name"] == {"0": "Live Grand Prix", "1": "Second Grand Prix"}
+        assert abs(row["fetched_at"] - time.time()) < 60
+        # Memoized: no second request for the same season.
+        get_events(2026)
+        assert len(live_schedule.calls) == 1
+
+    def test_fresh_cache_row_skips_the_network(self, live_schedule):
+        import time
+
+        from tif1.cache import get_cache
+        from tif1.exceptions import NetworkError
+
+        get_cache().set_entry(
+            "json",
+            "f1schedule/schedule_2026.json",
             {
-                "events": ["Fallback Grand Prix"],
-                "sessions": {"Fallback Grand Prix": ["Practice 1", "Qualifying", "Race"]},
-            }
-            if year == 2099
-            else None
-        ),
-    )
+                "fetched_at": time.time() - 60,
+                "schedule": _raw_f1schedule_year(2026, (1, "Cached Grand Prix")),
+            },
+        )
+        live_schedule.default = NetworkError(url="unused", status_code=None)
 
-    events = get_events(2099)
-    assert _event_names(events) == ["Fallback Grand Prix"]
-    assert get_sessions(2099, "Fallback Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+        assert _event_names(get_events(2026)) == ["Cached Grand Prix"]
+        assert live_schedule.calls == []
+
+    def test_expired_cache_row_is_refetched(self, live_schedule):
+        import time
+
+        from tif1.cache import get_cache
+        from tif1.config import get_config
+
+        get_config().set("schedule_ttl_hours", 1.0)
+        try:
+            get_cache().set_entry(
+                "json",
+                "f1schedule/schedule_2026.json",
+                {
+                    "fetched_at": time.time() - 2 * 3600,
+                    "schedule": _raw_f1schedule_year(2026, (1, "Stale Grand Prix")),
+                },
+            )
+            live_schedule.add(
+                _RAW_SCHEDULE_URL.format(year=2026),
+                _raw_f1schedule_year(2026, (1, "Fresh Grand Prix")),
+            )
+
+            assert _event_names(get_events(2026)) == ["Fresh Grand Prix"]
+            assert len(live_schedule.calls) == 1
+            assert _cache_row(2026)["schedule"]["event_name"] == {"0": "Fresh Grand Prix"}
+        finally:
+            get_config().set("schedule_ttl_hours", 6.0)
+
+    def test_failed_fetch_uses_stale_cache_row(self, live_schedule):
+        import time
+
+        from tif1.cache import get_cache
+        from tif1.exceptions import NetworkError
+
+        get_cache().set_entry(
+            "json",
+            "f1schedule/schedule_2026.json",
+            {
+                "fetched_at": time.time() - 30 * 24 * 3600,
+                "schedule": _raw_f1schedule_year(2026, (1, "Stale Grand Prix")),
+            },
+        )
+        live_schedule.default = NetworkError(url="unused", status_code=None)
+
+        assert _event_names(get_events(2026)) == ["Stale Grand Prix"]
+        assert len(live_schedule.calls) == 1
+
+    def test_failed_fetch_without_cache_row_uses_vendored_file(self, live_schedule):
+        from tif1.exceptions import NetworkError
+
+        live_schedule.default = NetworkError(url="unused", status_code=None)
+
+        events = get_events(2026)
+
+        assert "Australian Grand Prix" in _event_names(events)
+        assert len(live_schedule.calls) == 1
+        assert _cache_row(2026) is None
+
+    def test_malformed_upstream_file_is_ignored(self, live_schedule):
+        live_schedule.add(_RAW_SCHEDULE_URL.format(year=2026), {"unexpected": "shape"})
+
+        events = get_events(2026)
+
+        assert "Australian Grand Prix" in _event_names(events)
+        assert _cache_row(2026) is None
+
+    def test_offline_mode_never_fetches(self, live_schedule):
+        from tif1.config import get_config
+        from tif1.exceptions import NetworkError
+
+        live_schedule.default = NetworkError(url="unused", status_code=None)
+        get_config().set("offline_mode", True)
+        try:
+            assert "Australian Grand Prix" in _event_names(get_events(2026))
+        finally:
+            get_config().set("offline_mode", False)
+        assert live_schedule.calls == []
+
+    def test_past_season_is_served_from_vendored_file(self, live_schedule):
+        from tif1.exceptions import NetworkError
+
+        live_schedule.default = NetworkError(url="unused", status_code=None)
+
+        assert "Bahrain Grand Prix" in _event_names(get_events(2024))
+        assert live_schedule.calls == []
+
+    def test_past_season_missing_from_vendored_files_is_fetched(self, live_schedule):
+        live_schedule.add(
+            _RAW_SCHEDULE_URL.format(year=2017),
+            _raw_f1schedule_year(2017, (1, "Historic Grand Prix")),
+        )
+
+        assert _event_names(get_events(2017)) == ["Historic Grand Prix"]
+        assert get_sessions(2017, "Historic Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+        assert live_schedule.calls == [_RAW_SCHEDULE_URL.format(year=2017)]
+
+    def test_year_without_upstream_file_is_empty(self, live_schedule):
+        # The transport raises DataNotFoundError for unmapped URLs (HTTP 404).
+        assert get_events(2099).empty
+        assert get_sessions(2099, "Any Grand Prix") == [
+            "Practice 1",
+            "Practice 2",
+            "Practice 3",
+            "Qualifying",
+            "Race",
+        ]
+        assert len(live_schedule.calls) == 1
+        assert _cache_row(2099) is None
+
+    def test_memo_refreshes_after_ttl_in_process(self, live_schedule, monkeypatch):
+        import tif1.events as events_mod
+
+        clock = {"now": 1_000_000.0}
+        monkeypatch.setattr(events_mod.time, "time", lambda: clock["now"])
+        live_schedule.add(
+            _RAW_SCHEDULE_URL.format(year=2026),
+            _raw_f1schedule_year(2026, (1, "First Grand Prix")),
+        )
+        assert _event_names(get_events(2026)) == ["First Grand Prix"]
+        assert get_sessions(2026, "First Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+
+        live_schedule.add(
+            _RAW_SCHEDULE_URL.format(year=2026),
+            _raw_f1schedule_year(2026, (1, "Renamed Grand Prix")),
+        )
+        clock["now"] += 6 * 3600 + 1
+
+        assert _event_names(get_events(2026)) == ["Renamed Grand Prix"]
+        assert get_sessions(2026, "Renamed Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+        assert len(live_schedule.calls) == 2

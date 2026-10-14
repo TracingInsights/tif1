@@ -202,7 +202,7 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
 3. **Cache Check (SQLite)**
    - Builds the cache key from the payload path (year, event, session, file name)
    - Queries the SQLite cache database in tif1's OS-dependent cache directory by default
-   - Cached payloads do not expire; only "missing payload" verdicts expire (`missing_payloads_ttl_days`)
+   - Cached payloads do not expire; only "missing payload" verdicts (`missing_payloads_ttl_days`) and the live season schedule row (`schedule_ttl_hours`) expire
    - On a cache hit, parses the stored payload or loads a stored DataFrame without network I/O
    - On a cache miss, proceeds to fetch from the CDN
 

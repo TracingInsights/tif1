@@ -5,23 +5,44 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 import unicodedata
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import lru_cache
 from importlib.resources import files
 from typing import Any, ClassVar, Self, cast
 
 import pandas as pd
 
+from .cache import get_cache
+from .config import get_config
 from .core_utils.constants import EVENT_NAME_ALIASES
-from .exceptions import DataNotFoundError, EventNotInSeasonError, InvalidDataError, NetworkError
+from .exceptions import (
+    CacheError,
+    DataNotFoundError,
+    EventNotInSeasonError,
+    InvalidDataError,
+    NetworkError,
+)
 from .payload_loader import get_url_loader
-from .retry import retry_with_backoff
 from .schedule_schema import validate_schedule_payload
 
 _F1SCHEDULE_YEAR_PATTERN = re.compile(r"^schedule_(\d{4})\.json$")
-_F1SCHEDULE_CDN_TEMPLATE = (
-    "https://cdn.jsdelivr.net/gh/theOehrly/f1schedule@master/schedule_{year}.json"
+# Same source FastF1 reads. raw.githubusercontent.com serves a branch file with
+# a 5-minute edge cache, so a calendar change lands within minutes; jsDelivr
+# pins branch references for 12 hours (and the CDN chain in ``tif1.cdn`` is for
+# the large per-year data repositories, not this one small file per season).
+_F1SCHEDULE_URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/theOehrly/f1schedule/master/schedule_{year}.json"
 )
+_F1SCHEDULE_CACHE_KEY_TEMPLATE = "f1schedule/schedule_{year}.json"
+_F1SCHEDULE_FETCH_TIMEOUT = 15
+# A failed refresh keeps the fallback (stale cache row or vendored file) for
+# this long before the next lookup tries the network again.
+_F1SCHEDULE_RETRY_AFTER_SECONDS = 300.0
+_DEFAULT_SCHEDULE_TTL_HOURS = 6.0
 
 logger = logging.getLogger(__name__)
 
@@ -158,39 +179,151 @@ def _load_vendored_f1schedule_years() -> dict[str, Any]:
     return years
 
 
-@lru_cache(maxsize=16)
-def _load_f1schedule_year_from_cdn(year: int) -> dict[str, Any] | None:
-    @retry_with_backoff(
-        max_retries=3,
-        backoff_factor=1.5,
-        jitter=True,
-        exceptions=(NetworkError, InvalidDataError, TypeError, ValueError),
-    )
-    def _fetch_payload() -> dict[str, Any] | None:
-        url = _F1SCHEDULE_CDN_TEMPLATE.format(year=year)
-        try:
-            payload = get_url_loader().get_url(url, timeout=15)
-        except DataNotFoundError:
-            return None
-        return _convert_f1schedule_year(payload, year)
+@dataclass(slots=True)
+class _YearSchedule:
+    """Per-process memo of one season's converted schedule.
 
+    ``expires_at`` is the wall-clock time after which the live source is
+    consulted again; ``math.inf`` for seasons served from the vendored files.
+    ``sessions`` memoizes resolved session lists per queried event name (the
+    fuzzy event resolution is the expensive part of ``get_sessions``).
+    """
+
+    payload: dict[str, Any]
+    events: tuple[str, ...]
+    expires_at: float
+    sessions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+_year_schedules: dict[int, _YearSchedule] = {}
+_year_schedules_lock = threading.Lock()
+
+
+def _schedule_ttl_seconds() -> float:
+    ttl_hours = get_config().get("schedule_ttl_hours", _DEFAULT_SCHEDULE_TTL_HOURS)
+    return float(ttl_hours) * 3600.0
+
+
+def _is_current_or_future_season(year: int) -> bool:
+    return year >= datetime.now(UTC).year
+
+
+def _read_cached_f1schedule_year(year: int) -> tuple[float, dict[str, Any]] | None:
+    """Return ``(fetched_at, raw_year)`` from the SQLite cache, or None."""
+    key = _F1SCHEDULE_CACHE_KEY_TEMPLATE.format(year=year)
     try:
-        return _fetch_payload()
-    except Exception as exc:
-        logger.warning("Failed to fetch schedule_%s.json from CDN: %s", year, exc)
+        entry = get_cache().get_entry("json", key)
+    except (CacheError, OSError) as exc:
+        logger.debug("Schedule cache read failed for %s: %s", key, exc)
         return None
+    if not isinstance(entry, dict):
+        return None
+    fetched_at = entry.get("fetched_at")
+    raw_year = entry.get("schedule")
+    if not isinstance(fetched_at, int | float) or not isinstance(raw_year, dict):
+        return None
+    return float(fetched_at), raw_year
+
+
+def _write_cached_f1schedule_year(year: int, raw_year: dict[str, Any], fetched_at: float) -> None:
+    key = _F1SCHEDULE_CACHE_KEY_TEMPLATE.format(year=year)
+    try:
+        get_cache().set_entry("json", key, {"fetched_at": fetched_at, "schedule": raw_year})
+    except (CacheError, OSError) as exc:
+        logger.debug("Schedule cache write failed for %s: %s", key, exc)
+
+
+def _fetch_f1schedule_year(year: int) -> dict[str, Any] | None:
+    """Fetch ``schedule_{year}.json`` from the f1schedule repository.
+
+    Returns the converted year payload, ``{}`` when the file does not exist
+    upstream (a season without a published calendar) and ``None`` when the
+    fetch failed, so the caller can fall back to cached or vendored data.
+    """
+    url = _F1SCHEDULE_URL_TEMPLATE.format(year=year)
+    try:
+        raw_year = get_url_loader().get_url(url, timeout=_F1SCHEDULE_FETCH_TIMEOUT)
+    except DataNotFoundError:
+        return {}
+    except (NetworkError, InvalidDataError) as exc:
+        logger.warning("Failed to fetch schedule_%s.json from %s: %s", year, url, exc)
+        return None
+    try:
+        payload = _convert_f1schedule_year(raw_year, year)
+    except InvalidDataError as exc:
+        logger.warning("Ignoring malformed schedule_%s.json from %s: %s", year, url, exc)
+        return None
+    _write_cached_f1schedule_year(year, raw_year, time.time())
+    return payload
+
+
+def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], float]:
+    """Resolve a season that may still change: live source first, then fallbacks.
+
+    Order: SQLite row younger than ``schedule_ttl_hours`` -> live fetch ->
+    stale SQLite row -> vendored file -> empty. Returns the payload and the
+    memo expiry.
+    """
+    ttl = _schedule_ttl_seconds()
+    cached = _read_cached_f1schedule_year(year)
+    if cached is not None and now - cached[0] < ttl:
+        try:
+            return _convert_f1schedule_year(cached[1], year), cached[0] + ttl
+        except InvalidDataError as exc:
+            logger.debug("Discarding malformed cached schedule_%s.json: %s", year, exc)
+
+    if not get_config().get("offline_mode", False):
+        fetched = _fetch_f1schedule_year(year)
+        if fetched is not None:
+            return fetched, now + ttl
+
+    if cached is not None:
+        try:
+            return _convert_f1schedule_year(cached[1], year), now + _F1SCHEDULE_RETRY_AFTER_SECONDS
+        except InvalidDataError as exc:
+            logger.debug("Discarding malformed cached schedule_%s.json: %s", year, exc)
+    vendored = _load_schedule_payload()["years"].get(str(year), {})
+    return vendored, now + _F1SCHEDULE_RETRY_AFTER_SECONDS
+
+
+def _build_year_schedule(year: int, now: float) -> _YearSchedule:
+    if not _is_current_or_future_season(year):
+        vendored = _load_schedule_payload()["years"].get(str(year))
+        if isinstance(vendored, dict) and vendored:
+            return _YearSchedule(vendored, tuple(vendored.get("events", ())), float("inf"))
+    payload, expires_at = _load_live_year_payload(year, now)
+    events = payload.get("events", [])
+    return _YearSchedule(payload, tuple(events) if isinstance(events, list) else (), expires_at)
+
+
+def _get_year_schedule(year: int) -> _YearSchedule:
+    """Return the memoized season schedule, refreshing a live season past its TTL."""
+    now = time.time()
+    record = _year_schedules.get(year)
+    if record is not None and record.expires_at > now:
+        return record
+    fresh = _build_year_schedule(year, now)
+    with _year_schedules_lock:
+        current = _year_schedules.get(year)
+        if current is not None and current.expires_at > now:
+            # Another thread refreshed while this one fetched.
+            return current
+        if current is not None and current.payload == fresh.payload:
+            # Unchanged upstream: keep the memoized session lookups.
+            current.expires_at = fresh.expires_at
+            return current
+        _year_schedules[year] = fresh
+    return fresh
 
 
 def _resolve_year_payload(year: int) -> dict[str, Any]:
-    payload = _load_schedule_payload()
-    year_payload = payload["years"].get(str(year), {})
-    if isinstance(year_payload, dict) and year_payload:
-        return year_payload
+    return _get_year_schedule(year).payload
 
-    cdn_payload = _load_f1schedule_year_from_cdn(year)
-    if isinstance(cdn_payload, dict):
-        return cdn_payload
-    return {}
+
+def _clear_schedule_memo() -> None:
+    """Drop the per-process schedule memo (tests and explicit refreshes)."""
+    with _year_schedules_lock:
+        _year_schedules.clear()
 
 
 @lru_cache(maxsize=1)
@@ -202,9 +335,7 @@ def _load_schedule_payload() -> dict[str, Any]:
 
 def _build_events_for_year(year: int) -> list[str]:
     """Get list of events for a given year."""
-    year_payload = _resolve_year_payload(year)
-    events = year_payload.get("events", [])
-    return list(events) if isinstance(events, list) else []
+    return list(_get_year_schedule(year).events)
 
 
 def _build_sessions_for_event(year: int, event: str) -> list[str]:
@@ -229,10 +360,9 @@ def _build_sessions_for_event(year: int, event: str) -> list[str]:
     return list(event_sessions)
 
 
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
-    """Get cached events as immutable tuple."""
-    return tuple(_build_events_for_year(year))
+    """Get the season's event names as an immutable tuple (memoized per season)."""
+    return _get_year_schedule(year).events
 
 
 def get_events(year: int) -> EventSchedule:
@@ -240,10 +370,14 @@ def get_events(year: int) -> EventSchedule:
     return get_event_schedule(year)
 
 
-@lru_cache(maxsize=128)
 def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
-    """Get cached sessions as immutable tuple."""
-    return tuple(_build_sessions_for_event(year, event))
+    """Get the resolved session list as an immutable tuple (memoized per season)."""
+    record = _get_year_schedule(year)
+    sessions = record.sessions.get(event)
+    if sessions is None:
+        sessions = tuple(_build_sessions_for_event(year, event))
+        record.sessions[event] = sessions
+    return sessions
 
 
 def get_sessions(year: int, event: str) -> list[str]:

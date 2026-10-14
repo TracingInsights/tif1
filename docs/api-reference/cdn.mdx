@@ -308,7 +308,7 @@ Most users never need to interact with the CDN API directly. It works transparen
 12. **High-availability requirements**: Add multiple backup sources for production applications
 
 <Warning>
-  **Never use `raw.githubusercontent.com` as a CDN source.** GitHub's raw content URLs have strict rate limits (60 requests/hour for unauthenticated requests). tif1 explicitly blocks these URLs during initialization. Use jsDelivr or another proper CDN service instead.
+  **Never use `raw.githubusercontent.com` as a CDN source.** GitHub's raw content URLs have strict rate limits (60 requests/hour for unauthenticated requests). tif1 explicitly blocks these URLs during initialization. Use jsDelivr or another proper CDN service instead. (The live event schedule in `tif1.events` is the one deliberate exception: a single `schedule_{year}.json` per season, cached for `schedule_ttl_hours`, fetched outside the CDN chain.)
 
   **Why it is blocked:**
   - Rate limits: 60 requests/hour (unauthenticated) or 5,000/hour (authenticated)

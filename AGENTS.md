@@ -39,7 +39,7 @@ Key patterns:
 - All exceptions accept `**context` kwargs for structured error info.
 
 Constraints:
-- Never use `https://raw.githubusercontent.com` CDN (rate limits). Use jsDelivr (primary), Hugging Face buckets (fallback), or StaticDelivr (last resort) only.
+- Never use `https://raw.githubusercontent.com` as a CDN for the data repositories (rate limits). Use jsDelivr (primary), Hugging Face buckets (fallback), or StaticDelivr (last resort) only. The one sanctioned raw GitHub URL is the live event schedule: `events.py` fetches `theOehrly/f1schedule/master/schedule_{year}.json` (the file FastF1 reads, 5-minute edge cache) for the current/future season, caches the raw file in the SQLite `json` tier under `f1schedule/schedule_{year}.json` for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`), and falls back to the vendored `data/schedules/f1schedule/` files; past seasons are served from the vendored files only.
 - Python >=3.11 (CI tests 3.11 through 3.15); use type hints everywhere; Google-style docstrings for public APIs.
 - Ruff ruleset (see pyproject.toml for full select/ignore); line length 100, double quotes, space indent.
 - Keep imports sorted (ruff/format), avoid unused imports, prefer explicit names.
