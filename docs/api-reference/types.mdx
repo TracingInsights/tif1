@@ -15,7 +15,7 @@ keywords:
 
 ## Overview
 
-`tif1` is built with type safety as a core design goal. Every public API, function, method, and data structure includes type hints. These hints enable static type checkers (mypy, pyright, pytype) to catch errors before runtime. This design provides multiple benefits:
+`tif1` is built with type safety as a core design goal. Most public functions, methods, and data structures include type hints. These hints enable static type checkers (mypy, pyright, pytype) to catch errors before runtime. This design provides multiple benefits:
 
 - **Compile-time error detection**: Catch type mismatches, invalid parameters, and API misuse before running code
 - **Enhanced IDE support**: Get accurate autocomplete, inline documentation, parameter hints, and refactoring tools
@@ -87,7 +87,7 @@ Literal types are a key Python type system feature. They restrict values to a sp
 
 ### `BackendType`
 
-The `BackendType` literal specifies which DataFrame library backend to use for data operations. `tif1` is designed to be backend-agnostic, supporting both pandas and polars with identical APIs.
+The `BackendType` literal specifies which DataFrame library backend to use for data operations. `tif1` is designed to be backend-agnostic: pandas and polars sessions have the same entry points. Column dtypes differ; for example, polars time columns hold float seconds.
 
 ```python
 BackendType = Literal["pandas", "polars"]
@@ -131,7 +131,7 @@ from tif1.types import BackendType
 
 # Explicit type annotation ensures type safety
 lib: BackendType = "pandas"
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib=lib)
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race", lib=lib)
 
 # Type checker catches invalid backends at compile time
 # lib: BackendType = "dask"  # ✗ Type error: "dask" not in Literal["pandas", "polars"]
@@ -151,7 +151,7 @@ backend: BackendType = "polars"
 config.set("lib", backend)
 
 # All subsequent sessions use polars automatically
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 print(type(session.laps))  # <class 'polars.dataframe.frame.DataFrame'>
 
 # Verify backend
@@ -210,7 +210,7 @@ def get_backend_type(session: tif1.Session) -> BackendType:
     else:
         raise TypeError(f"Unknown backend: {type(session.laps)}")
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 backend: BackendType = get_backend_type(session)
 print(f"Session using: {backend}")
 ```
@@ -234,7 +234,7 @@ def optimize_for_backend(
         # Pandas-specific optimizations
         if isinstance(df, pd.DataFrame):
             # Use categorical for string columns
-            for col in df.select_dtypes(include=['object']).columns:
+            for col in df.select_dtypes(include=['object', 'str']).columns:
                 if df[col].nunique() / len(df) < 0.5:
                     df[col] = df[col].astype('category')
         return df
@@ -248,7 +248,7 @@ def optimize_for_backend(
 
     return df
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="pandas")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race", lib="pandas")
 backend: BackendType = "pandas"
 optimized_laps = optimize_for_backend(session.laps, backend)
 ```
@@ -328,20 +328,23 @@ Introduced in 2021, modified the traditional format:
 |-----|---------|---------|
 | Friday | Practice 1 (FP1) | Only practice session, limited setup time |
 | Friday | Qualifying | Determines Sprint starting grid |
+| Saturday | Practice 2 (FP2) | Second practice session |
 | Saturday | Sprint | Short race (~100km), determines Race starting grid |
 | Sunday | Race | Main event, full championship points |
 
-**Sprint Weekend Format (2023+)**
+**Sprint Weekend Format (2024+)**
 
-Current sprint format with additional qualifying:
+Current sprint format with a separate sprint qualifying:
 
 | Day | Session | Purpose |
 |-----|---------|---------|
 | Friday | Practice 1 (FP1) | Only practice session |
-| Friday | Sprint Qualifying/Shootout | Determines Sprint starting grid |
-| Saturday | Sprint | Short race, determines Race starting grid |
-| Saturday | Qualifying | Determines Race starting grid (overrides Sprint result) |
+| Friday | Sprint Qualifying | Determines Sprint starting grid |
+| Saturday | Sprint | Short race with its own points |
+| Saturday | Qualifying | Determines Race starting grid |
 | Sunday | Race | Main event, full championship points |
+
+In 2023, `Qualifying` ran on Friday, and a `Sprint Shootout` set the Sprint grid on Saturday.
 
 #### Session Type Details
 
@@ -352,8 +355,9 @@ Current sprint format with additional qualifying:
 
 **Qualifying Sessions**
 - `"Qualifying"`: Main qualifying session determining race grid
-- `"Sprint Qualifying"`: Qualifying for sprint race (2023 format, some races)
-- `"Sprint Shootout"`: Alternative name for sprint qualifying (2023 format, some races)
+- `"Sprint Qualifying"`: Qualifying for the sprint race (2024 onward)
+- `"Sprint Shootout"`: The 2023 name of the sprint qualifying session
+- On 2021-2022 sprint weekends, the event has a `"Sprint"` session and no separate sprint qualifying
 
 **Race Sessions**
 - `"Sprint"`: Short-format race (~100km, ~30 minutes)
@@ -367,7 +371,7 @@ import tif1
 
 # Type-safe session loading
 session_name: SessionType = "Qualifying"
-session = tif1.get_session(2021, "Belgian Grand Prix", session_name)
+session = tif1.get_session(2021, "Dutch Grand Prix", session_name)
 
 # Type checker prevents typos
 # session_name: SessionType = "Qualifing"  # ✗ Type error: typo caught
@@ -405,7 +409,8 @@ def load_weekend_sessions(
             session = tif1.get_session(year, gp, session_type)
             sessions[session_type] = session
             print(f"✓ Loaded {session_type}: {len(session.laps)} laps")
-        except tif1.DataNotFoundError:
+        # ValueError: the event has no such session; DataNotFoundError: no data on the CDN
+        except (ValueError, tif1.DataNotFoundError):
             print(f"✗ {session_type} not available")
 
     return sessions
@@ -419,7 +424,7 @@ standard_sessions: list[SessionType] = [
     "Race"
 ]
 
-weekend = load_weekend_sessions(2021, "Belgian Grand Prix", standard_sessions)
+weekend = load_weekend_sessions(2021, "Dutch Grand Prix", standard_sessions)
 
 # Access specific sessions
 quali = weekend.get("Qualifying")
@@ -464,7 +469,7 @@ def get_qualifying_session(year: int, gp: str) -> Optional[tif1.Session]:
             session = tif1.get_session(year, gp, session_type)
             print(f"Found {session_type}")
             return session
-        except tif1.DataNotFoundError:
+        except (ValueError, tif1.DataNotFoundError):
             continue
 
     print(f"No qualifying session found for {year} {gp}")
@@ -493,37 +498,19 @@ def detect_weekend_format(year: int, gp: str) -> WeekendFormat:
 
     Args:
         year: Season year
-        gp: Grand Prix name
+        gp: Exact event name from the schedule. get_sessions() does no alias or
+            fuzzy matching: an unknown name returns the standard five sessions
 
     Returns:
         Weekend format type
     """
-    # Check for sprint sessions
-    has_sprint = False
-    has_sprint_quali = False
-    has_fp3 = False
+    # get_session() raises ValueError for a session that the event does not
+    # have, so read the session list from the schedule instead
+    sessions: list[str] = tif1.get_sessions(year, gp)
 
-    try:
-        tif1.get_session(year, gp, "Sprint")
-        has_sprint = True
-    except tif1.DataNotFoundError:
-        pass
-
-    try:
-        tif1.get_session(year, gp, "Sprint Qualifying")
-        has_sprint_quali = True
-    except tif1.DataNotFoundError:
-        try:
-            tif1.get_session(year, gp, "Sprint Shootout")
-            has_sprint_quali = True
-        except tif1.DataNotFoundError:
-            pass
-
-    try:
-        tif1.get_session(year, gp, "Practice 3")
-        has_fp3 = True
-    except tif1.DataNotFoundError:
-        pass
+    has_sprint = "Sprint" in sessions
+    has_sprint_quali = "Sprint Qualifying" in sessions or "Sprint Shootout" in sessions
+    has_fp3 = "Practice 3" in sessions
 
     # Determine format
     if has_sprint and has_sprint_quali:
@@ -639,7 +626,7 @@ def compare_driver_pace(
                     "FastestLap": fastest,
                     "TotalLaps": len(driver_laps)
                 })
-        except tif1.DataNotFoundError:
+        except (ValueError, tif1.DataNotFoundError):
             continue
 
     return pd.DataFrame(results)
@@ -655,7 +642,7 @@ sessions_to_compare: list[SessionType] = [
 
 pace_comparison = compare_driver_pace(
     2021,
-    "Belgian Grand Prix",
+    "Dutch Grand Prix",
     "VER",
     sessions_to_compare
 )
@@ -730,7 +717,7 @@ Pirelli brings three dry compounds to each race, designated as Soft, Medium, and
 from tif1.types import CompoundType
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 laps = session.laps
 
 # Filter laps by compound
@@ -785,7 +772,7 @@ def analyze_tire_strategy(
     return pd.DataFrame(stints)
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 strategy = analyze_tire_strategy(session, "VER")
 print(strategy)
 ```
@@ -822,7 +809,7 @@ def compare_compound_performance(
             # Filter out outliers (pit laps, slow laps)
             clean_laps = compound_laps[
                 (compound_laps["LapTime"].notna()) &
-                (~compound_laps.get("Deleted", False))
+                (~compound_laps["Deleted"].fillna(False))
             ]
 
             if len(clean_laps) > 0:
@@ -835,10 +822,13 @@ def compare_compound_performance(
                     "UniqueDrivers": compound_laps["Driver"].nunique()
                 })
 
-    return pd.DataFrame(results).sort_values("AvgLapTime")
+    comparison = pd.DataFrame(results)
+    if comparison.empty:  # none of the compounds was used (for example, a wet race)
+        return comparison
+    return comparison.sort_values("AvgLapTime")
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 dry_compounds: list[CompoundType] = ["SOFT", "MEDIUM", "HARD"]
 comparison = compare_compound_performance(session, dry_compounds)
 print(comparison)
@@ -888,7 +878,7 @@ def analyze_tire_degradation(
     return pd.DataFrame()
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 degradation = analyze_tire_degradation(session, "VER", "MEDIUM")
 print(degradation)
 ```
@@ -933,7 +923,7 @@ def get_compound_statistics(session: tif1.Session) -> dict[CompoundType, dict]:
     return stats
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 stats = get_compound_statistics(session)
 
 for compound, data in stats.items():
@@ -959,6 +949,10 @@ TrackStatusType = Literal[
     "7"   # VSC Ending - VSC about to end
 ]
 ```
+
+<Note>
+  The `TrackStatus` column of a lap joins every status seen during that lap into one string, for example `"14"` or `"41"`. `TrackStatusType` lists single codes only. To find laps with a safety car, use `laps["TrackStatus"].astype(str).str.contains("4")`. Compare with `"1"` to find laps that stayed green.
+</Note>
 
 #### Track Status Breakdown
 
@@ -1010,7 +1004,7 @@ TrackStatusType = Literal[
 from tif1.types import TrackStatusType
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 laps = session.laps
 
 # Filter laps under green flag conditions
@@ -1068,7 +1062,7 @@ def get_representative_laps(session: tif1.Session) -> pd.DataFrame:
     return laps
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 clean_laps = get_representative_laps(session)
 print(f"Representative laps: {len(clean_laps)} / {len(session.laps)}")
 ```
@@ -1134,7 +1128,7 @@ def analyze_track_status_timeline(session: tif1.Session) -> pd.DataFrame:
     return pd.DataFrame(status_changes)
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 timeline = analyze_track_status_timeline(session)
 print(timeline)
 ```
@@ -1165,15 +1159,21 @@ def analyze_safety_car_impact(session: tif1.Session) -> dict:
     safety_car: TrackStatusType = "4"
     vsc: TrackStatusType = "6"
 
-    green_laps = len(laps[laps["TrackStatus"] == green_flag])
-    sc_laps = len(laps[laps["TrackStatus"] == safety_car])
-    vsc_laps = len(laps[laps["TrackStatus"] == vsc])
+    # A lap's TrackStatus can hold several codes ("41"), so test for the digit
+    status = laps["TrackStatus"].astype(str)
+    green_mask = status == green_flag
+    sc_mask = status.str.contains(safety_car)
+    vsc_mask = status.str.contains(vsc)
+
+    green_laps = int(green_mask.sum())
+    sc_laps = int(sc_mask.sum())
+    vsc_laps = int(vsc_mask.sum())
 
     total_laps = len(laps)
 
     # Calculate average lap times
-    green_avg = laps[laps["TrackStatus"] == green_flag]["LapTime"].mean()
-    sc_avg = laps[laps["TrackStatus"] == safety_car]["LapTime"].mean()
+    green_avg = laps[green_mask]["LapTime"].mean()
+    sc_avg = laps[sc_mask]["LapTime"].mean()
 
     return {
         "total_laps": total_laps,
@@ -1188,7 +1188,7 @@ def analyze_safety_car_impact(session: tif1.Session) -> dict:
     }
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 impact = analyze_safety_car_impact(session)
 
 print(f"Green flag: {impact['green_percentage']:.1f}%")
@@ -1225,14 +1225,14 @@ class LapDataDict(TypedDict):
     # ===== CORE IDENTITY (Required) =====
     # These fields are always present and never None
     Driver: str                      # 3-letter driver code (e.g., "VER", "HAM")
-    DriverNumber: str                # Car number as string (e.g., "33", "44")
+    DriverNumber: str                # Car number as string (e.g., "1", "44")
     Team: str                        # Team name (e.g., "Red Bull Racing")
     Time: datetime.timedelta         # Session time from start (e.g., 0:15:23.456)
 
     # ===== LAP TIMING (Optional, timedelta) =====
     # All timing fields are timedelta objects, may be None
     LapTime: NotRequired[datetime.timedelta | None]           # Total lap time
-    LapNumber: NotRequired[float | None]                      # Lap number (float for partial laps)
+    LapNumber: NotRequired[float | None]                      # Lap number (float64 on pandas so it can hold NaN)
     Stint: NotRequired[float | None]                          # Stint number (1, 2, 3, ...)
     PitOutTime: NotRequired[datetime.timedelta | None]        # Time exiting pit lane
     PitInTime: NotRequired[datetime.timedelta | None]         # Time entering pit lane
@@ -1254,10 +1254,10 @@ class LapDataDict(TypedDict):
     # ===== TIRE INFORMATION (Optional) =====
     Compound: NotRequired[str | None]         # Tire compound (SOFT, MEDIUM, HARD, etc.)
     TyreLife: NotRequired[float | None]       # Tire age in laps
-    FreshTyre: NotRequired[bool]              # Whether tire is new (not NotRequired)
+    FreshTyre: NotRequired[bool]              # Whether the tire was new at the start of the stint
 
     # ===== SESSION/LAP METADATA (Optional) =====
-    TrackStatus: NotRequired[str | None]      # Track status code ("1", "2", "4", etc.)
+    TrackStatus: NotRequired[str | None]      # Status codes seen on the lap ("1", "4", "41", ...)
     Position: NotRequired[float | None]       # Position at lap end
     IsPersonalBest: NotRequired[bool]         # Whether lap is driver's PB
     QualifyingSession: NotRequired[str | None]  # Qualifying session (Q1, Q2, Q3)
@@ -1278,8 +1278,12 @@ class LapDataDict(TypedDict):
     Rainfall: NotRequired[bool]                          # Whether it's raining
     TrackTemp: NotRequired[float | None]                 # Track temperature (°C)
     WindDirection: NotRequired[int | None]               # Wind direction (degrees)
-    WindSpeed: NotRequired[float | None]                 # Wind speed (km/h)
+    WindSpeed: NotRequired[float | None]                 # Wind speed (m/s)
 ```
+
+<Note>
+  The annotations describe pandas rows. On pandas, the time fields are `timedelta64[ns]` columns, and `Driver`, `Team`, `Compound`, and `TrackStatus` are `category` columns. On polars, the time fields (`LapTime`, `Time`, `Sector1Time`, ...) are Float64 seconds. `LapNumber`, `Stint`, `TyreLife`, and `Position` are Int64, and `LapStartDate` is a string.
+</Note>
 
 #### Field Categories Explained
 
@@ -1288,9 +1292,10 @@ class LapDataDict(TypedDict):
 These four fields are always present and form the unique identity of each lap:
 
 ```python
+import datetime
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 laps = session.laps
 
 # Core fields are always available
@@ -1305,23 +1310,24 @@ for _, lap in laps.head().iterrows():
 
 **Lap Timing Fields**
 
-Timing data uses `datetime.timedelta` objects for precision and easy arithmetic:
+Timing data uses `datetime.timedelta` objects (`pd.Timedelta` on pandas) for precision and easy arithmetic:
 
 ```python
 import tif1
-import datetime
+import pandas as pd
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Qualifying")
 laps = session.laps
 
-# Access timing fields (may be None)
+# Access timing fields (NaT when missing)
 for _, lap in laps.head().iterrows():
-    lap_time = lap.get("LapTime")  # timedelta | None
-    s1_time = lap.get("Sector1Time")  # timedelta | None
-    s2_time = lap.get("Sector2Time")  # timedelta | None
-    s3_time = lap.get("Sector3Time")  # timedelta | None
+    lap_time = lap.get("LapTime")  # pd.Timedelta or NaT
+    s1_time = lap.get("Sector1Time")  # pd.Timedelta or NaT
+    s2_time = lap.get("Sector2Time")  # pd.Timedelta or NaT
+    s3_time = lap.get("Sector3Time")  # pd.Timedelta or NaT
 
-    if all([lap_time, s1_time, s2_time, s3_time]):
+    # NaT is truthy, so test with pd.notna() instead of all([...])
+    if all(pd.notna(t) for t in (lap_time, s1_time, s2_time, s3_time)):
         # Calculate sector percentages
         total_seconds = lap_time.total_seconds()
         s1_pct = (s1_time.total_seconds() / total_seconds) * 100
@@ -1337,8 +1343,9 @@ Speed measurements at various points around the track (in km/h):
 
 ```python
 import tif1
+import pandas as pd
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Qualifying")
 laps = session.laps
 
 # Find fastest speed trap
@@ -1372,7 +1379,7 @@ Track tire compound, age, and condition:
 import tif1
 from tif1.types import CompoundType
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 laps = session.laps
 
 # Analyze tire strategy
@@ -1401,7 +1408,7 @@ Additional context about the lap:
 import tif1
 from tif1.types import TrackStatusType
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Qualifying")
 laps = session.laps
 
 # Find personal best laps
@@ -1431,7 +1438,7 @@ Weather conditions sampled at each lap:
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 laps = session.laps
 
 # Track weather changes during race
@@ -1483,7 +1490,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
 
     # Timing
     lap_time = lap.get("LapTime")
-    if lap_time:
+    if pd.notna(lap_time):  # NaT is truthy, so test with pd.notna()
         analysis["lap_time"] = lap_time
         analysis["lap_time_seconds"] = lap_time.total_seconds()
 
@@ -1492,7 +1499,7 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
         s2 = lap.get("Sector2Time")
         s3 = lap.get("Sector3Time")
 
-        if all([s1, s2, s3]):
+        if all(pd.notna(s) for s in (s1, s2, s3)):
             total = lap_time.total_seconds()
             analysis["sector_split"] = {
                 "S1": f"{(s1.total_seconds() / total) * 100:.1f}%",
@@ -1543,8 +1550,8 @@ def analyze_lap_comprehensive(lap: pd.Series) -> dict:
     return analysis
 
 # Usage
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
-fastest_lap = session.get_fastest_lap()
+session = tif1.get_session(2021, "Dutch Grand Prix", "Qualifying")
+fastest_lap = session.laps.pick_fastest()  # a Lap (pandas Series)
 
 analysis = analyze_lap_comprehensive(fastest_lap)
 
@@ -1562,44 +1569,50 @@ if "tire" in analysis:
 
 ### `TelemetryDataDict`
 
-Structure of high-frequency telemetry data. All fields except Time are optional.
+Structure of telemetry data. All fields except Time are optional.
 
 ```python
 class TelemetryDataDict(TypedDict):
-    Time: float                                    # Time from lap start (seconds)
-    RPM: NotRequired[int | None]                   # Engine RPM
+    Time: float                                    # Time from lap start (frames: timedelta64 on pandas, Float64 seconds on polars)
+    RPM: NotRequired[int | None]                   # Engine RPM (float64 in session frames)
     Speed: NotRequired[float | None]               # Speed (km/h)
     nGear: NotRequired[int | None]                 # Gear number (1-8)
     Throttle: NotRequired[float | None]            # Throttle position (0-100%)
-    Brake: NotRequired[int | None]                 # Brake status (0=off, 1=on)
-    DRS: NotRequired[int | None]                   # DRS status (0=off, 10+=on)
+    Brake: NotRequired[int | None]                 # Brake applied (bool on pandas, 0/1 Int64 on polars)
+    DRS: NotRequired[int | None]                   # DRS flag (0=closed, 1=open)
     Distance: NotRequired[float | None]            # Distance from lap start (meters)
-    RelativeDistance: NotRequired[float | None]    # Relative distance
-    DriverAhead: NotRequired[str | None]           # Driver code ahead
-    DistanceToDriverAhead: NotRequired[float | None]  # Gap to driver ahead
-    X: NotRequired[float | None]                   # X coordinate (meters)
-    Y: NotRequired[float | None]                   # Y coordinate (meters)
-    Z: NotRequired[float | None]                   # Z coordinate (meters)
+    RelativeDistance: NotRequired[float | None]    # Distance as a fraction of the lap (0-1)
+    DriverAhead: NotRequired[str | None]           # Driver number ahead (string); NaN/null when nobody is ahead
+    DistanceToDriverAhead: NotRequired[float | None]  # Gap to driver ahead (meters); NaN/null when nobody is ahead
+    X: NotRequired[float | None]                   # X coordinate
+    Y: NotRequired[float | None]                   # Y coordinate
+    Z: NotRequired[float | None]                   # Z coordinate
     AccelerationX: NotRequired[float | None]       # X acceleration
     AccelerationY: NotRequired[float | None]       # Y acceleration
     AccelerationZ: NotRequired[float | None]       # Z acceleration
-    DataKey: NotRequired[str | None]               # Data key identifier
+    DataKey: NotRequired[str | None]               # Data key identifier (not in session telemetry frames)
 ```
+
+<Note>
+  `Time` is declared as `float`, so a type checker sees `float`. In the frames, `Time` is a lap-relative timedelta on pandas and float seconds on polars. Session telemetry frames also carry `Driver` and `LapNumber` columns that the TypedDict does not declare.
+</Note>
 
 **Usage:**
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-lap = session.laps.iloc[0]
+import pandas as pd
+
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
+lap = session.laps.iloc[0]  # a Lap (pandas Series)
 tel = lap.telemetry
 
-# Access telemetry data
-for _, sample in tel.iterrows():
-    time: float = sample["Time"]
-    speed = sample.get("Speed")  # May be None
-    if speed:
-        print(f"Time: {time:.2f}s, Speed: {speed:.1f} km/h")
+# Access telemetry data (first 10 samples)
+for _, sample in tel.head(10).iterrows():
+    time: pd.Timedelta = sample["Time"]  # lap-relative timedelta on pandas
+    speed = sample.get("Speed")  # NaN when missing
+    if pd.notna(speed):
+        print(f"Time: {time.total_seconds():.2f}s, Speed: {speed:.1f} km/h")
 ```
 
 ---
@@ -1610,21 +1623,21 @@ Structure of weather data returned by `session.weather`.
 
 ```python
 class WeatherDataDict(TypedDict):
-    Time: datetime.timedelta                       # Session time from start
+    Time: datetime.timedelta                       # Session time (timedelta64 on pandas, Duration(ms) on polars)
     AirTemp: NotRequired[float | None]             # Air temperature (°C)
     Humidity: NotRequired[float | None]            # Relative humidity (%)
     Pressure: NotRequired[float | None]            # Atmospheric pressure (mbar)
-    Rainfall: NotRequired[bool | None]             # Rainfall indicator
+    Rainfall: NotRequired[bool | None]             # Rainfall indicator (nullable boolean)
     TrackTemp: NotRequired[float | None]           # Track temperature (°C)
-    WindDirection: NotRequired[int | None]         # Wind direction (degrees)
-    WindSpeed: NotRequired[float | None]           # Wind speed (km/h)
+    WindDirection: NotRequired[int | None]         # Wind direction (degrees, Int64)
+    WindSpeed: NotRequired[float | None]           # Wind speed (m/s)
 ```
 
 **Usage:**
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 weather = session.weather
 
 # Access weather data
@@ -1643,22 +1656,26 @@ Structure of race control messages.
 
 ```python
 class RaceControlDataDict(TypedDict):
-    Time: float                                    # Session time (seconds)
-    Category: NotRequired[str | None]              # Message category
+    Time: float                                    # Message time (frames: datetime64 timestamp on both backends)
+    Category: NotRequired[str | None]              # Message category ("Flag", "Drs", "SafetyCar", "Other")
     Message: NotRequired[str | None]               # Message text
-    Status: NotRequired[str | None]                # Track status
+    Status: NotRequired[str | None]                # Status (for example, DRS "ENABLED")
     Flag: NotRequired[str | None]                  # Flag type
     Scope: NotRequired[str | None]                 # Message scope
-    Sector: NotRequired[int | str | None]          # Affected sector
+    Sector: NotRequired[int | str | None]          # Affected sector (float64 in the frame, NaN when absent)
     RacingNumber: NotRequired[str | None]          # Affected driver number
     Lap: NotRequired[int | None]                   # Lap number
 ```
+
+<Note>
+  `Time` is declared as `float`, but the `Time` column of `session.race_control_messages` holds absolute timestamps, not session seconds.
+</Note>
 
 **Usage:**
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 messages = session.race_control_messages
 
 # Access race control messages
@@ -1686,11 +1703,13 @@ class DriverInfoDict(TypedDict):
     url: str                       # Headshot URL
 ```
 
+`DriverInfoDict` describes the raw driver payload. `session.drivers_df` renames these keys to `Driver`, `Team`, `DriverNumber`, `FirstName`, `LastName`, `TeamColor`, and `HeadshotUrl`. `TeamColor` has no leading `#`.
+
 **Usage:**
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 drivers_df = session.drivers_df
 
 # Access driver information
@@ -1713,7 +1732,7 @@ For better IDE support, use type hints with DataFrames:
 import pandas as pd
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 
 # Type hint for laps DataFrame
 laps: pd.DataFrame = session.laps
@@ -1734,7 +1753,7 @@ import tif1
 config = tif1.get_config()
 config.set("lib", "polars")
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 
 # Type hint for laps DataFrame
 laps: pl.DataFrame = session.laps
@@ -1755,10 +1774,12 @@ DataFrame = Union[pd.DataFrame, pl.DataFrame]
 
 def analyze_laps(laps: DataFrame) -> dict:
     """Works with both pandas and polars."""
+    # LapTime is a timedelta on pandas but float seconds on polars;
+    # LapTimeSeconds is float seconds on both backends.
     if isinstance(laps, pd.DataFrame):
-        return {"count": len(laps), "fastest": laps["LapTime"].min()}
+        return {"count": len(laps), "fastest": laps["LapTimeSeconds"].min()}
     else:
-        return {"count": len(laps), "fastest": laps["LapTime"].min()}
+        return {"count": laps.height, "fastest": laps["LapTimeSeconds"].min()}
 ```
 
 ---
@@ -1768,11 +1789,12 @@ def analyze_laps(laps: DataFrame) -> dict:
 ### Core Objects
 
 ```python
+import tif1
 from tif1 import Session, Driver
 from tif1.core import Lap, Laps, Telemetry
 
 # Session
-session: Session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session: Session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 
 # Driver
 driver: Driver = session.get_driver("VER")
@@ -1790,10 +1812,14 @@ telemetry: Telemetry = lap.telemetry
 ### Model Objects
 
 ```python
-from tif1.core import SessionResults, DriverResult, CircuitInfo
+import tif1
+from tif1.models import CircuitInfo, DriverResult, SessionResults
 
-# Session results
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
+
+# Session results (a DataFrame; each row is a DriverResult)
 results: SessionResults = session.results
+first: DriverResult = results.iloc[0]
 
 # Circuit info
 circuit: CircuitInfo = session.get_circuit_info()
@@ -1806,17 +1832,19 @@ circuit: CircuitInfo = session.get_circuit_info()
 ### Async Functions
 
 ```python
+import asyncio
 from typing import Awaitable
 import pandas as pd
 import tif1
 
 async def load_session_async() -> pd.DataFrame:
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
     laps: pd.DataFrame = await session.laps_async()
     return laps
 
-# Type hint for async function
+# Type hint for the coroutine; run it to get the DataFrame
 load_func: Awaitable[pd.DataFrame] = load_session_async()
+laps: pd.DataFrame = asyncio.run(load_func)
 ```
 
 ### Dictionary Returns
@@ -1826,14 +1854,17 @@ from typing import Dict
 import pandas as pd
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 
-# Type hint for telemetry dictionary
-tels: Dict[str, pd.DataFrame] = session.get_fastest_laps_tels(by_driver=True)
+# get_fastest_laps_tels() returns ONE DataFrame with a Driver column, not a dict
+tels: pd.DataFrame = session.get_fastest_laps_tels(by_driver=True)
 
-for driver, tel in tels.items():
-    driver_code: str = driver
-    telemetry: pd.DataFrame = tel
+# Build a dict keyed by driver code when a mapping is needed
+tels_by_driver: Dict[str, pd.DataFrame] = {
+    str(driver): tel for driver, tel in tels.groupby("Driver")
+}
+
+for driver_code, telemetry in tels_by_driver.items():
     print(f"{driver_code}: {len(telemetry)} samples")
 ```
 
@@ -1868,13 +1899,13 @@ def analyze_qualifying(
     session_name: SessionType = "Qualifying"
     session: Session = tif1.get_session(year, gp, session_name, lib=lib)
 
-    fastest_laps: pd.DataFrame = session.get_fastest_laps(by_driver=True)
+    fastest_laps = session.get_fastest_laps(by_driver=True)
 
+    # LapTimeSeconds is float seconds on both backends (LapTime is a
+    # timedelta on pandas); zip() works on pandas and polars columns
     results: Dict[str, float] = {}
-    for _, row in fastest_laps.iterrows():
-        driver: str = row["Driver"]
-        lap_time: float = row["LapTime"]
-        results[driver] = lap_time
+    for driver, lap_time in zip(fastest_laps["Driver"], fastest_laps["LapTimeSeconds"]):
+        results[str(driver)] = float(lap_time)
 
     return results
 
@@ -1913,12 +1944,12 @@ def find_fastest_sector(
         lap: Lap object
 
     Returns:
-        Tuple of (sector_number, sector_time)
+        Tuple of (sector_number, sector_time_seconds)
     """
-    # Access lap data (Lap is a Series subclass)
-    s1: float = lap["Sector1Time"]
-    s2: float = lap["Sector2Time"]
-    s3: float = lap["Sector3Time"]
+    # Access lap data (Lap is a Series subclass; sector times are timedeltas)
+    s1: float = lap["Sector1Time"].total_seconds()
+    s2: float = lap["Sector2Time"].total_seconds()
+    s3: float = lap["Sector3Time"].total_seconds()
 
     sectors: List[Tuple[int, float]] = [
         (1, s1),
@@ -1931,7 +1962,7 @@ def find_fastest_sector(
 
 # Usage with type checking
 if __name__ == "__main__":
-    results: Dict[str, float] = analyze_qualifying(2021, "Belgian Grand Prix")
+    results: Dict[str, float] = analyze_qualifying(2021, "Dutch Grand Prix")
 
     for driver, time in results.items():
         print(f"{driver}: {time:.3f}s")
@@ -1973,48 +2004,7 @@ Modern IDEs like VS Code, PyCharm, and others provide:
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-# Hovering over 'session' shows: session: Session
-
-laps = session.laps
-# Hovering over 'laps' shows: laps: DataFrame
-
-driver = session.get_driver("VER")
-# Hovering over 'driver' shows: driver: Driver
-```
-
----
-
-## Best Practices
-
-1. **Always use type hints in function signatures**: Helps catch errors early.
-
-2. **Use Union types for lib-agnostic code**: Supports both pandas and polars.
-
-3. **Import types from tif1.types**: Centralized type definitions.
-
-4. **Use TypedDict for JSON data**: Better than plain dicts.
-
-5. **Enable strict type checking**: Use mypy or pyright in CI/CD.
-
-6. **Document complex types**: Add docstrings explaining type parameters.
-
-7. **Use Optional for nullable values**: Makes None handling explicit.
-
-```python
-from typing import Optional
-import tif1
-
-def get_driver_safely(
-    session: tif1.Session,
-    driver_code: str
-) -> Optional[tif1.Driver]:
-    """Get driver or None if not found."""
-    try:
-        return session.get_driver(driver_code)
-    except tif1.DriverNotFoundError:
-        return None
- "Belgian Grand Prix", "Race")
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 # Hovering over 'session' shows: session: Session
 
 laps = session.laps
@@ -2190,6 +2180,7 @@ def get_driver_safely(
         return None
 
 # Usage with type checking
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 driver = get_driver_safely(session, "VER")
 if driver is not None:  # Type checker knows driver is not None here
     laps = driver.laps
@@ -2231,6 +2222,8 @@ Restrict values to specific constants:
 
 ```python
 from typing import Literal
+import pandas as pd
+import tif1
 from tif1.types import TrackStatusType
 
 # ✓ Good: Literal type for constants
@@ -2244,6 +2237,7 @@ def filter_by_status(
     return laps[laps["TrackStatus"] == status]
 
 # Type checker ensures only valid status codes
+laps = tif1.get_session(2021, "Dutch Grand Prix", "Race").laps
 clean_laps = filter_by_status(laps, GREEN_FLAG)  # ✓ Valid
 # error_laps = filter_by_status(laps, "9")  # ✗ Type error
 ```
@@ -2303,7 +2297,7 @@ def comprehensive_analysis(
 
             results[session_type] = session_results
 
-        except tif1.DataNotFoundError:
+        except (ValueError, tif1.DataNotFoundError):
             continue
 
     return results
@@ -2311,7 +2305,7 @@ def comprehensive_analysis(
 # Usage with full type safety
 analysis = comprehensive_analysis(
     year=2021,
-    gp="Belgian Grand Prix",
+    gp="Dutch Grand Prix",
     sessions=["Practice 1", "Qualifying", "Race"],
     drivers=["VER", "HAM", "BOT"],
     backend="pandas"

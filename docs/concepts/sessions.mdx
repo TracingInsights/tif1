@@ -23,7 +23,7 @@ The Session object is the primary interface for access to all F1 data associated
 - **Telemetry data** - High-frequency sensor data capturing speed, throttle, brake, RPM, gear, DRS, and 3D position coordinates
 - **Weather conditions** - Time-series weather data including air temperature, track temperature, humidity, wind, and rainfall
 - **Race control messages** - Official FIA communications including flags, penalties, safety car periods, and track status changes
-- **Session results** - Final classification, grid positions, and driver standings
+- **Session results** - Final classification with driver and team details, finish status, and laps completed
 - **Circuit information** - Track layout data including corner positions, angles, and circuit rotation
 
 The Session object uses **lazy loading** and **intelligent caching** for maximum performance. Data is fetched from the CDN only on explicit access. Subsequent accesses are served instantly from cache. This architecture enables efficient work with large datasets and keeps the API simple and intuitive.
@@ -62,7 +62,7 @@ The Session object organizes data in a logical hierarchy:
 1. **Session Level** - Top-level metadata, configuration, and session-wide data (weather, race control messages)
 2. **Driver Level** - Individual driver information, complete lap history for each driver
 3. **Lap Level** - Single lap data including lap time, sectors, tire compound, track status
-4. **Telemetry Level** - High-frequency sensor data for a specific lap (typically 100-300 Hz sampling rate)
+4. **Telemetry Level** - Sensor data for a specific lap, sampled several times per second (about 7-8 Hz)
 
 ## Creating a Session
 
@@ -86,9 +86,14 @@ session = tif1.get_session(2025, "Monaco", "Qualifying")
 session = tif1.get_session(2025, "Monaco", "Q")
 session = tif1.get_session(2025, "Monaco", "Race")
 session = tif1.get_session(2025, "Monaco", "R")
-session = tif1.get_session(2025, "Monaco", "Sprint")
-session = tif1.get_session(2025, "Monaco", "Sprint Qualifying")
+session = tif1.get_session(2025, "Monaco", "race")  # session names are case-insensitive
+
+# Sprint sessions exist only on sprint weekends (Monaco has none)
+session = tif1.get_session(2025, "Miami Grand Prix", "Sprint")
+session = tif1.get_session(2025, "Miami Grand Prix", "Sprint Qualifying")
 ```
+
+tif1 resolves the event name in three steps. First, it tries the exact event name. Next, it tries a table of circuit, city, and country aliases, such as `"Spa"`, `"Monza"`, and `"USA"`. Last, it uses fuzzy matching. An alias for an event that is not on the calendar of that season raises `tif1.EventNotInSeasonError`, a subclass of `ValueError`.
 
 ### Performance Optimization with Polars
 
@@ -109,7 +114,7 @@ fastest = session.get_fastest_laps()  # Also Polars
 ```
 
 <Note>
-Polars (`polars>=1.44.1`) is installed with `tif1`. If Polars is not importable, for example after a manual uninstall, tif1 automatically falls back to pandas with a warning.
+Polars (`polars>=2.0.0,<3`) is installed with `tif1`. If Polars is not importable, for example after a manual uninstall, tif1 automatically falls back to pandas with a warning.
 </Note>
 
 ### Cache Control
@@ -150,8 +155,8 @@ Set default values for `lib` and `enable_cache` globally with the config system:
 import tif1
 
 # Set global defaults
-tif1.config.set("lib", "polars")
-tif1.config.set("enable_cache", True)
+tif1.get_config().set("lib", "polars")
+tif1.get_config().set("enable_cache", True)
 
 # All subsequent sessions will use these defaults
 session = tif1.get_session(2025, "Silverstone", "Race")  # Uses polars + cache
@@ -163,11 +168,14 @@ Session properties provide read-only access to various data types. All propertie
 
 ### drivers
 
-Returns a list of driver numbers as strings. This property provides FastF1 API compatibility.
+Returns a list of driver numbers as strings, in classification order (as in FastF1). `session.drivers[:10]` is the top ten. The 3-letter codes are in `session.drivers_df["Driver"]`, in the same order.
+
+For seasons whose upstream driver file is sorted by car number only, tif1 rebuilds the order from the laps. That order can miss a post-race penalty.
 
 ```python
 drivers = session.drivers
-# ['1', '11', '16', '55', '63', '4', '14', '18', '10', '31', ...]
+# 2025 Bahrain Grand Prix race:
+# ['81', '63', '4', '16', '44', '1', '10', '31', '22', '87', ...]
 
 # Iterate over all drivers
 for driver_number in session.drivers:
@@ -182,14 +190,14 @@ Alias for `drivers` property. Returns the same list of driver numbers.
 
 ```python
 driver_list = session.driver_list
-# ['1', '11', '16', '55', '63', '4', '14', '18', '10', '31', ...]
+# ['81', '63', '4', '16', '44', '1', '10', '31', '22', '87', ...]
 ```
 
 **Returns:** `list[str]` - List of driver numbers as strings
 
 ### drivers_df
 
-Returns comprehensive driver information as a DataFrame. This is the most detailed driver data available, including names, teams, colors, and headshot URLs.
+Returns comprehensive driver information as a DataFrame. This is the most detailed driver data available, including names, teams, colors, and headshot URLs. The rows are in the same classification order as `session.drivers`.
 
 ```python
 drivers_df = session.drivers_df
@@ -200,16 +208,17 @@ drivers_df = session.drivers_df
 # - DriverNumber: Driver's racing number as string
 # - FirstName: Driver's first name
 # - LastName: Driver's last name
-# - TeamColor: Hex color code for team (e.g., '#3671C6')
+# - TeamColor: Hex color code for team without a leading '#' (e.g., '3671C6')
 # - HeadshotUrl: URL to driver's official headshot image
 
 # Example usage
 print(drivers_df[["Driver", "Team", "DriverNumber"]])
-#    Driver                Team DriverNumber
-# 0     VER  Red Bull Racing            1
-# 1     PER  Red Bull Racing           11
-# 2     HAM         Mercedes           44
-# 3     RUS         Mercedes           63
+# Output for the 2025 Bahrain Grand Prix race:
+#   Driver      Team DriverNumber
+# 0    PIA   McLaren           81
+# 1    RUS  Mercedes           63
+# 2    NOR   McLaren            4
+# 3    LEC   Ferrari           16
 # ...
 
 # Filter by team
@@ -235,11 +244,13 @@ Returns all laps for all drivers in the session. This is one of the most importa
 ```python
 laps = session.laps  # pandas or polars DataFrame
 
-# Available columns (varies by session type):
-# - Time: Lap completion time (timedelta)
+# Available columns (varies by session type). Time-like columns are
+# timedelta64 on pandas and float seconds on polars:
+# - Time: Session time when the lap ended
 # - Driver: 3-letter driver code
 # - DriverNumber: Driver's racing number
-# - LapTime: Lap time (timedelta)
+# - LapTime: Lap time
+# - LapTimeSeconds: Lap time as float seconds on both backends
 # - LapNumber: Sequential lap number
 # - Stint: Stint number
 # - PitOutTime: Time exiting pit lane
@@ -267,6 +278,7 @@ laps = session.laps  # pandas or polars DataFrame
 # - DeletedReason: Reason for lap deletion
 # - FastF1Generated: Boolean indicating if lap was interpolated
 # - IsAccurate: Boolean indicating data accuracy
+# - WeatherTime: Time of the matched weather sample
 # - AirTemp: Air temperature (°C) - from weather data
 # - Humidity: Relative humidity (%) - from weather data
 # - Pressure: Atmospheric pressure (mbar) - from weather data
@@ -275,14 +287,19 @@ laps = session.laps  # pandas or polars DataFrame
 # - WindDirection: Wind direction (degrees) - from weather data
 # - WindSpeed: Wind speed (m/s) - from weather data
 
+# The examples below use pandas. On polars, laps[mask] selects columns,
+# so filter rows with laps.filter(pl.col("Driver") == "VER") instead.
+
 # Example: Get all laps for a specific driver
 ver_laps = laps[laps["Driver"] == "VER"]
 
 # Example: Filter by compound
 soft_tire_laps = laps[laps["Compound"] == "SOFT"]
 
-# Example: Get fastest lap per driver
-fastest_laps = laps.loc[laps.groupby("Driver")["LapTime"].idxmin()]
+# Example: Get fastest lap per driver (drop laps without a time first:
+# idxmin raises for a driver who has no timed lap)
+timed = laps.dropna(subset=["LapTime"])
+fastest_laps = timed.loc[timed.groupby("Driver", observed=True)["LapTime"].idxmin()]
 
 # Example: Analyze sector times
 print(laps[["Driver", "LapNumber", "Sector1Time", "Sector2Time", "Sector3Time"]].head())
@@ -296,7 +313,7 @@ The `laps` property triggers a network fetch on first access if data is not cach
 
 ### weather
 
-Returns time-series weather data recorded throughout the session. Weather data is sampled at regular intervals (typically every 1-2 minutes).
+Returns time-series weather data recorded throughout the session. Weather data is sampled at regular intervals (about once per minute).
 
 ```python
 weather = session.weather
@@ -315,10 +332,12 @@ weather = session.weather
 if weather["Rainfall"].any():
     print("Rain detected during session!")
 
-# Example: Plot temperature evolution
+# Example: Plot temperature evolution (Time is a timedelta; plot minutes)
 import matplotlib.pyplot as plt
-plt.plot(weather["Time"], weather["TrackTemp"], label="Track Temp")
-plt.plot(weather["Time"], weather["AirTemp"], label="Air Temp")
+minutes = weather["Time"].dt.total_seconds() / 60
+plt.plot(minutes, weather["TrackTemp"], label="Track Temp")
+plt.plot(minutes, weather["AirTemp"], label="Air Temp")
+plt.xlabel("Session time (min)")
 plt.legend()
 plt.show()
 
@@ -331,6 +350,10 @@ print(f"Maximum wind speed: {max_wind:.1f} m/s")
 
 <Note>
 Weather data is automatically merged into the `laps` DataFrame, so each lap has associated weather conditions. Direct access to `session.weather` is necessary only for independent analysis of weather trends.
+</Note>
+
+<Note>
+`Time` is `timedelta64[ns]` on pandas and `Duration("ms")` on polars. `Rainfall` is a nullable boolean and `WindDirection` a nullable integer on both backends. When the weather payload cannot be converted, tif1 logs a warning and returns an empty DataFrame. See [Empty weather or race control tables](/concepts/backends#empty-weather-or-race-control-tables).
 </Note>
 
 ### weather_data
@@ -355,20 +378,19 @@ messages = session.race_control_messages
 # - Category: Message category (e.g., 'Flag', 'SafetyCar', 'Drs')
 # - Message: Full message text
 # - Status: Status indicator
-# - Flag: Flag type (e.g., 'YELLOW', 'GREEN', 'RED')
-# - Scope: Scope of message (e.g., 'Track', 'Sector', 'Driver')
+# - Flag: Flag type (e.g., 'GREEN', 'CLEAR', 'DOUBLE YELLOW', 'CHEQUERED', 'BLACK AND WHITE')
+# - Scope: Scope of message ('Track', 'Sector', 'Driver')
 # - Sector: Affected sector number (if applicable)
 # - RacingNumber: Affected driver number (if applicable)
-# - Lap: Lap number when message was issued
+# - Lap: Lap number when message was issued (0 when unknown on pandas, null on polars)
 
 # Example: Find all yellow flag incidents
-yellow_flags = messages[messages["Flag"] == "YELLOW"]
+yellow_flags = messages[messages["Flag"].isin(["YELLOW", "DOUBLE YELLOW"])]
 print(yellow_flags[["Time", "Message", "Sector"]])
 
-# Example: Find all driver-specific penalties
-penalties = messages[messages["Category"] == "Flag"]
-driver_penalties = penalties[penalties["RacingNumber"].notna()]
-print(driver_penalties[["Time", "RacingNumber", "Message"]])
+# Example: Find all driver-specific messages (penalties, investigations, warnings)
+driver_messages = messages[messages["RacingNumber"].notna()]
+print(driver_messages[["Time", "RacingNumber", "Message"]])
 
 # Example: Track safety car periods
 safety_car = messages[messages["Category"] == "SafetyCar"]
@@ -379,7 +401,7 @@ print(safety_car[["Time", "Message"]])
 
 ### results
 
-Returns session results with final classification and driver information. This property provides a FastF1-compatible `SessionResults` object.
+Returns the final classification with driver information, one row per driver in classification order. This property provides a FastF1-compatible `SessionResults` object.
 
 ```python
 results = session.results
@@ -388,26 +410,33 @@ results = session.results
 # - DriverNumber: Driver's racing number
 # - Abbreviation: 3-letter driver code
 # - TeamName: Full team name
-# - TeamColor: Hex color code
+# - TeamColor: Hex color code without a leading '#' (e.g., '3671C6')
 # - FirstName: Driver's first name
 # - LastName: Driver's last name
 # - FullName: Full name (FirstName + LastName)
 # - HeadshotUrl: URL to driver headshot
-# - Position: Final position (if available)
-# - ClassifiedPosition: Official classified position
-# - GridPosition: Starting grid position
-# - Status: Finish status (e.g., 'Finished', 'Retired')
-# - Points: Championship points earned
-# - Laps: Number of laps completed
+# - Position: Classified position as a float (1.0 to N)
+# - ClassifiedPosition: The same position as a string ("1" to "N")
+# - GridPosition: Not in the source data (always NaN)
+# - Status: Finish status (e.g., 'Finished', '+1 Lap', 'Did not start')
+# - Points: Not in the source data (always NaN)
+# - Laps: Number of laps completed (float)
 
 # Example: Get podium finishers
 podium = results[results["Position"] <= 3]
 print(podium[["Position", "Abbreviation", "TeamName"]])
+# Output for the 2025 Bahrain Grand Prix race:
+#    Position Abbreviation  TeamName
+# 0       1.0          PIA   McLaren
+# 1       2.0          RUS  Mercedes
+# 2       3.0          NOR   McLaren
 
-# Example: Find DNFs
-dnfs = results[results["Status"] != "Finished"]
-print(dnfs[["Abbreviation", "Status"]])
+# Example: Find drivers who did not finish on the leader's lap count
+not_on_lead_lap = results[results["Status"] != "Finished"]
+print(not_on_lead_lap[["Abbreviation", "Status", "Laps"]])
 ```
+
+`Status` comes from the lap count. In races and sprints, a driver on the leader's lap count is `"Finished"`. A lapped or retired driver is `"+1 Lap"` or `"+N Laps"`, and a driver without laps is `"Did not start"`. Other sessions report `"Finished"` for every driver. The source data has no grid positions, points, or retirement reasons. `results.iloc[i].dnf` is `True` unless the status is `"Finished"`, `"+1 Lap"`, `"+2 Laps"`, or `"Not classified"`.
 
 **Returns:** `SessionResults` (pandas DataFrame subclass) - Session results
 
@@ -418,20 +447,20 @@ Returns complete telemetry data for all drivers across all laps. This is a very 
 ```python
 car_data = session.car_data
 
-# Available columns:
-# - Time / SessionTime: Timestamp
+# Available columns (same as any telemetry frame):
+# - Time: Lap-relative time (timedelta on pandas, float seconds on polars)
 # - Driver: 3-letter driver code
+# - LapNumber: Lap the sample belongs to
 # - Speed: Speed in km/h
 # - RPM: Engine RPM
 # - nGear: Current gear (1-8)
 # - Throttle: Throttle position (0-100%)
-# - Brake: Brake pressure (boolean or 0-100)
-# - DRS: DRS status (0-14, where >10 indicates active)
-# - X: X coordinate on track (meters)
-# - Y: Y coordinate on track (meters)
-# - Z: Z coordinate (elevation, meters)
-# - Distance: Distance along track (meters)
-# - DriverAhead: Driver code of car ahead
+# - Brake: Brake applied (bool on pandas, 0/1 on polars)
+# - DRS: DRS flag (0 = closed, 1 = open)
+# - X, Y, Z: Position on track (meters)
+# - Distance, RelativeDistance: Distance along track (meters, fraction of lap)
+# - AccelerationX, AccelerationY, AccelerationZ: Acceleration components
+# - DriverAhead: Number of the car ahead as a string (missing when nobody is ahead)
 # - DistanceToDriverAhead: Gap to car ahead (meters)
 
 # Example: Analyze speed distribution
@@ -450,7 +479,7 @@ print(f"Maximum speed: {max_speed:.1f} km/h by {fastest_driver}")
 **Returns:** `DataFrame` (pandas or Polars) - Complete telemetry for all drivers
 
 <Warning>
-`car_data` can be very large (millions of rows for a full race). Access to this property fetches telemetry for ALL laps of ALL drivers, which may take significant time and memory. Consider driver-specific or lap-specific telemetry access methods instead.
+`car_data` can be very large (close to a million rows for a full race). Access to this property fetches telemetry for ALL laps of ALL drivers, which may take significant time and memory. Consider driver-specific or lap-specific telemetry access methods instead.
 </Warning>
 
 ### pos_data
@@ -491,13 +520,25 @@ name = session.name
 
 **Returns:** `str` - Session name
 
+### event_name and session_name
+
+Return the readable event and session names. `session.gp` and `session.session` keep the URL-encoded forms, because tif1 builds every CDN path from them.
+
+```python
+print(session.event_name)    # 'Bahrain Grand Prix'
+print(session.session_name)  # 'Race'
+print(session.gp)            # 'Bahrain%20Grand%20Prix' (URL-encoded)
+```
+
+**Returns:** `str` - Event name or session name
+
 ### date
 
 Returns the session date as a pandas Timestamp.
 
 ```python
 date = session.date
-# Timestamp('2025-05-25 13:00:00')
+# Timestamp('2025-05-25 15:00:00') for the 2025 Monaco Grand Prix race (local start time)
 
 print(f"Session held on: {date.strftime('%Y-%m-%d')}")
 ```
@@ -579,11 +620,11 @@ Get a Driver object for a specific driver. The Driver object provides convenient
 
 **Signature:**
 ```python
-def get_driver(self, driver_code: str) -> Driver
+def get_driver(self, driver: str) -> Driver
 ```
 
 **Parameters:**
-- `driver_code` (str): 3-letter driver code (for example, 'VER', 'HAM', 'LEC')
+- `driver` (str): 3-letter driver code (for example, 'VER', 'HAM', 'LEC') or the driver number as a string ('1')
 
 **Returns:** `Driver` - Driver object with laps and telemetry access
 
@@ -617,7 +658,7 @@ print(f"VER: {ver_fastest}, HAM: {ham_fastest}, LEC: {lec_fastest}")
 ```
 
 <Tip>
-The `get_driver()` method uses intelligent prefetching. On the first call, it fetches the driver list and the requested driver's lap data in parallel. This significantly improves performance.
+The `get_driver()` method uses prefetching. On the first call, it fetches the driver list and the session lap table in parallel. This reduces the wait for the first driver lookup.
 </Tip>
 
 ### get_fastest_laps()
@@ -645,10 +686,11 @@ def get_fastest_laps(
 # Get fastest lap for each driver
 fastest_by_driver = session.get_fastest_laps(by_driver=True)
 print(fastest_by_driver[["Driver", "LapTime", "Compound"]])
-#    Driver    LapTime Compound
-# 0     VER  0:01:32.1     SOFT
-# 1     HAM  0:01:32.3     SOFT
-# 2     LEC  0:01:32.5     SOFT
+# Output for the 2025 Bahrain Grand Prix race (sorted by LapTime):
+#   Driver                LapTime Compound
+# 0    PIA 0 days 00:01:35.140000   MEDIUM
+# 1    RUS 0 days 00:01:35.518000     SOFT
+# 2    NOR 0 days 00:01:35.728000   MEDIUM
 # ...
 
 # Get the single overall fastest lap
@@ -678,8 +720,11 @@ Get telemetry for the overall fastest lap in the session. This is a convenience 
 
 **Signature:**
 ```python
-def get_fastest_lap_tel(self) -> DataFrame
+def get_fastest_lap_tel(self, ultra_cold: bool | None = None) -> DataFrame
 ```
+
+**Parameters:**
+- `ultra_cold` (bool | None): Force the ultra-cold fetch path on or off. `None` uses the `ultra_cold_start` config key. Default: None
 
 **Returns:** `DataFrame` - Telemetry data for the fastest lap
 
@@ -724,14 +769,14 @@ def get_fastest_laps_tels(
     self,
     by_driver: bool = True,
     drivers: list[str] | None = None
-) -> dict[str, DataFrame]
+) -> DataFrame
 ```
 
 **Parameters:**
 - `by_driver` (bool): If True, fetch telemetry for each driver's fastest lap. If False, fetch only the overall fastest lap. Default: True
 - `drivers` (list[str] | None): Optional list of driver codes to filter. If None, includes all drivers. Default: None
 
-**Returns:** `dict[str, DataFrame]` - Dictionary mapping driver codes to their fastest lap telemetry
+**Returns:** `DataFrame` - One telemetry frame for all requested laps, with `Driver` and `LapNumber` columns. It is not a dict; group by `Driver` to get one frame per driver.
 
 **Examples:**
 
@@ -740,8 +785,8 @@ def get_fastest_laps_tels(
 fastest_tels = session.get_fastest_laps_tels(by_driver=True)
 
 # Access specific driver's telemetry
-ver_tel = fastest_tels["VER"]
-ham_tel = fastest_tels["HAM"]
+ver_tel = fastest_tels[fastest_tels["Driver"] == "VER"]
+ham_tel = fastest_tels[fastest_tels["Driver"] == "HAM"]
 
 # Compare speed profiles
 import matplotlib.pyplot as plt
@@ -755,19 +800,19 @@ plt.show()
 # Get telemetry for specific drivers only
 top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM", "LEC"])
 
-# Analyze all drivers' maximum speeds
-for driver, tel in fastest_tels.items():
+# Analyze all drivers' maximum speeds (polars: for (driver,), tel in fastest_tels.group_by("Driver"))
+for driver, tel in fastest_tels.groupby("Driver"):
     max_speed = tel["Speed"].max()
     print(f"{driver}: {max_speed:.1f} km/h")
 
 # Find who had the highest top speed
-max_speeds = {driver: tel["Speed"].max() for driver, tel in fastest_tels.items()}
-fastest_driver = max(max_speeds, key=max_speeds.get)
+max_speeds = fastest_tels.groupby("Driver")["Speed"].max()
+fastest_driver = max_speeds.idxmax()
 print(f"Highest top speed: {fastest_driver} at {max_speeds[fastest_driver]:.1f} km/h")
 ```
 
 <Note>
-This method uses asynchronous parallel fetching internally, which makes it much faster than calling `get_driver(driver).laps.fastest().telemetry` for each driver sequentially.
+This method uses asynchronous parallel fetching internally, which makes it much faster than calling `get_driver(driver).laps.pick_fastest().telemetry` for each driver sequentially.
 </Note>
 
 ### laps_async()
@@ -793,8 +838,9 @@ async def analyze_session():
     # Load laps asynchronously
     laps = await session.laps_async()
 
-    # Analyze data
-    fastest = laps.loc[laps.groupby("Driver")["LapTime"].idxmin()]
+    # Analyze data (pandas): fastest timed lap per driver
+    timed = laps.dropna(subset=["LapTime"])
+    fastest = timed.loc[timed.groupby("Driver", observed=True)["LapTime"].idxmin()]
     return fastest
 
 # Run the async function
@@ -840,14 +886,15 @@ circuit_info = session.get_circuit_info()
 # Access corner data
 corners = circuit_info.corners
 print(corners[["Number", "X", "Y", "Angle"]])
-#    Number        X        Y    Angle
-# 0       1   1234.5   5678.9    45.2
-# 1       2   2345.6   6789.0    -30.1
+# Output for the 2025 Bahrain Grand Prix:
+#    Number           X            Y       Angle
+# 0       1   42.405939  8329.202564 -246.615311
+# 1       2  820.781621  7879.043841 -101.177469
 # ...
 
-# Get circuit rotation
+# Get circuit rotation (a float in degrees)
 rotation = circuit_info.rotation
-print(f"Circuit rotation: {rotation}° degrees")
+print(f"Circuit rotation: {rotation}°")
 
 # Plot circuit layout
 import matplotlib.pyplot as plt
@@ -870,23 +917,32 @@ Circuit information is cached after the first call, so subsequent calls are inst
 
 ### fetch_all_laps_telemetry()
 
-Fetch telemetry for all laps of all drivers. This is equivalent to accessing `session.car_data` but provides explicit control.
+Fetch telemetry for all laps of all drivers in parallel. `session.car_data` loads the same payloads and concatenates them into one DataFrame; this method returns one frame per lap.
 
 **Signature:**
 ```python
-def fetch_all_laps_telemetry(self) -> DataFrame
+def fetch_all_laps_telemetry(self, *, ultra_cold: bool | None = None) -> dict[tuple[str, int], DataFrame]
 ```
 
-**Returns:** `DataFrame` - Complete telemetry for all drivers and laps
+**Parameters:**
+- `ultra_cold` (bool | None): Skip validation and cache writes for a faster cold start. `None` uses the config value. Default: None
+
+**Returns:** `dict[tuple[str, int], DataFrame]` - Mapping of `(driver_code, lap_number)` to that lap's telemetry. Laps without telemetry are absent from the dict.
 
 **Examples:**
 
 ```python
-# Explicitly fetch all telemetry
-all_telemetry = session.fetch_all_laps_telemetry()
+import pandas as pd
 
-# This is equivalent to:
-all_telemetry = session.car_data
+# Explicitly fetch all telemetry
+all_laps_tel = session.fetch_all_laps_telemetry()
+ver_lap_10 = all_laps_tel[("VER", 10)]
+
+# Keep only one driver by filtering the keys
+ver_tels = {key: tel for key, tel in all_laps_tel.items() if key[0] == "VER"}
+
+# One frame for the whole session (pandas; polars: pl.concat(all_laps_tel.values()))
+all_telemetry = pd.concat(all_laps_tel.values(), ignore_index=True)
 
 # Analyze telemetry statistics
 print(f"Total telemetry samples: {len(all_telemetry)}")
@@ -932,12 +988,12 @@ Sprint weekends have a modified format:
 5. **Race (R)** - Sunday, ~2 hours
 
 ```python
-# Access sprint weekend sessions
-fp1 = tif1.get_session(2025, "Austria", "Practice 1")
-sprint_qualifying = tif1.get_session(2025, "Austria", "Sprint Qualifying")
-sprint = tif1.get_session(2025, "Austria", "Sprint")
-qualifying = tif1.get_session(2025, "Austria", "Qualifying")
-race = tif1.get_session(2025, "Austria", "Race")
+# Access sprint weekend sessions (Spa was a 2025 sprint weekend)
+fp1 = tif1.get_session(2025, "Spa", "Practice 1")
+sprint_qualifying = tif1.get_session(2025, "Spa", "Sprint Qualifying")
+sprint = tif1.get_session(2025, "Spa", "Sprint")
+qualifying = tif1.get_session(2025, "Spa", "Qualifying")
+race = tif1.get_session(2025, "Spa", "Race")
 ```
 
 ### Session Name Variations
@@ -946,19 +1002,22 @@ tif1 accepts multiple variations of session names for convenience:
 
 | Official Name | Accepted Variations |
 |--------------|-------------------|
-| Practice 1 | `"Practice 1"`, `"FP1"`, `"Free Practice 1"` |
-| Practice 2 | `"Practice 2"`, `"FP2"`, `"Free Practice 2"` |
-| Practice 3 | `"Practice 3"`, `"FP3"`, `"Free Practice 3"` |
-| Qualifying | `"Qualifying"`, `"Q"`, `"Quali"` |
-| Sprint Qualifying | `"Sprint Qualifying"`, `"SQ"`, `"Sprint Shootout"` |
+| Practice 1 | `"Practice 1"`, `"FP1"` |
+| Practice 2 | `"Practice 2"`, `"FP2"` |
+| Practice 3 | `"Practice 3"`, `"FP3"` |
+| Qualifying | `"Qualifying"`, `"Q"` |
+| Sprint Qualifying (2024 onward) | `"Sprint Qualifying"`, `"SQ"` |
+| Sprint Shootout (2023) | `"Sprint Shootout"`, `"SS"` |
 | Sprint | `"Sprint"`, `"S"` |
 | Race | `"Race"`, `"R"` |
+
+Matching is case-insensitive, so `"fp1"`, `"race"`, and `"r"` work as well. Other spellings, such as `"Free Practice 1"` or `"Quali"`, raise `ValueError`. A session that the event does not have also raises `ValueError`, for example `"Sprint"` on a weekend without a sprint.
 
 ```python
 # All of these work:
 session = tif1.get_session(2025, "Monaco", "Practice 1")
 session = tif1.get_session(2025, "Monaco", "FP1")
-session = tif1.get_session(2025, "Monaco", "Free Practice 1")
+session = tif1.get_session(2025, "Monaco", "fp1")
 
 session = tif1.get_session(2025, "Monaco", "Qualifying")
 session = tif1.get_session(2025, "Monaco", "Q")
@@ -1076,19 +1135,20 @@ sequenceDiagram
 
 ### Ultra-Cold Start Optimization
 
-For specific use cases, tif1 provides **ultra-cold start mode**. This aggressive optimization bypasses normal caching and validation for maximum speed.
+tif1 has an **ultra-cold start mode** for the first fetch of a session that is not in the cache yet. It is on by default (config key `ultra_cold_start`). It skips the persistent-cache reads and the validation on the critical path. Once a session is cached, tif1 reads the cache instead.
 
 ```python
-# Enable ultra-cold start globally
-tif1.config.set("ultra_cold_start", True)
+# Ultra-cold start is on by default
+config = tif1.get_config()
+print(config.get("ultra_cold_start"))  # True
 
-# Now fastest lap telemetry fetches are optimized
+# Turn it off globally, or force it for one call with ultra_cold=True
+config.set("ultra_cold_start", False)
 session = tif1.get_session(2025, "Monaco", "Qualifying")
-fastest_tel = session.get_fastest_lap_tel()  # Ultra-fast fetch
+fastest_tel = session.get_fastest_lap_tel(ultra_cold=True)
 
-# Optionally enable background cache fill
-tif1.config.set("ultra_cold_background_cache_fill", True)
-# Data is fetched immediately, then cached in background
+# Optionally fill the persistent cache in the background after an ultra-cold fetch
+config.set("ultra_cold_background_cache_fill", True)
 ```
 
 **When to Use Ultra-Cold Start:**
@@ -1099,8 +1159,8 @@ tif1.config.set("ultra_cold_background_cache_fill", True)
 
 **Trade-offs:**
 - Skips data validation (assumes CDN data is correct)
-- Bypasses retry logic (one try only)
-- No persistent caching (unless background fill is enabled)
+- One try per request when `ultra_cold_skip_retries` is on (the default)
+- Skips persistent-cache reads; `ultra_cold_background_cache_fill` fills the cache in the background
 
 ### Parallel Fetching
 
@@ -1110,12 +1170,12 @@ tif1 automatically uses **parallel fetching** for operations that require multip
 # Fetches telemetry for all drivers in parallel
 fastest_tels = session.get_fastest_laps_tels()  # Parallel fetch
 
-# Sequential equivalent (much slower - don't do this)
+# Sequential equivalent (much slower - don't do this). session.drivers holds
+# driver numbers; the codes are in session.drivers_df["Driver"]
 fastest_tels_slow = {}
-for driver in session.drivers:
-    drv = session.get_driver(driver)
-    fastest_lap = drv.laps.loc[drv.laps["LapTime"].idxmin()]
-    fastest_tels_slow[driver] = fastest_lap.telemetry
+for code in session.drivers_df["Driver"]:
+    drv = session.get_driver(code)
+    fastest_tels_slow[code] = drv.laps.pick_fastest().telemetry
 ```
 
 **Parallel Fetching Benefits:**
@@ -1128,25 +1188,21 @@ for driver in session.drivers:
 
 tif1 implements intelligent **prefetching** to reduce latency:
 
-#### Session Table Prefetching
+#### Driver Lookup Prefetching
 ```python
-# On first driver access, prefetch common session tables
-driver = session.get_driver("VER")  # Triggers prefetch of weather, rcm, drivers
-```
-
-#### Driver Lap Prefetching
-```python
-# When getting a driver, prefetch their lap data
-driver = session.get_driver("VER")  # Fetches drivers.json + VER/laptimes.json in parallel
+# On the first driver lookup, tif1 fetches drivers.json and the session lap
+# table in parallel (config key: prefetch_driver_laps_on_get_driver, default True)
+driver = session.get_driver("VER")
 ```
 
 #### Background Telemetry Prefetching
 ```python
-# Enable background telemetry prefetching
-tif1.config.set("prefetch_telemetry_background", True)
+# Background telemetry prefetch is off by default. With both keys on, tif1
+# fetches the telemetry of every lap on a daemon thread after the laps load
+tif1.get_config().set("prefetch_all_telemetry_on_first_lap_request", True)
+tif1.get_config().set("prefetch_all_telemetry_after_laps_load", True)
 
-# Accessing laps triggers background telemetry fetch
-laps = session.laps  # Laps returned immediately, telemetry fetched in background
+laps = session.laps  # Laps return immediately; telemetry fills the cache in the background
 ```
 
 ## Data Enrichment and Transformations
@@ -1193,9 +1249,10 @@ laps = session.laps
 
 # LapTime is a timedelta, LapTimeSeconds is float
 print(laps[["LapTime", "LapTimeSeconds"]].head())
-#       LapTime  LapTimeSeconds
-# 0  0:01:32.123          92.123
-# 1  0:01:33.456          93.456
+# Output for the 2025 Bahrain Grand Prix race:
+#                  LapTime  LapTimeSeconds
+# 0 0 days 00:01:38.693000          98.693
+# 1 0 days 00:01:37.492000          97.492
 
 # Easy arithmetic with LapTimeSeconds
 average_lap_time = laps["LapTimeSeconds"].mean()
@@ -1214,13 +1271,17 @@ Telemetry includes relative position data:
 lap = session.get_driver("VER").laps.iloc[10]
 tel = lap.telemetry
 
-# DriverAhead: 3-letter code of car ahead
+# DriverAhead: number of the car ahead as a string (missing when nobody is ahead)
 # DistanceToDriverAhead: Gap in meters
 print(tel[["Distance", "DriverAhead", "DistanceToDriverAhead"]].head())
-#    Distance DriverAhead  DistanceToDriverAhead
-# 0       0.0         HAM                  125.3
-# 1      10.5         HAM                  126.1
-# 2      21.0         HAM                  127.5
+# Output for the 2025 Bahrain Grand Prix race (the first samples of a lap
+# can have no DriverAhead value):
+#     Distance DriverAhead  DistanceToDriverAhead
+# 0   0.000003         NaN               6.755556
+# 1   1.377778         NaN               6.755556
+# 2   1.466667         NaN               6.755556
+# 3   5.911111          44               6.755556
+# 4  12.000003          44              13.833892
 
 # Analyze gap evolution
 import matplotlib.pyplot as plt
@@ -1237,54 +1298,64 @@ tif1 renames columns from the raw CDN format to more intuitive names:
 | Raw CDN Column | tif1 Column | Description |
 |---------------|-------------|-------------|
 | `drv` | `Driver` | 3-letter driver code |
-| `ln` | `LapNumber` | Sequential lap number |
-| `lt` | `LapTime` | Lap time (timedelta) |
+| `lap` | `LapNumber` | Sequential lap number |
+| `time` | `LapTime` | Lap time |
+| `session_time` | `Time` | Session time at the end of the lap |
 | `s1` | `Sector1Time` | Sector 1 time |
 | `s2` | `Sector2Time` | Sector 2 time |
 | `s3` | `Sector3Time` | Sector 3 time |
-| `cmp` | `Compound` | Tire compound |
-| `tl` | `TyreLife` | Tire age in laps |
-| `spd_i1` | `SpeedI1` | Speed at intermediate 1 |
-| `spd_i2` | `SpeedI2` | Speed at intermediate 2 |
-| `spd_fl` | `SpeedFL` | Speed at finish line |
-| `spd_st` | `SpeedST` | Speed at speed trap |
+| `compound` | `Compound` | Tire compound |
+| `life` | `TyreLife` | Tire age in laps |
+| `pos` | `Position` | Position at the end of the lap |
+| `status` | `TrackStatus` | Track status code |
+| `pb` | `IsPersonalBest` | Personal-best flag |
+| `speed_i1` | `SpeedI1` | Speed at intermediate 1 |
+| `speed_i2` | `SpeedI2` | Speed at intermediate 2 |
+| `speed_fl` | `SpeedFL` | Speed at finish line |
+| `speed_st` | `SpeedST` | Speed at speed trap |
+
+The full map is `LAP_RENAME_MAP` in `src/tif1/core_utils/constants.py`.
 
 ### Type Conversions
 
 tif1 automatically converts data types for optimal performance and usability:
 
 ```python
-# Time columns → timedelta
+# Time columns → timedelta (pandas); float seconds on polars
 laps["LapTime"]  # timedelta64[ns]
 laps["Sector1Time"]  # timedelta64[ns]
+laps["LapTimeSeconds"]  # float64 on both backends
 
 # Timestamp columns → datetime
 messages["Time"]  # datetime64[ns]
+laps["LapStartDate"]  # datetime64[ns] (String on polars)
 
-# Numeric columns → appropriate types
-laps["LapNumber"]  # int64
+# Numeric columns (FastF1 convention: float64 on pandas, Int64 on polars)
+laps["LapNumber"]  # float64
 laps["SpeedI1"]  # float64
-laps["Position"]  # int64
+laps["Position"]  # float64
 
 # Boolean columns
 laps["IsPersonalBest"]  # bool
-laps["Deleted"]  # bool
-weather["Rainfall"]  # bool
+laps["Deleted"]  # boolean (nullable)
+weather["Rainfall"]  # boolean (nullable)
 
-# Categorical columns (for memory efficiency)
-laps["Compound"]  # object (SOFT, MEDIUM, HARD, etc.)
-laps["Driver"]  # object (VER, HAM, LEC, etc.)
+# Categorical columns (for memory efficiency; String on polars)
+laps["Compound"]  # category (SOFT, MEDIUM, HARD, etc.)
+laps["Driver"]  # category (VER, HAM, LEC, etc.)
 ```
+
+See [Column types by backend](/concepts/backends#column-types-by-backend) for the full contract.
 
 ### Data Validation
 
 tif1 validates data integrity and handles edge cases:
 
-- **Missing data** - Replaced with appropriate null values (NaN, NaT, None)
-- **Invalid lap times** - Filtered out or marked as deleted
+- **Missing data** - Replaced with the backend's null values (NaN, NaT, None, `<NA>` on pandas; `null` on polars)
+- **Sentinel strings** - The upstream tokens `"None"`, `"null"`, `"nan"`, and `""` become missing values
+- **Payload structure** - A payload that is not a JSON object raises `InvalidDataError`. Schema validation with pydantic is off by default; turn it on with the `validate_data`, `validate_lap_times`, and `validate_telemetry` config keys
+- **Deleted laps** - Kept in `laps` with `Deleted == True`; `get_fastest_laps()` ignores them
 - **Malformed telemetry** - Logged and skipped
-- **Inconsistent driver codes** - Normalized to 3-letter format
-- **Out-of-range values** - Clamped or marked as invalid
 
 ```python
 # tif1 handles missing data gracefully
@@ -1312,7 +1383,7 @@ Polars provides 2-3x faster data processing:
 
 ```python
 # Use Polars globally
-tif1.config.set("lib", "polars")
+tif1.get_config().set("lib", "polars")
 
 # Or per-session
 session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
@@ -1354,9 +1425,9 @@ fastest_tels = session.get_fastest_laps_tels()
 
 # Sequential - slow
 fastest_tels = {}
-for driver in session.drivers:
-    drv = session.get_driver(driver)
-    fastest_tels[driver] = drv.laps.fastest().telemetry
+for code in session.drivers_df["Driver"]:
+    drv = session.get_driver(code)
+    fastest_tels[code] = drv.laps.pick_fastest().telemetry
 ```
 
 ### 5. Enable Caching
@@ -1405,11 +1476,11 @@ ver_tel = all_tel[all_tel["Driver"] == "VER"]
 
 ### 8. Use Ultra-Cold Start for One-Off Queries
 
-For single-use queries, enable ultra-cold start:
+Ultra-cold start and single-try fetches are on by default. Keep them on for single-use queries:
 
 ```python
-tif1.config.set("ultra_cold_start", True)
-tif1.config.set("ultra_cold_skip_retries", True)
+tif1.get_config().set("ultra_cold_start", True)  # the default
+tif1.get_config().set("ultra_cold_skip_retries", True)  # the default
 
 # Fastest possible fetch
 session = tif1.get_session(2025, "Monaco", "Qualifying")
@@ -1439,10 +1510,10 @@ Periodically clear cache if disk space is a concern:
 
 ```python
 # Clear all cached data
-tif1.cache.clear()
+tif1.get_cache().clear()
 
-# Clear specific session
-tif1.cache.clear_session(2025, "Monaco Grand Prix", "Race")
+# Drop one tier only (there is no per-session clear)
+tif1.get_cache().invalidate("telemetry")  # "memory", "json", "telemetry", or "all"
 ```
 
 ## Common Patterns and Examples
@@ -1455,11 +1526,11 @@ import matplotlib.pyplot as plt
 
 session = tif1.get_session(2025, "Monaco", "Qualifying")
 
-# Get fastest lap telemetry for top 3 drivers
+# Get fastest lap telemetry for top 3 drivers (one frame with a Driver column)
 fastest_tels = session.get_fastest_laps_tels(drivers=["VER", "HAM", "LEC"])
 
 # Plot speed comparison
-for driver, tel in fastest_tels.items():
+for driver, tel in fastest_tels.groupby("Driver"):
     plt.plot(tel["Distance"], tel["Speed"], label=driver)
 
 plt.xlabel("Distance (m)")
@@ -1472,6 +1543,7 @@ plt.show()
 ### Pattern: Analyze Tire Degradation
 
 ```python
+import matplotlib.pyplot as plt
 import tif1
 
 session = tif1.get_session(2025, "Monaco", "Race")
@@ -1540,9 +1612,10 @@ print(f"Theoretical best lap: {theoretical_best}")
 ### Pattern: Overtaking Analysis
 
 ```python
+import matplotlib.pyplot as plt
 import tif1
 
-session = tif1.get_session(2025, "Monza", "Race")
+session = tif1.get_session(2025, "Italian Grand Prix", "Race")
 laps = session.laps
 
 # Track position changes
@@ -1562,10 +1635,10 @@ plt.show()
 ### Pattern: Telemetry Heatmap
 
 ```python
+import matplotlib.pyplot as plt
 import tif1
-import numpy as np
 
-session = tif1.get_session(2025, "Spa", "Qualifying")
+session = tif1.get_session(2025, "Belgian Grand Prix", "Qualifying")
 fastest_tel = session.get_fastest_lap_tel()
 
 # Create throttle/brake heatmap
@@ -1595,8 +1668,8 @@ plt.show()
 
 **Solutions:**
 1. Check the internet connection
-2. Verify CDN is accessible: `tif1.cdn.test_connection()`
-3. Enable ultra-cold start for faster initial fetch
+2. Enable logging with `tif1.setup_logging(logging.DEBUG)` to see which CDN source fails
+3. Keep ultra-cold start on (the default) for a faster initial fetch
 4. Use Polars backend for faster parsing
 
 ### Issue: Cache Not Working
@@ -1607,7 +1680,7 @@ plt.show()
 1. Verify caching is enabled: `session.enable_cache`
 2. Check that the platform-specific cache directory exists
 3. Verify disk space is available
-4. Clear corrupted cache: `tif1.cache.clear()`
+4. Clear corrupted cache: `tif1.get_cache().clear()`
 
 ### Issue: Missing Data
 

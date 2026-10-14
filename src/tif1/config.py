@@ -102,7 +102,16 @@ class Config:
             "pool_exhaustion_backoff_max": 0.5,
             "pool_exhaustion_backoff_jitter": 0.01,
             "http_multiplexed": True,
-            "http_disable_http3": False,
+            # Argos A7: HTTP/2-only by default. With the switch finally reaching
+            # the adapter, interleaved live A/Bs put h2 at parity-to-faster
+            # (5/6 full-session pairs, 3/3 small batches) and every collapse
+            # regime observed (143 s, 614 s, hours) ran over h3. Set
+            # TIF1_HTTP_DISABLE_HTTP3=false to negotiate QUIC again.
+            "http_disable_http3": True,
+            # Argos A8: warm the shared CDN connection (DNS + TLS) in a daemon
+            # thread while get_session() returns, so the first payload request
+            # of a cold load rides an already-open connection.
+            "cdn_preconnect": True,
             "cdns": [
                 "https://cdn.jsdelivr.net/gh/TracingInsights",
                 "https://huggingface.co/buckets/tracinginsights",
@@ -122,7 +131,7 @@ class Config:
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
-            "http_resolvers": ["standard", "doh://cloudflare", "doh://google"],
+            "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
         }
 
         # Load from config file
@@ -200,6 +209,7 @@ class Config:
             "TIF1_POOL_EXHAUSTION_BACKOFF_JITTER": ("pool_exhaustion_backoff_jitter", float),
             "TIF1_HTTP_MULTIPLEXED": ("http_multiplexed", _to_bool),
             "TIF1_HTTP_DISABLE_HTTP3": ("http_disable_http3", _to_bool),
+            "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
             "TIF1_CDNS": ("cdns", _to_list),
             "TIF1_VALIDATE_DATA": ("validate_data", _to_bool),
             "TIF1_VALIDATE_LAP_TIMES": ("validate_lap_times", _to_bool),

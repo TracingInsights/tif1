@@ -308,7 +308,7 @@ tif1 cache-clear --yes
 
 F1 data in tif1 follows a clear hierarchy:
 
-```python
+```text
 Season (Year)
   └── Event (Grand Prix)
       └── Session (Practice, Qualifying, Race)
@@ -469,7 +469,7 @@ Understanding these core concepts helps with effective CLI use and helps avoid c
 
 ### Event Names
 
-Event names are the official Grand Prix names as they appear in the FIA Formula 1 World Championship calendar. They must match **exactly** - the CLI performs case-sensitive string matching.
+Event names are the official Grand Prix names as they appear in the FIA Formula 1 World Championship calendar. The CLI resolves a name like `tif1.get_event_by_name()`. It tries a case-insensitive exact name first, then the alias table ("Monza", "Silverstone"), then fuzzy matching. The alias table holds circuit, city, and country names. Fuzzy matching always picks an event and logs `Correcting user input '...' to '...'`, so the official name is the safest input.
 
 **Standard Event Name Format:**
 
@@ -493,21 +493,22 @@ Some events have unique naming conventions:
 - "Las Vegas Grand Prix" (not "Vegas Grand Prix")
 - "Saudi Arabian Grand Prix" (not "Saudi Grand Prix")
 
-**Why Exact Names Matter:**
+**Why Official Names Help:**
 
-The CLI uses these names to construct CDN URLs and cache keys. Even small differences will cause lookup failures:
+The `drivers`, `fastest`, and `debug` commands resolve the name through `tif1.get_session()`. The `sessions` command resolves it through `tif1.get_sessions()`. Variants resolve to the same event, but a typo can resolve to a different race without an error:
 
 ```bash
-# ❌ WRONG - These will all fail
-tif1 sessions 2025 "Monaco GP"           # Missing "Grand Prix"
-tif1 sessions 2025 "monaco grand prix"   # Wrong case
-tif1 sessions 2025 "Monaco  Grand Prix"  # Extra space
-tif1 sessions 2025 "Sao Paulo Grand Prix" # Missing special character
+# These all resolve to the Monaco Grand Prix or the São Paulo Grand Prix
+tif1 sessions 2025 "Monaco GP"
+tif1 sessions 2025 "monaco grand prix"
+tif1 sessions 2025 "Sao Paulo Grand Prix"
 
-# ✅ CORRECT
+# Official names need no resolution step
 tif1 sessions 2025 "Monaco Grand Prix"
 tif1 sessions 2025 "São Paulo Grand Prix"
 ```
+
+The table titles of `sessions`, `drivers`, and `fastest` repeat the name as typed, not the resolved name.
 
 **Shell Quoting Rules:**
 
@@ -553,7 +554,7 @@ tif1 sessions 2025 "Monaco Grand Prix"
 
 ### Session Names
 
-Session names identify specific track sessions within an event. Like event names, they must match exactly and are case-sensitive.
+Session names identify specific track sessions within an event. They are case-insensitive, and the abbreviations `FP1`, `FP2`, `FP3`, `Q`, `S`, `SS`, `SQ`, and `R` also work. Session names do not use fuzzy matching.
 
 **Standard Weekend Format:**
 
@@ -578,7 +579,7 @@ Sprint weekends have a different structure:
 **Session Name Variations:**
 
 - Practice sessions: "Practice 1", "Practice 2", "Practice 3" (note the space)
-- Qualifying: "Qualifying" (not "Quali" or "Q")
+- Qualifying: "Qualifying" or "Q" (not "Quali")
 - Sprint qualifying: "Sprint Qualifying" (two words)
 - Sprint race: "Sprint" (not "Sprint Race")
 - Main race: "Race" (not "Grand Prix" or "Main Race")
@@ -586,16 +587,16 @@ Sprint weekends have a different structure:
 **Common Mistakes:**
 
 ```bash
-# ❌ WRONG
-tif1 drivers 2025 "Monaco Grand Prix" "FP1"              # Use "Practice 1"
-tif1 drivers 2025 "Monaco Grand Prix" "Quali"            # Use "Qualifying"
-tif1 drivers 2025 "Monaco Grand Prix" "Sprint Race"      # Use "Sprint"
-tif1 drivers 2025 "Monaco Grand Prix" "practice 1"       # Wrong case
+# ❌ WRONG (ValueError: Session '...' does not exist for 2025 Monaco Grand Prix.)
+tif1 drivers 2025 "Monaco Grand Prix" "Quali"            # Use "Qualifying" or "Q"
+tif1 drivers 2025 "Monaco Grand Prix" "Sprint Race"      # Use "Sprint" (sprint weekends only)
+tif1 drivers 2025 "Monaco Grand Prix" "P1"               # Use "Practice 1" or "FP1"
 
 # ✅ CORRECT
 tif1 drivers 2025 "Monaco Grand Prix" "Practice 1"
+tif1 drivers 2025 "Monaco Grand Prix" "FP1"
+tif1 drivers 2025 "Monaco Grand Prix" "practice 1"
 tif1 drivers 2025 "Monaco Grand Prix" "Qualifying"
-tif1 drivers 2025 "Monaco Grand Prix" "Sprint"
 ```
 
 **Discovering Available Sessions:**

@@ -13,7 +13,7 @@ keywords:
 
 ### What is tif1?
 
-tif1 is a high-performance Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current. Parallel async loading is more than 3x faster than sequential fetching in the benchmark suite.
+tif1 is a Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current. Parallel async loading is more than 3x faster than sequential fetching in the benchmark suite.
 
 ### How is tif1 different from fastf1?
 
@@ -56,7 +56,7 @@ pip install tif1
 
 Python 3.11 or higher is required. Versions 3.11 through 3.15 are tested in CI.
 
-On Python 3.14 and later, the cache uses the standard-library `compression.zstd` module instead of the `zstandard` package. On Python 3.15, the `lz4` package is not installed because it has no 3.15 wheels yet, so the telemetry frame cache uses zstd instead. Cached data stays compatible across these versions.
+On Python 3.14 and later, the cache uses the standard-library `compression.zstd` module instead of the `zstandard` package. On Python 3.15, the `lz4` package is not installed because it has no 3.15 wheels yet. The telemetry frame cache uses zstd instead. Cached data stays compatible across these versions.
 
 ### Do I need an API key?
 
@@ -92,10 +92,12 @@ Data is typically available 30 minutes after a session ends. This is slightly lo
 ### Why am I getting DataNotFoundError?
 
 Common causes:
-- Event name is misspelled (use `get_events()` to check)
-- Session name is misspelled (use `get_sessions()` to check)
 - The data has not been published yet (check whether the session ended recently)
 - The session did not take place (cancelled or postponed)
+- A driver code or lap number does not exist in the session (`DriverNotFoundError`, `LapNotFoundError`)
+- The event name is not on the calendar of that season, for example `"Suzuka"` in 2021
+
+tif1 resolves circuit, city, and country names such as `"Spa"` or `"Silverstone"` to the correct event. A misspelled event name does not raise: tif1 corrects it to the closest event name. Check the result with `session.event["EventName"]`. A session name that does not exist raises `ValueError` and lists the available session names.
 
 ---
 
@@ -121,8 +123,8 @@ Polars is written in Rust and uses:
 Yes, each session can use a different backend:
 
 ```python
-session1 = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
-session2 = tif1.get_session(2025, "Monza", "Race", lib="polars")
+session1 = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="pandas")
+session2 = tif1.get_session(2025, "Italian Grand Prix", "Race", lib="polars")
 ```
 
 ---
@@ -151,7 +153,7 @@ tif1.get_cache().clear()
 
 ### Column Names Do Not Match fastf1
 
-tif1 uses PascalCase for all columns, for example `LapTime` instead of `time`. This is intentional for consistency. Use the exact column names shown in the data schema reference.
+tif1 uses the fastf1 column names, which are mostly PascalCase, for example `LapTime` and `Speed`. The raw JSON keys, such as `time`, are not column names. The laps table also keeps the lower-case source columns `drv`, `team`, and `ms1` to `ms3`. Use the exact column names shown in the [Data Schema Reference](/reference/data-schema).
 
 
 
@@ -164,7 +166,7 @@ tif1 uses PascalCase for all columns, for example `LapTime` instead of `time`. T
 No, tif1 uses lazy loading. Data is fetched automatically at first access:
 
 ```python
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Data fetched here
 ```
 
@@ -176,7 +178,10 @@ Use the optimized batch method:
 
 ```python
 # Parallel loading - faster than sequential (3x+ in benchmarks)
+# One DataFrame with a Driver column; group by Driver to split it
 tels = session.get_fastest_laps_tels(by_driver=True)
+for driver, tel in tels.groupby("Driver"):
+    print(driver, len(tel))
 ```
 
 ### Can I filter by lap number?
@@ -190,6 +195,21 @@ lap_10 = laps[laps["LapNumber"] == 10]
 # Polars
 lap_10 = laps.filter(pl.col("LapNumber") == 10)
 ```
+
+### Why does `laps["LapTime"] < 90` fail?
+
+`LapTime` is a `timedelta64[ns]` column on pandas and a `Float64` column of seconds on polars. Compare `LapTimeSeconds`, which is a float on both backends:
+
+```python
+# pandas
+fast = laps[laps["LapTimeSeconds"] < 90]
+
+# polars
+fast = laps.filter(pl.col("LapTimeSeconds") < 90)
+```
+
+On pandas, `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` also works. See [Column types by backend](/concepts/backends#column-types-by-backend).
+
 ### How do I get weather data?
 
 Weather is automatically included in the laps DataFrame:
@@ -204,6 +224,8 @@ Or access it directly:
 ```python
 weather = session.weather
 ```
+
+`Time` is `timedelta64[ns]` on pandas and `Duration("ms")` on polars. `Rainfall` is a nullable boolean on both backends. When the weather payload cannot be converted, tif1 logs a warning and returns an empty DataFrame. See [Empty Weather or Race Control Table](/reference/troubleshooting#empty-weather-or-race-control-table).
 
 ---
 
@@ -234,21 +256,35 @@ Yes, tif1 includes optional Pydantic validation (enabled by default). Invalid da
 ### Can I use tif1 in production?
 
 Yes, tif1 is designed for production use with:
-- Robust error handling
+- Typed exceptions rooted at `TIF1Error`
 - Circuit breaker pattern
 - Automatic retries
 - SQLite caching for reliability
 
 ### How do I export data?
 
-tif1 DataFrames support all standard export formats:
+On the pandas backend, use the standard pandas export methods. On polars, use `write_csv`, `write_parquet`, and `write_json`.
 
 ```python
+import sqlite3
+
 laps.to_csv("data.csv")
 laps.to_parquet("data.parquet")
-laps.to_json("data.json")
-laps.to_sql("laps", connection)
+laps.to_json("data.json", date_format="iso")
+
+# SQLite column names are case-insensitive: drop the lower-case duplicates first
+laps_sql = laps.loc[:, ~laps.columns.str.lower().duplicated()].copy()
+
+# SQL has no timedelta type: store the time columns as float seconds
+td_cols = laps_sql.select_dtypes("timedelta").columns
+laps_sql[td_cols] = laps_sql[td_cols].apply(lambda s: s.dt.total_seconds())
+
+conn = sqlite3.connect("f1_data.db")
+laps_sql.to_sql("laps", conn, if_exists="replace", index=False)
+conn.close()
 ```
+
+See [Data Export](/tutorials/data-export) for Excel, HDF5, and PostgreSQL.
 
 ### Can I use tif1 with Jupyter?
 
@@ -259,8 +295,16 @@ Yes, tif1 has built-in Jupyter support with rich HTML displays for Session, Driv
 Yes, tif1 uses asyncio internally and provides async methods:
 
 ```python
-laps = await session.laps_async()
+import asyncio
+
+async def main():
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    return await session.laps_async()
+
+laps = asyncio.run(main())
 ```
+
+Inside a running event loop, such as a Jupyter cell, call `await session.laps_async()` directly.
 
 ---
 
@@ -275,7 +319,7 @@ import tif1
 import matplotlib.pyplot as plt
 from scipy import stats
 
-session = tif1.get_session(2025, "Bahrain", "Race")
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 laps = session.laps
 
 # Filter for a specific driver and stint
@@ -286,12 +330,13 @@ driver_laps = laps[
 ]
 
 # Plot lap time vs tire life
-plt.scatter(driver_laps["TyreLife"], driver_laps["LapTime"])
+# LapTime is a timedelta column; LapTimeSeconds holds float seconds
+plt.scatter(driver_laps["TyreLife"], driver_laps["LapTimeSeconds"])
 
 # Add trend line
 slope, intercept, r_value, _, _ = stats.linregress(
     driver_laps["TyreLife"],
-    driver_laps["LapTime"]
+    driver_laps["LapTimeSeconds"]
 )
 print(f"Degradation: {slope:.3f} seconds per lap")
 print(f"R²: {r_value**2:.3f}")
@@ -309,18 +354,18 @@ Use the telemetry comparison utilities:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
 
 # Get fastest laps for both drivers
 ver_fastest = session.get_driver("VER").get_fastest_lap()
 lec_fastest = session.get_driver("LEC").get_fastest_lap()
 
-# Get telemetry
+# Get telemetry (get_lap needs an int; LapNumber is a float column)
 ver_tel = session.get_driver("VER").get_lap(
-    ver_fastest["LapNumber"].iloc[0]
+    int(ver_fastest["LapNumber"].iloc[0])
 ).telemetry
 lec_tel = session.get_driver("LEC").get_lap(
-    lec_fastest["LapNumber"].iloc[0]
+    int(lec_fastest["LapNumber"].iloc[0])
 ).telemetry
 
 # Plot speed comparison
@@ -345,7 +390,7 @@ Detect position changes between consecutive laps:
 import tif1
 import pandas as pd
 
-session = tif1.get_session(2025, "Monza", "Race")
+session = tif1.get_session(2025, "Italian Grand Prix", "Race")
 laps = session.laps
 
 # Sort by driver and lap number
@@ -359,7 +404,7 @@ overtakes = laps_sorted[laps_sorted["PositionChange"] < 0]
 
 # Display overtakes
 for _, overtake in overtakes.iterrows():
-    print(f"Lap {overtake['LapNumber']}: {overtake['Driver']} "
+    print(f"Lap {int(overtake['LapNumber'])}: {overtake['Driver']} "
           f"gained {abs(int(overtake['PositionChange']))} position(s)")
 ```
 
@@ -370,7 +415,7 @@ Race pace excludes outliers and pit laps:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Silverstone", "Race")
+session = tif1.get_session(2025, "British Grand Prix", "Race")
 laps = session.laps
 
 def calculate_race_pace(laps, driver):
@@ -383,11 +428,11 @@ def calculate_race_pace(laps, driver):
         (~driver_laps["Deleted"])
     ]
 
-    # Remove laps > 107% of fastest
-    fastest = driver_laps["LapTime"].min()
-    driver_laps = driver_laps[driver_laps["LapTime"] < fastest * 1.07]
+    # Remove laps > 107% of fastest (LapTimeSeconds is a float column)
+    fastest = driver_laps["LapTimeSeconds"].min()
+    driver_laps = driver_laps[driver_laps["LapTimeSeconds"] < fastest * 1.07]
 
-    return driver_laps["LapTime"].mean()
+    return driver_laps["LapTimeSeconds"].mean()
 
 # Compare top 3
 for driver in ["VER", "HAM", "LEC"]:
@@ -402,26 +447,27 @@ Sprint races are accessed like regular sessions:
 ```python
 import tif1
 
-# Load sprint race
-session = tif1.get_session(2025, "Austria", "Sprint")
+# Load sprint race (use a sprint weekend; get_sessions(year, gp) lists the sessions)
+session = tif1.get_session(2025, "Chinese Grand Prix", "Sprint")
 laps = session.laps
 
 # Sprint races are shorter
-print(f"Total laps: {laps['LapNumber'].max()}")
-print(f"Sprint winner: {laps[laps['Position'] == 1]['Driver'].iloc[0]}")
+print(f"Total laps: {int(laps['LapNumber'].max())}")
+final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
+print(f"Sprint winner: {final_lap[final_lap['Position'] == 1]['Driver'].iloc[0]}")
 
 # Sprint qualifying
-sprint_quali = tif1.get_session(2025, "Austria", "Sprint Qualifying")
+sprint_quali = tif1.get_session(2025, "Chinese Grand Prix", "Sprint Qualifying")
 ```
 
 ### How do I handle missing data?
 
-tif1 provides utilities for handling missing data:
+Missing lap times are `NaT` (pandas) or `null` (polars). Missing telemetry gives an empty DataFrame, not an exception. A driver code that is not in the session raises `DriverNotFoundError`, a subclass of `DataNotFoundError`:
 
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Monaco", "Race")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps
 
 # Check for missing lap times
@@ -431,13 +477,14 @@ print(f"Missing lap times: {len(missing_times)}")
 # Check for missing telemetry
 for driver in ["VER", "HAM"]:
     try:
-        fastest = session.get_driver(driver).get_fastest_lap()
-        tel = session.get_driver(driver).get_lap(
-            fastest["LapNumber"].iloc[0]
-        ).telemetry
-        print(f"{driver}: Telemetry available ({len(tel)} samples)")
+        tel = session.get_driver(driver).get_fastest_lap_tel()
     except tif1.DataNotFoundError:
+        print(f"{driver}: not in this session")
+        continue
+    if tel.empty:
         print(f"{driver}: Telemetry not available")
+    else:
+        print(f"{driver}: Telemetry available ({len(tel)} samples)")
 ```
 
 ### How do I analyze sector times?
@@ -447,7 +494,7 @@ Sector analysis shows where time is gained or lost:
 ```python
 import tif1
 
-session = tif1.get_session(2025, "Spa", "Qualifying")
+session = tif1.get_session(2025, "Belgian Grand Prix", "Qualifying")
 
 # Get fastest laps
 fastest_laps = session.get_fastest_laps(by_driver=True)
@@ -500,9 +547,9 @@ if st.button("Load Data"):
         fastest = session.get_fastest_laps(by_driver=True)
         st.dataframe(fastest[["Driver", "Team", "LapTime"]].head(10))
 
-        # Plot lap time distribution
+        # Plot lap time distribution (LapTimeSeconds is a float column)
         fig, ax = plt.subplots()
-        ax.hist(laps["LapTime"], bins=50)
+        ax.hist(laps["LapTimeSeconds"], bins=50)
         ax.set_xlabel("Lap Time (s)")
         ax.set_ylabel("Frequency")
         st.pyplot(fig)
@@ -517,7 +564,8 @@ import tif1
 import pandas as pd
 
 def analyze_season(year):
-    events = tif1.get_events(year)
+    # Skip pre-season testing: those rounds have no Race session
+    events = tif1.get_event_schedule(year, include_testing=False)
     results = []
 
     for _, event in events.iterrows():
@@ -554,15 +602,17 @@ import tif1
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
 laps = session.laps
 
-# Custom heatmap of lap times by driver and session
+# Custom heatmap of best lap times by driver and qualifying segment
+# LapTimeSeconds is a float column; QualifyingSession holds Q1, Q2 or Q3
 pivot = laps.pivot_table(
-    values="LapTime",
+    values="LapTimeSeconds",
     index="Driver",
-    columns="Session",
-    aggfunc="min"
+    columns="QualifyingSession",
+    aggfunc="min",
+    observed=True,
 )
 
 plt.figure(figsize=(10, 12))

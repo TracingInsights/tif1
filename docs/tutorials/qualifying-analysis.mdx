@@ -274,7 +274,8 @@ Measure driver consistency across all qualifying laps.
 
 ```python
 # Calculate standard deviation of lap times per driver
-consistency = laps.groupby("Driver")["LapTime"].agg(["mean", "std", "count"])
+# LapTimeSeconds is a float column; LapTime is a timedelta column
+consistency = laps.groupby("Driver")["LapTimeSeconds"].agg(["mean", "std", "count"])
 consistency = consistency[consistency["count"] >= 3]  # At least 3 laps
 consistency = consistency.sort_values("std")
 

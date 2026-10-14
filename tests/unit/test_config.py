@@ -79,6 +79,7 @@ def test_default_cache_dir_other_posix_uses_linux_layout(tmp_path, monkeypatch):
     assert _default_cache_dir() == home / ".tif1"
 
 
+@pytest.mark.real_cache_dir
 def test_config_default_cache_dir_uses_platform_path(tmp_path, monkeypatch):
     """Config uses the platform default instead of the legacy ~/.tif1/cache path."""
     home = tmp_path / "home"
@@ -316,6 +317,7 @@ class TestConfigGetValidation:
         assert "~" not in result
         assert "my_cache" in result
 
+    @pytest.mark.real_cache_dir
     def test_cache_dir_none_falls_back_to_default(self):
         """None cache_dir must not reach Path(str(None)) — no literal "None" dir."""
         config = config_module.Config()
@@ -327,6 +329,7 @@ class TestConfigGetValidation:
         config.set("cache_dir", None)
         assert config.get("cache_dir", "fallback") == "fallback"
 
+    @pytest.mark.real_cache_dir
     def test_cache_dir_invalid_type_falls_back_to_default(self):
         config = config_module.Config()
         config.set("cache_dir", 123)

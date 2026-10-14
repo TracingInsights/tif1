@@ -384,7 +384,7 @@ export TIF1_LOG_LEVEL=DEBUG
 
 ```bash
 export TIF1_CDNS=https://cdn1.example.com,https://cdn2.example.com
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://,doh+google://
 ```
 
 ### Complete Environment Variable Reference
@@ -407,12 +407,13 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
-export TIF1_HTTP_DISABLE_HTTP3=false
+export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_CDN_PRECONNECT=true
 # export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
 # export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=10000
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://,doh+google://
 
 # Retry & Circuit Breaker
 export TIF1_RETRY_BACKOFF_FACTOR=2.0
@@ -727,7 +728,7 @@ try:
 
     # Perform operations with adjusted settings
     session = tif1.get_session(2024, 1, "R")
-    session.load()
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
 
 finally:
     # Restore original settings
@@ -983,11 +984,19 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="http_disable_http3" type="bool" default="False">
-  Disable HTTP/3 support.
+<ResponseField name="http_disable_http3" type="bool" default="True">
+  Disable HTTP/3 (QUIC). The default is HTTP/2 over TCP. In interleaved live A/Bs, HTTP/2 was at parity or faster for the bulk telemetry fetch, and every stalled fetch observed ran over HTTP/3. Set it to `False` to negotiate HTTP/3 again.
 
   ```python
-  config.set("http_disable_http3", True)
+  config.set("http_disable_http3", False)  # negotiate HTTP/3 again
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_preconnect" type="bool" default="True">
+  Warm the shared CDN connection in a daemon thread during `get_session()`, so the first request of a cold load skips the DNS and TLS handshake. Skipped in offline and CI mode.
+
+  ```python
+  config.set("cdn_preconnect", False)  # keep get_session() network-free
   ```
 </ResponseField>
 
@@ -1031,15 +1040,17 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
+<ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh+cloudflare://", "doh+google://"]'>
   DNS resolver configuration with DNS-over-HTTPS (DoH) fallback support. The library tries resolvers in order until one succeeds.
 
-  **Default:** `["standard", "doh://cloudflare", "doh://google"]`
+  **Default:** `["standard", "doh+cloudflare://", "doh+google://"]`
 
   **Resolver Types:**
   - `standard` — System DNS resolver (fastest, but may be blocked or censored)
-  - `doh://cloudflare` — Cloudflare DNS-over-HTTPS (1.1.1.1)
-  - `doh://google` — Google DNS-over-HTTPS (8.8.8.8)
+  - `doh+cloudflare://` — Cloudflare DNS-over-HTTPS (1.1.1.1)
+  - `doh+google://` — Google DNS-over-HTTPS (8.8.8.8)
+
+  The resolvers use the niquests `<protocol>+<provider>://` form. `tif1` translates the older spelling (`doh://cloudflare`, `doh://google`, `doh://quad9`, `doh://adguard`, `doh://nextdns`) to this form.
 
   **Benefits of DoH:**
   - Bypass DNS blocking or censorship
@@ -1057,10 +1068,10 @@ config.set("pool_connections", 1024)
   config.set("http_resolvers", ["standard"])
 
   # Use only DoH (most private)
-  config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+  config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
   # Custom order (try Cloudflare first, then system)
-  config.set("http_resolvers", ["doh://cloudflare", "standard"])
+  config.set("http_resolvers", ["doh+cloudflare://", "standard"])
   ```
 </ResponseField>
 
@@ -1151,7 +1162,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="cdn_use_minification" type="bool" default="False">
-  Request `.min.json` payloads from CDNs that serve them. Hugging Face buckets never minify, so tif1 skips minification there. No environment variable maps to this key.
+  Request `.min.json` payloads instead of `.json`. The three default CDNs do not serve `.min.json`. jsDelivr and StaticDelivr answer 404, and Hugging Face mirrors the files as they are. So `tif1` ignores this key for them. It has an effect only for a custom mirror in `cdns` that serves minified files. No environment variable maps to this key.
 
   ```python
   config.set("cdn_use_minification", False)
@@ -1395,10 +1406,11 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "pool_connections": 512,
   "pool_maxsize": 1024,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "keepalive_timeout": 300,
   "keepalive_max_requests": 5000,
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
 }
 ```
 
@@ -1437,7 +1449,7 @@ export TIF1_POOL_CONNECTIONS=512
 export TIF1_POOL_MAXSIZE=1024
 
 # Configure DNS resolvers (comma-separated)
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://
 ```
 
 ---
@@ -1500,7 +1512,7 @@ config = tif1.get_config()
 config.set("ultra_cold_start", True)
 
 # Use DoH for faster DNS
-config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
 # Aggressive connection pooling
 config.set("pool_connections", 256)
@@ -1574,6 +1586,8 @@ tif1.setup_logging(logging.DEBUG)  # DEBUG, INFO, WARNING, ERROR
 Or use the fastf1-compatible function:
 
 ```python
+import logging
+
 import tif1
 
 # Set log level (fastf1 compatibility)
@@ -1658,7 +1672,7 @@ config.set("ultra_cold_start", True)
 config.set("ultra_cold_skip_retries", True)
 
 # Use DoH for faster DNS resolution
-config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
 # Moderate concurrency (avoid overwhelming)
 config.set("max_workers", 32)
@@ -1980,7 +1994,7 @@ config.set("circuit_breaker_threshold", 20)
 config.set("circuit_breaker_timeout", 300)
 
 # Multiple DNS resolvers
-config.set("http_resolvers", ["standard", "doh://cloudflare", "doh://google"])
+config.set("http_resolvers", ["standard", "doh+cloudflare://", "doh+google://"])
 
 # Enable cache for redundancy
 config.set("enable_cache", True)
@@ -2183,7 +2197,7 @@ config = tif1.get_config()
 config.set("timeout", 120)
 
 # Try DoH resolvers
-config.set("http_resolvers", ["doh://cloudflare", "doh://google", "standard"])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://", "standard"])
 
 # Enable retries
 config.set("max_retries", 5)
@@ -2546,7 +2560,8 @@ Legend: ↑ = Increases, ↓ = Decreases
   "pool_exhaustion_backoff_max": 0.5,
   "pool_exhaustion_backoff_jitter": 0.01,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,
@@ -2560,7 +2575,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "prefetch_all_telemetry_after_laps_load": false,
   "telemetry_prefetch_max_concurrent_requests": 32,
   "json_parse_workers": 0,
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
 }
 ```
 

@@ -306,7 +306,9 @@ class TelemetryData(ConsistentLengthsMixin, BaseModel):
 class RaceControlData(ConsistentLengthsMixin, BaseModel):
     """Race control messages schema."""
 
-    time: list[float | None] = Field(..., min_length=1)
+    # Upstream rcm.json carries ISO wall-clock strings; session-relative seconds
+    # are accepted as well.
+    time: list[str | float | None] = Field(..., min_length=1)
     category: list[str | None] = Field(default_factory=list, alias="cat")
     message: list[str | None] = Field(default_factory=list, alias="msg")
     status: list[str | None] = Field(default_factory=list)
@@ -459,10 +461,13 @@ def validate_drivers(data: dict) -> DriversData:
 def validate_laps(data: dict) -> LapData:
     """Validate lap data.
 
+    Upstream ``laptimes.json`` spells missing values as the string ``"None"``;
+    they are normalized to ``None`` first, like the other validators do.
+
     Raises:
         ValidationError: If validation fails
     """
-    return LapData.model_validate(data)
+    return LapData.model_validate(_normalize_payload_lists(data))
 
 
 def _coerce_optional_bool_list(values: list[Any]) -> list[Any]:

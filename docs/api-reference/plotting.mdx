@@ -23,16 +23,16 @@ This module is the primary interface for color management, style generation, and
 
 - **Session-Aware Lookups**: All team and driver metadata queries use session data loaded from the TracingInsights API. This ensures accuracy across seasons and race weekends. The module extracts driver lineups, team affiliations, and metadata from session results. No manual data entry or external configuration files are needed.
 
-- **Season-Aware Colors**: Compound color palette selection is based on the session year. The module switches between the 2018 hypersoft era and the 2019+ system. The 2018 era has 7 dry compounds with distinct colors. The 2019+ system has 3 dry compounds with pink/yellow/white colors. This ensures historical accuracy in visualizations.
+- **Season-Aware Colors**: Compound color palette selection is based on the session year. The module switches between the 2018 hypersoft era and the 2019+ system. The 2018 era has 7 dry compounds with distinct colors. The 2019+ system has 3 dry compounds with red/yellow/white colors. This ensures historical accuracy in visualizations.
 
 - **Multiple Color Schemes**: Support for three distinct color palettes:
-  - `default`: tif1's optimized color scheme (now aliased to `fastf1`)
+  - `default`: the global default colormap (initially `fastf1`; change it with `set_default_colormap`)
   - `fastf1`: FastF1-compatible colors for drop-in replacement scenarios
   - `official`: Official F1 team colors extracted from liveries and branding guidelines
 
 - **Timedelta Support**: Optional matplotlib timedelta plotting via the `timple` library. It renders lap times, sector times, and time deltas natively on matplotlib axes. No manual conversion to seconds or string formatting is needed.
 
-- **Fuzzy Matching**: Identifier resolution with Levenshtein distance-based matching and warnings for near-matches. Accepts team names, short names, driver abbreviations, full names, and aliases. For example, "redbull", "RBR", and "Red Bull Racing" all resolve to the same team.
+- **Fuzzy Matching**: Identifier resolution with Levenshtein distance-based matching and warnings for near-matches. Accepts team names, short names, driver abbreviations, full names, and aliases. For example, "redbull", "red bull", and "Red Bull Racing" all resolve to the same team. Car codes such as "RBR" are not team aliases: use `get_team_code` for car codes.
 
 - **Type Safety**: Full type hints and runtime validation for all public APIs. This gives IDE autocomplete support and early error detection during development.
 
@@ -66,7 +66,7 @@ The primary differences are internal. tif1 uses cached session mappings for O(1)
 
 ### Complete API Surface
 
-The module exposes 25 public functions organized into six functional categories:
+The module exposes 27 public functions organized into seven functional categories:
 
 #### Setup and Configuration (3 functions)
 
@@ -89,8 +89,8 @@ The module exposes 25 public functions organized into six functional categories:
 - **`get_driver_style`** - Generate complete matplotlib style dictionary with color, linestyle, marker, and custom properties
 - **`get_driver_abbreviations_by_team`** - List driver codes for a specific team
 - **`get_driver_names_by_team`** - List full driver names for a specific team
-- **`list_driver_abbreviations`** - List all driver codes in a session (in grid order)
-- **`list_driver_names`** - List all driver full names in a session (in grid order)
+- **`list_driver_abbreviations`** - List all driver codes in a session (in classification order)
+- **`list_driver_names`** - List all driver full names in a session (in classification order)
 
 #### Compound (Tire) Colors (3 functions)
 
@@ -101,15 +101,20 @@ The module exposes 25 public functions organized into six functional categories:
 #### Mapping and Batch Operations (2 functions)
 
 - **`get_driver_color_mapping`** - Get all driver colors as a dictionary (abbreviation → hex color)
-- **`add_sorted_driver_legend`** - Add team-grouped, grid-ordered legend to matplotlib axes
+- **`add_sorted_driver_legend`** - Add a team-grouped legend in classification order to matplotlib axes
 
-#### Advanced Styling (5 functions)
+#### Advanced Styling (4 functions)
 
 - **`apply_plot_style`** - Apply custom plot styling with background, text color, and transparency options
 - **`load_custom_font`** - Load custom fonts from file paths or URLs for typography customization
 - **`get_plot_config`** - Retrieve default plotting configuration (figure size, DPI, font sizes, spacing)
-- **`get_driver_abbreviations_by_team`** - Get driver codes for a team (also listed above)
-- **`get_driver_names_by_team`** - Get driver names for a team (also listed above)
+- **`get_plot_style`** - Return a copy of a named plot style (`default-light` or `default-dark`)
+
+#### Car Codes and Chart Palette (3 functions)
+
+- **`get_team_code`** - Resolve a team name to its car image code (for example, `"RBR"`)
+- **`team_code_mapping`** - Get the team name to car code mapping for a season
+- **`team_color_mapping`** - Get the TracingInsights v2 chart palette for a season
 
 ### Migration from FastF1
 
@@ -135,7 +140,7 @@ session.load()
 color = tif1.plotting.get_team_color("Red Bull Racing", session)
 ```
 
-The behavior and output will be identical in most cases, with tif1 providing:
+The behavior and output are identical in most cases, with tif1 providing:
 
 - **Performance improvements**: Cached session mappings eliminate redundant DataFrame iterations
 - **Stricter validation**: Invalid inputs are caught earlier with more descriptive error messages
@@ -148,7 +153,7 @@ There are a few minor behavioral differences to be aware of:
 
 1. **Error messages**: tif1 provides more detailed error messages with context about what went wrong and what data was available
 2. **Warnings**: Fuzzy matching warnings include the original query and the resolved value for transparency
-3. **Session requirement**: tif1 strictly enforces the session parameter for team/driver lookups and raises `ValueError` if `None`. FastF1 may silently return empty strings
+3. **Session requirement**: tif1 requires the session parameter for team and driver color lookups and raises `ValueError` if it is `None`. Name lookups without a session return an empty string, and list helpers return an empty list
 4. **Colormap validation**: tif1 validates colormap values immediately and raises `ValueError` for invalid options, preventing silent fallback to defaults
 
 ## Matplotlib Setup
@@ -157,7 +162,7 @@ There are a few minor behavioral differences to be aware of:
 
 ```python
 def setup_mpl(
-    mpl_timedelta_support: bool = True,
+    mpl_timedelta_support: bool | str = True,
     color_scheme: str | None = None,
     *,
     misc_mpl_mods: bool = True,
@@ -169,8 +174,8 @@ Configure matplotlib with Formula 1-optimized defaults including color schemes, 
 
 #### Parameters
 
-- **`mpl_timedelta_support`** (`bool`, default: `True`)
-  Enable timedelta plotting support via the `timple` library. When enabled, matplotlib can natively plot `pandas.Timedelta` and `datetime.timedelta` objects on axes. `timple` is installed with `tif1`.
+- **`mpl_timedelta_support`** (`bool | str`, default: `True`)
+  Enable timedelta plotting support via the `timple` library. When enabled, matplotlib can natively plot `pandas.Timedelta` and `datetime.timedelta` objects on axes. `timple` is installed with `tif1`. A string in this position is read as `color_scheme` (FastF1 style), and timedelta support is then off.
 
 - **`color_scheme`** (`str | None`, default: `None`)
   Color scheme to apply. Valid values:
@@ -178,22 +183,25 @@ Configure matplotlib with Formula 1-optimized defaults including color schemes, 
   - `"light"` - tif1's simple light theme (lightblue background, black text)
   - `"default-light"` - The TracingInsights v2 `Fastest_Lap.py` theme (lightblue background, black text, hidden top/right spines, no y tick marks)
   - `"default-dark"` - The TracingInsights dark-brand counterpart (`#011627` background, lime text)
+  - `None` - Apply no theme and leave the matplotlib colors unchanged
 
-  The `default-*` schemes do not force the v2 scripts' 32pt tick, legend and axis-label fonts globally. Those sizes were tuned for 20x20 inch canvases and swamp the 10x8 inch charts; the 20x20 race-launch chart still draws its labels at the style's 32pt `label_size`. Applying any named scheme first resets every rcParams key the schemes manage, so themes never leak into one another.
-  - `"official"` - Use official F1 team colors
-  - `None` - Use tif1's default color scheme
+  The `default-*` schemes do not force the v2 scripts' 32pt tick, legend and axis-label fonts globally. Those sizes were tuned for 20x20 inch canvases and are too large for the 10x8 inch charts. The 20x20 race-launch chart still draws its labels at the style's 32pt `label_size`. Applying any named scheme first resets every rcParams key the schemes manage, so themes never leak into one another.
+
+  `"official"` is not a theme: it is a colormap for color lookups. Select it with `set_default_colormap("official")` or the `colormap=` argument. Other unknown values apply no theme.
 
 - **`misc_mpl_mods`** (`bool`, default: `True`)
-  Apply additional matplotlib style modifications including grid styling, tick parameters, and figure aesthetics.
+  Apply the color scheme. When `False`, `setup_mpl` only sets up timedelta support and changes no style settings.
 
 - **`**kwargs`**
-  Additional keyword arguments passed to matplotlib configuration.
+  `background` and `text_color` override the colors of the `light` and `default-*` schemes. Other keys are ignored.
 
 #### Behavior
 
 This function accepts both FastF1-style positional arguments and tif1's keyword-only style:
 
 ```python
+import tif1
+
 # FastF1-compatible positional style
 tif1.plotting.setup_mpl(False, "fastf1")
 
@@ -205,7 +213,7 @@ tif1.plotting.setup_mpl(color_scheme="fastf1", mpl_timedelta_support=False)
 
 `timple` is a required dependency of `tif1`, so timedelta plotting works out of the box.
 
-If `timple` has been removed from the environment, tif1 emits a runtime warning and continues with style-only setup. Timedelta axes will not render correctly until `timple` is reinstalled.
+If `timple` has been removed from the environment, tif1 emits a `RuntimeWarning` and continues with style-only setup. Timedelta axes do not render correctly until `timple` is reinstalled.
 
 #### Examples
 
@@ -227,16 +235,17 @@ import tif1.plotting
 tif1.plotting.setup_mpl(mpl_timedelta_support=False, color_scheme="fastf1")
 ```
 
-**Official F1 colors with custom modifications:**
+**Official F1 team colors on the fastf1 theme:**
 
 ```python
 import tif1.plotting
 
-# Official colors with additional matplotlib tweaks
-tif1.plotting.setup_mpl(
-    color_scheme="official",
-    misc_mpl_mods=True
-)
+# "official" is a colormap for color lookups, not a setup_mpl theme
+tif1.plotting.set_default_colormap("official")
+tif1.plotting.setup_mpl(color_scheme="fastf1", misc_mpl_mods=True)
+
+# The colormap setting is global: restore it when it is no longer needed
+tif1.plotting.set_default_colormap("fastf1")
 ```
 
 #### Notes
@@ -244,7 +253,7 @@ tif1.plotting.setup_mpl(
 - Call `setup_mpl()` once at the start of the script, before creating any plots
 - The function modifies global matplotlib settings via `matplotlib.rcParams`
 - Timedelta support is particularly useful for lap time comparisons and race pace analysis
-- The `misc_mpl_mods` parameter controls grid styling, tick formatting, and other visual enhancements
+- The `misc_mpl_mods` parameter controls whether the color scheme is applied
 
 ## Named Plot Styles
 
@@ -271,7 +280,7 @@ import tif1
 dark = tif1.plotting.get_plot_style("default-dark")
 print(dark["colors"])    # {'background': '#011627', 'text': 'lime', 'grid': 'white', 'bar_label': 'white', 'ytick': 'white'}
 print(dark["images"])    # {'tyre_zoom': 0.07, 'tyre_x_offset': -150, 'car_zoom': 0.5, 'car_x_offset': -110, 'car_threshold': 2.5}
-print(dark["spacing"])   # {'label_padding': 20, 'x_margin': 0.4, 'subplot_left': 0.15, ...}
+print(dark["spacing"])   # {'label_padding': 20, 'subplot_left': 0.15, 'subplot_right': 0.97, ...}
 ```
 
 ```python
@@ -279,7 +288,7 @@ import tif1
 
 style = tif1.plotting.get_plot_style("default-light")
 print(style["figure"])   # {'size': (20, 20), 'dpi': 300, 'constrained_layout': True}
-print(style["colors"])   # {'background': 'lightblue', 'text': 'black', 'grid': 'black'}
+print(style["colors"])   # {'background': 'lightblue', 'text': 'black', 'grid': 'black', ...}
 
 tif1.plotting.setup_mpl(color_scheme="default-dark")
 ```
@@ -297,6 +306,9 @@ The `tif1.assets` module ships the car artwork (all years 2018-2026), tyre compo
 ### Car images
 
 ```python
+import matplotlib.pyplot as plt
+import pandas as pd
+
 from tif1 import assets, plotting
 
 # Team name -> car image code (e.g. "Red Bull Racing" -> "RBR")
@@ -305,6 +317,15 @@ print(code)  # "RBR"
 
 # Load the artwork as an RGBA array (cached)
 img = assets.load_car_image(2024, code)
+
+# One row per driver, with the column names the asset helpers use by default
+df = pd.DataFrame({
+    "Driver": ["VER", "NOR", "LEC"],
+    "LapTimeDelta": [0.0, 0.12, 0.25],
+    "Team_code": ["RBR", "MCL", "FER"],
+    "Team_color": ["#3671c6", "#ff8000", "#e80020"],
+    "Compound": ["SOFT", "SOFT", "MEDIUM"],
+})
 
 # Annotate a barh chart with each team's car (Fastest_Lap-style)
 fig, ax = plt.subplots(figsize=(20, 20))
@@ -338,7 +359,7 @@ The plotting module implements a season-aware color system. It adapts to the tir
 Formula 1 tire compound naming and the color system have changed over the years:
 
 - **2018**: Complex system with seven compounds (HYPERSOFT, ULTRASOFT, SUPERSOFT, SOFT, MEDIUM, HARD, SUPERHARD), each with distinct colors
-- **2019-present**: Simplified three-compound system (SOFT, MEDIUM, HARD) with consistent pink/yellow/white colors, plus INTERMEDIATE and WET
+- **2019-present**: Simplified three-compound system (SOFT, MEDIUM, HARD) with consistent red/yellow/white colors, plus INTERMEDIATE and WET
 
 The tif1 plotting module automatically selects the correct color palette based on the session year, ensuring historical accuracy in visualizations.
 
@@ -346,14 +367,14 @@ The tif1 plotting module automatically selects the correct color palette based o
 
 - **Team and driver colors**: Always require a `session` parameter to ensure accurate team identification
 - **Compound colors**: Can work without a session (returns modern palette) but are season-aware when a session is provided
-- **Colormap selection**: Three schemes available (`default`, `fastf1`, `official`) with validation
+- **Colormap selection**: Three colormap values available (`default`, `fastf1`, `official`) with validation
 
 ### `get_team_color`
 
 ```python
 def get_team_color(
     identifier: str,
-    session,
+    session=None,
     *,
     colormap: str = "default",
     exact_match: bool = False
@@ -368,22 +389,23 @@ Retrieve the color hex code for a team based on the selected colormap.
   Team identifier. Accepts multiple formats:
   - Full team name: `"Red Bull Racing"`
   - Short name: `"Red Bull"`
-  - Team code: `"RBR"`
   - Fuzzy matches: `"redbull"`, `"RedBull"` (when `exact_match=False`)
+
+  Car codes such as `"RBR"` are not accepted: fuzzy matching can resolve them to a different team.
 
 - **`session`** (required)
   A loaded tif1 Session object. Cannot be `None` - raises `ValueError` if omitted.
 
 - **`colormap`** (`str`, default: `"default"`)
   Color scheme to use:
-  - `"default"` - tif1's optimized color palette
+  - `"default"` - The global default colormap (set via `set_default_colormap`, initially `"fastf1"`)
   - `"fastf1"` - FastF1-compatible colors
   - `"official"` - Official F1 team colors from liveries
 
   Invalid values raise `ValueError`.
 
 - **`exact_match`** (`bool`, default: `False`)
-  When `False`, enables fuzzy matching for team identifiers. When `True`, requires exact string match (case-sensitive).
+  When `False`, enables fuzzy matching for team identifiers. When `True`, the identifier must equal a team name or alias. Case and accents are still ignored, but no fuzzy correction occurs.
 
 #### Returns
 
@@ -406,7 +428,7 @@ session.load()
 
 # Get Ferrari color using default colormap
 ferrari_color = tif1.plotting.get_team_color("Ferrari", session)
-print(ferrari_color)  # "#dc0000"
+print(ferrari_color)  # "#e8002d"
 ```
 
 **Comparing color schemes:**
@@ -428,11 +450,15 @@ print(f"Official: {ferrari_official}")
 # These all resolve to the same team (fuzzy matching enabled by default)
 color1 = tif1.plotting.get_team_color("Red Bull Racing", session)
 color2 = tif1.plotting.get_team_color("redbull", session)
-color3 = tif1.plotting.get_team_color("RBR", session)
+color3 = tif1.plotting.get_team_color("red bull", session)
 
 assert color1 == color2 == color3  # All return the same color
 
-# Exact match mode (case-sensitive, no fuzzy matching)
+# Fuzzy matching works on team names, not car codes: "RBR" resolves to the
+# 2024 "RB" team (a different team) and emits a UserWarning
+color4 = tif1.plotting.get_team_color("RBR", session)
+
+# Exact match mode (no fuzzy correction)
 try:
     color = tif1.plotting.get_team_color("redbull", session, exact_match=True)
 except KeyError:
@@ -467,18 +493,16 @@ Retrieve the color hex code for a tire compound, with automatic season-aware pal
   - **2018**: `"HYPERSOFT"`, `"ULTRASOFT"`, `"SUPERSOFT"`, `"SOFT"`, `"MEDIUM"`, `"HARD"`, `"SUPERHARD"`, `"INTERMEDIATE"`, `"WET"`
   - **2019+**: `"SOFT"`, `"MEDIUM"`, `"HARD"`, `"INTERMEDIATE"`, `"WET"`
 
-  Case-insensitive matching is supported.
+  Both palettes also contain `"UNKNOWN"` and `"TEST-UNKNOWN"`. Case-insensitive matching is supported.
 
 - **`session`** (optional)
   A loaded tif1 Session object. When provided, uses the session year to select the appropriate compound palette. When `None`, defaults to the modern (2019+) palette.
 
 #### Returns
 
-- **`str`**: Hex color code for the compound (for example, `"#ff0080"` for HYPERSOFT in 2018)
+- **`str`**: Hex color code for the compound (for example, `"#feb1c1"` for HYPERSOFT in 2018)
 
-#### Raises
-
-- **`KeyError`**: If the compound name is not valid for the session year
+The function does not raise for an unknown compound. A compound that is not in the season palette returns the `UNKNOWN` color (`"#00ffff"`).
 
 #### Examples
 
@@ -494,9 +518,9 @@ soft_color = tif1.plotting.get_compound_color("SOFT", session)
 medium_color = tif1.plotting.get_compound_color("MEDIUM", session)
 hard_color = tif1.plotting.get_compound_color("HARD", session)
 
-print(f"Soft:   {soft_color}")    # Pink
-print(f"Medium: {medium_color}")  # Yellow
-print(f"Hard:   {hard_color}")    # White
+print(f"Soft:   {soft_color}")    # Red (#da291c)
+print(f"Medium: {medium_color}")  # Yellow (#ffd12e)
+print(f"Hard:   {hard_color}")    # White (#f0f0ec)
 ```
 
 **Historical compound colors (2018):**
@@ -510,9 +534,9 @@ hypersoft = tif1.plotting.get_compound_color("HYPERSOFT", session_2018)
 ultrasoft = tif1.plotting.get_compound_color("ULTRASOFT", session_2018)
 supersoft = tif1.plotting.get_compound_color("SUPERSOFT", session_2018)
 
-print(f"Hypersoft: {hypersoft}")  # Bright pink
-print(f"Ultrasoft: {ultrasoft}")  # Purple
-print(f"Supersoft: {supersoft}")  # Red
+print(f"Hypersoft: {hypersoft}")  # Pink (#feb1c1)
+print(f"Ultrasoft: {ultrasoft}")  # Purple (#b24ba7)
+print(f"Supersoft: {supersoft}")  # Red (#fc2b2a)
 ```
 
 **Plotting tire strategy:**
@@ -538,7 +562,7 @@ for compound in compounds:
     compound_laps = laps[laps["Compound"] == compound]
     ax.scatter(
         compound_laps["LapNumber"],
-        compound_laps["LapTime"],
+        compound_laps["LapTimeSeconds"],
         color=compound_colors[compound],
         label=compound,
         s=50
@@ -546,19 +570,20 @@ for compound in compounds:
 
 ax.legend()
 ax.set_xlabel("Lap Number")
-ax.set_ylabel("Lap Time")
+ax.set_ylabel("Lap Time (s)")
 plt.show()
 ```
 
 **Without session (defaults to modern palette):**
 
 ```python
-# When no session is provided, uses 2019+ palette
-soft = tif1.plotting.get_compound_color("SOFT")  # Works
-try:
-    hypersoft = tif1.plotting.get_compound_color("HYPERSOFT")  # KeyError
-except KeyError:
-    print("HYPERSOFT not available in modern palette")
+# When no session is provided, uses the 2019+ palette
+soft = tif1.plotting.get_compound_color("SOFT")
+print(soft)  # "#da291c"
+
+# HYPERSOFT is not in that palette, so the UNKNOWN color is returned
+hypersoft = tif1.plotting.get_compound_color("HYPERSOFT")
+print(hypersoft)  # "#00ffff"
 ```
 
 ### `get_compound_mapping`
@@ -591,11 +616,13 @@ session.load()
 compound_colors = tif1.plotting.get_compound_mapping(session)
 print(compound_colors)
 # {
-#     "SOFT": "#ff0080",
-#     "MEDIUM": "#ffd700",
-#     "HARD": "#ffffff",
-#     "INTERMEDIATE": "#00ff00",
-#     "WET": "#0000ff"
+#     "SOFT": "#da291c",
+#     "MEDIUM": "#ffd12e",
+#     "HARD": "#f0f0ec",
+#     "INTERMEDIATE": "#43b02a",
+#     "WET": "#0067ad",
+#     "UNKNOWN": "#00ffff",
+#     "TEST-UNKNOWN": "#434649"
 # }
 ```
 
@@ -608,8 +635,8 @@ session_2024 = tif1.get_session(2024, "Monaco", "Race")
 compounds_2018 = tif1.plotting.get_compound_mapping(session_2018)
 compounds_2024 = tif1.plotting.get_compound_mapping(session_2024)
 
-print(f"2018 compounds: {len(compounds_2018)}")  # 9 compounds
-print(f"2024 compounds: {len(compounds_2024)}")  # 5 compounds
+print(f"2018 compounds: {len(compounds_2018)}")  # 11 (9 compounds + UNKNOWN, TEST-UNKNOWN)
+print(f"2024 compounds: {len(compounds_2024)}")  # 7 (5 compounds + UNKNOWN, TEST-UNKNOWN)
 ```
 
 **Create a compound color legend:**
@@ -643,7 +670,7 @@ The driver color and metadata functions give complete access to driver informati
 
 Following the FastF1 model, **both drivers from the same team share the same team color**. This design follows modern F1 broadcasting conventions. Teams are identified by a single color. Drivers are differentiated by other visual properties (linestyles, markers, helmet designs).
 
-To distinguish between teammates in visualizations, use the `get_driver_style` function. It assigns different linestyles and markers based on grid position within the team.
+To distinguish between teammates in visualizations, use the `get_driver_style` function. It assigns different linestyles and markers based on the classification order within the team.
 
 ### `get_driver_color`
 
@@ -681,7 +708,11 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
   Invalid values raise `ValueError` with a list of valid options.
 
 - **`exact_match`** (`bool`, default: `False`)
-  When `False`, enables fuzzy matching using Levenshtein distance. When `True`, requires exact string match (case-sensitive) against driver abbreviation, full name, first name, or last name.
+  When `False`, enables fuzzy matching using Levenshtein distance. When `True`, the identifier must equal the driver abbreviation, full name, first name, or last name. Case and accents are still ignored, but no fuzzy correction occurs.
+
+<Note>
+Name identifiers need driver names in the session data. Some sessions, for example the 2024 Belgian Grand Prix, carry only the 3-letter codes. On those sessions, a name such as `"Hamilton"` is fuzzy-matched to a wrong driver with a `UserWarning`. Use the 3-letter codes when `session.results["FullName"]` is empty.
+</Note>
 
 #### Returns
 
@@ -697,7 +728,7 @@ Retrieve the color hex code for a driver. Since drivers inherit their team's col
 1. **Driver Resolution**: The function first resolves the identifier to a driver using the session's driver/team mapping
 2. **Team Lookup**: Once the driver is identified, their team affiliation is retrieved
 3. **Color Selection**: The team's color is returned based on the selected colormap
-4. **Fuzzy Matching**: If exact match fails, Levenshtein distance finds the closest match. A warning is emitted if the match is not exact
+4. **Fuzzy Matching**: If exact match fails, Levenshtein distance finds the closest match. A warning is emitted if the match is not exact. An unknown identifier is not an error in this mode: it resolves to the closest driver
 
 #### Examples
 
@@ -776,7 +807,7 @@ for driver, color in zip(drivers, colors):
     driver_laps = session.laps.pick_driver(driver)
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         color=color,
         label=driver,
         linewidth=2
@@ -784,7 +815,7 @@ for driver, color in zip(drivers, colors):
 
 ax.legend()
 ax.set_xlabel("Lap Number")
-ax.set_ylabel("Lap Time")
+ax.set_ylabel("Lap Time (s)")
 ax.set_title("Race Pace Comparison")
 plt.show()
 ```
@@ -804,11 +835,12 @@ try:
 except ValueError as e:
     print(e)  # "Invalid colormap 'invalid'"
 
-# Unknown driver raises KeyError
+# Unknown driver raises KeyError in exact-match mode
+# (with fuzzy matching, it resolves to the closest driver and warns)
 try:
-    color = tif1.plotting.get_driver_color("UNKNOWN", session)
+    color = tif1.plotting.get_driver_color("UNKNOWN", session, exact_match=True)
 except KeyError as e:
-    print(e)  # "No driver found for 'UNKNOWN' (exact match only)" or similar
+    print(e)  # "No driver found for 'UNKNOWN' (exact match only)"
 ```
 
 ### `get_driver_style`
@@ -843,7 +875,11 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
   - `"color"` - Driver/team color
   - `"linestyle"` - Line style (rotates through: `"solid"`, `"dashed"`, `"dashdot"`, `"dotted"`)
   - `"marker"` - Marker style (rotates through: `"x"`, `"o"`, `"^"`, `"D"`)
-  - Any matplotlib color keyword: `"facecolor"`, `"edgecolor"`, `"markerfacecolor"`, `"markeredgecolor"`, etc.
+  - A matplotlib color keyword: `"color"`, `"c"`, `"colors"`, `"gapcolor"`, `"ecolor"`, `"facecolor"`, `"fc"`, `"facecolors"`
+  - An edge or marker color keyword: `"edgecolor"`, `"ec"`, `"edgecolors"`, `"markerfacecolor"`, `"mfc"`, `"markerfacecoloralt"`, `"mfcalt"`, `"markeredgecolor"`, `"mec"`
+  - Any name passed in `additional_color_kws`
+
+  Other names raise `ValueError`.
 
 - **`session`** (required)
   A loaded tif1 Session object
@@ -868,7 +904,7 @@ Generate a complete matplotlib style dictionary for a driver, including color, l
 
 #### Behavior Details
 
-**Team Position Rotation**: Drivers within the same team are assigned different linestyles and markers. The assignment is based on grid position (order in session results). The first driver (typically the one who qualified higher) gets the first style in the rotation. The second driver gets the second style, and so on.
+**Team Position Rotation**: Drivers within the same team are assigned different linestyles and markers. The assignment follows the order of `session.results`, which is the classification order. The better-classified teammate gets the first style in the rotation. The second driver gets the second style, and so on.
 
 **Linestyle Rotation**: `["solid", "dashed", "dashdot", "dotted"]`
 **Marker Rotation**: `["x", "o", "^", "D"]`
@@ -933,14 +969,14 @@ for driver in ["VER", "PER", "LEC", "SAI"]:
     driver_laps = session.laps.pick_driver(driver)
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         label=driver,
         **style  # Unpack style dictionary
     )
 
 ax.legend()
 ax.set_xlabel("Lap Number")
-ax.set_ylabel("Lap Time")
+ax.set_ylabel("Lap Time (s)")
 plt.show()
 ```
 
@@ -1095,7 +1131,7 @@ print(name)  # "Charles Leclerc"
 def list_driver_abbreviations(session) -> list[str]
 ```
 
-Get a list of all driver abbreviations in the session, ordered by grid position (as they appear in session results).
+Get a list of all driver abbreviations in the session, in classification order (as they appear in `session.results`).
 
 #### Parameters
 
@@ -1103,7 +1139,7 @@ Get a list of all driver abbreviations in the session, ordered by grid position 
 
 #### Returns
 
-- **`list[str]`**: List of three-letter driver abbreviations in grid order
+- **`list[str]`**: List of three-letter driver abbreviations in classification order
 
 #### Examples
 
@@ -1113,8 +1149,8 @@ session.load()
 
 drivers = tif1.plotting.list_driver_abbreviations(session)
 print(drivers)
-# ["VER", "PER", "LEC", "SAI", "HAM", "RUS", "NOR", "PIA", ...]
-# (Ordered by finishing position or grid position)
+# ["VER", "PER", "SAI", "LEC", "RUS", "NOR", "HAM", "PIA", ...]
+# (Ordered by classification)
 ```
 
 ### `list_driver_names`
@@ -1123,7 +1159,7 @@ print(drivers)
 def list_driver_names(session) -> list[str]
 ```
 
-Get a list of all driver full names in the session, ordered by grid position.
+Get a list of all driver full names in the session, in classification order.
 
 #### Parameters
 
@@ -1131,7 +1167,7 @@ Get a list of all driver full names in the session, ordered by grid position.
 
 #### Returns
 
-- **`list[str]`**: List of full driver names in grid order
+- **`list[str]`**: List of full driver names in classification order
 
 #### Examples
 
@@ -1217,7 +1253,7 @@ print(merc_drivers)  # ["Lewis Hamilton", "George Russell"]
 
 # Get McLaren drivers
 mclaren_drivers = tif1.plotting.get_driver_names_by_team("McLaren", session)
-print(mclaren_drivers)  # ["Lando Norris", "Oscar Piastri"]
+print(mclaren_drivers)  # ["Oscar Piastri", "Lando Norris"] (classification order)
 ```
 
 ### `get_driver_color_mapping`
@@ -1268,7 +1304,7 @@ for driver in ["VER", "HAM", "LEC"]:
     driver_laps = session.laps.pick_driver(driver)
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         color=colors[driver],  # O(1) lookup
         label=driver
     )
@@ -1284,7 +1320,7 @@ plt.show()
 def add_sorted_driver_legend(ax, session, *args, **kwargs)
 ```
 
-This groups drivers by team and keeps teammates in the same order used for style selection.
+This groups drivers by team and keeps teammates in the same order used for style selection. Teams appear in the order of their best-classified driver.
 
 Unresolved legend labels are preserved and appended after all resolved driver labels.
 
@@ -1336,13 +1372,13 @@ for driver in ["VER", "LEC"]:
     driver_laps = laps[laps["Driver"] == driver]
     ax.plot(
         driver_laps["LapNumber"],
-        driver_laps["LapTime"],
+        driver_laps["LapTimeSeconds"],
         color=colors[driver],
         label=driver,
     )
 
 tif1.plotting.add_sorted_driver_legend(ax, session)
 ax.set_xlabel("Lap number")
-ax.set_ylabel("Lap time")
+ax.set_ylabel("Lap time (s)")
 plt.show()
 ```

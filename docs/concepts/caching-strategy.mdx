@@ -209,7 +209,11 @@ import tif1
 cache = tif1.get_cache()
 print(cache.cache_dir)
 print(cache.db_path)
-print(cache.has_session_data(2024, "Monaco", "Race"))
+
+# The cache keys hold the URL-encoded names, so pass session.gp and session.session
+session = tif1.get_session(2024, "Monaco", "Race")
+session.load(laps=True, telemetry=False)
+print(cache.has_session_data(session.year, session.gp, session.session))  # True
 ```
 
 | Method | Purpose |
@@ -222,7 +226,7 @@ print(cache.has_session_data(2024, "Monaco", "Race"))
 | `get_entry(kind, key)` / `set_entry(kind, key, value)` | Kind-based interface; `kind` is `"json"` or `"telemetry"` |
 | `invalidate(scope)` | Drop one tier group (see below) |
 | `is_known_missing(key)` / `record_missing(key)` / `discard_missing(key)` | Negative-verdict tier |
-| `has_session_data(year, gp, session)` | True when any payload for the session is cached |
+| `has_session_data(year, gp, session)` | True when any payload for the session is cached; `gp` and `session` are the URL-encoded forms (`session.gp`, `session.session`) |
 | `clear()` | Delete every row and empty every memory tier |
 | `close()` | Flush pending writes and close the connection |
 
@@ -310,7 +314,7 @@ Set `TIF1_ENABLE_CACHE=false` or `tif1.get_config().set("enable_cache", False)` 
     The cache directory is forced to mode `0o700`. Keep the directory private: the frame tier unpickles blobs from it and trusts their origin.
   </Accordion>
   <Accordion title="Python 3.14 and 3.15 codecs">
-    Python 3.14 and later compress payload rows with the standard-library `compression.zstd` module. Python 3.15 has no `lz4` wheels yet, so frame rows are zstd-1 there. Payload rows read under every binding, so one cache directory can be shared between interpreter versions. Frame rows are the exception: an interpreter without `lz4` treats lz4 rows written elsewhere as misses and rebuilds the frames from the payload tier.
+    Python 3.14 and later compress payload rows with the standard-library `compression.zstd` module. Python 3.15 has no `lz4` wheels yet, so frame rows are zstd-1 there. Payload rows read under every binding, so one cache directory can be shared between interpreter versions. Frame rows are the exception. An interpreter without `lz4` treats lz4 rows from another interpreter as misses. It then rebuilds the frames from the payload tier.
   </Accordion>
 </AccordionGroup>
 

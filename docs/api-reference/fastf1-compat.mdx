@@ -50,16 +50,16 @@ This multi-layer approach ensures that hot data is served from memory while main
 ### `Cache.enable_cache`
 
 ```python
-@staticmethod
+@classmethod
 def enable_cache(
     cache_dir: str | Path | None = None,
     ignore_version: bool = True,
     force_renew: bool = False,
     use_requests_cache: bool = True
-) -> Cache
+) -> tif1.cache.Cache
 ```
 
-Enable caching with fastf1-compatible API. This method initializes tif1's caching system and configures the cache directory. Once enabled, all data fetched through tif1 will be automatically cached for faster subsequent access.
+Enable caching with fastf1-compatible API. This method initializes tif1's caching system and configures the cache directory. After this call, tif1 caches all fetched data for faster access.
 
 #### Parameters
 
@@ -72,7 +72,7 @@ Enable caching with fastf1-compatible API. This method initializes tif1's cachin
 
 #### Returns
 
-- **`Cache`**: The configured global tif1 cache instance
+- **`tif1.cache.Cache`**: The configured global tif1 cache instance (the same object that `tif1.get_cache()` returns)
 
 #### Behavior Details
 
@@ -166,14 +166,14 @@ tif1.Cache.enable_cache("./cache")
 
 #### Thread Safety
 
-`enable_cache()` is thread-safe and can be called from multiple threads. However, it is recommended to call it once during application initialization to avoid unnecessary overhead.
+`enable_cache()` closes the global cache instance and creates a new one. Call it once during application start-up, before other threads fetch data.
 
 ---
 
 ### `Cache.clear_cache`
 
 ```python
-@staticmethod
+@classmethod
 def clear_cache(
     cache_dir: str | Path | None = None,
     deep: bool = False
@@ -193,8 +193,8 @@ Clear cached data from the specified cache directory. This method removes all ca
 
 The clearing process works as follows:
 
-1. **Active Cache Detection**: If `cache_dir` is `None`, uses the now active cache instance
-2. **Directory Validation**: Verifies the cache directory exists and is a valid directory
+1. **Active Cache Detection**: If `cache_dir` is `None`, uses the active cache instance
+2. **Directory Validation**: If `cache_dir` is given, verifies that it exists and is a directory
 3. **SQLite Clearing**: Executes `DELETE` statements on all cache tables
 4. **Memory Cache Flush**: Clears in-memory LRU caches
 5. **Legacy Cleanup** (if `deep=True`): Removes FastF1 HTTP cache files for users migrating from fastf1
@@ -203,6 +203,8 @@ The clearing process works as follows:
 
 - **`cache` table**: General session data, lap times, race control messages, weather data
 - **`telemetry_cache` table**: Telemetry data indexed by (year, GP, session, driver, lap)
+- **`telemetry_frames` and `telemetry_frames_pl` tables**: Built telemetry frames for the pandas and polars backends
+- **`missing_payloads` table**: Records of files that no CDN has
 - **In-memory caches**: Both general and telemetry-specific LRU caches
 
 #### Examples
@@ -224,10 +226,15 @@ tif1.Cache.clear_cache()
 
 **Clear a specific cache directory:**
 ```python
+from pathlib import Path
+
 import tif1
 
-# Clear cache in a specific directory without activating it
-tif1.Cache.clear_cache(cache_dir="./old_cache")
+# Clear cache in a specific directory without activating it.
+# A missing directory raises NotADirectoryError, so check it first.
+old_cache = Path("./old_cache")
+if old_cache.is_dir():
+    tif1.Cache.clear_cache(cache_dir=old_cache)
 ```
 
 **Deep clean (remove legacy FastF1 files):**
@@ -267,7 +274,7 @@ tif1.Cache.clear_cache()
 
 #### Error Handling
 
-- **`NotADirectoryError`**: Raised if the specified `cache_dir` exists but is not a directory
+- **`NotADirectoryError`**: Raised if the specified `cache_dir` does not exist or is not a directory
 - **`OSError`**: May be raised if file permissions prevent deletion (logged as warning for legacy files)
 
 #### Performance Impact
@@ -350,9 +357,8 @@ fastf1.set_log_level(logging.INFO)
 session = fastf1.get_session(2024, "Monaco", "Q")
 session.load()
 
-# Get driver
-ver = session.get_driver("VER")
-fastest = ver.pick_fastest()
+# Get the fastest lap of one driver
+fastest = session.laps.pick_drivers("VER").pick_fastest()
 
 # Get telemetry
 tel = fastest.get_telemetry()
@@ -372,9 +378,8 @@ tif1.set_log_level(logging.INFO)
 session = tif1.get_session(2024, "Monaco", "Q")
 session.load()
 
-# Get driver (identical API)
-ver = session.get_driver("VER")
-fastest = ver.pick_fastest()
+# Get the fastest lap of one driver (identical API)
+fastest = session.laps.pick_drivers("VER").pick_fastest()
 
 # Get telemetry (identical API)
 tel = fastest.get_telemetry()
@@ -406,8 +411,9 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 Some fastf1 parameters are ignored in tif1 because they are handled automatically:
 
 - `Cache.enable_cache(ignore_version)`: tif1 handles versioning automatically
-- `Cache.enable_cache(force_renew)`: Use `Cache.clear_cache()` instead
 - `Cache.enable_cache(use_requests_cache)`: tif1 uses SQLite cache
+
+`Cache.enable_cache(force_renew=True)` is not ignored: it clears the cache after enabling it.
 
 ### Performance Improvements
 

@@ -40,16 +40,18 @@ class CDNSource:
     use_minification: bool = False
 
     def format_url(self, year: int, gp: str, session: str, path: str) -> str:
-        """Format URL for this CDN with optional minification support.
+        """Format URL for this CDN.
 
         jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
         StaticDelivr format: https://cdn.staticdelivr.com/gh/user/repo/branch/path
         Hugging Face bucket format: https://huggingface.co/buckets/user/bucket/resolve/path
 
-        jsDelivr supports automatic minification by appending .min before the extension.
-        This can reduce file sizes by 20-40% for JSON files.
+        ``use_minification`` requests ``file.min.json`` instead of ``file.json``;
+        it is meant for a custom mirror that serves minified copies. The
+        default CDNs ignore the global ``cdn_use_minification`` option (see
+        ``CDNManager``): jsDelivr minifies only JavaScript and CSS, so the
+        request would answer 404 everywhere and only add a wasted round trip.
         """
-        # jsDelivr minification: file.json -> file.min.json
         if self.use_minification and path.endswith(".json"):
             path = path.replace(".json", ".min.json")
 
@@ -65,9 +67,18 @@ class CDNSource:
 
 
 class CDNManager:
-    """Manage multiple CDN sources with fallback and rate limiting."""
+    """Manage multiple CDN sources with fallback and rate limiting.
+
+    The module-level manager (:func:`get_cdn_manager`) reads ``cdns`` and
+    ``cdn_use_minification`` from the config when ``tif1.cdn`` is imported;
+    call :meth:`reload` after ``config.set(...)`` to apply a change.
+    """
 
     def __init__(self):
+        self.reload()
+
+    def reload(self) -> None:
+        """Rebuild the source list from the current config and reset failure counts."""
         from .config import get_config
 
         config = get_config()
@@ -90,9 +101,11 @@ class CDNManager:
             name = self._name_for_url(base_url, i)
             if any(s.name == name for s in self.sources):
                 name = f"{name} {i}"
-            # Hugging Face does not minify; a .min.json request would 404 and
-            # DataNotFoundError aborts the fallback chain, so never minify there.
-            source_minification = use_minification and "huggingface" not in base_url.lower()
+            # None of the default CDNs serves .min.json (jsDelivr minifies only
+            # JS/CSS; Hugging Face and StaticDelivr mirror the repo as-is), so a
+            # minified request is a guaranteed 404 and a wasted round trip there.
+            # The option only applies to custom mirrors.
+            source_minification = use_minification and not self._is_default_cdn(base_url)
             self.sources.append(
                 CDNSource(
                     name=name,
@@ -109,7 +122,7 @@ class CDNManager:
                     name="jsDelivr",
                     base_url=default_sources[0],
                     priority=1,
-                    use_minification=use_minification,
+                    use_minification=False,
                 ),
                 CDNSource(
                     name="HuggingFace",
@@ -121,12 +134,18 @@ class CDNManager:
                     name="StaticDelivr",
                     base_url=default_sources[2],
                     priority=3,
-                    use_minification=use_minification,
+                    use_minification=False,
                 ),
             ]
 
         self._failure_counts = {source.name: 0 for source in self.sources}
         self._max_failures = 3
+
+    @staticmethod
+    def _is_default_cdn(base_url: str) -> bool:
+        """True for jsDelivr, Hugging Face and StaticDelivr, none of which serves ``.min.json``."""
+        lowered = base_url.lower()
+        return any(host in lowered for host in ("jsdelivr", "huggingface", "staticdelivr"))
 
     @staticmethod
     def _name_for_url(base_url: str, index: int) -> str:
@@ -205,10 +224,19 @@ class CDNManager:
             except InvalidDataError:
                 raise
             except Exception as e:
-                logger.warning(f"CDN {source.name} failed: {e}")
-                self.mark_failure(source.name)
+                status = self._response_status(e)
+                if CDNManager._is_file_refusal(status):
+                    # Argos A11: a 403 is per-file on jsDelivr ("Package size
+                    # exceeded the configured limit of 50 MB" for files its
+                    # edge has not cached) - like a 404 it says nothing about
+                    # the mirror's health, so it must not count towards
+                    # disabling the source for the rest of the process.
+                    logger.debug(f"CDN {source.name} refused {path} ({status}), trying next source")
+                else:
+                    logger.warning(f"CDN {source.name} failed: {e}")
+                    self.mark_failure(source.name)
                 last_exception = e
-                statuses.append(self._response_status(e))
+                statuses.append(status)
 
         # Called via the class so Mock-bound instances keep the real decision logic.
         if CDNManager._all_client_refusals(statuses):
@@ -218,6 +246,17 @@ class CDNManager:
             url=f"{year}/{gp}/{session}/{path}",
             status_code=self._response_status(last_exception),
         )
+
+    @staticmethod
+    def _is_file_refusal(status: int | None) -> bool:
+        """True for statuses that refuse one file without saying the mirror is down.
+
+        404: the mirror does not (yet) hold the file. 403: jsDelivr's answer for
+        a file it cannot fetch from a repository over its 50 MB package limit -
+        intermittent and per-file (files already in its cache keep serving).
+        Neither is a health signal; both fall through to the next source.
+        """
+        return status in (403, 404)
 
     async def try_sources_async(
         self,
@@ -280,11 +319,32 @@ class CDNManager:
             except InvalidDataError:
                 raise
             except Exception as e:
-                logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
-                if self._response_status(e) != 404:
+                status = self._response_status(e)
+                if not CDNManager._is_file_refusal(status):
+                    logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
                     self.mark_failure(source.name)
+                    last_exception = e
+                    statuses.append(status)
+                    continue
+                # Argos A11: a per-file refusal (403 on jsDelivr's over-limit
+                # repository, or a 404 surfaced as an HTTP error) is handled
+                # exactly like the DataNotFoundError branch above - no health
+                # penalty, race the remaining sources.
+                logger.debug(f"CDN {source.name} refused {path} ({status}), racing remaining")
                 last_exception = e
-                statuses.append(self._response_status(e))
+                statuses.append(status)
+                remaining = sources[index + 1 :]
+                if not remaining:
+                    break
+                result, race_error, race_statuses = await self._race_remaining_async(
+                    year, gp, session, path, fetch_func, remaining
+                )
+                statuses.extend(race_statuses)
+                if result is not None:
+                    return result
+                if race_error is not None:
+                    last_exception = race_error
+                break
 
         # Called via the class so Mock-bound instances keep the real decision logic.
         if CDNManager._all_client_refusals(statuses):
@@ -344,11 +404,14 @@ class CDNManager:
                         continue
                     if isinstance(error, InvalidDataError):
                         raise error from race_failure
-                    logger.warning(
-                        f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
-                    )
                     status = self._response_status(error)
-                    if status != 404:
+                    if CDNManager._is_file_refusal(status):
+                        # Per-file refusal (Argos A11): no health penalty.
+                        logger.debug(f"CDN {race_failure.source_name} refused the file ({status})")
+                    else:
+                        logger.warning(
+                            f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
+                        )
                         self.mark_failure(race_failure.source_name)
                     last_error = error
                     statuses.append(status)

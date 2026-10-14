@@ -15,6 +15,42 @@ _niquests = None
 _shared_session: Any | None = None
 _session_lock = threading.Lock()
 
+#: Resolver specifiers in niquests' ``<scheme>+<provider>://`` form: standard
+#: DNS first, then DNS-over-HTTPS fallbacks. (``doh://cloudflare`` is parsed as
+#: a DoH server literally named "cloudflare" and never resolves anything.)
+DEFAULT_RESOLVERS: tuple[str, ...] = ("standard", "doh+cloudflare://", "doh+google://")
+
+# Pre-0.8 config files spelled the DoH fallbacks as ``doh://<provider>``.
+_LEGACY_RESOLVER_SPELLINGS = {
+    "doh://cloudflare": "doh+cloudflare://",
+    "doh://google": "doh+google://",
+    "doh://quad9": "doh+quad9://",
+    "doh://adguard": "doh+adguard://",
+    "doh://nextdns": "doh+nextdns://",
+}
+
+
+def _normalize_resolver(resolver: str) -> str:
+    """Map the legacy ``doh://<provider>`` spelling to niquests' ``doh+<provider>://``."""
+    return _LEGACY_RESOLVER_SPELLINGS.get(resolver.lower(), resolver)
+
+
+def _response_reused_connection(response: Any) -> bool:
+    """Whether a niquests response rode an already-open pooled connection.
+
+    niquests records the handshake timings on ``response.conn_info``; a reused
+    connection performs no new TCP/TLS handshake, so ``established_latency``
+    and ``tls_handshake_latency`` are zero (or absent). Unknown shapes (mocks,
+    other clients) count as not reused.
+    """
+    info = getattr(response, "conn_info", None)
+    if info is None:
+        return False
+    established = getattr(info, "established_latency", None)
+    handshake = getattr(info, "tls_handshake_latency", None)
+    return not established and not handshake
+
+
 # Connection reuse metrics
 _connection_metrics = {
     "total_requests": 0,
@@ -75,9 +111,7 @@ def _create_session() -> Any:
         # Set to 4x connections for burst handling, minimum 512
         pool_maxsize = max(512, pool_connections * 4)
 
-    configured_resolvers = config.get(
-        "http_resolvers", ["standard", "doh://cloudflare", "doh://google"]
-    )
+    configured_resolvers = config.get("http_resolvers", list(DEFAULT_RESOLVERS))
     resolvers: list[str | None] = []
 
     if isinstance(configured_resolvers, list):
@@ -88,10 +122,10 @@ def _create_session() -> Any:
             if normalized in {"standard", "default", "none", ""}:
                 resolvers.append(None)
             else:
-                resolvers.append(resolver.strip())
+                resolvers.append(_normalize_resolver(resolver.strip()))
 
     if not resolvers:
-        resolvers = [None, "doh://cloudflare", "doh://google"]
+        resolvers = [None, *DEFAULT_RESOLVERS[1:]]
 
     for resolver in resolvers:
         session = None
@@ -112,10 +146,20 @@ def _create_session() -> Any:
             # Skip env/netrc resolution on every request; this is costly at telemetry scale.
             session.trust_env = False
 
+            # The adapter owns name resolution in niquests, so the resolver
+            # must be handed to the replacement adapter or it is silently lost.
+            # Argos A7: the replacement adapter owns protocol negotiation
+            # too, so the HTTP/3 switch must be handed to it as well or the
+            # ``http_disable_http3`` knob is silently lost (E7 could not
+            # measure an h2-only variant for exactly this reason).
             session.mount(
                 "https://",
                 niquests.adapters.HTTPAdapter(
-                    pool_connections=pool_connections, pool_maxsize=pool_maxsize, pool_block=False
+                    pool_connections=pool_connections,
+                    pool_maxsize=pool_maxsize,
+                    pool_block=False,
+                    resolver=resolver,
+                    disable_http3=disable_http3,
                 ),
             )
             # Enable connection keep-alive with timeout and max requests
