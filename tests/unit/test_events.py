@@ -330,6 +330,86 @@ class TestGetEventByName:
         assert event["EventName"] == "São Paulo Grand Prix"
 
 
+class TestEventNameAliases:
+    """Circuit, city and country names resolve to the event they mean.
+
+    Before the alias table, fuzzy matching sent "Spa" to the Spanish GP
+    ("spa" is a substring of "spain"), "USA" to Qatar (substring of "lusail"),
+    "Interlagos" to the Dutch GP and "Britain" to Bahrain, in every season.
+    """
+
+    @pytest.mark.parametrize(
+        ("year", "query", "expected"),
+        [
+            (2021, "Spa", "Belgian Grand Prix"),
+            (2024, "Spa", "Belgian Grand Prix"),
+            (2025, "Spa GP", "Belgian Grand Prix"),
+            (2025, "Spa-Francorchamps", "Belgian Grand Prix"),
+            (2024, "Interlagos", "São Paulo Grand Prix"),
+            (2019, "Interlagos", "Brazilian Grand Prix"),
+            (2024, "Britain", "British Grand Prix"),
+            (2025, "UK", "British Grand Prix"),
+            (2025, "USA", "United States Grand Prix"),
+            (2025, "COTA", "United States Grand Prix"),
+            (2025, "Italy", "Italian Grand Prix"),
+            (2025, "Monza", "Italian Grand Prix"),
+            (2025, "Barcelona", "Spanish Grand Prix"),
+            (2026, "Barcelona", "Barcelona Grand Prix"),
+            (2026, "Madrid", "Spanish Grand Prix"),
+            (2025, "Suzuka", "Japanese Grand Prix"),
+            (2025, "Montréal", "Canadian Grand Prix"),
+            (2019, "Mexico", "Mexican Grand Prix"),
+            (2024, "Mexico", "Mexico City Grand Prix"),
+            (2020, "Sakhir", "Sakhir Grand Prix"),
+            (2024, "Sakhir", "Bahrain Grand Prix"),
+            (2025, "Yas Marina", "Abu Dhabi Grand Prix"),
+            (2025, "Lusail", "Qatar Grand Prix"),
+        ],
+    )
+    def test_alias_resolves(self, year, query, expected):
+        assert get_event_by_name(year, query)["EventName"] == expected
+
+    @pytest.mark.parametrize(
+        ("year", "query", "event"),
+        [
+            (2021, "Suzuka", "Japanese Grand Prix"),
+            (2021, "Singapore", "Singapore Grand Prix"),
+            (2023, "Imola", "Emilia Romagna Grand Prix"),
+        ],
+    )
+    def test_alias_for_event_not_held_that_year_raises(self, year, query, event):
+        with pytest.raises(ValueError, match=f"refers to the {event}, which is not on the {year}"):
+            get_event_by_name(year, query)
+
+    def test_non_alias_country_still_fuzzy_matches(self):
+        # Germany hosted the Eifel GP (Nürburgring) in 2020; not an alias.
+        assert get_event_by_name(2020, "Germany")["EventName"] == "Eifel Grand Prix"
+
+    def test_exact_name_wins_over_alias(self):
+        assert get_event_by_name(2020, "Sakhir Grand Prix")["EventName"] == "Sakhir Grand Prix"
+
+    def test_exact_match_mode_ignores_aliases(self):
+        with pytest.raises(ValueError, match="No exact match found"):
+            get_event_by_name(2025, "Spa", exact_match=True)
+
+    def test_event_name_is_a_fuzzy_feature(self):
+        # No alias for "Britsh" (typo): the event name itself must be matched.
+        assert get_event_by_name(2025, "Britsh")["EventName"] == "British Grand Prix"
+
+
+class TestFuzzyMatcherRaggedReference:
+    def test_ragged_feature_lists_do_not_raise(self):
+        from tif1.fuzzy import fuzzy_matcher
+
+        index, exact = fuzzy_matcher("monza", [["silverstone", "british"], ["monza"]])
+        assert (index, exact) == (1, True)
+
+    def test_empty_reference_features(self):
+        from tif1.fuzzy import fuzzy_matcher
+
+        assert fuzzy_matcher("x", [[], []]) == (0, False)
+
+
 class TestEventSessionName:
     """Test FastF1-compatible Event session name lookup."""
 

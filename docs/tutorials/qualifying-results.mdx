@@ -62,12 +62,12 @@ fastest_laps = pd.DataFrame(list_fastest_laps) \
 
 ## Calculating Gap to Pole
 
-The chart shows time differences from pole position, not absolute lap times.
+The chart shows time differences from pole position, not absolute lap times. Store the gap as float seconds, so that the bar axis shows seconds.
 
 ```python
-# Calculate time delta from pole
+# Calculate time delta from pole (as float seconds for matplotlib)
 pole_lap_time = fastest_laps['LapTime'].iloc[0]
-fastest_laps['LapTimeDelta'] = fastest_laps['LapTime'] - pole_lap_time
+fastest_laps['LapTimeDelta'] = (fastest_laps['LapTime'] - pole_lap_time).dt.total_seconds()
 
 # Preview the results
 print(fastest_laps[['Driver', 'LapTime', 'LapTimeDelta']].head(10))

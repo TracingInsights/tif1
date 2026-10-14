@@ -25,7 +25,8 @@ session = tif1.get_session(2025, "British Grand Prix", "Race")
 laps = session.laps
 
 # Group by driver and stint to see strategy
-strategy = laps.groupby(["Driver", "Stint", "Compound"]).agg({
+# Wrap in pd.DataFrame: groupby on the Laps subclass drops the key column names
+strategy = pd.DataFrame(laps).groupby(["Driver", "Stint", "Compound"], observed=True).agg({
     "LapNumber": ["min", "max", "count"]
 }).reset_index()
 
@@ -34,14 +35,13 @@ print(strategy.head())
 
 ## Visualizing the Strategy
 
-A "Gantt-style" chart shows when each driver swapped tires.
+A "Gantt-style" chart shows when each driver swapped tires. `session.results` lists the drivers in finishing order, so its first ten rows are the top 10.
 
 ```python
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(12, 8))
-# session.drivers returns driver numbers; translate them to abbreviations
-drivers = [session.get_driver(i)["Abbreviation"] for i in session.drivers[:10]]  # Top 10 drivers
+drivers = session.results["Abbreviation"].head(10).tolist()  # Top 10 finishers
 
 for i, driver in enumerate(drivers):
     driver_laps = laps[laps["Driver"] == driver]

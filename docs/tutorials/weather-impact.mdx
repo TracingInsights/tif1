@@ -30,7 +30,7 @@ weather = session.weather
 
 ## Weather Data Structure
 
-Weather is recorded approximately once per minute.
+Weather is recorded approximately once per minute. `Time` is a `timedelta64[ns]` column that counts from the session start. `Rainfall` is a boolean column.
 
 ```python
 # View weather data
@@ -55,10 +55,8 @@ clean_laps = laps[
     (laps["LapNumber"] > 1)
 ].copy()
 
-# Matplotlib and numpy need numeric values, so convert the timedelta lap times to seconds
-clean_laps["LapTimeSeconds"] = clean_laps["LapTime"].dt.total_seconds()
-
 # Plot track temp vs lap time
+# LapTime is a timedelta column; matplotlib and numpy need the float LapTimeSeconds
 plt.figure(figsize=(12, 6))
 plt.scatter(clean_laps["TrackTemp"], clean_laps["LapTimeSeconds"], alpha=0.3)
 plt.xlabel("Track Temperature (°C)")
@@ -80,11 +78,11 @@ plt.show()
 Track how temperature changes during the session.
 
 ```python
-# Plot temperature evolution
+# Plot temperature evolution (Time is a timedelta column; the x-axis needs minutes)
 fig, ax1 = plt.subplots(figsize=(14, 6))
 
 # Air temp
-ax1.plot(weather["Time"] / 60, weather["AirTemp"],
+ax1.plot(weather["Time"].dt.total_seconds() / 60, weather["AirTemp"],
          color="blue", label="Air Temp", linewidth=2)
 ax1.set_xlabel("Time (minutes)")
 ax1.set_ylabel("Air Temperature (°C)", color="blue")
@@ -92,7 +90,7 @@ ax1.tick_params(axis="y", labelcolor="blue")
 
 # Track temp
 ax2 = ax1.twinx()
-ax2.plot(weather["Time"] / 60, weather["TrackTemp"],
+ax2.plot(weather["Time"].dt.total_seconds() / 60, weather["TrackTemp"],
          color="red", label="Track Temp", linewidth=2)
 ax2.set_ylabel("Track Temperature (°C)", color="red")
 ax2.tick_params(axis="y", labelcolor="red")
@@ -114,16 +112,23 @@ clean_laps["HumidityRange"] = pd.cut(
     labels=["Low", "Medium", "High", "Very High"]
 )
 
-# Compare lap times by humidity
+# Compare lap times by humidity (one box per humidity range that occurs)
+humidity_groups = [
+    (label, group["LapTimeSeconds"])
+    for label, group in clean_laps.groupby("HumidityRange", observed=True)
+]
 plt.figure(figsize=(10, 6))
-sns.boxplot(x="HumidityRange", y="LapTime", data=clean_laps)
+plt.boxplot(
+    [times for _, times in humidity_groups],
+    tick_labels=[label for label, _ in humidity_groups],
+)
 plt.xlabel("Humidity Range (%)")
 plt.ylabel("Lap Time (s)")
 plt.title("Humidity Impact on Lap Times")
 plt.show()
 
 # Statistical summary
-humidity_stats = clean_laps.groupby("HumidityRange")["LapTime"].agg([
+humidity_stats = clean_laps.groupby("HumidityRange")["LapTimeSeconds"].agg([
     "mean", "median", "std", "count"
 ])
 print(humidity_stats)
@@ -141,8 +146,8 @@ if weather["Rainfall"].any():
     print(f"Rain started at: {rain_start.total_seconds() / 60:.1f} minutes")
 
     # Mark laps as wet or dry
-    # The laps DataFrame stores the session time at lap completion in "Time"
-    laps["Wet"] = laps["Time"] >= rain_start
+    # Every lap carries the weather sample closest to it, including "Rainfall"
+    laps["Wet"] = laps["Rainfall"]
 
     # Compare dry vs wet lap times
     dry_laps = laps[laps["Wet"] == False]
@@ -158,8 +163,8 @@ if weather["Rainfall"].any():
                 label="Dry", alpha=0.5, color="orange")
     plt.scatter(wet_laps["LapNumber"], wet_laps["LapTime"].dt.total_seconds(),
                 label="Wet", alpha=0.5, color="blue")
-    # Mark the first lap completed after the rain started
-    rain_lap = laps[laps["Wet"]]["LapNumber"].min()
+    # Mark the first wet lap
+    rain_lap = wet_laps["LapNumber"].min()
     plt.axvline(x=rain_lap, color="red", linestyle="--",
                 label="Rain Start")
     plt.xlabel("Lap Number")
@@ -181,10 +186,7 @@ clean_laps = laps[
     (laps["PitInTime"].isna())
 ].copy()
 
-# Convert the timedelta lap times to seconds for numeric analysis
-clean_laps["LapTimeSeconds"] = clean_laps["LapTime"].dt.total_seconds()
-
-# Group by compound and temperature range
+# Group by compound and temperature range (LapTimeSeconds holds float seconds)
 clean_laps["TempRange"] = pd.cut(
     clean_laps["TrackTemp"],
     bins=[0, 35, 40, 45, 100],
@@ -233,7 +235,7 @@ clean_laps["WindStrength"] = pd.cut(
 
 # Compare lap times by wind
 plt.figure(figsize=(10, 6))
-sns.violinplot(x="WindStrength", y="LapTime", data=clean_laps)
+sns.violinplot(x="WindStrength", y="LapTimeSeconds", data=clean_laps)
 plt.xlabel("Wind Strength")
 plt.ylabel("Lap Time (s)")
 plt.title("Wind Impact on Lap Times")
@@ -247,7 +249,7 @@ Atmospheric pressure can affect engine performance.
 ```python
 # Plot pressure over time
 plt.figure(figsize=(12, 6))
-plt.plot(weather["Time"] / 60, weather["Pressure"], linewidth=2)
+plt.plot(weather["Time"].dt.total_seconds() / 60, weather["Pressure"], linewidth=2)
 plt.xlabel("Time (minutes)")
 plt.ylabel("Atmospheric Pressure (mbar)")
 plt.title("Atmospheric Pressure During Session")
@@ -259,7 +261,7 @@ from scipy import stats
 
 correlation, p_value = stats.pearsonr(
     clean_laps["Pressure"],
-    clean_laps["LapTime"]
+    clean_laps["LapTimeSeconds"]
 )
 print(f"Pressure-LapTime correlation: {correlation:.3f} (p={p_value:.3f})")
 ```
@@ -271,7 +273,7 @@ Combine multiple weather factors.
 ```python
 # Create feature matrix
 features = clean_laps[["AirTemp", "TrackTemp", "Humidity", "Pressure", "WindSpeed"]]
-target = clean_laps["LapTime"]
+target = clean_laps["LapTimeSeconds"]
 
 # Calculate correlations
 correlations = features.corrwith(target).sort_values(ascending=False)
@@ -322,6 +324,8 @@ print(adjusted_performance.head(10))
 ## Complete Weather Analysis Function
 
 ```python
+from scipy import stats
+
 def analyze_weather_impact(year, gp, session_type):
     """Complete weather impact analysis."""
     # Load data
@@ -337,7 +341,7 @@ def analyze_weather_impact(year, gp, session_type):
     ]
 
     # Temperature analysis
-    temp_corr, _ = stats.pearsonr(clean_laps["TrackTemp"], clean_laps["LapTime"])
+    temp_corr, _ = stats.pearsonr(clean_laps["TrackTemp"], clean_laps["LapTimeSeconds"])
 
     # Rain check
     rain_detected = weather["Rainfall"].any()

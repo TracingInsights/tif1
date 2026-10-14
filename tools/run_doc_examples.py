@@ -26,10 +26,51 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 RUNNER = """
+import inspect
 import json
+import os
+import shutil
 import matplotlib
 matplotlib.use("Agg")
 import sys
+from pathlib import Path
+
+# The pages run against the developer's real data cache (fast, offline), so
+# the cache-maintenance examples they demonstrate (Cache.clear(),
+# invalidate("all"), tif1.Cache.clear_cache(), enable_cache(force_renew=True),
+# shutil.rmtree on the cache dir) would wipe it. Those calls are still
+# argument-checked against the real signature, then skipped.
+import tif1.cache as _cache_mod
+from tif1 import fastf1_compat as _fastf1_compat
+
+_PROTECTED = Path(os.environ["TIF1_CACHE_DIR"]).resolve()
+
+
+def _guard(owner, name, static=False):
+    sig = inspect.signature(getattr(owner, name))
+
+    def skipped(*args, **kwargs):
+        sig.bind(*args, **kwargs)
+        print(f"[run_doc_examples] skipped {owner.__name__}.{name}() on the shared cache", file=sys.stderr)
+
+    setattr(owner, name, staticmethod(skipped) if static else skipped)
+
+
+_guard(_cache_mod.Cache, "clear")
+_guard(_cache_mod.Cache, "invalidate")
+_guard(_fastf1_compat.Cache, "clear_cache", static=True)
+_real_rmtree = shutil.rmtree
+
+
+def _safe_rmtree(path, *args, **kwargs):
+    target = Path(path).resolve()
+    if target == _PROTECTED or _PROTECTED in target.parents or target in _PROTECTED.parents:
+        print(f"[run_doc_examples] refused shutil.rmtree({path})", file=sys.stderr)
+        return None
+    return _real_rmtree(path, *args, **kwargs)
+
+
+shutil.rmtree = _safe_rmtree
 
 blocks = json.loads(sys.argv[1])
 ns = {}
@@ -84,9 +125,11 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
     ) as handle:
         handle.write(RUNNER)
         runner_path = handle.name
-    # Doc blocks may call config.set(), which persists to $HOME/.tif1rc and
-    # would pollute later pages. Isolate HOME per page, keep the shared data
-    # cache, and pin the default backend.
+    # Doc blocks may call config.save(), which writes $HOME/.tif1rc, and write
+    # files (to_csv, sqlite3.connect, config.save("./x.json")) relative to the
+    # working directory. Run each page with a throwaway HOME that is also its
+    # working directory (removed afterwards), keep the shared data cache, and
+    # pin the default backend.
     env = dict(os.environ)
     home = tempfile.mkdtemp(prefix="tif1_docs_")
     env["HOME"] = home
@@ -99,7 +142,7 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=REPO_ROOT,
+            cwd=home,
             env=env,
         )
     except subprocess.TimeoutExpired:

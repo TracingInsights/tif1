@@ -122,7 +122,7 @@ class Config:
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
-            "http_resolvers": ["standard", "doh://cloudflare", "doh://google"],
+            "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
         }
 
         # Load from config file

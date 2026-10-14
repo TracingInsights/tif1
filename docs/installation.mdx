@@ -37,7 +37,7 @@ keywords:
   <Step title="Check what comes with it">
     `tif1` installs pandas and polars together with its plotting dependencies. There is no separate extra for the Polars backend. Select it at runtime with `lib="polars"` or `TIF1_LIB=polars`.
 
-    The only extra is `dev`. It adds the test and lint toolchain for contributors:
+    The only extra is `dev`. It adds the test and lint toolchain for contributors.
     <CodeGroup>
       ```bash pip
       pip install "tif1[dev]"
@@ -69,7 +69,7 @@ Configure `tif1` with environment variables. They are useful in CI/CD environmen
 | `TIF1_CACHE_DIR` | Path to the cache directory | OS-dependent (see below) |
 | `TIF1_LIB` | Default data lib (`pandas` or `polars`) | `pandas` |
 | `TIF1_ENABLE_CACHE` | Enable or disable caching (`true`/`false`) | `true` |
-| `TIF1_ULTRA_COLD_START` | Enable ultra-low latency mode | `false` |
+| `TIF1_ULTRA_COLD_START` | Enable ultra-low latency mode | `true` |
 
 The default cache directory follows the FastF1 platform layout. It uses `tif1` as the application directory:
 
@@ -102,7 +102,7 @@ For permanent settings, create a `.tif1rc` (JSON) file in the home directory:
     "Database is locked" errors show that multiple processes write to the cache at the same time. `tif1` uses WAL mode to reduce this problem. Very high concurrency on slow disks can still trigger the error.
   </Accordion>
   <Accordion title="Polars Version Mismatch">
-    Use `polars>=1.44.1` (the version `tif1` installs) to avoid compatibility issues with the `tif1` categorical optimization.
+    `tif1` requires `polars>=2.0.0,<3` and installs it automatically. Polars 1.x is not supported. Upgrade an older installation with `pip install -U "polars>=2.0.0,<3"`.
   </Accordion>
 </AccordionGroup>
 

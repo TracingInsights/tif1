@@ -72,7 +72,7 @@ class NiquestsTransport:
     def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
         """Fetch ``url`` with the pooled niquests session and parse the JSON body."""
         from .config import get_config
-        from .http_session import _track_request, get_session
+        from .http_session import _response_reused_connection, _track_request, get_session
 
         niquests = _import_niquests()
         if timeout is None:
@@ -82,7 +82,7 @@ class NiquestsTransport:
             response = get_session().get(url, timeout=timeout)
         except niquests.RequestException as e:
             raise NetworkError(url=url, status_code=None) from e
-        _track_request(reused=True)
+        _track_request(reused=_response_reused_connection(response))
 
         if response.status_code == 404:
             raise DataNotFoundError(url=url)

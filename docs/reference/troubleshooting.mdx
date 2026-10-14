@@ -23,18 +23,34 @@ pip install --force-reinstall tif1
 
 Third-party tools shown in some examples, such as DuckDB or PyArrow, are not `tif1` dependencies. Install them separately when an example needs them.
 
+### Polars Version Conflict
+
+**Error:** `pip` reports a conflict such as `tif1 requires polars<3,>=2.0.0`, or user code raises `polars.exceptions.AttributeRemovedError` after an upgrade.
+
+**Solution:**
+`tif1` requires polars 2.x. Upgrade polars, then check the version:
+```bash
+pip install -U "polars>=2.0.0,<3"
+python -c "import polars as pl; print(pl.__version__)"
+```
+
+`AttributeRemovedError` and `ArgumentRemovedError` come from APIs that polars deprecated in 1.x and removed in 2.0. The error message names the replacement. See [Polars 2 notes](/concepts/backends#polars-2-notes) for the changes that affect code written on `tif1` frames.
+
 ---
 
 ## Data Access Issues
 
 ### DataNotFoundError
 
-**Error:** `DataNotFoundError: Data not found for 2025/Abu Dhabi Grand Prix/Practice 1`
+**Error:** `DataNotFoundError: Data not found: year=2025, event='Abu Dhabi Grand Prix', session='Practice 1'`
 
 **Causes:**
-- Event name misspelled (use `get_events` to check).
-- Session name misspelled (use `get_sessions` to check).
 - Data not yet available in the archive.
+- The session did not take place.
+- A driver code or lap number that does not exist (`DriverNotFoundError`, `LapNotFoundError`).
+- An event name that is not on the calendar of that season, for example `"Suzuka"` in 2021. `tif1` logs the reason, and `load()` raises `DataNotFoundError`.
+
+`tif1` resolves circuit, city, and country names such as `"Spa"` to the correct event. A misspelled event name does not raise: `tif1` corrects it to the closest event name. A session name that does not exist raises `ValueError` and lists the available names.
 
 **Solutions:**
 ```python
@@ -43,23 +59,43 @@ events = tif1.get_events(2025)
 
 # Check available sessions for that event
 sessions = tif1.get_sessions(2025, "British Grand Prix")
+
+# Check which event a name resolved to
+session = tif1.get_session(2025, "Silverstone", "Race")
+print(session.event["EventName"])  # British Grand Prix
 ```
 
 ### NetworkError
 
-**Error:** `NetworkError: Failed to fetch data from CDN`
+**Error:** `NetworkError: Network request failed: url='...'`
 
 **Solutions:**
 1. **Enable Debug Logging:** See which CDN is failing.
    ```python
    import tif1, logging
    tif1.setup_logging(logging.DEBUG)
-```
+   ```
 2. **Reset Circuit Breaker:** After several failures, the circuit breaker can be open.
    ```python
    tif1.reset_circuit_breaker()
-```
+   ```
 3. **Check CDN Status:** The primary CDN is jsDelivr, with Hugging Face buckets and StaticDelivr as fallbacks. Make sure that the network does not block them.
+
+### Empty Weather or Race Control Table
+
+**Symptom:** `session.weather` or `session.race_control_messages` returns an empty DataFrame. The log shows `Failed to load weather for ...` or `Failed to load race control messages for ...`.
+
+**Cause:** These tables are optional. When a payload cannot be converted to the dtype contract, `tif1` logs a warning. It returns an empty DataFrame instead of raising. Laps and telemetry are not affected.
+
+**Solutions:**
+1. **Enable Logging:** Read the reason in the warning.
+   ```python
+   import tif1, logging
+   tif1.setup_logging(logging.WARNING)
+   ```
+2. **Report It:** Open a GitHub issue with the warning text. It names the column that failed.
+
+A session that has no weather file at all logs `No weather in session` at `INFO` level and also returns an empty DataFrame. See [Empty weather or race control tables](/concepts/backends#empty-weather-or-race-control-tables).
 
 ---
 
@@ -115,13 +151,28 @@ tif1.get_cache().clear()
 **Error:** `KeyError: 'time'` or `KeyError: 'speed'`
 
 **Solution:**
-`tif1` uses **PascalCase** for all column names. Use `LapTime` instead of `time`, and `Speed` instead of `speed`.
+`tif1` uses the fastf1 column names, which are mostly **PascalCase**. Use `LapTime` instead of `time`, and `Speed` instead of `speed`. The laps table has no `Speed` column: its speed-trap columns are `SpeedI1`, `SpeedI2`, `SpeedFL`, and `SpeedST`.
 
 | Wrong | Right |
 | :--- | :--- |
 | `laps["time"]` | `laps["LapTime"]` |
 | `telemetry["rpm"]` | `telemetry["RPM"]` |
-| `lap.get_telemetry()` | `lap.telemetry` |
+| `laps["Speed"]` | `laps["SpeedST"]` |
+| `telemetry["SessionTime"]` | `telemetry["Time"]` (lap-relative) |
+
+### TypeError When Comparing LapTime
+
+**Error:** `TypeError` from `laps[laps["LapTime"] < 90]` on pandas. On polars, the same expression raises `ValueError`, because polars reads a boolean mask inside `laps[...]` as a column selector.
+
+**Solution:**
+`LapTime` is `timedelta64[ns]` on pandas and `Float64` seconds on polars. Compare `LapTimeSeconds`, which is a float on both backends, or compare `LapTime` with a `Timedelta`:
+
+| Backend | Works |
+| :--- | :--- |
+| pandas | `laps[laps["LapTimeSeconds"] < 90]` or `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` |
+| polars | `laps.filter(pl.col("LapTimeSeconds") < 90)` |
+
+On polars, select rows with `filter`. See [Column types by backend](/concepts/backends#column-types-by-backend).
 
 ---
 

@@ -6,8 +6,10 @@ from typing import Any
 
 from .exceptions import (
     CacheError,
+    CircuitBreakerOpenError,
     DataNotFoundError,
     DriverNotFoundError,
+    EventNotInSeasonError,
     InvalidDataError,
     LapNotFoundError,
     NetworkError,
@@ -22,7 +24,9 @@ __all__ = [
     "CacheError",
     "DataNotFoundError",
     "DriverInfoDict",
+    "CircuitBreakerOpenError",
     "DriverNotFoundError",
+    "EventNotInSeasonError",
     "InvalidDataError",
     "LapDataDict",
     "LapNotFoundError",

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 else:
     # Polars is optional; _ensure_polars_bound() imports it on first use and
     # binds it here (keeps ``pl`` patchable for tests).
-    pl = None  # type: ignore[ty:invalid-assignment]
+    pl = None
 
 logger = logging.getLogger(__name__)
 

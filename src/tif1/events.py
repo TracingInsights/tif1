@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from functools import lru_cache
 from importlib.resources import files
 from typing import Any, ClassVar, Self, cast
 
 import pandas as pd
 
-from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
+from .core_utils.constants import EVENT_NAME_ALIASES
+from .exceptions import DataNotFoundError, EventNotInSeasonError, InvalidDataError, NetworkError
 from .payload_loader import get_url_loader
 from .retry import retry_with_backoff
 from .schedule_schema import validate_schedule_payload
@@ -206,13 +208,22 @@ def _build_events_for_year(year: int) -> list[str]:
 
 
 def _build_sessions_for_event(year: int, event: str) -> list[str]:
-    """Get list of sessions for a given year and event."""
+    """Get list of sessions for a given year and event.
+
+    ``event`` is resolved like ``get_event_by_name`` (exact name, then alias,
+    then fuzzy match), so ``get_sessions(2025, "Spielberg")`` answers for the
+    Austrian Grand Prix instead of the generic five-session weekend.
+    """
     standard = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
     year_payload = _resolve_year_payload(year)
     sessions = year_payload.get("sessions", {})
     if not isinstance(sessions, dict):
         return standard
     event_sessions = sessions.get(event)
+    if event_sessions is None and event:
+        resolved = _find_event_by_name(year, list(_get_events_cached(year)), event)
+        if resolved is not None:
+            event_sessions = sessions.get(str(resolved.EventName))
     if not isinstance(event_sessions, list) or not event_sessions:
         return standard
     return list(event_sessions)
@@ -495,6 +506,28 @@ def _create_event(year: int, event_name: str, metadata: Any) -> Event:
     return cast(Event, event_factory(year, event_name, event_metadata))
 
 
+_ALIAS_NOISE_RE = re.compile(r"\b(?:grand prix|gp|formula 1|f1)\b")
+
+
+def _event_alias_key(name: str) -> str:
+    """Normalise an event query for :data:`EVENT_NAME_ALIASES` lookup.
+
+    Folds accents ("Montréal" -> "montreal"), lower-cases, turns punctuation
+    into spaces and drops "Grand Prix"/"GP"/"Formula 1" so "Spa GP" and
+    "Spa-Francorchamps" find their keys.
+    """
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFKD", name) if not unicodedata.combining(ch)
+    ).casefold()
+    words = re.sub(r"[^0-9a-z]+", " ", folded)
+    return " ".join(_ALIAS_NOISE_RE.sub(" ", words).split())
+
+
+def _event_alias_targets(name: str) -> tuple[str, ...]:
+    """Event names a circuit/city/country alias refers to (empty if not an alias)."""
+    return EVENT_NAME_ALIASES.get(_event_alias_key(name), ())
+
+
 def _find_event_by_name(
     year: int, event_names: list[str], name: str, exact_match: bool = False
 ) -> Event | None:
@@ -525,6 +558,21 @@ def _find_event_by_name(
             metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
             return _create_event(year, event_name, metadata)
 
+    # Circuit/city/country aliases ("Spa", "Interlagos", "USA") resolve
+    # directly: fuzzy matching sends several of them to the wrong race. An
+    # alias whose event is not on this season's calendar returns None rather
+    # than silently loading a different race.
+    alias_targets = _event_alias_targets(name)
+    if alias_targets:
+        for target in alias_targets:
+            if target in event_names:
+                metadata = metadata_dict.get(target) if isinstance(metadata_dict, dict) else None
+                return _create_event(year, target, metadata)
+        logger.info(
+            "'%s' refers to the %s, which is not on the %s calendar", name, alias_targets[0], year
+        )
+        return None
+
     from .fuzzy import fuzzy_matcher
 
     def _remove_common_words(event_name: str) -> str:
@@ -534,14 +582,16 @@ def _find_event_by_name(
             event_name = event_name.replace(word, "")
         return event_name.strip()
 
-    def _matcher_strings(metadata: dict[str, Any]) -> list[str]:
+    def _matcher_strings(event_name: str, metadata: dict[str, Any]) -> list[str]:
         strings = []
         if metadata.get("Location"):
             strings.append(metadata["Location"].casefold())
         if metadata.get("Country"):
             strings.append(metadata["Country"].casefold())
-        if metadata.get("EventName"):
-            strings.append(_remove_common_words(metadata["EventName"]))
+        # The schedule metadata carries no EventName key, so the event's own
+        # name ("british") was never a feature: "Britain" then scored
+        # "Bahrain" highest. Always match against the name itself.
+        strings.append(_remove_common_words(str(metadata.get("EventName") or event_name)))
         if metadata.get("OfficialEventName"):
             strings.append(_remove_common_words(metadata["OfficialEventName"]))
         return strings
@@ -549,9 +599,10 @@ def _find_event_by_name(
     user_input = name
     name = _remove_common_words(name)
     reference = [
-        _matcher_strings(metadata_dict.get(event_name, {}))
-        if isinstance(metadata_dict, dict)
-        else []
+        _matcher_strings(
+            event_name,
+            metadata_dict.get(event_name) or {} if isinstance(metadata_dict, dict) else {},
+        )
         for event_name in event_names
     ]
     index, exact = fuzzy_matcher(name, reference)
@@ -606,6 +657,11 @@ def get_event_by_name(year: int, name: str, exact_match: bool = False) -> Event:
     events = list(_get_events_cached(year))
     event = _find_event_by_name(year, events, name, exact_match=exact_match)
     if event is None:
+        alias_targets = () if exact_match else _event_alias_targets(name)
+        if alias_targets:
+            raise EventNotInSeasonError(
+                f"'{name}' refers to the {alias_targets[0]}, which is not on the {year} calendar"
+            )
         raise ValueError(f"No exact match found for event '{name}' in {year}")
     return event
 

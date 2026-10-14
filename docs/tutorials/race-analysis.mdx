@@ -36,8 +36,8 @@ laps = session.laps
 Start with a high-level overview of the race.
 
 ```python
-# Basic race statistics
-print(f"Total laps: {laps['LapNumber'].max()}")
+# Basic race statistics (LapNumber is a float column on pandas)
+print(f"Total laps: {int(laps['LapNumber'].max())}")
 print(f"Drivers: {len(laps['Driver'].unique())}")
 print(f"Total lap records: {len(laps)}")
 
@@ -48,7 +48,7 @@ print(f"\nRace Winner: {winner['Driver']} ({winner['Team']})")
 
 # Fastest lap
 fastest = laps.loc[laps["LapTime"].idxmin()]
-print(f"Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime'].total_seconds():.3f}s")
+print(f"Fastest Lap: {fastest['Driver']} - Lap {int(fastest['LapNumber'])} - {fastest['LapTime'].total_seconds():.3f}s")
 ```
 
 ## 2. Position Changes
@@ -121,10 +121,9 @@ clean_laps = clean_race_laps(laps)
 final_positions = laps[laps["LapNumber"] == laps["LapNumber"].max()].sort_values("Position")
 top_5_drivers = final_positions.head(5)["Driver"].tolist()
 
-# Box plot of lap times (matplotlib needs numeric values, so convert to seconds)
+# Box plot of lap times (matplotlib needs numbers; LapTimeSeconds holds float seconds)
 fig, ax = plt.subplots(figsize=(12, 6))
-top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)].copy()
-top_5_laps["LapTimeSeconds"] = top_5_laps["LapTime"].dt.total_seconds()
+top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)]
 
 colors_list = [tif1.plotting.get_driver_color(d, session=session) for d in top_5_drivers]
 
@@ -316,7 +315,7 @@ plt.show()
 
 ## 7. Pit Stop Analysis
 
-Analyze pit stop timing and duration.
+Analyze pit stop timing and duration. `PitInTime` sits on the in-lap and `PitOutTime` on the next lap, the out-lap.
 
 ```python
 def analyze_pit_stops(laps):
@@ -326,16 +325,18 @@ def analyze_pit_stops(laps):
     for driver in laps["Driver"].unique():
         driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
 
-        # Find pit laps (where PitInTime is not null)
+        # PitInTime sits on the in-lap; PitOutTime sits on the next lap (the out-lap)
+        next_pit_out = driver_laps["PitOutTime"].shift(-1)
         pit_laps = driver_laps[driver_laps["PitInTime"].notna()]
 
-        for _, pit_lap in pit_laps.iterrows():
+        for idx, pit_lap in pit_laps.iterrows():
+            pit_out = next_pit_out.loc[idx]
             pit_stops.append({
                 "Driver": driver,
                 "Lap": pit_lap["LapNumber"],
                 "PitInTime": pit_lap["PitInTime"],
-                "PitOutTime": pit_lap["PitOutTime"],
-                "Duration": pit_lap["PitOutTime"] - pit_lap["PitInTime"] if pd.notna(pit_lap["PitOutTime"]) else None,
+                "PitOutTime": pit_out,
+                "Duration": pit_out - pit_lap["PitInTime"] if pd.notna(pit_out) else pd.NaT,
                 "Stint": pit_lap["Stint"],
             })
 
@@ -447,12 +448,12 @@ def generate_race_report(session, laps):
 
     # Fastest lap
     fastest = laps.loc[laps["LapTime"].idxmin()]
-    print(f"⚡ Fastest Lap: {fastest['Driver']} - Lap {fastest['LapNumber']} - {fastest['LapTime'].total_seconds():.3f}s")
+    print(f"⚡ Fastest Lap: {fastest['Driver']} - Lap {int(fastest['LapNumber'])} - {fastest['LapTime'].total_seconds():.3f}s")
 
     # Race statistics
     print(f"\n📊 Race Statistics:")
-    print(f"   Total Laps: {laps['LapNumber'].max()}")
-    print(f"   Classified Finishers: {len(final_lap)}")
+    print(f"   Total Laps: {int(laps['LapNumber'].max())}")
+    print(f"   Drivers on the lead lap: {len(final_lap)}")
 
     # Pit stops
     pit_stops = laps[laps["PitInTime"].notna()]

@@ -926,8 +926,9 @@ class TestHttpCreateSession:
 
         session = _create_session()
         assert session is mock_session
+        # The legacy ``doh://<provider>`` spelling is translated to niquests' form.
         mock_niquests.Session.assert_called_once_with(
-            multiplexed=True, resolver="doh://cloudflare", disable_http3=False
+            multiplexed=True, resolver="doh+cloudflare://", disable_http3=False
         )
 
     def test_all_resolvers_fail_raises_network_error(self, monkeypatch):

@@ -13,6 +13,7 @@ these models, so importing it here would create an import cycle.
 
 import logging
 import math
+import re
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, cast, runtime_checkable
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 else:
     # Polars is optional; _ensure_polars_available() (below) imports it on
     # first polars-backend use instead of paying ~260 ms at module load.
-    pl = None  # type: ignore[ty:invalid-assignment]
+    pl = None
 
 POLARS_AVAILABLE = False
 
@@ -363,7 +364,18 @@ class Laps(pd.DataFrame):
         if isinstance(identifiers, str | int) or not isinstance(identifiers, list | tuple | set):
             identifiers = [identifiers]
         identifiers = [self._normalize_driver_identifier(i) for i in identifiers]
-        return self[self["Driver"].isin(identifiers)]
+        mask = self["Driver"].isin(identifiers)
+        # FastF1 accepts driver numbers as well as abbreviations: a numeric
+        # identifier is matched against DriverNumber (strings upstream) too.
+        if "DriverNumber" in self.columns and any(i.isdigit() for i in identifiers):
+            numbers = self["DriverNumber"]
+            if pd.api.types.is_numeric_dtype(numbers):
+                numbers = numbers.astype("Int64").astype("string")
+            elif not numbers.isin(identifiers).any():
+                # object column holding ints (hand-built frames): compare as text
+                numbers = numbers.astype("string")
+            mask = mask | numbers.isin(identifiers)
+        return self[mask]
 
     def pick_lap(self, lap_number):
         return self[self["LapNumber"] == lap_number]
@@ -688,8 +700,15 @@ class Laps(pd.DataFrame):
             yield _IterLapResult(index, non_null_lap)
 
     def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
-        """Reset index and drop level_0 column if created."""
+        """Reset index and drop the ``level_0`` column if one was created.
+
+        ``inplace=True`` returns ``None`` and keeps the new column, like pandas
+        (``DataFrame.to_sql(index=True)`` resets the index in place and then
+        inserts that column).
+        """
         result = cast(Any, super()).reset_index(drop=drop, **kwargs)
+        if result is None:  # inplace=True: pandas semantics, the new column stays
+            return None
         # Remove level_0 column if it was created
         if not drop and "level_0" in result.columns:
             result = result.drop(columns=["level_0"])
@@ -789,6 +808,22 @@ class Lap(pd.Series):
                 )
                 self.session._mark_session_cache_populated()
         return tel
+
+
+# Offset aliases pandas 3 removed, as FastF1-era code still spells them
+# (``resample_channels("1S")``): upper-case second/milli/minute/hour.
+_LEGACY_OFFSET_ALIASES = {"S": "s", "L": "ms", "T": "min", "H": "h"}
+_LEGACY_OFFSET_RE = re.compile(r"^\s*(\d*\.?\d*)\s*([SLTH])\s*$")
+
+
+def _modern_offset_alias(rule: str) -> str:
+    """Translate a pandas<3 upper-case offset alias (``"1S"``) to its current form."""
+    if not isinstance(rule, str):
+        return rule
+    match = _LEGACY_OFFSET_RE.match(rule)
+    if match is None:
+        return rule
+    return f"{match.group(1)}{_LEGACY_OFFSET_ALIASES[match.group(2)]}"
 
 
 class Telemetry(pd.DataFrame):
@@ -1099,6 +1134,19 @@ class Telemetry(pd.DataFrame):
 
         return []
 
+    @staticmethod
+    def _extract_lap_drivers(ref_laps: Any) -> list[str]:
+        """Driver codes referenced by Lap/Laps-compatible inputs (empty if unknown)."""
+        if isinstance(ref_laps, pd.DataFrame):
+            if "Driver" in ref_laps.columns:
+                return [str(v) for v in ref_laps["Driver"].dropna().unique().tolist()]
+            return []
+        if isinstance(ref_laps, pd.Series):
+            value = ref_laps.get("Driver")
+            if value is not None and not pd.isna(value):
+                return [str(value)]
+        return []
+
     def slice_by_lap(
         self,
         ref_laps,
@@ -1111,6 +1159,20 @@ class Telemetry(pd.DataFrame):
                 raise ValueError(
                     "Cannot slice telemetry because 'ref_laps' contains Laps of multiple drivers!"
                 )
+
+        # tif1 telemetry keeps ``Time`` lap-relative (zero at the lap start)
+        # and carries no ``SessionTime``, so a lap's session-time window
+        # (LapStartTime..Time) can never select its samples. Without a
+        # session-time axis, match on LapNumber (and Driver when both sides
+        # carry it); the time window stays the path for FastF1-style frames.
+        if "SessionTime" not in self.columns and "LapNumber" in self.columns:
+            lap_numbers = self._extract_lap_numbers(ref_laps)
+            if lap_numbers:
+                lap_mask = self["LapNumber"].isin(lap_numbers)
+                drivers = self._extract_lap_drivers(ref_laps)
+                if drivers and "Driver" in self.columns:
+                    lap_mask &= self["Driver"].isin(drivers)
+                return self.slice_by_mask(lap_mask.to_numpy(copy=False), pad=pad, pad_side=pad_side)
 
         start_time, end_time = self._extract_lap_time_window(ref_laps)
         if not pd.isna(start_time) and not pd.isna(end_time):
@@ -1150,8 +1212,9 @@ class Telemetry(pd.DataFrame):
             merged = pd.concat([self.reset_index(drop=True), pd.DataFrame(other)], axis=1)
         return self._wrap(merged)
 
-    def resample_channels(self, rule: str = "1S", **kwargs):
+    def resample_channels(self, rule: str = "1s", **kwargs):
         _ = kwargs
+        rule = _modern_offset_alias(rule)
         if "Time" not in self.columns or self.empty:
             return self._wrap(self.copy())
         frame = self.copy()

@@ -34,7 +34,7 @@ The chart function `plot_race_launch_ratings` uses this module: it draws car ima
 ### `available_car_years`
 
 ```python
-available_car_years() -> list[int]
+def available_car_years() -> list[int]
 ```
 
 Return the sorted list of years that have bundled car images. The current data covers 2018 to 2026.
@@ -42,7 +42,7 @@ Return the sorted list of years that have bundled car images. The current data c
 ### `available_team_codes`
 
 ```python
-available_team_codes(year: int) -> list[str]
+def available_team_codes(year: int) -> list[str]
 ```
 
 Return the sorted list of team codes available for a season. For 2024 the codes are `AMR`, `APN`, `FER`, `HAA`, `KS`, `MCL`, `MER`, `RB`, `RBR`, and `WIL`. Raises `FileNotFoundError` when no images are bundled for the year.
@@ -50,7 +50,7 @@ Return the sorted list of team codes available for a season. For 2024 the codes 
 ### `list_fonts`
 
 ```python
-list_fonts() -> list[str]
+def list_fonts() -> list[str]
 ```
 
 Return the sorted file names of the bundled fonts.
@@ -62,7 +62,7 @@ All path helpers return a `pathlib.Path` and raise `FileNotFoundError` when the 
 ### `car_image_path`
 
 ```python
-car_image_path(year: int, team_code: str) -> Path
+def car_image_path(year: int, team_code: str) -> Path
 ```
 
 Return the bundled path of a car image for a season and team code, for example `car_image_path(2024, "RBR")`.
@@ -70,7 +70,7 @@ Return the bundled path of a car image for a season and team code, for example `
 ### `tyre_image_path`
 
 ```python
-tyre_image_path(compound: str) -> Path
+def tyre_image_path(compound: str) -> Path
 ```
 
 Return the bundled path of a tyre image for a compound, for example `tyre_image_path("SOFT")`.
@@ -78,7 +78,7 @@ Return the bundled path of a tyre image for a compound, for example `tyre_image_
 ### `font_path`
 
 ```python
-font_path(name: str) -> Path
+def font_path(name: str) -> Path
 ```
 
 Return the bundled path of a font file, for example `font_path("Azonix.otf")`. Pass the result to `matplotlib.font_manager.FontProperties(fname=...)`.
@@ -88,7 +88,7 @@ Return the bundled path of a font file, for example `font_path("Azonix.otf")`. P
 ### `load_car_image`
 
 ```python
-load_car_image(year: int, team_code: str) -> np.ndarray
+def load_car_image(year: int, team_code: str) -> np.ndarray
 ```
 
 Load a bundled car image as an RGBA numpy array. The result is cached with `functools.cache`. Repeated calls for the same year and code return the same array without disk reads.
@@ -96,7 +96,7 @@ Load a bundled car image as an RGBA numpy array. The result is cached with `func
 ### `load_tyre_image`
 
 ```python
-load_tyre_image(compound: str) -> np.ndarray
+def load_tyre_image(compound: str) -> np.ndarray
 ```
 
 Load a bundled tyre image as an RGBA numpy array, cached in the same way.
@@ -108,7 +108,7 @@ The helpers draw bundled artwork on an axes with `matplotlib.offsetbox.Annotatio
 ### `add_car_images`
 
 ```python
-add_car_images(
+def add_car_images(
     ax,
     df,
     year,
@@ -168,7 +168,7 @@ Vertical offset applied to the y position.
 ### `add_tyre_images`
 
 ```python
-add_tyre_images(
+def add_tyre_images(
     ax,
     df,
     *,
@@ -186,7 +186,7 @@ Annotate an axes with the bundled tyre image for every row of `df`. An unknown c
 ### `add_car_image_at_position`
 
 ```python
-add_car_image_at_position(ax, x, y, year, team_code, *, zoom=0.5, x_offset=-110) -> None
+def add_car_image_at_position(ax, x, y, year, team_code, *, zoom=0.5, x_offset=-110) -> None
 ```
 
 Add a single bundled car image at an explicit position `(x, y)` on the axes. When no image is bundled for the year and code, the call returns without drawing.
@@ -194,7 +194,7 @@ Add a single bundled car image at an explicit position `(x, y)` on the axes. Whe
 ### `add_tyre_image_at_position`
 
 ```python
-add_tyre_image_at_position(ax, x, y, compound, *, zoom=0.07, x_offset=-190) -> None
+def add_tyre_image_at_position(ax, x, y, compound, *, zoom=0.07, x_offset=-190) -> None
 ```
 
 Add a single bundled tyre image at an explicit position `(x, y)` on the axes. An unknown compound falls back to the generic `None` artwork.

@@ -82,7 +82,7 @@ Validates raw lap timing JSON from the CDN. Ensures that all required fields are
 - All non-empty arrays must have identical length
 - Stint numbers must be >= 1
 - Tire life must be >= 0
-- Null-like strings ("", "none", "null", "nan") are automatically converted to None
+- `validate_laps()` does not convert null-like strings ("", "none", "null", "nan"). `validate_lap_data()` converts them to None
 - Optional fields (session_time, pit times, speed traps, weather) are validated if present
 
 **Example:**
@@ -111,7 +111,8 @@ raw_data = {
 try:
     validated = validate_laps(raw_data)
     print(f"✓ Validated {len(validated.lap)} laps")
-    print(f"  Required fields: {len([f for f in validated.model_fields if validated.__getattribute__(f)])}")
+    required = [name for name, field in type(validated).model_fields.items() if field.is_required()]
+    print(f"  Required fields: {len(required)}")
 
     # Access validated data
     print(f"  Fastest lap: {min(validated.time)} seconds")
@@ -238,6 +239,8 @@ except Exception as e:
 **Working with Nested Tel Objects:**
 
 ```python
+from tif1.validation import validate_telemetry
+
 # CDN sometimes returns nested structure
 nested_data = {
     "tel": {
@@ -363,16 +366,20 @@ bad_data = {
 
 **Integration with Session:**
 
+Session loading does not call `validate_drivers()`. The `validate_data` option validates `weather.json` and `rcm.json` (see [Configuration](#configuration)).
+
 ```python
 import tif1
 
-# Enable validation
+# Enable validation of weather.json and rcm.json
 config = tif1.get_config()
 config.set("validate_data", True)
 
-# Driver data is automatically validated during session load
 session = tif1.get_session(2025, "Monaco", "Race")
-# If drivers.json is malformed, validation error is raised here
+session.load(laps=False, telemetry=False)
+# Payloads fetched from the CDN are validated in non-strict mode:
+# a malformed payload is logged and passed through unchanged
+print(f"Weather samples: {len(session.weather)}")
 ```
 
 ---
@@ -474,6 +481,8 @@ except Exception as e:
 **Handling Mixed Formats:**
 
 ```python
+from tif1.validation import validate_weather
+
 # CDN might return mixed naming conventions
 mixed_data = {
     "Time": [0.0, 60.0],        # PascalCase
@@ -510,6 +519,7 @@ Validates race control message data from the CDN, ensuring message timestamps, c
 
 **Validation Rules:**
 - Required field: `time` - message timestamp in seconds
+- The CDN `rcm.json` stores `time` as ISO 8601 date strings, which `RaceControlData` rejects. For CDN payloads, use `validate_race_control_data()`: it checks the structure and the lengths only
 - All non-empty arrays must have identical length
 - Supports aliased field names (`cat`, `msg`, `dNum`)
 - Null-like strings converted to None
@@ -519,22 +529,22 @@ Validates race control message data from the CDN, ensuring message timestamps, c
 ```python
 from tif1.validation import validate_race_control
 
-# Raw race control data from CDN
+# Race control data in the CDN layout (time in seconds for this example)
 raw_data = {
     "time": [0.0, 300.0, 450.0, 600.0],
-    "cat": ["Flag", "SafetyCar", "Flag", "Penalty"],
+    "cat": ["Flag", "SafetyCar", "Flag", "Other"],
     "msg": [
-        "GREEN FLAG",
+        "GREEN LIGHT - PIT EXIT OPEN",
         "SAFETY CAR DEPLOYED",
-        "YELLOW FLAG - SECTOR 2",
-        "5 SECOND TIME PENALTY - CAR 33"
+        "YELLOW IN TRACK SECTOR 2",
+        "FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 33"
     ],
-    "status": ["1", "4", "4", "4"],
-    "flag": ["GREEN", "YELLOW", "YELLOW", "YELLOW"],
-    "scope": ["Track", "Track", "Sector", "Driver"],
+    "status": [None, "DEPLOYED", None, None],
+    "flag": ["GREEN", None, "YELLOW", None],
+    "scope": ["Track", None, "Sector", None],
     "sector": [None, None, 2, None],
     "dNum": [None, None, None, "33"],
-    "lap": [None, None, None, 15]
+    "lap": [1, 5, 8, 15]
 }
 
 try:
@@ -551,17 +561,17 @@ try:
         for i in range(len(validated.time))
         if validated.category[i] == "SafetyCar"
     ]
-    print(f"  Safety car deployments: {len(safety_car_msgs)}")
+    print(f"  Safety car messages: {len(safety_car_msgs)}")
 
-    # Find penalties
+    # Find penalties (category "Other", identified by the message text)
     penalties = [
-        (validated.time[i], validated.message[i], validated.racing_number[i])
+        (validated.lap[i], validated.message[i], validated.racing_number[i])
         for i in range(len(validated.time))
-        if validated.category[i] == "Penalty"
+        if "PENALTY" in (validated.message[i] or "")
     ]
     print(f"  Penalties issued: {len(penalties)}")
-    for time, msg, driver in penalties:
-        print(f"    Lap {time:.0f}s: {msg} (Driver #{driver})")
+    for lap, msg, driver in penalties:
+        print(f"    Lap {lap}: {msg} (Driver #{driver})")
 
 except Exception as e:
     print(f"✗ Validation failed: {e}")
@@ -569,23 +579,21 @@ except Exception as e:
 
 **Message Categories:**
 
-Common race control message categories:
+Race control message categories in the CDN data:
 
 - `Flag`: Track flag changes (GREEN, YELLOW, RED, BLUE, etc.)
-- `SafetyCar`: Safety car deployment/withdrawal
-- `VirtualSafetyCar`: VSC deployment/withdrawal
-- `Penalty`: Driver penalties (time penalties, drive-through, etc.)
-- `DRS`: DRS enabled/disabled
-- `Other`: Miscellaneous messages
+- `SafetyCar`: Safety car and virtual safety car (VSC) deployment and withdrawal
+- `Drs`: DRS enabled/disabled
+- `Other`: Other messages, including penalties and investigations
 
 **Field Reference:**
 
 | Field | Alias | Type | Description |
 |-------|-------|------|-------------|
 | `time` | - | `float` | Message timestamp (seconds from session start) |
-| `category` | `cat` | `str` | Message category (Flag, SafetyCar, Penalty, etc.) |
+| `category` | `cat` | `str` | Message category (Flag, SafetyCar, Drs, Other) |
 | `message` | `msg` | `str` | Full message text |
-| `status` | - | `str` | Track status code ("1"=green, "2"=yellow, "4"=SC, etc.) |
+| `status` | - | `str` | Status text ("DEPLOYED", "ENABLED", "DISABLED", etc.) |
 | `flag` | - | `str` | Flag type (GREEN, YELLOW, RED, BLUE, etc.) |
 | `scope` | - | `str` | Message scope (Track, Sector, Driver) |
 | `sector` | - | `int\|str` | Affected sector number (1, 2, or 3) |
@@ -595,7 +603,18 @@ Common race control message categories:
 **Filtering Messages by Category:**
 
 ```python
-# Load and validate race control data
+from tif1.validation import validate_race_control
+
+raw_data = {
+    "time": [0.0, 300.0, 600.0],
+    "cat": ["Flag", "SafetyCar", "Other"],
+    "msg": ["GREEN LIGHT - PIT EXIT OPEN", "SAFETY CAR DEPLOYED", "5 SECOND TIME PENALTY FOR CAR 33"],
+    "flag": ["GREEN", None, None],
+    "dNum": [None, None, "33"],
+    "lap": [1, 5, 15],
+}
+
+# Validate race control data
 validated = validate_race_control(raw_data)
 
 # Extract only flag changes
@@ -614,15 +633,16 @@ penalties = [
         "lap": validated.lap[i]
     }
     for i in range(len(validated.time))
-    if validated.category[i] == "Penalty"
+    if "PENALTY" in (validated.message[i] or "")
 ]
 
-# Extract safety car periods
+# Extract safety car messages (the "SafetyCar" category covers the SC and the VSC)
 sc_events = [
     (validated.time[i], validated.message[i])
     for i in range(len(validated.time))
-    if validated.category[i] in ["SafetyCar", "VirtualSafetyCar"]
+    if validated.category[i] == "SafetyCar"
 ]
+print(flag_changes, penalties, sc_events, sep="\n")
 ```
 
 ---
@@ -699,7 +719,7 @@ Inherits from `ConsistentLengthsMixin` which provides automatic array length val
 1. **Length Consistency**: All non-empty lists must have the same length
 2. **Stint Validation**: All stint values must be >= 1
 3. **Tire Life Validation**: All tire life values must be >= 0
-4. **Null Normalization**: Null-like strings ("", "none", "null", "nan") converted to None
+4. **Null Normalization**: The model does not convert null-like strings. `validate_lap_data()` converts them to None
 5. **Alias Support**: Accepts both verbose and aliased field names
 
 **Example:**
@@ -736,6 +756,8 @@ lap_dict = lap_data.model_dump()
 **Working with Aliases:**
 
 ```python
+from tif1.validation import LapData
+
 # Input data can use either verbose or aliased names
 data_with_aliases = {
     "time": [90.1],
@@ -792,7 +814,7 @@ Represents validated telemetry sensor data with support for multiple CDN formats
 | `drs` | - | `list[bool \| None]` | DRS status | True/False |
 | `distance` | - | `list[float \| None]` | Distance from lap start (m) | 0-circuit length |
 | `rel_distance` | - | `list[float \| None]` | Relative distance | 0-1 |
-| `driver_ahead` | `DriverAhead` | `list[str \| None]` | Driver code ahead | 3-letter code |
+| `driver_ahead` | `DriverAhead` | `list[str \| None]` | Driver number of the car ahead | Number string (for example, "4") |
 | `distance_to_driver_ahead` | `DistanceToDriverAhead` | `list[float \| None]` | Gap to car ahead (m) | >= 0 |
 | `x` | - | `list[float \| None]` | X coordinate | Circuit-specific |
 | `y` | - | `list[float \| None]` | Y coordinate | Circuit-specific |
@@ -806,7 +828,7 @@ Represents validated telemetry sensor data with support for multiple CDN formats
 
 1. **Nested Tel Objects**: Automatically unwraps `tel` nested structures
 2. **Boolean Coercion**: Converts numeric 0/1 to False/True for `brake` and `drs`
-3. **Null Normalization**: Converts null-like strings to None
+3. **Null Normalization**: `validate_telemetry()` converts null-like strings to None before it builds the model
 4. **Empty Arrays**: Optional fields can be empty arrays
 
 **Validation Behavior:**
@@ -851,6 +873,8 @@ tel_dict = tel_data.model_dump()
 **Handling Nested Structures:**
 
 ```python
+from tif1.validation import TelemetryData
+
 # CDN format with nested tel object
 nested_data = {
     "tel": {
@@ -871,6 +895,8 @@ print(tel_data.tel)    # Original nested dict preserved
 **Boolean Coercion:**
 
 ```python
+from tif1.validation import TelemetryData
+
 # CDN sometimes returns numeric 0/1 instead of boolean
 data_with_numeric_bools = {
     "time": [0.0, 0.1, 0.2],
@@ -922,7 +948,7 @@ Represents validated weather sensor data with support for multiple naming conven
 1. **Key Normalization**: Automatically converts PascalCase to snake_case
 2. **Alias Support**: Accepts compact aliased names (wT, wAT, etc.)
 3. **Length Consistency**: All non-empty arrays must have same length
-4. **Null Normalization**: Converts null-like strings to None
+4. **Null Normalization**: `validate_weather()` converts null-like strings to None before it builds the model
 
 **Example:**
 ```python
@@ -972,9 +998,9 @@ Represents validated race control message data including flags, safety car deplo
 
 | Field | Alias | Type | Description |
 |-------|-------|------|-------------|
-| `category` | `cat` | `list[str \| None]` | Message category (Flag, SafetyCar, Penalty, etc.) |
+| `category` | `cat` | `list[str \| None]` | Message category (Flag, SafetyCar, Drs, Other) |
 | `message` | `msg` | `list[str \| None]` | Full message text |
-| `status` | - | `list[str \| None]` | Track status code |
+| `status` | - | `list[str \| None]` | Status text (DEPLOYED, ENABLED, DISABLED, etc.) |
 | `flag` | - | `list[str \| None]` | Flag type (GREEN, YELLOW, RED, etc.) |
 | `scope` | - | `list[str \| None]` | Message scope (Track, Sector, Driver) |
 | `sector` | - | `list[int \| str \| None]` | Affected sector number |
@@ -987,11 +1013,11 @@ from tif1.validation import RaceControlData
 
 rcm_data = RaceControlData(
     time=[0.0, 300.0, 450.0],
-    cat=["Flag", "SafetyCar", "Penalty"],
-    msg=["GREEN FLAG", "SAFETY CAR DEPLOYED", "5 SEC PENALTY - CAR 33"],
-    status=["1", "4", "4"],
-    flag=["GREEN", "YELLOW", "YELLOW"],
-    scope=["Track", "Track", "Driver"],
+    cat=["Flag", "SafetyCar", "Other"],
+    msg=["GREEN LIGHT - PIT EXIT OPEN", "SAFETY CAR DEPLOYED", "5 SECOND TIME PENALTY FOR CAR 33"],
+    status=[None, "DEPLOYED", None],
+    flag=["GREEN", None, None],
+    scope=["Track", None, None],
     dNum=[None, None, "33"],
 )
 
@@ -1076,7 +1102,7 @@ print(f"Team: {driver.team} (#{driver.tc})")
 Enumeration of valid tire compound values used in F1 sessions.
 
 ```python
-class TireCompound(str, Enum):
+class TireCompound(StrEnum):
     SOFT = "SOFT"
     MEDIUM = "MEDIUM"
     HARD = "HARD"
@@ -1116,7 +1142,7 @@ assert TireCompound.INTERMEDIATE == "INTERMEDIATE"
 Enumeration of valid F1 session types.
 
 ```python
-class SessionType(str, Enum):
+class SessionType(StrEnum):
     PRACTICE_1 = "Practice 1"
     PRACTICE_2 = "Practice 2"
     PRACTICE_3 = "Practice 3"
@@ -1148,8 +1174,8 @@ is_sprint_weekend = session in [
 - **Practice 1/2/3**: Free practice sessions
 - **Qualifying**: Standard qualifying format
 - **Sprint**: Sprint race (100km race on Saturday)
-- **Sprint Qualifying**: Qualifying for sprint race (2023 format)
-- **Sprint Shootout**: Short qualifying for sprint race (2024+ format)
+- **Sprint Qualifying**: Qualifying for sprint race (2024+ format)
+- **Sprint Shootout**: Short qualifying for sprint race (2023 format)
 - **Race**: Main Grand Prix race
 
 ---
@@ -1159,7 +1185,7 @@ is_sprint_weekend = session in [
 Enumeration of valid lap status values.
 
 ```python
-class LapStatus(str, Enum):
+class LapStatus(StrEnum):
     VALID = "VALID"
     INVALID = "INVALID"
     OUTLAP = "OUTLAP"
@@ -1170,6 +1196,14 @@ class LapStatus(str, Enum):
 ```python
 from tif1.validation import LapStatus
 
+# Lap records labelled by application code
+laps = [
+    {"lap": 1, "status": "OUTLAP"},
+    {"lap": 2, "status": "VALID"},
+    {"lap": 3, "status": "INVALID"},
+    {"lap": 4, "status": "INLAP"},
+]
+
 # Filter valid laps
 valid_laps = [lap for lap in laps if lap["status"] == LapStatus.VALID.value]
 
@@ -1178,7 +1212,10 @@ pit_laps = [
     lap for lap in laps
     if lap["status"] in [LapStatus.OUTLAP.value, LapStatus.INLAP.value]
 ]
+print(len(valid_laps), len(pit_laps))
 ```
+
+The `status` field of CDN lap payloads holds track status codes ("1", "4", ...), not `LapStatus` values.
 
 **Status Types:**
 - **VALID**: Clean lap with no track limits violations
@@ -1193,7 +1230,7 @@ pit_laps = [
 Enumeration of data anomaly types detected by the validation system.
 
 ```python
-class AnomalyType(str, Enum):
+class AnomalyType(StrEnum):
     MISSING_LAPS = "missing_laps"
     DUPLICATE_LAPS = "duplicate_laps"
     OUTLIER_TIMES = "outlier_times"
@@ -1203,12 +1240,14 @@ class AnomalyType(str, Enum):
 ```python
 from tif1.validation import detect_lap_anomalies, AnomalyType
 
+laps = [{"lap": 1, "time": 90.0}, {"lap": 2, "time": 89.5}, {"lap": 4, "time": 89.2}]
 anomalies = detect_lap_anomalies(laps)
 
 # Filter by type
 missing = [a for a in anomalies if a.type == AnomalyType.MISSING_LAPS]
 duplicates = [a for a in anomalies if a.type == AnomalyType.DUPLICATE_LAPS]
 outliers = [a for a in anomalies if a.type == AnomalyType.OUTLIER_TIMES]
+print(len(missing), len(duplicates), len(outliers))
 ```
 
 **Anomaly Types:**
@@ -1262,7 +1301,7 @@ laps = [
     {"lap": 2, "time": 89.5},
     # Missing lap 3
     {"lap": 4, "time": 89.2},
-    {"lap": 5, "time": 270.0},  # Outlier (pit stop lap)
+    {"lap": 5, "time": 600.0},  # Outlier (red flag lap)
     {"lap": 5, "time": 88.8},   # Duplicate lap 5
 ]
 
@@ -1288,12 +1327,21 @@ for anomaly in anomalies:
 #
 # [LOW] outlier_times
 #   1 outlier lap time(s) detected
-#   Details: {'outlier_count': 1, 'average_time': 111.5}
+#   Details: {'outlier_count': 1, 'average_time': 191.5}
 ```
 
 **Filtering by Severity:**
 
 ```python
+from tif1.validation import detect_lap_anomalies
+
+laps = [
+    {"lap": 1, "time": 90.0},
+    {"lap": 2, "time": 89.5},
+    {"lap": 4, "time": 89.2},
+    {"lap": 5, "time": 270.0},
+    {"lap": 5, "time": 88.8},
+]
 anomalies = detect_lap_anomalies(laps)
 
 # Critical issues only
@@ -1312,6 +1360,8 @@ print(f"Severity distribution: {severity_counts}")
 
 **Integration with Session Data:**
 
+`detect_lap_anomalies()` reads the `lap` and `time` keys, or `LapNumber` and a numeric `LapTime`. The `LapTime` column of `tif1` is a timedelta, so pass `LapTimeSeconds` as `time`, one driver at a time.
+
 ```python
 import tif1
 from tif1.validation import detect_lap_anomalies
@@ -1319,9 +1369,15 @@ from tif1.validation import detect_lap_anomalies
 # Load session
 session = tif1.get_session(2025, "Monaco", "Race")
 
-# Get laps as list of dicts
-laps_df = session.laps
-laps_list = laps_df.to_dict('records')
+# One driver at a time: lap numbers repeat across drivers
+laps_df = session.laps.pick_driver("VER")
+
+# detect_lap_anomalies reads the "lap" and "time" (seconds) keys
+laps_list = (
+    laps_df[["LapNumber", "LapTimeSeconds"]]
+    .rename(columns={"LapNumber": "lap", "LapTimeSeconds": "time"})
+    .to_dict("records")
+)
 
 # Detect anomalies
 anomalies = detect_lap_anomalies(laps_list)
@@ -1398,7 +1454,7 @@ config.set("validate_data", True)
 
 # Now all CDN data will be validated
 session = tif1.get_session(2025, "Monaco", "Race")
-# drivers.json, weather.json, and rcm.json are automatically validated
+# weather.json and rcm.json are validated when they are fetched from the CDN
 ```
 
 #### Disable Validation (Default)
@@ -1447,7 +1503,7 @@ Set validation in `.tif1rc` configuration file:
 
 **File Locations** (checked in order):
 1. `TIF1_CONFIG_FILE` environment variable path
-2. `./tif1rc` (if `TIF1_TRUST_CWD_CONFIG=true`)
+2. `./.tif1rc` (if `TIF1_TRUST_CWD_CONFIG=true`)
 3. `~/.tif1rc` (user home directory)
 
 ```python
@@ -1462,15 +1518,16 @@ print(f"Validation enabled: {config.get('validate_data')}")
 
 #### What Gets Validated
 
-When `validate_data=True`, the following CDN payloads are validated:
+Validation runs on payloads fetched from the CDN, not on payloads served from the cache. Each payload type has its own configuration key:
 
-| File | Validation Function | Data Type |
-|------|---------------------|-----------|
-| `drivers.json` | `validate_drivers()` | Driver roster information |
-| `weather.json` | `validate_weather_data()` | Weather sensor data |
-| `rcm.json` | `validate_race_control_data()` | Race control messages |
+| File | Validation Function | Configuration Key |
+|------|---------------------|-------------------|
+| `weather.json` | `validate_weather_data()` | `validate_data` |
+| `rcm.json` | `validate_race_control_data()` | `validate_data` |
+| `laptimes.json` | `validate_lap_data()` | `validate_lap_times` |
+| `*_tel.json` | `validate_telemetry_data()` | `validate_telemetry` |
 
-**Note**: Lap and telemetry data validation is controlled separately (see below).
+The pipeline does not validate `drivers.json`. Validation is also skipped in ultra-cold start mode.
 
 #### Validation Modes
 
@@ -1482,8 +1539,23 @@ When `validate_data=True`, the following CDN payloads are validated:
 ```python
 from tif1.validation import validate_lap_data
 
-# Non-strict: returns original data on failure
+raw_data = {
+    "time": [90.1, 89.5, 89.2],
+    "lap": [1.0, 2.0, 3.0],
+    "s1": [30.0, 29.8, 29.6],
+    "s2": [30.1, 29.9, 29.8],
+    "s3": [30.0, 29.8, 29.8],
+    "compound": ["SOFT", "SOFT", "None"],  # "None" is a null-like string
+    "stint": [1, 1, 1],
+    "life": [1, 2, 3],
+    "pos": [1, 1, 1],
+    "status": ["1", "1", "1"],
+    "pb": [False, True, True],
+}
+
+# Non-strict: returns the input payload (null-like strings converted) on failure
 validated = validate_lap_data(raw_data, strict=False)
+print(validated["compound"])  # ['SOFT', 'SOFT', None]
 ```
 
 **Strict Mode**:
@@ -1492,12 +1564,15 @@ validated = validate_lap_data(raw_data, strict=False)
 - Ensures data quality is enforced
 
 ```python
+from tif1.exceptions import InvalidDataError
 from tif1.validation import validate_lap_data
 
-# Strict: raises exception on failure
+raw_data = {"time": [90.1, 89.5], "lap": [1.0]}  # Required fields missing
+
+# Strict: raises InvalidDataError on failure
 try:
     validated = validate_lap_data(raw_data, strict=True)
-except Exception as e:
+except InvalidDataError as e:
     print(f"Validation failed: {e}")
     # Handle error appropriately
 ```
@@ -1509,15 +1584,21 @@ except Exception as e:
 Enable validation for specific data types only:
 
 ```python
+import asyncio
+
 import tif1
-
-config = tif1.get_config()
-
-# Validate only drivers and weather, skip race control
-config.set("validate_data", True)
-
-# Manual validation for specific types
+from tif1.async_fetch import fetch_json_async
 from tif1.validation import validate_drivers, validate_weather
+
+# Keep automatic validation off; validate selected payloads by hand
+config = tif1.get_config()
+config.set("validate_data", False)
+
+async def fetch(path):
+    return await fetch_json_async(2025, "Bahrain Grand Prix", "Race", path)
+
+raw_drivers = asyncio.run(fetch("drivers.json"))
+raw_weather = asyncio.run(fetch("weather.json"))
 
 # Validate drivers
 drivers_data = validate_drivers(raw_drivers)
@@ -1525,8 +1606,8 @@ drivers_data = validate_drivers(raw_drivers)
 # Validate weather
 weather_data = validate_weather(raw_weather)
 
-# Skip race control validation
-# (process raw_rcm directly)
+print(f"{len(drivers_data.drivers)} drivers, {len(weather_data.time)} weather samples")
+# Skip race control validation (process rcm.json directly)
 ```
 
 #### Ultra Cold Start Mode
@@ -1589,13 +1670,14 @@ config.save(Path("./my-config.json"))
 
 ```python
 import os
-import tif1
 
-# Load from custom file
+# Set the variable before the first "import tif1" (or export it in the shell)
 os.environ["TIF1_CONFIG_FILE"] = "/path/to/config.json"
 
+import tif1
+
 config = tif1.get_config()
-# Configuration loaded from custom file
+# Configuration loaded from the custom file
 ```
 
 ### Validation Integration Points
@@ -1611,7 +1693,7 @@ config.set("validate_data", True)
 
 # Validation happens automatically during session load
 session = tif1.get_session(2025, "Monaco", "Race")
-# drivers.json, weather.json, rcm.json validated automatically
+# weather.json and rcm.json are validated when they are fetched from the CDN
 
 # Access validated data
 print(f"Drivers: {len(session.results)}")
@@ -1622,24 +1704,23 @@ print(f"Race control messages: {len(session.race_control_messages)}")
 #### Manual Validation (Custom Workflows)
 
 ```python
-from tif1.validation import (
-    validate_drivers,
-    validate_weather,
-    validate_race_control,
-    validate_laps,
-    validate_telemetry
-)
+import asyncio
+
+from tif1.async_fetch import fetch_json_async
+from tif1.validation import validate_drivers, validate_weather
+
+async def load_raw(path):
+    """Fetch one raw payload of the 2025 Bahrain Grand Prix race."""
+    return await fetch_json_async(2025, "Bahrain Grand Prix", "Race", path)
 
 # Load raw data from CDN
-raw_drivers = load_from_cdn("drivers.json")
-raw_weather = load_from_cdn("weather.json")
-raw_rcm = load_from_cdn("rcm.json")
+raw_drivers = asyncio.run(load_raw("drivers.json"))
+raw_weather = asyncio.run(load_raw("weather.json"))
 
 # Validate manually
 try:
     drivers = validate_drivers(raw_drivers)
     weather = validate_weather(raw_weather)
-    rcm = validate_race_control(raw_rcm)
 
     print("✓ All data validated successfully")
 except Exception as e:
@@ -1651,6 +1732,9 @@ except Exception as e:
 1. **Development**: Enable all validation to catch data issues early
 
 ```python
+import tif1
+
+config = tif1.get_config()
 config.set("validate_data", True)
 config.set("validate_lap_times", True)
 config.set("validate_telemetry", True)
@@ -1659,12 +1743,19 @@ config.set("validate_telemetry", True)
 2. **Testing**: Use strict mode to enforce data quality
 
 ```python
+from tif1.validation import validate_lap_data
+
+data = {"time": [90.1], "lap": [1.0], "s1": [30.0], "s2": [30.1], "s3": [30.0],
+        "compound": ["SOFT"], "stint": [1], "life": [1], "pos": [1], "status": ["1"], "pb": [False]}
 validated = validate_lap_data(data, strict=True)
 ```
 
 3. **Production**: Disable validation for maximum performance
 
 ```python
+import tif1
+
+config = tif1.get_config()
 config.set("validate_data", False)
 ```
 
@@ -1678,11 +1769,14 @@ export TIF1_ULTRA_COLD_START=false
 5. **Monitoring**: Enable validation periodically to check data quality
 
 ```python
-# Run validation check once per day
-if should_run_validation_check():
-    config.set("validate_data", True)
-    session = tif1.get_session(2025, "Monaco", "Race")
-    # Check for validation errors in logs
+import tif1
+
+# For example, in a scheduled daily job
+config = tif1.get_config()
+config.set("validate_data", True)
+session = tif1.get_session(2025, "Monaco", "Race")
+session.load(laps=False, telemetry=False)
+# Payloads fetched from the CDN are validated; check the "tif1.validation" logger output
 ```
 
 ---
@@ -1726,9 +1820,22 @@ def clean_lap_data(data: dict) -> dict:
 
     return cleaned
 
-# Usage
-raw_data = load_raw_lap_data()
+# Usage: lap 3 has no time and an invalid stint number
+raw_data = {
+    "time": [90.1, 89.5, None],
+    "lap": [1.0, 2.0, 3.0],
+    "s1": [30.0, 29.8, None],
+    "s2": [30.1, 29.9, None],
+    "s3": [30.0, 29.8, None],
+    "compound": ["SOFT", "SOFT", "SOFT"],
+    "stint": [1, 1, 0],
+    "life": [1, 2, 3],
+    "pos": [1, 1, 1],
+    "status": ["1", "1", "1"],
+    "pb": [False, True, False],
+}
 validated = validate_and_clean_laps(raw_data)
+print(f"{len(validated.lap)} laps after cleaning")
 ```
 
 ---
@@ -1740,39 +1847,42 @@ from tif1.validation import detect_lap_anomalies, AnomalyType
 import tif1
 
 def analyze_session_quality(year, gp, session_name):
-    """Analyze data quality for a session."""
+    """Analyze lap data quality for each driver of a session."""
     session = tif1.get_session(year, gp, session_name)
-
-    # Get all laps
     laps = session.laps
 
-    # Convert to list of dicts
-    lap_dicts = laps.to_dict('records')
+    report = {}
+    for driver in laps["Driver"].dropna().unique():
+        # detect_lap_anomalies reads the "lap" and "time" (seconds) keys
+        lap_dicts = (
+            laps.pick_driver(driver)[["LapNumber", "LapTimeSeconds"]]
+            .rename(columns={"LapNumber": "lap", "LapTimeSeconds": "time"})
+            .to_dict("records")
+        )
+        report[driver] = detect_lap_anomalies(lap_dicts)
 
-    # Detect anomalies
-    anomalies = detect_lap_anomalies(lap_dicts)
-
-    # Categorize anomalies
+    anomalies = [a for driver_anomalies in report.values() for a in driver_anomalies]
     missing = [a for a in anomalies if a.type == AnomalyType.MISSING_LAPS]
     duplicates = [a for a in anomalies if a.type == AnomalyType.DUPLICATE_LAPS]
     outliers = [a for a in anomalies if a.type == AnomalyType.OUTLIER_TIMES]
 
     print(f"Data Quality Report:")
-    print(f"  Total laps: {len(lap_dicts)}")
+    print(f"  Total laps: {len(laps)}")
     print(f"  Missing laps: {len(missing)}")
     print(f"  Duplicate laps: {len(duplicates)}")
     print(f"  Outlier times: {len(outliers)}")
 
     # Show details
-    for anomaly in anomalies:
-        print(f"  [{anomaly.severity}] {anomaly.description}")
-        if anomaly.details:
-            print(f"    {anomaly.details}")
+    for driver, driver_anomalies in report.items():
+        for anomaly in driver_anomalies:
+            print(f"  {driver} [{anomaly.severity}] {anomaly.description}")
+            if anomaly.details:
+                print(f"    {anomaly.details}")
 
-    return anomalies
+    return report
 
 # Usage with 2021 Belgian Grand Prix Race
-anomalies = analyze_session_quality(2021, "Belgian Grand Prix", "Race")
+report = analyze_session_quality(2021, "Belgian Grand Prix", "Race")
 ```
 
 ---
@@ -1806,7 +1916,8 @@ def validate_with_logging(data: dict, data_type: str):
         raise
 
 # Usage
-validated = validate_with_logging(raw_data, "laps")
+raw_data = {"time": [0.0, 0.1], "speed": [250.0, 251.0], "brake": [0, 1]}
+validated = validate_with_logging(raw_data, "telemetry")
 ```
 
 ---
@@ -1816,27 +1927,39 @@ validated = validate_with_logging(raw_data, "laps")
 1. **Use strict mode during development**: Catches data issues early.
 
 ```python
+from tif1.validation import validate_lap_data
+
+data = {"time": [90.1], "lap": [1.0], "s1": [30.0], "s2": [30.1], "s3": [30.0],
+        "compound": ["SOFT"], "stint": [1], "life": [1], "pos": [1], "status": ["1"], "pb": [False]}
 validated = validate_lap_data(data, strict=True)
 ```
 
 2. **Handle validation errors gracefully**: Do not crash on bad data.
 
 ```python
-from tif1.exceptions import InvalidDataError
+import logging
+
+from pydantic import ValidationError
+
+from tif1.validation import validate_laps
+
+logger = logging.getLogger(__name__)
+
+data = {"time": [90.1], "lap": [1.0]}  # Required fields missing
 
 try:
     validated = validate_laps(data)
-except Exception as e:
+except ValidationError as e:
     # Log and use fallback
-    logger.warning(f"Validation failed: {e}")
-    pass
+    logger.warning(f"Validation failed: {e.error_count()} errors")
+    validated = None
 ```
 
 3. **Run anomaly detection periodically**: Monitor data quality over time.
 
 4. **Clean data before validation**: Remove obvious errors first using normalization functions.
 
-5. **Use null-like string conversion**: The validation module automatically converts "", "none", "null", "nan" to None.
+5. **Use null-like string conversion**: `validate_lap_data()`, `validate_telemetry()`, `validate_weather()` and `validate_race_control()` convert "", "none", "null", "nan" to None. `validate_laps()` does not.
 
 ---
 
@@ -1845,11 +1968,16 @@ except Exception as e:
 ### Validation Errors
 
 ```python
-from tif1.exceptions import InvalidDataError
+from pydantic import ValidationError
+
+from tif1.validation import validate_laps
+
+data = {"time": [90.1], "lap": [1.0], "s1": [30.0], "s2": [30.1], "s3": [30.0],
+        "compound": ["SOFT"], "stint": [0], "life": [1], "pos": [1], "status": ["1"], "pb": [False]}
 
 try:
     validated = validate_laps(data)
-except Exception as e:
+except ValidationError as e:
     print(f"Error: {e}")
 
     # Check specific fields by inspecting the error message
@@ -1862,6 +1990,8 @@ except Exception as e:
 ### Inconsistent Lengths
 
 ```python
+data = {"time": [90.1, 89.5], "lap": [1.0, 2.0, 3.0], "pos": []}
+
 # Check array lengths before validation
 lengths = {key: len(val) for key, val in data.items() if isinstance(val, list)}
 print(f"Array lengths: {lengths}")
@@ -1875,9 +2005,13 @@ if len(set(non_empty_lengths)) > 1:
 ### Performance Issues
 
 ```python
+from tif1.validation import validate_lap_data
+
+data = {"time": [90.1], "lap": [1.0]}
+
 # Validation is already optimized and disabled by default
-# For manual validation, use non-strict mode
-validated = validate_laps(data, strict=False)
+# For manual validation, use the pydantic-free non-strict mode
+validated = validate_lap_data(data, strict=False)
 
 # Or skip validation entirely by not calling validation functions
 # The library handles this automatically based on performance settings

@@ -77,20 +77,25 @@ tif1 events 2024
 tif1 events 2018
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 events 2025`):**
 ```text
-┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ # ┃ Event                         ┃
-┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ 1 │ Bahrain Grand Prix           │
-│ 2 │ Saudi Arabian Grand Prix     │
-│ 3 │ Australian Grand Prix        │
-│ 4 │ Japanese Grand Prix          │
+          F1 Events 2025
+┏━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ #  ┃ Event                     ┃
+┡━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1  │ Australian Grand Prix     │
+│ 2  │ Chinese Grand Prix        │
+│ 3  │ Japanese Grand Prix       │
+│ 4  │ Bahrain Grand Prix        │
 ...
-└───┴───────────────────────────────┘
+│ 24 │ Abu Dhabi Grand Prix      │
+│ 25 │ Pre-Season Testing        │
+└────┴───────────────────────────┘
 
-Total: 24 events
+Total: 25 events
 ```
+
+The list includes testing events, such as `Pre-Season Testing`. The total can be higher than the number of Grand Prix weekends.
 
 **Use Cases:**
 - Discover available events for a season
@@ -249,26 +254,25 @@ tif1 fastest 2024 "British Grand Prix" "Practice 1"
 tif1 fastest 2024 "Italian Grand Prix" Race
 ```
 
-**Sample Output (All Drivers):**
+**Sample Output (All Drivers, `tif1 fastest 2025 Bahrain Race`):**
 ```text
 Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ Pos ┃ Driver ┃ Team                   ┃ Time      ┃
-┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ 1   │ VER    │ Red Bull Racing        │ 82.456s   │
-│ 2   │ LEC    │ Ferrari                │ 82.789s   │
-│ 3   │ HAM    │ Mercedes               │ 82.901s   │
-│ 4   │ SAI    │ Ferrari                │ 83.012s   │
+     Fastest Laps - Bahrain 2025 - Race
+┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Pos ┃ Driver ┃ Team            ┃ Time    ┃
+┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ 1   │ PIA    │ McLaren         │ 95.140s │
+│ 2   │ RUS    │ Mercedes        │ 95.518s │
+│ 3   │ NOR    │ McLaren         │ 95.728s │
+│ 4   │ LEC    │ Ferrari         │ 96.132s │
 ...
-└─────┴────────┴────────────────────────┴───────────┘
+└─────┴────────┴─────────────────┴─────────┘
 ```
 
-**Sample Output (Single Driver):**
+**Sample Output (Single Driver, `-d VER`):**
 ```text
 Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-VER fastest lap: 82.456s
+VER fastest lap: 96.167s
 ```
 
 **Use Cases:**
@@ -412,7 +416,7 @@ tif1 version
 
 **Sample Output:**
 ```text
-tif1 version 0.1.0
+tif1 version 0.8.0
 ```
 
 **Use Cases:**
@@ -459,18 +463,20 @@ tif1 debug 2024 Monaco Qualifying
 tif1 debug 2024 "British Grand Prix" Race
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 debug 2025 Bahrain Race`, shortened):**
 ```text
-2025-04-18 10:30:15 - tif1.cache - DEBUG - Cache miss: 2025/Abu Dhabi Grand Prix/Practice 1/laps
-2025-04-18 10:30:15 - tif1.http_session - DEBUG - GET https://cdn.jsdelivr.net/gh/TracingInsights/2025/...
-2025-04-18 10:30:16 - tif1.core - DEBUG - Parsing lap data: 342 laps
-2025-04-18 10:30:16 - tif1.cache - DEBUG - Cached: 2025/Abu Dhabi Grand Prix/Practice 1/laps
+2025-04-18 10:30:15 - tif1.core - DEBUG - Session initialized: year=2025, gp=Bahrain Grand Prix, session=Race, lib=pandas
 Loading session with debug logging... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
 Session loaded successfully!
+2025-04-18 10:30:15 - tif1.cdn - DEBUG - Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json
 Drivers: 20
-Laps: 342
+2025-04-18 10:30:16 - tif1.core - INFO - Loading laps async (pandas): 2025_Bahrain%20Grand%20Prix_Race_laps
+2025-04-18 10:30:16 - tif1.cdn - DEBUG - Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/session_laptimes.json
+2025-04-18 10:30:17 - tif1.async_fetch - DEBUG - Fetched: 2025/Bahrain%20Grand%20Prix/Race/session_laptimes.json from jsDelivr
+Laps: 1128
 ```
+
+The session loads lazily, so `Session loaded successfully!` appears first. The data fetches start when the command reads the drivers and the laps.
 
 **Use Cases:**
 - Troubleshoot data loading issues
@@ -547,9 +553,12 @@ The CLI is designed for use in shell scripts and automation workflows:
 
 ```bash
 #!/bin/bash
-# Script to check fastest laps for all 2025 qualifying sessions
+# Script to check fastest laps for all 2025 qualifying sessions.
+# The events table is for people to read; get plain event names from Python
+# (one per line, testing excluded) so multi-word names stay intact.
 
-for event in $(tif1 events 2025 | grep -oP '\d+\s+\K.*'); do
+python -c 'import tif1; print("\n".join(tif1.get_event_schedule(2025, include_testing=False)["EventName"]))' |
+while IFS= read -r event; do
   echo "Processing: $event"
   tif1 fastest 2025 "$event" Qualifying
 done
@@ -645,7 +654,7 @@ tif1 cache-info
 
 - Use quotes for multi-word names: `"Abu Dhabi Grand Prix"`
 - Single-word event names do not need quotes: `Monaco`
-- Session names are case-sensitive: `Qualifying` not `qualifying`
+- Session names are case-insensitive: `Qualifying`, `qualifying`, and `Q` all work
 - Use `tif1 events` and `tif1 sessions` to find exact names
 
 ### Performance Optimization

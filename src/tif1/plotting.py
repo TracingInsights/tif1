@@ -251,6 +251,11 @@ def setup_mpl(
     if not misc_mpl_mods:
         return
 
+    if color_scheme is not None and color_scheme not in _COLOR_SCHEMES:
+        raise ValueError(
+            f"Unknown color_scheme {color_scheme!r}; choose one of {', '.join(_COLOR_SCHEMES)}"
+        )
+
     if color_scheme in _COLOR_SCHEMES:
         # Every scheme starts from matplotlib's defaults for the keys the
         # schemes manage, so switching e.g. from ``default-dark`` back to
@@ -487,6 +492,15 @@ def _enable_timple() -> None:
             _TIMPLE_IMPORT_WARNING_SHOWN = True
         return
 
+    # timple 0.1.x builds ``np.timedelta64("NaT")`` without a unit, which numpy
+    # 2.5 deprecates; the warning is theirs, not the caller's, so silence it for
+    # timple's own modules only.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*'generic' unit for NumPy timedelta.*",
+        category=DeprecationWarning,
+        module=r"timple(\..*)?",
+    )
     tick_formats = ["%d %d ay", "%H:00", "%H:%m", "%M:%s.0", "%M:%s.%ms"]
     tmpl = timple.Timple(
         converter="concise",
@@ -833,6 +847,14 @@ def _match_driver(identifier: str, session: Any, *, exact_match: bool = False) -
     index, exact = fuzzy_matcher(normalized_identifier, reference)
     driver = mapping.drivers[index]
     if not exact:
+        if not driver.first_name and not driver.last_name:
+            # Some seasons publish no driver names (full_name then falls back
+            # to the abbreviation); a fuzzy hit against bare abbreviations is
+            # noise ("Hamilton" -> SAI), not a correction.
+            raise KeyError(
+                f"No driver found for '{identifier}': this session has no driver names, "
+                "use the three-letter abbreviation"
+            )
         _warn_on_correction(identifier, driver.full_name)
     return driver
 

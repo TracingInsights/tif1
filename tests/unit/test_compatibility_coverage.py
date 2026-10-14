@@ -1,5 +1,5 @@
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -137,6 +137,11 @@ def test_driver_result_dnf():
     assert not dr3.dnf
 
 
+async def _no_payloads(requests, **_kwargs):
+    """Every CDN answered 404: the laps table is empty, nothing raises."""
+    return [None] * len(requests)
+
+
 def test_session_compatibility_properties():
     session = get_session(2024, "Monaco", "Race")
     session._drivers = [
@@ -152,10 +157,10 @@ def test_session_compatibility_properties():
     ]
 
     assert session.session == "Race"
-    assert hasattr(session.car_data, "__getitem__")
-    assert hasattr(session.pos_data, "__getitem__")
-
-    res = session.results
+    with patch("tif1.core.fetch_multiple_async", new=_no_payloads):
+        assert hasattr(session.car_data, "__getitem__")
+        assert hasattr(session.pos_data, "__getitem__")
+        res = session.results
     assert isinstance(res, SessionResults)
     assert len(res) == 1
     assert res.iloc[0]["Abbreviation"] == "VER"
@@ -271,6 +276,7 @@ def test_session_get_fastest_laps_empty():
 def test_lazy_telemetry_dict_key_error():
     session = get_session(2024, "Monaco", "Race")
     session._drivers = [{"driver": "VER", "number": "1"}]
-    ltd = session.car_data
+    with patch("tif1.core.fetch_multiple_async", new=_no_payloads):
+        ltd = session.car_data
     with pytest.raises(KeyError):
         _ = ltd["XYZ"]

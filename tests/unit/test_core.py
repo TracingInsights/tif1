@@ -248,20 +248,17 @@ class TestSessionAdvanced:
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_laps_property_error_handling(self, mock_fetch):
-        """Test laps property with error handling."""
-        call_count = [0]
+        """Missing lap payloads (404 on every CDN) degrade to an empty table."""
+        mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
 
-        def side_effect(path):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
-            raise InvalidDataError(reason="Failed to load laps")
+        async def missing(requests, **_kwargs):
+            return [None] * len(requests)
 
-        mock_fetch.side_effect = side_effect
-
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
-        laps = session.laps
+        with patch("tif1.core.fetch_multiple_async", new=missing):
+            session = Session(2025, "Test GP", "Race", enable_cache=False)
+            laps = session.laps
         assert isinstance(laps, pd.DataFrame)
+        assert laps.empty
 
     @patch("tif1.core.fetch_multiple_async")
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)

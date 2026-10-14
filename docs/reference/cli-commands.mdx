@@ -9,7 +9,7 @@ keywords:
   - "tif1 CLI"
 ---
 
-The `tif1` CLI provides quick access to F1 data without writing Python code. It is a thin wrapper around the Python API: each command loads data through `tif1.get_events()`, `tif1.get_sessions()`, or `tif1.get_session()` and prints a table.
+The `tif1` CLI provides quick access to F1 data without writing Python code. It is a thin wrapper around the Python API. Each command loads data through `tif1.get_events()`, `tif1.get_sessions()`, or `tif1.get_session()` and prints a table.
 
 ## Installation
 
@@ -322,7 +322,7 @@ echo $?  # 1
     Use `events` and `sessions` to confirm that data exists before loading a session.
   </Card>
   <Card title="Keep the Cache" icon="bolt">
-    Repeated commands for the same session are served from the SQLite cache and finish in well under a second.
+    Repeated commands for the same session read from the SQLite cache. They finish in well under a second.
   </Card>
   <Card title="Switch to Python for Analysis" icon="code">
     The CLI is for quick lookups. Lap filtering, telemetry, exports, and plots live in the Python API.
