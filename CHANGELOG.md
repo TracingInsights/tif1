@@ -62,6 +62,38 @@ Twelve hypotheses measured on a 32-core workstation (every prior series ran on
   of worker RSS) and alternative transports (A10: aiohttp −21 % on the raw
   84 MB transfer; curl_cffi erratic) — see RESULTS.md.
 
+### Summary — Kroton-series performance work
+
+Ten new hypotheses were measured (full log in
+`.agents/perf-kroton/RESULTS.md`); all ten ran to a verdict, three shipped,
+seven were rejected by measurement. Headline numbers on the 2026 Monaco GP
+race benchmark (~1452 telemetry frames, 1455 laps rows):
+
+- **Laps frame tier (pandas + polars)**: the processed laps DataFrame
+  materializes once per (year, gp, session) in `laps_frames` /
+  `laps_frames_pl`; warm first-touch `session.laps` **67.8 → 4.6 ms (14x)**
+  on pandas and **29.2 → 5.6 ms (5.2x)** on polars. Corrupt or
+  foreign-backend rows degrade to the payload path; ultra-cold loads never
+  read the tiers.
+- **Typed direct block assembly** for `_typed_telemetry_frame`: a bit-exact
+  vectorized replica of pandas' `cast_from_unit_vectorized` Time conversion
+  (~26x faster than `pd.to_timedelta` on float arrays), pre-typed
+  Driver/Brake/nGear/DRS/LapNumber columns, an arrow string fast path, and
+  direct `BlockManager` construction. Cold per-frame assembly
+  **1447 → 1155 ms median (1.25x)**; offline best-of 940 → 576 µs/frame.
+  Falls back to the plain constructor on any pandas-internals drift.
+  *Merge note:* the Argos series landed its own version of this builder
+  (`DataFrame._from_arrays`, consolidated blocks, `array.array` channel
+  conversion); measured head-to-head on the same corpus it was faster in
+  5/5 interleaved pairs, so the direct `BlockManager` helpers were dropped in
+  the merge and the vectorized Time cast kept its finite/huge-value guard.
+- Rejected with numbers: typed merged-dict assembly (+5.6% regression — the
+  per-frame win does not transfer to 614k-row merged frames), zstd-1 codec
+  re-eval (lz4 wins both directions on current deps), pydantic validation
+  share (4 ms), `get_session` first-call cost (it is the pandas import),
+  results first-touch (0.7 ms), block-concat of frame hits (13.8 ms),
+  laps dtype-pass rework (sub-costs scattered; subsumed by the tier).
+
 ### Added — Python 3.15 support
 
 - Python 3.15 is a supported, CI-tested interpreter: the `3.15` trove

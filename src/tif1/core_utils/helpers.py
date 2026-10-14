@@ -349,10 +349,19 @@ def _typed_telemetry_frame(
         columns: list[str] = []
         for k, v in normalized_data.items():
             if k == "Time":
+                # Bit-exact vectorized replica of pandas' base/frac cast
+                # (A2 / KR-2); the exact pd.to_timedelta call stays the path
+                # for NaN/inf/huge values and non-float lists.
                 seconds = _float_channel_array(v)
                 if seconds is None:
-                    seconds = np.asarray(v, dtype="float64")
-                column: Any = _seconds_to_td64ns(seconds)
+                    try:
+                        seconds = np.asarray(v, dtype="float64")
+                    except (TypeError, ValueError):
+                        seconds = None
+                if seconds is not None and _td_cast_is_safe(seconds):
+                    column: Any = _seconds_to_td64ns(seconds)
+                else:
+                    column = pd.to_timedelta(seconds if seconds is not None else v, unit="s")
             elif k == "Brake" and None not in v:
                 ints = _numeric_channel_array(v)
                 column = (
@@ -407,9 +416,6 @@ def _typed_telemetry_frame(
         frame = _frame_from_arrays(arrays, columns, max_len)
     except (AttributeError, TypeError, ValueError):
         return None
-    for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
-        if col not in frame.columns:
-            frame[col] = pd.NA
     return frame
 
 
@@ -630,6 +636,13 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     # template + masked ``pd.to_timedelta`` assignment; NaN never reaches a
     # pandas conversion and the values are bit-identical to that path.
     seconds = numeric_values.to_numpy(dtype="float64", na_value=np.nan)
+    if not _td_cast_is_safe(seconds):
+        valid_mask = numeric_values.notna()
+        result = pd.Series(pd.NaT, index=numeric_values.index, dtype="timedelta64[ns]")
+        if bool(valid_mask.any()):
+            result.loc[valid_mask] = pd.to_timedelta(seconds[valid_mask.to_numpy()], unit="s")
+        result.name = values.name
+        return result
     return pd.Series(_seconds_to_td64ns(seconds), index=numeric_values.index, name=values.name)
 
 
@@ -682,6 +695,23 @@ def _seconds_to_td64ns(seconds: np.ndarray) -> np.ndarray:
     if missing.any():
         nanos[missing] = _NAT_INT64
     return nanos.view("m8[ns]")
+
+
+def _td_cast_is_safe(seconds: np.ndarray) -> bool:
+    """Whether every value is finite and far from the int64-nanosecond range.
+
+    The vectorized cast truncates silently where pandas would raise
+    ``OutOfBoundsTimedelta``; NaN is handled inside the cast, so only inf and
+    |x| >= 9e9 s (~285 years) are routed back to ``pd.to_timedelta``.
+    """
+    if seconds.size == 0:
+        return False
+    finite = np.isfinite(seconds)
+    if finite.all():
+        return bool(np.abs(seconds).max() < 9.0e9)
+    if not (finite | np.isnan(seconds)).all():
+        return False  # inf present
+    return bool(np.abs(seconds[finite]).max() < 9.0e9) if finite.any() else True
 
 
 def _float_channel_array(values: list[Any]) -> np.ndarray | None:

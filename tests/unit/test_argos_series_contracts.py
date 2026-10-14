@@ -89,6 +89,21 @@ class TestA1A2TypedFrames:
             got = _seconds_to_td64ns(seconds).view("i8")
             assert np.array_equal(expected, got)
 
+    def test_out_of_range_seconds_follow_pandas(self):
+        """inf / huge values leave the vectorized cast and raise like pandas."""
+        from tif1.core_utils.helpers import _td_cast_is_safe
+
+        assert _td_cast_is_safe(np.array([1.5, np.nan, 80.0]))
+        assert not _td_cast_is_safe(np.array([1.5, np.inf]))
+        assert not _td_cast_is_safe(np.array([1.0e10]))
+        assert not _td_cast_is_safe(np.array([], dtype="float64"))
+        huge = pd.Series([1.0, 1.0e10], dtype="float64")
+        with pytest.raises(pd.errors.OutOfBoundsTimedelta):
+            _numeric_seconds_to_timedelta(huge)
+        payload = _payload()
+        payload["time"][0] = 1.0e10
+        assert _create_telemetry_df(payload, "VER", 3, "pandas") is None
+
     def test_numeric_seconds_to_timedelta_keeps_contract(self):
         values = pd.Series([80.5, None, "x", 0.0], dtype=object, name="LapTime")
         out = _numeric_seconds_to_timedelta(values)
