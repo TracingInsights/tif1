@@ -108,7 +108,7 @@ Different circuits have distinct gear usage profiles. Street circuits like Monac
 
 ## Parameters
 
-The native chart accepts the shared filters plus a few chart-specific options. Change the gear color scale with `cmap`, or write the figure straight to a file with `save_path`:
+The native chart has one chart-specific option: `cmap` sets the gear color scale. `save_path` writes the figure straight to a file:
 
 ```python
 import tif1
@@ -123,7 +123,7 @@ fig, ax = tif1.plot_gear_shifts(
 plt.show()
 ```
 
-The colorbar is scaled from the data, not the fixed 8-gear range in the example above. The chart works for any gearbox.
+The native colorbar runs from gear 1 to the top gear of the lap. The example above uses a fixed 8-gear range. The chart works for any gearbox.
 
 ## Complete Example
 

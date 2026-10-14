@@ -2,7 +2,7 @@
 title: "Why tif1 instead of fastf1?"
 sidebarTitle: "Why tif1?"
 icon: "scale"
-description: "A fact-checked comparison of tif1 and fastf1: no rate limits, lazy fetching, 22 chart helpers, no IP restrictions, and mini-sector data."
+description: "A fact-checked comparison of tif1 and fastf1: no rate limits, lazy fetching, 22 chart helpers, public CDN access, and mini-sector data."
 keywords:
   - "tif1 vs fastf1"
   - "fastf1 alternative"
@@ -18,7 +18,7 @@ keywords:
   - "f1 lap telemetry"
 ---
 
-`fastf1` is the de-facto standard library for Formula 1 data in Python. The fastf1 project has done much for the F1 data community. `tif1` started as a personal project with a different philosophy in a few areas. These areas are data-fetch granularity, API rate limits, ready-made charts, CDN-based access, and extra data.
+`fastf1` is an established library for Formula 1 data in Python. The fastf1 project has done much for the F1 data community. `tif1` started as a personal project with a different philosophy in a few areas. These areas are data-fetch granularity, API rate limits, ready-made charts, CDN-based access, and extra data.
 
 `tif1` keeps a fastf1-compatible API, so the two libraries feel familiar side by side. This fact-checked comparison helps with that decision.
 
@@ -26,16 +26,15 @@ keywords:
 
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
-| **Data source** | F1 live-timing API + Ergast-compatible jolpica-f1 API | TracingInsights static data on a free global CDN |
-| **Granularity** | Whole-session `session.load()` required | Lazy, fine-grained — fetch one lap of telemetry directly |
-| **Rate limits** | Yes — jolpica-f1 caps at **500 requests/hour** (4 req/s burst); live-timing API can throttle/block | **None** — static CDN files, no quotas, no API keys |
-| **IP restrictions** | Live-timing endpoints may block VPNs and data-center IPs | None — works from any IP via global CDNs |
-| **Built-in charts** | Manual matplotlib chart code | **22 optional one-call chart helpers** |
-| **Mini-sector data** | Not in the public API | Included (race-control mini-sectors + enriched lap splits) |
+| **Data source** | F1 live-timing API + Ergast-compatible jolpica-f1 API | TracingInsights static files on public CDNs |
+| **Granularity** | Session-wide `session.load()`, with flags per data type | Lazy, per file — fetch one lap of telemetry directly |
+| **Rate limits** | Yes — fastf1 raises an error after **500 uncached requests/hour**, the jolpica-f1 limit | **None** — static CDN files, no quotas, no API keys |
+| **Access** | Some cloud runtimes get HTTP 403 from the live-timing host | Public CDN files, no key or login |
+| **Built-in charts** | Plotting helpers for colors and styles; chart code in matplotlib | **22 optional one-call chart helpers** |
+| **Mini-sector data** | Not in the laps data | Mini-sector color codes (`ms1`, `ms2`, `ms3`) on every lap |
 | **Backends** | pandas only | pandas **and** polars |
-| **Caching** | File-based pickle cache | SQLite persistent cache + in-memory LRU |
-| **Network** | HTTP/1.1, sequential | HTTP/2, asynchronous, multi-CDN fallback |
-| **Data availability** | ~20-25 min after session | ~30 min after session (more enrichment) |
+| **Caching** | SQLite HTTP cache + pickle files of parsed data | SQLite persistent cache + in-memory LRU |
+| **Network** | HTTP/1.1 (`requests`) | HTTP/2, asynchronous, multi-CDN fallback |
 | **Live timing** | Supported | Archive only (2018-current) |
 
 ---
@@ -46,35 +45,36 @@ keywords:
 
 `fastf1` is session-oriented by design. `session.load()` fetches the entire session up front:
 
-```python
+```python fastf1
 import fastf1
 
 session = fastf1.get_session(2025, "Monaco", "R")
-session.load()  # Downloads EVERYTHING: all drivers, all laps, all telemetry
+session.load()  # Laps, telemetry, weather, and messages of all drivers
 ```
 
-For a single race, that means tens of megabytes of JSON per driver across all 20 drivers. Weather, track status, race control messages, and more add to the volume. Loading telemetry for all drivers alone is typically **100-300 HTTP requests**. That volume is reasonable for a full-weekend analysis. Most of it goes unused when the analysis needs only a few laps.
+fastf1 reads session-wide files from the F1 live-timing API. The car data and the position data each arrive as one file for all drivers. `session.load(telemetry=False)` skips them. There is no option to load one driver or one lap. That volume is reasonable for a full-session analysis. Most of it goes unused when the analysis needs only a few laps.
 
 ### The tif1 approach: lazy and fine-grained
 
-In `tif1`, a session is a lightweight object. Data is fetched only when a property is accessed, and only the files needed for that access:
+In `tif1`, a session is a lightweight object. Data is fetched only when a property is accessed, and only the files needed for that access. The example below fetches three JSON files: the driver list, the lap table, and the telemetry of lap 19.
 
 ```python
 import tif1
 
 session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 
-# No session.load() needed — this pulls a single, small JSON file.
+# No session.load() needed: one telemetry file for one lap.
 telemetry = session.get_driver("VER").get_lap(19).telemetry
 print(telemetry[["Time", "Speed", "Throttle"]].head())
 ```
 
 ### Why it matters
 
-- **Faster iteration** — first results appear in seconds, not minutes.
+- **Faster iteration** — the first lap of telemetry needs three small files.
 - **Disk space** — the cache stores only the files actually used.
-- **Bandwidth and energy** — fewer transferred bytes reduce the environmental load, especially at scale.
-- **Predictable cost** — one lap equals one file. One session needs only a few files.
+- **Bandwidth** — only the requested files travel over the network.
+- **Predictable cost** — one lap of telemetry equals one file. The lap table of a session is usually one file.
+
 ---
 
 ## 2. No API rate limits — a verified 500 requests/hour ceiling on fastf1's data source
@@ -84,16 +84,16 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 `fastf1` obtains its data from two upstream sources:
 
 1. The **F1 live-timing API** (unofficial, for telemetry and timing feeds).
-2. The **Ergast-compatible jolpica-f1 API** (open source, for lap times, results, and historical data). It replaces the old Ergast API, which was limited to roughly 250 requests per hour per IP.
+2. The **Ergast-compatible jolpica-f1 API** (open source, for lap times, results, and historical data). It replaces the old Ergast API.
 
 The jolpica-f1 [Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md) documents the following for unauthenticated access:
 
 - **Burst limit:** 4 requests per second
 - **Sustained limit: 500 requests per hour**
 
-Requests above the limits receive `HTTP 429 Too Many Requests` with the message *"Request was throttled"*. The [Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) add that abuse or excessive use may result in temporary or permanent blocking. The same terms note that the limits decrease in the future as token-based access rolls out.
+Requests above the limits receive `HTTP 429 Too Many Requests` with the message *"Request was throttled"*. The same guide states that the unauthenticated limits decrease in the future as token access rolls out. The [Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) add that abuse or excessive use may result in temporary or permanent blocking.
 
-The live-timing endpoints used for telemetry are not a public service. They are known to throttle and block clients that make too many requests.
+fastf1 applies the same ceiling on the client side. Its request session waits at least 0.25 s between requests. It raises `RateLimitExceededError` after 500 requests in one hour. One counter covers the live-timing API and jolpica-f1 together. Requests that fastf1 serves from its cache do not count.
 
 ### When the limit matters
 
@@ -104,21 +104,19 @@ The 500 requests/hour ceiling is a real constraint worth planning around. Load p
 - backtests or model training on many sessions,
 - background jobs that warm a cache.
 
-These patterns can approach 500 requests quickly, especially with whole-session loads. This scenario led to the creation of `tif1` for the app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
+These patterns can approach 500 requests quickly, especially with whole-session loads and an empty cache. This scenario led to the creation of `tif1` for the app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
 
 ### Why tif1 has no rate limits
 
-`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`). Distribution runs through **jsDelivr (primary)**, **Hugging Face buckets (fallback)**, and **StaticDelivr (backup)**. These free CDNs distribute open-source software worldwide.
+`tif1` does not depend on those APIs for distribution. It serves pre-processed static JSON files from public GitHub data repositories (`TracingInsights/{year}`). Distribution runs through **jsDelivr (primary)**, **Hugging Face buckets (fallback)**, and **StaticDelivr (backup)**. These are free, public CDNs.
 
 The result:
 
 - No API keys or accounts
-- No per-user or per-IP request quotas
-- No throttling on burst traffic
+- No request quota or request counter in `tif1`
+- A configurable cap on parallel requests (for example `max_concurrent_requests`) instead of an hourly limit
 - Automatic CDN failover, retries, and a circuit breaker built in
 - SQLite and in-memory LRU caching, so repeat accesses do not hit the network
-
-Load any amount of data without watching a request counter.
 
 ---
 
@@ -142,7 +140,7 @@ fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=
 plt.show()
 
 # 4-panel speed / longitudinal-g / lateral-g / driver-actions comparison.
-fig, ax = tif1.plot_telemetry_comparison(2024, "Monaco Grand Prix", "Q", drivers=["VER", "LEC"])
+fig, axes = tif1.plot_telemetry_comparison(2024, "Monaco Grand Prix", "Q", drivers=["VER", "LEC"])
 plt.show()
 
 # Or save straight to a file — no interactive session required.
@@ -161,32 +159,27 @@ tif1.plot_laptime_heatmap(2023, "Monaco Grand Prix", "R", save_path="monaco_heat
 | **Performance** | `plot_downforce_levels`, `plot_throttle_distance`, `plot_tire_degradation`, `plot_race_launch_ratings`, `plot_qualifying_grid`, `plot_track_temperature` |
 | **Speeds** | `plot_top_speeds` |
 
-Every chart accepts shared filters: year, event, session, drivers/teams, save path, and DPI. Every chart also has a matching tutorial in the [Tutorials](/tutorials/race-analysis) section.
+Every chart accepts `year`, `event`, `session`, `save_path`, and `dpi`. Most charts also accept a `drivers`, `teams`, or `compounds` filter. Most charts have a matching tutorial in the [Tutorials](/tutorials/race-analysis) section.
 
 ---
 
-## 4. Works from anywhere — no IP restrictions
+## 4. Public CDN access
 
-### IP restrictions on the live-timing endpoints
+### Access to the live-timing host
 
-fastf1's telemetry flows come from the official F1 live-timing infrastructure, which is an internal service. Community discussions report that these endpoints reject requests from some sources:
+fastf1 reads timing and telemetry from `livetiming.formula1.com`, which is not a public API. The host can refuse some networks. In [FastF1 discussion #949](https://github.com/theOehrly/Fast-F1/discussions/949), a Google Colab runtime got HTTP 403 from it. Another network got HTTP 200 for the same URL.
 
-- **VPNs are sometimes blocked** — common VPN/proxy IP ranges may be rejected.
-- **Data-center and cloud IPs are sometimes blocked** — a VPS, cloud function, or CI runner can require workarounds.
-- **Residential-IP workarounds** appear in discussions for users who encounter these blocks.
+fastf1 then tries its mirror, `livetiming-mirror.fastf1.dev`. The mirror does not have every session.
 
-These blocks do not affect every user. Users who encounter them see the benefit of CDN-based delivery.
+### The tif1 approach: public CDNs
 
-### The tif1 approach: global CDNs, no IP checks
+`tif1` serves files from **jsDelivr** (primary) and **Hugging Face buckets** (fallback), with **StaticDelivr** as a last-resort backup. These are public CDNs. `tif1` sends plain HTTPS requests:
 
-`tif1` serves files from **jsDelivr** (primary) and **Hugging Face buckets** (fallback), with **StaticDelivr** as a last-resort backup. These free CDNs serve millions of websites every day. CDNs are built to serve content to the entire internet, so there are:
+- No API keys
+- No cookies or logins
+- No accounts
 
-- No IP allowlists or blocks
-- No VPN/proxy detection
-- No residential-IP requirements
-- No keys, cookies, or sessions
-
-Any network can pull tif1 data identically and at the same speed. Home broadband, a university campus, AWS/GCP/Azure, a Raspberry Pi, or a GitHub Actions runner all work. The CDN edge is close to every user.
+Any network that can reach one of these CDNs can load the data. This includes cloud runtimes and CI runners.
 
 ---
 
@@ -194,12 +187,12 @@ Any network can pull tif1 data identically and at the same speed. Home broadband
 
 ### Mini-sector data
 
-Formula 1 timing divides a lap into 3 sectors. Each sector divides into **8 mini-sectors** — 24 mini-sectors around the lap. Mini-sector timing shows where drivers gain and lose time more precisely than the three conventional sectors. Teams and broadcasters use it for detailed performance analysis.
+Formula 1 timing divides each of the three sectors into mini-sectors. The number of mini-sectors in a sector changes from circuit to circuit. Mini-sector colors show where a lap was a personal best or an overall best, below the sector level.
 
-fastf1's public API focuses on lap timing, telemetry, and results. The TracingInsights data pipeline behind tif1 provides a few extras outside that scope:
+The fastf1 laps data has no mini-sector columns. The TracingInsights data pipeline behind tif1 adds them from OpenF1 when the session matches:
 
-- **Race-control messages** include the affected mini-sector in the `Sector` column (`1-24`), for example a yellow flag in mini-sector 12. Flags are tracked per mini-sector, not just per conventional sector.
-- **Lap data** is enriched with mini-sector splits sourced from OpenF1 for per-lap resolution below the S1/S2/S3 level.
+- **`ms1`, `ms2`, `ms3`** hold the codes for sector 1, 2, and 3, usually one digit for each mini-sector.
+- Each digit is a color code, for example `1` for green, `3` for purple, and `5` for the pit lane. The [data reference](/reference/data-reference) lists all codes.
 
 In tif1:
 
@@ -208,9 +201,9 @@ import tif1
 
 session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
-# Race-control messages carry the affected mini-sector (1-24).
-rcm = session.race_control_messages
-print(rcm[["Time", "Message", "Flag", "Sector"]].head())
+# Mini-sector color codes
+laps = session.laps
+print(laps[["Driver", "LapNumber", "ms1", "ms2", "ms3"]].head())
 ```
 
 ### A few more extras
@@ -218,12 +211,11 @@ print(rcm[["Time", "Message", "Flag", "Sector"]].head())
 | Capability | Details |
 | :--- | :--- |
 | **Per-lap weather** | Air/track temperature, humidity, rainfall, wind merged into every lap row — no joins needed |
-| **Derived telemetry** | `DriverAhead`, `DistanceToDriverAhead`, and `AccelerationX/Y/Z` computed and included |
-| **Acceleration channels** | Longitudinal, lateral, and vertical g-forces from position/speed data |
-| **Polars backend** | The same data usable on the polars engine for 2x faster analytics |
-| **SQLite + LRU cache** | Persistent cache survives restarts; memory LRU makes repeat loads nearly instant |
+| **Acceleration channels** | `AccelerationX`, `AccelerationY`, and `AccelerationZ` (longitudinal, lateral, and vertical, in m/s²), computed from speed and position data |
+| **Polars backend** | The same data as `polars.DataFrame` objects |
+| **SQLite + LRU cache** | Persistent cache survives restarts; repeat reads in one process come from memory |
 | **Async fetching** | HTTP/2 parallel downloads with multi-CDN fallback and a circuit breaker |
-| **Jupyter-ready** | Rich HTML rendering of sessions, laps, and telemetry in notebooks |
+| **Jupyter-ready** | `tif1.jupyter` adds HTML display for sessions, drivers, and laps in notebooks |
 | **CLI** | `tif1` command-line tools for schedules, data inspection, and cache management |
 
 ---
@@ -233,12 +225,12 @@ print(rcm[["Time", "Message", "Flag", "Sector"]].head())
 Both libraries have strengths, and fastf1 remains the better choice in a few situations:
 
 - **Live timing.** tif1 is an archive library (2018-current). Real-time lap and telemetry data during a live session needs fastf1.
-- **Freshest data.** tif1 data is published ~30 minutes after a session ends, versus ~20-25 minutes for fastf1. The 2-5 minute gap pays for enrichment and processing.
+- **Freshest data.** fastf1 reads the F1 live-timing archive directly. tif1 can load a session only after the TracingInsights pipeline publishes its files.
 - **Deep fastf1-internal dependencies.** A codebase that relies on fastf1 internals beyond the documented API surface (for example `fastf1.ergast`, `fastf1.livetiming`) needs those specific modules. tif1 does not include them.
 
 ## Migration
 
-tif1 keeps the fastf1 column names for laps and telemetry, so many scripts need only an import change. The [migration guide](/migration-from-fastf1) lists the differences, such as the 0/1 `DRS` flag and the lap-relative telemetry `Time`.
+tif1 keeps the fastf1 column names for laps and telemetry, so many scripts need only an import change. The [migration guide](/migration-from-fastf1) lists the differences, such as the 0/1 `DRS` flag and the missing `SessionTime` and `Date` telemetry columns.
 
 ```python
 import tif1 as ff1  # many scripts need no other change
@@ -248,7 +240,7 @@ See the [Migration from fastf1](/migration-from-fastf1) guide for the step-by-st
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Load a first session in under 30 seconds.
+    Load a first session and read laps and telemetry.
   </Card>
   <Card title="Charts API" icon="chart-column" href="/api-reference/charts">
     Browse all 22 native chart functions.

@@ -363,8 +363,6 @@ class TestConfigGetValidation:
             "max_retry_delay",
             "circuit_breaker_threshold",
             "circuit_breaker_timeout",
-            "http2_max_connections",
-            "http2_max_pool_size",
         ]
         for key in numeric_keys:
             config.set(key, -5)
@@ -424,10 +422,14 @@ class TestConfigEnvOverrides:
         config = config_module.Config()
         assert "test_cache" in config.get("cache_dir")
 
-    def test_log_level_env_override(self, monkeypatch):
+    def test_removed_keys_are_gone(self, monkeypatch):
+        # log_level and the http2_* pool sizes were never read; they are not
+        # config keys any more, and their environment variables are ignored.
         monkeypatch.setenv("TIF1_LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("TIF1_HTTP2_MAX_CONNECTIONS", "50")
         config = config_module.Config()
-        assert config.get("log_level") == "DEBUG"
+        for key in ("log_level", "http2_max_connections", "http2_max_pool_size"):
+            assert config.get(key) is None
 
     def test_enable_cache_env_override(self, monkeypatch):
         monkeypatch.setenv("TIF1_ENABLE_CACHE", "false")

@@ -1,7 +1,7 @@
 ---
 title: "Data Reference"
 icon: "file-json"
-description: "Field-by-field reference for the raw TracingInsights telemetry data files (laptimes.json, tel.json, weather.json, rcm.json, drivers.json, corners.json)"
+description: "Field-by-field reference for the raw TracingInsights data files (laptimes.json, session_laptimes.json, {lap}_tel.json, weather.json, rcm.json, drivers.json, corners.json)"
 keywords:
   - "tif1"
   - "Formula 1"
@@ -14,7 +14,7 @@ keywords:
   - "race control"
 ---
 
-This guide documents every field in the TracingInsights GitHub telemetry data repositories and the JSON structures. Each field is explained with practical context, so no prior Formula 1 knowledge is required.
+This guide documents the fields of the JSON files that tif1 reads from the TracingInsights GitHub data repositories. Each field is explained with practical context, so no prior Formula 1 knowledge is required.
 
 <Note>
   This page documents the **raw JSON files** served from the TracingInsights data repos. tif1 loads these files and maps their abbreviated keys to fastf1-compatible PascalCase DataFrame columns. See the [Data Schema Reference](/reference/data-schema) for the columns of `session.laps`, `lap.telemetry`, and the other public APIs.
@@ -22,12 +22,12 @@ This guide documents every field in the TracingInsights GitHub telemetry data re
 
 ## How This Data Is Generated
 
-The data repositories use two main extraction scripts. They share the same output format for `laptimes.json`, but produce different session-level files.
+The current season's repository uses two main extraction scripts. Older season repositories hold earlier versions, some under other names such as `telR.py`. The scripts share the same output format for `laptimes.json`, but produce different session-level files.
 
 | Script | Primary Output | Extra Session Files | Notes |
 | :--- | :--- | :--- | :--- |
-| `R.py` | Per-driver `laptimes.json` and per-lap `{lap}_tel.json` telemetry | `weather.json`, `rcm.json`, `drivers.json`, `corners.json` | Full telemetry extraction; uses FastF1 + MultiViewer circuit API fallback. |
-| `LapTimes.py` | Per-driver `laptimes.json` only | None | Optimized lap-time-only extraction; enriches Race laps with official Ergast lap times and adds OpenF1 mini-sectors (`ms1`, `ms2`, `ms3`) and qualifying segments (`qs`). |
+| `R.py` | Per-driver `laptimes.json` and per-lap `{lap}_tel.json` telemetry | `session_laptimes.json`, `weather.json`, `rcm.json`, `drivers.json`, `corners.json` | Full telemetry extraction; uses FastF1 + MultiViewer circuit API fallback. |
+| `LapTimes.py` | Per-driver `laptimes.json` | `session_laptimes.json` (the laps of all drivers in one file) | Optimized lap-time-only extraction; enriches Race laps with official Ergast lap times and adds OpenF1 mini-sectors (`ms1`, `ms2`, `ms3`) and qualifying segments (`qs`). |
 
 **Data sources:**
 
@@ -61,23 +61,23 @@ Messages sent by Race Control (the officials) to teams about track status, penal
 
 | Key | Field | Description | Values |
 | :--- | :--- | :--- | :--- |
-| `time` | Time | Wall-clock date and time when this message was issued | ISO 8601 string, for example `"2025-04-13T14:20:01"` |
+| `time` | Time | UTC date and time when this message was issued (not a session time) | ISO 8601 string without a time zone, for example `"2024-05-26T12:20:00.000000000"` |
 | `cat` | Category | Type of message being sent | `"Other"`, `"Flag"`, `"Drs"`, `"SafetyCar"`, `"CarEvent"` |
-| `msg` | Message | Human-readable description of the event | e.g. `"Yellow Flag"`, `"DRS Enabled"`, `"Unsafe Release"` |
-| `status` | Status | Additional context about the message state | e.g. `"DISABLED"`, `"ENABLED"`, depends on category |
-| `flag` | Flag | Type of flag being waved (if applicable) | `"GREEN"`, `"RED"`, `"YELLOW"`, `"DOUBLE YELLOW"`, `"CLEAR"`, `"CHEQUERED"`, `"BLACK AND WHITE"` |
-| `scope` | Scope | How wide the impact of this message is | `"Track"` (entire track), `"Sector"` (one of 3 sectors), `"Driver"` (specific driver) |
-| `sector` | Sector | Which mini sector is affected (if scope is `"Sector"`). There are 3 sectors, each divided into 8 mini sectors | 1-24 |
+| `msg` | Message | Human-readable description of the event | e.g. `"DOUBLE YELLOW IN TRACK SECTOR 7"`, `"DRS DISABLED"`, `"GREEN LIGHT - PIT EXIT OPEN"` |
+| `status` | Status | Additional context about the message state | e.g. `"DISABLED"`, `"ENABLED"`, `"DEPLOYED"`, `"ENDING"`, depends on category. `"None"` when not applicable. |
+| `flag` | Flag | Type of flag being waved (if applicable) | `"GREEN"`, `"RED"`, `"YELLOW"`, `"DOUBLE YELLOW"`, `"BLUE"`, `"CLEAR"`, `"CHEQUERED"`, `"BLACK AND WHITE"`. `"None"` for messages without a flag. |
+| `scope` | Scope | How wide the impact of this message is | `"Track"` (entire track), `"Sector"` (one marshal sector), `"Driver"` (specific driver), or `"None"` |
+| `sector` | Sector | Which marshal sector of the track is affected (if scope is `"Sector"`). The number of marshal sectors depends on the circuit. | Number such as `7.0`; `"None"` for other scopes |
 | `dNum` | Driver Number / Racing Number | The driver's car number affected by the message (if scope is `"Driver"`) | String: `"1"`, `"44"`, `"63"`, etc. |
-| `lap` | Lap | Which lap number this message refers to | Integer. Sessions other than Race send `"None"`. |
+| `lap` | Lap | Which lap number this message refers to | Integer in Race and Sprint sessions. Qualifying and other sessions can send `"None"`. |
 
 ### What This Means
 
-When a yellow flag is deployed due to debris in Sector 2, the data can show `{cat: "Flag", msg: "Yellow", flag: "YELLOW", scope: "Sector", sector: 2}`. This tells the teams that drivers must slow down in that sector.
+When a yellow flag is shown in marshal sector 2, the data can show `{cat: "Flag", msg: "YELLOW IN TRACK SECTOR 2", flag: "YELLOW", scope: "Sector", sector: 2.0}`. This tells the teams that drivers must slow down in that sector.
 
-## Telemetry Data (`tel.json`)
+## Telemetry Data (`{lap}_tel.json`)
 
-Detailed second-by-second (actually 3.7 Hz sampling, roughly 270ms intervals) data from the car's sensors and systems. Each lap is stored in its own `{lap}_tel.json` file.
+Samples from the car's sensors, merged with the car position. In the 2024 Monaco Race data, samples are about 0.13 s apart (about 7.5 samples per second). Each lap is stored in its own `{lap}_tel.json` file, with the fields under a top-level `tel` key.
 
 ### Basic Car Metrics
 
@@ -85,13 +85,13 @@ Detailed second-by-second (actually 3.7 Hz sampling, roughly 270ms intervals) da
 | :--- | :--- | :--- | :--- | :--- |
 | `time` | Time | Time when this data sample was recorded from start of the lap | seconds |  |
 | `rpm` | Revolutions Per Minute | Engine rotations per minute | RPM | Higher on straights, lower in corners |
-| `speed` | Speed | How fast the car is traveling | km/h | Derived from GPS/telemetry sources |
-| `gear` | Gear | Current gear the car is in | 1-8 | F1 uses 8-speed gearboxes |
-| `throttle` | Throttle Position | How much the driver is pressing the throttle pedal | 0-100% | 0% = fully released, 100% = floored |
-| `brake` | Brake | Whether brakes are being applied | `true`/`false` | Binary: either braking or not |
+| `speed` | Speed | How fast the car is traveling | km/h | From the car data stream |
+| `gear` | Gear | Current gear the car is in | 0-8 | 0 = neutral. F1 uses 8-speed gearboxes |
+| `throttle` | Throttle Position | How much the driver is pressing the throttle pedal | 0-100% | 0% = fully released, 100% = floored. Some samples hold values above 100. |
+| `brake` | Brake | Whether brakes are being applied | 0 or 1 | 1 = braking, 0 = not braking |
 | `drs` | DRS | Status of the DRS (rear wing flap that reduces drag). The raw FastF1 value is mapped to a binary open/closed state | 0 or 1 | 0 = Off/closed; 1 = open. Raw FastF1 DRS values of `10`, `12`, or `14` are treated as open. |
-| `distance` | Distance | Total distance driven since start of lap | meters | Increases monotonically (always increasing) |
-| `rel_distance` | Relative Distance | Normalized distance along the lap, where 0.0 is the first sample and 1.0 is the last sample | unitless (0.0-1.0) | Useful for aligning telemetry across different laps |
+| `distance` | Distance | Total distance driven since start of lap | meters | Starts near 0. The first samples can be slightly negative. |
+| `rel_distance` | Relative Distance | Distance as a fraction of the lap length: about 0.0 at the start of the lap and about 1.0 at the end | unitless (0.0-1.0) | Useful for aligning telemetry across different laps |
 
 ### Driver and Car Ahead Information
 
@@ -109,42 +109,42 @@ The car experiences forces in three directions simultaneously. The extraction sc
 | Key | Axis Direction | Computation Formula | Outlier Handling | Smoothing |
 | :--- | :--- | :--- | :--- | :--- |
 | `acc_x` | Longitudinal (forward/backward along track) | `ax = gradient(v_ms) / gradient(time)`, where `v_ms = speed / 3.6` | If `ax > 25 m/s²` (one-sided, positive only), the value is replaced with the previous sample's value. Boundary samples (first/last) are excluded. | 3-point moving average |
-| `acc_y` | Lateral (side-to-side) | `ay = v² × C`, where `C = dθ / (ds + 0.0001)` and `θ = arctan2(dy, dx)`, phase-unwrapped | **Stage 1 (intermediate):** if `|dθ| > 0.5 rad/sample`, replace with the previous value before computing C and ay. **Stage 2:** hard-zero if `|ay| > 150 m/s²` (~15G) | 9-point moving average |
-| `acc_z` | Vertical (up/down, elevation changes) | `az = v² × C_z`, where `C_z = dθ_z / (ds + 0.0001)` and `θ_z = arctan2(dz, dx)`, phase-unwrapped | **Stage 1 (intermediate):** if `|dθ_z| > 0.5 rad/sample`, replace with the previous value. **Stage 2:** hard-zero if `|az| > 150 m/s²` (~15G) | 9-point moving average |
+| `acc_y` | Lateral (side-to-side) | `ay = v² × C`, where `C = dθ / (ds + 0.0001)` and `θ = arctan2(dy, dx)`, phase-unwrapped | **Stage 1 (intermediate):** if `\|dθ\| > 0.5 rad/sample`, replace with the previous value before computing C and ay. **Stage 2:** hard-zero if `\|ay\| > 150 m/s²` (~15G) | 9-point moving average |
+| `acc_z` | Vertical (up/down, elevation changes) | `az = v² × C_z`, where `C_z = dθ_z / (ds + 0.0001)` and `θ_z = arctan2(dz, dx)`, phase-unwrapped | **Stage 1 (intermediate):** if `\|dθ_z\| > 0.5 rad/sample`, replace with the previous value. **Stage 2:** hard-zero if `\|az\| > 150 m/s²` (~15G) | 9-point moving average |
 
 ### Position Data (3D Coordinates)
 
 | Key | Field | Description | Unit |
 | :--- | :--- | :--- | :--- |
-| `x` | X Position | Horizontal position on the track (left-right) | meters |
-| `y` | Y Position | Horizontal position on the track (forward-backward) | meters |
-| `z` | Z Position | Vertical height above track surface | meters |
+| `x` | X Position | Horizontal coordinate on the track map | 1/10 m |
+| `y` | Y Position | Horizontal coordinate on the track map, at a right angle to `x` | 1/10 m |
+| `z` | Z Position | Vertical coordinate (elevation) | 1/10 m |
 
 <Note>
-  Position data is interpolated (estimated between actual measurements) to align with the higher-frequency car data. Car data comes at roughly 240ms intervals and position data at roughly 220ms. The two streams must be matched.
+  The coordinates use units of 1/10 m, so the path length through `x` and `y` is about 10 times `distance`. Car data comes at roughly 240 ms intervals and position data at roughly 220 ms. Each file merges the two streams, and values are interpolated between the measurements.
 </Note>
 
 ### Other Telemetry Fields
 
 | Key | Field | Description |
 | :--- | :--- | :--- |
-| `dataKey` | Data Key | Unique identifier that links this telemetry data to a specific driver and lap |
+| `dataKey` | Data Key | Unique identifier that links this telemetry data to a specific driver and lap. One string per file, not a list. |
 
 The format is `Year-EventName-Session-Driver 3 letter code-Lap Number`, for example `2025-United States Grand Prix-Race-VER-9`.
 
 <Info>
-  For 2026 Pre-Season Testing, `PreSeasonTesting1` is used as EventName instead of `Pre-Season Testing 1`.
+  For 2026 pre-season testing, the EventName part has no spaces or hyphens: `PreSeasonTesting1` for `Pre-Season Testing 1`, and `PreSeasonTesting` for `Pre-Season Testing`.
 </Info>
 
 ## Driver Data (`drivers.json`)
 
-Static information about each driver that does not change during a session.
+Static information about each driver that does not change during a session. The file holds one `drivers` list with one object per driver.
 
 | Key | Field | Description | Type |
 | :--- | :--- | :--- | :--- |
 | `driver` | Driver (ID) | Unique 3 letter driver identifier | String: `"VER"` |
 | `team` | Team | Team name the driver is racing for | String: `"Red Bull Racing"`, `"Ferrari"`, etc. |
-| `dn` | Driver Number | The number on the car | Integer: 1-99 |
+| `dn` | Driver Number | The number on the car | String: `"16"` |
 | `fn` | First Name | Driver's first name | String: `"Lewis"`, `"Max"`, `"Kimi"` |
 | `ln` | Last Name | Driver's last name | String: `"Hamilton"`, `"Verstappen"`, `"Antonelli"` |
 | `tc` | Team Color | Official team color in hexadecimal format | Hex string: `"4781D7"` (Red Bull's blue), `"ED1131"` (Ferrari red) |
@@ -152,7 +152,7 @@ Static information about each driver that does not change during a session.
 
 ## Lap Times Data (`laptimes.json`)
 
-Timing and performance information for each completed lap, stored per driver.
+Timing and performance information for each completed lap, stored per driver. `session_laptimes.json` holds the same keys for all drivers in one file, in alphabetical driver order. tif1 prefers that file when it loads laps, and falls back to the per-driver files.
 
 ### Core Timing Information
 
@@ -162,13 +162,13 @@ Timing and performance information for each completed lap, stored per driver.
 | `lap` | Lap Number | Which lap this is (1st, 2nd, 3rd, etc.) | Integer | Counts from 1 |
 | `sesT` | Session Time | When this lap ended relative to session start | seconds |  |
 | `lST` | Lap Start Time | When this lap started relative to session start | seconds | Lap ended at `sesT`, started at `lST` |
-| `lSD` | Lap Start Date | Calendar date/timestamp when lap started | Date string | Useful for multi-day sessions |
+| `lSD` | Lap Start Date | Calendar date/timestamp when lap started | Date string | ISO 8601, for example `"2024-05-26T13:03:11.069000000"` |
 
 ### Sector Times (Track Divided into 3 Sections)
 
 The track is divided into 3 sectors. Sector times show where a driver gained or lost time.
 
-| Key | Field | Description | Notes |
+| Key | Field | Description | Unit |
 | :--- | :--- | :--- | :--- |
 | `s1` | Sector 1 Time | Time to complete first section of track | seconds |
 | `s2` | Sector 2 Time | Time to complete second section of track | seconds |
@@ -195,19 +195,19 @@ Modern F1 tracks have speed guns that measure top speed at specific locations:
 | `compound` | Tire Compound | The type of tire being used | String | `"SOFT"`, `"MEDIUM"`, `"HARD"`, `"INTERMEDIATE"`, `"WET"`, `"UNKNOWN"` |
 | `life` | Tire Life | Laps driven on this tire (includes laps in other sessions for used sets of tires) | Integer (laps) |  |
 | `fresh` | Fresh Tire | Was this a new (fresh) tire when fitted? | Boolean | `true` = new tire, `false` = used tire. Tire had TyreLife=0 at stint start, i.e. was a new tire |
-| `stint` | Stint Number | How many pit stops has this driver made | Integer | First stint = 1, after 1st pit stop = 2, etc. |
+| `stint` | Stint Number | Which stint of the driver this lap belongs to | Integer | First stint = 1, after 1st pit stop = 2, etc. |
 
 ### Mini-Sector Segment Times (OpenF1)
 
-Encoded digit strings show the colour classification of each mini-sector in a sector. These fields are available only when OpenF1 data can be matched to the session.
+Encoded digit strings show the colour classification of each mini-sector in a sector. These fields are available only when OpenF1 data can be matched to the session. Otherwise the value is `"None"`.
 
 | Key | Field | Description | Values |
 | :--- | :--- | :--- | :--- |
-| `ms1` | Mini-Sector Sectors 1 | Encoded mini-sector classifications for Sector 1 | String of digits, e.g. `"01331111"` |
-| `ms2` | Mini-Sector Sectors 2 | Encoded mini-sector classifications for Sector 2 | String of digits |
-| `ms3` | Mini-Sector Sectors 3 | Encoded mini-sector classifications for Sector 3 | String of digits |
+| `ms1` | Mini-Sectors, Sector 1 | Encoded mini-sector classifications for Sector 1 | String of digits, e.g. `"01331111"` |
+| `ms2` | Mini-Sectors, Sector 2 | Encoded mini-sector classifications for Sector 2 | String of digits |
+| `ms3` | Mini-Sectors, Sector 3 | Encoded mini-sector classifications for Sector 3 | String of digits |
 
-Each character is one mini-sector and is encoded using the following colour map:
+Each character is one mini-sector. The number of mini-sectors in a sector depends on the circuit. Each character uses the following colour map:
 
 | Encoded Digit | Meaning |
 | :--- | :--- |
@@ -232,7 +232,7 @@ Each character is one mini-sector and is encoded using the following colour map:
 | :--- | :--- | :--- | :--- |
 | `pos` | Position | Driver's position in the race/sprint at the end of this lap. This value is `None` for FP1, FP2, FP3, Sprint Shootout, and Qualifying as well as for crash laps. For Race sessions this may be overwritten with the Ergast/Jolpica position when available. | Integer: 1-22 |
 | `status` | Track Status | A string containing track status numbers for all track status that occurred during this lap | String: `"1"`, `"216"` |
-| `pb` | Personal Best | Whether this lap is the official personal best lap of a driver. If any lap of a driver is quicker than their respective personal best lap, that quicker lap is invalid and not counted — for example if track limits were exceeded | `true`/`false` |
+| `pb` | Personal Best | Whether this lap was the official personal best lap of the driver when it was set. Several laps of one driver can be `true`. If any lap of a driver is quicker than their respective personal best lap, that quicker lap is invalid and not counted — for example if track limits were exceeded | `true`/`false` |
 
 ### Pit Stop Information
 
@@ -294,11 +294,13 @@ Information about the physical corners of the racetrack layout.
 | Key | Field | Description | Unit | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | `CornerNumber` | Corner Number | Sequential number of this corner | Integer: 1+ | Identifies which corner (1st, 2nd, 3rd, etc.) |
-| `X` | X Coordinate | Horizontal position of the corner on the track map | meters |  |
-| `Y` | Y Coordinate | Horizontal position of the corner on the track map | meters |  |
+| `X` | X Coordinate | Horizontal position of the corner on the track map | 1/10 m | Same coordinates as telemetry `x` |
+| `Y` | Y Coordinate | Horizontal position of the corner on the track map | 1/10 m | Same coordinates as telemetry `y` |
 | `Angle` | Angle | An angle in degrees, used to visually offset the marker's placement on a track map in a logical direction (usually orthogonal to the track) | ° |  |
 | `Distance` | Distance | Location of the marker as a distance from the start/finish line | meters | Position relative to start/finish |
 | `Rotation` | Rotation | Rotation of the circuit in degrees. Can be used to rotate the coordinate system of the telemetry (position) data to match the orientation of the official track map | Degrees or `None` |  |
+
+Some newer files, for example 2026, add more keys such as `CornerLetter`, `MarshalSectorNumber`, `TrackX`, and `TrackY`. tif1 reads only the keys in this table.
 
 ## Where to Find More Information
 

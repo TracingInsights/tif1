@@ -108,7 +108,7 @@ def clean_race_laps(laps):
 
     # Remove very slow laps (safety car, incidents)
     fastest = clean["LapTime"].min()
-    clean = clean[clean["LapTime"] < fastest * 1.15]
+    clean = clean[clean["LapTime"] < fastest * 1.07]
 
     # Remove deleted laps
     clean = clean[~clean["Deleted"]]
@@ -154,10 +154,10 @@ Analyze tire strategy and stint lengths.
 
 ```python
 def plot_tire_strategy(laps):
-    """Visualize tire strategy for all drivers."""
+    """Visualize tire strategy for the drivers on the lead lap."""
     fig, ax = plt.subplots(figsize=(16, 12))
 
-    # Get final classification
+    # Drivers who completed the final lap, in finishing order
     final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
     drivers_sorted = final_lap.sort_values("Position")["Driver"].tolist()
 

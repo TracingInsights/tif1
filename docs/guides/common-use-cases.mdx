@@ -28,8 +28,8 @@ def analyze_race_strategy(year: int, event: str):
     session = tif1.get_session(year, event, "Race")
     laps = session.laps
 
-    # Group by driver and stint on a plain DataFrame, so reset_index keeps the key names
-    strategy = pd.DataFrame(laps).groupby(["Driver", "Stint"]).agg({
+    # Group by driver and stint
+    strategy = laps.groupby(["Driver", "Stint"]).agg({
         "LapNumber": ["min", "max", "count"],
         "Compound": "first",
         "LapTimeSeconds": "mean"
@@ -44,18 +44,18 @@ def analyze_race_strategy(year: int, event: str):
 strategy = analyze_race_strategy(2025, "Monaco Grand Prix")
 print(strategy)
 
-# Find optimal strategy
+# Average stint pace per compound
 best_strategy = strategy.groupby("Compound")["AvgLapTime"].mean()
 print(f"\nAverage pace by compound:\n{best_strategy}")
 ```
 
 ## Qualifying Performance
 
-Compare qualifying performance across sessions.
+Compare each driver's best qualifying lap, lap count, and compounds.
 
 ```python
 def analyze_qualifying(year: int, event: str):
-    """Analyze qualifying progression through Q1, Q2, Q3."""
+    """Summarize each driver's qualifying session."""
     quali = tif1.get_session(year, event, "Qualifying")
     laps = quali.laps
 
@@ -67,7 +67,7 @@ def analyze_qualifying(year: int, event: str):
         # Get best lap time
         best_lap = driver_laps["LapTime"].min()
 
-        # Count laps per session
+        # Count the laps of the driver
         lap_count = len(driver_laps)
 
         # Get compound used
@@ -159,11 +159,12 @@ def model_tire_degradation(session, compound: str = "SOFT"):
     """Model tire degradation for a specific compound."""
     laps = session.laps
 
-    # Filter to compound and clean data
+    # Filter to compound and clean data (laps without a time break the regression)
     compound_laps = laps[
         (laps["Compound"] == compound) &
         (~laps["Deleted"]) &
-        (laps["PitInTime"].isna())
+        (laps["PitInTime"].isna()) &
+        (laps["LapTime"].notna())
     ]
 
     results = {}
@@ -248,8 +249,8 @@ Track championship standings throughout a season.
 
 ```python
 def calculate_championship_standings(year: int, up_to_event: str = None):
-    """Calculate championship standings."""
-    # get_events() returns a DataFrame; take the EventName column as a list
+    """Sum Grand Prix points per driver (sprint races are not counted)."""
+    # get_event_schedule() returns a DataFrame; take the EventName column as a list
     events = tif1.get_event_schedule(year, include_testing=False)["EventName"].tolist()
 
     if up_to_event:
@@ -265,16 +266,13 @@ def calculate_championship_standings(year: int, up_to_event: str = None):
     for event in events:
         try:
             session = tif1.get_session(year, event, "Race")
-            laps = session.laps
 
-            # Get final positions
-            final_lap = laps["LapNumber"].max()
-            final_positions = laps[laps["LapNumber"] == final_lap]
-            final_positions = final_positions.sort_values("Position")
+            # results is in classification order and includes lapped drivers
+            results = session.results
 
             # Award points
-            for _, row in final_positions.iterrows():
-                driver = row["Driver"]
+            for _, row in results.iterrows():
+                driver = row["Abbreviation"]
                 position = row["Position"]
 
                 if position in points_system:
@@ -300,7 +298,7 @@ for i, (driver, points) in enumerate(standings, 1):
 
 ## Overtaking Analysis
 
-Analyze overtaking opportunities and execution.
+Count the positions each driver gains from one lap to the next.
 
 ```python
 def analyze_overtakes(session):
@@ -323,7 +321,7 @@ def analyze_overtakes(session):
             suffixes=("_prev", "_curr")
         )
 
-        # Find position changes
+        # Find position changes (pit stops and retirements of others count too)
         comparison["change"] = comparison["Position_prev"] - comparison["Position_curr"]
 
         # Overtakes are positive changes

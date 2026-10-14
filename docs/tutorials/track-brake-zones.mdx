@@ -29,7 +29,7 @@ fastest_lap = session.laps.pick_fastest()
 
 ## Getting Brake Data
 
-Brake data is binary: 0 (not braking) or 1 (braking).
+`Brake` is a boolean column: `True` while the driver brakes, `False` otherwise.
 
 ```python
 # Get telemetry
@@ -71,7 +71,7 @@ plt.show()
 
 ## Parameters
 
-The native chart accepts the shared filters plus a few chart-specific options. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
+The native chart always draws the fastest lap of the session, so it has no driver or lap filters. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
 
 ```python
 import tif1
@@ -108,9 +108,9 @@ plt.show()
 
 - **Red sections:** Active braking zones before corners
 - **Green sections:** No braking (straights and corners)
-- **Length of red zones:** Indicates braking duration and intensity
+- **Length of red zones:** Shows the distance the driver brakes. `Brake` is on or off only, so the map does not show brake pressure.
 
-Circuits like Monza have fewer but more intense braking zones, while Monaco has frequent braking throughout the lap.
+Monza has fewer braking zones than Monaco. On the fastest 2023 qualifying laps, the driver brakes for about 10% of the lap distance at Monza. At Monaco, the value is about 22%.
 
 ## Comparing Drivers
 

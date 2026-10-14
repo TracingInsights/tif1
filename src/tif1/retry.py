@@ -9,11 +9,29 @@ from datetime import datetime
 from functools import wraps
 from typing import TypeVar
 
-from .exceptions import CircuitBreakerOpenError
+from .exceptions import CircuitBreakerOpenError, DataNotFoundError, InvalidDataError, NetworkError
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Statuses that refuse one file on a healthy server (see CDNManager._is_file_refusal).
+_FILE_REFUSAL_STATUSES = (403, 404)
+
+
+def _is_server_answer(error: BaseException) -> bool:
+    """True for a missing, refused or malformed payload: the server answered.
+
+    Such errors will not change on retry and say nothing about the network, so
+    they neither count against the circuit breaker nor get retried, matching
+    the async fetch path.
+    """
+    if isinstance(error, DataNotFoundError | InvalidDataError):
+        return True
+    return (
+        isinstance(error, NetworkError)
+        and error.context.get("status_code") in _FILE_REFUSAL_STATUSES
+    )
 
 
 class CircuitBreaker:
@@ -140,8 +158,9 @@ class CircuitBreaker:
             result = func(*args, **kwargs)
             self._record_success(pre_call_state)
             return result
-        except Exception:
-            self._record_failure()
+        except Exception as e:
+            if not _is_server_answer(e):
+                self._record_failure()
             raise
 
     def _record_success(self, pre_call_state: str) -> None:
@@ -198,18 +217,22 @@ def retry_with_backoff(
 ):
     """Decorator for retry with exponential backoff and jitter."""
 
+    # Fewer than one attempt would never call ``func``; match the async fetch
+    # path, which treats ``max_retries=0`` as a single attempt.
+    attempts = max(1, max_retries)
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
             last_exception: BaseException | None = None
 
-            for attempt in range(max_retries):
+            for attempt in range(attempts):
                 try:
                     return _circuit_breaker.call(func, *args, **kwargs)
                 except exceptions as e:
                     last_exception = e
 
-                    if attempt == max_retries - 1:
+                    if attempt == attempts - 1 or _is_server_answer(e):
                         break
 
                     # Calculate backoff with jitter
@@ -217,7 +240,7 @@ def retry_with_backoff(
                     if jitter:
                         backoff *= 0.5 + random.random()
 
-                    logger.warning(f"Retry {attempt + 1}/{max_retries} after {backoff:.2f}s: {e}")
+                    logger.warning(f"Retry {attempt + 1}/{attempts} after {backoff:.2f}s: {e}")
                     time.sleep(backoff)
 
             if last_exception is not None:

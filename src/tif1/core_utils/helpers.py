@@ -14,6 +14,7 @@ from tif1.exceptions import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
 from .constants import (
     CATEGORICAL_COLS,
+    COL_DELETED,
     COL_DRIVER,
     COL_LAP_NUMBER,
     COL_LAP_NUMBER_ALT,
@@ -139,16 +140,37 @@ def _create_empty_df(lib: str):
     return pd.DataFrame()
 
 
-def _filter_valid_laptimes(laps, lib: str):
-    """Filter laps with valid lap times (optimized to minimize copies)."""
+def _not_deleted_mask(laps: pd.DataFrame) -> np.ndarray | None:
+    """Boolean mask of laps not marked ``Deleted`` (``None`` without the column)."""
+    if COL_DELETED not in laps.columns:
+        return None
+    deleted = laps[COL_DELETED]
+    if deleted.dtype == bool:
+        return ~deleted.to_numpy()
+    # Nullable/object flags: a missing value means "not deleted".
+    return ~deleted.astype("boolean").fillna(False).to_numpy(dtype=bool)
+
+
+def _filter_valid_laptimes(laps, lib: str, *, exclude_deleted: bool = False):
+    """Filter laps with valid lap times (optimized to minimize copies).
+
+    Args:
+        laps: Laps frame of either backend.
+        lib: Backend of ``laps``.
+        exclude_deleted: Also drop laps whose ``Deleted`` flag is set (the
+            fastest-lap selections: a deleted lap time does not count).
+    """
     if COL_LAP_TIME not in laps.columns:
         return laps
 
     if lib == "polars" and _ensure_polars_available() and isinstance(laps, pl.DataFrame):
         # Keep original LapTime representation and provide a numeric helper column.
+        keep = pl.col(COL_LAP_TIME_SECONDS).is_not_null()
+        if exclude_deleted and COL_DELETED in laps.columns:
+            keep = keep & ~pl.col(COL_DELETED).cast(pl.Boolean, strict=False).fill_null(False)
         return laps.with_columns(
             pl.col(COL_LAP_TIME).cast(pl.Float64, strict=False).alias(COL_LAP_TIME_SECONDS)
-        ).filter(pl.col(COL_LAP_TIME_SECONDS).is_not_null())
+        ).filter(keep)
 
     # For pandas: check if already timedeltas (any resolution, e.g. timedelta64[us]
     # with pandas 3.0 unit inference)
@@ -157,8 +179,11 @@ def _filter_valid_laptimes(laps, lib: str):
     # per-block copies on every pick_fastest/get_fastest_lap call. A shallow
     # copy keeps the all-valid case free of a block copy too.
     lap_time = cast(pd.Series, laps[COL_LAP_TIME])
+    not_deleted = _not_deleted_mask(laps) if exclude_deleted else None
     if pd.api.types.is_timedelta64_dtype(lap_time):
         mask = lap_time.notna().to_numpy()
+        if not_deleted is not None:
+            mask = mask & not_deleted
         valid = laps[mask] if not mask.all() else laps.copy(deep=False)
         valid[COL_LAP_TIME_SECONDS] = (
             cast(pd.Series, valid[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
@@ -167,6 +192,8 @@ def _filter_valid_laptimes(laps, lib: str):
 
     lap_time_numeric = pd.to_numeric(lap_time, errors="coerce")
     valid_mask = lap_time_numeric.notna().to_numpy()
+    if not_deleted is not None:
+        valid_mask = valid_mask & not_deleted
     valid = laps[valid_mask]
     if valid.empty:
         return valid

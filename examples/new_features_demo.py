@@ -22,9 +22,12 @@ def main():
     print(f"Lib: {config.get('lib')}")
     print(f"Validate data: {config.get('validate_data')}")
 
-    # Set custom configuration
+    # Set custom configuration (in memory only; config.save() writes ~/.tif1rc)
+    # validate_data checks weather and race-control payloads when they are
+    # fetched; validate_lap_times does the same for lap payloads.
     config.set("max_retries", 5)
     config.set("validate_data", True)
+    config.set("validate_lap_times", True)
     print(f"Updated max_retries to: {config.get('max_retries')}")
 
     # 2. Logging Setup
@@ -75,7 +78,7 @@ def main():
     print("-" * 60)
     try:
         session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1", lib="pandas")
-        print(f"Session loaded: {session.year} {session.gp.replace('%20', ' ')}")
+        print(f"Session loaded: {session.year} {session.event_name}")
         print(f"Lib: {session.lib}")
         print(f"Cache enabled: {session.enable_cache}")
 
@@ -87,8 +90,9 @@ def main():
         if len(drivers) > 3:
             print(f"  ... and {len(drivers) - 3} more")
 
-        # Get laps with validation
-        print("\nLoading laps with data validation...")
+        # Get laps (payloads fetched from the CDN are validated; a cache hit
+        # serves the already-processed frame)
+        print("\nLoading laps...")
         laps = session.laps
         print(f"Total laps loaded: {len(laps)}")
         print(f"Columns: {list(laps.columns)[:5]}...")
@@ -105,30 +109,22 @@ def main():
         print(f"Driver: {ver.driver}")
         ver_fastest = ver.get_fastest_lap()
         if not ver_fastest.empty:
-            lap_time = ver_fastest["LapTime"].values[0]
-            compound = (
-                ver_fastest["Compound"].values[0] if "Compound" in ver_fastest.columns else "N/A"
-            )
+            lap_time = ver_fastest["LapTimeSeconds"].iloc[0]
+            compound = ver_fastest["Compound"].iloc[0]
             print(f"Fastest lap: {lap_time:.3f}s on {compound}")
 
         # 8. Telemetry with Validation
         print("\n8. Telemetry Data")
         print("-" * 60)
         if not ver_fastest.empty:
-            lap_num = (
-                ver_fastest["LapNumber"].values[0]
-                if "LapNumber" in ver_fastest.columns
-                else ver_fastest["lap"].values[0]
-            )
-            lap = ver.get_lap(int(lap_num))
+            lap_num = int(ver_fastest["LapNumber"].iloc[0])
+            lap = ver.get_lap(lap_num)
             telemetry = lap.telemetry
             if not telemetry.empty:
                 print(f"Telemetry points: {len(telemetry)}")
                 print(f"Columns: {list(telemetry.columns)[:5]}...")
-                if "Speed" in telemetry.columns:
-                    print(f"Max speed: {telemetry['Speed'].max():.1f} km/h")
-                if "RPM" in telemetry.columns:
-                    print(f"Max RPM: {telemetry['RPM'].max()}")
+                print(f"Max speed: {telemetry['Speed'].max():.1f} km/h")
+                print(f"Max RPM: {telemetry['RPM'].max():.0f}")
 
     except tif1.DataNotFoundError:
         print("Data not available for this session")
@@ -137,15 +133,14 @@ def main():
         print("Check circuit breaker status")
     except tif1.InvalidDataError as e:
         print(f"Data validation failed: {e}")
-    except Exception as e:
-        print(f"Error: {e}")
 
     # 9. Cache Management
     print("\n9. Cache Management")
     print("-" * 60)
     cache = tif1.get_cache()
     print(f"Cache directory: {cache.cache_dir}")
-    print("Cache operations available: get, set, clear")
+    print(f"Cache database: {cache.db_path}")
+    print("Cache operations available: get, set, invalidate, clear")
 
     # 10. Summary
     print("\n" + "=" * 60)
@@ -157,16 +152,15 @@ def main():
     print("✓ Circuit breaker pattern")
     print("✓ CDN fallback system")
     print("✓ Enhanced data validation")
-    print("✓ Improved HTTP/2 connection pooling")
+    print("✓ HTTP connection pooling (niquests)")
     print("✓ Type definitions for IDE support")
     print("✓ Comprehensive error handling")
     print("\nFor Jupyter notebooks:")
-    print("✓ Rich HTML display (auto-enabled)")
+    print("✓ Rich HTML display (tif1.jupyter.enable_jupyter_display())")
     print("\nFor testing:")
-    print("✓ Fuzzing tests (tests/test_fuzzing.py)")
+    print("✓ Fuzzing tests (tests/unit/test_fuzzing.py)")
     print("\nDocumentation:")
-    print("✓ Complete API reference (docs/api-reference/complete.mdx)")
-    print("✓ Improvements summary (IMPROVEMENTS.md)")
+    print("✓ API reference: https://tif1.tracinginsights.com/api-reference/overview")
 
 
 if __name__ == "__main__":

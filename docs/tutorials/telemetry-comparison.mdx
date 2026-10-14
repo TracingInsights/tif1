@@ -59,12 +59,13 @@ def compute_accelerations(telemetry):
     dv = np.diff(v)
     lon_acc = np.append(dv / dt, 0) / 9.81  # Convert to g
 
-    # Lateral acceleration from position change
+    # Lateral acceleration from the curvature of the X/Y path
     dx = np.gradient(telemetry["X"], telemetry["Distance"])
     dy = np.gradient(telemetry["Y"], telemetry["Distance"])
 
-    # Calculate curvature
-    curvature = (dx * np.gradient(dy) - dy * np.gradient(dx)) / (dx**2 + dy**2)**1.5
+    # Curvature = change of heading per meter (independent of the X/Y units)
+    heading = np.unwrap(np.arctan2(dy, dx))
+    curvature = np.gradient(heading, telemetry["Distance"])
     lat_acc = v * v * curvature / 9.81
 
     # Clip outliers
@@ -152,7 +153,7 @@ plt.show()
 
 ## Parameters
 
-The native chart accepts the shared filters plus the analyzed distance window. `distance_min` and `distance_max` bound the comparison to a section of the lap, such as the section shown above. The default picks the top-2 finishers:
+The native chart accepts the shared filters plus the analyzed distance window. `distance_min` and `distance_max` bound the comparison to a section of the lap. The defaults (1000 m to 2500 m) give the section shown in the image above. Without `drivers`, the chart picks the top-2 finishers:
 
 ```python
 import tif1
@@ -171,7 +172,7 @@ Note that `ax` is a numpy array of the 4 panel axes, not a single axes.
 
 ## Complete Example
 
-The whole workflow above (acceleration math included) is wrapped in a single native function:
+The whole workflow above is wrapped in a single native function:
 
 ```python
 import tif1
@@ -185,13 +186,13 @@ plt.show()
 # tif1.plot_telemetry_comparison(2024, "Monaco", "Q", save_path="telemetry_comparison.png")
 ```
 
-The internal acceleration computation uses a numerically safer carry-forward outlier policy instead of the `np.clip` shown above. This policy keeps the envelopes faithful to the data.
+The native function computes the accelerations with smoothed low-noise derivatives instead of `np.diff` and `np.gradient`. It replaces values above 7.5 g with the previous sample instead of clipping them with `np.clip`. It also labels the faster driver by average speed in the distance window.
 
 ## What to Analyze
 
 - **Speed traces:** Who carries more speed through corners?
 - **Longitudinal acceleration:** Positive = accelerating, negative = braking. Who brakes harder or accelerates earlier?
-- **Lateral acceleration:** Shows cornering forces. Higher values = faster through corners.
+- **Lateral acceleration:** Shows cornering forces. Higher absolute values = more speed through corners. The sign shows the direction of the corner.
 - **Driver actions:** Visual representation of throttle and brake application.
 
 ## Key Insights

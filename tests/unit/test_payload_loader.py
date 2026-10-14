@@ -117,6 +117,32 @@ class TestPayloadLoaderGet:
         )
         assert loader.get("test.json", use_cache=False, write_cache=False) == {"data": "value"}
 
+    def test_offline_mode_cache_miss_raises_without_fetching(self, monkeypatch):
+        from tif1.config import get_config
+
+        monkeypatch.setitem(get_config()._config, "offline_mode", True)
+        loader = _make_loader()
+        with pytest.raises(NetworkError):
+            loader.get("test.json")
+        assert loader.transport.calls == []
+
+    def test_offline_mode_serves_cache_hits(self, monkeypatch):
+        from tif1.config import get_config
+
+        monkeypatch.setitem(get_config()._config, "offline_mode", True)
+        loader = _make_loader(cache_get=lambda _key: {"cached": True})
+        assert loader.get("test.json") == {"cached": True}
+
+    def test_ci_mode_bypasses_persistent_cache(self, monkeypatch):
+        from tif1.config import get_config
+
+        monkeypatch.setitem(get_config()._config, "ci_mode", True)
+        loader = _make_loader(
+            cache_get=lambda _key: pytest.fail("must not read cache"),
+            cache_set=lambda _key, _value: pytest.fail("must not write cache"),
+        )
+        assert loader.get("test.json") == {"data": "value"}
+
     def test_validate_false_skips_schema_but_keeps_dict_coercion(self):
         loader = _make_loader(
             transport=InMemoryTransport({"test.json": {"unexpected": "schema-free"}})

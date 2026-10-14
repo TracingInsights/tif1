@@ -294,6 +294,41 @@ class TestCDNManagerTrySources:
         with pytest.raises(NetworkError):
             manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
 
+    def test_transport_403_is_a_file_refusal_not_a_source_failure(self):
+        # NiquestsTransport raises NetworkError(status_code=403) with no .response.
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig(
+                ["https://cdn.jsdelivr.net/gh/X", "https://example.com/cdn/Y"]
+            ),
+        ):
+            manager = CDNManager()
+
+        def _fetch(url):
+            if "jsdelivr" in url:
+                raise NetworkError(url=url, status_code=403)
+            raise DataNotFoundError(year=2024, event="Test", session="Race")
+
+        with pytest.raises(DataNotFoundError):
+            manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
+        assert all(count == 0 for count in manager._failure_counts.values())
+
+    @pytest.mark.parametrize("status", [408, 429])
+    def test_try_again_later_statuses_are_not_missing_everywhere(self, status):
+        with patch(
+            "tif1.config.get_config",
+            return_value=_StubConfig(
+                ["https://cdn.jsdelivr.net/gh/X", "https://example.com/cdn/Y"]
+            ),
+        ):
+            manager = CDNManager()
+
+        def _fetch(url):
+            raise NetworkError(url=url, status_code=status)
+
+        with pytest.raises(NetworkError):
+            manager.try_sources(2024, "Test", "Race", "drivers.json", _fetch)
+
 
 class TestCDNManagerInit:
     """Test CDNManager.__init__ edge cases."""

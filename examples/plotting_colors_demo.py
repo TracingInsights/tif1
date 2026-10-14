@@ -6,13 +6,16 @@ from tif1 import plotting
 
 
 class MockSession:
-    """Mock session for demo."""
+    """Mock session for demo (only ``year`` and ``drivers_df`` are needed)."""
 
-    def __init__(self, year=None):
+    def __init__(self, year=None, drivers_df=None):
         self.year = year
+        if drivers_df is not None:
+            self.drivers_df = drivers_df
+            return
         self.drivers_df = pd.DataFrame(
             {
-                "Driver": ["VER", "PER", "HAM", "RUS", "LEC", "SAI"],
+                "Driver": ["VER", "PER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA"],
                 "Team": [
                     "Red Bull Racing",
                     "Red Bull Racing",
@@ -20,12 +23,41 @@ class MockSession:
                     "Mercedes",
                     "Ferrari",
                     "Ferrari",
+                    "McLaren",
+                    "McLaren",
                 ],
-                "FirstName": ["Max", "Sergio", "Lewis", "George", "Charles", "Carlos"],
-                "LastName": ["Verstappen", "Perez", "Hamilton", "Russell", "Leclerc", "Sainz"],
-                "DriverNumber": ["1", "11", "44", "63", "16", "55"],
-                "TeamColor": ["#0600ef", "#0600ef", "#00d2be", "#00d2be", "#dc0000", "#dc0000"],
-                "HeadshotUrl": [""] * 6,
+                "FirstName": [
+                    "Max",
+                    "Sergio",
+                    "Lewis",
+                    "George",
+                    "Charles",
+                    "Carlos",
+                    "Lando",
+                    "Oscar",
+                ],
+                "LastName": [
+                    "Verstappen",
+                    "Perez",
+                    "Hamilton",
+                    "Russell",
+                    "Leclerc",
+                    "Sainz",
+                    "Norris",
+                    "Piastri",
+                ],
+                "DriverNumber": ["1", "11", "44", "63", "16", "55", "4", "81"],
+                "TeamColor": [
+                    "#3671c6",
+                    "#3671c6",
+                    "#27f4d2",
+                    "#27f4d2",
+                    "#e8002d",
+                    "#e8002d",
+                    "#ff8000",
+                    "#ff8000",
+                ],
+                "HeadshotUrl": [""] * 8,
             }
         )
 
@@ -39,7 +71,9 @@ def main():
     # Set default colormap
     print("1. Setting default colormap to 'fastf1'")
     plotting.set_default_colormap("fastf1")
-    print(f"   Default colormap: {plotting._DEFAULT_COLORMAP}\n")
+    fastf1_color = plotting.get_team_color("Red Bull Racing", session)
+    official_color = plotting.get_team_color("Red Bull Racing", session, colormap="official")
+    print(f"   Red Bull Racing: fastf1 {fastf1_color}, official {official_color}\n")
 
     # Get team colors
     print("2. Team Colors (2024 season):")
@@ -127,9 +161,20 @@ def main():
         print(f"   {driver}: {style}")
     print()
 
-    # New teams in 2026
+    # New teams in 2026 (the session must contain the team)
     print("13. New Teams in 2026:")
-    session_2026 = MockSession(year=2026)
+    drivers_2026 = pd.DataFrame(
+        {
+            "Driver": ["HUL", "BOR", "PER", "BOT"],
+            "Team": ["Audi", "Audi", "Cadillac", "Cadillac"],
+            "FirstName": ["Nico", "Gabriel", "Sergio", "Valtteri"],
+            "LastName": ["Hulkenberg", "Bortoleto", "Perez", "Bottas"],
+            "DriverNumber": ["27", "5", "11", "77"],
+            "TeamColor": ["", "", "", ""],
+            "HeadshotUrl": [""] * 4,
+        }
+    )
+    session_2026 = MockSession(year=2026, drivers_df=drivers_2026)
     print(f"   Audi:     {plotting.get_team_color('Audi', session_2026)}")
     print(f"   Cadillac: {plotting.get_team_color('Cadillac', session_2026)}")
     print()

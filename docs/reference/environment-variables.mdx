@@ -41,7 +41,7 @@ export TIF1_ENABLE_CACHE=false
 
 ### TIF1_OFFLINE_MODE
 
-Serve payloads from the cache only. A cache miss raises `NetworkError` instead of contacting a CDN.
+Serve payloads from the cache only. A cache miss raises `NetworkError` instead of contacting a CDN. Offline mode also skips the live schedule download and the CDN preconnect.
 
 ```bash
 export TIF1_OFFLINE_MODE=true
@@ -53,7 +53,7 @@ export TIF1_OFFLINE_MODE=true
 
 ### TIF1_CI_MODE
 
-Bypass the payload cache for reads and writes, so every fetch hits the CDN.
+Bypass the persistent cache for reads and writes, so every fetch hits the CDN. CI mode turns off `enable_cache` for every session, so the laps and telemetry frame tiers are not used either.
 
 ```bash
 export TIF1_CI_MODE=true
@@ -79,7 +79,7 @@ export TIF1_LIB=polars
 
 ### TIF1_POLARS_LAP_CATEGORICAL
 
-Use categorical dtypes for string columns in polars lap frames.
+Cast the `Driver`, `Team`, `Compound`, and `TrackStatus` columns of polars lap frames to `Categorical`. On pandas, these columns are always `category`.
 
 ```bash
 export TIF1_POLARS_LAP_CATEGORICAL=true
@@ -87,20 +87,6 @@ export TIF1_POLARS_LAP_CATEGORICAL=true
 
 <Info>
   Type: `bool`. Default: `false`
-</Info>
-
-### TIF1_LOG_LEVEL
-
-Set the logging verbosity.
-
-```bash
-export TIF1_LOG_LEVEL=DEBUG
-```
-
-<Info>
-  Type: `str`. Default: `WARNING`
-
-  Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 </Info>
 
 ## Network Configuration
@@ -120,7 +106,7 @@ export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingfac
 </Info>
 
 <Note>
-  The `cdn_use_minification` config key has no environment variable. Set it in `.tif1rc` or with `config.set("cdn_use_minification", True)`.
+  The `cdn_use_minification` config key has no environment variable. Set it in `.tif1rc` or with `config.set("cdn_use_minification", True)`. It applies only to custom mirrors: tif1 never requests `.min.json` files from the three default CDNs.
 </Note>
 
 ### TIF1_TIMEOUT
@@ -137,7 +123,7 @@ export TIF1_TIMEOUT=60
 
 ### TIF1_MAX_RETRIES
 
-Maximum number of retries for failed requests. `0` disables retries.
+Maximum number of tries for each payload fetch, including the first try. `0` and `1` both mean one try without a retry.
 
 ```bash
 export TIF1_MAX_RETRIES=5
@@ -173,7 +159,7 @@ export TIF1_RETRY_JITTER=false
 
 ### TIF1_RETRY_JITTER_MAX
 
-Maximum jitter in seconds. `0.0` disables jitter.
+Maximum random jitter in seconds that the async fetch path (laps and telemetry) adds to a retry delay. `0.0` adds no jitter on that path.
 
 ```bash
 export TIF1_RETRY_JITTER_MAX=1.0
@@ -185,7 +171,7 @@ export TIF1_RETRY_JITTER_MAX=1.0
 
 ### TIF1_MAX_RETRY_DELAY
 
-Upper bound for a single retry delay in seconds.
+Upper bound in seconds for a single retry delay on the async fetch path (laps and telemetry).
 
 ```bash
 export TIF1_MAX_RETRY_DELAY=120.0
@@ -197,7 +183,7 @@ export TIF1_MAX_RETRY_DELAY=120.0
 
 ### TIF1_MAX_WORKERS
 
-Maximum number of worker threads for parallel requests.
+Lower bound for the size of the shared worker thread pool. The pool size is the largest of `max_workers`, `max_concurrent_requests`, and `telemetry_prefetch_max_concurrent_requests`.
 
 ```bash
 export TIF1_MAX_WORKERS=50
@@ -297,30 +283,6 @@ export TIF1_CDN_PRECONNECT=false
   Type: `bool`. Default: `true`. Skipped automatically in offline and CI mode.
 </Info>
 
-### TIF1_HTTP2_MAX_CONNECTIONS
-
-Maximum HTTP/2 connections per host.
-
-```bash
-export TIF1_HTTP2_MAX_CONNECTIONS=20
-```
-
-<Info>
-  Type: `int`. Default: `10`
-</Info>
-
-### TIF1_HTTP2_MAX_POOL_SIZE
-
-HTTP/2 connection pool size.
-
-```bash
-export TIF1_HTTP2_MAX_POOL_SIZE=40
-```
-
-<Info>
-  Type: `int`. Default: `20`
-</Info>
-
 ### TIF1_POOL_CONNECTIONS
 
 Number of connection pools. The library clamps explicit values to a minimum of `10`.
@@ -335,7 +297,7 @@ export TIF1_POOL_CONNECTIONS=512
 
 ### TIF1_POOL_MAXSIZE
 
-Maximum connections per pool. The library clamps explicit values to a minimum of `512`.
+Maximum connections per pool. The library raises explicit values to at least `max(512, pool_connections)`.
 
 ```bash
 export TIF1_POOL_MAXSIZE=2048
@@ -347,7 +309,7 @@ export TIF1_POOL_MAXSIZE=2048
 
 ### TIF1_KEEPALIVE_TIMEOUT
 
-Keep-alive timeout in seconds.
+Keep-alive timeout in seconds, sent in the `Keep-Alive` request header.
 
 ```bash
 export TIF1_KEEPALIVE_TIMEOUT=300
@@ -359,7 +321,7 @@ export TIF1_KEEPALIVE_TIMEOUT=300
 
 ### TIF1_KEEPALIVE_MAX_REQUESTS
 
-Maximum requests per keep-alive connection.
+Maximum requests per keep-alive connection, sent in the `Keep-Alive` request header.
 
 ```bash
 export TIF1_KEEPALIVE_MAX_REQUESTS=5000
@@ -507,7 +469,7 @@ export TIF1_SCHEDULE_TTL_HOURS=1.0
 
 ### TIF1_ULTRA_COLD_START
 
-Enable the low-latency path for first-time loads.
+Enable the low-latency path for first-time loads. For a session that is not in the cache, tif1 skips cache reads and payload validation. A cached session always loads from the cache.
 
 ```bash
 export TIF1_ULTRA_COLD_START=false
@@ -567,7 +529,7 @@ export TIF1_PREFETCH_ALL_TELEMETRY_ON_FIRST_LAP_REQUEST=true
 
 ### TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD
 
-Prefetch every telemetry payload as soon as laps are loaded.
+Prefetch every telemetry payload in a background thread as soon as laps are loaded. This setting takes effect only when `TIF1_PREFETCH_ALL_TELEMETRY_ON_FIRST_LAP_REQUEST` is also `true`.
 
 ```bash
 export TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD=true
@@ -579,7 +541,7 @@ export TIF1_PREFETCH_ALL_TELEMETRY_AFTER_LAPS_LOAD=true
 
 ### TIF1_VALIDATE_DATA
 
-Enable Pydantic validation of incoming JSON payloads.
+Enable Pydantic validation of the `weather.json` and `rcm.json` payloads.
 
 ```bash
 export TIF1_VALIDATE_DATA=true
@@ -591,7 +553,7 @@ export TIF1_VALIDATE_DATA=true
 
 ### TIF1_VALIDATE_LAP_TIMES
 
-Enable validation of lap time payloads.
+Enable validation of the `laptimes.json` and `session_laptimes.json` payloads.
 
 ```bash
 export TIF1_VALIDATE_LAP_TIMES=true
@@ -603,7 +565,7 @@ export TIF1_VALIDATE_LAP_TIMES=true
 
 ### TIF1_VALIDATE_TELEMETRY
 
-Enable validation of telemetry payloads.
+Enable validation of the `{lap}_tel.json` telemetry payloads.
 
 ```bash
 export TIF1_VALIDATE_TELEMETRY=true
@@ -612,6 +574,10 @@ export TIF1_VALIDATE_TELEMETRY=true
 <Info>
   Type: `bool`. Default: `false`
 </Info>
+
+<Note>
+  The three validation settings apply only to payloads that tif1 downloads with `TIF1_ULTRA_COLD_START=false`. The ultra cold start path (the default) skips validation, and a cache hit is not validated again.
+</Note>
 
 ### TIF1_JSON_PARSE_WORKERS
 
@@ -689,7 +655,6 @@ A file whose root is not a JSON object is skipped with a warning.
   "circuit_breaker_timeout": 60,
   "lib": "pandas",
   "polars_lap_categorical": false,
-  "log_level": "WARNING",
   "max_workers": 20,
   "max_concurrent_requests": 22
 }
@@ -708,7 +673,6 @@ config = tif1.get_config()
 # Update settings
 config.set("enable_cache", False)
 config.set("lib", "polars")
-config.set("log_level", "DEBUG")
 
 # Configure multiple CDNs
 config.set("cdns", [
@@ -751,7 +715,7 @@ print(config.get("timeout", 30))  # 30, with a warning in the log
 
 <CardGroup cols={2}>
   <Card title="Use .tif1rc for Projects" icon="file">
-    Commit `.tif1rc` to version control for team consistency.
+    Commit a project `.tif1rc` and point `TIF1_CONFIG_FILE` at it. tif1 reads `./.tif1rc` only with `TIF1_TRUST_CWD_CONFIG=true`.
   </Card>
   <Card title="Use ENV for Deployment" icon="server">
     Use environment variables in production for flexibility.
@@ -760,6 +724,6 @@ print(config.get("timeout", 30))  # 30, with a warning in the log
     Override only the values that must change.
   </Card>
   <Card title="Document Changes" icon="book">
-    Add a comment for each changed default value.
+    Record each changed default value outside the file. `.tif1rc` is strict JSON and accepts no comments.
   </Card>
 </CardGroup>

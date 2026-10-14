@@ -11,7 +11,7 @@ keywords:
   - "team comparison"
 ---
 
-Speed trap data reveals which teams have the most powerful engines and efficient aerodynamics. Compare maximum speeds across teams to identify performance advantages on straights and understand the power unit hierarchy.
+Speed trap data shows which cars are fastest on the straights. Top speed depends on power unit output and on aerodynamic drag. Compare maximum speeds across teams to find performance advantages on the straights.
 
 <img src="/assets/top_speeds.png" alt="Top speeds by team comparison" />
 
@@ -30,7 +30,7 @@ session = tif1.get_session(2023, 'Italian Grand Prix', 'Q')
 
 ## Finding the Fastest Speed Trap
 
-F1 tracks have multiple speed measurement points (I1, I2, ST, FL). Identify which one recorded the highest speeds.
+The laps table has four speed columns in km/h: `SpeedI1`, `SpeedI2`, `SpeedST`, and `SpeedFL`. For each lap, find the trap with the highest reading. The trap that wins most often is the fastest trap. For this session, it is `SpeedST`.
 
 ```python
 # Get speed columns
@@ -127,7 +127,7 @@ When analyzing top speed data, consider:
 
 ## Parameters
 
-The native chart exposes the shared filters. Restrict the comparison with `teams`, or force a specific trap with `speed_trap`:
+The native chart accepts a `teams` filter. Restrict the comparison with `teams`, or force a specific trap with `speed_trap`:
 
 ```python
 import tif1
@@ -141,7 +141,9 @@ fig, ax = tif1.plot_top_speeds(
 plt.show()
 ```
 
-The default `speed_trap=None` auto-detects the trap with the highest readings, using exactly the logic from the sections above. Omit `teams` (the default) to include every team.
+The default `speed_trap=None` selects the trap with the logic from the sections above. Omit `teams` (the default) to include every team.
+
+Unlike the manual code, the native chart first drops deleted laps and pit in and out laps. As a result, the team maxima can differ. In this session, Haas F1 Team reaches 351 km/h on all laps, but 341 km/h after the filter.
 
 ## Complete Example
 

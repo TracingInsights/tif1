@@ -7,6 +7,101 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Fixed — found by the documentation audit (2026-10-14)
+
+- **`Laps.groupby` keeps its key names.** `Lap`, `DriverResult`, `Driver` and
+  `Event` replaced pandas' own `Series._metadata = ["_name"]`, so every copy
+  dropped the Series name; groupby copies its key columns, so the result index
+  had no names and `reset_index()` produced `level_0`/`level_1` columns.
+- **`offline_mode` and `ci_mode` apply to every payload fetch.**
+  `PayloadLoader.get` now matches `fetch_json_async`: offline mode serves
+  cached payloads and raises `NetworkError` on a miss without a request; CI
+  mode skips the persistent cache. The parallel session-table prefetch in
+  `Session.load()` (its own HTTP session) is skipped in offline mode and
+  bypasses the persistent cache in CI mode.
+- **A 404 no longer trips the circuit breaker.** On the sync path every
+  `DataNotFoundError` counted as a breaker failure, so two missing optional
+  payloads opened the process-wide breaker and blocked all fetches for 60 s.
+  `CircuitBreaker.call` and `retry_with_backoff` now treat missing, refused
+  (403/404) or malformed payloads as answers from a healthy server: not
+  counted, not retried — as the async path already did.
+- **jsDelivr 403s on the sync path are file refusals.** `NiquestsTransport`
+  raises `NetworkError(status_code=403)` without a response object, so the
+  status was invisible and the 403 was retried with backoff and counted against
+  the mirror. An unknown driver code on a cold session took 30-60 s to fail; it
+  now fails in about 3 s.
+- **408/429 are not "missing everywhere".** A CDN that answered "try again
+  later" on every mirror produced `DataNotFoundError` and a 7-day missing
+  verdict; it now raises a retryable `NetworkError`.
+- **`session.laps` stays a `Laps` after `await session.laps_async()`.** The
+  async path stored the plain frame, so `pick_*` methods disappeared.
+- **`get_cache()` reopens after `close()`.** Closing the global cache left
+  `get_cache()` returning the closed instance, which dropped every later read
+  and write.
+- **`tif1 events 2017`** prints "No events found for 2017" and exits 1 instead
+  of a `KeyError` traceback.
+- **`SessionNotLoadedError` accepts `**context`** like every other `TIF1Error`.
+- **`Session1DateUtc`-`Session5DateUtc` hold UTC.** The f1schedule dates are
+  local track time and were copied into the UTC columns unchanged; they are now
+  local time minus the event's `GmtOffset` (Monaco 2024 race: 15:00+02:00 local,
+  13:00 UTC). Negative half-hour offsets such as `-04:30` also parse correctly.
+- **`max_retries=0` makes one attempt.** `retry_with_backoff` never called the
+  function for values below 1 and raised `RuntimeError`; the async path already
+  treated 0 as a single attempt.
+- **Charts:** `plot_driver_laptimes` puts the fastest laps on top (seaborn
+  already inverts a timedelta y-axis, and the extra `invert_yaxis()` flipped it
+  back); `plot_track_temperature` colors several drivers by team instead of
+  one shared red; `plot_throttle_distance` and `plot_downforce_levels` titles
+  name the loaded session instead of always "Qualifying".
+- **CI mode skips every persistent tier.** `ci_mode` now forces the session's
+  `enable_cache` off, so the laps and telemetry frame tiers are neither read nor
+  written (before, only payload reads and writes were bypassed).
+- **Chart `drivers` accept names.** Every chart with a `drivers` parameter
+  fuzzy-resolves the entries to abbreviations first. Before, only
+  `plot_driver_laptimes` and `plot_position_changes` did; `plot_lap_delta`
+  raised "No common laps" for `["Verstappen", "Leclerc"]` and
+  `plot_track_temperature` drew empty lines.
+- **Charts work with `lib="polars"`.** Every chart failed part-way on a
+  polars session with an `AttributeError`. Charts now load the pandas view of
+  the session for either backend (same payloads and payload cache) and draw
+  the identical figure; any other `lib` raises `ValueError`.
+- **A deleted lap is never the fastest lap.** `Laps.pick_fastest()`,
+  `Session.get_fastest_laps()` (cold and loaded paths), `Driver.get_fastest_lap()`
+  and everything built on them skip laps marked `Deleted`, as FastF1 does
+  (2023 Spanish GP qualifying: TSU's fastest was his deleted 1:13.316, ranking
+  him 11th; it is now 1:13.862, 15th, the official result).
+  `pick_fastest(only_by_time=True)`, ignored before, returns the plain minimum.
+- **Event-name tie-break.** When several events tied on the best fuzzy score,
+  the tie-break could hand the match to an untied event: "Bahrein" resolved to
+  the Spanish Grand Prix. Only the tied events are compared now.
+- **Jupyter session card counts drivers after `load()`.** A warm laps frame-tier
+  hit left the driver list unread, so the card said "Not loaded".
+- The missing-`timple` warning no longer points at a nonexistent `plotting`
+  extra (`timple` is a required dependency).
+
+### Changed — documentation audit follow-ups (2026-10-14)
+
+- **Names that resemble no event raise `EventNotFoundError`.** Fuzzy event
+  matching had no minimum score, so `get_session(2025, "Invalid GP", "Race")`
+  silently loaded the Italian Grand Prix. A fuzzy match now needs a score of
+  70 (typos of real events score 75-97); below that `get_event_by_name`,
+  `get_session` and `get_sessions` raise the new `tif1.EventNotFoundError` (a
+  `ValueError`). `EventNotInSeasonError` is now its subclass. `get_sessions`
+  (and `tif1 sessions`) used to answer the generic five sessions for any
+  unknown name. `get_event()` and `EventSchedule.get_event_by_name()` still
+  return `None` for no match.
+- **pyarrow is a runtime dependency.** polars sessions converted lap rows and
+  the track-status column through Arrow, so `get_lap()` and `track_status`
+  raised `ModuleNotFoundError` on a plain `pip install tif1`.
+
+### Removed
+
+- The `log_level`, `http2_max_connections` and `http2_max_pool_size` config
+  keys and their `TIF1_LOG_LEVEL`, `TIF1_HTTP2_MAX_CONNECTIONS` and
+  `TIF1_HTTP2_MAX_POOL_SIZE` environment variables. Nothing read them. Set the
+  log level with `tif1.set_log_level()` or the `logging` module. Old `.tif1rc`
+  files that still contain the keys load as before.
+
 ### Changed — live event schedule (2026-10-14)
 
 - **The current season's calendar is fetched live from `theOehrly/f1schedule`

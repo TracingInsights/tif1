@@ -397,6 +397,65 @@ class TestEventNameAliases:
         assert get_event_by_name(2025, "Britsh")["EventName"] == "British Grand Prix"
 
 
+class TestFuzzyMatchQuality:
+    """Typos resolve; names unlike every event raise instead of loading a wrong race."""
+
+    def test_tie_break_stays_among_the_tied_events(self):
+        from tif1.fuzzy import fuzzy_matcher
+
+        # Bahrain GP and pre-season testing (both at Sakhir) tie on "bahrain";
+        # the tie-break must not hand the match to an untied event.
+        reference = [
+            ["sakhir", "bahrain", "bahrain", "gulfairbahrain"],
+            ["barcelona", "spain", "spanish", "aramcogranpremiodeespana"],
+            ["sakhir", "bahrain", "preseasontesting", "preseasontesting"],
+        ]
+        assert fuzzy_matcher("bahrein", reference) == (0, False)
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("Bahrein", "Bahrain Grand Prix"),
+            ("Monacco", "Monaco Grand Prix"),
+            ("Abu Dabi", "Abu Dhabi Grand Prix"),
+            ("Sao Paolo", "São Paulo Grand Prix"),
+            ("Singapur", "Singapore Grand Prix"),
+        ],
+    )
+    def test_typos_still_resolve(self, query, expected):
+        assert get_event_by_name(2025, query)["EventName"] == expected
+
+    @pytest.mark.parametrize("query", ["Invalid GP", "xyz", "Hello World", "Grand Prix", "Paris"])
+    def test_unrelated_names_raise(self, query):
+        from tif1.exceptions import EventNotFoundError
+
+        with pytest.raises(EventNotFoundError, match="2025"):
+            get_event_by_name(2025, query)
+
+    def test_get_session_rejects_an_unrelated_name(self):
+        from tif1 import get_session
+        from tif1.exceptions import EventNotFoundError
+
+        with pytest.raises(EventNotFoundError):
+            get_session(2025, "Invalid GP", "Race")
+
+    def test_get_sessions_rejects_names_like_get_event_by_name(self):
+        from tif1.events import get_sessions
+        from tif1.exceptions import EventNotFoundError, EventNotInSeasonError
+
+        with pytest.raises(EventNotFoundError, match="Paris"):
+            get_sessions(2025, "Paris")
+        with pytest.raises(EventNotInSeasonError):
+            get_sessions(2021, "Suzuka")
+        assert "Qualifying" in get_sessions(2025, "Spielberg")
+
+    def test_not_in_season_is_an_event_not_found_error(self):
+        from tif1.exceptions import EventNotFoundError, EventNotInSeasonError
+
+        assert issubclass(EventNotInSeasonError, EventNotFoundError)
+        assert issubclass(EventNotFoundError, ValueError)
+
+
 class TestFuzzyMatcherRaggedReference:
     def test_ragged_feature_lists_do_not_raise(self):
         from tif1.fuzzy import fuzzy_matcher
@@ -523,6 +582,31 @@ class TestEventSessionName:
         assert event is not None
         assert event.get_session_date(5, utc=True) == pd.Timestamp(event["Session5DateUtc"])
 
+    def test_session_date_utc_applies_the_gmt_offset(self):
+        # f1schedule session dates are local track time; Monaco 2024 is UTC+2.
+        event = get_event(2024, "Monaco Grand Prix")
+        assert event is not None
+        local = pd.Timestamp(event["Session5Date"])
+
+        assert local == pd.Timestamp("2024-05-26 15:00", tz="UTC+02:00")
+        assert pd.Timestamp(event["Session5DateUtc"]) == pd.Timestamp("2024-05-26 13:00")
+
+    def test_convert_f1schedule_year_utc_for_negative_offsets(self):
+        from tif1.events import Event, _convert_f1schedule_year
+
+        raw = {
+            "event_name": {"0": "Test Grand Prix"},
+            "round_number": {"0": 1},
+            "gmt_offset": {"0": "-04:30"},
+            "session1": {"0": "Race"},
+            "session1_date": {"0": "2024-06-09T14:00:00"},
+        }
+        metadata = _convert_f1schedule_year(raw, 2024)["metadata"]["Test Grand Prix"]
+
+        assert metadata["Session1DateUtc"] == "2024-06-09T18:30:00"
+        event = Event(2024, "Bahrain Grand Prix", metadata=metadata)
+        assert event["Session1Date"].utcoffset() == -pd.Timedelta(hours=4, minutes=30)
+
     def test_get_session_date_missing_local_timestamp(self):
         from tif1.events import Event
 
@@ -534,6 +618,14 @@ class TestEventSessionName:
 
         with pytest.raises(ValueError, match="Local timestamp is not available"):
             event.get_session_date(1)
+
+    def test_event_copy_keeps_series_name(self):
+        from tif1.events import Event
+
+        event = Event(2024, "Bahrain Grand Prix")
+        event.name = 1
+
+        assert event.copy().name == 1
 
 
 _RAW_SCHEDULE_URL = (

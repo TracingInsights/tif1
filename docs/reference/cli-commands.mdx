@@ -9,7 +9,7 @@ keywords:
   - "tif1 CLI"
 ---
 
-The `tif1` CLI provides quick access to F1 data without writing Python code. It is a thin wrapper around the Python API. Each command loads data through `tif1.get_events()`, `tif1.get_sessions()`, or `tif1.get_session()` and prints a table.
+The `tif1` CLI provides quick access to F1 data without writing Python code. It is a thin wrapper around the Python API. The data commands load data through `tif1.get_events()`, `tif1.get_sessions()`, or `tif1.get_session()` and print a table.
 
 ## Installation
 
@@ -39,7 +39,7 @@ Every command accepts `--help`, for example `tif1 fastest --help`.
 
 ### events
 
-List all events (Grands Prix) for a year.
+List all events of a season, testing events included.
 
 ```bash
 tif1 events YEAR
@@ -53,20 +53,24 @@ tif1 events YEAR
   </Tab>
   <Tab title="Output">
     ```text
-            F1 Events 2025
-    ┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-    ┃ # ┃ Event                    ┃
-    ┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-    │ 1 │ Australian Grand Prix    │
-    │ 2 │ Chinese Grand Prix       │
-    │ 3 │ Japanese Grand Prix      │
-    │ … │ …                        │
-    └───┴──────────────────────────┘
+              F1 Events 2025
+    ┏━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+    ┃ #  ┃ Event                     ┃
+    ┡━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+    │ 1  │ Australian Grand Prix     │
+    │ 2  │ Chinese Grand Prix        │
+    │ 3  │ Japanese Grand Prix       │
+    │ …  │ …                         │
+    │ 24 │ Abu Dhabi Grand Prix      │
+    │ 25 │ Pre-Season Testing        │
+    └────┴───────────────────────────┘
 
-    Total: 24 events
+    Total: 25 events
     ```
   </Tab>
 </Tabs>
+
+The list is the full schedule, so the total can exceed the number of Grands Prix. Testing events come last.
 
 **Arguments:**
 
@@ -90,19 +94,22 @@ tif1 sessions YEAR EVENT
   </Tab>
   <Tab title="Output">
     ```text
-      Monaco Grand Prix 2025
-    ┏━━━┳━━━━━━━━━━━━━━━━┓
-    ┃ # ┃ Session        ┃
-    ┡━━━╇━━━━━━━━━━━━━━━━┩
-    │ 1 │ Practice 1     │
-    │ 2 │ Practice 2     │
-    │ 3 │ Practice 3     │
-    │ 4 │ Qualifying     │
-    │ 5 │ Race           │
-    └───┴────────────────┘
+    Monaco Grand Prix
+           2025
+    ┏━━━┳━━━━━━━━━━━━┓
+    ┃ # ┃ Session    ┃
+    ┡━━━╇━━━━━━━━━━━━┩
+    │ 1 │ Practice 1 │
+    │ 2 │ Practice 2 │
+    │ 3 │ Practice 3 │
+    │ 4 │ Qualifying │
+    │ 5 │ Race       │
+    └───┴────────────┘
     ```
   </Tab>
 </Tabs>
+
+The table title repeats the event name as typed, not the resolved name.
 
 **Arguments:**
 
@@ -113,7 +120,7 @@ tif1 sessions YEAR EVENT
 
 ### drivers
 
-List the drivers and teams in a session.
+List the drivers, teams, and car numbers of a session.
 
 ```bash
 tif1 drivers YEAR EVENT SESSION
@@ -127,20 +134,23 @@ tif1 drivers YEAR EVENT SESSION
   </Tab>
   <Tab title="Output">
     ```text
-     Monaco Grand Prix 2025 - Race
-    ┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-    ┃ Driver ┃ Team               ┃
-    ┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-    │ VER    │ Red Bull Racing    │
-    │ NOR    │ McLaren            │
-    │ LEC    │ Ferrari            │
-    │ …      │ …                  │
-    └────────┴────────────────────┘
+    Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+      Monaco Grand Prix 2025 - Race
+    ┏━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━┓
+    ┃ Driver ┃ Team            ┃ No. ┃
+    ┡━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━┩
+    │ NOR    │ McLaren         │ 4   │
+    │ LEC    │ Ferrari         │ 16  │
+    │ PIA    │ McLaren         │ 81  │
+    │ …      │ …               │ …   │
+    └────────┴─────────────────┴─────┘
 
     Total: 20 drivers
     ```
   </Tab>
 </Tabs>
+
+Rows are in classification order (`session.drivers_df`): driver code, team, and car number.
 
 **Arguments:**
 
@@ -166,15 +176,17 @@ tif1 fastest YEAR EVENT SESSION [--driver CODE]
   </Tab>
   <Tab title="Output">
     ```text
-      Fastest Laps - Monaco Grand Prix 2025 - Qualifying
-    ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-    ┃ Pos ┃ Driver ┃ Team            ┃ Time     ┃
-    ┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-    │ 1   │ NOR    │ McLaren         │ 69.954s  │
-    │ 2   │ LEC    │ Ferrari         │ 70.063s  │
-    │ 3   │ PIA    │ McLaren         │ 70.129s  │
-    │ …   │ …      │ …               │ …        │
-    └─────┴────────┴─────────────────┴──────────┘
+    Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+      Fastest Laps - Monaco Grand Prix 2025 -
+                     Qualifying
+    ┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+    ┃ Pos ┃ Driver ┃ Team            ┃ Time    ┃
+    ┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+    │ 1   │ NOR    │ McLaren         │ 69.954s │
+    │ 2   │ LEC    │ Ferrari         │ 70.063s │
+    │ 3   │ PIA    │ McLaren         │ 70.129s │
+    │ …   │ …      │ …               │ …       │
+    └─────┴────────┴─────────────────┴─────────┘
     ```
   </Tab>
   <Tab title="One driver">
@@ -182,16 +194,21 @@ tif1 fastest YEAR EVENT SESSION [--driver CODE]
     tif1 fastest 2025 "Monaco Grand Prix" Qualifying --driver LEC
     ```
     ```text
+    Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
     LEC fastest lap: 70.063s
     ```
   </Tab>
 </Tabs>
 
+Times are lap times in seconds. Rich wraps a table title that is wider than the table.
+
 **Options:**
 
 | Option | Description |
 | :--- | :--- |
-| `--driver`, `-d CODE` | Show only this driver's fastest lap (three-letter code, for example `VER`) |
+| `--driver`, `-d CODE` | Show only this driver's fastest lap (three-letter code, for example `VER`). The code is case-sensitive; an unknown code exits with `DriverNotFoundError`. |
+
+A lap counts when its `LapTime` is set. A driver without any timed lap is left out of the table; with `--driver` the command prints `No valid laps for CODE` instead of a time.
 
 ### cache-info
 
@@ -223,6 +240,13 @@ tif1 cache-clear [--yes]
 | :--- | :--- |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripts) |
 
+```text
+Are you sure you want to clear the cache? [y/N]: y
+Cache cleared successfully!
+```
+
+Any answer other than `y` prints `Cache clear cancelled`. The command deletes the rows of every cache table. The `cache.sqlite` file keeps its size, and SQLite reuses the free pages for new data.
+
 ### version
 
 Print the installed tif1 version.
@@ -243,11 +267,23 @@ Load a session with debug logging enabled and print a short summary. Use it to s
 tif1 debug YEAR EVENT SESSION
 ```
 
+Output of `tif1 debug 2025 "Monaco Grand Prix" Race` with a warm cache:
+
 ```text
+2026-10-14 18:29:47 - tif1.core - DEBUG - Session initialized: year=2025, gp=Monaco Grand Prix, session=Race, lib=pandas
+2026-10-14 18:29:47 - tif1.cache - DEBUG - SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
+Loading session with debug logging... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
 Session loaded successfully!
+2026-10-14 18:29:47 - tif1.cache - DEBUG - Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/drivers.json
+2026-10-14 18:29:47 - tif1.core - INFO - Loading laps async (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
+2026-10-14 18:29:47 - asyncio - DEBUG - Using selector: EpollSelector
+2026-10-14 18:29:47 - tif1.core - INFO - Laps frame tier hit: 2025/Monaco%20Grand%20Prix/Race
 Drivers: 20
-Laps: 1247
+Laps: 1425
+2026-10-14 18:29:47 - tif1.cache - DEBUG - Cache connection closed
 ```
+
+The command calls `tif1.setup_logging(logging.DEBUG)`. The timestamped log lines go to stderr, and the summary goes to stdout. Drivers and laps load lazily, so `Session loaded successfully!` appears before the fetch and cache log lines. On a cold cache, the log also shows the `Trying CDN: jsDelivr - <url>` request lines.
 
 ## Environment Variables
 
@@ -262,14 +298,12 @@ tif1 fastest 2025 "Monaco Grand Prix" Race
 export TIF1_ENABLE_CACHE=false
 tif1 drivers 2025 "Monaco Grand Prix" Race
 
-# Verbose logging for every command
-export TIF1_LOG_LEVEL=DEBUG
-tif1 events 2025
-
-# Serve only from the cache, never from the network
-export TIF1_OFFLINE_MODE=true
-tif1 fastest 2025 "Monaco Grand Prix" Race
+# Use another cache directory
+export TIF1_CACHE_DIR="$HOME/tif1-cache"
+tif1 cache-info
 ```
+
+For debug logs, use the `debug` command.
 
 See the [environment variables reference](/reference/environment-variables) for the full list.
 
@@ -308,9 +342,16 @@ python -c "import tif1; print(tif1.get_session(2025, 'Monaco', 'Race').laps.to_c
 | `2` | Usage error: missing or invalid arguments |
 
 ```bash
-tif1 fastest 2025 "Not A Grand Prix" Race
-echo $?  # 1
+tif1 drivers 2025 "Monaco Grand Prix" Sprint
+echo $?  # 1 (ValueError: Session 'Sprint' does not exist for 2025 Monaco Grand Prix.)
+
+tif1 events
+echo $?  # 2 (Missing argument 'year'.)
 ```
+
+A misspelled event name does not fail. Event names are fuzzy-matched, so `tif1 sessions 2025 "Monacco"` logs `Correcting user input 'Monacco' to 'Monaco Grand Prix'` on stderr. It then exits `0` with the sessions of that event. Circuit, city, and country aliases resolve directly.
+
+A name that resembles no event, such as `"Paris"`, exits `1` with `EventNotFoundError` in `sessions`, `drivers`, `fastest`, and `debug`. An alias of an event that is not on the calendar exits `1` with `EventNotInSeasonError`.
 
 ## Best Practices
 
@@ -319,7 +360,7 @@ echo $?  # 1
     Quote event names with spaces, for example `"Monaco Grand Prix"`.
   </Card>
   <Card title="Check Availability" icon="check">
-    Use `events` and `sessions` to confirm that data exists before loading a session.
+    Use `events` and `sessions` to find the exact names before loading a session.
   </Card>
   <Card title="Keep the Cache" icon="bolt">
     Repeated commands for the same session read from the SQLite cache. They finish in well under a second.

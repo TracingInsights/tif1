@@ -24,6 +24,15 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Australian Grand Prix" in result.stdout
 
+    @patch("tif1.get_events")
+    def test_events_command_year_without_schedule(self, mock_get_events):
+        """A year with no schedule (e.g. 2017) is reported, not a KeyError traceback."""
+        mock_get_events.return_value = pd.DataFrame()
+        result = runner.invoke(app, ["events", "2017"])
+        assert result.exit_code == 1
+        assert "No events found for 2017" in result.stdout
+        assert not isinstance(result.exception, KeyError)
+
     @patch("tif1.get_sessions")
     def test_sessions_command(self, mock_get_sessions):
         """Test sessions command."""

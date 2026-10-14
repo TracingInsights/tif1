@@ -39,17 +39,17 @@ uv run pytest tests/ -v
 
 Run specific test file:
 ```bash
-uv run pytest tests/test_core.py -v
+uv run pytest tests/unit/test_core.py -v
 ```
 
 Run with coverage:
 ```bash
-uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html
+uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html -m "not slow and not integration and not benchmark"
 ```
 
-Run only unit tests (skip integration):
+Run only unit tests:
 ```bash
-uv run pytest tests/ -v -m "not integration"
+uv run pytest tests/unit/ -v
 ```
 
 Run integration tests (serial):
@@ -59,7 +59,7 @@ uv run pytest -o addopts='' tests/ -v -n 0 -m integration
 
 Run benchmarks (serial for stable timing):
 ```bash
-uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark-only --no-cov -n 0
+uv run pytest -o addopts='' tests/benchmarks/ -v -m benchmark --benchmark-only --no-cov -n 0
 ```
 
 ### Code Quality
@@ -87,7 +87,6 @@ uv run prek run --all-files
 ### Running Examples
 
 ```bash
-uv run python examples/basic_usage.py
 uv run python examples/async_loading.py
 ```
 

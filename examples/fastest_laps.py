@@ -15,28 +15,19 @@ print("-" * 60)
 fastest_by_driver = session.get_fastest_laps(by_driver=True)
 if len(fastest_by_driver) > 0:
     # Sort by lap time
-    if hasattr(fastest_by_driver, "sort_values"):
-        fastest_by_driver = fastest_by_driver.sort_values("LapTime")
+    fastest_by_driver = fastest_by_driver.sort_values("LapTime")
     print(fastest_by_driver[["Driver", "Team", "LapTime", "Compound"]].head(10))
 
 # Get overall fastest lap
+# LapTime is a Timedelta; LapTimeSeconds holds the same time as a float.
 print("\n2. OVERALL FASTEST LAP")
 print("-" * 60)
 overall_fastest = session.get_fastest_laps(by_driver=False)
 if len(overall_fastest) > 0:
-    if hasattr(overall_fastest, "iloc"):
-        driver = overall_fastest["Driver"].iloc[0]
-        team = overall_fastest["Team"].iloc[0]
-        lap_time = overall_fastest["LapTime"].iloc[0]
-        compound = overall_fastest["Compound"].iloc[0]
-    else:
-        driver = overall_fastest["Driver"][0]
-        team = overall_fastest["Team"][0]
-        lap_time = overall_fastest["LapTime"][0]
-        compound = overall_fastest["Compound"][0]
-    print(f"Driver: {driver} ({team})")
-    print(f"Time: {lap_time:.3f}s")
-    print(f"Compound: {compound}")
+    fastest = overall_fastest.iloc[0]
+    print(f"Driver: {fastest['Driver']} ({fastest['Team']})")
+    print(f"Time: {fastest['LapTimeSeconds']:.3f}s")
+    print(f"Compound: {fastest['Compound']}")
 
 # Get driver's fastest lap
 print("\n3. VERSTAPPEN'S FASTEST LAP")
@@ -45,33 +36,10 @@ try:
     ver = session.get_driver("VER")
     ver_fastest = ver.get_fastest_lap()
     if len(ver_fastest) > 0:
-        if hasattr(ver_fastest, "iloc"):
-            lap_time = ver_fastest["LapTime"].iloc[0]
-            lap_num = (
-                ver_fastest["LapNumber"].iloc[0]
-                if "LapNumber" in ver_fastest.columns
-                else ver_fastest["lap"].iloc[0]
-            )
-            compound = (
-                ver_fastest["Compound"].iloc[0]
-                if "Compound" in ver_fastest.columns
-                else ver_fastest["compound"].iloc[0]
-            )
-        else:
-            lap_time = ver_fastest["LapTime"][0]
-            lap_num = (
-                ver_fastest["LapNumber"][0]
-                if "LapNumber" in ver_fastest.columns
-                else ver_fastest["lap"][0]
-            )
-            compound = (
-                ver_fastest["Compound"][0]
-                if "Compound" in ver_fastest.columns
-                else ver_fastest["compound"][0]
-            )
-        print(f"Lap Number: {lap_num}")
-        print(f"Time: {lap_time:.3f}s")
-        print(f"Compound: {compound}")
+        lap = ver_fastest.iloc[0]
+        print(f"Lap Number: {int(lap['LapNumber'])}")
+        print(f"Time: {lap['LapTimeSeconds']:.3f}s")
+        print(f"Compound: {lap['Compound']}")
 except tif1.DriverNotFoundError:
     print("VER not in this session")
 
@@ -80,25 +48,21 @@ print("\n4. TEAMMATE COMPARISON")
 print("-" * 60)
 try:
     ham = session.get_driver("HAM")
-    rus = session.get_driver("RUS")
+    lec = session.get_driver("LEC")
 
     ham_fastest = ham.get_fastest_lap()
-    rus_fastest = rus.get_fastest_lap()
+    lec_fastest = lec.get_fastest_lap()
 
-    if len(ham_fastest) > 0 and len(rus_fastest) > 0:
-        if hasattr(ham_fastest, "iloc"):
-            ham_time = ham_fastest["LapTime"].iloc[0]
-            rus_time = rus_fastest["LapTime"].iloc[0]
-        else:
-            ham_time = ham_fastest["LapTime"][0]
-            rus_time = rus_fastest["LapTime"][0]
+    if len(ham_fastest) > 0 and len(lec_fastest) > 0:
+        ham_time = ham_fastest["LapTimeSeconds"].iloc[0]
+        lec_time = lec_fastest["LapTimeSeconds"].iloc[0]
 
-        delta = abs(ham_time - rus_time)
-        faster = "HAM" if ham_time < rus_time else "RUS"
+        delta = abs(ham_time - lec_time)
+        faster = "HAM" if ham_time < lec_time else "LEC"
 
-        print("Mercedes (HAM vs RUS):")
+        print("Ferrari (HAM vs LEC):")
         print(f"  HAM: {ham_time:.3f}s")
-        print(f"  RUS: {rus_time:.3f}s")
+        print(f"  LEC: {lec_time:.3f}s")
         print(f"  Delta: {delta:.3f}s ({faster} faster)")
 except tif1.DriverNotFoundError as e:
     print(f"Driver not found: {e}")
@@ -114,11 +78,6 @@ if len(specific_drivers) > 0:
 print("\n6. TOP 3 COMPARISON")
 print("-" * 60)
 if len(fastest_by_driver) >= 3:
-    if hasattr(fastest_by_driver, "iloc"):
-        top3 = fastest_by_driver.head(3)
-        for idx, row in top3.iterrows():
-            print(f"{row['Driver']:3s} ({row['Team']:20s}): {row['LapTime']:.3f}s")
-    else:
-        top3 = fastest_by_driver.head(3)
-        for i in range(len(top3)):
-            print(f"{top3['Driver'][i]:3s} ({top3['Team'][i]:20s}): {top3['LapTime'][i]:.3f}s")
+    top3 = fastest_by_driver.head(3)
+    for _, row in top3.iterrows():
+        print(f"{row['Driver']:3s} ({row['Team']:20s}): {row['LapTimeSeconds']:.3f}s")

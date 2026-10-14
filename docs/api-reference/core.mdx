@@ -45,38 +45,31 @@ Session (2024 Monaco Grand Prix - Race)
 
 - **Multi-Layer Caching**: Caching strategy with in-memory LRU cache (instant access) and SQLite persistent cache (survives restarts). Cache keys are session-specific and backend-aware (pandas vs polars).
 
-- **Async Support**: All data-intensive operations have async variants (`laps_async()`, `get_fastest_laps_tels_async()`) that use parallel HTTP requests. The benchmark suite validates more than 3x faster loading compared to sequential fetching.
+- **Async Support**: The main loaders have async variants (`laps_async()`, `get_fastest_laps_tels_async()`) that use parallel HTTP requests. The benchmark suite checks that parallel fetching is more than 3x faster than sequential fetching.
 
-- **Backend Flexibility**: Choose pandas (default, full compatibility) or polars (faster for large datasets) for DataFrame operations. Polars gives a 10-100x speedup for some operations. Backend selection is per-session and affects all data structures.
+- **Backend Flexibility**: Choose pandas (default, full compatibility) or polars for DataFrame operations. Backend selection is per-session and affects the lap, telemetry, weather, and message frames.
 
 - **FastF1 Compatibility**: Drop-in replacement for FastF1 in common use cases. The common FastF1 methods (`pick_driver()`, `pick_fastest()`, `iterlaps()`, etc.) are supported.
 
-- **Ultra-Cold Mode**: Optimization mode that bypasses cache validation and skips loading unnecessary data for minimal latency. Use it in serverless environments or when only specific data is needed (for example, fastest lap telemetry).
+- **Ultra-Cold Mode**: On a cold start, this mode skips cache reads, payload validation, and retries. The `ultra_cold_start` setting is on by default and applies only to sessions that are not in the cache.
 
-- **Error Resilience**: Complete exception hierarchy (`DataNotFoundError`, `NetworkError`, `InvalidDataError`) with structured error context. Failed telemetry fetches are tracked per-driver to avoid repeated failures.
+- **Error Resilience**: Complete exception hierarchy (`DataNotFoundError`, `NetworkError`, `InvalidDataError`) with structured error context. Telemetry failures are counted per driver, and the warnings stop after three failures for a driver.
 
 **Performance Characteristics:**
 
-| Operation | Cold Cache | Warm Cache | Notes |
-|-----------|-----------|------------|-------|
-| `session.laps` | 2-4s | &lt;100ms | Auto-async parallel loading |
-| `laps_async()` | 0.5-1s | &lt;100ms | Explicit async, parallel loading |
-| `get_fastest_lap_tel()` | 200-500ms | &lt;50ms | Single telemetry fetch |
-| `get_fastest_laps_tels()` | 300-800ms | &lt;100ms | Parallel telemetry for multiple drivers |
-| `ultra_cold=True` | 100-300ms | N/A | Skips cache validation |
+- `session.laps` and `laps_async()` run the same parallel fetch. The `laps` property runs `laps_async()` with `asyncio.run()`.
+- A warm cache serves laps and telemetry from the local SQLite cache instead of the CDN.
 
-**Memory Footprint:**
+**Memory Footprint** (2024 Monaco Grand Prix race, 20 drivers, 78 laps):
 
-- Session metadata: ~10-50 KB
-- Laps DataFrame (20 drivers, 60 laps): ~500 KB - 2 MB
-- Single lap telemetry: ~50-200 KB (varies by track length)
-- Full session telemetry (all laps): ~50-200 MB (rarely needed)
+- Laps DataFrame (1237 rows): about 0.5 MB
+- Telemetry of one lap: about 115 KB (591 samples)
+- Telemetry of every lap (`session.car_data`): about 260 MB (1.1 million samples)
 
 **Thread Safety:**
 
-- Session objects are thread-safe for read operations
-- Internal caches use threading locks for concurrent access
-- Async methods can be called from multiple coroutines safely
+- The persistent cache and the in-memory LRU tiers use threading locks.
+- The lazy `Session` properties take no lock. Two threads that read an unloaded property at the same time can both fetch it.
 
 ## `get_session`
 
@@ -142,10 +135,10 @@ def get_session(
   DataFrame library choice for data representation.
 
   - `"pandas"`: Use pandas DataFrames (default, maximum compatibility)
-  - `"polars"`: Use polars DataFrames (faster for large datasets, requires `polars` package)
+  - `"polars"`: Use polars DataFrames (`polars` is a tif1 dependency)
   - `None`: Use global config value (defaults to `"pandas"`)
 
-  **Performance note**: Polars can be faster for large datasets (10-100x for some operations). Polars is installed with `tif1`. If it has been removed and is requested, tif1 falls back to pandas with a warning.
+  **Backend note**: Polars is installed with `tif1`. If it has been removed and is requested, tif1 falls back to pandas with a warning.
 </ParamField>
 
 **Returns:**
@@ -158,15 +151,18 @@ def get_session(
 
 <ResponseField name="ValueError" type="Exception">
   Raised in the following cases:
-  - Year is before 2018 (`"Year must be between 2018 and 2100"`)
-  - Grand Prix round number cannot be resolved
-  - A circuit or country alias names an event that is not on that season's calendar (for example, `"Suzuka"` in 2021)
+  - Year is outside 2018 to 2100 (`"Year must be between 2018 and 2100, got 2017"`)
+  - Grand Prix round number cannot be resolved (`"Invalid round: 30"`)
+  - An event name resembles no event of the season (`"No event matching 'Invalid GP' in 2025"`)
+  - A known event name or alias names an event that is not on that season's calendar (`"Suzuka"` in 2021)
   - Session name/number does not exist for the specified event
   - Session number is out of range for the event
+
+  The unmatched-name case raises `EventNotFoundError`, a `ValueError` subclass exported as `tif1.EventNotFoundError`. It is not a `TIF1Error`. The calendar case raises its subclass `EventNotInSeasonError` from `tif1.exceptions`. It also applies to a known event name in a year outside 2018 to 2100.
 </ResponseField>
 
 <ResponseField name="DataNotFoundError" type="Exception">
-  Raised on first data access or `load()` when no CDN has data for the session. `get_session()` itself does not fetch data. For a season without schedule data, `get_session()` keeps the name as given, so the error appears only at data access.
+  Raised on first data access or `load()` when no CDN has data for the session. `get_session()` itself does not fetch session data. For a season without schedule data, an unknown event name is kept as given. Then the error appears only at data access.
 </ResponseField>
 
 <ResponseField name="NetworkError" type="Exception">
@@ -243,6 +239,8 @@ except NetworkError as e:
 <Tip>
   **Best Practice**: Use abbreviated names and session codes for cleaner code:
   ```python
+  import tif1
+
   # ✅ Concise and readable
   session = tif1.get_session(2024, "Monaco", "Q")
 
@@ -252,7 +250,7 @@ except NetworkError as e:
 </Tip>
 
 <Note>
-  **Event Name Resolution**: An exact event name wins first. Next, the per-season alias table resolves circuit, city, and country names: `"Silverstone"` resolves to `"British Grand Prix"`, and `"Spa"` resolves to `"Belgian Grand Prix"`. Fuzzy matching handles the rest. A name that matches nothing still resolves to the closest event, and `tif1` only logs the correction. Check `session.event_name` when the input is uncertain.
+  **Event Name Resolution**: An exact event name wins first. Next, the per-season alias table resolves circuit, city, and country names: `"Silverstone"` resolves to `"British Grand Prix"`, and `"Spa"` resolves to `"Belgian Grand Prix"`. Fuzzy matching handles the rest. A typo such as `"Monacco"` resolves to the closest event, and `tif1` logs a "Correcting user input" warning. A fuzzy match needs a score of at least 70 out of 100. A name that resembles no event, such as `"Invalid GP"`, raises `EventNotFoundError`.
 </Note>
 
 ---
@@ -264,20 +262,21 @@ The `Session` object is the central hub for all data related to a specific F1 we
 **Design Philosophy:**
 - **Lazy Loading**: Properties are loaded on first access, not at construction time
 - **Caching**: All fetched data is cached (when enabled) to minimize network requests
-- **Immutable Identity**: Once created, a session's year/GP/session cannot be changed
-- **Thread-Safe**: Internal caches use locks for concurrent access
+- **Locking**: The caches use locks for concurrent access; the lazy properties do not
 - **Memory Efficient**: Only requested data is loaded into memory
 
 ### Constructor
 
 ```python
-Session(
-    year: int,
-    gp: str | int,
-    session: str,
-    enable_cache: bool | None = None,
-    lib: Literal["pandas", "polars"] | None = None
-)
+class Session:
+    def __init__(
+        self,
+        year: int,
+        gp: str | int,
+        session: str,
+        enable_cache: bool | None = None,
+        lib: Literal["pandas", "polars"] | None = None,
+    )
 ```
 
 <Warning>
@@ -378,7 +377,8 @@ Session(
 <ResponseField name="laps" type="Laps">
   All laps for all drivers. Includes per-lap weather columns (`AirTemp`, `TrackTemp`, `Rainfall`, ...).
   On pandas, `LapTime` and the sector times are timedeltas; `LapTimeSeconds` holds float seconds.
-  Loaded lazily on first access. Use `laps_async()` for faster parallel loading.
+  With `lib="polars"`, it is a plain polars DataFrame with timing columns in float seconds.
+  Loaded lazily on first access. Inside a running event loop, await `laps_async()` instead.
 </ResponseField>
 
 <ResponseField name="weather" type="DataFrame">
@@ -492,7 +492,7 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 
 **Parameters:**
 - `laps`: Load lap timing data
-- `telemetry`: Prefetch telemetry for all laps (expensive)
+- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`
 - `weather`: Load weather data
 - `messages`: Load race control messages
 
@@ -502,11 +502,11 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 **Example:**
 ```python
 # Load only laps and weather
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 session.load(laps=True, telemetry=False, weather=True, messages=False)
 
 # Or use lazy loading (recommended)
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 laps = session.laps  # Loads automatically
 ```
 
@@ -516,7 +516,7 @@ laps = session.laps  # Loads automatically
 async def laps_async() -> DataFrame
 ```
 
-Asynchronously load all laps for all drivers using parallel HTTP requests. This is the fastest way to initialize a session.
+Asynchronously load all laps for all drivers using parallel HTTP requests. The `laps` property runs this coroutine with `asyncio.run()`, so both take the same time. Await it directly when an event loop already runs.
 
 **Returns:**
 - DataFrame with all laps
@@ -527,7 +527,7 @@ import asyncio
 import tif1
 
 async def main():
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
     laps = await session.laps_async()
     print(f"Loaded {len(laps)} laps")
 
@@ -566,7 +566,7 @@ def get_fastest_laps(
 ) -> DataFrame
 ```
 
-Get the fastest lap(s) from the session.
+Get the fastest lap(s) from the session. A deleted lap (`Deleted == True`) is never a fastest lap. A driver whose every timed lap was deleted is left out of the result.
 
 **Parameters:**
 - `by_driver`: If `True`, returns fastest lap per driver. If `False`, returns single overall fastest lap
@@ -604,10 +604,10 @@ Async version of `get_fastest_laps()` for parallel data fetching.
 def get_fastest_lap_tel(ultra_cold: bool | None = None) -> DataFrame
 ```
 
-Optimized method to get telemetry for the single overall fastest lap of the session. Uses ultra-cold start optimization to minimize latency.
+Get telemetry for the single overall fastest lap of the session. It finds the fastest lap in the raw lap payloads, then fetches only the telemetry file of that lap.
 
 **Parameters:**
-- `ultra_cold`: Enable ultra-low latency mode. If `None`, uses global config
+- `ultra_cold`: Enable ultra-low latency mode. If `None`, uses the `ultra_cold_start` config value, which applies only to a session that is not in the cache
 
 **Returns:**
 - DataFrame with telemetry data
@@ -664,7 +664,7 @@ tels = session.get_fastest_laps_tels(
 ```
 
 <Tip>
-  **Performance Tip:** This method fetches telemetry for multiple drivers in parallel. This is faster than calling `get_fastest_lap_tel()` sequentially for each driver.
+  **Performance Tip:** This method fetches telemetry for multiple drivers in parallel. This is faster than calling `Driver.get_fastest_lap_tel()` for each driver in turn.
 </Tip>
 
 #### `get_fastest_laps_tels_async()`
@@ -692,14 +692,14 @@ Fetch lap data for multiple drivers in parallel.
 - `drivers`: List of driver codes
 
 **Returns:**
-- Dictionary mapping driver codes to lap DataFrames
+- Dictionary mapping driver codes to lap DataFrames. A driver without data maps to an empty DataFrame
 
 **Example:**
 ```python
 import asyncio
 
 async def main():
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
     laps_dict = await session.fetch_driver_laps_parallel(["VER", "HAM", "BOT"])
 
     for driver, laps in laps_dict.items():
@@ -726,7 +726,7 @@ Fetch telemetry for every lap of every driver. This is a synchronous wrapper tha
 - Dictionary mapping `(driver_code, lap_number)` tuples to telemetry DataFrames. Missing or failed laps are left out.
 
 **Warning:**
-This can be very slow and data-intensive (50-200 MB for full session). Use sparingly. There is no `drivers` filter: filter the dictionary keys instead.
+This can be very slow and data-intensive (about 260 MB for the 2024 Monaco race). Use sparingly. There is no `drivers` filter: filter the dictionary keys instead.
 
 **Example:**
 ```python
@@ -768,7 +768,7 @@ asyncio.run(main())
 ```
 
 <Warning>
-  **Memory Warning:** Fetching all telemetry for a full race session can consume 50-200 MB of memory. Use this only when all telemetry data is needed. For most use cases, fetch telemetry for specific laps or drivers instead.
+  **Memory Warning:** The telemetry of a full race can use hundreds of megabytes (260 MB for the 2024 Monaco race). Use this only when all telemetry data is needed. For most use cases, fetch telemetry for specific laps or drivers instead.
 </Warning>
 
 #### `get_circuit_info()`
@@ -781,7 +781,7 @@ Get circuit information: corner locations and the track map rotation. `CircuitIn
 
 **Returns:**
 - `CircuitInfo` object with:
-  - `corners`: DataFrame with columns `X, Y, Number, Letter, Angle, Distance`
+  - `corners`: DataFrame with columns `X, Y, Number, Letter, Angle, Distance` (`Letter` is always an empty string)
   - `marshal_lights`: Always an empty DataFrame with the same columns (not in the data source)
   - `marshal_sectors`: Always an empty DataFrame with the same columns (not in the data source)
   - `rotation`: Circuit rotation in degrees (float)
@@ -806,7 +806,7 @@ print(circuit.corners[["Number", "Distance"]].head())
 ```
 
 <Note>
-  **FastF1 Compatibility:** This method returns a `CircuitInfo` dataclass that is fully compatible with FastF1's `mvapi.CircuitInfo`. The `add_marker_distance()` method works identically to FastF1's implementation.
+  **FastF1 Compatibility:** `CircuitInfo` has the same attributes as FastF1's `mvapi.CircuitInfo`. `add_marker_distance()` uses the same best-fit method: each marker takes the `Distance` of the nearest XY telemetry sample.
 </Note>
 
 ---
@@ -817,24 +817,25 @@ Represents a specific driver's performance within a session. Provides convenient
 
 **Design Philosophy:**
 - **Lazy Loading:** Lap data is loaded on first access to `driver.laps`
-- **Efficient Filtering:** When session laps are already loaded, driver laps are filtered in-place without additional network requests
+- **Efficient Filtering:** When session laps are already loaded, driver laps are filtered from them without additional network requests
 - **Prefetching:** The `get_driver()` method can prefetch driver laps in parallel with driver metadata for faster initialization
 - **Caching:** Lap index maps are cached for O(1) lap number lookups
 
 **Performance Characteristics:**
-- First access to `driver.laps`: 200-500ms (cold cache), &lt;50ms (warm cache)
-- Subsequent access: &lt;1ms (in-memory reference)
+- Later accesses to `driver.laps` return the stored frame
 - `get_lap(n)`: O(1) lookup using cached index map
-- `get_fastest_lap()`: O(n) scan of lap times (typically &lt;1ms for 60 laps)
+- `get_fastest_lap()`: O(n) scan of lap times
 
 ### Constructor
 
 ```python
-Driver(
-    session: Session,
-    driver: str,
-    prefetched_lap_data: dict[str, Any] | None = None
-)
+class Driver(pd.Series):
+    def __init__(
+        self,
+        session: TelemetryProvider,
+        driver: str,
+        prefetched_lap_data: dict[str, Any] | None = None,
+    )
 ```
 
 <Note>
@@ -888,6 +889,7 @@ Get a specific lap by number.
 **Raises:**
 - `LapNotFoundError`: If the lap does not exist for this driver
 - `ValueError`: If `lap_number` is less than 1
+- `TypeError`: If `lap_number` is not an `int` (for example, the float `19.0`)
 
 **Example:**
 ```python
@@ -902,7 +904,7 @@ print(f"Lap time: {lap_19['LapTimeSeconds']:.3f}s")  # LapTime itself is a timed
 def get_fastest_lap() -> DataFrame
 ```
 
-Get this driver's fastest lap as a single-row `Laps` DataFrame.
+Get this driver's fastest lap as a single-row `Laps` DataFrame. Deleted laps are skipped. The result is empty when the driver has no valid lap that was not deleted.
 
 **Returns:**
 - Single-row `Laps` DataFrame with the fastest lap data. Use `.iloc[0]` to read values.
@@ -941,7 +943,7 @@ The `Laps` class extends `pd.DataFrame` and provides a rich set of methods for f
 **Design Philosophy:**
 - **DataFrame Extension:** Inherits all pandas DataFrame methods while adding F1-specific functionality
 - **Method Chaining:** Most methods return new `Laps` objects, enabling fluent API patterns
-- **FastF1 Compatibility:** All `pick_*` methods match FastF1's behavior exactly
+- **FastF1 Compatibility:** The `pick_*` methods use FastF1's names and arguments. Some options differ, as each method notes
 - **Lazy Telemetry:** The `telemetry` property loads telemetry only when accessed
 
 ### Filtering Methods
@@ -1003,6 +1005,8 @@ if fastest is not None:
 ```
 
 **Returns:** Single `Lap` object (pd.Series) or `None` if no valid laps.
+
+By default, `pick_fastest()` skips deleted laps (`Deleted == True`), as FastF1 does. It returns `None` when every timed lap was deleted. `pick_fastest(only_by_time=True)` returns the lap with the lowest non-null `LapTime`, deleted or not.
 
 #### `pick_quicklaps(threshold=1.07)`
 
@@ -1067,6 +1071,8 @@ vsc_laps = laps.pick_track_status("6", how="contains")
 - `how="equals"`: Exact match (default)
 - `how="contains"`: Partial match (useful for compound status codes)
 
+Any other `how` value (such as FastF1's `"excludes"`) returns the laps unchanged.
+
 #### `pick_wo_box()` / `pick_box_laps(which="both")`
 
 Filter laps by pit stop activity.
@@ -1104,7 +1110,7 @@ clean_laps = laps.pick_not_deleted().pick_accurate().pick_wo_box()
 
 #### `get_telemetry()` / `get_car_data()` / `get_pos_data()`
 
-Get telemetry data for the laps. All three methods return the same data (FastF1 compatibility).
+Get telemetry data for the laps. For single-driver laps, all three methods return the same data (FastF1 compatibility).
 
 ```python
 # Telemetry for a few laps of one driver
@@ -1123,7 +1129,7 @@ tel = ver_laps.telemetry
 The columns are `Time`, `RPM`, `Speed`, `nGear`, `Throttle`, `Brake`, `DRS`, `Distance`, `RelativeDistance`, and `DriverAhead`.
 They continue with `DistanceToDriverAhead`, `AccelerationX/Y/Z`, `X`, `Y`, `Z`, `Driver`, and `LapNumber`.
 
-**Note:** Only works for single-driver laps. Raises `ValueError` if laps contain multiple drivers.
+**Note:** `get_telemetry()` and the `telemetry` property raise `ValueError` if the laps contain multiple drivers. `get_car_data()` and `get_pos_data()` concatenate the telemetry of every driver instead.
 
 #### `get_weather_data()`
 
@@ -1174,27 +1180,27 @@ for idx, lap in laps.pick_driver("VER").pick_laps(range(1, 4)).iterlaps():
 ```
 
 **Parameters:**
-- `require`: Optional list of column names that must be non-null. Laps with null values in these columns are skipped.
+- `require`: Optional list of column names that must be non-null. Laps with null values in these columns are skipped. The default (`None`) requires `["LapTime", "Driver"]`. A column that does not exist raises `KeyError`.
 
 **Returns:** Generator yielding `_IterLapResult` tuples with:
 - `.index`: DataFrame index of the lap
 - `.lap`: `Lap` object (pd.Series) with session reference
 - `[column_name]`: Direct column access (for example, `result["Driver"]`)
 
-**Performance:** Efficient iteration with minimal memory overhead. Telemetry is loaded lazily per lap.
+**Performance:** Telemetry is loaded lazily per lap. Each yielded `Lap` leaves out the columns that are null for that lap.
 
 ### Utility Methods
 
 #### `reset_index(drop=False, **kwargs)`
 
-Reset DataFrame index. Automatically removes `level_0` column if created.
+Reset DataFrame index. Automatically removes the `level_0` column if pandas creates one. Session laps already have an `index` column, so pandas puts the old index in `level_0`. As a result, `drop=False` also drops the old index.
 
 ```python
 # Reset index and drop old index
 laps_reset = laps.reset_index(drop=True)
 
-# Reset index and keep as column
-laps_with_old_index = laps.reset_index(drop=False)
+# Same columns: the old index goes to level_0, which tif1 removes
+laps_reset = laps.reset_index(drop=False)
 ```
 
 ### Properties
@@ -1254,11 +1260,12 @@ Represents a single lap, providing access to high-frequency telemetry data. This
 ### Constructor
 
 ```python
-Lap(data=None, *args, session=None, **kwargs)
+class Lap(pd.Series):
+    def __init__(self, data=None, *args, **kwargs)
 ```
 
 <Note>
-  Use `driver.get_lap()` instead of constructing `Lap` directly. `Lap` takes `pd.Series` arguments plus the parent `session`.
+  Use `driver.get_lap()` instead of constructing `Lap` directly. `Lap` takes `pd.Series` arguments plus the parent session as the `session` keyword argument.
 </Note>
 
 ### Properties
@@ -1362,7 +1369,7 @@ For the weather of a lap, read the weather columns of the lap row. Examples are 
 import tif1
 
 # Load session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
 # Access drivers
 print(f"Drivers: {session.drivers}")
@@ -1426,10 +1433,10 @@ plt.show()
   - `Brake`: Brake applied (boolean on pandas, 0/1 integer on polars)
   - `nGear`: Gear number
   - `DRS`: DRS flag (0 = closed, 1 = open)
-  - `X`, `Y`, `Z`: 3D position coordinates
+  - `X`, `Y`, `Z`: 3D position coordinates (1/10 m)
   - `Distance`, `RelativeDistance`: Distance along the lap (meters, and 0-1 fraction)
   - `DriverAhead`, `DistanceToDriverAhead`: Car number of the car ahead and the gap in meters (missing when no car is ahead)
-  - `AccelerationX`, `AccelerationY`, `AccelerationZ`: Acceleration channels
+  - `AccelerationX`, `AccelerationY`, `AccelerationZ`: Acceleration channels (m/s²)
   - `Driver`, `LapNumber`: Lap identity
 </Note>
 
@@ -1440,7 +1447,7 @@ import asyncio
 import tif1
 
 async def load_session():
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
     # Load laps in parallel
     laps = await session.laps_async()
@@ -1459,23 +1466,22 @@ asyncio.run(load_session())
 ```
 
 <Tip>
-  **Performance Tip:** `laps_async()` is faster than the `laps` property for cold starts
-  because it fetches all driver lap data in parallel. Use async methods when performance is critical.
+  **Performance Tip:** The `laps` property and `laps_async()` both fetch all driver lap data in parallel.
+  Use the async methods when an event loop already runs, or to overlap several loads.
 </Tip>
 
 ### Ultra-cold start mode
 
 ```python
-# Enable ultra-cold start for minimal latency
 import tif1
 
-# Configure ultra-cold mode globally
+# ultra_cold_start is on by default; it applies only to sessions that are not cached
 config = tif1.get_config()
 config.set("ultra_cold_start", True)
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
 
-# Get fastest lap telemetry with ultra-cold optimization
+# Force ultra-cold mode for this call
 tel = session.get_fastest_lap_tel(ultra_cold=True)
 
 # This skips loading all laps and goes directly to the fastest lap
@@ -1483,9 +1489,9 @@ print(f"Loaded in minimal time: {len(tel)} samples")
 ```
 
 <Note>
-  **Ultra-cold mode** bypasses cache validation and skips loading unnecessary data for faster cold starts.
-  Use when minimal latency is needed and not all session data is required. The trade-off is that some
-  data validation is skipped.
+  **Ultra-cold mode** skips cache reads, payload validation, and retries on the critical path for faster cold starts.
+  Use it when minimal latency is needed and not all session data is required. The trade-off is that
+  payload validation is skipped.
 </Note>
 
 ### Error Handling
@@ -1495,7 +1501,7 @@ import tif1
 from tif1.exceptions import DriverNotFoundError, LapNotFoundError, DataNotFoundError
 
 try:
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
     driver = session.get_driver("VER")
     lap = driver.get_lap(1)
     tel = lap.telemetry
@@ -1508,32 +1514,9 @@ except DataNotFoundError as e:
     print(f"Session data not available: {e}")
 ```
 
-### Performance Comparison
-
-```python
-import time
-import asyncio
-import tif1
-
-# Sync approach (slower)
-start = time.time()
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-laps = session.laps  # Sequential loading
-print(f"Sync: {time.time() - start:.2f}s")
-
-# Async approach (faster)
-async def load_async():
-    start = time.time()
-    session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
-    laps = await session.laps_async()  # Parallel loading
-    print(f"Async: {time.time() - start:.2f}s")
-
-asyncio.run(load_async())
-```
-
 <Tip>
   **Best Practices:**
-  - Use async methods (`laps_async()`, `get_fastest_laps_tels_async()`) for cold starts
+  - Use async methods (`laps_async()`, `get_fastest_laps_tels_async()`) inside a running event loop
   - Enable caching to speed up subsequent loads
   - Use `ultra_cold=True` when only specific data is needed
   - Filter drivers with the `drivers` parameter to reduce data transfer
@@ -1549,11 +1532,11 @@ asyncio.run(load_async())
 
 ```python
 # session.drivers holds car numbers as strings, in classification order
-drivers = session.drivers  # 2025 Bahrain race: ["81", "63", "4", ...]
+drivers = session.drivers  # 2024 Monaco race: ["16", "81", "55", ...]
 driver = session.get_driver(drivers[0])  # Works: get_driver() accepts numbers
 
 # For the 3-letter codes, read drivers_df (same order)
-driver_codes = session.drivers_df["Driver"].tolist()  # ["PIA", "RUS", "NOR", ...]
+driver_codes = session.drivers_df["Driver"].tolist()  # ["LEC", "PIA", "SAI", ...]
 driver = session.get_driver(driver_codes[0])
 
 # get_driver() accepts both codes and numbers

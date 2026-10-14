@@ -125,6 +125,8 @@ def plot_downforce_levels(
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     if drivers is None:
         drivers = list(sess.laps["Driver"].unique())
+    else:
+        drivers = _common.resolve_drivers(sess, drivers, 0)
 
     downforce_data: list[dict[str, Any]] = []
     for driver in drivers:
@@ -183,7 +185,7 @@ def plot_downforce_levels(
     ax.set_xlabel("Downforce Level (relative difference)", fontsize=12, fontweight="bold")
     ax.set_ylabel("Driver", fontsize=12, fontweight="bold")
     ax.set_title(
-        f"{sess.event.year} {sess.event['EventName']} Qualifying - Downforce Levels\n"
+        f"{sess.event.year} {sess.event['EventName']} {sess.name} - Downforce Levels\n"
         "(Avg Speed / Max Speed x 100)",
         fontsize=14,
         fontweight="bold",
@@ -263,6 +265,8 @@ def plot_throttle_distance(
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     if drivers is None:
         drivers = list(sess.laps["Driver"].unique())
+    else:
+        drivers = _common.resolve_drivers(sess, drivers, 0)
 
     throttle_data: list[dict[str, Any]] = []
     for driver in drivers:
@@ -320,7 +324,7 @@ def plot_throttle_distance(
     ax.set_xlabel("Distance at Full Throttle (relative difference)", fontsize=12, fontweight="bold")
     ax.set_ylabel("Driver", fontsize=12, fontweight="bold")
     ax.set_title(
-        f"{sess.event.year} {sess.event['EventName']} Qualifying - Full Throttle Distance\n"
+        f"{sess.event.year} {sess.event['EventName']} {sess.name} - Full Throttle Distance\n"
         f"(% of lap distance at >= {throttle_threshold:.0f}% throttle)",
         fontsize=14,
         fontweight="bold",
@@ -689,6 +693,8 @@ def plot_race_launch_ratings(
 
     if drivers is None:
         drivers = list(sess.laps["Driver"].unique())
+    else:
+        drivers = _common.resolve_drivers(sess, drivers, 0)
 
     rows: list[dict[str, Any]] = []
     for driver in drivers:

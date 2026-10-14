@@ -24,7 +24,11 @@ ver_laps = ver.laps
 print(f"\n{'=' * 50}")
 print(f"VER LAPS ({len(ver_laps)} total)")
 print("=" * 50)
-print(ver_laps[["lap", "time", "compound", "s1", "s2", "s3"]].head())
+print(
+    ver_laps[
+        ["LapNumber", "LapTime", "Compound", "Sector1Time", "Sector2Time", "Sector3Time"]
+    ].head()
+)
 
 # Get telemetry for a specific lap
 lap_19 = ver.get_lap(19)
@@ -34,7 +38,7 @@ print(f"VER LAP 19 TELEMETRY ({len(telemetry)} points)")
 print("=" * 50)
 print(telemetry[["Time", "Speed", "Throttle", "Brake", "RPM", "nGear"]].head(10))
 
-# Show position and acceleration data if available
+# Show position (X/Y/Z in 1/10 m) and acceleration data if available
 if "X" in telemetry.columns:
     print(f"\n{'=' * 50}")
     print("POSITION & ACCELERATION DATA")
@@ -52,6 +56,8 @@ print("=" * 50)
 print(f"Max Speed: {telemetry['Speed'].max():.1f} km/h")
 print(f"Max RPM: {telemetry['RPM'].max():.0f}")
 print(f"Max Throttle: {telemetry['Throttle'].max():.1f}%")
-if "AccelerationY" in telemetry.columns:
-    print(f"Max Acceleration: {telemetry['AccelerationY'].max():.2f} m/s²")
-    print(f"Max Braking: {telemetry['AccelerationY'].min():.2f} m/s²")
+if "AccelerationX" in telemetry.columns:
+    # AccelerationX is longitudinal, AccelerationY is lateral (both in m/s²)
+    print(f"Max Acceleration: {telemetry['AccelerationX'].max():.2f} m/s²")
+    print(f"Max Braking: {telemetry['AccelerationX'].min():.2f} m/s²")
+    print(f"Max Lateral: {telemetry['AccelerationY'].abs().max():.2f} m/s²")

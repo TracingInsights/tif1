@@ -119,7 +119,7 @@ The Closed state is the default, healthy operating mode where everything is work
 **Monitoring**:
 - Tracks the failure count for each request using thread-safe atomic operations
 - The failure counter counts consecutive failures: it accumulates until a request succeeds
-- The `last_failure_time` property records when the most recent failure occurred
+- The `last_failure_time` attribute records when the most recent failure occurred
 
 **Transition Conditions**:
 - Remains in Closed state as long as the failure count stays below the configured threshold
@@ -137,7 +137,7 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 **Behavior**:
 - All requests are immediately blocked without attempting to contact the downstream service
 - No network calls are made, no timeouts are waited for, and no resources are consumed
-- Requests fail instantly with `CircuitBreakerOpenError("Circuit breaker is open")`, a `NetworkError` subclass
+- Requests fail instantly with `CircuitBreakerOpenError`, a `NetworkError` subclass whose message is "Circuit breaker is open"
 - The circuit breaker starts a timeout timer using monotonic time
 
 **Duration**:
@@ -153,7 +153,7 @@ The Open state is the circuit breaker's protective mode, activated when the fail
 
 **Error Handling**:
 - Raises `CircuitBreakerOpenError` ("Circuit breaker is open") immediately for all requests
-- This exception is distinct from network errors, so code can handle circuit breaker failures differently
+- The exception subclasses `NetworkError`, so transport-error handlers catch it too; check `isinstance(e, CircuitBreakerOpenError)` to handle it differently
 - The immediate failure prevents resource waste and provides fast feedback
 
 **Use Case**: This state protects both the application and the failing service. The application avoids wasting resources on requests that fail. The failing service gets time to recover without new requests. Users get immediate error responses instead of waiting for timeouts.
@@ -221,7 +221,7 @@ stateDiagram-v2
 
 4. **Open → Open (Timeout Not Elapsed)**: In Open state, the timeout has not elapsed. All requests are blocked immediately, and the circuit remains open.
 
-5. **Open → Half-Open (Timeout Elapsed)**: When the timeout elapses, the circuit transitions to Half-Open on the next request. The circuit then allows one test request through.
+5. **Open → Half-Open (Timeout Elapsed)**: When the timeout elapses, the circuit transitions to Half-Open on the next request. The circuit then lets requests through again.
 
 6. **Half-Open → Closed (Test Success)**: If the test request succeeds, the circuit closes. It resets the failure counter to 0 and resumes normal operation.
 
@@ -295,10 +295,12 @@ Here's an example demonstrating thread-safe behavior with multiple concurrent th
 
 ```python
 import threading
-from tif1.retry import get_circuit_breaker
+from tif1.retry import CircuitBreaker
 import time
 
-cb = get_circuit_breaker()
+# A private instance: the failures injected below must not open the global
+# breaker that tif1's own CDN fetches share (get_circuit_breaker()).
+cb = CircuitBreaker(threshold=5, timeout=60)
 
 def worker(worker_id):
     """Simulate concurrent requests from multiple threads."""
@@ -352,7 +354,7 @@ In this example:
 - The actual function execution happens outside the lock to avoid holding it during I/O
 - This minimizes lock contention and allows high concurrency
 
-**Lock-Free Reads**:
+**Locked Reads**:
 - The `state` and `failures` properties use the lock for reads to ensure memory visibility
 - This adds minimal overhead compared to lock-free reads but guarantees correctness
 - In practice, the overhead is negligible compared to network I/O times
@@ -385,7 +387,7 @@ class CircuitBreaker:
 **Parameters:**
 
 <ParamField path="threshold" type="int" default={5}>
-  Number of consecutive failures required before the circuit breaker opens. Must be >= 1.
+  Number of consecutive failures required before the circuit breaker opens. The constructor does not check the value. The global instance clamps it to at least 1.
 
   **Choosing the right threshold:**
   - **Lower values (1-3)**: More sensitive, opens quickly. Use for critical services where fast failure detection is important. Also use when good fallback strategies exist.
@@ -404,7 +406,7 @@ class CircuitBreaker:
 </ParamField>
 
 <ParamField path="timeout" type="int" default={60}>
-  Number of seconds the circuit breaker remains open before transitioning to half-open state to test recovery. Must be >= 1.
+  Number of seconds the circuit breaker remains open before transitioning to half-open state to test recovery. The constructor does not check the value. The global instance clamps it to at least 1.
 
   **Choosing the right timeout:**
   - **Short timeouts (10-30s)**: Quick recovery testing. Use when services typically recover quickly. Also use to minimize downtime.
@@ -474,9 +476,9 @@ class CircuitBreaker:
 </ResponseField>
 
 <ResponseField name="last_failure_time" type="datetime | None">
-  Timestamp of the most recent failure using `datetime.now()`. Useful for logging, monitoring, and debugging.
+  Timestamp of the most recent failure using `datetime.now()`. Useful for logging, monitoring, and debugging. A plain attribute, not a locked property.
 
-  This property is `None` if no failures have occurred since the circuit breaker was created or reset. The timestamp uses wall-clock time (not monotonic time) for human readability.
+  This attribute is `None` if no failures have occurred since the circuit breaker was created or reset. The timestamp uses wall-clock time (not monotonic time) for human readability.
 
   **Usage:**
   ```python
@@ -694,9 +696,13 @@ def get_circuit_breaker() -> CircuitBreaker
 **Returns:**
 
 <ResponseField name="CircuitBreaker" type="CircuitBreaker">
-  The global `CircuitBreaker` instance that `tif1` uses internally for all CDN requests and network operations.
+  The global `CircuitBreaker` instance that the `tif1` payload fetches share.
 
-  This is a singleton instance that is shared across the entire application. All `tif1` data fetching operations (session loading, lap data, telemetry, etc.) use this same circuit breaker instance. The instance provides unified failure detection and protection across all network operations.
+  This is a singleton instance that is shared across the entire application. Two fetch paths use it:
+  - The batch fetch path (lap and telemetry batches) calls `check_and_update_state()` before each attempt. It records one success or failure per attempt. When the circuit is open, the fetch fails with `NetworkError` and no request is sent.
+  - The single-payload path with retries sends each CDN request through `retry_with_backoff`, which calls `call()`. There, every exception counts as a failure, except a missing file (404), a refused file (403) and a malformed payload (`InvalidDataError`).
+
+  The single-payload path without retries (`ultra_cold_skip_retries`) and the live schedule download do not use the circuit breaker.
 </ResponseField>
 
 **When to Use:**
@@ -727,13 +733,9 @@ if cb.last_failure_time:
 
 ```python
 from tif1.retry import get_circuit_breaker
-from flask import Flask, jsonify
 
-app = Flask(__name__)
-
-@app.route('/health')
-def health_check():
-    """Health check endpoint that includes circuit breaker status."""
+def health_check() -> tuple[dict, int]:
+    """Health payload and HTTP status for a /health route of any web framework."""
     cb = get_circuit_breaker()
 
     health_status = {
@@ -750,7 +752,10 @@ def health_check():
         health_status["circuit_breaker"]["last_failure"] = cb.last_failure_time.isoformat()
 
     status_code = 200 if cb.state == "closed" else 503
-    return jsonify(health_status), status_code
+    return health_status, status_code
+
+payload, status = health_check()
+print(status, payload["status"])
 ```
 
 **Example - Conditional Logic Based on State:**
@@ -1254,7 +1259,7 @@ def retry_with_backoff(
 ```
 
 **Parameters:**
-- `max_retries`: Total number of attempts, including the first call (default: 3)
+- `max_retries`: Total number of attempts, including the first call (default: 3). A value below 1 makes one attempt
 - `backoff_factor`: Exponential backoff multiplier (default: 2.0)
 - `jitter`: Add random jitter to backoff (default: True)
 - `exceptions`: Tuple of exceptions to catch (default: all exceptions)
@@ -1374,8 +1379,11 @@ config.save()
 | `circuit_breaker_timeout` | `int` | `60` | Seconds before testing recovery |
 | `retry_backoff_factor` | `float` | `2.0` | Exponential backoff multiplier |
 | `retry_jitter` | `bool` | `True` | Add random jitter to backoff |
-| `max_retry_delay` | `float` | `60.0` | Maximum retry delay in seconds |
-| `max_retries` | `int` | `3` | Attempts for each payload fetch |
+| `retry_jitter_max` | `float` | `0.0` | Maximum jitter in seconds in the batch fetch path (`0.0` adds none) |
+| `max_retry_delay` | `float` | `60.0` | Maximum retry delay in seconds in the batch fetch path |
+| `max_retries` | `int` | `3` | Attempts for each payload fetch, the first included (`0` or `1`: no retries) |
+
+The single-payload path wraps each CDN request in `retry_with_backoff` with `max_retries`, `retry_backoff_factor` and `retry_jitter`. The batch fetch path waits `min(retry_backoff_factor ** attempt, max_retry_delay)` seconds between attempts. With `retry_jitter` on, it adds a random `0` to `retry_jitter_max` seconds.
 
 ---
 
@@ -1459,7 +1467,6 @@ data = fetch_with_logging(URL)
 import tif1
 from tif1.retry import get_circuit_breaker
 from tif1.exceptions import NetworkError
-from urllib.parse import quote
 
 def load_session_with_fallback(year, gp, session_name):
     """Load session with fallback to cached data."""
@@ -1486,8 +1493,8 @@ def load_from_cache_only(year, gp, session_name):
     """Load a session only when the cache already holds its data."""
     cache = tif1.get_cache()
 
-    # Cache keys use the URL-encoded event and session names
-    if not cache.has_session_data(year, quote(gp), quote(session_name)):
+    # has_session_data() accepts plain or URL-encoded names
+    if not cache.has_session_data(year, gp, session_name):
         raise ValueError("No cached data available")
 
     # Cached payloads load without network requests
@@ -1541,7 +1548,7 @@ class RetryProgress:
 # Usage
 @RetryProgress(max_retries=5)
 def fetch_data(url):
-    # Your fetch logic
+    # Fetch logic goes here
     pass
 
 data = fetch_data("https://example.com/data.json")

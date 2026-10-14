@@ -358,6 +358,25 @@ def test_pandas_subclass_reconstruction_preserves_metadata():
     assert driver_result.copy().session is session
 
 
+def test_series_subclasses_keep_name_through_copy_and_groupby():
+    """Series subclasses keep pandas' ``_name`` metadata, so groupby keys stay named."""
+    session = SimpleNamespace(_get_driver_info=lambda _driver: {"dn": "1"})
+
+    laps = core.Laps(
+        {"Driver": ["VER", "HAM", "VER"], "Stint": [1, 1, 2], "LapTime": [3.0, 2.0, 1.0]},
+        session=session,
+    )
+    assert laps["Driver"].copy(deep=False).name == "Driver"
+    grouped = laps.groupby(["Driver", "Stint"]).agg(LapTime=("LapTime", "min"))
+    assert list(grouped.reset_index().columns) == ["Driver", "Stint", "LapTime"]
+
+    lap = core.Lap({"Driver": "VER"}, name=7, session=session)
+    driver_result = core.DriverResult({"Status": "Finished"}, name="VER", session=session)
+    driver = core.Driver(session, "VER")
+    for series in (lap, driver_result, driver):
+        assert series.copy().name == series.name
+
+
 def test_driver_reconstruction_preserves_identity_without_sharing_caches(monkeypatch):
     """Driver pandas operations preserve identity and reset derived lookup state."""
     session = SimpleNamespace(

@@ -80,12 +80,12 @@ laps = session.laps
 
 **Debug Output Example** (a warm cache; a cold load also logs the CDN requests):
 ```text
-2026-10-14 13:51:38 - tif1.core - DEBUG - Session initialized: year=2021, gp=Belgian Grand Prix, session=Race, lib=pandas
-2026-10-14 13:51:38 - tif1.core - INFO - Loading laps async (pandas): 2021_Belgian%20Grand%20Prix_Race_laps
-2026-10-14 13:51:38 - tif1.cache - DEBUG - SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
-2026-10-14 13:51:38 - tif1.cache - DEBUG - Cache hit (SQLite): 2021/Belgian%20Grand%20Prix/Race/drivers.json
-2026-10-14 13:51:38 - tif1.async_fetch - DEBUG - Thread pool executor initialized (max_workers=32)
-2026-10-14 13:51:38 - tif1.cache - DEBUG - Cache hit (SQLite): 2021/Belgian%20Grand%20Prix/Race/session_laptimes.json
+2026-10-14 18:40:49 - tif1.core - DEBUG - Session initialized: year=2021, gp=Belgian Grand Prix, session=Race, lib=pandas
+2026-10-14 18:40:49 - tif1.cache - DEBUG - SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
+2026-10-14 18:40:49 - tif1.core - INFO - Loading laps async (pandas): 2021_Belgian%20Grand%20Prix_Race_laps
+2026-10-14 18:40:49 - asyncio - DEBUG - Using selector: EpollSelector
+2026-10-14 18:40:49 - tif1.core - INFO - Laps frame tier hit: 2021/Belgian%20Grand%20Prix/Race
+2026-10-14 18:40:49 - tif1.cache - DEBUG - Cache connection closed
 ```
 
 **Selective Logging Example:**
@@ -121,9 +121,8 @@ logging.getLogger("tif1.async_fetch").setLevel(logging.DEBUG)
 ```
 
 **Performance Considerations:**
-- DEBUG logging adds ~5-10% overhead due to string formatting
-- INFO logging adds ~1-2% overhead
-- WARNING and above have negligible performance impact
+- DEBUG and INFO logging format and write a record for each cache lookup and fetch step
+- WARNING and above log only problems, so they add almost no work
 - Python logging is synchronous: each record is written in the thread that logs it
 
 **Best Practices:**
@@ -223,7 +222,7 @@ Update a configuration value in memory.
 
 **Behavior:**
 - Most settings take effect on the next operation that reads them
-- Some components read their settings once, when they are created. The CDN manager reads `cdns` when `tif1` is imported. The circuit breaker applies new values after `reset_circuit_breaker()`
+- Some components read their settings once, when they are created. The CDN manager reads `cdns` and `cdn_use_minification` when `tif1.cdn` is first imported; `get_cdn_manager().reload()` applies a change. The circuit breaker applies new values after `reset_circuit_breaker()`
 - Changes are in-memory only until `save()` is called
 - `set()` does no type conversion: pass the type that the key expects (for example, an `int` for `timeout`)
 - Unknown keys are stored as-is
@@ -309,13 +308,13 @@ Reference of all configuration options:
 
 | Key | Type | Default | Description | Performance Impact |
 | :--- | :--- | :--- | :--- | :--- |
-| `lib` | `str` | `"pandas"` | DataFrame library: `"pandas"` or `"polars"` | Polars is 2-5x faster for large datasets |
+| `lib` | `str` | `"pandas"` | DataFrame library: `"pandas"` or `"polars"` | Depends on the workload; pick the library of the analysis code |
 | `enable_cache` | `bool` | `True` | Enable multi-layer caching system | Disabling eliminates cache overhead but requires re-fetching |
 | `cache_dir` | `str` | OS-dependent | SQLite cache database location | SSD recommended for best performance |
 | `timeout` | `int` | `30` | Network request timeout in seconds | Increase for slow connections |
 | `max_retries` | `int` | `3` | Maximum retry attempts for failed requests | More retries = better reliability, slower failures |
-| `validate_data` | `bool` | `False` | Enable Pydantic validation of JSON data | Enabling adds ~10-15% processing time |
-| `ultra_cold_start` | `bool` | `True` | Skip loading full session data, fetch on-demand | Much faster for single lap queries |
+| `validate_data` | `bool` | `False` | Enable Pydantic validation of JSON data | Enabling adds validation work to each payload |
+| `ultra_cold_start` | `bool` | `True` | Cold-start fast path: an uncached session skips the cache read and validation | Faster first load; a cached session loads from the cache as usual |
 | `circuit_breaker_threshold` | `int` | `5` | Failures before circuit breaker opens | Lower = faster failure detection |
 | `circuit_breaker_timeout` | `int` | `60` | Circuit breaker reset timeout in seconds | Time to wait before retrying failed service |
 | `cdns` | `list[str]` | `["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"]` | List of CDN base URLs, tried in order | Multiple CDNs improve reliability |
@@ -407,8 +406,8 @@ from pathlib import Path
 
 config = tif1.get_config()
 
-# Use project-specific cache
-project_cache = Path(__file__).parent / ".cache" / "tif1"
+# Use a project-specific cache (here: under the working directory)
+project_cache = Path.cwd() / ".cache" / "tif1"
 config.set("cache_dir", str(project_cache))
 
 # Or use system temp directory
@@ -416,6 +415,8 @@ import tempfile
 temp_cache = Path(tempfile.gettempdir()) / "tif1_cache"
 config.set("cache_dir", str(temp_cache))
 
+# The cache reads cache_dir once, when it is created (first data load).
+# Set it before that, or save it and start a new process.
 config.save()
 ```
 
@@ -423,10 +424,10 @@ config.save()
 
 1. **Use environment variables for deployment**: Easier to configure across environments without code changes
 2. **Save configuration after tuning**: Persist the optimized settings with `config.save()`
-3. **Use polars for production**: Better performance and memory efficiency
-4. **Disable validation in production**: Saves ~10-15% processing time if data quality is trusted
+3. **Use polars when the analysis code uses polars**: Laps and telemetry then arrive as polars frames
+4. **Keep validation off in production**: `validate_data` is off by default; turn it on to check untrusted data
 5. **Increase timeout for slow networks**: Default 30s may not be enough on mobile/satellite connections
-6. **Use ultra-cold start for single lap queries**: Faster when only one lap's telemetry is needed
+6. **Keep ultra-cold start on**: It makes the first load of an uncached session faster
 7. **Configure the circuit breaker for each use case**: Lower threshold for fail-fast, higher for resilience
 8. **Use multiple CDNs for reliability**: Configure fallback CDNs in production
 
@@ -440,9 +441,9 @@ The `tif1` caching system is a performance component that reduces data loading t
 
 The cache system consists of three layers:
 
-1. **In-memory LRU cache**: Fast access to recently used DataFrames (separate caches for pandas and polars)
-2. **SQLite persistent cache**: Disk-based storage for JSON responses and telemetry data
-3. **Automatic cache warming**: Prefetches commonly accessed data
+1. **In-memory LRU tiers of the `Cache` object**: Raw and parsed JSON and telemetry payloads
+2. **SQLite persistent cache**: Disk-based storage for JSON responses, telemetry payloads and built DataFrames
+3. **Process-global lap caches**: One LRU of lap DataFrames for pandas and one for polars (see `clear_lap_cache()`)
 
 ### `get_cache`
 
@@ -587,7 +588,7 @@ Store telemetry data in cache.
 
 **Behavior:**
 - Stores in both memory and SQLite
-- Uses optimized storage format
+- Compresses payloads of 4 KB or more in SQLite (zstd, or zlib without zstd)
 - Automatically commits periodically
 - Enables fast subsequent access
 
@@ -647,15 +648,16 @@ Check if cache contains data for a specific session.
 
 **Parameters:**
 - `year` (int): Season year
-- `gp` (str): Grand Prix name, URL-encoded as in `session.gp`
-- `session` (str): Session name, URL-encoded as in `session.session`
+- `gp` (str): Grand Prix name, URL-encoded as in `session.gp` (the plain name also works)
+- `session` (str): Session name, URL-encoded as in `session.session` (the plain name also works)
 
 **Returns:**
 - `True` if session data exists in cache, `False` otherwise
 
 **Behavior:**
 - Returns `True` when any cached JSON file or telemetry entry belongs to the session
-- Fast operation (one prefix query)
+- Fast operation (a memory scan, then at most two SQLite queries)
+- Returns `True` when the probe itself fails, so that loads still try the cache
 - Useful for pre-flight checks before loading
 
 **Example:**
@@ -696,8 +698,7 @@ cache.clear()
 print("All cache data cleared")
 
 # Verify cache is empty
-has_data = cache.has_session_data(2025, "Monaco%20Grand%20Prix", "Race")
-assert not has_data, "Cache should be empty"
+print(cache.has_session_data(2025, "Monaco%20Grand%20Prix", "Race"))  # False
 ```
 
 **Use Cases:**
@@ -714,35 +715,23 @@ Close the SQLite database connection and flush pending writes.
 - Commits any pending transactions
 - Closes database connection
 - Releases file locks
-- Should be called before application exit
+- `tif1` registers an `atexit` hook that closes the global cache, so an explicit call is not necessary
+
+<Note>
+  Closing the global cache also releases it: the next `get_cache()` call opens a new, working instance, and later loads use it. The closed object itself stays closed: its reads miss and its writes are dropped. Call `get_cache()` again instead of keeping the old reference.
+</Note>
 
 **Example:**
 ```python
-import atexit
 import tif1
 
 cache = tif1.get_cache()
+cache.close()  # commits pending writes and closes the connection
 
-# Ensure cache is closed on exit
-atexit.register(cache.close)
-
-# Or manually close
-try:
-    # ... your code ...
-    pass
-finally:
-    cache.close()
+# get_cache() now opens a new instance
+new_cache = tif1.get_cache()
+print(new_cache is cache)  # False
 ```
-
-### Cache Performance Characteristics
-
-| Operation | Memory Cache | SQLite Cache | Network Fetch |
-| :--- | :--- | :--- | :--- |
-| Lap data lookup | ~0.001ms | ~1-5ms | ~100-500ms |
-| Telemetry lookup | ~0.001ms | ~2-10ms | ~50-200ms |
-| Batch telemetry (10 laps) | ~0.01ms | ~5-20ms | ~500-2000ms |
-| Session data check | ~0.001ms | ~1ms | N/A |
-| Cache clear | ~1ms | ~10-50ms | N/A |
 
 ### Cache Size Management
 
@@ -760,30 +749,18 @@ size_bytes = sum(path.stat().st_size for path in Path(cache.cache_dir).glob("cac
 print(f"Cache size: {size_bytes / (1024 * 1024):.2f} MB")
 ```
 
-**Typical Cache Sizes:**
-- Single session: ~5-15 MB
-- Full season (all sessions): ~500-800 MB
-- Multiple seasons: ~2-5 GB
-
 **Cache Cleanup Strategies:**
 
 ```python
 import tif1
-from pathlib import Path
 
 cache = tif1.get_cache()
 
-# Strategy 1: Clear everything
+# Strategy 1: Clear everything (the database file keeps its size)
 cache.clear()
-
-# Strategy 2: Delete the cache database files
-cache.close()
-for path in Path(cache.cache_dir).glob("cache.sqlite*"):
-    path.unlink()
-
-# Strategy 3: Selective clearing (manual SQL)
-# Not recommended - use clear() instead
 ```
+
+Strategy 2 is to delete the database files. First stop all Python processes that use `tif1`. Then delete `cache.sqlite`, `cache.sqlite-wal` and `cache.sqlite-shm` in the cache directory. A process that has the database open continues to write to the deleted file.
 
 ### Async Cache Operations
 
@@ -824,8 +801,8 @@ asyncio.run(fetch_cached_data())
 2. **Do not clear cache unnecessarily**: The cache improves performance on repeated loads
 3. **Monitor cache size**: Set up periodic cleanup if disk space is limited
 4. **Use batch operations**: `get_telemetry_batch()` is much faster than individual calls
-5. **Close cache on exit**: Use `atexit.register(cache.close)` to ensure clean shutdown
-6. **Check cache before loading**: Use `has_session_data()` to avoid unnecessary network calls
+5. **Do not keep a closed cache object**: `tif1` closes the cache at exit. After `close()`, call `get_cache()` again
+6. **Check what is cached**: `has_session_data()` tells whether any file of a session is in the cache
 7. **Use SSD for cache**: Faster than HDD for SQLite operations
 8. **Consider cache location**: Put cache on fast local storage, not network drives
 
@@ -1103,7 +1080,7 @@ Calculate delta time between two laps (FastF1 compatibility function).
 def delta_time(reference_lap: Lap, compare_lap: Lap) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
 ```
 
-This function uses the same algorithm as FastF1's `delta_time`. It interpolates the comparison lap's time onto the reference lap's distance axis.
+This function follows FastF1's `delta_time`, without the distance scaling of recent FastF1 versions. It interpolates the comparison lap's time onto the reference lap's distance axis.
 
 **Parameters:**
 - `reference_lap` (Lap): Reference lap (for example, from `laps.pick_fastest()` or `Driver.get_lap()`), or a telemetry frame with `Time` and `Distance`
@@ -1119,7 +1096,9 @@ This function uses the same algorithm as FastF1's `delta_time`. It interpolates 
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying")
+# pick_driver() and pick_fastest() are pandas Laps methods: ask for pandas
+# even when the configuration selects polars
+session = tif1.get_session(2021, "Belgian Grand Prix", "Qualifying", lib="pandas")
 laps = session.laps
 
 # Get fastest laps for two drivers
@@ -1150,7 +1129,7 @@ The circuit breaker is a critical reliability component. It stops the applicatio
 
 1. **Closed** (Normal): All requests are allowed through
 2. **Open** (Failing): Requests are blocked immediately without attempting
-3. **Half-Open** (Testing): Limited requests allowed to test if service recovered
+3. **Half-Open** (Testing): Requests are allowed again. A success closes the breaker and a failure opens it again
 
 **State Transitions:**
 ```text
@@ -1162,7 +1141,7 @@ Half-Open --[failure]--> Open
 
 ### `get_circuit_breaker`
 
-Returns the global circuit breaker instance used for all network requests.
+Returns the global circuit breaker instance used for CDN payload requests.
 
 ```python
 def get_circuit_breaker() -> CircuitBreaker
@@ -1268,6 +1247,12 @@ Record a successful operation (resets failure count).
 **Example** (`fetch_data()` stands for the application's own network call):
 ```python
 from tif1.retry import get_circuit_breaker
+
+
+def fetch_data():
+    """Stand-in for the application's own network call."""
+    return {"status": "ok"}
+
 
 cb = get_circuit_breaker()
 
@@ -1429,15 +1414,21 @@ Mark a CDN source as failed (increments failure count).
 - Disables source if it reaches max failures (3)
 - Logs warning when source is disabled
 
-**Example** (`fetch_from_cdn()` stands for the application's own request):
+**Example** (`request_from_cdn()` stands for the application's own request):
 ```python
 from tif1.cdn import get_cdn_manager
+
+
+def request_from_cdn(source_name):
+    """Stand-in for the application's own request to one CDN."""
+    return {"source": source_name}
+
 
 cdn = get_cdn_manager()
 
 try:
     # Attempt to fetch from CDN
-    data = fetch_from_cdn("jsDelivr")
+    data = request_from_cdn("jsDelivr")
 except Exception:
     cdn.mark_failure("jsDelivr")
 ```
@@ -1458,7 +1449,7 @@ Mark a CDN source as successful (resets failure count).
 cdn = get_cdn_manager()
 
 try:
-    data = fetch_from_cdn("jsDelivr")
+    data = request_from_cdn("jsDelivr")
     cdn.mark_success("jsDelivr")
 except Exception:
     cdn.mark_failure("jsDelivr")
@@ -1661,7 +1652,7 @@ This function clears both the pandas and polars lap DataFrame caches, freeing me
 - Clears pandas lap cache
 - Clears polars lap cache
 - Does NOT affect SQLite cache (persistent storage)
-- Immediate effect on memory usage
+- Frees the cached lap DataFrames that no `Session` object still holds
 - Thread-safe operation
 
 **When to Use:**
@@ -1675,19 +1666,19 @@ This function clears both the pandas and polars lap DataFrame caches, freeing me
 from tif1.cache import clear_lap_cache
 import tif1
 
-# Load and process a session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+# Load and process a session (pick_fastest() is a pandas Laps method)
+session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="pandas")
 laps = session.laps
 
 # Do analysis...
-fastest_laps = laps.pick_fastest()
+fastest_lap = laps.pick_fastest()
 
 # Clear memory cache when done
 clear_lap_cache()
 print("Lap cache cleared - memory freed")
 ```
 
-**Memory Impact Example:**
+**Memory Impact Example** (needs `psutil`: `pip install psutil`):
 ```python
 import tif1
 from tif1.cache import clear_lap_cache
@@ -1721,11 +1712,6 @@ print(f"Memory after clearing: {mem_cleared:.1f} MB")
 print(f"Memory freed: {mem_after - mem_cleared:.1f} MB")
 ```
 
-**Typical Memory Usage:**
-- Single session lap DataFrame: ~5-15 MB
-- Full season in cache: ~200-500 MB
-- Clearing cache can free 50-80% of lap data memory
-
 **Best Practices:**
 1. Clear cache between unrelated analyses
 2. Clear cache in batch processing loops
@@ -1743,8 +1729,8 @@ def process_season_with_memory_management(year):
     schedule = tif1.get_event_schedule(year, include_testing=False)
 
     for i, event_name in enumerate(schedule["EventName"]):
-        # Load and process session
-        session = tif1.get_session(year, event_name, "Race")
+        # Load and process session (pick_fastest() needs the pandas backend)
+        session = tif1.get_session(year, event_name, "Race", lib="pandas")
         laps = session.laps
 
         # Your analysis here
@@ -1879,8 +1865,8 @@ import tif1
 from pathlib import Path
 import json
 
-def cache_management_dashboard():
-    """Interactive cache management dashboard."""
+def cache_management_dashboard(choice="1", confirm=False):
+    """Cache management dashboard (choice: "1" keep, "2" clear, "3" export)."""
     cache = tif1.get_cache()
     config = tif1.get_config()
 
@@ -1938,11 +1924,8 @@ def cache_management_dashboard():
     print("  3. Export cache info")
     print(f"{'='*60}")
 
-    choice = input("\nSelect option (1-3): ").strip()
-
     if choice == "2":
-        confirm = input("Are you sure you want to clear the cache? (yes/no): ")
-        if confirm.lower() == "yes":
+        if confirm:
             cache.clear()
             print("✓ Cache cleared successfully")
         else:
@@ -1964,7 +1947,7 @@ def cache_management_dashboard():
     else:
         print("✓ Cache preserved")
 
-# Run dashboard
+# Run dashboard (keeps the cache; pass choice="3" to export the info)
 cache_management_dashboard()
 ```
 
@@ -2153,7 +2136,6 @@ def optimize_for_performance():
         "lib": "polars",  # Faster DataFrame operations
         "validate_data": False,  # Skip validation overhead
         "enable_cache": True,  # Use caching
-        "cdn_use_minification": True,  # Smaller downloads
         "timeout": 30,  # Don't wait too long
         "max_retries": 3,  # Reasonable retry count
     }
@@ -2170,20 +2152,16 @@ def optimize_for_performance():
     print("\nRunning benchmark...")
     print("-"*60)
 
-    # Clear cache for fair test
-    cache = tif1.get_cache()
-    cache.clear()
-    clear_lap_cache()
-
-    # Test load time
+    # Cold load: enable_cache=False reads nothing from the cache (data comes from the CDN)
     start = time.time()
-    session = tif1.get_session(2021, "Monaco Grand Prix", "Race")
+    session = tif1.get_session(2021, "Monaco Grand Prix", "Race", enable_cache=False)
     laps = session.laps
     first_load = time.time() - start
 
     print(f"First load (cold): {first_load:.2f}s")
 
-    # Test cached load
+    # Fill the cache once, then time a cached load
+    tif1.get_session(2021, "Monaco Grand Prix", "Race").laps
     clear_lap_cache()  # Clear memory cache only
     start = time.time()
     session = tif1.get_session(2021, "Monaco Grand Prix", "Race")
@@ -2321,9 +2299,8 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    config.set("lib", "pandas")
    ```
    - More familiar API for most developers
-   - Better error messages
+   - `Laps` methods such as `pick_driver()` and `pick_fastest()` are available
    - Easier to inspect intermediate results
-   - Switch to polars for production
 
 3. **Keep Validation Enabled**
    ```python
@@ -2332,7 +2309,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Catches data quality issues early
    - Provides clear error messages
    - Helps identify API changes
-   - ~10-15% overhead is acceptable in development
+   - The validation overhead is acceptable in development
 
 4. **Use Shorter Timeouts**
    ```python
@@ -2348,27 +2325,26 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    cache.clear()
    ```
    - Ensures that tests run with fresh data
-   - Validates cache warming logic
+   - Forces new downloads from the CDN
    - Catches cache-related bugs
 
 ### Production Best Practices
 
-1. **Use Polars for Maximum Performance**
+1. **Use Polars When the Analysis Code Uses Polars**
    ```python
    config = tif1.get_config()
    config.set("lib", "polars")
    config.save()
    ```
-   - 2-5x faster DataFrame operations
-   - Better memory efficiency
-   - Lower CPU usage
-   - Handles larger datasets
+   - Laps and telemetry arrive as polars frames
+   - No conversion step in polars pipelines
+   - The `Laps` helper methods (`pick_*`) need the pandas backend
 
 2. **Keep Validation Off in Production**
    ```python
    config.set("validate_data", False)  # the default
    ```
-   - Saves ~10-15% processing time
+   - Skips the validation work on each payload
    - Reduces CPU usage
    - Only disable if data quality is trusted
    - Keep enabled if data source is unreliable
@@ -2395,12 +2371,16 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 5. **Use Multiple CDNs**
    ```python
+   from tif1.cdn import get_cdn_manager
+
    config.set("cdns", [
        "https://cdn.jsdelivr.net/gh/TracingInsights",
-       "https://backup-cdn.example.com/TracingInsights"
+       "https://huggingface.co/buckets/tracinginsights",
+       "https://cdn.staticdelivr.com/gh/TracingInsights",
+       "https://mirror.example.com/TracingInsights",  # a custom mirror
    ])
-   # The CDN manager reads "cdns" when tif1 is imported,
-   # so save the list and start a new process to apply it.
+   # The CDN manager reads "cdns" once; reload() applies the new list
+   get_cdn_manager().reload()
    config.save()
    ```
    - Automatic fallback on CDN failure
@@ -2408,16 +2388,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Geographic redundancy
    - Load distribution
 
-6. **Enable CDN Minification**
-   ```python
-   config.set("cdn_use_minification", True)
-   ```
-   - Reduces bandwidth by 20-40%
-   - Faster downloads
-   - Lower data costs
-   - Minimal CPU overhead
-
-7. **Set Up Proper Logging**
+6. **Set Up Proper Logging**
    ```python
    import logging
 
@@ -2436,29 +2407,16 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Debug production issues
    - Audit data access
 
-8. **Close Cache on Exit**
-   ```python
-   import atexit
-   import tif1
-
-   cache = tif1.get_cache()
-   atexit.register(cache.close)
-   ```
-   - Ensures data is flushed to disk
-   - Prevents corruption
-   - Releases file locks
-   - Clean shutdown
-
 ### Performance Optimization
 
-1. **Use Ultra Cold Start for Single Lap Queries**
+1. **Keep Ultra Cold Start On**
    ```python
-   config.set("ultra_cold_start", True)
+   config.set("ultra_cold_start", True)  # the default
    ```
-   - Faster for single lap telemetry
-   - Skips loading full session data
-   - On-demand fetching
-   - Not suitable for full session analysis
+   - Faster first load of an uncached session
+   - Skips the cache read and validation on that first load
+   - Still writes the fetched payloads to the cache
+   - A cached session loads from the cache as usual
 
 2. **Clear Lap Cache Periodically**
    ```python
@@ -2542,9 +2500,12 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    ```python
    from tif1.retry import get_circuit_breaker
 
+   def send_alert(message):
+       """Stand-in for the application's own alert hook."""
+       print(f"ALERT: {message}")
+
    cb = get_circuit_breaker()
    if cb.state == "open":
-       # Alert monitoring system (send_alert is the application's own hook)
        send_alert("Circuit breaker is open")
    ```
    - Track circuit breaker state
@@ -2555,6 +2516,11 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 3. **Implement Exponential Backoff**
    ```python
    import time
+
+   from tif1.exceptions import NetworkError
+
+   year, gp, session_type = 2021, "Belgian Grand Prix", "Race"
+   max_retries = 3
 
    for attempt in range(max_retries):
        try:
@@ -2612,26 +2578,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Balance performance vs memory
    - Monitor memory usage
 
-2. **Use Context Managers for Cache**
-   ```python
-   class CacheManager:
-       def __enter__(self):
-           self.cache = tif1.get_cache()
-           return self.cache
-
-       def __exit__(self, *args):
-           self.cache.close()
-
-   with CacheManager() as cache:
-       # Use cache...
-       pass
-   # Cache automatically closed
-   ```
-   - Ensures proper cleanup
-   - Prevents resource leaks
-   - Clean shutdown
-
-3. **Monitor Memory Usage**
+2. **Monitor Memory Usage**
    ```python
    import psutil
    import os
@@ -2749,10 +2696,12 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 1. **Track Performance Metrics**
    ```python
+   import logging
    import time
 
    start = time.time()
    session = tif1.get_session(year, gp, session_type)
+   laps = session.laps  # get_session() alone loads no data
    load_time = time.time() - start
 
    # Log metric
@@ -2765,11 +2714,14 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 2. **Set Up Health Checks**
    ```python
+   import tif1
+   from tif1.cdn import get_cdn_manager
+   from tif1.retry import get_circuit_breaker
+
    def health_check():
        """Check tif1 system health."""
        cb = get_circuit_breaker()
        cdn = get_cdn_manager()
-       cache = tif1.get_cache()
 
        return {
            "circuit_breaker": cb.state,

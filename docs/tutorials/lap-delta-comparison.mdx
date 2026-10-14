@@ -143,7 +143,7 @@ plt.show()
 # tif1.plot_lap_delta(2024, "Monaco", "R", drivers=["VER", "LEC"], save_path="lap_delta.png")
 ```
 
-Bars below zero mean the first driver was faster; bars above zero mean the second driver was faster. The y-axis auto-scales to the data instead of the hardcoded `(-2, 2)` used above. Bars are colored with the faster driver's team color.
+Bars below zero mean the first driver was faster; bars above zero mean the second driver was faster. The y-axis auto-scales to the data instead of the hardcoded `(-2, 2)` used above. Bars are colored with the faster driver's team color. Unlike the manual code, the native function drops deleted laps and pit in/out laps by default. For VER vs LEC, this removes laps 1, 2, 52 and 53.
 
 ## Interpreting the Chart
 
@@ -164,7 +164,7 @@ This visualization helps identify:
 
 ## Filtering Out Outliers
 
-The native function exposes the same filters as parameters. Drop pit laps with `include_pit_laps=False` (the default) and remove safety-car laps with a per-driver `laptime_cutoff`:
+The native function exposes the same filters as parameters. Pit laps are dropped by default (`include_pit_laps=False`). A per-driver `laptime_cutoff` also removes slow laps, such as safety-car laps:
 
 ```python
 import tif1
@@ -188,8 +188,8 @@ To compare different pairs, call the native function with a different `drivers` 
 ```python
 import tif1
 
-# Compare any two drivers
-fig, ax = tif1.plot_lap_delta(2024, "Monaco", "R", drivers=["HAM", "RUS"])
+# Compare any two drivers (pick different teams so the bar colors differ)
+fig, ax = tif1.plot_lap_delta(2024, "Monaco", "R", drivers=["PIA", "SAI"])
 plt.show()
 
 # The default (drivers=None) picks the top-2 finishers

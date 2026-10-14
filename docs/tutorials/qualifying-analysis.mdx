@@ -11,13 +11,14 @@ keywords:
 
 In qualifying, drivers search for the fastest possible lap. This tutorial shows how to analyze qualifying sessions. It compares progression through Q1/Q2/Q3 and identifies where time is gained or lost.
 
-<img src="/assets/qualifying_grid.png" alt="Qualifying results showing top 10 grid positions" />
+<img src="/assets/qualifying_grid.png" alt="Qualifying gap-to-pole chart for the 2023 Spanish Grand Prix" />
+
+The chart above is the native `tif1.plot_qualifying_grid(2023, 'Spanish Grand Prix', 'Q')` output; the [Qualifying Results](/tutorials/qualifying-results) tutorial builds it step by step.
 
 ## Loading Qualifying Data
 
 ```python
 import tif1
-import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -28,7 +29,7 @@ laps = session.laps
 
 ## Understanding Qualifying Structure
 
-Modern F1 qualifying has three segments:
+In the 2025 season, qualifying has three segments:
 - Q1: All 20 drivers, bottom 5 eliminated
 - Q2: Top 15 drivers, bottom 5 eliminated
 - Q3: Top 10 drivers fight for pole
@@ -56,10 +57,10 @@ print(fastest_laps_sorted[["Driver", "Team", "LapTime", "Compound"]].head(10))
 
 ## Visualizing the Grid
 
-Create a visual representation of the qualifying results.
+Create a visual representation of the 10 fastest laps. The order of best laps can differ from the official order. In this session, ALB set his best lap in Q2 and qualified 10th. `session.results` holds the official order.
 
 ```python
-# Get top 10 for pole position battle
+# Get the 10 fastest drivers by best lap
 top_10 = fastest_laps_sorted.head(10)
 
 # Look up team colors from the drivers table
@@ -74,7 +75,7 @@ plt.figure(figsize=(12, 6))
 plt.barh(top_10["Driver"], lap_seconds, color=colors)
 plt.xlabel("Lap Time (s)")
 plt.ylabel("Driver")
-plt.title("Qualifying Results - Top 10")
+plt.title("Fastest Laps - Top 10")
 plt.gca().invert_yaxis()
 plt.tight_layout()
 plt.show()
@@ -86,10 +87,8 @@ Analyze how drivers improved from Q1 to Q3.
 
 ```python
 # Get fastest lap per driver per qualifying segment
-# Wrap in pd.DataFrame: groupby on the Laps subclass drops the key column names
 progression = (
-    pd.DataFrame(laps)
-    .groupby(["Driver", "QualifyingSession"])
+    laps.groupby(["Driver", "QualifyingSession"])
     .agg(LapTime=("LapTime", "min"))
     .reset_index()
 )
@@ -122,7 +121,7 @@ q3_progression = progression[progression["Driver"].isin(q3_drivers)]
 
 # Plot progression (convert timedelta to seconds for matplotlib)
 plt.figure(figsize=(14, 8))
-for driver in q3_drivers[:10]:  # Top 10 only
+for driver in q3_drivers:  # The 10 drivers who reached Q3
     driver_data = q3_progression[q3_progression["Driver"] == driver]
     plt.plot(driver_data["QualifyingSession"],
              driver_data["LapTime"].dt.total_seconds(),
@@ -191,7 +190,7 @@ plt.show()
 Identify which sectors drivers are strongest in.
 
 ```python
-# Get fastest sectors per driver
+# Sector times from each driver's fastest lap
 sector_analysis = fastest_laps_sorted[[
     "Driver", "Sector1Time", "Sector2Time", "Sector3Time"
 ]].copy()
@@ -330,7 +329,7 @@ print(f"Total laps: {results['total_laps']}, Deleted: {results['deleted_laps']}"
 ## Summary
 
 Use `tif1` to:
-- Identify pole position and grid order
+- Identify pole position and rank the best laps
 - Track progression through Q1/Q2/Q3
 - Analyze sector performance
 - Compare telemetry between drivers

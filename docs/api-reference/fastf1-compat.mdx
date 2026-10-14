@@ -39,9 +39,11 @@ The `Cache` class provides fastf1-compatible cache management with improved perf
 
 tif1's caching system consists of three layers:
 
-1. **In-Memory LRU Cache**: Lock-free reads for frequently accessed data (configurable size, default 1024 items)
-2. **Telemetry-Specific Cache**: Dedicated in-memory cache for telemetry data (default 2048 items)
-3. **SQLite Persistence**: WAL-mode SQLite database for durable storage with optimized concurrency
+1. **In-Memory LRU Cache**: Lock-free reads for frequently accessed data (`memory_cache_max_items`, default 1024 items)
+2. **Telemetry-Specific Cache**: Dedicated in-memory cache for telemetry data (`memory_telemetry_cache_max_items`, default 2048 items)
+3. **SQLite Persistence**: WAL-mode SQLite database (`cache.sqlite`) for durable storage with optimized concurrency
+
+Two smaller in-memory LRU tiers (128 and 256 items) keep parsed payloads, so repeated reads skip JSON parsing.
 
 This multi-layer approach ensures that hot data is served from memory while maintaining persistence across sessions.
 
@@ -66,7 +68,7 @@ Enable caching with fastf1-compatible API. This method initializes tif1's cachin
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `cache_dir` | `str \| Path \| None` | `None` | Directory path for cache storage. If `None`, uses the configured cache directory (default: Windows `%LOCALAPPDATA%/Temp/tif1`; macOS `~/Library/Caches/tif1`; Linux/other POSIX `~/.cache/tif1` when `~/.cache` exists, otherwise `~/.tif1`) |
-| `ignore_version` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 handles cache versioning automatically through content-based keys |
+| `ignore_version` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. The built telemetry-frame tables carry a schema version, and tif1 rebuilds them when it changes |
 | `force_renew` | `bool` | `False` | If `True`, clears all existing cache data after enabling. Use `Cache.clear_cache()` for more control |
 | `use_requests_cache` | `bool` | `True` | **Compatibility parameter** - Ignored by tif1. tif1 uses SQLite-backed caching instead of requests-cache |
 
@@ -89,9 +91,10 @@ When `enable_cache()` is called:
 The cache directory is resolved in the following order of precedence:
 
 1. Explicit `cache_dir` parameter
-2. `TIF1_CACHE_DIR` environment variable
-3. Configuration file setting (`~/.tif1rc`)
-4. Platform-specific default:
+2. The directory of an earlier `enable_cache()` call in the same process
+3. `TIF1_CACHE_DIR` environment variable
+4. Configuration file setting (`~/.tif1rc`)
+5. Platform-specific default:
    - **Windows**: `%LOCALAPPDATA%/Temp/tif1`
    - **macOS**: `~/Library/Caches/tif1`
    - **Linux/other POSIX**: `~/.cache/tif1` (or `~/.tif1` if `~/.cache` does not exist)
@@ -139,30 +142,34 @@ export TIF1_CACHE_DIR="/mnt/fast-ssd/f1-cache"
 ```python
 import tif1
 
-# Will use /mnt/fast-ssd/f1-cache automatically
+# In a new process, this uses /mnt/fast-ssd/f1-cache automatically
+# (an earlier enable_cache("...") call in the same process takes precedence)
 tif1.Cache.enable_cache()
 ```
 
 #### Migration from fastf1
 
-The API is identical, so migration needs few changes:
+The call is the same, so migration needs few changes:
 
-```python
-# fastf1 code
+<CodeGroup>
+```python fastf1
 import fastf1
 fastf1.Cache.enable_cache("./cache")
+```
 
-# tif1 equivalent (identical call)
+```python tif1
 import tif1
 tif1.Cache.enable_cache("./cache")
 ```
+</CodeGroup>
+
+Two defaults differ. In fastf1, `cache_dir` is required and `ignore_version` defaults to `False`. In tif1, `cache_dir` is optional and `ignore_version` defaults to `True` (it has no effect).
 
 #### Performance Considerations
 
-- **First call overhead**: The first `enable_cache()` call creates the SQLite database and initializes tables (~10-50ms)
+- **First call overhead**: Creating a new SQLite database and its tables takes about 10-50ms on a local disk
 - **Subsequent calls**: Reusing an existing cache directory is nearly instant
-- **Memory usage**: In-memory caches use approximately 50-100 bytes per cached item
-- **Disk usage**: SQLite database grows with cached data; typical session data is 1-5 MB
+- **Disk usage**: `cache.sqlite` grows with each loaded session. `Cache.get_cache_info()` returns the directory and its size in bytes
 
 #### Thread Safety
 
@@ -187,25 +194,28 @@ Clear cached data from the specified cache directory. This method removes all ca
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `cache_dir` | `str \| Path \| None` | `None` | Optional cache directory path. If `None`, clears the currently active cache directory |
-| `deep` | `bool` | `False` | If `True`, also removes legacy FastF1 HTTP cache database files (`fastf1_http_cache.sqlite*`) for complete cleanup |
+| `deep` | `bool` | `False` | If `True`, also removes legacy FastF1 HTTP cache database files (`fastf1_http_cache.sqlite*`) from `cache_dir`. Only applies when `cache_dir` is given |
 
 #### Behavior Details
 
 The clearing process works as follows:
 
-1. **Active Cache Detection**: If `cache_dir` is `None`, uses the active cache instance
+1. **Active Cache Detection**: If `cache_dir` is `None`, uses the active cache instance (and creates it if needed)
 2. **Directory Validation**: If `cache_dir` is given, verifies that it exists and is a directory
 3. **SQLite Clearing**: Executes `DELETE` statements on all cache tables
 4. **Memory Cache Flush**: Clears in-memory LRU caches
-5. **Legacy Cleanup** (if `deep=True`): Removes FastF1 HTTP cache files for users migrating from fastf1
+5. **Legacy Cleanup** (if `deep=True` and `cache_dir` is given): Removes FastF1 HTTP cache files for users migrating from fastf1
+
+A `cache_dir` that is not the active directory gets a temporary cache instance, which is closed after the clear.
 
 #### Cache Tables Cleared
 
-- **`cache` table**: General session data, lap times, race control messages, weather data
+- **`cache` table**: Fetched JSON payloads (lap times, drivers, race control messages, weather data), as text or compressed
 - **`telemetry_cache` table**: Telemetry data indexed by (year, GP, session, driver, lap)
 - **`telemetry_frames` and `telemetry_frames_pl` tables**: Built telemetry frames for the pandas and polars backends
+- **`laps_frames` and `laps_frames_pl` tables**: Built laps tables for the pandas and polars backends
 - **`missing_payloads` table**: Records of files that no CDN has
-- **In-memory caches**: Both general and telemetry-specific LRU caches
+- **In-memory caches**: All four in-memory LRU tiers
 
 #### Examples
 
@@ -260,27 +270,29 @@ session.load()
 
 #### Migration from fastf1
 
-The basic API is identical:
+The signature is the same as in fastf1 (`cache_dir=None, deep=False`):
 
-```python
-# fastf1 code
+<CodeGroup>
+```python fastf1
 import fastf1
 fastf1.Cache.clear_cache()
+```
 
-# tif1 equivalent (identical)
+```python tif1
 import tif1
 tif1.Cache.clear_cache()
 ```
+</CodeGroup>
 
 #### Error Handling
 
 - **`NotADirectoryError`**: Raised if the specified `cache_dir` does not exist or is not a directory
-- **`OSError`**: May be raised if file permissions prevent deletion (logged as warning for legacy files)
+- **`OSError`** while a legacy file is removed: logged as a warning, not raised
 
 #### Performance Impact
 
-- **Clearing time**: Typically 10-100ms depending on cache size
-- **Disk I/O**: Minimal - SQLite `DELETE` operations are fast with WAL mode
+- **Clearing time**: Grows with the number of cached rows
+- **Disk usage**: `DELETE` does not make `cache.sqlite` smaller. SQLite keeps the free pages for new data
 - **Memory**: In-memory caches are cleared instantly
 
 #### When to Clear Cache
@@ -295,9 +307,23 @@ Consider clearing the cache in these scenarios:
 
 #### Thread Safety
 
-`clear_cache()` is thread-safe but should not be called concurrently with data fetching operations, as this may lead to inconsistent cache states.
+`clear_cache()` holds the cache locks while it deletes the rows. Do not call it while other threads load data: a load in progress can write its rows again after the clear.
 
 ---
+
+### Other `Cache` Methods
+
+| Method | Behavior |
+| :--- | :--- |
+| `Cache.disabled()` | Context manager: caching is off inside the `with` block |
+| `Cache.set_disabled()` | Sets the `enable_cache` option to `False`. Calls nest |
+| `Cache.set_enabled()` | Undoes one `set_disabled()` call. The last one restores the earlier `enable_cache` value |
+| `Cache.offline_mode(enabled)` | Sets the `offline_mode` option. While it is on, `requests_get()` and `requests_post()` raise `NetworkError` |
+| `Cache.ci_mode(enabled)` | Sets the `ci_mode` option |
+| `Cache.get_cache_info()` | Returns `(cache_dir, size_in_bytes)` after `enable_cache()`, else `(None, None)` |
+| `Cache.requests_get(url, **kwargs)` | HTTP GET through the shared tif1 session (default timeout: the `timeout` option) |
+| `Cache.requests_post(url, data=None, **kwargs)` | HTTP POST through the shared tif1 session |
+| `Cache.delete_response(url)` | Does nothing: tif1 has no FastF1-style HTTP response cache |
 
 ---
 
@@ -326,26 +352,29 @@ tif1.set_log_level(logging.DEBUG)
 tif1.set_log_level(logging.ERROR)
 ```
 **Migration from fastf1:**
-```python
-# fastf1 code
+
+<CodeGroup>
+```python fastf1
 import fastf1
 import logging
 fastf1.set_log_level(logging.DEBUG)
+```
 
-# tif1 equivalent (identical)
+```python tif1
 import tif1
 import logging
 tif1.set_log_level(logging.DEBUG)
 ```
+</CodeGroup>
 
 ---
 
 ## Complete migration example
 
-Here's a complete example showing how to migrate a fastf1 script to tif1:
+This complete example shows how to migrate a fastf1 script to tif1:
 
 **Original fastf1 code:**
-```python
+```python fastf1
 import fastf1
 import logging
 
@@ -370,18 +399,18 @@ print(f"Max speed: {tel['Speed'].max()}")
 import tif1
 import logging
 
-# Setup (identical API)
+# Setup (same calls)
 tif1.Cache.enable_cache("./cache")
 tif1.set_log_level(logging.INFO)
 
-# Load session (identical API)
+# Load session (same calls)
 session = tif1.get_session(2024, "Monaco", "Q")
 session.load()
 
-# Get the fastest lap of one driver (identical API)
+# Get the fastest lap of one driver (same calls)
 fastest = session.laps.pick_drivers("VER").pick_fastest()
 
-# Get telemetry (identical API)
+# Get telemetry (same calls)
 tel = fastest.get_telemetry()
 print(f"Max speed: {tel['Speed'].max()}")
 ```
@@ -396,15 +425,15 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 
 | Feature | fastf1 | tif1 | Notes |
 | :--- | :--- | :--- | :--- |
-| `Cache.enable_cache()` | ✅ | ✅ | Identical API |
-| `Cache.clear_cache()` | ✅ | ✅ | Identical API |
-| `set_log_level()` | ✅ | ✅ | Identical API |
-| `get_session()` | ✅ | ✅ | Identical API |
-| `Session.load()` | ✅ | ✅ | Identical API |
-| `Session.laps` | ✅ | ✅ | Identical API |
-| `Session.get_driver()` | ✅ | ✅ | Identical API |
-| `Driver.laps` | ✅ | ✅ | Identical API |
-| `Lap.get_telemetry()` | ✅ | ✅ | Identical API |
+| `Cache.enable_cache()` | ✅ | ✅ | Same call; `cache_dir` is optional in tif1 |
+| `Cache.clear_cache()` | ✅ | ✅ | Same signature |
+| `set_log_level()` | ✅ | ✅ | Same call |
+| `get_session()` | ✅ | ✅ | Same call; tif1 adds `enable_cache` and `lib` |
+| `Session.load()` | ✅ | ✅ | `laps`, `telemetry`, `weather`, `messages` flags |
+| `Session.laps` | ✅ | ✅ | Same call |
+| `Session.get_driver()` | ✅ | ✅ | Same call |
+| `Driver.laps` | ✅ | ✅ | Same call |
+| `Lap.get_telemetry()` | ✅ | ✅ | Same call |
 
 ### Ignored Parameters
 
@@ -420,7 +449,7 @@ Some fastf1 parameters are ignored in tif1 because they are handled automaticall
 tif1 provides significant performance improvements while maintaining API compatibility:
 
 - **Async loading**: `session.laps_async()` for parallel data fetching
-- **Ultra-cold start**: Minimal latency for first-time loads
+- **Ultra-cold start**: the `ultra_cold_start` option (on by default) for first-time loads
 - **HTTP/2 multiplexing**: Faster parallel requests
 - **Optimized caching**: SQLite-backed multi-layer cache
 
@@ -431,8 +460,8 @@ tif1 provides significant performance improvements while maintaining API compati
 When migrating from fastf1 to tif1:
 
 - [ ] Replace `import fastf1` with `import tif1`
-- [ ] Update `Cache.enable_cache()` calls (API is identical)
-- [ ] Update `set_log_level()` calls (API is identical)
+- [ ] Update `Cache.enable_cache()` calls (same call)
+- [ ] Update `set_log_level()` calls (same call)
 - [ ] Test that `get_session()` works with the year/GP/session combinations in use
 - [ ] Verify DataFrame column names match (tif1 uses fastf1 naming conventions)
 - [ ] Consider using async methods (`laps_async()`, `get_fastest_laps_tels_async()`) for better performance
@@ -442,11 +471,11 @@ When migrating from fastf1 to tif1:
 
 ## Known Limitations
 
-The following fastf1 features are not yet supported in tif1:
+The following fastf1 features are not supported in tif1:
 
-- **Ergast API integration**: tif1 uses TracingInsights CDN exclusively
+- **Ergast API integration**: tif1 reads only the TracingInsights data repositories (through jsDelivr, Hugging Face, and StaticDelivr)
 - **Live timing**: tif1 focuses on historical data
-- **Custom data sources**: tif1 uses a fixed CDN structure
+- **Custom data sources**: the `cdns` setting can point at a mirror, but the mirror must use the same file layout as the TracingInsights repositories
 
 When these features are needed, continue using fastf1 or open an issue on the tif1 GitHub repository.
 

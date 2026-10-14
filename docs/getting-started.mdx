@@ -80,12 +80,12 @@ drivers = session.drivers_df
 print(drivers[["Driver", "Team", "DriverNumber"]])
 ```
 
-Output:
+Output (the rows are in classification order):
 ```text
-  Driver             Team DriverNumber
-0    VER  Red Bull Racing            1
-1    GAS           Alpine           10
-2    ANT         Mercedes           12
+  Driver     Team DriverNumber
+0    NOR  McLaren            4
+1    LEC  Ferrari           16
+2    PIA  McLaren           81
 ...
 ```
 
@@ -179,10 +179,8 @@ soft_laps = clean[clean["Compound"] == "SOFT"]
 ### Analyzing tire strategy
 
 ```python
-import pandas as pd
-
-# Group by driver and stint on a plain DataFrame, so reset_index keeps the key names
-strategy = pd.DataFrame(laps).groupby(["Driver", "Stint"]).agg({
+# Group by driver and stint
+strategy = laps.groupby(["Driver", "Stint"]).agg({
     "Compound": "first",
     "LapNumber": ["min", "max", "count"]
 }).reset_index()
@@ -207,9 +205,9 @@ else:
 
 ## Performance Tips
 
-### Use async for cold cache
+### Use async code in an event loop
 
-For a first load, use async for parallel fetching. The benchmark suite validates more than 3x speed versus sequential fetch:
+`session.laps` already fetches the lap data in parallel. Inside a running event loop, await `laps_async()` instead:
 
 ```python
 import asyncio
@@ -225,11 +223,11 @@ laps = asyncio.run(load_data())
 
 ### Batch telemetry fetching
 
-Never fetch telemetry in a loop:
+Do not fetch telemetry one driver at a time in a loop:
 
 <CodeGroup>
 ```python Good - Batch Fetching
-# Fetch all telemetry in parallel (validated at 3x+ vs sequential)
+# Fetch the fastest-lap telemetry of all drivers in one parallel batch
 tels = session.get_fastest_laps_tels(by_driver=True)
 
 # tels is one DataFrame with a Driver column, not a dict
@@ -238,18 +236,17 @@ for driver, tel in tels.groupby("Driver"):
 ```
 
 ```python Bad - Sequential Loop
-# Slow - fetches one at a time
+# Slow - one telemetry request after the other
 for driver_code in session.drivers_df["Driver"]:
     driver = session.get_driver(driver_code)
-    fastest = driver.get_fastest_lap()
-    # This is very slow!
+    tel = driver.get_fastest_lap_tel()
 ```
 </CodeGroup>
 
 ### Use Polars for large datasets
 
 ```python
-# Use polars lib for 2x faster processing
+# Use the polars lib for laps and telemetry
 session_pl = tif1.get_session(
     2025,
     "Monaco Grand Prix",
@@ -308,15 +305,13 @@ import tif1
 # Get configuration
 config = tif1.get_config()
 
-# Change cache directory
-config.set("cache_dir", "/custom/cache/path")
-
-# Use polars by default
+# Use polars for the sessions created after this call
 config.set("lib", "polars")
-
-# Enable debug logging
-config.set("log_level", "DEBUG")
 ```
+
+<Note>
+  `tif1` reads `cache_dir` when it opens the cache for the first time in a process. To use a different cache directory, set `TIF1_CACHE_DIR` or `cache_dir` in `.tif1rc` before the first data access. To enable debug logging, call `tif1.setup_logging(logging.DEBUG)`.
+</Note>
 
 ## Next Steps
 
@@ -348,8 +343,8 @@ If permission errors occur:
 # Replace <cache-dir> with the platform-specific tif1 cache directory
 ls -la <cache-dir>/
 
-# Fix permissions
-chmod -R 755 <cache-dir>/
+# Give the owner read and write access again
+chmod -R u+rwX <cache-dir>/
 ```
 
 ### Network Timeouts
@@ -365,18 +360,11 @@ config.set("timeout", 60)  # Increase the HTTP timeout to 60s
 
 ### Memory Issues
 
-For large datasets:
+For large datasets, use the polars lib:
 
 ```python
-# Use polars (50% less memory)
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
-
-# Or process drivers one at a time
-for driver_code in session.drivers_df["Driver"]:
-    driver = session.get_driver(driver_code)
-    laps = driver.laps
-    # Process laps
-    del laps  # Free memory
+laps = session.laps  # polars DataFrame
 ```
 
 ## Getting Help

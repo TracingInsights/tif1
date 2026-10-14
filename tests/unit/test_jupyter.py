@@ -110,6 +110,22 @@ class TestDisplaySessionInfo:
         assert "pandas" in html
         assert "3" in html
 
+    def test_counts_drivers_once_laps_are_loaded(self):
+        # A warm laps frame-tier hit leaves _drivers unset; the driver list is
+        # still local, so the display must not claim it is not loaded.
+        session = SimpleNamespace(
+            year=2025,
+            gp="Bahrain",
+            session="Race",
+            lib="pandas",
+            drivers=["81", "63", "4"],
+            _drivers=None,
+            _laps=object(),
+        )
+        html = display_session_info(session)
+        assert "Not loaded" not in html
+        assert ">3<" in html
+
     def test_renders_not_loaded_when_drivers_not_loaded(self):
         session = SimpleNamespace(
             year=2024,

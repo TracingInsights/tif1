@@ -23,21 +23,15 @@ print("-" * 60)
 fastest_tels = session.get_fastest_laps_tels(by_driver=True)
 if len(fastest_tels) > 0:
     print(f"Total telemetry points: {len(fastest_tels)}")
-    if hasattr(fastest_tels, "groupby"):
-        print(f"Drivers: {fastest_tels['Driver'].nunique()}")
-    else:
-        print(f"Drivers: {fastest_tels['Driver'].n_unique()}")
+    print(f"Drivers: {fastest_tels['Driver'].nunique()}")
 
 # Get telemetry for specific drivers only
-print("\n3. TOP 3 DRIVERS TELEMETRY")
+print("\n3. SELECTED DRIVERS TELEMETRY (VER, HAM, LEC)")
 print("-" * 60)
 top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM", "LEC"])
 if len(top3_tels) > 0:
     print(f"Total telemetry points: {len(top3_tels)}")
-    if hasattr(top3_tels, "groupby"):
-        print(f"Drivers: {top3_tels['Driver'].unique()}")
-    else:
-        print(f"Drivers: {top3_tels['Driver'].unique().to_list()}")
+    print(f"Drivers: {list(top3_tels['Driver'].unique())}")
 
 # Get driver's fastest lap telemetry
 print("\n4. VERSTAPPEN'S FASTEST LAP TELEMETRY")
@@ -49,11 +43,6 @@ try:
         print(f"Telemetry points: {len(ver_tel)}")
         print(ver_tel[["Time", "Speed", "Throttle", "nGear"]].head(10))
 
-        # Max speed
-        if hasattr(ver_tel, "iloc"):
-            max_speed = ver_tel["Speed"].max()
-        else:
-            max_speed = ver_tel["Speed"].max()
-        print(f"\nMax speed: {max_speed:.1f} km/h")
+        print(f"\nMax speed: {ver_tel['Speed'].max():.1f} km/h")
 except tif1.DriverNotFoundError:
     print("VER not in this session")

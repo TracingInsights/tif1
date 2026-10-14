@@ -444,6 +444,27 @@ class TestTelemetryBatchCoverage:
         cache_module._cleanup_cache()
         assert cache_module._cache is None
 
+    def test_closing_the_global_cache_lets_get_cache_reopen(self, tmp_path, monkeypatch):
+        import tif1.cache as cache_module
+
+        closed = Cache(tmp_path)
+        monkeypatch.setattr(cache_module, "_cache", closed)
+        cache_module.get_cache().close()
+
+        reopened = cache_module.get_cache()
+        assert reopened is not closed
+        reopened.set("x", {"a": 1})
+        assert cache_module.get_cache().get("x") == {"a": 1}
+
+    def test_closing_a_private_cache_keeps_the_global_one(self, tmp_path, monkeypatch):
+        import tif1.cache as cache_module
+
+        global_cache = Cache(tmp_path / "global")
+        monkeypatch.setattr(cache_module, "_cache", global_cache)
+        Cache(tmp_path / "private").close()
+
+        assert cache_module.get_cache() is global_cache
+
     def test_has_session_data_probe_failure_defaults_true(self, tmp_path, monkeypatch):
         cache = Cache(tmp_path)
 

@@ -89,7 +89,7 @@ plt.show()
 
 ## Racing Line Visualization
 
-Use position data (X, Y, Z) to visualize the racing line.
+Use the `X` and `Y` position data to visualize the racing line. Positions are in 1/10 m.
 
 ```python
 import matplotlib.pyplot as plt
@@ -129,8 +129,8 @@ ax.add_collection(lc_ham)
 cbar = plt.colorbar(lc_ver, ax=ax)
 cbar.set_label("Speed (km/h)")
 
-ax.set_xlabel("X Position (m)")
-ax.set_ylabel("Y Position (m)")
+ax.set_xlabel("X Position (1/10 m)")
+ax.set_ylabel("Y Position (1/10 m)")
 ax.set_title("Racing Lines: VER (plasma) vs HAM (viridis)")
 ax.set_aspect("equal")
 plt.tight_layout()
@@ -204,7 +204,7 @@ ax.fill_between(
 ax.fill_between(
     ver_tel["Distance"],
     0,
-    ver_tel["Brake"] * 100,  # Scale brake to 0-100
+    ver_tel["Brake"] * 100,  # Brake is boolean: plot it as 0 or 100
     color="red",
     alpha=0.5,
     label="Brake"
@@ -269,8 +269,8 @@ for gear in sorted(ver_tel["nGear"].unique()):
         label=f"Gear {gear}"
     )
 
-ax.set_xlabel("X Position (m)")
-ax.set_ylabel("Y Position (m)")
+ax.set_xlabel("X Position (1/10 m)")
+ax.set_ylabel("Y Position (1/10 m)")
 ax.set_title("Gear Selection Around Track - VER Fastest Lap")
 ax.set_aspect("equal")
 ax.legend()
@@ -320,7 +320,7 @@ Use `tif1` to:
 - Examine gear selection strategies
 - Track DRS usage and zones
 
-All of this data is available at high frequency (~4Hz) for every lap. It enables detailed performance analysis.
+All of this data is available for every lap at roughly 7-8 samples per second (about 0.13 s apart). It enables detailed performance analysis.
 
 ---
 

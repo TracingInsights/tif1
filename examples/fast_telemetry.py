@@ -34,7 +34,8 @@ print(f"  Average: {elapsed / num_drivers:.3f}s per driver")
 print(f"  Total telemetry points: {len(all_fastest_tels):,}")
 
 # Example 3: Get specific drivers' telemetry
-print("\n3. Top 3 Drivers' Fastest Lap Telemetry")
+# Examples 3 and 4 reuse the laps already fetched in example 2 (session memo).
+print("\n3. Selected Drivers' Fastest Lap Telemetry")
 print("-" * 60)
 start = time.time()
 top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM", "LEC"])

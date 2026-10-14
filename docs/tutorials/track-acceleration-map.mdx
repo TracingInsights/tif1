@@ -10,7 +10,7 @@ keywords:
   - "track map"
 ---
 
-Acceleration maps show the g-forces experienced by the car around the circuit. This includes longitudinal acceleration (braking and acceleration) and lateral acceleration (cornering forces).
+Acceleration maps show the g-forces on the car around the circuit. The map on this page shows longitudinal acceleration (braking and acceleration). The last section explains how to get lateral acceleration (cornering forces).
 
 <img src="/assets/track_acceleration_map.png" alt="Track acceleration map showing g-forces" />
 
@@ -82,7 +82,7 @@ plt.show()
 
 ## Parameters
 
-The native chart accepts the shared filters plus a few chart-specific options. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
+The native chart always draws the fastest lap of the session, so it has no driver or lap filters. Change the color scale with `cmap`, or write the figure straight to a file with `save_path`:
 
 ```python
 import tif1
@@ -117,35 +117,17 @@ plt.show()
 
 ## Interpreting the Colors
 
-- **Red:** Positive acceleration (accelerating)
-- **Blue:** Negative acceleration (braking)
-- **White/neutral:** Constant speed
-- **Intensity:** Magnitude of g-forces
+- **Red:** The high end of the range (strongest acceleration)
+- **Blue:** The low end of the range (heaviest braking)
+- **White/neutral:** The middle of the range, not zero
 
-Modern F1 cars can achieve:
-- Up to 5g under braking
-- Up to 2g during acceleration
-- Up to 6g in high-speed corners (lateral)
+The color scale runs from the lowest value to the highest value of the lap. On this lap, the values go from about -3.8 g under braking to about +1.9 g under acceleration. The neutral color is at the midpoint, about -0.9 g, which is light braking.
 
 ## Lateral Acceleration
 
-For cornering forces, calculate lateral acceleration from speed and track curvature:
+Lateral acceleration comes from the speed and the track curvature. The curvature comes from the `X` and `Y` coordinates, which are in units of 1/10 m. A plain `np.gradient` of these coordinates amplifies the telemetry noise and gives values that are not realistic.
 
-```python
-# Calculate track curvature from X, Y coordinates
-dx = np.gradient(telemetry['X'])
-dy = np.gradient(telemetry['Y'])
-ddx = np.gradient(dx)
-ddy = np.gradient(dy)
-
-# Curvature formula
-curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2)**1.5
-
-# Lateral acceleration
-lat_acc = (speed_ms**2 * curvature) / 9.81
-```
-
-The [G-G diagram](/tutorials/gg-diagram) and [telemetry comparison](/tutorials/telemetry-comparison) tutorials use a numerically safer smooth-derivative approach for both acceleration components.
+The [G-G diagram](/tutorials/gg-diagram) and [telemetry comparison](/tutorials/telemetry-comparison) tutorials use a smooth-derivative approach for both acceleration components. Use that approach for lateral acceleration.
 
 ## Next Steps
 

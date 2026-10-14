@@ -136,7 +136,7 @@ print(humidity_stats)
 
 ## Rain Analysis
 
-Analyze performance in wet conditions.
+Analyze performance in wet conditions. The 2024 Singapore race was dry, so this block prints nothing for it. To see output, run it on a wet race, such as the 2023 Monaco Grand Prix.
 
 ```python
 # Check if it rained
@@ -146,7 +146,7 @@ if weather["Rainfall"].any():
     print(f"Rain started at: {rain_start.total_seconds() / 60:.1f} minutes")
 
     # Mark laps as wet or dry
-    # Every lap carries the weather sample closest to it, including "Rainfall"
+    # Every lap carries its own weather values, including "Rainfall"
     laps["Wet"] = laps["Rainfall"]
 
     # Compare dry vs wet lap times
@@ -194,10 +194,8 @@ clean_laps["TempRange"] = pd.cut(
 )
 
 # Compare compounds
-# Wrap in pd.DataFrame: groupby on the Laps subclass drops the key column names
 compound_temp = (
-    pd.DataFrame(clean_laps)
-    .groupby(["Compound", "TempRange"])["LapTimeSeconds"]
+    clean_laps.groupby(["Compound", "TempRange"])["LapTimeSeconds"]
     .mean()
     .reset_index()
 )

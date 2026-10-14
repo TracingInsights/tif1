@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
+from .exceptions import DataNotFoundError, InvalidDataError, NetworkError, TIF1Error
 
 logger = logging.getLogger(__name__)
 
@@ -431,18 +431,23 @@ class CDNManager:
             return None
         response = getattr(exception, "response", None)
         status = getattr(response, "status_code", None)
+        if status is None and isinstance(exception, TIF1Error):
+            # The sync transport raises NetworkError(status_code=...) without a response.
+            status = exception.context.get("status_code")
         return status if isinstance(status, int) else None
 
     @staticmethod
     def _all_client_refusals(statuses: list[int | None]) -> bool:
         """True when every source refused with a 4xx client error.
 
-        A ``None`` status (transport error, timeout) or a 5xx means a mirror
-        might still serve the payload, so the caller must stay retryable.
-        Non-int entries (defensive: mocked seams) also count as non-refusals.
+        A ``None`` status (transport error, timeout), a 5xx, or a 4xx that means
+        "try again later" (408, 429) means a mirror might still serve the
+        payload, so the caller must stay retryable instead of recording the file
+        as missing. Non-int entries (defensive: mocked seams) also count as
+        non-refusals.
         """
         return bool(statuses) and all(
-            s is not None and isinstance(s, int) and 400 <= s < 500 for s in statuses
+            isinstance(s, int) and 400 <= s < 500 and s not in (408, 429) for s in statuses
         )
 
 

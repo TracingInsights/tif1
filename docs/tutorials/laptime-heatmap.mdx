@@ -24,13 +24,13 @@ In a lap time heatmap:
 - **Colors** indicate lap time performance:
   - Green/cooler colors = faster laps
   - Red/warmer colors = slower laps
-  - White/missing = pit stops or deleted laps
+  - Blank cells (background color) = pit laps, deleted laps, or laps slower than the cutoff
 
 These patterns show tire degradation (gradual color shift), pit stop windows (gaps), and incidents (sudden color changes).
 
 ## Loading the Session
 
-Analyze the 2023 Monaco Grand Prix race to see how drivers performed throughout the event.
+Analyze the 2023 Monaco Grand Prix race to see how drivers performed throughout the event. Rain fell late in this race. Every lap after lap 51 is slower than the 107% cutoff, so the heatmap ends at lap 51.
 
 ```python
 import tif1
@@ -118,9 +118,9 @@ plt.show()
 
 When analyzing a lap time heatmap, look for:
 
-- **Vertical patterns:** Consistent colors down a column indicate similar pace across all drivers (for example, safety car periods)
+- **Vertical patterns:** Consistent colors down a column indicate similar pace across all drivers on that lap. Safety car laps are usually slower than the cutoff, so they show as blank columns
 - **Horizontal patterns:** Gradual color shifts across a row show tire degradation or fuel load effects
-- **Gaps:** White spaces indicate pit stops
+- **Gaps:** Blank cells indicate pit stops or filtered-out laps
 - **Sudden changes:** Abrupt color shifts may indicate incidents, traffic, or mistakes
 - **Consistent greens:** Drivers with predominantly green rows had strong, consistent pace
 
@@ -130,7 +130,7 @@ To compare true pace, apply fuel correction to account for the decreasing fuel l
 
 ```python
 # Simple fuel correction formula
-# Assumes ~0.03s per lap improvement per 1kg of fuel burned
+# Assumes each lap of fuel still in the car costs about 0.03 s
 max_laps = laps_clean['LapNumber'].max()
 laps_clean['FuelCorrected'] = (
     laps_clean['LapTimeSeconds'] -
@@ -173,12 +173,12 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `laptime_cutoff` fixes the color scale, from fastest to `fastest * cutoff`. `include_deleted` and `include_pit_laps` keep those laps when `True`. `cmap` and `xticklabels` control the styling:
+The native function exposes the same filters as parameters. `laptime_cutoff` drops laps slower than `fastest * cutoff` and fixes the color scale to that range. `include_deleted` and `include_pit_laps` keep those laps when `True`. `cmap` and `xticklabels` control the styling:
 
 ```python
 import tif1
 
-# Defaults match the chart above
+# Defaults match the first heatmap on this page (no fuel correction)
 fig, ax = tif1.plot_laptime_heatmap(2023, 'Monaco Grand Prix', 'R')
 plt.show()
 
@@ -229,7 +229,7 @@ heatmap_top = laps_top.pivot_table(
 # Plot with larger cells for better visibility
 fig, ax = plt.subplots(figsize=(16, 6))
 sns.heatmap(heatmap_top, cmap='RdYlGn_r', linewidths=1, ax=ax)
-ax.set_title('Top 5 Finishers - Lap Time Comparison')
+ax.set_title('Top 5 Drivers by Average Lap Time')
 plt.tight_layout()
 plt.show()
 ```

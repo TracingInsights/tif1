@@ -29,7 +29,7 @@ The `tif1.utils` module is a set of helpers for analysis code, compatible with `
 Session loading does not use these helpers: `tif1` builds its time columns with vectorized pandas or Polars code. Use the helpers on custom data, such as timing strings from a CSV file.
 
 <Note>
-  All utility functions are optimized for performance. They handle edge cases and return sensible defaults rather than raising exceptions when possible.
+  `recursive_dict_get` and `delta_time` return defaults (`{}`, `None` or an empty Series) instead of raising. `to_timedelta` and `to_datetime` raise the pandas error for input that pandas cannot parse.
 </Note>
 
 ---
@@ -55,11 +55,11 @@ Converts various time representations to a standardized pandas Timedelta object.
     - Full format: `"00:01:23.456"` (hours:minutes:seconds.milliseconds)
     - ISO 8601 duration format: `"PT1M23.456S"`
   - **`int` or `float`**: Interpreted as seconds (for example, `83.456` → 1 minute 23.456 seconds)
-  - **`numpy.floating`**: Interpreted as seconds (a subclass of `float`)
+  - **`numpy.float64`**: Interpreted as seconds (a subclass of `float`)
   - Any other pandas-compatible time format
 
 <Warning>
-  A `numpy.integer` value is not an `int` subclass, so `pd.to_timedelta()` reads it as nanoseconds: `to_timedelta(np.int64(90))` gives 90 ns. Convert it with `int()` or `float()` first.
+  A `numpy.integer` or `numpy.float32` value is not an `int` or `float` subclass, so `pd.to_timedelta()` reads it as nanoseconds. For example, `to_timedelta(np.int64(90))` gives 90 ns. Convert the value with `int()` or `float()` first.
 </Warning>
 
 #### Returns
@@ -228,7 +228,7 @@ This function is a thin wrapper around pandas' `pd.to_datetime()` function, prov
 1. **Automatic format detection**: Pandas detects ISO 8601, RFC 3339, and common datetime string formats
 2. **Numeric input**: Numbers are read as nanoseconds since the epoch
 3. **Timezone awareness**: Preserves timezone information when present in the input
-4. **Consistent output**: Always returns a pandas Timestamp for uniform handling
+4. **Output type**: A scalar input gives a pandas Timestamp (`NaT` for `None`). A list gives a `DatetimeIndex`
 
 #### Performance Characteristics
 
@@ -381,7 +381,7 @@ def delta_time(
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
 ```
 
-Estimates the time delta between two laps at each telemetry sample of the reference lap. The algorithm is the same as `fastf1.utils.delta_time`. It shows where along the track one lap gains or loses time against the other.
+Estimates the time delta between two laps at each telemetry sample of the reference lap. The algorithm follows `fastf1.utils.delta_time`, without the distance scaling of recent FastF1 versions (see [FastF1 Compatibility](#fastf1-compatibility)). It shows where along the track one lap gains or loses time against the other.
 
 #### Parameters
 
@@ -1132,7 +1132,7 @@ print(f"\nLaps under safety car: {len(safety_car_laps)}")
 if len(safety_car_laps) > 0:
     sc_lap_numbers = safety_car_laps['LapNumber'].unique()
 
-    for sc_lap in sc_lap_numbers[:3]:  # First 3 SC periods
+    for sc_lap in sc_lap_numbers[:3]:  # First 3 lap numbers under SC or VSC
         before_sc = laps[
             (laps['LapNumber'] >= sc_lap - 3) &
             (laps['LapNumber'] < sc_lap)
@@ -1493,73 +1493,72 @@ def process_lap_data_safely(lap_json_list):
 
 
 # Example usage
-if __name__ == "__main__":
-    # Simulated API response
-    api_response = {
-        "session": {
-            "info": {
-                "name": "Monaco Grand Prix",
-                "type": "Race",
-                "year": 2024
-            },
-            "circuit": {
-                "name": "Circuit de Monaco",
-                "location": "Monte Carlo",
-                "country": "Monaco"
-            },
-            "timing": {
-                "start_time": "2024-05-26T15:00:00+02:00"
-            },
-            "weather": {
-                "temperature": 24,
-                "humidity": 65,
-                "conditions": "Sunny"
-            },
-            "drivers": [
-                {"code": "VER", "team": "Red Bull Racing"},
-                {"code": "HAM", "team": "Mercedes"}
-            ]
-        }
-    }
-
-    # Extract metadata safely
-    metadata = extract_session_metadata(api_response)
-    print("Session Metadata:")
-    print(json.dumps(metadata, indent=2, default=str))
-
-    # Simulated lap data
-    lap_data_json = [
-        {
-            "driver": {"code": "VER", "team": "Red Bull Racing"},
-            "timing": {
-                "lap_time": "1:10.123",
-                "sector_1": "0:20.456",
-                "sector_2": "0:30.789",
-                "sector_3": "0:18.878"
-            },
-            "lap_number": 1,
-            "tyre": {"compound": "SOFT", "life": 1},
-            "position": 1,
-            "track_status": "1"
+# Simulated API response
+api_response = {
+    "session": {
+        "info": {
+            "name": "Monaco Grand Prix",
+            "type": "Race",
+            "year": 2024
         },
-        {
-            "driver": {"code": "HAM", "team": "Mercedes"},
-            "timing": {
-                "lap_time": "1:10.456"
-                # Missing sector times
-            },
-            "lap_number": 1,
-            "position": 2
-            # Missing tyre and track status
-        }
-    ]
+        "circuit": {
+            "name": "Circuit de Monaco",
+            "location": "Monte Carlo",
+            "country": "Monaco"
+        },
+        "timing": {
+            "start_time": "2024-05-26T15:00:00+02:00"
+        },
+        "weather": {
+            "temperature": 24,
+            "humidity": 65,
+            "conditions": "Sunny"
+        },
+        "drivers": [
+            {"code": "VER", "team": "Red Bull Racing"},
+            {"code": "HAM", "team": "Mercedes"}
+        ]
+    }
+}
 
-    # Process lap data safely
-    laps_df = process_lap_data_safely(lap_data_json)
-    print("\nProcessed Lap Data:")
-    print(laps_df)
-    print("\nData types:")
-    print(laps_df.dtypes)
+# Extract metadata safely
+metadata = extract_session_metadata(api_response)
+print("Session Metadata:")
+print(json.dumps(metadata, indent=2, default=str))
+
+# Simulated lap data
+lap_data_json = [
+    {
+        "driver": {"code": "VER", "team": "Red Bull Racing"},
+        "timing": {
+            "lap_time": "1:10.123",
+            "sector_1": "0:20.456",
+            "sector_2": "0:30.789",
+            "sector_3": "0:18.878"
+        },
+        "lap_number": 1,
+        "tyre": {"compound": "SOFT", "life": 1},
+        "position": 1,
+        "track_status": "1"
+    },
+    {
+        "driver": {"code": "HAM", "team": "Mercedes"},
+        "timing": {
+            "lap_time": "1:10.456"
+            # Missing sector times
+        },
+        "lap_number": 1,
+        "position": 2
+        # Missing tyre and track status
+    }
+]
+
+# Process lap data safely
+laps_df = process_lap_data_safely(lap_data_json)
+print("\nProcessed Lap Data:")
+print(laps_df)
+print("\nData types:")
+print(laps_df.dtypes)
 ```
 
 ---
@@ -1574,6 +1573,11 @@ Understanding the performance characteristics of utility functions helps develop
 
 1. **Vectorized operations**: When converting entire DataFrame columns, use pandas' native functions directly:
    ```python
+   import pandas as pd
+   from tif1.utils import to_timedelta
+
+   df = pd.DataFrame({"LapTimeStr": ["1:10.123", "1:09.876", "1:11.234"]})
+
    # Slower: Apply to each element
    df['LapTime'] = df['LapTimeStr'].apply(to_timedelta)
 
@@ -1583,10 +1587,12 @@ Understanding the performance characteristics of utility functions helps develop
 
 2. **Batch processing**: Convert data in batches rather than one-by-one:
    ```python
+   time_list = ["00:01:10.123", "00:01:09.876", "00:01:11.234"]
+
    # Slower: Individual conversions
    times = [to_timedelta(t) for t in time_list]
 
-   # Faster: Batch conversion
+   # Faster: Batch conversion (pandas needs the full "hh:mm:ss" form here)
    times = pd.to_timedelta(time_list)
    ```
 
@@ -1603,6 +1609,13 @@ Understanding the performance characteristics of utility functions helps develop
 
 1. **Cache telemetry data**: If comparing multiple laps, get the reference telemetry once and pass the frame:
    ```python
+   import tif1
+   from tif1.utils import delta_time
+
+   session = tif1.get_session(2024, "Monaco Grand Prix", "Qualifying")
+   reference_lap = session.laps.pick_driver("VER").pick_fastest()
+   laps_to_compare = [session.laps.pick_driver(d).pick_fastest() for d in ("HAM", "LEC", "NOR")]
+
    # Telemetry frame of the reference lap (delta_time accepts a frame)
    reference_telemetry = reference_lap.get_car_data()
 
@@ -1614,6 +1627,7 @@ Understanding the performance characteristics of utility functions helps develop
 
 2. **Limit telemetry channels**: When only specific channels are needed, filter after retrieval:
    ```python
+   ref_lap, comp_lap = reference_lap, laps_to_compare[0]
    delta, ref_tel, comp_tel = delta_time(ref_lap, comp_lap)
 
    # Only keep needed columns
@@ -1676,9 +1690,12 @@ Understanding the performance characteristics of utility functions helps develop
 
 1. **Process in chunks**: For very large lap datasets, process in chunks:
    ```python
+   # Custom timing data with lap times as strings
+   raw_laps = pd.DataFrame({"LapTime": ["1:10.123", "1:09.876", "1:11.234"] * 1000})
+
    chunk_size = 1000
-   for i in range(0, len(laps), chunk_size):
-       chunk = laps.iloc[i:i+chunk_size]
+   for i in range(0, len(raw_laps), chunk_size):
+       chunk = raw_laps.iloc[i:i+chunk_size].copy()
        chunk['LapTime'] = chunk['LapTime'].apply(to_timedelta)
        # Process chunk...
    ```
@@ -1776,12 +1793,12 @@ def recursive_dict_get(
 
 ### Common Exceptions
 
-These utilities handle errors gracefully. Even so, the following errors can occur:
+The following errors can occur:
 
-- **`ValueError`**: Invalid input format that pandas cannot parse
-- **`TypeError`**: Attempting to convert incompatible types
+- **`ValueError`**: Invalid input format that pandas cannot parse, or an object that `to_timedelta` cannot convert
+- **`TypeError`**: An object that `to_datetime` cannot convert
+- **`IndexError`**: An out-of-range list index in `recursive_dict_get`
 - **No error from `delta_time`**: An object without telemetry gives an empty delta Series
-- **`KeyError`**: Only if using direct dict access instead of `recursive_dict_get`
 
 ---
 
@@ -1812,33 +1829,31 @@ print(f"Samples: {len(delta)}, estimated gap at the line: {delta.iloc[-1]:.3f}s"
 
 ## FastF1 Compatibility
 
-The utilities module maintains API compatibility with FastF1 for simple migration:
+The four functions have the same names and arguments as in `fastf1.utils`. Some edge cases give different results (compared with FastF1 3.8):
 
 ### Compatible Functions
 
-| tif1 Function | FastF1 Equivalent | Compatibility |
-|---------------|-------------------|---------------|
-| `to_timedelta` | `fastf1.utils.to_timedelta` | ✅ Full |
-| `to_datetime` | `fastf1.utils.to_datetime` | ✅ Full |
-| `delta_time` | `fastf1.utils.delta_time` | ✅ Full |
-| `recursive_dict_get` | `fastf1.utils.recursive_dict_get` | ✅ Full |
+| tif1 Function | FastF1 Equivalent | Differences |
+|---------------|-------------------|-------------|
+| `to_timedelta` | `fastf1.utils.to_timedelta` | tif1 returns `pd.Timedelta` and reads numbers as seconds. FastF1 returns `datetime.timedelta`, and `None` for numbers or unparseable strings. tif1 raises `ValueError` for an unparseable string |
+| `to_datetime` | `fastf1.utils.to_datetime` | tif1 returns `pd.Timestamp` (timezone-aware for a trailing `Z`) and raises for an unparseable string. FastF1 returns a naive `datetime.datetime`, or `None` |
+| `delta_time` | `fastf1.utils.delta_time` | FastF1 uses `get_car_data(interpolate_edges=True)` and scales the compare lap distance to the reference lap length. tif1 does neither. FastF1 marks its function as deprecated |
+| `recursive_dict_get` | `fastf1.utils.recursive_dict_get` | With `default_none=True`, FastF1 also returns `None` for a key that holds `{}`. tif1 returns the `{}` |
 
 ### Migration Example
 
 ```python
-# FastF1 code
-import fastf1
-from fastf1.utils import to_timedelta, delta_time
+# FastF1 code:
+# import fastf1
+# from fastf1.utils import to_timedelta, delta_time
+# session = fastf1.get_session(2024, "Monaco", "Race")
 
-session = fastf1.get_session(2024, "Monaco", "Race")
-# ... rest of code
-
-# tif1 code (drop-in replacement)
+# tif1 code (the same calls)
 import tif1
 from tif1.utils import to_timedelta, delta_time
 
-session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
-# ... rest of code works identically
+session = tif1.get_session(2024, "Monaco", "Race")
+# Check the code paths that depend on the differences in the table above
 ```
 
 ---
@@ -1882,20 +1897,29 @@ else:
 **Issue: `recursive_dict_get` returns empty dict unexpectedly**
 
 ```python
-# Problem: Using wrong default
+from tif1.utils import recursive_dict_get
+
+data = {"session": {"info": {"name": "Monaco GP"}}}
+
+# Problem: with the default, a missing path gives {}, which is not None
 value = recursive_dict_get(data, "missing", "key")
-if value:  # This is True for empty dict!
-    process(value)
+if value is not None:  # True: value is {}
+    print(f"Found: {value}")
 
 # Solution: Use default_none=True for explicit checks
 value = recursive_dict_get(data, "missing", "key", default_none=True)
-if value is not None:
-    process(value)
+if value is not None:  # False: value is None
+    print(f"Found: {value}")
 ```
 
 **Issue: Performance degradation with large datasets**
 
 ```python
+import pandas as pd
+from tif1.utils import to_timedelta
+
+df = pd.DataFrame({"LapTimeStr": ["1:10.123", "1:09.876", "1:11.234"]})
+
 # Problem: Applying to each element
 df['LapTime'] = df['LapTimeStr'].apply(to_timedelta)  # Slow
 
@@ -1926,31 +1950,11 @@ df['LapTime'] = pd.to_timedelta("00:" + df['LapTimeStr'])  # Fast
 
 ## Additional Resources
 
-### Example Notebooks
-
-Check out these Jupyter notebooks for more examples:
-- **Lap Time Analysis**: Complete lap time analysis workflows
-- **Delta Time Visualization**: Advanced delta time plotting techniques
-- **Data Pipeline**: Building reliable data processing pipelines
-
-### Community Examples
-
-Browse community-contributed examples:
-- **Performance Analysis**: Driver and team performance comparisons
-- **Race Strategy**: Analyzing race strategy and tire management
-- **Qualifying Analysis**: Qualifying session analysis and visualization
-
 ### Support
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/TracingInsights/tif1/issues)
 - **Discussions**: [Ask questions and share examples](https://github.com/TracingInsights/tif1/discussions)
-- **Documentation**: [Full API documentation](https://docs.tif1.dev)
-
----
-
-<Note>
-  This utilities module is designed for performance and reliability. All functions handle edge cases gracefully and are optimized for common Formula 1 data analysis workflows.
-</Note>
+- **Documentation**: [Full API documentation](https://tif1.tracinginsights.com)
 
 <Tip>
   Use vectorized pandas operations when working with large datasets. Cache intermediate results when performing multiple analyses on the same data.

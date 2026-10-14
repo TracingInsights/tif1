@@ -16,7 +16,7 @@ Tire degradation has a large effect on F1 race strategy. This tutorial shows how
 
 ## Tire Degradation
 
-Tire degradation is the gradual loss of grip and the increase in lap times when tires wear out. Different compounds (Soft, Medium, Hard) have different degradation profiles:
+Tire degradation is the gradual loss of grip and the increase in lap times when tires wear out. Different compounds (Soft, Medium, Hard) have different degradation profiles. The typical profiles are:
 
 - **Soft**: Fastest initially but degrades quickly
 - **Medium**: Balanced performance and durability
@@ -212,11 +212,13 @@ plt.show()
 
 ## Understanding Degradation Rates
 
-The slope of the trend line gives the degradation rate:
+The slope of the trend line gives the degradation rate. Use these bands as a rough guide:
 
 - **0.00 - 0.05 s/lap**: Excellent tire management
 - **0.05 - 0.10 s/lap**: Normal degradation
 - **> 0.10 s/lap**: High degradation (aggressive driving or setup issues)
+
+On the medium tire in this race, the legend shows 0.096 s/lap for VER and 0.044 s/lap for HAM.
 
 ## Finding the "Cliff"
 
@@ -230,17 +232,23 @@ for compound in ["SOFT", "MEDIUM", "HARD"]:
     if len(compound_laps) > 15:
         degradation = compound_laps.groupby("TyreLife")["FuelCorrectedTime"].median()
 
-        # Calculate lap-to-lap delta
-        deltas = degradation.diff()
+        # Smooth first: noise alone moves the raw medians by more than 0.15s
+        smoothed = rolling_median(degradation.values, window=5)
 
-        # Find where degradation exceeds threshold
-        cliff_point = deltas[deltas > 0.15].index.min() if any(deltas > 0.15) else None
+        # Calculate lap-to-lap delta
+        deltas = np.diff(smoothed)
+
+        # Find the first step larger than the threshold
+        jumps = np.where(deltas > 0.3)[0]
+        cliff_point = degradation.index[jumps[0] + 1] if len(jumps) else None
 
         if cliff_point:
             print(f"{compound}: Cliff at lap {cliff_point}")
         else:
             print(f"{compound}: No cliff detected")
 ```
+
+For this race, the check flags the hard tire at a tire life of 27 laps. The chart above shows this step. The medium curve has no step above 0.3s. The soft result comes from only 20 clean laps, so treat it with care.
 
 ## Parameters
 
@@ -268,7 +276,7 @@ Compound colors come from `tif1.plotting.get_compound_mapping(session)` (season-
 
 ## Complete Example
 
-The complete workflow above (fuel correction, rolling median, cliff-friendly y-limits) is one native function:
+The complete workflow above (fuel correction, rolling median, quantile-based y-limits) is one native function:
 
 ```python
 import tif1

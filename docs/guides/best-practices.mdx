@@ -24,19 +24,19 @@ graph TD
     Cache -->|No| EnableCache[Enable Cache]
     EnableCache --> CheckData
 
-    CheckData -->|Yes| LoadFast[Load from Cache<br/>~100ms]
-    CheckData -->|No| AsyncLoad{Use<br/>Async?}
+    CheckData -->|Yes| LoadFast[Load from Cache]
+    CheckData -->|No| AsyncLoad{Batch<br/>Fetch?}
 
-    AsyncLoad -->|Yes| ParallelFetch[Parallel Fetch<br/>3x+ faster]
-    AsyncLoad -->|No| SequentialFetch[Sequential Fetch<br/>slower]
+    AsyncLoad -->|Yes| ParallelFetch[Parallel Fetch]
+    AsyncLoad -->|No| SequentialFetch[Sequential Fetch]
 
     ParallelFetch --> ProcessData[Process Data]
     SequentialFetch --> ProcessData
     LoadFast --> ProcessData
 
     ProcessData --> Lib{Lib<br/>Choice}
-    Lib -->|Polars| FastProcess[Fast Processing<br/>2x speed, 50% memory]
-    Lib -->|Pandas| StandardProcess[Standard Processing]
+    Lib -->|Polars| FastProcess[Polars Processing]
+    Lib -->|Pandas| StandardProcess[Pandas Processing]
 
     FastProcess --> Analysis[Perform Analysis]
     StandardProcess --> Analysis
@@ -68,7 +68,7 @@ laps = session.laps  # Fast - only laps fetched
 
 ```python Avoid - Loading Everything
 session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
-session.load()  # Fetches laps, telemetry, weather, and messages
+session.load()  # Fetches laps, weather, messages, and the telemetry of every lap
 laps = session.laps  # Slower - unnecessary data fetched
 ```
 </CodeGroup>
@@ -79,7 +79,7 @@ Never fetch telemetry in a loop. Use batch methods instead.
 
 <CodeGroup>
 ```python Good - Batch Fetching
-# Parallel fetch - validated at 3x+ vs sequential
+# One parallel fetch for every driver's fastest lap
 session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
 tels = session.get_fastest_laps_tels(by_driver=True)
 
@@ -100,7 +100,7 @@ for driver in session.drivers_df["Driver"]:
 
 ### Choose the right lib
 
-Use polars for large datasets and performance-critical code.
+Use polars for large datasets and performance-critical code. `lib="polars"` returns polars DataFrames from `session.laps`, `session.weather`, and the telemetry accessors. `session.drivers_df` stays a pandas DataFrame. Without polars, the session falls back to pandas.
 
 ```python
 import tif1
@@ -110,7 +110,7 @@ session = tif1.get_session(
     2024,
     "Belgian Grand Prix",
     "Race",
-    lib="polars"  # 2x faster, 50% less memory
+    lib="polars"  # polars DataFrames instead of pandas
 )
 ```
 
@@ -121,12 +121,12 @@ Never disable caching unless absolutely necessary.
 <CodeGroup>
 ```python Good - Cache Enabled (Default)
 session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
-# Subsequent loads are instant
+# Subsequent loads come from the local SQLite cache instead of the CDN
 ```
 
 ```python Avoid - Cache Disabled
 session = tif1.get_session(2024, "Belgian Grand Prix", "Race", enable_cache=False)
-# Every load hits the network
+# Every load hits the CDN
 ```
 </CodeGroup>
 
@@ -144,7 +144,7 @@ import tif1
 
 def analyze_session(session: Session) -> dict[str, float]:
     """Analyze session and return metrics."""
-    laps = session.laps  # Type is inferred as DataFrame
+    laps = session.laps  # Annotated as a pandas or polars DataFrame
 
     # LapTime is a Timedelta; LapTimeSeconds is the float the annotation promises
     return {
@@ -166,7 +166,9 @@ from tif1 import DataNotFoundError, NetworkError, InvalidDataError
 def safe_load_session(year: int, gp: str, session: str):
     """Load session with proper error handling."""
     try:
-        return tif1.get_session(year, gp, session)
+        loaded = tif1.get_session(year, gp, session)
+        loaded.laps  # get_session is lazy: the fetch (and its errors) happen here
+        return loaded
     except DataNotFoundError:
         print(f"Data not found for {year} {gp} {session}")
         return None
@@ -176,7 +178,7 @@ def safe_load_session(year: int, gp: str, session: str):
         return None
     except InvalidDataError as e:
         print(f"Data corruption: {e}")
-        # Clear cache and retry
+        # Drop cached payloads before a retry
         tif1.get_cache().clear()
         return None
 ```
@@ -193,9 +195,9 @@ laps = session.laps
 
 # Good - the with block commits the transaction, or rolls it back on error
 with sqlite3.connect("f1_data.db") as conn:
-    # SQLite column names are case-insensitive: drop "team", the duplicate of "Team"
+    # SQLite column names are case-insensitive: to_sql fails with "duplicate
+    # column name: team" unless the lowercase "team" duplicate of "Team" is dropped
     laps_sql = laps.loc[:, ~laps.columns.str.lower().duplicated()]
-    # index=False is required: Laps.to_sql fails with the default index=True
     laps_sql.to_sql("laps", conn, if_exists="replace", index=False)
 ```
 
@@ -282,12 +284,12 @@ laps["DeltaToFastest"] = deltas
 
 ### Check data availability first
 
-Before processing multiple sessions, check the data that is available.
+Before processing multiple sessions, check which sessions each event has.
 
 ```python
 def process_season(year: int):
     """Process all races in a season."""
-    # get_events() returns a DataFrame; iterate the EventName column
+    # get_event_schedule() returns a DataFrame; iterate the EventName column
     events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
 
     for event in events:
@@ -351,7 +353,7 @@ For large-scale analysis, process drivers one at a time.
 
 ```python
 def analyze_all_drivers(session):
-    """Analyze drivers without loading all data at once."""
+    """Analyze one driver at a time."""
     results = []
 
     for driver_code in session.drivers_df["Driver"]:
@@ -374,7 +376,7 @@ def analyze_all_drivers(session):
 
 ### Use Polars for large datasets
 
-Polars uses significantly less memory than pandas.
+Polars frames use less memory than the pandas frames of the same session. Pass `lib="polars"` per session.
 
 ```python
 # For processing entire seasons
@@ -382,24 +384,25 @@ session = tif1.get_session(
     2024,
     "Belgian Grand Prix",
     "Race",
-    lib="polars"  # 50% less memory
+    lib="polars"
 )
 ```
 
 ### Clear cache periodically
 
-For long-running applications, clear old cache entries.
+For long-running applications, free the in-memory cache tiers, or clear the cache to remove all stored data.
 
 ```python
 import tif1
 
 # At application startup or periodically
 cache = tif1.get_cache()
-cache.clear()  # Clears all cached data
+cache.invalidate("memory")  # Frees the in-memory tiers; SQLite data stays
+cache.clear()  # Deletes every SQLite and in-memory entry
 
 # Or use the FastF1-compatible API
 from tif1.fastf1_compat import Cache
-Cache.clear_cache()  # Clears active cache
+Cache.clear_cache()  # Same as clear() on the active cache
 ```
 
 ---
@@ -486,7 +489,7 @@ def calculate_tire_degradation(laps, compound="SOFT"):
 
 <Steps>
   <Step title="Performance">
-    - Use async loading for cold cache
+    - Load only the data the analysis needs
     - Batch telemetry fetching
     - Choose appropriate lib (polars for large data)
     - Keep caching enabled
@@ -522,13 +525,13 @@ def calculate_tire_degradation(laps, compound="SOFT"):
 ## Related Pages
 
 <CardGroup cols={2}>
-<Card title="Performance" href="/guides/best-practices">
-    Optimization guide.
+  <Card title="Caching Strategy" href="/concepts/caching-strategy">
+    How the cache tiers work.
   </Card>
   <Card title="Error Handling" href="/guides/error-handling">
     Handle errors.
   </Card>
   <Card title="Common Use Cases" href="/guides/common-use-cases">
-    Handle large datasets.
+    Analysis recipes.
   </Card>
 </CardGroup>

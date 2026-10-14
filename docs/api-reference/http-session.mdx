@@ -21,15 +21,14 @@ The `http_session` module provides HTTP session management for tif1. It implemen
 
 ### Why HTTP Session Management Matters
 
-Formula 1 telemetry data consists of thousands of individual data points spread across multiple JSON files on CDN servers. A typical session load might require:
-- **20-50 HTTP requests** for lap data, session metadata, and driver information
-- **100-300 HTTP requests** for telemetry data when loading all drivers
-- **500+ HTTP requests** when loading full season data with telemetry
+Formula 1 session data is spread across many JSON files on CDN servers. A session load requests one file per payload:
+- **A few requests** for the session tables (drivers, laps, weather, race control messages)
+- **One request per driver lap** for telemetry, so a full race with telemetry can need more than 1000 requests
 
-Without proper connection management, each request would incur:
-- **TCP handshake overhead**: 1-3 round trips (50-150ms on typical connections)
-- **TLS negotiation**: 2-4 round trips (100-200ms)
-- **DNS resolution**: 20-100ms per unique hostname
+Without connection reuse, each request would pay for a new connection:
+- **DNS resolution** of the CDN host name
+- **TCP handshake**: one round trip
+- **TLS handshake**: one or two round trips
 
 The http_session module removes most of this overhead. It keeps one pooled session and reuses its open connections for later requests.
 
@@ -37,13 +36,13 @@ The http_session module removes most of this overhead. It keeps one pooled sessi
 
 - **Thread-safe singleton pattern**: Single shared session across all threads and requests
 - **Aggressive connection pooling**: Dynamically sized pools based on concurrency settings
-- **HTTP/2 multiplexing**: Multiple requests over single connections (optional)
-- **HTTP/3 support**: QUIC protocol for improved performance (optional)
-- **Resolver list**: Configurable DNS resolvers, including DNS-over-HTTPS (DoH) entries (see the known issue in [DoH support](#dns-over-https-doh-support))
+- **HTTP/2 multiplexing**: Multiple requests over single connections (on by default, `http_multiplexed`)
+- **HTTP/3 support**: QUIC, off by default (`http_disable_http3`)
+- **Resolver list**: Configurable DNS resolvers, including DNS-over-HTTPS (DoH) entries (see [DoH support](#dns-over-https-doh-support))
 - **Request counters**: Counts of the HTTP requests that tif1 sends through the shared session
-- **Keep-alive optimization**: Configurable timeouts and request limits per connection
+- **Keep-alive headers**: Configurable `Keep-Alive` timeout and request limit values
 - **Automatic resource cleanup**: Graceful shutdown on process exit
-- **Zero-trust environment handling**: Disabled trust_env for predictable behavior
+- **No environment settings**: `trust_env` is off, so the session does not read proxy variables (such as `HTTPS_PROXY`) or `.netrc` files
 
 ---
 
@@ -71,7 +70,7 @@ The function uses a module-level lock (`_session_lock`) to ensure thread-safe in
   - Dynamic connection pooling based on concurrency settings
   - The first resolver from `http_resolvers` that builds a session
   - HTTP/2 multiplexing (if enabled)
-  - HTTP/3 support (if not disabled)
+  - HTTP/3 only when `http_disable_http3` is `False` (the default is `True`)
   - Keep-alive headers with configurable timeouts
   - Disabled `trust_env` for predictable behavior
 
@@ -85,9 +84,8 @@ The session is configured with:
 - **Multiplexing**: HTTP/2 multiplexing enabled by default
 
 **Performance Characteristics:**
-- **First call**: 10-50ms (session creation + DNS resolution)
-- **Subsequent calls**: &lt;1μs (cached instance return)
-- **Memory overhead**: ~1-2MB for session + connection pools
+- **First call**: Builds the session and mounts its adapter. DNS lookups and connections happen at the first request, not here
+- **Subsequent calls**: Return the cached instance without a lock
 
 **Example:**
 ```python
@@ -107,16 +105,17 @@ print(f"Status: {response.status_code}")  # 200
 
 **Advanced Usage:**
 ```python
-from tif1.http_session import get_session
+from tif1.http_session import close_session, get_session
 import tif1
 
-# Configure before first session creation
+# Set the pool sizes for the next session that tif1 builds
 config = tif1.get_config()
 config.set("pool_connections", 512)
 config.set("pool_maxsize", 2048)
 config.set("http_multiplexed", True)
 
-# Now get the session (will use custom settings)
+# Close the shared session (if one exists), then build a new one with these settings
+close_session()
 session = get_session()
 
 # Check session configuration
@@ -130,7 +129,7 @@ print(f"Pool maxsize: {adapter._pool_maxsize}")
 </Warning>
 
 <Note>
-  Configuration changes only take effect before the first `get_session()` call. To apply new settings, call `close_session()` first to reset the singleton, then call `get_session()` again.
+  Configuration changes only take effect when tif1 builds a session. To apply new settings, call `tif1.async_fetch.close_session()` and then `close_session()` from this module. The first call drops the reference that the async fetch layer keeps to the old session. The next `get_session()` call builds a new session.
 </Note>
 
 ---
@@ -166,12 +165,12 @@ Get current connection pool statistics for monitoring and debugging.
 **Returns:**
 - Dictionary with connection metrics:
   - `total_requests`: Number of payload requests that tif1 sent through the shared session
-  - `connections_reused`: Number of requests counted as reused
+  - `connections_reused`: Number of those requests that used an open pooled connection
   - `connections_created`: Number of shared sessions created
   - `reuse_rate`: `connections_reused` as a percentage of `total_requests` (0-100)
 
 <Note>
-  tif1 counts every tracked request as reused, so `reuse_rate` is 100.0 after the first request and 0.0 before it. The counters do not measure real socket reuse. Data served from the cache makes no request. A session that loads from the cache leaves all counters at 0.
+  tif1 counts a request as reused when niquests reports no connection or TLS handshake time for it. The first request on a new connection is not reused. Data served from the cache makes no request, so a session that loads from the cache leaves the request counters at 0. During `Session.load()`, tif1 fetches the session tables through a separate short-lived niquests session, and these counters do not include those requests.
 </Note>
 
 **Example:**
@@ -210,8 +209,8 @@ The HTTP session is configured via the global config object. Key settings:
 | `http_disable_http3` | `bool` | `True` | Disable HTTP/3 (QUIC); HTTP/2 over TCP is the default |
 | `pool_connections` | `int` | Dynamic (min 256) | Number of connection pools (auto-sized based on concurrency) |
 | `pool_maxsize` | `int` | Dynamic (min 512) | Maximum connections per pool (auto-sized to 4x pool_connections; a set value below 512 is raised to 512) |
-| `keepalive_timeout` | `int` | `120` | Keep-alive timeout in seconds |
-| `keepalive_max_requests` | `int` | `10000` | Max requests per connection |
+| `keepalive_timeout` | `int` | `120` | Timeout value (seconds) sent in the `Keep-Alive` header |
+| `keepalive_max_requests` | `int` | `10000` | Request limit sent in the `Keep-Alive` header |
 | `http_resolvers` | `list[str]` | `["standard", "doh+cloudflare://", "doh+google://"]` | DNS resolvers to try in order when tif1 creates the session |
 
 **Example:**
@@ -267,7 +266,7 @@ The HTTP session uses aggressive connection pooling for maximum performance:
 
 - **Connection reuse**: Keeps connections alive for multiple requests
 - **Pool sizing**: Dynamically sized based on concurrency settings
-- **Keep-alive**: Configurable timeout and max requests per connection
+- **Keep-alive**: Configurable `Keep-Alive` header values
 - **Thread-safe**: Single shared session across all threads
 
 **Performance benefits:**
@@ -335,7 +334,7 @@ config.set("pool_maxsize", 512)  # values below 512 are raised to 512
 
 ### Keep-Alive Tuning
 
-Adjust keep-alive settings for different network conditions:
+These values only set the `Keep-Alive` request header. The server decides how long it keeps a connection open.
 
 ```python
 import tif1
@@ -368,18 +367,23 @@ config.set("pool_maxsize", 1024)
 
 ### DNS Resolution Failures
 
-tif1 does not switch to DoH when a DNS lookup fails. Because of the known issue in [DoH support](#dns-over-https-doh-support), `http_resolvers` does not change HTTPS lookups at this time. Fix DNS at the system level, or set the resolver list for a later release:
+tif1 does not switch to DoH when a DNS lookup fails during a request. To use DoH, put a DoH entry first in `http_resolvers` and rebuild the shared session:
 
 ```python
 import tif1
+from tif1 import async_fetch, http_session
 
 config = tif1.get_config()
 config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
+
+# The resolver applies when tif1 builds a session
+async_fetch.close_session()
+http_session.close_session()
 ```
 
 ### Connection reuse issues
 
-The counters show how many payload requests went to the network. They do not measure socket reuse (see the note in [Connection Statistics](#connection-statistics)):
+The counters show how many payload requests went to the network. They also show how many of them used an open connection (see [Connection Statistics](#connection-statistics)):
 
 ```python
 from tif1.http_session import get_connection_stats
@@ -389,6 +393,7 @@ if stats["total_requests"] == 0:
     print("No network requests yet (data came from the cache)")
 else:
     print(f"Network requests: {stats['total_requests']}")
+    print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
 ```
 
 ---
@@ -398,7 +403,7 @@ else:
 1. **Do not create multiple sessions**: Use the shared session for all requests
 2. **Monitor connection stats**: Track how many requests reach the network
 3. **Tune pool size**: Match the pool size to the concurrency needs
-4. **Fix DNS at the system level**: `http_resolvers` does not change HTTPS lookups at this time
+4. **Use DoH when system DNS is unreliable**: Put a DoH entry first in `http_resolvers`
 5. **Keep HTTP/2 multiplexing on**: It is the default. Disable it only when a CDN causes errors
 6. **Let the library manage cleanup**: Session closes automatically on exit
 
@@ -408,7 +413,7 @@ else:
 
 The http_session module provides:
 - Shared HTTP session with connection pooling
-- A configurable resolver list (see the known issue above)
+- A configurable resolver list
 - Request counters
 - Configurable pool sizing and keep-alive
 - Thread-safe singleton pattern

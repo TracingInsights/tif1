@@ -36,6 +36,16 @@ def fuzzy_matcher(
         element in the reference list and exact is a boolean indicating if the
         match is accurate or not.
     """
+    index, exact, _score = _fuzzy_match(query, reference)
+    return index, exact
+
+
+def _fuzzy_match(query: str, reference: list[list[str]]) -> tuple[int, bool, float]:
+    """:func:`fuzzy_matcher`, plus the best feature score (0-100) of the match.
+
+    An accurate (substring) match scores 100. Callers use the score to reject
+    a query that resembles no element at all.
+    """
     query = query.casefold().replace(" ", "")
     for i in range(len(reference)):
         for j in range(len(reference[i])):
@@ -45,7 +55,7 @@ def fuzzy_matcher(
     # instead of numpy raising on a ragged list.
     width = max((len(features) for features in reference), default=0)
     if width == 0:
-        return 0, False
+        return 0, False, 0.0
     for features in reference:
         features.extend([""] * (width - len(features)))
 
@@ -57,30 +67,41 @@ def fuzzy_matcher(
             full_partial_match_indices.append(i)
 
     if len(full_partial_match_indices) == 1:
-        return full_partial_match_indices[0], True
+        return full_partial_match_indices[0], True, 100.0
 
     # Zero or multiple substring matches — use fuzzy matching
-    reference_arr = np.array(reference)
-    ratios = np.zeros_like(reference_arr, dtype=int)
-
     if full_partial_match_indices:
         candidate_indices = full_partial_match_indices
     else:
-        candidate_indices = range(len(reference_arr))
+        candidate_indices = range(len(reference))
 
+    ratios = np.zeros((len(reference), width), dtype=float)
     for i in candidate_indices:
-        feature_strings = reference_arr[i]
-        ratios[i] = [fuzz.ratio(val, query) for val in feature_strings]
+        ratios[i] = [fuzz.ratio(val, query) if val else 0.0 for val in reference[i]]
 
-    max_ratio = np.max(ratios)
-    max_row_ratios = np.max(ratios, axis=1)
+    max_ratio = float(ratios.max())
+    tied = np.flatnonzero(ratios.max(axis=1) == max_ratio)
+    if len(tied) == 1:
+        return int(tied[0]), False, max_ratio
 
-    # If multiple rows share the max ratio, disambiguate via remaining features
-    if np.sum(max_row_ratios == max_ratio) > 1:
-        unique, counts = np.unique(reference_arr, return_counts=True)
-        count_dict = dict(zip(unique, counts))
-        mask = (np.vectorize(count_dict.get)(reference_arr) > 1) & (ratios == max_ratio)
-        ratios[mask] = 0
-
-    max_index = np.argmax(ratios) // ratios.shape[1]
-    return int(max_index), False
+    # Several elements share the best score (Bahrain GP and pre-season testing
+    # both match "bahrain"). A feature that more than one tied element has
+    # cannot tell them apart: score the tied elements on their other features
+    # only, and never let an element outside the tie win.
+    rows_with_feature: dict[str, int] = {}
+    for i in tied:
+        for val in set(reference[i]):
+            if val:
+                rows_with_feature[val] = rows_with_feature.get(val, 0) + 1
+    tie_scores = [
+        max(
+            (
+                ratio
+                for val, ratio in zip(reference[i], ratios[i])
+                if val and rows_with_feature[val] == 1
+            ),
+            default=0.0,
+        )
+        for i in tied
+    ]
+    return int(tied[int(np.argmax(tie_scores))]), False, max_ratio

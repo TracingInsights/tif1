@@ -51,6 +51,8 @@ dependencies = [
     "orjson>=3.12.0,<4",
     "rapidfuzz>=3.14.6,<4",
     "polars>=2.0.0,<3",
+    # polars <-> pandas conversion (to_pandas/from_pandas) goes through Arrow.
+    "pyarrow>=25.0.1,<27",
     # Python 3.14+ ships zstd in the standard library (PEP 784); the wheel is
     # only needed on older interpreters (see tif1.cache codec selection).
     "zstandard>=0.25.0,<0.26; python_version < '3.14'",
@@ -74,7 +76,6 @@ dev = [
     "pytest-asyncio>=1.4.0,<2",
     "pytest-benchmark>=5.3.0,<6",
     "pytest-mock>=3.15.1,<4",
-    "pyarrow>=25.0.1,<27",
     "ruff>=0.16.6,<0.17.0",
     "ty>=0.0.78,<0.1.0",
     "prek>=0.5.2,<0.6.0",

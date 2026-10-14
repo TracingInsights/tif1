@@ -361,11 +361,20 @@ class PayloadLoader:
         Raises:
             DataNotFoundError: Payload does not exist.
             InvalidDataError: Payload is not a JSON object or failed validation.
-            NetworkError: All CDN sources failed.
+            NetworkError: All CDN sources failed, or ``offline_mode`` is on and
+                the payload is not cached.
         """
         local_payload = self._memo_get(path)
         if local_payload is not None:
             return local_payload
+
+        from .config import get_config
+
+        config = get_config()
+        # Same contract as the batch path (fetch_json_async): CI mode skips the
+        # persistent cache, offline mode never touches the network.
+        if config.get("ci_mode", False):
+            use_cache = write_cache = False
 
         cache_key = self.cache_key(path)
 
@@ -375,6 +384,9 @@ class PayloadLoader:
                 if isinstance(cached, dict):
                     self._memo_set(path, cached)
                 return cached
+
+        if config.get("offline_mode", False):
+            raise NetworkError(url=cache_key, status_code=None)
 
         try:
             result = self._fetch(path, fast=fast)

@@ -11,11 +11,11 @@ keywords:
 
 Race pace analysis is a common task in F1 data science. The analysis examines lap times over a long stint. The results show which driver is faster and how well each driver manages the tires.
 
-<img src="/assets/race_pace_boxplot.png" alt="Race pace comparison box plot" />
+<img src="/assets/race_pace_boxplot.png" alt="Race pace box plot of the top 5 finishers at the 2024 Abu Dhabi Grand Prix" />
 
 ## Loading the Data
 
-This example uses the 2024 Abu Dhabi Grand Prix. Use the `polars` lib for faster filtering.
+This example uses the 2024 Abu Dhabi Grand Prix. It loads the session with the `polars` lib and converts the laps to pandas for plotting.
 
 ```python
 import tif1

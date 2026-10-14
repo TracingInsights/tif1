@@ -89,13 +89,13 @@ class CacheError(TIF1Error):
 class SessionNotLoadedError(TIF1Error):
     """Raised when accessing session data before loading."""
 
-    def __init__(self, attribute: str | None = None) -> None:
+    def __init__(self, attribute: str | None = None, **context: Any) -> None:
         message = (
             f"Session data not loaded. Access '{attribute}' requires loading data first."
             if attribute
             else "Session data not loaded"
         )
-        super().__init__(message, attribute=attribute)
+        super().__init__(message, attribute=attribute, **context)
 
 
 class DriverNotFoundError(DataNotFoundError):
@@ -107,14 +107,23 @@ class DriverNotFoundError(DataNotFoundError):
         TIF1Error.__init__(self, message, driver=driver, **_plain_names(context))
 
 
-class EventNotInSeasonError(ValueError):
-    """Raised when an event alias names a Grand Prix that is not on that season's calendar.
+class EventNotFoundError(ValueError):
+    """Raised when an event name matches no event of the season.
 
-    ``get_event_by_name(2021, "Suzuka")`` resolves the alias to the Japanese
-    Grand Prix, which was not held in 2021. This is a ``ValueError`` (not a
+    ``get_event_by_name(2025, "Invalid GP")`` finds no event whose name,
+    location or country is close enough to the query, so it raises instead of
+    returning the least-bad match. This is a ``ValueError`` (not a
     ``TIF1Error``) because ``get_event_by_name`` raises ``ValueError`` for every
     unresolved name; ``get_session`` re-raises it instead of loading a
     different race.
+    """
+
+
+class EventNotInSeasonError(EventNotFoundError):
+    """Raised when an event alias names a Grand Prix that is not on that season's calendar.
+
+    ``get_event_by_name(2021, "Suzuka")`` resolves the alias to the Japanese
+    Grand Prix, which was not held in 2021.
     """
 
 
