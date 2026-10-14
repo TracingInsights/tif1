@@ -36,19 +36,19 @@ keywords = [
 ]
 dependencies = [
     "pandas>=3.0.6,<4",
-    "niquests>=3.21.1,<4",
+    "niquests>=3.21.2,<4",
     "pydantic>=2.14.0,<3",
-    "typer>=0.27.2,<0.28.0",
+    "typer>=0.27.3,<0.28.0",
     "rich>=15.0.0,<16",
     "typing-extensions>=4.16.0,<5",
-    "nest-asyncio2>=1.7.2,<2",
+    "nest-asyncio2>=1.7.4,<2",
     "matplotlib>=3.11.2,<4",
     "seaborn>=0.13.2,<1",
     # scipy 1.18 dropped Python 3.11; 1.18.1 is the first release with 3.15 wheels.
     "scipy>=1.17.1,<2; python_version < '3.15'",
     "scipy>=1.18.1,<2; python_version >= '3.15'",
     "timple==0.1.8",
-    "orjson>=3.12.0,<4",
+    "orjson>=3.13.0,<4",
     "rapidfuzz>=3.14.6,<4",
     "polars>=2.0.0,<3",
     # Python 3.14+ ships zstd in the standard library (PEP 784); the wheel is
@@ -73,13 +73,13 @@ dev = [
     "pytest-cov>=7.1.0,<8",
     "pytest-asyncio>=1.4.0,<2",
     "pytest-benchmark>=5.3.0,<6",
-    "pytest-mock>=3.15.1,<4",
-    "pyarrow>=25.0.1,<27",
-    "ruff>=0.16.6,<0.17.0",
-    "ty>=0.0.78,<0.1.0",
-    "prek>=0.5.2,<0.6.0",
-    "pandas-stubs>=3.0.5.260730,<4",
-    "hypothesis>=6.167.1,<7",
+    "pytest-mock>=3.16.0,<4",
+    "pyarrow>=26.0.0,<27",
+    "ruff>=0.17.0,<0.18.0",
+    "ty>=0.0.86,<0.1.0",
+    "prek>=0.5.5,<0.6.0",
+    "pandas-stubs>=3.0.5.260914,<4",
+    "hypothesis>=6.169.0,<7",
 ]
 
 [project.scripts]
