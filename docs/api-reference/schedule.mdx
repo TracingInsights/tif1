@@ -20,7 +20,7 @@ The `schedule_schema` module is the validation layer for the tif1 internal sched
 
 ## Purpose and Role
 
-The schedule validation system guarantees that all schedule payloads conform to the tif1 internal schema before use by higher-level APIs. This applies to the vendored JSON files and to custom data passed to the validator. Years fetched from the CDN only pass the conversion checks. This validation layer provides these functions:
+The schedule validation system guarantees that all schedule payloads conform to the tif1 internal schema before use by higher-level APIs. This applies to the vendored JSON files and to custom data passed to the validator. Years fetched from the f1schedule repository only pass the conversion checks. This validation layer provides these functions:
 
 - **Data Integrity Assurance**: Validates that schedule data structures are complete, correctly typed, and internally consistent
 - **Early Error Detection**: Catches malformed or incomplete data at the earliest possible stage, preventing cascading failures
@@ -50,15 +50,16 @@ The schedule validation system sits at a critical junction in tif1's data pipeli
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Schedule Data Sources                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Vendored JSON Files (src/tif1/data/schedules/f1schedule/)   │
-│     • Per-year files: schedule_2021.json, schedule_2022.json    │
+│  1. Live f1schedule file (raw.githubusercontent.com)            │
+│     • Current and future seasons, and years without a            │
+│       vendored file                                              │
 │     • Columnar format (pandas-like structure)                    │
-│     • Bundled with library installation                          │
+│     • Cached in SQLite for schedule_ttl_hours (default 6)        │
 │                                                                   │
-│  2. CDN Fallback (jsdelivr)                                      │
-│     • Fetched for years not in vendored data                     │
-│     • Same columnar format as vendored files                     │
-│     • Cached per process (a failed fetch, too)                   │
+│  2. Vendored JSON Files (src/tif1/data/schedules/f1schedule/)   │
+│     • Per-year files: schedule_2021.json, schedule_2022.json    │
+│     • Past seasons, and the fallback when the fetch fails        │
+│     • Bundled with library installation                          │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -104,7 +105,7 @@ The schedule validation system sits at a critical junction in tif1's data pipeli
 
 1. **Fail-Fast Philosophy**: Validation occurs immediately after data conversion, before any caching or API exposure. This ensures that invalid data never propagates through the system.
 
-2. **Single Validation Point**: The vendored schedule data passes through one validation function. Years fetched from the CDN only pass the conversion checks.
+2. **Single Validation Point**: The vendored schedule data passes through one validation function. Years fetched from the f1schedule repository only pass the conversion checks.
 
 3. **Performance Optimization**: Validation is fast (typically &lt;1ms) and runs only once per session due to caching.
 
@@ -1721,26 +1722,37 @@ get_event(2021, "Belgian Grand Prix")
 
 ### Data Source Priority
 
-tif1 uses a fallback system for schedule data:
+The source depends on whether the season can still change:
 
 ```text
+Current or future season (year >= this year), or a year without a vendored file
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. Vendored JSON Files (Primary Source)                     │
-│    Location: src/tif1/data/schedules/f1schedule/            │
-│    Coverage: Years bundled with library (2018-2026)         │
-│    Validation: Runs once per Python session                 │
+│ 1. SQLite row younger than schedule_ttl_hours (default 6)   │
+│    Key: f1schedule/schedule_{year}.json                     │
 └─────────────────────────────────────────────────────────────┘
-                          ↓ (if year not found)
+                          ↓ (missing or expired)
 ┌─────────────────────────────────────────────────────────────┐
-│ 2. CDN Fallback (Secondary Source)                          │
-│    URL: jsdelivr.net/gh/theOehrly/f1schedule@master/        │
-│    Coverage: All years available in f1schedule repo         │
+│ 2. Live fetch                                               │
+│    URL: raw.githubusercontent.com/theOehrly/f1schedule/     │
+│         master/schedule_{year}.json  (same file as FastF1)  │
 │    Validation: Conversion checks only                       │
-│    Caching: Cached per process (a failed fetch, too)        │
+│    A 404 means "no calendar for that year": empty schedule  │
+└─────────────────────────────────────────────────────────────┘
+                          ↓ (fetch failed or offline_mode)
+┌─────────────────────────────────────────────────────────────┐
+│ 3. Stale SQLite row, then the vendored file                 │
+│    Retried after 5 minutes                                  │
+└─────────────────────────────────────────────────────────────┘
+
+Past season with a vendored file
+┌─────────────────────────────────────────────────────────────┐
+│ Vendored JSON Files (src/tif1/data/schedules/f1schedule/)   │
+│    Coverage: 2018 onwards; validated once per process       │
+│    No network request                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Only the vendored payload goes through `validate_schedule_payload()`. A CDN year is converted, and the conversion raises `InvalidDataError` for a malformed file. A failed CDN fetch logs a warning and gives an empty schedule.
+Only the vendored payload goes through `validate_schedule_payload()`. A fetched year is converted, and the conversion raises `InvalidDataError` for a malformed file; a malformed upstream file is logged and ignored (the fallback chain continues). A failed fetch logs a warning and falls back to the stale row or the vendored file, so the current season is still resolvable offline.
 
 ### Caching Strategy
 
@@ -1757,20 +1769,19 @@ def _load_schedule_payload():
     payload = {"schema_version": 1, "years": vendored_years}
     return validate_schedule_payload(payload)
 
-@lru_cache(maxsize=16)
-def _load_f1schedule_year_from_cdn(year):
-    """Load and convert a year from the CDN (cached per year)."""
-    # No validate_schedule_payload() call: the conversion raises
-    # InvalidDataError for a malformed file. A failed fetch returns None,
-    # and lru_cache keeps that None for the rest of the process.
-    raw_data = fetch_from_cdn(year)
-    return _convert_f1schedule_year(raw_data, year)
+def _get_year_schedule(year):
+    """Memoized season schedule; a live season is refreshed past its TTL."""
+    # No validate_schedule_payload() call for a fetched year: the conversion
+    # raises InvalidDataError for a malformed file. The raw upstream file is
+    # stored in the SQLite "json" tier with its fetch time, so a new process
+    # within schedule_ttl_hours reads it without a request.
+    ...
 ```
 
 **Cache Characteristics:**
 
 - **Vendored Data**: Validated once per Python session, cached indefinitely
-- **CDN Data**: Converted once per year per process, cached with LRU eviction (16 years max). A failed fetch is cached too
+- **Live Data**: The raw upstream file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`) and memoized in the process for the same window. A failed fetch keeps the fallback for 5 minutes before the next attempt
 - **Performance Impact**: The first call reads and converts all vendored files (about 25ms). Later calls are cache hits
 
 ### Custom Schedule Data Integration
@@ -2114,15 +2125,18 @@ schedule2 = _load_schedule_payload()
 Event and session lists are cached as immutable tuples:
 
 ```python
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
-    """Cache events as immutable tuple for hashability."""
-    return tuple(_build_events_for_year(year))
+    """Events as an immutable tuple, memoized per season."""
+    return _get_year_schedule(year).events
 
-@lru_cache(maxsize=128)
 def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
-    """Cache sessions as immutable tuple."""
-    return tuple(_build_sessions_for_event(year, event))
+    """Resolved session list, memoized per season and queried name."""
+    record = _get_year_schedule(year)
+    sessions = record.sessions.get(event)
+    if sessions is None:
+        sessions = tuple(_build_sessions_for_event(year, event))
+        record.sessions[event] = sessions
+    return sessions
 ```
 
 **Benefits:**

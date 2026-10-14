@@ -1149,6 +1149,14 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="schedule_ttl_hours" type="float" default="6.0">
+  Age in hours after which the live event schedule of the current or a future season is re-fetched from the `theOehrly/f1schedule` repository. `0` re-fetches on every lookup; negative values are rejected. Past seasons come from the vendored files and never refresh. Environment variable: `TIF1_SCHEDULE_TTL_HOURS`.
+
+  ```python
+  config.set("schedule_ttl_hours", 1.0)  # pick up calendar changes within the hour
+  ```
+</ResponseField>
+
 </Accordion>
 
 <Accordion title="CDN Configuration">
@@ -2553,6 +2561,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "memory_cache_max_items": 1024,
   "memory_telemetry_cache_max_items": 2048,
   "missing_payloads_ttl_days": 7.0,
+  "schedule_ttl_hours": 6.0,
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "connection_stats_log_interval": 60.0,

@@ -165,7 +165,7 @@ cdn_manager.reset()
 **Unsupported CDNs:**
 
 The following CDN sources are explicitly blocked due to rate limiting or compatibility issues:
-- `raw.githubusercontent.com` - GitHub's raw content CDN has aggressive rate limiting (60 requests/hour for unauthenticated users)
+- `raw.githubusercontent.com` - GitHub's raw content CDN has aggressive rate limiting (60 requests/hour for unauthenticated users). The one request tif1 makes there on purpose is the live season's `schedule_{year}.json` in `tif1.events`, outside the CDN chain and cached for `schedule_ttl_hours`
 
 Always use a proper CDN like jsDelivr that is designed for high-volume content delivery.
 

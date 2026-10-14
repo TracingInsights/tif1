@@ -7,6 +7,24 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Changed — live event schedule (2026-10-14)
+
+- **The current season's calendar is fetched live from `theOehrly/f1schedule`
+  on `raw.githubusercontent.com`, the same file FastF1 reads.** It used to
+  come from the vendored `schedule_{year}.json` snapshot, which only lagged
+  behind upstream; jsDelivr (the old fallback for years without a snapshot)
+  pins branch files for 12 hours, raw GitHub for 5 minutes. With the 2026
+  calendar being rewritten mid-season, the vendored snapshot was already
+  missing a round. Order for the current and future seasons: SQLite row
+  younger than `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`,
+  `0` re-fetches every lookup) → live fetch → stale row → vendored file.
+  Past seasons still come from the vendored files with no request. A failed
+  fetch logs a warning and keeps the fallback for 5 minutes;
+  `offline_mode` never fetches. The in-process memo honours the same TTL,
+  so a long-running process picks up calendar changes too. This is the one
+  sanctioned `raw.githubusercontent.com` request in tif1: one small file per
+  season, outside the data-repository CDN chain.
+
 ### Performance — Argos series (2026-10-14)
 
 Twelve hypotheses measured on a 32-core workstation (every prior series ran on

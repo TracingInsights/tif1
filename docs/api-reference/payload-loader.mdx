@@ -351,7 +351,7 @@ This example requires network access. It fetches the f1schedule payload that `ti
 ```python
 from tif1.payload_loader import get_url_loader
 
-url = "https://cdn.jsdelivr.net/gh/theOehrly/f1schedule@master/schedule_2025.json"
+url = "https://raw.githubusercontent.com/theOehrly/f1schedule/master/schedule_2025.json"
 data = get_url_loader().get_url(url, timeout=15.0)
 print(type(data).__name__, list(data)[:3])
 ```

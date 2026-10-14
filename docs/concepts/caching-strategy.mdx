@@ -108,7 +108,11 @@ When every CDN answers a payload request with a 4xx status, `tif1` records the k
 CREATE TABLE missing_payloads (key TEXT PRIMARY KEY, recorded_at REAL);
 ```
 
-Later loads consult `is_known_missing()` before the network and raise `DataNotFoundError` without a request. A verdict expires after `missing_payloads_ttl_days` (default `7.0`). This is the only tier with a TTL. A successful write for the same key discards the verdict.
+Later loads consult `is_known_missing()` before the network and raise `DataNotFoundError` without a request. A verdict expires after `missing_payloads_ttl_days` (default `7.0`). A successful write for the same key discards the verdict.
+
+### Live schedule row
+
+`tif1.events` stores the raw `schedule_{year}.json` of a live season in the `json` tier under `f1schedule/schedule_{year}.json`, together with its fetch time. The row is re-fetched from the `theOehrly/f1schedule` repository once it is older than `schedule_ttl_hours` (default `6.0`); a failed refresh keeps serving the stale row. Session payloads never expire; this row and the negative verdicts are the two TTL-scoped entries.
 
 ### Backend lap LRU
 
@@ -169,6 +173,7 @@ Configuration is read through `tif1.get_config().get(key)` and changed with `.se
 | `memory_cache_max_items` | `TIF1_MEMORY_CACHE_MAX_ITEMS` | `1024` | JSON blob LRU size |
 | `memory_telemetry_cache_max_items` | `TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS` | `2048` | Telemetry blob LRU size |
 | `missing_payloads_ttl_days` | `TIF1_MISSING_PAYLOADS_TTL_DAYS` | `7.0` | Lifetime of a negative verdict |
+| `schedule_ttl_hours` | `TIF1_SCHEDULE_TTL_HOURS` | `6.0` | Age at which a live season's schedule is re-fetched |
 
 Boolean environment variables accept `1`, `true`, `yes`, and `on`.
 
@@ -308,7 +313,7 @@ Set `TIF1_ENABLE_CACHE=false` or `tif1.get_config().set("enable_cache", False)` 
     A row that fails to decompress, parse, or unpickle is logged and treated as a miss. The row is not deleted. The next successful write for the same key replaces it.
   </Accordion>
   <Accordion title="No TTL on positive entries">
-    Payload rows, frame rows, and memory entries never expire. Only the negative-verdict tier has a TTL (`missing_payloads_ttl_days`). Use `invalidate()` or `clear()` to remove data.
+    Payload rows, frame rows, and memory entries never expire. Only the negative-verdict tier (`missing_payloads_ttl_days`) and the live schedule row (`schedule_ttl_hours`) are TTL-scoped. Use `invalidate()` or `clear()` to remove data.
   </Accordion>
   <Accordion title="Directory permissions">
     The cache directory is forced to mode `0o700`. Keep the directory private: the frame tier unpickles blobs from it and trusts their origin.

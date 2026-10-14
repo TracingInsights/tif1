@@ -22,6 +22,8 @@ keywords:
 4. **SQLite frame tier**: Materialized telemetry DataFrames in `telemetry_frames` (pandas) and `telemetry_frames_pl` (polars)
 5. **Negative-verdict tier**: The `missing_payloads` table remembers payloads that every CDN reported missing, for `missing_payloads_ttl_days` (default 7 days)
 
+The `cache` table also holds one TTL-scoped row per live season, `f1schedule/schedule_{year}.json`, written by `tif1.events` and re-fetched after `schedule_ttl_hours` (default 6).
+
 Two more tiers live outside `Cache`: the per-session `SessionMemo` (`Session._memo`) and the process-global backend lap LRU (`get_backend_lap_cache`). Hot data comes from memory (microsecond latency). Cold data comes from disk (millisecond latency) without a network request (second+ latency). The cache is thread-safe and supports synchronous and asynchronous operations.
 
 <Note>

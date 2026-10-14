@@ -101,7 +101,7 @@ graph TD
 - Requests for files missing everywhere never burn the retry/backoff budget
 - 5xx and transport errors keep the retryable `NetworkError`
 - Handles URL encoding and path construction
-- Never uses `raw.githubusercontent.com` (strict rate limits)
+- Never uses `raw.githubusercontent.com` for session data (strict rate limits); the only raw GitHub request tif1 makes is the one `schedule_{year}.json` of a live season in `events.py`, cached for `schedule_ttl_hours`
 
 **Async HTTP Fetcher (`async_fetch.py`)**
 - Parallel HTTP requests using `niquests` (HTTP/2 support)
@@ -528,7 +528,7 @@ When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a mul
 - Used when both jsDelivr and Hugging Face fail or are unavailable
 
 **Forbidden Source: raw.githubusercontent.com**
-- Never used due to strict rate limits
+- Never used for session payloads due to strict rate limits. The one exception is the live event schedule: `events.py` fetches `theOehrly/f1schedule/master/schedule_{year}.json` for the current season (one small file, cached for `schedule_ttl_hours`) because that is where calendar changes land first
 - When all three sources fail, tif1 raises `NetworkError` (or `DataNotFoundError` when every source returned a 4xx) instead of trying it
 
 #### URL Construction
@@ -4383,7 +4383,8 @@ export TIF1_CACHE_DIR="/path/to/tif1-cache"
 export TIF1_ENABLE_CACHE="true"
 export TIF1_MEMORY_CACHE_MAX_ITEMS="1024"
 export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS="2048"
-export TIF1_MISSING_PAYLOADS_TTL_DAYS="7.0"  # only TTL; cached payloads never expire
+export TIF1_MISSING_PAYLOADS_TTL_DAYS="7.0"  # cached payloads never expire
+export TIF1_SCHEDULE_TTL_HOURS="6.0"          # live season schedule refresh age
 export TIF1_CACHE_COMMIT_INTERVAL="100"
 
 # Network configuration

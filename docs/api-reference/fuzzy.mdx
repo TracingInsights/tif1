@@ -2353,43 +2353,44 @@ for year, event, session in test_cases:
 
 #### Event Schedule Caching
 
-Event schedules are cached using `@lru_cache` to avoid repeated file I/O and JSON parsing:
+Event schedules are memoized per season to avoid repeated file I/O, JSON parsing, and network requests:
 
 ```python
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
-    """Get cached events as immutable tuple."""
-    return tuple(_build_events_for_year(year))
+    """Events as an immutable tuple, memoized per season."""
+    return _get_year_schedule(year).events
 ```
 
 **Benefits:**
-- First call: about 25ms (reads and converts all vendored schedule files)
-- Subsequent calls: ~0.001ms (cache hit)
-- Cache size: 16 years (sufficient for most use cases)
+- First call: about 25ms for a past season (reads and converts all vendored schedule files); a live season adds one fetch per `schedule_ttl_hours` window
+- Subsequent calls: ~0.001ms (memo hit)
+- A live season's memo expires with the TTL, so a long-running process picks up calendar changes
 
 **Memory usage:**
 - ~2KB per year (24 events × ~80 bytes per event name)
-- Total: ~32KB for 16 years
 
 #### Session List Caching
 
 Session lists are also cached per (year, event) combination:
 
 ```python
-@lru_cache(maxsize=128)
 def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
-    """Get cached sessions as immutable tuple."""
-    return tuple(_build_sessions_for_event(year, event))
+    """Resolved session list, memoized per season and queried name."""
+    record = _get_year_schedule(year)
+    sessions = record.sessions.get(event)
+    if sessions is None:
+        sessions = tuple(_build_sessions_for_event(year, event))
+        record.sessions[event] = sessions
+    return sessions
 ```
 
 **Benefits:**
 - First call: well under 0.1ms once the schedule is loaded
-- Subsequent calls: ~0.001ms (cache hit)
-- Cache size: 128 (year, event) pairs
+- Subsequent calls: ~0.001ms (memo hit)
+- The memo lives on the season record, so a refreshed live schedule drops it with the old events
 
 **Memory usage:**
 - ~500 bytes per (year, event) pair
-- Total: ~64KB for 128 pairs
 
 #### Why Fuzzy Match Results Are NOT Cached
 
@@ -3751,18 +3752,15 @@ RapidFuzz implements several optimizations:
 Python's `@lru_cache` decorator uses a hash table with doubly-linked list for O(1) access and eviction:
 
 ```python
-from functools import lru_cache
-
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
     """
-    Cache structure:
-    - Hash table: {year: (events_tuple, access_order)}
-    - Doubly-linked list: maintains access order for LRU eviction
-    - Max size: 16 entries
-    - Eviction: Least recently used when cache is full
+    Memo structure:
+    - Hash table: {year: _YearSchedule(payload, events, expires_at, sessions)}
+    - expires_at: math.inf for a vendored past season; fetch time plus
+      schedule_ttl_hours for a live season
+    - No eviction: a handful of seasons per process
     """
-    return tuple(_build_events_for_year(year))
+    return _get_year_schedule(year).events
 ```
 
 **Cache hit rate analysis:**

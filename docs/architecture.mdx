@@ -92,7 +92,7 @@ sequenceDiagram
 - Static schedules are packaged as JSON files in `src/tif1/data/schedules/f1schedule/` (one file per year: `schedule_2018.json`, `schedule_2019.json`, etc.).
 - `events.py` reads these assets through `importlib.resources` and converts them to the internal format.
 - `schedule_schema.validate_schedule_payload` enforces structure and schema versioning.
-- CDN fallback fetches missing years from jsdelivr (f1schedule repository).
+- The current and future seasons (and years without a packaged file) are fetched from the `theOehrly/f1schedule` repository on `raw.githubusercontent.com` (the file FastF1 reads; 5-minute edge cache) and cached in SQLite for `schedule_ttl_hours` (default 6). The packaged file is the fallback when the fetch fails. This is the one sanctioned `raw.githubusercontent.com` URL: one small file per season, never the data repositories.
 
 ## Design Rules
 

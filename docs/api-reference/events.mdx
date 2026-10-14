@@ -42,7 +42,7 @@ Use the events API to:
 
 The events module is built on several key design principles:
 
-1. **Performance-First**: The raw schedule is loaded once and kept in memory. The module uses vendored JSON files for 2018-2026 and a CDN fallback for other years.
+1. **Performance-First**: The raw schedule is loaded once and kept in memory. Past seasons come from vendored JSON files; the current season is fetched from the live f1schedule repository and cached for `schedule_ttl_hours`.
 
 2. **Pandas Integration**: All data structures extend pandas DataFrame and Series, providing familiar interfaces while adding F1-specific methods. This enables integration with the broader pandas ecosystem.
 
@@ -54,10 +54,10 @@ The events module is built on several key design principles:
 
 ### Data Sources & Availability
 
-Schedule data is sourced from two primary locations:
+Schedule data is sourced from two locations:
 
-- **Vendored JSON files**: The seasons 2018-2026 are packaged with `tif1`. They give instant access without network requests
-- **f1schedule CDN**: Other years are fetched from the `theOehrly/f1schedule` GitHub repository via the jsDelivr CDN
+- **Live f1schedule file**: The current and future seasons are fetched from the `theOehrly/f1schedule` GitHub repository (`raw.githubusercontent.com`, the same file FastF1 reads), so a rescheduled or cancelled round shows up within minutes of the upstream commit. The raw file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`). Years without a vendored file use the same path
+- **Vendored JSON files**: The seasons 2018-2026 are packaged with `tif1`. Past seasons are served from them without a network request; the current season falls back to them when the fetch fails or `offline_mode` is on
 
 **Supported years**: 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026
 
@@ -123,14 +123,14 @@ The function returns an `EventSchedule` object. This object is a specialized pan
 
 - `InvalidDataError`: If the schedule data is malformed or cannot be parsed
 
-A year without schedule data does not raise. A failed CDN fetch logs a warning, and the function returns an empty `EventSchedule`.
+A year without schedule data does not raise: when the repository has no file for it, the function returns an empty `EventSchedule`. A failed fetch logs a warning and falls back to the cached or vendored schedule.
 
 **Behavior & Implementation Details:**
 
-- **Caching**: The raw schedule data is cached in memory after the first request. Later calls for the same year make no network requests, but each call builds a new `EventSchedule`.
-- **Data Source**: Vendored JSON files in the package cover 2018-2026. Other years are fetched from the `theOehrly/f1schedule` repository (via jsDelivr).
+- **Caching**: The raw schedule data is cached in memory after the first request. Later calls for the same year make no network requests until `schedule_ttl_hours` have passed for a live season, but each call builds a new `EventSchedule`.
+- **Data Source**: The current and future seasons come from the live `theOehrly/f1schedule` repository (`raw.githubusercontent.com`, the same file FastF1 reads), re-fetched once the cached copy is older than `schedule_ttl_hours` (default 6). Past seasons come from the vendored JSON files (2018 onwards); earlier years fall back to the repository.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Testing rows have `RoundNumber` 0 and come after the race weekends. Use `get_event_schedule(year, include_testing=False)` to exclude them.
-- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. An initial CDN fetch adds the network time.
+- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. The first fetch of a live season (once per TTL window per cache directory) adds the network time.
 
 **Example Usage:**
 
@@ -898,11 +898,11 @@ The returned `EventSchedule` object is a specialized pandas DataFrame subclass. 
 
 - `InvalidDataError`: If the schedule data is malformed or cannot be parsed
 
-A year without schedule data returns an empty `EventSchedule`. A failed CDN fetch logs a warning and also returns an empty schedule.
+A year without schedule data returns an empty `EventSchedule`. A failed fetch logs a warning and falls back to the cached or vendored schedule.
 
 **Behavior & Implementation Details:**
 
-- **Data Source**: Schedule data comes from vendored JSON files (2018-2026) or the `theOehrly/f1schedule` repository on jsDelivr (other years). The data source is invisible to the caller.
+- **Data Source**: The current and future seasons come from the live `theOehrly/f1schedule` repository (`raw.githubusercontent.com`, the same file FastF1 reads), re-fetched once the cached copy is older than `schedule_ttl_hours` (default 6). Past seasons come from the vendored JSON files (2018 onwards); earlier years fall back to the repository. The data source is invisible to the caller.
 
 - **Caching**: The raw schedule data is cached in memory after the first request. Each call builds a new `EventSchedule` from it, which takes a few milliseconds.
 
@@ -2098,9 +2098,11 @@ from unittest.mock import patch
 
 import tif1
 
-def test_schedule_without_cdn_data():
-    # The real CDN loader logs a failed fetch and returns None
-    with patch('tif1.events._load_f1schedule_year_from_cdn', return_value=None):
+def test_schedule_without_upstream_data():
+    # The repository has no file for the year (HTTP 404): an empty schedule
+    import tif1.events as events_mod
+    events_mod._clear_schedule_memo()
+    with patch('tif1.events._fetch_f1schedule_year', return_value={}):
         schedule = tif1.get_events(2015)  # Year without vendored data
         assert schedule.empty  # No exception: an empty EventSchedule
 ```

@@ -491,6 +491,18 @@ export TIF1_MISSING_PAYLOADS_TTL_DAYS=1.0
   Type: `float`. Default: `7.0`
 </Info>
 
+### TIF1_SCHEDULE_TTL_HOURS
+
+Age in hours after which the event schedule of the current (or a future) season is re-fetched from the `theOehrly/f1schedule` repository. Past seasons come from the vendored files and never refresh.
+
+```bash
+export TIF1_SCHEDULE_TTL_HOURS=1.0
+```
+
+<Info>
+  Type: `float`. Default: `6.0`. `0` re-fetches on every lookup.
+</Info>
+
 ## Data Loading and Validation
 
 ### TIF1_ULTRA_COLD_START
