@@ -96,7 +96,7 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 </ParamField>
 
 <ParamField path="gp" type="str" required>
-  Grand Prix name (for example, "Monaco Grand Prix", "Bahrain Grand Prix"). Must match the exact event name in the schedule data.
+  Grand Prix name (for example, "Monaco Grand Prix", "Bahrain Grand Prix"). Must match the exact event name in the schedule data. No fuzzy matching applies here: `"Monaco"` raises `DataNotFoundError`.
 </ParamField>
 
 <ParamField path="session" type="str" required>
@@ -105,22 +105,23 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 
 <ParamField path="path" type="str" required>
   Path to JSON file relative to the session directory. Common paths:
-  - `"laps.json"` - All lap times for the session
-  - `"drivers.json"` - Driver metadata (names, numbers, teams)
+  - `"session_laptimes.json"` - All laps of all drivers in the session
+  - `"drivers.json"` - Driver metadata (codes, numbers, names, teams)
   - `"weather.json"` - Weather data throughout the session
   - `"rcm.json"` - Race control messages (flags, safety car, etc.)
-  - `"laps/VER.json"` - Lap times for a specific driver (for example, Verstappen)
-  - `"telemetry/VER_1_tel.json"` - Telemetry for driver VER, lap 1
+  - `"corners.json"` - Corner markers and track rotation
+  - `"VER/laptimes.json"` - Lap times for one driver (for example, Verstappen)
+  - `"VER/1_tel.json"` - Telemetry for driver VER, lap 1
 </ParamField>
 
 <ParamField path="max_retries" type="int | None" default="None">
-  Maximum number of retries for failed requests. If `None`, uses global config value (default: 3).
+  Total number of tries for each request, including the first. If `None`, uses global config value (default: 3). Values below 1 still make one try.
 
-  - Set to `0` to disable retries for the fastest cold-start fetch
+  - Set to `1` (or `0`) for one try with no retries, for the fastest cold-start fetch
   - Set to `3-5` for production use (balance between reliability and latency)
   - Set to `10+` for unreliable networks (maximum reliability)
 
-  When `ultra_cold_skip_retries=True` in config, this is automatically set to `0` for the first fetch.
+  When `ultra_cold_skip_retries` is `True` (the default), the ultra-cold `Session` path calls this function with `max_retries=1`, so it makes one try.
 </ParamField>
 
 <ParamField path="timeout" type="int | None" default="None">
@@ -146,14 +147,14 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 <ParamField path="validate_payload" type="bool" default="True">
   If `True`, run fetch-path validation on the fetched data before returning. The fetch
   path is pydantic-free; public `validate_*` APIs remain for compatibility.
-  Validation rules depend on the payload type:
+  Validation rules depend on the payload type and on three config flags:
 
-  - `rcm.json`: Validate race control messages (strict=False, normalize=False)
-  - `weather.json`: Validate weather data (strict=False)
-  - `*_tel.json`: Validate telemetry data (strict=False, normalize=False)
-  - `laps.json` / `laptimes.json`: Validate lap times (if `validate_lap_times=True`)
+  - `rcm.json`: Validate race control messages (strict=False, normalize=False) when `validate_data` is `True`
+  - `weather.json`: Validate weather data (strict=False) when `validate_data` is `True`
+  - `session_laptimes.json` / `*/laptimes.json`: Validate lap times when `validate_lap_times` is `True`
+  - `*_tel.json`: Validate telemetry data (strict=False, normalize=False) when `validate_telemetry` is `True`
 
-  Set to `False` for ~10-20% faster parsing when data integrity is guaranteed.
+  All three flags default to `False`, so a default fetch runs no validation. Set `validate_payload=False` to skip validation even when a flag is on.
 </ParamField>
 
 #### Returns
@@ -161,11 +162,11 @@ Asynchronously fetch and parse JSON from a CDN with caching, retry logic, circui
 <ResponseField name="data" type="dict[str, Any]">
   Parsed JSON data as a dictionary. **Never returns `None`** - raises an exception on error instead.
 
-  The structure depends on the requested path:
-  - `laps.json`: `{"laps": [{"lap": 1, "time": "1:23.456", ...}, ...]}`
-  - `drivers.json`: `{"drivers": [{"code": "VER", "name": "Max Verstappen", ...}, ...]}`
-  - `weather.json`: `{"weather": [{"time": "2025-05-25T14:00:00", "temp": 25.5, ...}, ...]}`
-  - `*_tel.json`: `{"tel": {"rpm": [15000, 15100, ...], "speed": [300, 305, ...], ...}}`
+  The structure depends on the requested path. Most payloads hold parallel arrays, one per column:
+  - `session_laptimes.json`, `*/laptimes.json`: `{"time": [103.877, ...], "lap": [1, ...], "compound": ["SOFT", ...], "drv": ["VER", ...], ...}`
+  - `drivers.json`: `{"drivers": [{"driver": "VER", "dn": "1", "fn": "Max", "ln": "Verstappen", "team": "Red Bull Racing", ...}, ...]}`
+  - `weather.json`: `{"wT": [14.542, ...], "wAT": [27.9, ...], "wTT": [34.5, ...], ...}`
+  - `*_tel.json`: `{"tel": {"time": [0.0, ...], "rpm": [9992.8, ...], "speed": [0.0, ...], ...}}`
 </ResponseField>
 
 #### Raises
@@ -213,14 +214,14 @@ import asyncio
 from tif1.async_fetch import fetch_json_async
 
 async def fetch_data():
-    # Fetch laps data for 2025 Monaco Qualifying
+    # Fetch all laps of 2025 Monaco Qualifying (one array per column)
     data = await fetch_json_async(
         year=2025,
         gp="Monaco Grand Prix",
         session="Qualifying",
-        path="laps.json"
+        path="session_laptimes.json"
     )
-    print(f"Loaded {len(data.get('laps', []))} laps")
+    print(f"Loaded {len(data['lap'])} laps")
 
 asyncio.run(fetch_data())
 ```
@@ -268,12 +269,12 @@ import asyncio
 from tif1.async_fetch import fetch_json_async
 
 async def fetch_without_validation():
-    # Skip validation for ~10-20% faster parsing
+    # Skip validation even when the validate_* config flags are on
     data = await fetch_json_async(
         year=2025,
         gp="Monaco Grand Prix",
         session="Race",
-        path="laps.json",
+        path="session_laptimes.json",
         validate_payload=False
     )
     return data
@@ -292,7 +293,7 @@ async def fetch_with_error_handling():
             year=2025,
             gp="Monaco Grand Prix",
             session="Race",
-            path="laps.json"
+            path="session_laptimes.json"
         )
         return data
     except DataNotFoundError as e:
@@ -337,7 +338,8 @@ async def fetch_multiple_async(
     validate_payload: bool = True,
     max_retries: int | None = None,
     timeout: int | None = None,
-    max_concurrent_requests: int | None = None
+    max_concurrent_requests: int | None = None,
+    defer_telemetry_writes: bool = False
 ) -> list[dict[str, Any] | None]
 ```
 
@@ -351,9 +353,9 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
   **Example**:
   ```python
   requests = [
-      (2025, "Monaco Grand Prix", "Qualifying", "laps/VER.json"),
-      (2025, "Monaco Grand Prix", "Qualifying", "laps/HAM.json"),
-      (2025, "Monaco Grand Prix", "Qualifying", "laps/LEC.json"),
+      (2025, "Monaco Grand Prix", "Qualifying", "VER/laptimes.json"),
+      (2025, "Monaco Grand Prix", "Qualifying", "HAM/laptimes.json"),
+      (2025, "Monaco Grand Prix", "Qualifying", "LEC/laptimes.json"),
   ]
   ```
 
@@ -373,7 +375,7 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
 </ParamField>
 
 <ParamField path="max_retries" type="int | None" default="None">
-  Maximum number of retries per request. If `None`, uses global config value (default: 3).
+  Total number of tries for each request, including the first. If `None`, uses global config value (default: 3).
 
   **Note**: Each request retries independently. A failed request does not block other requests.
 </ParamField>
@@ -392,6 +394,10 @@ Fetch multiple JSON files in parallel with optimized concurrency control and gra
   - `100+`: Ultra-aggressive, only for specialized scenarios (for example, telemetry prefetching with `telemetry_prefetch_max_concurrent_requests`)
 
   **Note**: Higher concurrency does not always mean faster. The optimal value depends on network bandwidth, CDN rate limits, and CPU capacity for JSON parsing.
+</ParamField>
+
+<ParamField path="defer_telemetry_writes" type="bool" default="False">
+  If `True`, the batch collects telemetry payloads and writes them to the cache in one serial flush at the end. The writes then do not occupy concurrency slots.
 </ParamField>
 
 #### Returns
@@ -427,17 +433,16 @@ async def fetch_driver_laps():
     # Fetch laps for multiple drivers in parallel
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR", "PIA", "RUS", "ALO"]
     requests = [
-        (2025, "Monaco Grand Prix", "Qualifying", f"laps/{driver}.json")
+        (2025, "Monaco Grand Prix", "Qualifying", f"{driver}/laptimes.json")
         for driver in drivers
     ]
 
     results = await fetch_multiple_async(requests)
 
-    # Process results
+    # Process results (each payload holds one array per column)
     for driver, data in zip(drivers, results):
         if data is not None:
-            laps = data.get("laps", [])
-            print(f"{driver}: {len(laps)} laps")
+            print(f"{driver}: {len(data['lap'])} laps")
         else:
             print(f"{driver}: No data available")
 
@@ -454,7 +459,7 @@ async def fetch_driver_telemetry():
     num_laps = 50
 
     requests = [
-        (2025, "Monaco Grand Prix", "Race", f"telemetry/{driver}_{lap}_tel.json")
+        (2025, "Monaco Grand Prix", "Race", f"{driver}/{lap}_tel.json")
         for lap in range(1, num_laps + 1)
     ]
 
@@ -479,7 +484,7 @@ async def fetch_weekend_data():
     # Fetch laps for all sessions in a race weekend
     sessions = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
     requests = [
-        (2025, "Monaco Grand Prix", session, "laps.json")
+        (2025, "Monaco Grand Prix", session, "session_laptimes.json")
         for session in sessions
     ]
 
@@ -488,8 +493,7 @@ async def fetch_weekend_data():
     # Process results
     for session, data in zip(sessions, results):
         if data is not None:
-            laps = data.get("laps", [])
-            print(f"{session}: {len(laps)} laps")
+            print(f"{session}: {len(data['lap'])} laps")
         else:
             print(f"{session}: Not available")
 
@@ -501,10 +505,10 @@ import asyncio
 from tif1.async_fetch import fetch_multiple_async
 
 async def fetch_with_custom_settings():
-    # Fetch with custom concurrency and timeout
+    # Fetch telemetry for all 78 laps of one driver
     requests = [
-        (2025, "Monaco Grand Prix", "Race", f"laps/driver{i}.json")
-        for i in range(100)
+        (2025, "Monaco Grand Prix", "Race", f"VER/{lap}_tel.json")
+        for lap in range(1, 79)
     ]
 
     results = await fetch_multiple_async(
@@ -648,10 +652,10 @@ async def fetch_with_shared_limit():
     tasks = [
         fetch_with_rate_limit(
             fetch_json_async,
-            2025, "Monaco Grand Prix", "Race", f"laps/driver{i}.json",
+            2025, "Monaco Grand Prix", "Race", f"VER/{lap}_tel.json",
             semaphore=semaphore
         )
-        for i in range(50)
+        for lap in range(1, 51)
     ]
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -880,7 +884,7 @@ config.set("max_retries", 5)
 # Set max concurrent requests (default: 22)
 config.set("max_concurrent_requests", 50)
 
-# Enable/disable validation (default: True)
+# Enable validation of rcm.json and weather.json (default: False)
 config.set("validate_data", True)
 
 # Retry backoff factor (default: 2.0)
@@ -892,7 +896,7 @@ config.set("max_retry_delay", 60.0)
 # Enable retry jitter (default: True)
 config.set("retry_jitter", True)
 
-# Max jitter in seconds (default: 1.0)
+# Max jitter in seconds (default: 0.0, so no jitter is added)
 config.set("retry_jitter_max", 1.0)
 
 # JSON parse workers for process pool (default: 0, disabled)
@@ -905,6 +909,10 @@ config.set("offline_mode", False)
 config.set("ci_mode", False)
 ```
 
+<Note>
+  When `json_parse_workers` is above `0`, tif1 parses non-telemetry payloads in worker processes. Put the script entry point under `if __name__ == "__main__":`, or the workers fail to start and the fetch raises `NetworkError`.
+</Note>
+
 ---
 
 ## Error Handling
@@ -912,30 +920,37 @@ config.set("ci_mode", False)
 The async fetch system uses a hierarchy of exceptions:
 
 ```python
+import asyncio
+
+from tif1.async_fetch import fetch_json_async
 from tif1.exceptions import NetworkError, DataNotFoundError, InvalidDataError
 
-try:
-    data = await fetch_json_async(
-        year=2025,
-        gp="Monaco",
-        session="Race",
-        path="laps.json"
-    )
-except DataNotFoundError as e:
-    # Resource doesn't exist (404)
-    print(f"Data not found: {e}")
-    print(f"Year: {e.context.get('year')}")
-    print(f"Event: {e.context.get('event')}")
-    print(f"Session: {e.context.get('session')}")
-except InvalidDataError as e:
-    # JSON parsing or validation failed
-    print(f"Invalid data: {e}")
-    print(f"Reason: {e.context.get('reason')}")
-except NetworkError as e:
-    # All retry attempts failed
-    print(f"Network error: {e}")
-    print(f"URL: {e.context.get('url')}")
-    print(f"Status: {e.context.get('status_code')}")
+async def main():
+    try:
+        data = await fetch_json_async(
+            year=2025,
+            gp="Monaco Grand Prix",
+            session="Race",
+            path="session_laptimes.json"
+        )
+        print(f"Loaded {len(data['lap'])} laps")
+    except DataNotFoundError as e:
+        # Resource does not exist on any CDN (404)
+        print(f"Data not found: {e}")
+        print(f"Year: {e.context.get('year')}")
+        print(f"Event: {e.context.get('event')}")
+        print(f"Session: {e.context.get('session')}")
+    except InvalidDataError as e:
+        # JSON parsing or validation failed
+        print(f"Invalid data: {e}")
+        print(f"Reason: {e.context.get('reason')}")
+    except NetworkError as e:
+        # All retry attempts failed
+        print(f"Network error: {e}")
+        print(f"URL: {e.context.get('url')}")
+        print(f"Status: {e.context.get('status_code')}")
+
+asyncio.run(main())
 ```
 
 ---
@@ -945,36 +960,52 @@ except NetworkError as e:
 ### Custom concurrency limits
 
 ```python
-# Fetch with custom concurrency
-requests = [(2025, "Monaco", "Race", f"laps/driver{i}.json") for i in range(100)]
-results = await fetch_multiple_async(requests, max_concurrent_requests=50)
+import asyncio
+
+from tif1.async_fetch import fetch_multiple_async
+
+async def main():
+    # Fetch all 78 telemetry laps of one driver, 50 requests at a time
+    requests = [(2025, "Monaco Grand Prix", "Race", f"VER/{lap}_tel.json") for lap in range(1, 79)]
+    results = await fetch_multiple_async(requests, max_concurrent_requests=50)
+    print(f"Fetched {sum(r is not None for r in results)}/{len(requests)} payloads")
+
+asyncio.run(main())
 ```
 
 ### Disable caching for fresh data
 
 ```python
+import asyncio
+
+from tif1.async_fetch import fetch_json_async
+
 # Skip cache reads and writes
-data = await fetch_json_async(
+data = asyncio.run(fetch_json_async(
     year=2025,
-    gp="Monaco",
+    gp="Monaco Grand Prix",
     session="Race",
-    path="laps.json",
+    path="session_laptimes.json",
     use_cache=False,
     write_cache=False
-)
+))
 ```
 
 ### Disable validation for performance
 
 ```python
-# Skip payload validation for faster parsing
-data = await fetch_json_async(
+import asyncio
+
+from tif1.async_fetch import fetch_json_async
+
+# Skip payload validation (it runs only when a validate_* config flag is on)
+data = asyncio.run(fetch_json_async(
     year=2025,
-    gp="Monaco",
+    gp="Monaco Grand Prix",
     session="Race",
-    path="laps.json",
+    path="session_laptimes.json",
     validate_payload=False
-)
+))
 ```
 
 ---
@@ -994,5 +1025,5 @@ data = await fetch_json_async(
 </Accordion>
 
 <Accordion title="Retry Logic">
-  Failed requests are retried with exponential backoff and jitter. The backoff formula is: `min(backoff_factor^attempt + random(0, jitter_max), max_delay)` seconds, where defaults are `backoff_factor=2.0`, `jitter_max=1.0`, and `max_delay=60.0`. The system also includes circuit breaker logic to prevent cascading failures and special handling for connection pool exhaustion.
+  Failed requests are retried with exponential backoff and optional jitter. The delay is `min(backoff_factor^attempt, max_delay) + random(0, jitter_max)` seconds, where defaults are `backoff_factor=2.0`, `jitter_max=0.0`, and `max_delay=60.0`. The system also includes circuit breaker logic to prevent cascading failures and special handling for connection pool exhaustion.
 </Accordion>

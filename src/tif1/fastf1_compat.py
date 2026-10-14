@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
-from .config import get_config
+from .config import _default_cache_dir, get_config
 from .exceptions import NetworkError
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ class Cache:
         if cls._cache_dir is not None:
             return cls._cache_dir
         configured = get_config().get("cache_dir")
+        if not configured:  # never Path(str(None)) -> a literal "./None" dir
+            return _default_cache_dir()
         return Path(str(configured)).expanduser()
 
     @classmethod

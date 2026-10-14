@@ -61,7 +61,7 @@ This function configures the root logger and sets the level for the `tif1` logge
 **Behavior:**
 - Configures logging format: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
 - Sets date format: `%Y-%m-%d %H:%M:%S`
-- Applies to all `tif1.*` loggers (core, cache, http, retry, cdn, etc.)
+- Applies to all `tif1.*` loggers (`tif1.core`, `tif1.cache`, `tif1.async_fetch`, `tif1.http_session`, `tif1.cdn`, `tif1.retry`, and others)
 - Suppresses `urllib3_future.connectionpool` warnings (set to ERROR level)
 - Thread-safe: Can be called from any thread
 
@@ -78,20 +78,21 @@ session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 laps = session.laps
 ```
 
-**Debug Output Example:**
+**Debug Output Example** (a warm cache; a cold load also logs the CDN requests):
 ```text
-2024-03-15 14:23:45 - tif1.core - DEBUG - Loading session: 2021/Belgian_Grand_Prix/Race
-2024-03-15 14:23:45 - tif1.cache - DEBUG - Checking cache for 2021/Belgian_Grand_Prix/Race/drivers.json
-2024-03-15 14:23:45 - tif1.cache - DEBUG - Cache hit for drivers.json
-2024-03-15 14:23:45 - tif1.http - DEBUG - Fetching https://cdn.jsdelivr.net/gh/TracingInsights/2021@main/Belgian_Grand_Prix/Race/laps.json
-2024-03-15 14:23:46 - tif1.http - DEBUG - Response: 200 OK (1.2s, 245KB)
-2024-03-15 14:23:46 - tif1.core - DEBUG - Parsing lap data: 1,234 laps
-2024-03-15 14:23:46 - tif1.core - DEBUG - Loaded 20 drivers
+2026-10-14 13:51:38 - tif1.core - DEBUG - Session initialized: year=2021, gp=Belgian Grand Prix, session=Race, lib=pandas
+2026-10-14 13:51:38 - tif1.core - INFO - Loading laps async (pandas): 2021_Belgian%20Grand%20Prix_Race_laps
+2026-10-14 13:51:38 - tif1.cache - DEBUG - SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
+2026-10-14 13:51:38 - tif1.cache - DEBUG - Cache hit (SQLite): 2021/Belgian%20Grand%20Prix/Race/drivers.json
+2026-10-14 13:51:38 - tif1.async_fetch - DEBUG - Thread pool executor initialized (max_workers=32)
+2026-10-14 13:51:38 - tif1.cache - DEBUG - Cache hit (SQLite): 2021/Belgian%20Grand%20Prix/Race/session_laptimes.json
 ```
 
 **Selective Logging Example:**
 ```python
 import logging
+
+import tif1
 
 # Only show warnings and errors
 tif1.setup_logging(logging.WARNING)
@@ -107,21 +108,23 @@ tif1.setup_logging(logging.CRITICAL + 1)
 ```python
 import logging
 
+import tif1
+
 # Set global level
 tif1.setup_logging(logging.INFO)
 
 # But enable DEBUG for specific modules
 logging.getLogger("tif1.cache").setLevel(logging.DEBUG)
-logging.getLogger("tif1.http").setLevel(logging.DEBUG)
+logging.getLogger("tif1.async_fetch").setLevel(logging.DEBUG)
 
-# Now only cache and HTTP operations show debug output
+# Now only cache and HTTP fetch operations show debug output
 ```
 
 **Performance Considerations:**
 - DEBUG logging adds ~5-10% overhead due to string formatting
 - INFO logging adds ~1-2% overhead
 - WARNING and above have negligible performance impact
-- Logging is buffered and asynchronous in most Python implementations
+- Python logging is synchronous: each record is written in the thread that logs it
 
 **Best Practices:**
 1. Use DEBUG during development to understand data flow
@@ -159,9 +162,9 @@ The `Config` object is a singleton, meaning all calls to `get_config()` return t
 - `Config`: Singleton configuration instance
 
 **Thread Safety:**
-- The Config singleton is thread-safe
-- Multiple threads can safely call `get()` and `set()`
-- File operations (`save()`) use atomic writes
+- `get()` and `set()` are plain dictionary operations without a lock
+- Set the configuration once at start-up, before worker threads start
+- `save()` writes the file in place; it is not an atomic write
 
 **Basic Example:**
 ```python
@@ -219,9 +222,10 @@ Update a configuration value in memory.
 - `value` (Any): New value to set
 
 **Behavior:**
-- Changes are immediate and affect all subsequent operations
+- Most settings take effect on the next operation that reads them
+- Some components read their settings once, when they are created. The CDN manager reads `cdns` when `tif1` is imported. The circuit breaker applies new values after `reset_circuit_breaker()`
 - Changes are in-memory only until `save()` is called
-- Type conversion is automatic for known keys
+- `set()` does no type conversion: pass the type that the key expects (for example, an `int` for `timeout`)
 - Unknown keys are stored as-is
 
 **Example:**
@@ -256,8 +260,9 @@ Save current configuration to a JSON file.
 - `path` (Path | str | None, optional): File path to save to. If `None`, saves to `~/.tif1rc`. Defaults to `None`.
 
 **Behavior:**
-- Creates parent directories if they do not exist
-- Uses atomic write (write to temp file, then rename)
+- Does not create parent directories: the target directory must exist
+- Writes the file in place (not an atomic write)
+- Logs an error instead of raising an exception when the write fails
 - Saves all current settings, including defaults
 - File format is human-readable JSON
 
@@ -268,13 +273,14 @@ config = tif1.get_config()
 # Save to default location (~/.tif1rc)
 config.save()
 
-# Save to custom location
-config.save("/path/to/custom/config.json")
+# Save to custom location (the directory must exist)
 config.save("./project_tif1_config.json")
 
 # Save to user's config directory
 from pathlib import Path
-config.save(Path.home() / ".config" / "tif1" / "config.json")
+config_dir = Path.home() / ".config" / "tif1"
+config_dir.mkdir(parents=True, exist_ok=True)
+config.save(config_dir / "config.json")
 ```
 
 **Configuration File Format:**
@@ -290,9 +296,9 @@ config.save(Path.home() / ".config" / "tif1" / "config.json")
   "circuit_breaker_threshold": 10,
   "circuit_breaker_timeout": 120,
   "cdns": [
-    "https://cdn.staticdelivr.com/gh/TracingInsights",
     "https://cdn.jsdelivr.net/gh/TracingInsights",
-    "https://huggingface.co/buckets/tracinginsights"
+    "https://huggingface.co/buckets/tracinginsights",
+    "https://cdn.staticdelivr.com/gh/TracingInsights"
   ]
 }
 ```
@@ -308,16 +314,16 @@ Reference of all configuration options:
 | `cache_dir` | `str` | OS-dependent | SQLite cache database location | SSD recommended for best performance |
 | `timeout` | `int` | `30` | Network request timeout in seconds | Increase for slow connections |
 | `max_retries` | `int` | `3` | Maximum retry attempts for failed requests | More retries = better reliability, slower failures |
-| `validate_data` | `bool` | `True` | Enable Pydantic validation of JSON data | Disabling saves ~10-15% processing time |
-| `ultra_cold_start` | `bool` | `False` | Skip loading full session data, fetch on-demand | Dramatically faster for single lap queries |
+| `validate_data` | `bool` | `False` | Enable Pydantic validation of JSON data | Enabling adds ~10-15% processing time |
+| `ultra_cold_start` | `bool` | `True` | Skip loading full session data, fetch on-demand | Much faster for single lap queries |
 | `circuit_breaker_threshold` | `int` | `5` | Failures before circuit breaker opens | Lower = faster failure detection |
 | `circuit_breaker_timeout` | `int` | `60` | Circuit breaker reset timeout in seconds | Time to wait before retrying failed service |
-| `cdns` | `list[str]` | `["https://cdn.staticdelivr.com/gh/TracingInsights", "https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights"]` | List of CDN base URLs for fallback | Multiple CDNs improve reliability |
-| `cdn_use_minification` | `bool` | `False` | Use minified JSON files from CDN | Reduces bandwidth by 20-40% |
+| `cdns` | `list[str]` | `["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"]` | List of CDN base URLs, tried in order | Multiple CDNs improve reliability |
+| `cdn_use_minification` | `bool` | `False` | Request `.min.json` files from custom mirrors (the default CDNs ignore it) | Only useful with a mirror that serves minified copies |
 
 ### Environment Variable Configuration
 
-All configuration keys can be set via environment variables using the `TIF1_` prefix:
+Most configuration keys can be set via environment variables using the `TIF1_` prefix:
 
 ```bash
 # Set DataFrame library
@@ -341,7 +347,7 @@ export TIF1_CIRCUIT_BREAKER_TIMEOUT=120
 ```
 
 **Type Conversion:**
-- Booleans: `"true"`, `"1"`, `"yes"` → `True`; `"false"`, `"0"`, `"no"` → `False`
+- Booleans: `"true"`, `"1"`, `"yes"`, `"on"` → `True`; `"false"`, `"0"`, `"no"`, `"off"` → `False`
 - Integers: Parsed automatically
 - Lists: Comma-separated values (for example, `"url1,url2,url3"`)
 
@@ -374,7 +380,7 @@ config.set("validate_data", False)  # Skip validation overhead
 config.set("timeout", 60)  # Handle slow networks
 config.set("max_retries", 5)  # More resilient
 config.set("circuit_breaker_threshold", 10)  # Tolerate more failures
-config.set("cdn_use_minification", True)  # Reduce bandwidth
+config.set("cdn_use_minification", True)  # Only affects custom mirrors
 
 config.save()
 ```
@@ -453,7 +459,7 @@ The `Cache` object manages the SQLite database that stores fetched JSON data and
 
 **Thread Safety:**
 - The Cache singleton is thread-safe
-- Uses connection pooling for concurrent access
+- Uses one SQLite connection (WAL mode) guarded by a lock
 - Automatic transaction management with periodic commits
 - Safe for use in multi-threaded applications
 
@@ -465,15 +471,15 @@ cache = tif1.get_cache()
 
 # Inspect cache location
 print(f"Cache directory: {cache.cache_dir}")
-print(f"Cache database: {cache.cache_dir / 'cache.db'}")
+print(f"Cache database: {cache.db_path}")  # <cache_dir>/cache.sqlite
 
-# Check if specific session is cached
-has_data = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+# Check if specific session is cached.
+# Cache keys use the URL-encoded names, as in session.gp and session.session.
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+has_data = cache.has_session_data(session.year, session.gp, session.session)
 print(f"Monaco GP cached: {has_data}")
 
-# Clear all cached data
-cache.clear()
-print("Cache cleared")
+# cache.clear() deletes all cached data (see clear() below)
 ```
 
 ### Cache Methods
@@ -483,7 +489,7 @@ print("Cache cleared")
 Retrieve raw cached data by key.
 
 **Parameters:**
-- `key` (str): Cache key (typically in format `year/gp/session/file.json`)
+- `key` (str): Cache key. Session files use `{year}/{gp}/{session}/{file}.json` with URL-encoded names, for example `2025/Monaco%20Grand%20Prix/Race/drivers.json`
 
 **Returns:**
 - Cached data (usually dict or list), or `None` if not found
@@ -498,15 +504,12 @@ Retrieve raw cached data by key.
 ```python
 cache = tif1.get_cache()
 
-# Get drivers data
-drivers = cache.get("2025/Monaco_Grand_Prix/Race/drivers.json")
+# Get the raw drivers payload ({"drivers": [...]}) of a session
+drivers = cache.get("2025/Monaco%20Grand%20Prix/Race/drivers.json")
 if drivers:
-    print(f"Found {len(drivers)} drivers in cache")
-
-# Get laps data
-laps = cache.get("2025/Monaco_Grand_Prix/Race/laps.json")
-if laps:
-    print(f"Found {len(laps)} laps in cache")
+    print(f"Found {len(drivers['drivers'])} drivers in cache")
+else:
+    print("Drivers file not cached yet")
 ```
 
 #### `set(key: str, data: Any) -> None`
@@ -520,7 +523,7 @@ Store data in cache.
 **Behavior:**
 - Stores in both memory and SQLite
 - Automatically serializes to JSON
-- Commits to disk periodically (every 10 writes) or on close
+- Commits to disk periodically (every `cache_commit_interval` writes, default 100) or on close
 - Overwrites existing data for the same key
 
 **Example:**
@@ -544,30 +547,30 @@ Get cached telemetry data for a specific lap.
 
 **Parameters:**
 - `year` (int): Season year
-- `gp` (str): Grand Prix name (underscored format)
-- `session` (str): Session type (for example, "Race", "Qualifying")
+- `gp` (str): Grand Prix name, URL-encoded as in `session.gp` (for example, `"Belgian%20Grand%20Prix"`)
+- `session` (str): Session name, URL-encoded as in `session.session` (for example, `"Race"`, `"Practice%201"`)
 - `driver` (str): Driver code (for example, "VER", "HAM")
 - `lap` (int): Lap number
 
 **Returns:**
-- Telemetry data dict, or `None` if not cached
+- Raw telemetry payload (a dict of channel lists such as `time`, `speed`, `rpm`), or `None` if not cached
 
 **Behavior:**
-- Uses optimized key format: `{year}/{gp}/{session}/telemetry/{driver}/{lap}`
+- Keys entries on the tuple `(year, gp, session, driver, lap)`
 - Checks memory cache first for ultra-fast access
 - Falls back to SQLite for persistent storage
-- Returns raw telemetry dict (not DataFrame)
+- Returns the raw payload dict (not a DataFrame)
 
 **Example:**
 ```python
 cache = tif1.get_cache()
 
 # Check if specific lap telemetry is cached
-tel = cache.get_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1)
+tel = cache.get_telemetry(2021, "Belgian%20Grand%20Prix", "Race", "VER", 1)
 if tel:
-    print(f"Cached telemetry has {len(tel)} samples")
+    print(f"Cached telemetry has {len(tel['time'])} samples")
 else:
-    print("Telemetry not cached, will fetch from CDN")
+    print("Telemetry not cached; tif1 fetches it from the CDN on first use")
 ```
 
 #### `set_telemetry(year: int, gp: str, session: str, driver: str, lap: int, data: Any) -> None`
@@ -576,8 +579,8 @@ Store telemetry data in cache.
 
 **Parameters:**
 - `year` (int): Season year
-- `gp` (str): Grand Prix name (underscored format)
-- `session` (str): Session type
+- `gp` (str): Grand Prix name, URL-encoded as in `session.gp`
+- `session` (str): Session name, URL-encoded as in `session.session`
 - `driver` (str): Driver code
 - `lap` (int): Lap number
 - `data` (Any): Telemetry data to cache
@@ -592,28 +595,29 @@ Store telemetry data in cache.
 ```python
 cache = tif1.get_cache()
 
-# Manually cache telemetry (usually done automatically)
+# Manually cache telemetry (tif1 does this automatically for real laps).
+# Use a key that no real session uses, so real telemetry is not replaced.
 telemetry_data = {
-    "Time": [0.0, 0.1, 0.2],
-    "Speed": [0, 50, 100],
-    "Throttle": [0, 50, 100]
+    "time": [0.0, 0.1, 0.2],
+    "speed": [0, 50, 100],
+    "throttle": [0, 50, 100]
 }
-cache.set_telemetry(2021, "Belgian_Grand_Prix", "Race", "VER", 1, telemetry_data)
+cache.set_telemetry(2099, "Example%20Grand%20Prix", "Race", "TST", 1, telemetry_data)
+print(cache.get_telemetry(2099, "Example%20Grand%20Prix", "Race", "TST", 1)["speed"])
 ```
 
-#### `get_telemetry_batch(year: int, gp: str, session: str, driver: str, laps: list[int]) -> dict[int, Any]`
+#### `get_telemetry_batch(year: int, gp: str, session: str, driver_laps: list[tuple[str, int]]) -> dict[tuple[str, int], Any]`
 
 Get multiple laps of telemetry in a single operation.
 
 **Parameters:**
 - `year` (int): Season year
-- `gp` (str): Grand Prix name
-- `session` (str): Session type
-- `driver` (str): Driver code
-- `laps` (list[int]): List of lap numbers
+- `gp` (str): Grand Prix name, URL-encoded as in `session.gp`
+- `session` (str): Session name, URL-encoded as in `session.session`
+- `driver_laps` (list[tuple[str, int]]): `(driver_code, lap_number)` pairs; one batch can mix drivers
 
 **Returns:**
-- Dict mapping lap number to telemetry data (only includes cached laps)
+- Dict mapping `(driver_code, lap_number)` to telemetry data (only includes cached laps)
 
 **Performance:**
 - Single SQLite query for all laps (much faster than individual queries)
@@ -625,16 +629,16 @@ Get multiple laps of telemetry in a single operation.
 cache = tif1.get_cache()
 
 # Get telemetry for multiple laps at once
-laps_to_fetch = [1, 2, 3, 4, 5]
+laps_to_fetch = [("VER", 1), ("VER", 2), ("HAM", 1), ("HAM", 2)]
 cached_telemetry = cache.get_telemetry_batch(
-    2021, "Belgian_Grand_Prix", "Race", "VER", laps_to_fetch
+    2021, "Belgian%20Grand%20Prix", "Race", laps_to_fetch
 )
 
 print(f"Found {len(cached_telemetry)} of {len(laps_to_fetch)} laps in cache")
 
 # Process cached laps
-for lap_num, tel_data in cached_telemetry.items():
-    print(f"Lap {lap_num}: {len(tel_data)} samples")
+for (driver, lap_num), tel_data in cached_telemetry.items():
+    print(f"{driver} lap {lap_num}: {len(tel_data['time'])} samples")
 ```
 
 #### `has_session_data(year: int, gp: str, session: str) -> bool`
@@ -643,31 +647,34 @@ Check if cache contains data for a specific session.
 
 **Parameters:**
 - `year` (int): Season year
-- `gp` (str): Grand Prix name (underscored format)
-- `session` (str): Session type
+- `gp` (str): Grand Prix name, URL-encoded as in `session.gp`
+- `session` (str): Session name, URL-encoded as in `session.session`
 
 **Returns:**
 - `True` if session data exists in cache, `False` otherwise
 
 **Behavior:**
-- Checks for presence of key session files (drivers.json, laps.json)
-- Fast operation (index lookup only)
+- Returns `True` when any cached JSON file or telemetry entry belongs to the session
+- Fast operation (one prefix query)
 - Useful for pre-flight checks before loading
 
 **Example:**
 ```python
+from urllib.parse import quote
+
 cache = tif1.get_cache()
+gp = quote("Monaco Grand Prix")  # "Monaco%20Grand%20Prix"
 
 # Check multiple sessions
-sessions = ["FP1", "FP2", "FP3", "Qualifying", "Race"]
-for session_type in sessions:
-    cached = cache.has_session_data(2025, "Monaco_Grand_Prix", session_type)
+sessions = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
+for session_name in sessions:
+    cached = cache.has_session_data(2025, gp, quote(session_name))
     status = "✓ cached" if cached else "✗ not cached"
-    print(f"{session_type}: {status}")
+    print(f"{session_name}: {status}")
 
 # Conditional loading
-if not cache.has_session_data(2025, "Monaco_Grand_Prix", "Race"):
-    print("Data not cached, will fetch from CDN...")
+if not cache.has_session_data(2025, gp, "Race"):
+    print("Data not cached; the next load fetches it from the CDN")
 ```
 
 #### `clear() -> None`
@@ -677,8 +684,7 @@ Remove all entries from both memory and SQLite cache.
 **Behavior:**
 - Clears in-memory LRU cache
 - Deletes all rows from SQLite tables
-- Vacuums database to reclaim disk space
-- Resets all cache statistics
+- Does not vacuum the database: the file keeps its size until SQLite reuses the free pages
 - Thread-safe operation
 
 **Example:**
@@ -690,7 +696,7 @@ cache.clear()
 print("All cache data cleared")
 
 # Verify cache is empty
-has_data = cache.has_session_data(2025, "Monaco_Grand_Prix", "Race")
+has_data = cache.has_session_data(2025, "Monaco%20Grand%20Prix", "Race")
 assert not has_data, "Cache should be empty"
 ```
 
@@ -748,11 +754,10 @@ import tif1
 from pathlib import Path
 
 cache = tif1.get_cache()
-cache_db = Path(cache.cache_dir) / "cache.db"
 
-if cache_db.exists():
-    size_mb = cache_db.stat().st_size / (1024 * 1024)
-    print(f"Cache size: {size_mb:.2f} MB")
+# The database is cache.sqlite plus its -wal and -shm files
+size_bytes = sum(path.stat().st_size for path in Path(cache.cache_dir).glob("cache.sqlite*"))
+print(f"Cache size: {size_bytes / (1024 * 1024):.2f} MB")
 ```
 
 **Typical Cache Sizes:**
@@ -771,11 +776,10 @@ cache = tif1.get_cache()
 # Strategy 1: Clear everything
 cache.clear()
 
-# Strategy 2: Delete cache database file
+# Strategy 2: Delete the cache database files
 cache.close()
-cache_db = Path(cache.cache_dir) / "cache.db"
-if cache_db.exists():
-    cache_db.unlink()
+for path in Path(cache.cache_dir).glob("cache.sqlite*"):
+    path.unlink()
 
 # Strategy 3: Selective clearing (manual SQL)
 # Not recommended - use clear() instead
@@ -793,19 +797,19 @@ async def fetch_cached_data():
     cache = tif1.get_cache()
 
     # Async get
-    data = await cache.get_async("2025/Monaco_Grand_Prix/Race/laps.json")
+    data = await cache.get_async("2025/Monaco%20Grand%20Prix/Race/drivers.json")
 
     # Async set
     await cache.set_async("custom/key", {"data": "value"})
 
     # Async telemetry get
     tel = await cache.get_telemetry_async(
-        2021, "Belgian_Grand_Prix", "Race", "VER", 1
+        2021, "Belgian%20Grand%20Prix", "Race", "VER", 1
     )
 
-    # Async batch telemetry
+    # Async batch telemetry: (driver, lap) pairs
     batch = await cache.get_telemetry_batch_async(
-        2021, "Belgian_Grand_Prix", "Race", "VER", [1, 2, 3]
+        2021, "Belgian%20Grand%20Prix", "Race", [("VER", 1), ("VER", 2), ("VER", 3)]
     )
 
     return data
@@ -856,8 +860,8 @@ This function provides a unified interface for converting lap times, sector time
 
 **Behavior:**
 - Automatically adds leading `"00:"` to `"M:SS.mmm"` format
-- Handles negative times (for example, for deltas)
-- Preserves microsecond precision
+- Handles negative numbers (for example, `-1.234` for a delta). A negative string needs the full `"-00:00:01.234"` form
+- Keeps nanosecond precision
 - Returns pandas `Timedelta` for consistent arithmetic
 
 **Basic Examples:**
@@ -935,8 +939,9 @@ fast = to_timedelta("0:58.123")
 # Very slow lap (over 2 minutes)
 slow = to_timedelta("2:15.456")
 
-# Negative delta (for time differences)
-negative = to_timedelta("-0:01.234")
+# Negative delta (for time differences): pass a number
+negative = to_timedelta(-1.234)
+print(negative.total_seconds())  # -1.234
 
 # Zero time
 zero = to_timedelta("0:00.000")
@@ -989,10 +994,9 @@ import tif1
 
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
-# Parse session start time
-if hasattr(session, 'session_start_time'):
-    start_time = to_datetime(session.session_start_time)
-    print(f"Session started at: {start_time}")
+# session.date is already a Timestamp; to_datetime passes it through
+start_time = to_datetime(session.date)
+print(f"Session started at: {start_time}")
 ```
 
 ### `recursive_dict_get`
@@ -1096,19 +1100,19 @@ value = recursive_dict_get(data, "a", "missing", "c", default_none=True)
 Calculate delta time between two laps (FastF1 compatibility function).
 
 ```python
-def delta_time(reference_lap: Lap, compare_lap: Lap) -> tuple[pd.Series, Telemetry, Telemetry]
+def delta_time(reference_lap: Lap, compare_lap: Lap) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]
 ```
 
-This function provides compatibility with FastF1's `delta_time` utility for comparing lap performance.
+This function uses the same algorithm as FastF1's `delta_time`. It interpolates the comparison lap's time onto the reference lap's distance axis.
 
 **Parameters:**
-- `reference_lap` (Lap): Reference lap object
-- `compare_lap` (Lap): Lap object to compare against reference
+- `reference_lap` (Lap): Reference lap (for example, from `laps.pick_fastest()` or `Driver.get_lap()`), or a telemetry frame with `Time` and `Distance`
+- `compare_lap` (Lap): Lap to compare against the reference (same kinds as `reference_lap`)
 
 **Returns:**
 - Tuple of `(delta_series, ref_telemetry, comp_telemetry)`
-  - `delta_series`: Time delta at each telemetry point
-  - `ref_telemetry`: Reference lap telemetry
+  - `delta_series`: Float seconds at each reference telemetry point. A positive value means that the comparison lap is slower at that point. The series is empty when either lap has fewer than two samples
+  - `ref_telemetry`: Reference lap telemetry (pandas, also on the polars backend)
   - `comp_telemetry`: Comparison lap telemetry
 
 **Example:**
@@ -1122,15 +1126,15 @@ laps = session.laps
 ver_fastest = laps.pick_driver("VER").pick_fastest()
 ham_fastest = laps.pick_driver("HAM").pick_fastest()
 
-# Calculate delta
+# Calculate delta (positive = HAM slower than VER at that point)
 delta, ref_tel, comp_tel = tif1.utils.delta_time(ver_fastest, ham_fastest)
 
 # Analyze where time was gained/lost
-print(f"Maximum advantage: {delta.max():.3f}s")
-print(f"Maximum disadvantage: {delta.min():.3f}s")
+print(f"Largest HAM deficit: {delta.max():.3f}s")
+print(f"Largest HAM advantage: {-delta.min():.3f}s")
 ```
 
-**Note:** This is a compatibility function. For more advanced delta analysis, consider using the telemetry comparison features in the plotting module.
+**Note:** The delta is an estimate from interpolated telemetry, so it can differ slightly from the official lap time gap.
 
 ---
 
@@ -1216,7 +1220,7 @@ else:
 
 #### `failures: int`
 
-Current failure count (read-only).
+Current failure count.
 
 **Example:**
 ```python
@@ -1257,12 +1261,14 @@ if cb.last_failure_time:
 Record a successful operation (resets failure count).
 
 **Behavior:**
-- Resets failure counter to 0
+- Resets failure counter to 0, unless the circuit is open
 - Transitions from half-open to closed
 - Thread-safe atomic operation
 
-**Example:**
+**Example** (`fetch_data()` stands for the application's own network call):
 ```python
+from tif1.retry import get_circuit_breaker
+
 cb = get_circuit_breaker()
 
 try:
@@ -1285,6 +1291,9 @@ Record a failed operation (increments failure count).
 
 **Example:**
 ```python
+from tif1.exceptions import NetworkError
+from tif1.retry import get_circuit_breaker
+
 cb = get_circuit_breaker()
 
 try:
@@ -1420,8 +1429,10 @@ Mark a CDN source as failed (increments failure count).
 - Disables source if it reaches max failures (3)
 - Logs warning when source is disabled
 
-**Example:**
+**Example** (`fetch_from_cdn()` stands for the application's own request):
 ```python
+from tif1.cdn import get_cdn_manager
+
 cdn = get_cdn_manager()
 
 try:
@@ -1661,7 +1672,7 @@ This function clears both the pandas and polars lap DataFrame caches, freeing me
 
 **Example:**
 ```python
-from tif1.core import clear_lap_cache
+from tif1.cache import clear_lap_cache
 import tif1
 
 # Load and process a session
@@ -1679,7 +1690,7 @@ print("Lap cache cleared - memory freed")
 **Memory Impact Example:**
 ```python
 import tif1
-from tif1.core import clear_lap_cache
+from tif1.cache import clear_lap_cache
 import psutil
 import os
 
@@ -1693,7 +1704,7 @@ mem_before = get_memory_usage()
 print(f"Memory before: {mem_before:.1f} MB")
 
 # Load multiple sessions
-for gp in ["Bahrain", "Saudi_Arabia", "Australia", "Emilia_Romagna"]:
+for gp in ["Bahrain Grand Prix", "Emilia Romagna Grand Prix", "Portuguese Grand Prix", "Spanish Grand Prix"]:
     session = tif1.get_session(2021, gp, "Race")
     laps = session.laps
     print(f"Loaded {gp}: {len(laps)} laps")
@@ -1725,20 +1736,20 @@ print(f"Memory freed: {mem_after - mem_cleared:.1f} MB")
 **Advanced: Selective Cache Management:**
 ```python
 import tif1
-from tif1.core import clear_lap_cache
+from tif1.cache import clear_lap_cache
 
 def process_season_with_memory_management(year):
     """Process entire season with periodic cache clearing."""
-    events = tif1.get_events(year)
+    schedule = tif1.get_event_schedule(year, include_testing=False)
 
-    for i, event in enumerate(events):
+    for i, event_name in enumerate(schedule["EventName"]):
         # Load and process session
-        session = tif1.get_session(year, event.EventName, "Race")
+        session = tif1.get_session(year, event_name, "Race")
         laps = session.laps
 
         # Your analysis here
-        fastest = laps.pick_fastest()
-        print(f"{event.EventName}: Fastest lap {fastest['LapTime'].iloc[0]}")
+        fastest = laps.pick_fastest()  # one lap (a Series)
+        print(f"{event_name}: Fastest lap {fastest['LapTime']}")
 
         # Clear cache every 5 events to manage memory
         if (i + 1) % 5 == 0:
@@ -1785,7 +1796,7 @@ def setup_production_config():
     config.set("enable_cache", True)
 
     # CDN settings
-    config.set("cdn_use_minification", True)  # Reduce bandwidth
+    config.set("cdn_use_minification", True)  # Only affects custom mirrors
 
     # Save configuration
     config.save()
@@ -1841,7 +1852,7 @@ def debug_session_load(year, gp, session_type):
         print(f"\n{'='*60}")
         print(f"Laps loaded in {laps_time:.2f}s")
         print(f"Total laps: {len(laps)}")
-        print(f"Drivers: {laps['Driver'].unique().tolist()}")
+        print(f"Drivers: {sorted(set(laps['Driver']))}")  # pandas and polars
         print(f"{'='*60}\n")
 
         return session
@@ -1879,7 +1890,7 @@ def cache_management_dashboard():
 
     # Cache location
     cache_dir = Path(cache.cache_dir)
-    cache_db = cache_dir / "cache.db"
+    cache_db = cache_dir / "cache.sqlite"
 
     print(f"\nCache Location:")
     print(f"  Directory: {cache_dir}")
@@ -1896,11 +1907,12 @@ def cache_management_dashboard():
 
     # Check specific sessions
     print(f"\nCached Sessions:")
+    # Cache keys use URL-encoded names (session.gp, session.session)
     test_sessions = [
-        (2025, "Monaco_Grand_Prix", "Race"),
-        (2025, "Monaco_Grand_Prix", "Qualifying"),
-        (2024, "Abu_Dhabi_Grand_Prix", "Race"),
-        (2021, "Belgian_Grand_Prix", "Race"),
+        (2025, "Monaco%20Grand%20Prix", "Race"),
+        (2025, "Monaco%20Grand%20Prix", "Qualifying"),
+        (2024, "Abu%20Dhabi%20Grand%20Prix", "Race"),
+        (2021, "Belgian%20Grand%20Prix", "Race"),
     ]
 
     cached_count = 0
@@ -2011,7 +2023,7 @@ def load_with_resilience(year, gp, session_type, max_retries=3):
 
         except NetworkError as e:
             print(f"\n✗ Network error: {e.message}")
-            print(f"  Status code: {e.status_code}")
+            print(f"  Status code: {e.context.get('status_code')}")
             print(f"  Circuit breaker: {cb.state}")
             print(f"  Failures: {cb.failures}/{cb.threshold}")
 
@@ -2043,7 +2055,7 @@ def load_with_resilience(year, gp, session_type, max_retries=3):
 try:
     session = load_with_resilience(2021, "Belgian Grand Prix", "Race")
     print(f"\nSession loaded successfully!")
-    print(f"Drivers: {session.laps['Driver'].unique().tolist()}")
+    print(f"Drivers: {sorted(set(session.laps['Driver']))}")
 except Exception as e:
     print(f"\nFatal error: {e}")
 ```
@@ -2088,8 +2100,7 @@ def create_project_config(project_name, project_dir):
     print(f"  Max retries: {config.get('max_retries')}")
     print(f"  Validation: {config.get('validate_data')}")
     print(f"\nTo use this config:")
-    print(f"  1. Set TIF1_CACHE_DIR={cache_dir}")
-    print(f"  2. Or load config programmatically")
+    print(f"  Set TIF1_CONFIG_FILE={config_file.resolve()}")
 
     # Create README
     readme = project_path / "TIF1_README.md"
@@ -2103,9 +2114,9 @@ def create_project_config(project_name, project_dir):
         f.write(f"## Usage\n\n")
         f.write(f"```python\n")
         f.write(f"import tif1\n\n")
-        f.write(f"# Load project config\n")
-        f.write(f"config = tif1.get_config()\n")
-        f.write(f"# Config is already loaded from {config_file.name}\n\n")
+        f.write(f"# Set TIF1_CONFIG_FILE={config_file.name} before Python starts.\n")
+        f.write(f"# tif1 then loads this file instead of ~/.tif1rc.\n")
+        f.write(f"config = tif1.get_config()\n\n")
         f.write(f"# Use tif1 normally\n")
         f.write(f"session = tif1.get_session(2021, 'Monaco Grand Prix', 'Race')\n")
         f.write(f"```\n")
@@ -2127,7 +2138,7 @@ Optimize configuration for maximum performance.
 
 ```python
 import tif1
-from tif1.core import clear_lap_cache
+from tif1.cache import clear_lap_cache
 import time
 
 def optimize_for_performance():
@@ -2182,10 +2193,9 @@ def optimize_for_performance():
     print(f"Second load (cached): {cached_load:.2f}s")
     print(f"Speedup: {first_load/cached_load:.1f}x faster")
 
-    # Test telemetry access
+    # Test telemetry access (works on the polars backend set above)
     start = time.time()
-    fastest = laps.pick_fastest()
-    tel = fastest.get_telemetry()
+    tel = session.get_fastest_lap_tel()
     telemetry_time = time.time() - start
 
     print(f"Telemetry load: {telemetry_time:.3f}s")
@@ -2200,7 +2210,7 @@ Process multiple sessions while managing memory usage.
 
 ```python
 import tif1
-from tif1.core import clear_lap_cache
+from tif1.cache import clear_lap_cache
 import psutil
 import os
 
@@ -2214,26 +2224,26 @@ def batch_process_season(year, cache_clear_interval=5):
     print(f"Batch Processing Season {year}")
     print("="*60)
 
-    # Get all events
-    events = tif1.get_events(year)
+    # Get all race weekends (pre-season testing has no race)
+    events = tif1.get_event_schedule(year, include_testing=False)
     print(f"Found {len(events)} events\n")
 
     results = []
     initial_memory = get_memory_mb()
 
-    for i, event in enumerate(events, 1):
-        event_name = event.EventName
+    for i, event_name in enumerate(events["EventName"], 1):
         print(f"[{i}/{len(events)}] Processing {event_name}...")
 
         try:
-            # Load session
-            session = tif1.get_session(year, event_name, "Race")
+            # Load session (pick_fastest() is a pandas Laps method, so ask for
+            # pandas even when the saved configuration selects polars)
+            session = tif1.get_session(year, event_name, "Race", lib="pandas")
             laps = session.laps
 
-            # Analyze
+            # Analyze (pick_fastest() returns one lap as a Series)
             fastest = laps.pick_fastest()
-            fastest_time = fastest['LapTime'].iloc[0]
-            fastest_driver = fastest['Driver'].iloc[0]
+            fastest_time = fastest['LapTime']
+            fastest_driver = fastest['Driver']
 
             result = {
                 "event": event_name,
@@ -2354,9 +2364,9 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Lower CPU usage
    - Handles larger datasets
 
-2. **Disable Validation in Production**
+2. **Keep Validation Off in Production**
    ```python
-   config.set("validate_data", False)
+   config.set("validate_data", False)  # the default
    ```
    - Saves ~10-15% processing time
    - Reduces CPU usage
@@ -2389,6 +2399,9 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
        "https://cdn.jsdelivr.net/gh/TracingInsights",
        "https://backup-cdn.example.com/TracingInsights"
    ])
+   # The CDN manager reads "cdns" when tif1 is imported,
+   # so save the list and start a new process to apply it.
+   config.save()
    ```
    - Automatic fallback on CDN failure
    - Improved reliability
@@ -2412,7 +2425,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    tif1.setup_logging(logging.INFO)
 
    # Configure file handler
-   handler = logging.FileHandler("/var/log/tif1.log")
+   handler = logging.FileHandler("tif1.log")
    handler.setFormatter(logging.Formatter(
        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
    ))
@@ -2449,7 +2462,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 2. **Clear Lap Cache Periodically**
    ```python
-   from tif1.core import clear_lap_cache
+   from tif1.cache import clear_lap_cache
 
    # Clear after processing each session
    clear_lap_cache()
@@ -2465,12 +2478,12 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
    # Batch operation (fast)
    telemetry_batch = cache.get_telemetry_batch(
-       2021, "Monaco_Grand_Prix", "Race", "VER", [1, 2, 3, 4, 5]
+       2021, "Monaco%20Grand%20Prix", "Race", [("VER", lap) for lap in range(1, 6)]
    )
 
    # Individual operations (slow)
    # for lap in [1, 2, 3, 4, 5]:
-   #     tel = cache.get_telemetry(2021, "Monaco_Grand_Prix", "Race", "VER", lap)
+   #     tel = cache.get_telemetry(2021, "Monaco%20Grand%20Prix", "Race", "VER", lap)
    ```
    - Single database query vs multiple
    - Much faster for multiple laps
@@ -2481,8 +2494,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    from pathlib import Path
 
    cache = tif1.get_cache()
-   cache_db = Path(cache.cache_dir) / "cache.db"
-   size_mb = cache_db.stat().st_size / (1024 * 1024)
+   size_mb = cache.db_path.stat().st_size / (1024 * 1024)
 
    if size_mb > 5000:  # 5 GB
        print("Cache is large, consider clearing old data")
@@ -2506,10 +2518,15 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 1. **Distinguish Between Error Types**
    ```python
+   import tif1
    from tif1.exceptions import DataNotFoundError, NetworkError
 
    try:
        session = tif1.get_session(2021, "Test GP", "Race")
+       session.load(laps=True, telemetry=False)
+   except ValueError as e:
+       # Unknown event or session name - fix the request, do not retry
+       print(f"Invalid request: {e}")
    except DataNotFoundError:
        # Data doesn't exist - don't retry
        print("Session data not available")
@@ -2517,7 +2534,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
        # Network issue - can retry
        print("Network error, retrying...")
    ```
-   - Do not retry DataNotFoundError
+   - Do not retry `ValueError` (unknown names) or DataNotFoundError
    - Retry NetworkError with backoff
    - Handle each error type appropriately
 
@@ -2527,7 +2544,7 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
    cb = get_circuit_breaker()
    if cb.state == "open":
-       # Alert monitoring system
+       # Alert monitoring system (send_alert is the application's own hook)
        send_alert("Circuit breaker is open")
    ```
    - Track circuit breaker state
@@ -2580,9 +2597,10 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
 
 1. **Clear Cache in Batch Processing**
    ```python
-   from tif1.core import clear_lap_cache
+   from tif1.cache import clear_lap_cache
 
-   for i, event in enumerate(events):
+   events = tif1.get_event_schedule(year, include_testing=False)
+   for i, event in enumerate(events["EventName"]):
        session = tif1.get_session(year, event, "Race")
        # Process session...
 
@@ -2685,14 +2703,23 @@ Guidelines for using `tif1` utilities effectively in different scenarios.
    - Reproducible tests
    - Catches cache bugs
 
-2. **Mock Network Calls**
+2. **Block the Network in Unit Tests**
    ```python
-   from unittest.mock import patch
+   import socket
 
-   @patch('tif1.http_session.fetch')
-   def test_session_load(mock_fetch):
-       mock_fetch.return_value = {"laps": []}
-       session = tif1.get_session(2021, "Test", "Race")
+   import pytest
+   import tif1
+   from tif1.exceptions import NetworkError
+
+   def test_load_without_network(monkeypatch):
+       def refuse(*args, **kwargs):
+           raise OSError("network disabled in tests")
+
+       monkeypatch.setattr(socket, "getaddrinfo", refuse)
+       monkeypatch.setattr(socket.socket, "connect", refuse)
+       session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=False)
+       with pytest.raises(NetworkError):
+           session.load(laps=True, telemetry=False, weather=False, messages=False)
    ```
    - Faster tests
    - No network dependency

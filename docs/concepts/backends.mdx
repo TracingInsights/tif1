@@ -15,7 +15,7 @@ keywords:
 
 # Data Backends in tif1
 
-tif1 is built with a flexible backend architecture that supports two DataFrame libraries: **pandas** (default) and **polars** (installed with tif1, selected with `lib="polars"`). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
+tif1 supports two DataFrame libraries: **pandas** (default) and **polars** (installed with tif1, selected with `lib="polars"`). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
 
 The backend system is integrated into the tif1 core architecture. When tif1 loads session data, telemetry, or lap data, it constructs DataFrames with the selected backend. All subsequent operations then use the strengths of that backend. This abstraction enables a backend switch with minimal code changes and a large performance gain.
 
@@ -68,7 +68,7 @@ graph TB
     style PL4 fill:#51cf66
 ```
 
-The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. When code calls `get_session()` or reads session attributes like `.laps` or `.telemetry`, tif1 runs these steps internally.
+The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. When code calls `get_session()` or reads session attributes like `.laps` or `.weather`, tif1 runs these steps internally.
 
 1. **Fetches data** from the CDN or cache (backend-agnostic)
 2. **Parses JSON** using orjson (backend-agnostic)
@@ -145,7 +145,7 @@ import tif1
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Returns pandas DataFrame
 
-# Standard pandas operations work seamlessly
+# Standard pandas operations work. LapTime is timedelta64; LapTimeSeconds is float
 fastest = laps.nsmallest(5, "LapTime")
 by_driver = laps.groupby("Driver")["LapTime"].mean()
 
@@ -157,7 +157,7 @@ verstappen_stats = verstappen["LapTime"].describe()
 lap_15 = laps[laps["LapNumber"] == 15]
 columns_of_interest = laps[["Driver", "LapTime", "Compound", "TyreLife"]]
 
-# Time-based operations (if timestamps available)
+# Time arithmetic: LapTime is a timedelta (LapTimeSeconds already holds float seconds)
 laps["LapTime_seconds"] = laps["LapTime"].dt.total_seconds()
 
 # Chaining operations
@@ -176,7 +176,7 @@ When using the pandas backend, tif1 provides additional functionality:
 
 - **Categorical dtypes**: Driver names and compounds are stored as categoricals for memory efficiency
 - **Timedelta columns**: Lap times are proper timedelta objects, enabling time arithmetic
-- **Index preservation**: tif1 maintains meaningful indices where appropriate
+- **Index**: laps keep a `RangeIndex` plus the FastF1 `index` column
 - **Method chaining**: All tif1 DataFrame operations support pandas method chaining
 
 ---
@@ -225,14 +225,14 @@ For tif1 workloads, polars typically provides:
 
 ### Installation
 
-Polars (`polars>=1.44.1`) is installed with `tif1`. If it is missing, for example after a manual uninstall, reinstall it alongside tif1:
+Polars (`polars>=2.0.0,<3`) is installed with `tif1`. If it is missing, for example after a manual uninstall, reinstall it alongside tif1:
 
 ```bash
 # A normal install already includes polars
 pip install tif1
 
 # Restore polars if it was removed from the environment
-pip install "polars>=1.44.1"
+pip install "polars>=2.0.0,<3"
 
 # Verify installation
 python -c "import polars as pl; print(pl.__version__)"
@@ -253,9 +253,9 @@ session = tif1.get_session(
     2025,
     "Monaco Grand Prix",
     "Race",
-    backend="polars"
+    lib="polars"
 )
-laps = session.laps  # Returns polars DataFrame
+laps = session.laps  # Returns polars DataFrame (LapTime is Float64 seconds)
 
 # Polars operations (similar but more explicit than pandas)
 fastest = laps.sort("LapTime").head(5)
@@ -291,11 +291,26 @@ laps_with_rolling = laps.with_columns([
 ])
 ```
 
+### Polars 2 notes
+
+tif1 requires polars 2.x. tif1 returns eager `DataFrame` objects. Most polars 2.0 changes do not affect code that only reads them. The changes below matter for code that builds on the returned frames:
+
+| Change in polars 2.0 | Effect on code that uses tif1 frames |
+| :--- | :--- |
+| `LazyFrame.collect()` runs on the streaming engine by default | Row order after `group_by`, joins, and `unpivot` is not guaranteed in lazy queries. Add `.sort(...)` or pass `maintain_order`. Eager frames are not affected. |
+| String to `Date`, `Datetime`, and `Time` casts are removed | Use `pl.col("LapStartDate").str.to_datetime()` instead of `.cast(pl.Datetime)`. |
+| `pl.concat(..., how="horizontal")` requires equal heights | Use `how="horizontal_extend"` to pad a shorter frame with nulls. |
+| `is_in()` no longer coerces types with loss | Cast both sides to one type first. `pl.col("LapNumber").is_in([1.0, 2.0])` raises because `LapNumber` is `Int64`; use `[1, 2]`. |
+| Removed APIs: `melt`, `with_row_count`, `GroupBy.count()`, `collect(streaming=True)`, `join(how="outer")`, `pl.NUMERIC_DTYPES` | Use `unpivot`, `with_row_index`, `len()`, `collect(engine="streaming")`, `join(how="full")`, and `pl.selectors.numeric()`. The `AttributeRemovedError` message names the replacement. |
+| `pl.Categorical(ordering=...)` is removed; categoricals always sort by string value | `TIF1_POLARS_LAP_CATEGORICAL=true` works as before. |
+
+The complete list is in the [polars 2.0 upgrade guide](https://docs.pola.rs/releases/upgrade/2/). Telemetry frames that polars 1.x wrote to the cache load unchanged under polars 2.x. The same release changes the telemetry dtypes for `DistanceToDriverAhead` and `DriverAhead`, so tif1 rebuilds its cached telemetry frames once. It rebuilds them from the cached payloads, without a network fetch.
+
 ### Polars-Specific Features in tif1
 
 When using the polars backend, tif1 uses these polars capabilities:
 
-- **Lazy evaluation**: Use `backend="polars"` with `lazy=True` for query optimization
+- **Lazy evaluation**: Call `.lazy()` on a polars frame to build an optimized query plan
 - **Parallel execution**: All operations automatically use available CPU cores
 - **Expression API**: Complex calculations can be expressed as optimized expressions
 - **Efficient string operations**: Driver name filtering and compound matching are faster
@@ -313,7 +328,7 @@ Performance varies by operation type, data size, and hardware. The benchmarks be
 - **Dataset**: 2024 Abu Dhabi GP Race session (20 drivers, 1,142 laps, full telemetry)
 - **Data size**: ~450MB in pandas, ~220MB in polars
 - **Measurement**: Median of 10 runs, cold cache
-- **Python**: 3.12, pandas 3.0.5, polars 1.43.2
+- **Python**: 3.12, pandas 3.0.5, polars 1.43.2 (measured before the move to polars 2; treat the figures as indicative)
 
 ### Operation-Level Benchmarks
 
@@ -359,10 +374,13 @@ These benchmarks represent complete analysis workflows:
 #### Use Case 1: Single Session Analysis
 
 ```python
-# Load session, filter to one driver, compute statistics
-session = get_session(2024, "Monaco", "Race", backend=backend)
+import tif1
+
+# Load session, filter to one driver, compute statistics (pandas shown;
+# the polars run used filter / group_by on the same session)
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race", lib="pandas")
 driver_laps = session.laps[session.laps["Driver"] == "VER"]
-stats = driver_laps.groupby("Compound").agg({"LapTime": ["mean", "std", "count"]})
+stats = driver_laps.groupby("Compound").agg({"LapTimeSeconds": ["mean", "std", "count"]})
 ```
 
 - **Pandas**: 2.8s total (2.5s load, 0.3s analysis)
@@ -372,13 +390,16 @@ stats = driver_laps.groupby("Compound").agg({"LapTime": ["mean", "std", "count"]
 #### Use Case 2: Multi-Session Aggregation
 
 ```python
+import pandas as pd
+import tif1
+
 # Load all 2024 races, compute fastest lap per driver per race
 results = []
-for event in get_events(2024):
-    session = get_session(2024, event, "Race", backend=backend)
+for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
+    session = tif1.get_session(2024, event, "Race", lib="pandas")
     fastest = session.get_fastest_laps(by_driver=True)
     results.append(fastest)
-combined = concat(results)
+combined = pd.concat(results, ignore_index=True)
 ```
 
 - **Pandas**: 68s total (24 races × ~2.8s)
@@ -388,11 +409,13 @@ combined = concat(results)
 #### Use Case 3: Telemetry Analysis
 
 ```python
-# Load telemetry, compute speed statistics per corner
-session = get_session(2024, "Spa", "Race", backend=backend)
-telemetry = session.get_driver("VER").telemetry
-corners = identify_corners(telemetry)  # Custom function
-corner_stats = telemetry.groupby(corners).agg({"Speed": ["mean", "max", "std"]})
+import tif1
+
+# Load fastest-lap telemetry, compute speed statistics per track segment
+session = tif1.get_session(2024, "Belgian Grand Prix", "Race", lib="pandas")
+telemetry = session.get_driver("VER").get_fastest_lap_tel()
+segment = (telemetry["Distance"] // 500).astype(int)  # 500 m segments; swap in a corner map
+segment_stats = telemetry.groupby(segment)["Speed"].agg(["mean", "max", "std"])
 ```
 
 - **Pandas**: 8.5s total (2.5s load, 6.0s analysis)
@@ -417,6 +440,104 @@ How performance scales with data size:
 
 ---
 
+## Data Contract by Backend
+
+tif1 loads the same payloads on both backends and then applies a dtype contract per backend. The contract decides how time values, text, and missing values are represented. Read this section before writing code that runs on both backends.
+
+### Column types by backend
+
+The tables list the types as loaded for the 2025 Bahrain Grand Prix race. Columns not listed have the same type on both backends: `Float64` for speeds and weather readings, `String` for text.
+
+**Laps** (`session.laps`)
+
+| Column | pandas | polars |
+| :--- | :--- | :--- |
+| `LapTime`, `Sector1Time` to `Sector3Time`, `Sector1SessionTime` to `Sector3SessionTime`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time`, `WeatherTime` | `timedelta64[ns]` | `Float64` (seconds) |
+| `LapTimeSeconds` | `float64` | `Float64` |
+| `LapNumber`, `Stint`, `TyreLife`, `Position` | `float64` | `Int64` |
+| `Driver`, `Team`, `Compound`, `TrackStatus` | `category` | `String` |
+| `IsPersonalBest`, `FreshTyre`, `IsAccurate`, `FastF1Generated`, `Rainfall` | `bool` | `Boolean` |
+| `Deleted` | `boolean` (nullable) | `Boolean` |
+| `LapStartDate` | `datetime64[ns]` | `String` (ISO 8601) |
+| `WindDirection` | `Int64` (nullable) | `Int64` |
+| `index` | `int64`, first column (FastF1 compatibility) | not present |
+
+Set `TIF1_POLARS_LAP_CATEGORICAL=true` to get `Categorical` for the text columns on polars. See [Environment variables](/reference/environment-variables).
+
+**Weather** (`session.weather`)
+
+| Column | pandas | polars |
+| :--- | :--- | :--- |
+| `Time` | `timedelta64[ns]` | `Duration("ms")` |
+| `AirTemp`, `Humidity`, `Pressure`, `TrackTemp`, `WindSpeed` | `float64` | `Float64` |
+| `WindDirection` | `Int64` (nullable) | `Int64` |
+| `Rainfall` | `boolean` (nullable) | `Boolean` |
+
+**Race control messages** (`session.race_control_messages`)
+
+| Column | pandas | polars |
+| :--- | :--- | :--- |
+| `Time` | `datetime64[ns]` | `Datetime("ns")` |
+| `Category`, `Message`, `Status`, `Flag`, `Scope`, `RacingNumber` | `object` (`None` when missing) | `String` (`null` when missing) |
+| `Sector` | `float64` | `Float64` |
+| `Lap` | `int64` (`0` when the message has no lap) | `Int64` (`null` when the message has no lap) |
+
+**Telemetry** (`lap.telemetry`, `session.get_fastest_lap_tel()`)
+
+| Column | pandas | polars |
+| :--- | :--- | :--- |
+| `Time` | `timedelta64[ns]` | `Float64` (seconds) |
+| `Brake` | `bool` | `Int64` (`0` or `1`) |
+| `nGear`, `DRS` (`DRS` is a `0` or `1` flag) | `Int64` (nullable) | `Int64` |
+| `LapNumber` | `Int64` | `Int32` |
+| `Speed`, `RPM`, `Throttle`, `Distance`, `RelativeDistance`, `AccelerationX` to `AccelerationZ`, `X`, `Y`, `Z` | `float64` | `Float64` |
+| `DistanceToDriverAhead` | `float64` (`NaN` when nobody is ahead) | `Float64` (`null` when nobody is ahead) |
+| `DriverAhead` | `str` with driver numbers, missing when nobody is ahead (`object` when every sample is missing) | `String` (`null` when nobody is ahead) |
+| `Driver` | `object` | `String` |
+
+`DriverAhead` holds driver numbers such as `"12"`, not driver codes. To find the samples with nobody ahead, use `isna()` on pandas or `is_null()` on polars. The column never holds the string `"None"`.
+
+For code that runs on both backends, use `LapTimeSeconds` for lap times. Compare `Driver`, `Team`, and `Compound` as strings. Both work without a cast on either backend.
+
+### Missing values and sentinels
+
+The upstream payloads encode a missing value in two ways: JSON `null`, and the literal string `"None"`. The string form appears in 2026 lap data and in the `Lap` column of race control messages for every non-race session. It also appears in telemetry when nobody is ahead. tif1 normalizes both forms on both backends before it applies the dtype contract:
+
+- Laps: the strings `"None"`, `"none"`, `"null"`, `"nan"`, and `""` become a missing value. The replacement runs only when a payload contains one of these tokens.
+- Weather and race control messages: the same tokens become a missing value. On polars the replacement runs before the frame is built. A column with one sentinel then keeps its `Boolean`, `Float64`, or `Int64` type instead of becoming `String`. On pandas the replacement runs before the `astype` and `to_numeric` passes.
+- Telemetry: the same tokens become `NaN` on pandas and `null` on polars. `DistanceToDriverAhead` and the other numeric channels stay `float64` or `Float64`. `DriverAhead` stays a text column of driver numbers.
+- Casts are non-strict on both backends. A value that cannot be parsed becomes a missing value; it does not raise.
+
+The representation of a missing value follows the backend. polars uses `null` for every type. pandas uses `NaT` for time columns, `NaN` for floats, `<NA>` for nullable integers and booleans, and `None` for text columns. One difference is intentional. The race control `Lap` column is a plain `int64` on pandas (FastF1 convention). A message without a lap has `Lap == 0` on pandas and `null` on polars.
+
+### Empty weather or race control tables
+
+Weather and race control messages are optional tables. When a payload cannot be converted to the dtype contract, tif1 logs a warning. It returns an empty DataFrame for that table instead of raising. `session.load()`, `session.laps`, and telemetry are not affected. The behaviour is the same on both backends.
+
+The warning names the table and the session, then gives the error. The event name is URL-encoded, as in `session.gp`:
+
+```text
+Failed to load weather for 2025/Bahrain%20Grand%20Prix/Race: <error>
+```
+
+Enable logging to see it, and test for an empty table before plotting:
+
+```python
+import logging
+
+import tif1
+
+tif1.setup_logging(logging.WARNING)
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+weather = session.weather
+if len(weather) == 0:
+    print("no weather table for this session")
+```
+
+A session that has no weather file at all logs `No weather in session` at `INFO` level and also returns an empty DataFrame.
+
+---
+
 ## Comprehensive API Differences
 
 While tif1 abstracts many differences, the API variations still matter for idiomatic code in each backend. This section compares common operations.
@@ -425,15 +546,16 @@ While tif1 abstracts many differences, the API variations still matter for idiom
 
 <CodeGroup>
 ```python Pandas
-# Boolean indexing (most common)
-fast_laps = laps[laps["LapTime"] < 90]
+# Boolean indexing (most common). LapTime is a timedelta, so compare the
+# float LapTimeSeconds column (or a pd.Timedelta) to a number of seconds
+fast_laps = laps[laps["LapTimeSeconds"] < 100]
 
 # Multiple conditions with & and |
-verstappen_fast = laps[(laps["Driver"] == "VER") & (laps["LapTime"] < 85)]
+verstappen_fast = laps[(laps["Driver"] == "VER") & (laps["LapTimeSeconds"] < 97)]
 
 # Query method (string-based, convenient)
-fast_laps = laps.query("LapTime < 90")
-verstappen_fast = laps.query("Driver == 'VER' and LapTime < 85")
+fast_laps = laps.query("LapTimeSeconds < 100")
+verstappen_fast = laps.query("Driver == 'VER' and LapTimeSeconds < 97")
 
 # isin for multiple values
 soft_medium = laps[laps["Compound"].isin(["SOFT", "MEDIUM"])]
@@ -447,19 +569,20 @@ first_10 = laps.iloc[:10]
 ```
 
 ```python Polars
-# Filter method (primary approach)
-fast_laps = laps.filter(pl.col("LapTime") < 90)
+# Filter method (primary approach). LapTime is already Float64 seconds on
+# polars; LapTimeSeconds works on both backends
+fast_laps = laps.filter(pl.col("LapTimeSeconds") < 100)
 
 # Multiple conditions with & and |
 verstappen_fast = laps.filter(
-    (pl.col("Driver") == "VER") & (pl.col("LapTime") < 85)
+    (pl.col("Driver") == "VER") & (pl.col("LapTimeSeconds") < 97)
 )
 
 # Chained filters (often clearer)
 verstappen_fast = (
     laps
     .filter(pl.col("Driver") == "VER")
-    .filter(pl.col("LapTime") < 85)
+    .filter(pl.col("LapTimeSeconds") < 97)
 )
 
 # is_in for multiple values
@@ -473,8 +596,9 @@ first_10 = laps.head(10)
 last_10 = laps.tail(10)
 rows_10_to_20 = laps.slice(10, 10)
 
-# Boolean indexing also works
-fast_laps = laps[laps["LapTime"] < 90]
+# No boolean-mask indexing: polars reads laps[mask] as a column selector,
+# so it raises (or picks columns when the lengths happen to match). Use filter.
+lap_15 = laps.filter(pl.col("LapNumber") == 15)
 ```
 </CodeGroup>
 
@@ -482,24 +606,28 @@ fast_laps = laps[laps["LapTime"] < 90]
 
 <CodeGroup>
 ```python Pandas
+import numpy as np
+
 # Select columns
 subset = laps[["Driver", "LapTime", "Compound"]]
 
 # Select by type
 numeric_cols = laps.select_dtypes(include=[np.number])
 
-# Add new columns
+# Add new columns (speeds are km/h; there is no Speed column in laps)
 laps["LapTime_seconds"] = laps["LapTime"].dt.total_seconds()
-laps["Speed_kph"] = laps["Speed_mph"] * 1.60934
+laps["SpeedST_mph"] = laps["SpeedST"] / 1.60934
 
-# Rename columns
-laps = laps.rename(columns={"LapTime": "Time", "Driver": "DriverCode"})
+# Rename columns (a "Time" column already exists, so pick a new name)
+laps = laps.rename(columns={"LapTime": "LapDuration", "Driver": "DriverCode"})
 
 # Drop columns
 laps = laps.drop(columns=["Deleted", "DeletedReason"])
 
-# Column operations
-laps["LapTime_normalized"] = (laps["LapTime"] - laps["LapTime"].mean()) / laps["LapTime"].std()
+# Column operations (LapTimeSeconds is float; LapDuration is a timedelta)
+laps["LapTime_normalized"] = (
+    (laps["LapTimeSeconds"] - laps["LapTimeSeconds"].mean()) / laps["LapTimeSeconds"].std()
+)
 ```
 
 ```python Polars
@@ -507,23 +635,24 @@ laps["LapTime_normalized"] = (laps["LapTime"] - laps["LapTime"].mean()) / laps["
 subset = laps.select(["Driver", "LapTime", "Compound"])
 
 # Select by type
-numeric_cols = laps.select(pl.col(pl.NUMERIC_DTYPES))
+numeric_cols = laps.select(pl.selectors.numeric())
 
-# Add new columns (with_columns is preferred)
+# Add new columns (with_columns is preferred). The polars backend stores
+# LapTime as Float64 seconds, so build a Duration from it rather than the reverse
 laps = laps.with_columns([
-    pl.col("LapTime").dt.total_seconds().alias("LapTime_seconds"),
-    (pl.col("Speed_mph") * 1.60934).alias("Speed_kph")
+    (pl.col("LapTime") * 1000).cast(pl.Duration("ms")).alias("LapTime_duration"),
+    (pl.col("SpeedST") / 1.60934).alias("SpeedST_mph")
 ])
 
-# Rename columns
-laps = laps.rename({"LapTime": "Time", "Driver": "DriverCode"})
+# Rename columns (a "Time" column already exists; renaming onto it raises DuplicateError)
+laps = laps.rename({"LapTime": "LapDuration", "Driver": "DriverCode"})
 
 # Drop columns
 laps = laps.drop(["Deleted", "DeletedReason"])
 
-# Column operations (expressions are powerful)
+# Column operations (expressions are composable)
 laps = laps.with_columns([
-    ((pl.col("LapTime") - pl.col("LapTime").mean()) / pl.col("LapTime").std())
+    ((pl.col("LapTimeSeconds") - pl.col("LapTimeSeconds").mean()) / pl.col("LapTimeSeconds").std())
     .alias("LapTime_normalized")
 ])
 ```
@@ -581,12 +710,20 @@ by_driver_compound = laps.group_by(["Driver", "Compound"]).agg(
     pl.col("LapTime").mean().alias("mean_time")
 )
 
-# Custom aggregation functions
+# Custom aggregations: compose expressions where possible
+ranges = laps.group_by("Driver").agg(
+    (pl.col("LapTime").max() - pl.col("LapTime").min()).alias("time_range")
+)
+
+# A Python function receives each group as a Series through map_batches
+# (map_elements would call it once per value, not once per group)
 def lap_time_range(s: pl.Series) -> float:
     return s.max() - s.min()
 
 ranges = laps.group_by("Driver").agg(
-    pl.col("LapTime").map_elements(lap_time_range).alias("time_range")
+    pl.col("LapTime")
+    .map_batches(lap_time_range, return_dtype=pl.Float64, returns_scalar=True)
+    .alias("time_range")
 )
 
 # Transform with over (window function)
@@ -639,50 +776,80 @@ sorted_laps = laps.sort(pl.col("LapTime").abs())
 
 <CodeGroup>
 ```python Pandas
-# Inner join
-merged = laps.merge(weather, on="LapNumber", how="inner")
+import pandas as pd
+
+# Inner join: attach each driver's best lap time to every lap
+best = session.get_fastest_laps()[["Driver", "LapTime"]].rename(columns={"LapTime": "BestLapTime"})
+merged = laps.merge(best, on="Driver", how="inner")
 
 # Left join
-merged = laps.merge(weather, on="LapNumber", how="left")
+merged = laps.merge(best, on="Driver", how="left")
 
 # Join on different column names
 merged = laps.merge(
-    weather,
-    left_on="LapNumber",
-    right_on="Lap",
+    session.results[["Abbreviation", "FullName"]],
+    left_on="Driver",
+    right_on="Abbreviation",
     how="left"
 )
 
-# Join on index
-merged = laps.merge(weather, left_index=True, right_index=True)
+# Join on index (same row order)
+ranks = laps[["LapTimeSeconds"]].rank().rename(columns={"LapTimeSeconds": "LapTimeRank"})
+merged = laps.merge(ranks, left_index=True, right_index=True)
 
-# Concatenate vertically
+# Nearest-time join: weather has no LapNumber column, so match on session time.
+# The laps already carry per-lap weather columns; this shows the technique.
+merged = pd.merge_asof(
+    laps.sort_values("Time"),
+    weather.sort_values("Time").rename(columns={"Time": "WeatherSampleTime"}),
+    left_on="Time",
+    right_on="WeatherSampleTime",
+    suffixes=("", "_weather"),
+)
+
+# Concatenate vertically (laps from two sessions)
+race1_laps = tif1.get_session(2025, "Bahrain Grand Prix", "Race").laps
+race2_laps = tif1.get_session(2025, "Saudi Arabian Grand Prix", "Race").laps
 all_laps = pd.concat([race1_laps, race2_laps], ignore_index=True)
 
-# Concatenate horizontally
-combined = pd.concat([laps, telemetry], axis=1)
+# Concatenate horizontally (same row count, distinct column names)
+combined = pd.concat([laps, ranks], axis=1)
 ```
 
 ```python Polars
-# Inner join
-merged = laps.join(weather, on="LapNumber", how="inner")
+# Inner join: attach each driver's best lap time to every lap
+best = session.get_fastest_laps().select(["Driver", pl.col("LapTime").alias("BestLapTime")])
+merged = laps.join(best, on="Driver", how="inner")
 
 # Left join
-merged = laps.join(weather, on="LapNumber", how="left")
+merged = laps.join(best, on="Driver", how="left")
 
-# Join on different column names
+# Join on different column names (results is always a pandas frame)
 merged = laps.join(
-    weather,
-    left_on="LapNumber",
-    right_on="Lap",
+    pl.from_pandas(session.results[["Abbreviation", "FullName"]]),
+    left_on="Driver",
+    right_on="Abbreviation",
     how="left"
 )
 
-# Concatenate vertically
+# Nearest-time join: weather.Time is Duration(ms), laps.Time is Float64 seconds
+weather_s = weather.with_columns((pl.col("Time").dt.total_milliseconds() / 1000).alias("Time"))
+merged = laps.sort("Time").join_asof(
+    weather_s.sort("Time").rename({"Time": "WeatherSampleTime"}),
+    left_on="Time",
+    right_on="WeatherSampleTime",
+    suffix="_weather",
+)
+
+# Concatenate vertically (laps from two sessions)
+race1_laps = tif1.get_session(2025, "Bahrain Grand Prix", "Race", lib="polars").laps
+race2_laps = tif1.get_session(2025, "Saudi Arabian Grand Prix", "Race", lib="polars").laps
 all_laps = pl.concat([race1_laps, race2_laps])
 
-# Concatenate horizontally
-combined = pl.concat([laps, telemetry], how="horizontal")
+# Concatenate horizontally (same height, distinct column names;
+# how="horizontal_extend" pads a shorter frame with nulls instead of raising)
+ranks = laps.select(pl.col("LapTimeSeconds").rank().alias("LapTimeRank"))
+combined = pl.concat([laps, ranks], how="horizontal")
 
 # Cross join (Cartesian product)
 cross = laps.join(weather, how="cross")
@@ -693,47 +860,40 @@ cross = laps.join(weather, how="cross")
 
 <CodeGroup>
 ```python Pandas
-# Check for missing values
+# Check for missing values (LapTime is NaT for a lap without a time)
 has_nulls = laps["LapTime"].isna()
 null_count = laps["LapTime"].isna().sum()
 
-# Drop missing values
+# Drop rows with a missing lap time. A bare dropna() is too aggressive:
+# most laps have a null PitInTime or PitOutTime, so it drops nearly everything.
 clean_laps = laps.dropna(subset=["LapTime"])
-clean_laps = laps.dropna()  # Drop any row with any null
 
-# Fill missing values
-filled = laps["LapTime"].fillna(0)
-filled = laps["LapTime"].fillna(method="ffill")  # Forward fill
-filled = laps["LapTime"].fillna(laps["LapTime"].mean())
+# Fill missing values. LapTime is timedelta64, so fill it with a Timedelta;
+# LapTimeSeconds holds the same value as float seconds.
+filled = laps["LapTime"].fillna(pd.Timedelta(0))
+filled = laps["LapTime"].ffill()  # Forward fill (fillna(method=...) was removed in pandas 3)
+filled = laps["LapTimeSeconds"].fillna(laps["LapTimeSeconds"].mean())
 
 # Interpolate
 filled = laps["LapTime"].interpolate()
 ```
 
 ```python Polars
-# Check for missing values
+# Check for missing values (LapTime is null for a lap without a time)
 has_nulls = laps["LapTime"].is_null()
 null_count = laps["LapTime"].null_count()
 
-# Drop missing values
+# Drop rows with a missing lap time (a bare drop_nulls() drops nearly
+# everything, because most laps have a null PitInTime or PitOutTime)
 clean_laps = laps.drop_nulls(subset=["LapTime"])
-clean_laps = laps.drop_nulls()  # Drop any row with any null
 
-# Fill missing values
-filled = laps.with_columns([
-    pl.col("LapTime").fill_null(0)
-])
-filled = laps.with_columns([
-    pl.col("LapTime").forward_fill()  # Forward fill
-])
-filled = laps.with_columns([
-    pl.col("LapTime").fill_null(pl.col("LapTime").mean())
-])
+# Fill missing values (LapTime is Float64 seconds in the polars backend)
+filled = laps.with_columns(pl.col("LapTime").fill_null(0.0))
+filled = laps.with_columns(pl.col("LapTime").forward_fill())  # Forward fill
+filled = laps.with_columns(pl.col("LapTime").fill_null(pl.col("LapTime").mean()))
 
 # Interpolate
-filled = laps.with_columns([
-    pl.col("LapTime").interpolate()
-])
+filled = laps.with_columns(pl.col("LapTime").interpolate())
 ```
 </CodeGroup>
 
@@ -777,11 +937,11 @@ extract = laps.select(pl.col("Driver").str.extract(r"([A-Z]{3})", 1))
 
 <CodeGroup>
 ```python Pandas
-# Rolling window
-rolling_avg = laps.groupby("Driver")["LapTime"].rolling(window=3).mean()
+# Rolling window (rolling/expanding need a numeric column: use LapTimeSeconds)
+rolling_avg = laps.groupby("Driver")["LapTimeSeconds"].rolling(window=3).mean()
 
 # Expanding window
-expanding_min = laps.groupby("Driver")["LapTime"].expanding().min()
+expanding_min = laps.groupby("Driver")["LapTimeSeconds"].expanding().min()
 
 # Rank within groups
 laps["Rank"] = laps.groupby("Driver")["LapTime"].rank()
@@ -835,35 +995,34 @@ laps = laps.with_columns([
 
 <CodeGroup>
 ```python Pandas
-# Convert types
-laps["LapNumber"] = laps["LapNumber"].astype(int)
-laps["Driver"] = laps["Driver"].astype("category")
-laps["LapTime"] = pd.to_datetime(laps["LapTime"])
+# Convert types. LapTime is timedelta64 in the pandas backend: convert it
+# with .dt.total_seconds(), not astype(float) or to_datetime (both raise).
+laps["LapNumber"] = laps["LapNumber"].astype("Int64")   # float64 → nullable integer
+laps["Driver"] = laps["Driver"].astype("category")      # already category in tif1
+seconds = laps["LapTime"].dt.total_seconds()            # timedelta → float seconds
+as_timedelta = pd.to_timedelta(laps["LapTimeSeconds"], unit="s")  # the reverse
 
-# Infer types
-laps = laps.infer_objects()
-
-# Convert to numeric (coerce errors)
-laps["Speed"] = pd.to_numeric(laps["Speed"], errors="coerce")
+# Convert to numeric (coerce errors): unparseable values become NaN
+laps["SpeedST"] = pd.to_numeric(laps["SpeedST"], errors="coerce")
 ```
 
 ```python Polars
-# Convert types
+# Convert types. LapTime is Float64 seconds in the polars backend: build a
+# Duration from it; a String → Datetime cast is not supported in polars 2.
 laps = laps.with_columns([
     pl.col("LapNumber").cast(pl.Int32),
     pl.col("Driver").cast(pl.Categorical),
-    pl.col("LapTime").str.strptime(pl.Datetime)
+    (pl.col("LapTime") * 1000).cast(pl.Duration("ms")).alias("LapTimeDuration"),
 ])
 
-# Strict casting (errors on failure)
-laps = laps.with_columns([
-    pl.col("Speed").cast(pl.Float64, strict=True)
-])
+# Strict casting (raises on failure)
+laps = laps.with_columns(pl.col("SpeedST").cast(pl.Float64, strict=True))
 
 # Non-strict casting (nulls on failure)
-laps = laps.with_columns([
-    pl.col("Speed").cast(pl.Float64, strict=False)
-])
+laps = laps.with_columns(pl.col("SpeedST").cast(pl.Float64, strict=False))
+
+# Parse an ISO 8601 string column (LapStartDate stays a String on polars)
+laps = laps.with_columns(pl.col("LapStartDate").str.to_datetime().alias("LapStart"))
 ```
 </CodeGroup>
 
@@ -878,30 +1037,32 @@ tif1 converts DataFrames between backends. This lets different parts of a workfl
 <CodeGroup>
 ```python Polars to Pandas
 # Start with polars
-session = tif1.get_session(2025, "Monaco", "Race", backend="polars")
+session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 laps_polars = session.laps
 
 # Convert to pandas for compatibility
 laps_pandas = laps_polars.to_pandas()
 
-# Now you can use pandas-specific libraries
+# pandas-only libraries work on the converted frame (LapTime stays float seconds)
 import seaborn as sns
-sns.boxplot(data=laps_pandas, x="Driver", y="LapTime")
+sns.violinplot(data=laps_pandas, x="Driver", y="LapTime")
 ```
 
 ```python Pandas to Polars
 # Start with pandas
-session = tif1.get_session(2025, "Monaco", "Race", backend="pandas")
+session = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
 laps_pandas = session.laps
 
 # Convert to polars for performance
 import polars as pl
 laps_polars = pl.from_pandas(laps_pandas)
 
-# Now you can use polars' fast operations
+# Polars operations on the converted frame. LapTime arrives as Duration(ns)
+# here (unlike a native tif1 polars frame, where it is Float64 seconds), so
+# aggregate the float LapTimeSeconds column and give each output a name
 result = laps_polars.group_by("Driver").agg([
-    pl.col("LapTime").mean(),
-    pl.col("LapTime").std()
+    pl.col("LapTimeSeconds").mean().alias("mean_time"),
+    pl.col("LapTimeSeconds").std().alias("std_time")
 ])
 ```
 </CodeGroup>
@@ -928,12 +1089,11 @@ import pyarrow as pa
 import polars as pl
 
 # Pandas → Arrow → Polars (zero-copy when possible)
-laps_pandas = session.laps  # pandas DataFrame
+laps_pandas = tif1.get_session(2025, "Monaco", "Race").laps  # pandas DataFrame
 arrow_table = pa.Table.from_pandas(laps_pandas)
 laps_polars = pl.from_arrow(arrow_table)
 
 # Polars → Arrow → Pandas (zero-copy when possible)
-laps_polars = session.laps  # polars DataFrame
 arrow_table = laps_polars.to_arrow()
 laps_pandas = arrow_table.to_pandas()
 ```
@@ -952,7 +1112,7 @@ import polars as pl
 import matplotlib.pyplot as plt
 
 # Use polars for heavy data processing
-session = tif1.get_session(2024, "Spa", "Race", backend="polars")
+session = tif1.get_session(2024, "Spa", "Race", lib="polars")
 
 # Process with polars (fast)
 driver_stats = (
@@ -984,15 +1144,16 @@ Some data types do not convert exactly between backends:
 | :--- | :--- | :--- | :--- |
 | Integers | int64 | Int64 | ✅ Perfect |
 | Floats | float64 | Float64 | ✅ Perfect |
-| Strings | object | Utf8 | ✅ Perfect |
+| Strings | str | String | ✅ Perfect |
 | Categoricals | category | Categorical | ✅ Perfect |
 | Datetimes | datetime64[ns] | Datetime | ✅ Perfect |
-| Timedeltas | timedelta64[ns] | Duration | ✅ Perfect |
+| Timedeltas | timedelta64[ns] | Duration | ✅ Perfect (native tif1 polars frames use Float64 seconds instead) |
 | Nullable ints | Int64 | Int64 | ✅ Perfect |
 | Mixed types | object | ⚠️ Varies | May need explicit casting |
 
 ```python
 # Handle type preservation explicitly
+laps_pandas = tif1.get_session(2025, "Monaco", "Race").laps
 laps_polars = pl.from_pandas(
     laps_pandas,
     schema_overrides={
@@ -1007,7 +1168,7 @@ laps_polars = pl.from_pandas(
 
 ## Setting Default Backend
 
-Configure tif1 to use a preferred backend by default. This avoids the need to specify `backend=` on every call.
+Configure tif1 to use a preferred backend by default. This avoids the need to specify `lib=` on every call.
 
 ### Via Configuration File
 
@@ -1015,8 +1176,8 @@ Create or edit `~/.tif1rc` (JSON format):
 
 ```json
 {
-  "backend": "polars",
-  "cache_enabled": true,
+  "lib": "polars",
+  "enable_cache": true,
   "cache_dir": "/path/to/tif1-cache"
 }
 ```
@@ -1065,7 +1226,7 @@ import tif1
 config = tif1.get_config()
 
 # Set backend
-config.set("backend", "polars")
+config.set("lib", "polars")
 
 # Optionally save to config file
 config.save()
@@ -1083,39 +1244,38 @@ import tif1
 
 # Set default to polars
 config = tif1.get_config()
-config.set("backend", "polars")
+config.set("lib", "polars")
 
 # Most sessions use polars
 session1 = tif1.get_session(2024, "Spa", "Race")  # Uses polars
 
 # But you can override for specific sessions
-session2 = tif1.get_session(2024, "Monaco", "Race", backend="pandas")  # Uses pandas
+session2 = tif1.get_session(2024, "Monaco", "Race", lib="pandas")  # Uses pandas
 ```
 
 ### Configuration Precedence
 
 When multiple configuration sources are present, tif1 uses this precedence order (highest to lowest):
 
-1. **Explicit parameter**: `backend="polars"` in function call
-2. **Environment variable**: `TIF1_LIB=polars`
-3. **Config file**: `~/.tif1rc` setting
-4. **Default**: `pandas`
+1. **Explicit parameter**: `lib="polars"` in function call
+2. **Runtime call**: `config.set("lib", "polars")` after import
+3. **Environment variable**: `TIF1_LIB=polars`, read once when the config loads
+4. **Config file**: `~/.tif1rc` setting
+5. **Default**: `pandas`
 
 ```python
 # Example showing precedence
-import os
 import tif1
 
-# Config file says "polars"
 config = tif1.get_config()
-config.set("backend", "polars")
+print(config.get("lib"))  # TIF1_LIB, then ~/.tif1rc, then the default "pandas"
 
-# Environment variable overrides config file
-os.environ["TIF1_LIB"] = "pandas"
+# A runtime set() replaces the value loaded from the environment or the file
+config.set("lib", "polars")
 
 # Explicit parameter overrides everything
-session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
-# Uses polars (explicit parameter wins)
+session = tif1.get_session(2024, "Monaco", "Race", lib="pandas")
+print(session.lib)  # pandas (explicit parameter wins)
 ```
 
 ---
@@ -1135,18 +1295,19 @@ laps_indexed = laps.set_index(["Driver", "LapNumber"])
 # Access data with MultiIndex
 verstappen_lap_10 = laps_indexed.loc[("VER", 10)]
 
-# Aggregate at different levels
-by_driver = laps_indexed.groupby(level="Driver").mean()
+# Aggregate at different levels (pick numeric columns; the frame also holds text)
+by_driver = laps_indexed.groupby(level="Driver")[["LapTimeSeconds", "SpeedST"]].mean()
 ```
 
 #### Time Series Functionality
 
 ```python
-# Resample time series data
-telemetry_resampled = telemetry.set_index("Time").resample("1S").mean()
+# Resample time series data (Time is a lap-relative timedelta)
+telemetry = session.get_fastest_lap_tel()
+telemetry_resampled = telemetry.set_index("Time").resample("1s").mean(numeric_only=True)
 
 # Time-based rolling windows
-rolling_speed = telemetry.set_index("Time")["Speed"].rolling("5S").mean()
+rolling_speed = telemetry.set_index("Time")["Speed"].rolling("5s").mean()
 
 # Business day calculations
 race_dates = pd.bdate_range("2024-01-01", "2024-12-31")
@@ -1161,21 +1322,22 @@ verstappen = laps.loc[laps["Driver"] == "VER"]
 # Position-based indexing
 first_10_laps = laps.iloc[:10]
 
-# Boolean indexing with loc
-fast_verstappen = laps.loc[(laps["Driver"] == "VER") & (laps["LapTime"] < 85)]
+# Boolean indexing with loc (LapTimeSeconds is float; LapTime is a timedelta)
+fast_verstappen = laps.loc[(laps["Driver"] == "VER") & (laps["LapTimeSeconds"] < 97)]
 ```
 
 #### Rich Ecosystem Integration
 
 ```python
-# Seaborn for statistical visualization
+# Seaborn for statistical visualization (plot float seconds, not the timedelta)
 import seaborn as sns
-sns.violinplot(data=laps, x="Compound", y="LapTime")
+sns.violinplot(data=laps, x="Compound", y="LapTimeSeconds")
 
-# Scikit-learn for machine learning
+# Scikit-learn for machine learning (needs float targets and no missing values)
 from sklearn.ensemble import RandomForestRegressor
-X = laps[["TyreLife", "TrackTemp", "AirTemp"]]
-y = laps["LapTime"]
+features = laps[["TyreLife", "TrackTemp", "AirTemp", "LapTimeSeconds"]].dropna()
+X = features[["TyreLife", "TrackTemp", "AirTemp"]]
+y = features["LapTimeSeconds"]
 model = RandomForestRegressor().fit(X, y)
 
 # Statsmodels for statistical analysis
@@ -1187,6 +1349,8 @@ print(model.summary())
 ### Polars-Exclusive Features
 
 #### Lazy Evaluation and Query Optimization
+
+The Parquet examples on this page read a file written once with `session.laps.write_parquet("race_data.parquet")`.
 
 ```python
 import polars as pl
@@ -1231,8 +1395,8 @@ result = laps.with_columns([
     # String operations
     pl.col("Driver").str.to_lowercase().alias("driver_lower"),
 
-    # Mathematical operations
-    (pl.col("Speed") * 1.60934).alias("speed_kph"),
+    # Mathematical operations (speed-trap column; laps have no Speed column)
+    (pl.col("SpeedST") / 1.60934).alias("speed_trap_mph"),
 
     # Aggregations over windows
     pl.col("LapTime").mean().over("Driver").alias("driver_avg"),
@@ -1248,9 +1412,9 @@ result = laps.with_columns([
 # Fast string processing (parallelized)
 result = laps.with_columns([
     pl.col("Team").str.to_uppercase(),
-    pl.col("Driver").str.replace("_", " "),
+    pl.col("Driver").str.to_lowercase().alias("driver_lower"),
     pl.col("Team").str.contains("Red Bull").alias("is_red_bull"),
-    pl.col("Driver").str.split("_").list.get(0).alias("first_name")
+    pl.col("Team").str.split(" ").list.get(0).alias("team_first_word")
 ])
 ```
 
@@ -1262,7 +1426,7 @@ arrow_table = laps.to_arrow()
 
 # Use with PyArrow compute functions
 import pyarrow.compute as pc
-filtered = arrow_table.filter(pc.field("LapTime") < 90)
+filtered = arrow_table.filter(pc.field("LapTimeSeconds") < 100)
 
 # Use with DuckDB for SQL queries (third-party: pip install duckdb)
 import duckdb
@@ -1272,13 +1436,14 @@ result = duckdb.query("SELECT Driver, AVG(LapTime) FROM laps GROUP BY Driver").p
 #### Streaming Mode (Out-of-Core Processing)
 
 ```python
-# Process data larger than RAM
+# Process data larger than RAM. huge_telemetry_data.parquet stands for telemetry
+# saved earlier with write_parquet (for example many laps of get_fastest_lap_tel())
 result = (
     pl.scan_parquet("huge_telemetry_data.parquet")
     .filter(pl.col("Speed") > 300)
     .group_by("Driver")
     .agg(pl.col("Speed").mean())
-    .collect(streaming=True)  # Process in chunks
+    .collect(engine="streaming")  # Process in chunks
 )
 ```
 
@@ -1337,6 +1502,10 @@ result = result_lazy.collect()
 ```
 </CodeGroup>
 
+<Note>
+In polars 2.x, `LazyFrame.collect()` runs on the streaming engine by default. The streaming engine does not keep row order after `group_by`, joins, or `unpivot`. Add `.sort(...)`, or pass `maintain_order` (for example `join(..., maintain_order="left")`), when the order matters. Call `collect(engine="in-memory")` to use the in-memory engine. Eager `DataFrame` operations, which `tif1` returns, are not affected.
+</Note>
+
 ### Query Optimization Techniques
 
 Polars applies several optimizations automatically:
@@ -1347,12 +1516,12 @@ Filters are pushed down to the data source, reading only necessary rows:
 
 ```python
 # Without optimization: Read all data, then filter
-laps = pl.read_parquet("race.parquet")
+laps = pl.read_parquet("race_data.parquet")
 verstappen = laps.filter(pl.col("Driver") == "VER")
 
 # With optimization: Filter while reading (much faster)
 verstappen = (
-    pl.scan_parquet("race.parquet")
+    pl.scan_parquet("race_data.parquet")
     .filter(pl.col("Driver") == "VER")
     .collect()
 )
@@ -1365,12 +1534,12 @@ Only requested columns are read from storage:
 
 ```python
 # Without optimization: Read all columns, then select
-laps = pl.read_parquet("race.parquet")  # Reads all 50+ columns
+laps = pl.read_parquet("race_data.parquet")  # Reads every column
 subset = laps.select(["Driver", "LapTime"])
 
 # With optimization: Read only needed columns
 subset = (
-    pl.scan_parquet("race.parquet")
+    pl.scan_parquet("race_data.parquet")
     .select(["Driver", "LapTime"])
     .collect()
 )
@@ -1382,6 +1551,8 @@ subset = (
 Repeated calculations are computed once:
 
 ```python
+laps_lazy = pl.scan_parquet("race_data.parquet")
+
 result = (
     laps_lazy
     .with_columns([
@@ -1398,6 +1569,8 @@ result = (
 Cheap filters run before expensive ones:
 
 ```python
+laps_lazy = pl.scan_parquet("race_data.parquet")
+
 result = (
     laps_lazy
     .filter(pl.col("Team").str.contains("Red Bull"))  # Expensive string op
@@ -1413,7 +1586,7 @@ Examine what polars plans to do before execution:
 
 ```python
 query = (
-    pl.scan_parquet("race.parquet")
+    pl.scan_parquet("race_data.parquet")
     .filter(pl.col("Driver") == "VER")
     .select(["LapNumber", "LapTime", "Compound"])
     .sort("LapTime")
@@ -1424,16 +1597,17 @@ query = (
 print(query.explain())
 ```
 
-Output:
-```python
-SLICE[offset: 0, len: 10]
-  SORT BY [col("LapTime")]
-    PROJECT */3 COLUMNS
-      FILTER col("Driver") == "VER"
-        Parquet SCAN race.parquet
-        PROJECT */3 COLUMNS
-        SELECTION: col("Driver") == "VER"
+Output with polars 2.0 (the exact plan text depends on the polars version):
+```text
+SORT BY [slice: (0, 10, dynamic_pred: ...)] [col("LapTime")]
+  simple π 3/3 ["LapNumber", "LapTime", ... 1 other column]
+    Parquet SCAN [race_data.parquet]
+    PROJECT 4/45 COLUMNS
+    SELECTION: (col("Driver") == "VER") & col("LapTime").dynamic_predicate()
+    ESTIMATED ROWS: 1128
 ```
+
+The plan shows predicate pushdown (`SELECTION`) and projection pushdown (`PROJECT 4/45 COLUMNS`). The scan reads only the rows and columns that the query needs.
 
 ### When to Use Lazy Evaluation
 
@@ -1516,13 +1690,13 @@ def analyze_huge_telemetry(telemetry_file: str):
     result = (
         pl.scan_parquet(telemetry_file)
         .filter(pl.col("Speed") > 300)
-        .group_by(["Driver", "Corner"])
+        .group_by(["Driver", "LapNumber"])
         .agg([
             pl.col("Speed").mean().alias("avg_speed"),
             pl.col("Speed").max().alias("max_speed"),
             pl.col("Throttle").mean().alias("avg_throttle")
         ])
-        .collect(streaming=True)  # Process in chunks
+        .collect(engine="streaming")  # Process in chunks
     )
     return result
 ```
@@ -1654,7 +1828,7 @@ import tif1
 import polars as pl
 
 # Use polars for heavy lifting
-session = tif1.get_session(2024, "Spa", "Race", backend="polars")
+session = tif1.get_session(2024, "Spa", "Race", lib="polars")
 
 # Process with polars (fast)
 driver_stats = (
@@ -1697,17 +1871,18 @@ When analyzing multiple sessions, backend choice significantly impacts performan
 import tif1
 import pandas as pd
 
-# Process all 2024 races
+# Process all 2024 races (the schedule is a DataFrame; loop over its EventName column)
 results = []
-for event in tif1.get_events(2024):
-    session = tif1.get_session(2024, event, "Race", backend="pandas")
+for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
+    session = tif1.get_session(2024, event, "Race", lib="pandas")
 
-    # Get fastest lap per driver
-    fastest = (
-        session.laps
-        .loc[session.laps.groupby("Driver")["LapTime"].idxmin()]
-        [["Driver", "LapTime", "Compound"]]
-    )
+    # Get fastest lap per driver (drop laps without a time first: a driver
+    # who retires on lap 1 has no timed lap, and idxmin raises on that group)
+    timed = session.laps.dropna(subset=["LapTimeSeconds"])
+    fastest = timed.loc[
+        timed.groupby("Driver", observed=True)["LapTimeSeconds"].idxmin(),
+        ["Driver", "LapTime", "Compound"],
+    ]
     fastest["Event"] = event
     results.append(fastest)
 
@@ -1723,16 +1898,17 @@ import polars as pl
 
 # Process all 2024 races
 results = []
-for event in tif1.get_events(2024):
-    session = tif1.get_session(2024, event, "Race", backend="polars")
+for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
+    session = tif1.get_session(2024, event, "Race", lib="polars")
 
-    # Get fastest lap per driver
+    # Get fastest lap per driver (Compound of that same lap)
     fastest = (
         session.laps
+        .filter(pl.col("LapTime").is_not_null())
         .group_by("Driver")
         .agg([
             pl.col("LapTime").min().alias("LapTime"),
-            pl.col("Compound").first().alias("Compound")
+            pl.col("Compound").sort_by("LapTime").first().alias("Compound")
         ])
         .with_columns(pl.lit(event).alias("Event"))
     )
@@ -1757,11 +1933,11 @@ def analyze_telemetry_efficiently(year: int, event: str, driver: str):
     """Analyze telemetry without loading everything into memory."""
 
     # Use polars for memory efficiency
-    session = tif1.get_session(year, event, "Race", backend="polars")
+    session = tif1.get_session(year, event, "Race", lib="polars")
     driver_obj = session.get_driver(driver)
 
-    # Get telemetry (polars uses ~50% less memory)
-    telemetry = driver_obj.telemetry
+    # Get the driver's fastest-lap telemetry (polars uses ~50% less memory)
+    telemetry = driver_obj.get_fastest_lap_tel()
 
     # Process in chunks using lazy evaluation
     corner_analysis = (
@@ -1808,11 +1984,11 @@ def process_season_incrementally(year: int, output_dir: Path):
 
     output_dir.mkdir(exist_ok=True)
 
-    for event in tif1.get_events(year):
+    for event in tif1.get_event_schedule(year, include_testing=False)["EventName"]:
         print(f"Processing {event}...")
 
         # Load session with polars
-        session = tif1.get_session(year, event, "Race", backend="polars")
+        session = tif1.get_session(year, event, "Race", lib="polars")
 
         # Process and compute statistics
         stats = (
@@ -1914,7 +2090,7 @@ from functools import lru_cache
 @lru_cache(maxsize=32)
 def get_driver_statistics(year: int, event: str, driver: str):
     """Get driver statistics with caching."""
-    session = tif1.get_session(year, event, "Race", backend="polars")
+    session = tif1.get_session(year, event, "Race", lib="polars")
     driver_obj = session.get_driver(driver)
 
     stats = (
@@ -1987,12 +2163,12 @@ stats2 = get_driver_statistics(2024, "Monaco", "VER")
 
 ### Issue 1: Polars Removed From the Environment
 
-**Symptom**: `ImportError: No module named 'polars'` or `BackendNotAvailableError`. Polars ships with `tif1`, so this means it was uninstalled or the environment is broken.
+**Symptom**: `import polars` raises `ModuleNotFoundError: No module named 'polars'`. A session requested with `lib="polars"` logs `Polars not available, falling back to pandas` and returns pandas frames. Polars ships with `tif1`, so this means it was uninstalled or the environment is broken.
 
 **Solution**:
 ```bash
 # Restore the polars version tif1 declares
-pip install "polars>=1.44.1"
+pip install "polars>=2.0.0,<3"
 
 # Verify installation
 python -c "import polars as pl; print(pl.__version__)"
@@ -2008,19 +2184,21 @@ python -c "import polars as pl; print(pl.__version__)"
 # ❌ Pandas-specific (fails with polars)
 result = laps.loc[laps["Driver"] == "VER"]
 
-# ✅ Works with both
+# ❌ Looks portable, but polars reads the mask as a column selector:
+#    it raises, or picks columns when the mask length matches the column count
 result = laps[laps["Driver"] == "VER"]
 
 # ❌ Polars-specific (fails with pandas)
 result = laps.filter(pl.col("Driver") == "VER")
 
-# ✅ Backend-agnostic wrapper
-def filter_driver(laps, driver, backend="pandas"):
-    if backend == "polars":
+# ✅ Backend-agnostic wrapper; session.lib names the active backend
+def filter_driver(laps, driver, lib="pandas"):
+    if lib == "polars":
         import polars as pl
         return laps.filter(pl.col("Driver") == driver)
-    else:
-        return laps[laps["Driver"] == driver]
+    return laps[laps["Driver"] == driver]
+
+result = filter_driver(session.laps, "VER", lib=session.lib)
 ```
 
 ### Issue 3: Memory Issues with Pandas
@@ -2031,7 +2209,7 @@ def filter_driver(laps, driver, backend="pandas"):
 
 ```python
 # Option 1: Switch to polars (uses 50-70% less memory)
-session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
+session = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 
 # Option 2: Process in chunks with pandas
 def process_in_chunks(laps, chunk_size=10000):
@@ -2058,7 +2236,8 @@ stats = laps.groupby("Driver").agg({
 
 # After (polars, fast)
 import polars as pl
-stats = laps.group_by("Driver").agg([
+laps_pl = tif1.get_session(2024, "Monaco", "Race", lib="polars").laps
+stats = laps_pl.group_by("Driver").agg([
     pl.col("LapTime").mean().alias("mean"),
     pl.col("LapTime").std().alias("std"),
     pl.col("LapTime").min().alias("min"),
@@ -2076,14 +2255,14 @@ stats = laps.group_by("Driver").agg([
 
 ```python
 # ❌ Bad: Convert back and forth
-session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
+session = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 laps_polars = session.laps
 laps_pandas = laps_polars.to_pandas()  # Conversion 1
 result_pandas = laps_pandas.groupby("Driver")["LapTime"].mean()
 result_polars = pl.from_pandas(result_pandas)  # Conversion 2
 
 # ✅ Good: Stay in one backend
-session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
+session = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 laps = session.laps
 result = laps.group_by("Driver").agg(pl.col("LapTime").mean())
 # Convert once at the end if needed
@@ -2099,14 +2278,14 @@ result_pandas = result.to_pandas()
 ```python
 # ❌ Forgot to collect
 result = (
-    pl.scan_parquet("race.parquet")
+    pl.scan_parquet("race_data.parquet")
     .filter(pl.col("Driver") == "VER")
 )
 print(result)  # Prints query plan, not data
 
 # ✅ Collect to execute
 result = (
-    pl.scan_parquet("race.parquet")
+    pl.scan_parquet("race_data.parquet")
     .filter(pl.col("Driver") == "VER")
     .collect()  # Execute and return DataFrame
 )
@@ -2124,30 +2303,32 @@ import seaborn as sns
 import polars as pl
 
 # Get data with polars
-session = tif1.get_session(2024, "Monaco", "Race", backend="polars")
+session = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 laps = session.laps
 
 # Convert for seaborn (expects pandas)
 laps_pd = laps.to_pandas()
-sns.boxplot(data=laps_pd, x="Driver", y="LapTime")
+sns.violinplot(data=laps_pd, x="Driver", y="LapTime")
 ```
 
 ### Issue 8: Column Name Conflicts
 
 **Symptom**: Errors with column names containing spaces or special characters
 
-**Solution**: Use proper column selection syntax
+**Solution**: Select such columns by string; `query()` and attribute access need valid identifiers
 
 ```python
-# ❌ Problematic column name
-laps["Lap Time"]  # Works in pandas, may fail in polars
+# Both backends accept any column name through string selection
+laps_pd = tif1.get_session(2024, "Monaco", "Race", lib="pandas").laps
+laps_pd["Lap Time"] = laps_pd["LapTimeSeconds"]
+fast = laps_pd.query("`Lap Time` < 100")   # backticks in query()
+fast = laps_pd[laps_pd["Lap Time"] < 100]   # laps_pd.Lap Time is a syntax error
 
-# ✅ Better: Use underscores
-laps["Lap_Time"]
+laps_pl = tif1.get_session(2024, "Monaco", "Race", lib="polars").laps
+laps_pl = laps_pl.with_columns(pl.col("LapTimeSeconds").alias("Lap Time"))
+fast = laps_pl.filter(pl.col("Lap Time") < 100)
 
-# ✅ Or use proper selection
-laps.select(pl.col("Lap Time"))  # Polars
-laps[["Lap Time"]]  # Pandas
+# ✅ Prefer underscores for new columns; tif1 column names are PascalCase
 ```
 
 ### Issue 9: Performance Not Improving with Polars
@@ -2167,13 +2348,13 @@ import time
 
 # Profile pandas
 start = time.time()
-session_pd = tif1.get_session(2024, "Monaco", "Race", backend="pandas")
+session_pd = tif1.get_session(2024, "Monaco", "Race", lib="pandas")
 result_pd = session_pd.laps.groupby("Driver")["LapTime"].mean()
 pandas_time = time.time() - start
 
 # Profile polars
 start = time.time()
-session_pl = tif1.get_session(2024, "Monaco", "Race", backend="polars")
+session_pl = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 result_pl = session_pl.laps.group_by("Driver").agg(pl.col("LapTime").mean())
 polars_time = time.time() - start
 
@@ -2184,22 +2365,24 @@ print(f"Speedup: {pandas_time/polars_time:.2f}x")
 
 ### Issue 10: Type Inference Differences
 
-**Symptom**: Same data has different types in pandas vs polars
+**Symptom**: The same column has a different type on each backend. `LapTime` is `timedelta64[ns]` on pandas and `Float64` seconds on polars; `Driver` is `category` on pandas and `String` on polars. See [Column types by backend](#column-types-by-backend) for the full table.
 
-**Solution**: Explicitly cast types
+**Solution**: Use the columns that have the same type on both backends; `LapTimeSeconds` is a float on both. Alternatively, normalise once after loading:
 
 ```python
-# Ensure consistent types across backends
-if backend == "polars":
+if session.lib == "polars":
     laps = laps.with_columns([
         pl.col("LapNumber").cast(pl.Int32),
         pl.col("Driver").cast(pl.Categorical),
-        pl.col("LapTime").cast(pl.Float64)
     ])
+    seconds = laps["LapTime"]  # already Float64 seconds
 else:  # pandas
-    laps["LapNumber"] = laps["LapNumber"].astype("int32")
+    laps["LapNumber"] = laps["LapNumber"].astype("Int32")
     laps["Driver"] = laps["Driver"].astype("category")
-    laps["LapTime"] = laps["LapTime"].astype("float64")
+    seconds = laps["LapTime"].dt.total_seconds()  # astype("float64") raises on timedelta
+
+# Backend-neutral: LapTimeSeconds is Float64 on both backends
+seconds = laps["LapTimeSeconds"]
 ```
 
 ---

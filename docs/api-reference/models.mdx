@@ -52,7 +52,7 @@ The models are designed with the following principles:
 
 1. **Simple Access Patterns**: Natural property access (for example, `lap.telemetry`, `driver.laps`)
 2. **Consistent Filtering**: All filtering methods follow the `pick_*` naming convention
-3. **Graceful Degradation**: Methods return empty DataFrames instead of raising exceptions when data is unavailable
+3. **Graceful Degradation**: Most methods return an empty DataFrame or `None` when data is unavailable. `Driver.get_lap()` raises `LapNotFoundError` instead
 4. **Session Context**: All models maintain a reference to their parent session for direct data access
 5. **Performance First**: Optimized for speed with vectorized operations and caching
 
@@ -90,12 +90,16 @@ fast_soft_laps = session.laps.pick_driver("VER").pick_tyre("SOFT").pick_quicklap
 
 ### Data Structure
 
-Each row in a `Laps` DataFrame represents a single lap with complete timing and metadata. The DataFrame contains the following column categories:
+Each row in a `Laps` DataFrame represents a single lap with complete timing and metadata. The DataFrame contains the following column categories. The dtypes below are for the pandas backend.
+
+<Note>
+On pandas, `LapTime` is a timedelta: comparing it to a number such as `90` raises `TypeError`. Use `LapTimeSeconds` (float seconds) or `pd.Timedelta(seconds=90)`. On polars, the timing columns are `Float64` seconds, `LapNumber` is `Int64`, and `Driver`, `Compound`, and `LapStartDate` are strings.
+</Note>
 
 #### Core Identity Columns
-- **`Driver`** (str): 3-letter driver code (for example, "VER", "HAM", "LEC")
+- **`Driver`** (category): 3-letter driver code (for example, "VER", "HAM", "LEC")
 - **`DriverNumber`** (str): Car racing number (for example, "1", "44", "16")
-- **`Team`** (str): Full team name (for example, "Red Bull Racing", "Mercedes")
+- **`Team`** (category): Full team name (for example, "Red Bull Racing", "Mercedes")
 - **`LapNumber`** (float): Sequential lap number within the session
 
 #### Timing Columns (timedelta64[ns])
@@ -116,25 +120,28 @@ All timing columns are stored as pandas timedelta objects for precise time arith
 - **`SpeedST`**: Speed at speed trap location
 
 #### Tire Information
-- **`Compound`** (str): Tire compound ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
+- **`Compound`** (category): Tire compound ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
 - **`TyreLife`** (float): Number of laps completed on this tire set
 - **`FreshTyre`** (bool): Whether this is a fresh (unused) tire set
 - **`Stint`** (float): Stint number within the session
 
 #### Lap Metadata
-- **`TrackStatus`** (str): Track condition code ("1"=Green, "2"=Yellow, "4"=Safety Car, "5"=Red Flag, "6"=VSC, "7"=VSC Ending)
+- **`TrackStatus`** (category): Every track status seen during the lap, as one string. The codes are "1"=Green, "2"=Yellow, "4"=Safety Car, "5"=Red Flag, "6"=VSC, and "7"=VSC Ending. For example, "41" contains both 4 and 1.
 - **`Position`** (float): Track position at lap completion
 - **`IsPersonalBest`** (bool): Whether this is the driver's fastest lap
-- **`Deleted`** (bool): Whether the lap time was deleted by race control
+- **`Deleted`** (nullable boolean): Whether the lap time was deleted by race control
 - **`DeletedReason`** (str): Reason for lap deletion (if applicable)
 - **`IsAccurate`** (bool): Whether the lap has accurate timing data
 - **`FastF1Generated`** (bool): Internal flag for data source tracking
 
 #### Qualifying-Specific
-- **`QualifyingSession`** (str): Which qualifying session ("Q1", "Q2", "Q3")
+- **`QualifyingSession`** (str): Which qualifying session ("Q1", "Q2", "Q3"). Only qualifying sessions have this column.
 
 #### Derived Columns
 - **`LapTimeSeconds`** (float): Lap time in seconds (derived from LapTime for convenience)
+- **`LapStartDate`** (datetime64): Wall-clock date and time of the lap start
+- **`ms1`**, **`ms2`**, **`ms3`**, **`drv`**, **`team`**: Raw source fields kept for compatibility
+- **`index`**: A leading integer column. `to_csv(index=False)` still writes it; drop it first when it is not needed
 
 #### Weather Data (per-lap)
 When weather data is available, each lap includes:
@@ -143,9 +150,9 @@ When weather data is available, each lap includes:
 - **`TrackTemp`** (float): Track surface temperature in °C
 - **`Humidity`** (float): Relative humidity percentage
 - **`Pressure`** (float): Atmospheric pressure in mbar
-- **`WindSpeed`** (float): Wind speed in km/h
-- **`WindDirection`** (int): Wind direction in degrees
-- **`Rainfall`** (bool): Whether it is raining
+- **`WindSpeed`** (float): Wind speed in m/s
+- **`WindDirection`** (Int64): Wind direction in degrees
+- **`Rainfall`** (nullable boolean): Whether it is raining
 
 ### Properties
 
@@ -208,11 +215,11 @@ laps = session.laps
 ver_laps = laps.pick_driver("VER")
 print(f"Verstappen completed {len(ver_laps)} laps")
 
-# Using driver number
-ver_laps = laps.pick_driver(1)
+# Using driver number (Verstappen raced as 33 in 2021)
+ver_laps = laps.pick_driver(33)
 
 # Using driver info dict (useful when iterating over driver data)
-driver_info = {"driver": "VER", "dn": 1, "team": "Red Bull Racing"}
+driver_info = {"driver": "VER", "dn": 33, "team": "Red Bull Racing"}
 ver_laps = laps.pick_driver(driver_info)
 
 # Chain with other filters for complex queries
@@ -514,7 +521,7 @@ def pick_quicklaps(threshold: float = 1.07) -> Laps
 
 **Parameters:**
 
-- **`threshold`** (float, default=1.07): Percentage multiplier for the fastest lap time. Default is 1.07 (107%), which is the F1 qualifying 107% rule. Must be >= 1.0.
+- **`threshold`** (float, default=1.07): Percentage multiplier for the fastest lap time. Default is 1.07 (107%), which is the F1 qualifying 107% rule. Use a value of 1.0 or more.
 
 **Returns:**
 - **`Laps`** object containing only laps within the threshold. Returns empty Laps if no laps meet the criteria.
@@ -523,7 +530,7 @@ def pick_quicklaps(threshold: float = 1.07) -> Laps
 - Calculates the fastest lap time in the collection
 - Returns all laps where `LapTime <= fastest_time * threshold`
 - Only considers laps with valid lap times (non-null, non-NaN)
-- Returns empty Laps if no valid lap times exist
+- Returns the laps unchanged if no valid lap times exist
 - Preserves session context and all lap metadata
 
 **Performance Characteristics:**
@@ -897,7 +904,7 @@ def pick_box_laps(which: str = "both") -> Laps
 - `pick_wo_box()` returns laps without any pit activity (neither PitInTime nor PitOutTime)
 - `pick_box_laps()` returns laps with pit activity
 - Useful for excluding slow pit laps from pace analysis
-- Returns empty Laps if columns do not exist
+- Returns the laps unchanged if the `PitInTime` or `PitOutTime` column does not exist
 
 **Example Usage:**
 
@@ -1009,7 +1016,7 @@ def telemetry(self) -> Telemetry
 - **Single-driver requirement**: Only works when all laps are from the same driver
 - Raises `ValueError` if laps contain multiple drivers
 - `get_telemetry()` includes driver-ahead channels (DriverAhead, DistanceToDriverAhead)
-- `telemetry` property provides basic telemetry without driver-ahead data
+- The `telemetry` property returns the same channels: tif1 telemetry already carries both driver-ahead columns
 - Returns empty Telemetry if no data available
 - Automatically concatenates telemetry from all laps in the collection
 - Preserves session context for continued analysis
@@ -1048,7 +1055,7 @@ if not lap_19_tel.empty:
     print(f"Braking zones: {len(braking)} samples")
 
     # DRS usage
-    drs_active = lap_19_tel[lap_19_tel["DRS"] >= 10]
+    drs_active = lap_19_tel[lap_19_tel["DRS"] == 1]
     print(f"DRS active: {len(drs_active)} samples")
 
 # Compare telemetry between laps
@@ -1270,7 +1277,7 @@ for lap_result in laps.iterlaps(require=["LapTime", "Compound"]):
 
 #### `split_qualifying_sessions()`
 
-Split qualifying laps into Q1, Q2, and Q3 sessions. Note: tif1 does not split by session internally, so this returns copies for FastF1 compatibility.
+Split qualifying laps into Q1, Q2, and Q3 sessions. The split uses the `QualifyingSession` column of qualifying laps.
 
 ```python
 def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
@@ -1281,9 +1288,9 @@ def split_qualifying_sessions() -> tuple[Laps, Laps, Laps]
 
 **Behavior Details:**
 - Returns three Laps objects representing Q1, Q2, and Q3
-- In tif1, this returns copies of the same data for compatibility
+- Splits by the `QualifyingSession` column ("Q1", "Q2", "Q3"), which qualifying sessions have
+- Without that column (practice, race, sprint), returns three copies of all laps
 - Each returned Laps object preserves session context
-- If the `QualifyingSession` column exists, splits by that column
 
 **Example Usage:**
 
@@ -1398,15 +1405,15 @@ tyre_life = lap.get("TyreLife", 0)
 ### Properties
 
 <ResponseField name="lap_number" type="int">
-  The lap number extracted from the `LapNumber` column. This is a convenience property that returns the lap number as an integer.
+  The value of the `LapNumber` column. On pandas, this value is a float, for example `19.0`. Convert it with `int()` before passing it to `Driver.get_lap()`.
 
   **Usage:**
   ```python
   lap = driver.get_lap(19)
-  print(f"Lap number: {lap.lap_number}")  # 19
+  print(f"Lap number: {lap.lap_number}")  # 19.0
   ```
 
-  **Note:** Returns `None` if `LapNumber` column is missing or null.
+  **Note:** Returns `None` if the `LapNumber` column is missing.
 </ResponseField>
 
 <ResponseField name="driver" type="str">
@@ -1477,8 +1484,8 @@ tyre_life = lap.get("TyreLife", 0)
 
   # Access session information
   print(f"Year: {lap.session.year}")
-  print(f"GP: {lap.session.gp}")
-  print(f"Session: {lap.session.session}")
+  print(f"GP: {lap.session.event_name}")  # "Bahrain Grand Prix"
+  print(f"Session: {lap.session.session_name}")  # "Race"
 
   # Access other session data
   all_laps = lap.session.laps
@@ -1490,7 +1497,7 @@ tyre_life = lap.get("TyreLife", 0)
 
 #### `get_telemetry()`
 
-Explicitly load telemetry data with driver-ahead channels. This method is similar to accessing the `telemetry` property but includes additional channels for analyzing car-to-car interactions.
+Load telemetry data with driver-ahead channels (FastF1 naming). In tif1, the `telemetry` property already includes these channels, so both return the same columns.
 
 ```python
 def get_telemetry() -> Telemetry
@@ -1524,13 +1531,13 @@ if not tel.empty:
             min_distance = ahead_data["DistanceToDriverAhead"].min()
             print(f"Closest approach: {min_distance:.1f}m")
 
-            # Identify the driver ahead
+            # Identify the driver ahead (driver numbers, for example "81")
             drivers_ahead = ahead_data["DriverAhead"].unique()
             print(f"Drivers ahead: {', '.join(drivers_ahead)}")
 
     # Standard telemetry analysis
     print(f"Max speed: {tel['Speed'].max()} km/h")
-    print(f"DRS usage: {len(tel[tel['DRS'] >= 10])} samples")
+    print(f"DRS usage: {len(tel[tel['DRS'] == 1])} samples")
 ```
 
 **Use Cases:**
@@ -1756,10 +1763,12 @@ The `Driver` class represents a driver's participation in a session. It provides
 # From Session object
 driver = session.get_driver("VER")
 
-# Iterate over all drivers
-for driver_code in session.drivers:
+# Iterate over all drivers (classification order)
+for driver_code in session.drivers_df["Driver"]:
     driver = session.get_driver(driver_code)
 ```
+
+`session.drivers` holds driver numbers as strings ("81", "63", ...), not codes. `session.drivers_df["Driver"]` holds the 3-letter codes in the same order.
 
 ### Data Structure
 
@@ -1770,7 +1779,7 @@ A `Driver` object is a pandas Series containing driver metadata. The data is sto
 - **`DriverNumber`** (str): Racing number (for example, "1", "44", "16")
 - **`Abbreviation`** (str): 3-letter driver code (for example, "VER", "HAM", "LEC")
 - **`TeamName`** (str): Full team name (for example, "Red Bull Racing", "Mercedes")
-- **`TeamColor`** (str): Team color hex code (for example, "#3671C6")
+- **`TeamColor`** (str): Team color hex code without `#` (for example, "3671C6")
 - **`FirstName`** (str): Driver's first name (for example, "Max", "Lewis")
 - **`LastName`** (str): Driver's last name (for example, "Verstappen", "Hamilton")
 - **`FullName`** (str): Driver's full name (for example, "Max Verstappen")
@@ -1819,7 +1828,7 @@ if "HeadshotUrl" in driver:
 
   # Access session information
   print(f"Year: {driver.session.year}")
-  print(f"GP: {driver.session.gp}")
+  print(f"GP: {driver.session.event_name}")
 
   # Access other session data
   all_laps = driver.session.laps
@@ -1901,14 +1910,15 @@ def get_lap(lap_number: int) -> Lap
 
 **Parameters:**
 
-- **`lap_number`** (int): The lap number to retrieve. Must be a positive integer.
+- **`lap_number`** (int): The lap number to retrieve. Must be a positive `int`. Convert a `LapNumber` value such as `19.0` with `int()` first.
 
 **Returns:**
 - **`Lap`** object for the specified lap
 
 **Raises:**
 - **`LapNotFoundError`**: If the lap does not exist for this driver
-- **`ValueError`**: If lap_number is invalid (negative, zero, or not an integer)
+- **`ValueError`**: If `lap_number` is zero or negative
+- **`TypeError`**: If `lap_number` is not an `int` (for example, the float `19.0`)
 
 **Behavior Details:**
 - Uses optimized O(1) lookup with internal lap index map
@@ -1925,6 +1935,9 @@ def get_lap(lap_number: int) -> Lap
 **Example Usage:**
 
 ```python
+import pandas as pd
+from tif1.exceptions import LapNotFoundError
+
 driver = session.get_driver("VER")
 
 # Get a specific lap
@@ -1963,7 +1976,7 @@ except LapNotFoundError as e:
 for lap_num in range(1, 60):
     try:
         lap = driver.get_lap(lap_num)
-        if lap.get("PitInTime") is not None:
+        if pd.notna(lap.get("PitInTime")):  # NaT on laps without a pit entry
             print(f"Pit stop on lap {lap_num}")
             break
     except LapNotFoundError:
@@ -1981,13 +1994,14 @@ driver = session.get_driver("VER")
 try:
     lap = driver.get_lap(99)
 except LapNotFoundError as e:
-    print(f"Lap not found: {e}")
-    print(f"Driver: {e.driver}")
-    print(f"Lap number: {e.lap_number}")
-except ValueError as e:
+    print(f"Lap not found: {e.message}")
+    print(f"Driver: {e.context['driver']}")
+    print(f"Lap number: {e.context['lap_number']}")
+except (ValueError, TypeError) as e:
     print(f"Invalid lap number: {e}")
 
 # Check if lap exists before accessing
+lap_number = 40
 total_laps = len(driver.laps)
 if lap_number <= total_laps:
     lap = driver.get_lap(lap_number)
@@ -2157,7 +2171,7 @@ if not fastest_tel.empty:
     print(f"Braking zones: {len(braking)} samples")
 
     # Analyze DRS
-    drs_active = fastest_tel[fastest_tel["DRS"] >= 10]
+    drs_active = fastest_tel[fastest_tel["DRS"] == 1]
     print(f"DRS active: {len(drs_active)} samples")
 
     # Gear usage
@@ -2294,7 +2308,7 @@ The `Telemetry` class represents high-frequency data recorded throughout a lap o
 
 **Module:** `tif1.models` (canonical module; re-exported by `tif1.core` for backward compatibility)
 
-**Sampling Rate:** Typically 10-20 Hz (10-20 samples per second), resulting in 1000-3000 samples per lap
+**Sampling Rate:** About 7-8 samples per second. A 2025 Bahrain race lap of about 100 seconds has about 780 samples.
 
 **Common Access Patterns:**
 
@@ -2329,7 +2343,7 @@ Telemetry DataFrames contain high-frequency sensor data with the following colum
 
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
-| `Time` | timedelta64[ns] | Seconds | Time from lap start (or session start) |
+| `Time` | timedelta64[ns] (polars: Float64 seconds) | - | Time from lap start (0 at the start of each lap) |
 | `Distance` | float64 | Meters | Distance from lap start along the racing line |
 | `RelativeDistance` | float64 | 0-1 | Normalized distance (0 = start, 1 = finish) |
 
@@ -2338,16 +2352,16 @@ Telemetry DataFrames contain high-frequency sensor data with the following colum
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
 | `Speed` | float64 | km/h | Current speed |
-| `RPM` | int | RPM | Engine revolutions per minute |
-| `nGear` | int | - | Current gear (1-8, 0 for neutral/reverse) |
+| `RPM` | float64 | RPM | Engine revolutions per minute |
+| `nGear` | Int64 | - | Current gear (1-8, 0 for neutral/reverse) |
 
 #### Driver Inputs
 
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
 | `Throttle` | float64 | % | Throttle position (0-100%) |
-| `Brake` | bool | - | Brake pedal pressed (True/False) |
-| `DRS` | int | - | DRS status (0=Off, 10+=On, values 10-14 indicate different DRS states) |
+| `Brake` | bool (polars: Int64 0/1) | - | Brake pedal pressed (True/False) |
+| `DRS` | Int64 | - | DRS flag: 1 = open, 0 = closed. tif1 does not use the raw FastF1 codes (10-14) |
 
 #### Position (3D Coordinates)
 
@@ -2357,20 +2371,28 @@ Telemetry DataFrames contain high-frequency sensor data with the following colum
 | `Y` | float64 | Meters | Y coordinate on track |
 | `Z` | float64 | Meters | Z coordinate (elevation) |
 
+#### Acceleration
+
+| Column | Type | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `AccelerationX` | float64 | m/s² | Longitudinal acceleration, derived from speed and time |
+| `AccelerationY` | float64 | m/s² | Lateral acceleration, derived from speed and track curvature |
+| `AccelerationZ` | float64 | m/s² | Vertical acceleration, derived from speed and vertical curvature |
+
 #### Lap Context
 
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
 | `Driver` | str | - | Driver code (e.g., "VER") |
-| `LapNumber` | int | - | Lap number this telemetry belongs to |
-| `TrackStatus` | str | - | Track condition code ("1"=Green, "2"=Yellow, etc.) |
+| `LapNumber` | Int64 | - | Lap number this telemetry belongs to |
+| `TrackStatus` | str | - | Only after `add_track_status()`, which fills "1" (Green) |
 
 #### Driver-Ahead Data (when available)
 
 | Column | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
-| `DriverAhead` | str | - | Driver code of car ahead |
-| `DistanceToDriverAhead` | float64 | Meters | Distance to car ahead |
+| `DriverAhead` | str | - | Driver number of the car ahead (for example, "81"), missing (NaN) when no car is ahead |
+| `DistanceToDriverAhead` | float64 | Meters | Distance to car ahead, NaN when no car is ahead |
 
 **Note:** Not all columns are always present. Use `if "ColumnName" in tel.columns` to check availability.
 
@@ -2463,21 +2485,26 @@ def slice_by_lap(
 - **`Telemetry`** DataFrame for the specified lap(s)
 
 **Behavior Details:**
-- Extracts telemetry based on lap start/end times or lap numbers
+- tif1 telemetry has a lap-relative `Time` and no `SessionTime`, so the slice matches the `LapNumber` and `Driver` columns
+- Telemetry with a `SessionTime` column (FastF1 style) is sliced by the lap start and end times
 - Raises ValueError if ref_laps contains multiple drivers
 - Returns empty Telemetry if lap not found
 
 **Example Usage:**
 
 ```python
+# Telemetry of a stint (laps 10-25 of one driver)
+stint_tel = driver.laps.pick_laps(slice(10, 25)).telemetry
+
 # Get telemetry for specific lap
 lap = driver.get_lap(19)
-session_tel = session.car_data  # All telemetry
-lap_tel = session_tel.slice_by_lap(lap)
+lap_tel = stint_tel.slice_by_lap(lap)
+print(f"Lap 19: {len(lap_tel)} samples")
 
 # Get telemetry for multiple laps
 laps_10_to_15 = driver.laps.pick_laps(slice(10, 15))
-multi_lap_tel = session_tel.slice_by_lap(laps_10_to_15)
+multi_lap_tel = stint_tel.slice_by_lap(laps_10_to_15)
+print(f"Laps 10-15: {len(multi_lap_tel)} samples")
 ```
 
 ---
@@ -2609,9 +2636,10 @@ def calculate_driver_ahead(return_reference: bool = False) -> tuple
 - **`calculate_driver_ahead()`**: Tuple of (driver_ahead_array, distance_array) or (driver_ahead, distance, reference_tel)
 
 **Behavior Details:**
-- Now returns placeholder data (not fully implemented in tif1)
-- Provided for FastF1 compatibility
-- Future versions will include actual driver-ahead calculations
+- tif1 does not calculate the driver ahead itself. It reads the `DriverAhead` and `DistanceToDriverAhead` channels of the source telemetry.
+- `lap.get_telemetry()` and `laps.get_telemetry()` already include both channels
+- If the channels are missing, `add_driver_ahead()` adds them with missing values (`None` and NaN)
+- `DriverAhead` holds driver numbers as strings (for example, "81"), not 3-letter codes
 
 **Example Usage:**
 
@@ -2681,25 +2709,28 @@ def merge_channels(other, **kwargs) -> Telemetry
 **Example Usage:**
 
 ```python
+lap1 = driver.get_lap(10)
+lap2 = driver.get_lap(20)
 tel1 = lap1.telemetry
 tel2 = lap2.telemetry
 
-# Merge telemetry from two laps
+# Merge telemetry from two laps (columns of tel2 get the suffix "_other")
 merged = tel1.merge_channels(tel2)
+print(merged[["Time", "Speed", "Speed_other"]].head())
 ```
 
 ---
 
-#### `resample_channels(rule="1S", **kwargs)`
+#### `resample_channels(rule="1s", **kwargs)`
 
 Resample telemetry to a different frequency. Useful for reducing data size or standardizing sampling rates.
 
 ```python
-def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
+def resample_channels(rule: str = "1s", **kwargs) -> Telemetry
 ```
 
 **Parameters:**
-- **`rule`** (str, default="1S"): Resampling frequency (for example, "1S" = 1 second, "100ms" = 100 milliseconds)
+- **`rule`** (str, default="1s"): pandas offset alias for the resampling frequency (for example, "1s" = 1 second, "100ms" = 100 milliseconds). Legacy upper-case aliases such as "1S" are translated.
 - **`**kwargs`**: Additional arguments (for compatibility)
 
 **Returns:**
@@ -2707,6 +2738,7 @@ def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
 
 **Behavior Details:**
 - Resamples numeric columns using mean aggregation
+- Drops non-numeric columns such as `Driver` and `DriverAhead`
 - Interpolates missing values after resampling
 - Useful for reducing data size or aligning different telemetry sources
 
@@ -2716,7 +2748,7 @@ def resample_channels(rule: str = "1S", **kwargs) -> Telemetry
 tel = lap.telemetry
 
 # Resample to 1 second intervals
-resampled_1s = tel.resample_channels(rule="1S")
+resampled_1s = tel.resample_channels(rule="1s")
 print(f"Original: {len(tel)} samples")
 print(f"Resampled: {len(resampled_1s)} samples")
 
@@ -2724,7 +2756,7 @@ print(f"Resampled: {len(resampled_1s)} samples")
 resampled_100ms = tel.resample_channels(rule="100ms")
 
 # Resample to 5 second intervals for overview
-resampled_5s = tel.resample_channels(rule="5S")
+resampled_5s = tel.resample_channels(rule="5s")
 ```
 
 ---
@@ -2762,7 +2794,7 @@ if not tel.empty:
     print(f"  Braking: {braking/len(tel)*100:.1f}% of lap")
 
     # DRS usage
-    drs_active = len(tel[tel['DRS'] >= 10])
+    drs_active = len(tel[tel['DRS'] == 1])
     print(f"  DRS Active: {drs_active/len(tel)*100:.1f}% of lap")
 
     # Gear usage
@@ -2852,7 +2884,7 @@ if not tel.empty:
 
 ## SessionResults
 
-The `SessionResults` class contains race results and final standings for a session. It inherits from `pandas.DataFrame`, providing a tabular view of how drivers finished the session.
+The `SessionResults` class contains the classification of a session, one row per driver in classification order. It inherits from `pandas.DataFrame`. The data source publishes no official classification, so tif1 builds the order from the lap data.
 
 ### Class Overview
 
@@ -2866,8 +2898,8 @@ The `SessionResults` class contains race results and final standings for a sessi
 # From Session object
 results = session.results
 
-# Check if results are available
-if results is not None and not results.empty:
+# Check if results are available (empty when the session has no driver data)
+if not results.empty:
     print(results)
 ```
 
@@ -2879,20 +2911,24 @@ if results is not None and not results.empty:
 
 ### Available Columns
 
-The SessionResults DataFrame typically contains the following columns:
+The SessionResults DataFrame contains the following columns:
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `Position` | int/float | Final position (1-20) |
-| `Driver` | str | 3-letter driver code |
-| `DriverNumber` | str | Racing number |
-| `Team` | str | Team name |
-| `Points` | int/float | Championship points earned |
-| `Status` | str | Finish status (Finished, +1 Lap, Retired, DNF, etc.) |
-| `Time` | timedelta/str | Total race time or gap to winner |
-| `GridPosition` | int/float | Starting grid position (if available) |
+| `DriverNumber` | str | Racing number (for example, "81") |
+| `Abbreviation` | str | 3-letter driver code (for example, "PIA") |
+| `TeamName` | str | Team name |
+| `TeamColor` | str | Team color hex code without `#` |
+| `FirstName`, `LastName`, `FullName` | str | Driver names |
+| `HeadshotUrl` | str | URL of the driver headshot image |
+| `Position` | float | Classification position (1.0 to N) |
+| `ClassifiedPosition` | str | Classification position as text ("1" to "N") |
+| `GridPosition` | float | Always NaN: the data source has no starting grid |
+| `Status` | str | Races and sprints: "Finished", "+1 Lap", "+N Laps", or "Did not start". Other sessions: "Finished" |
+| `Points` | float | Always NaN: the data source has no points |
+| `Laps` | float | Number of laps completed |
 
-**Note:** Column availability depends on session type and data source.
+**Note:** There is no `Driver`, `Team`, or `Time` column. Use `Abbreviation` and `TeamName`. Some seasons have a source file sorted by car number. For those, tif1 rebuilds the order from the laps and can miss a post-race penalty.
 
 ### Usage Examples
 
@@ -2901,19 +2937,19 @@ The SessionResults DataFrame typically contains the following columns:
 ```python
 results = session.results
 
-if results is not None and not results.empty:
+if not results.empty:
     print("Race Results:")
-    print(results[["Position", "Driver", "Team", "Points", "Status"]])
+    print(results[["ClassifiedPosition", "Abbreviation", "TeamName", "Status", "Laps"]])
 
     # Get winner
     winner = results.iloc[0]
-    print(f"\nWinner: {winner['Driver']} ({winner['Team']})")
+    print(f"\nWinner: {winner['Abbreviation']} ({winner['TeamName']})")
 
     # Get podium
     podium = results.head(3)
     print("\nPodium:")
     for idx, driver_result in podium.iterrows():
-        print(f"  P{driver_result['Position']}: {driver_result['Driver']}")
+        print(f"  P{driver_result['ClassifiedPosition']}: {driver_result['Abbreviation']}")
 ```
 
 #### Analyzing Results
@@ -2921,30 +2957,28 @@ if results is not None and not results.empty:
 ```python
 results = session.results
 
-if results is not None and not results.empty:
-    # Count finishers
+if not results.empty:
+    # Count drivers on the lead lap
     finishers = results[results["Status"] == "Finished"]
-    print(f"Finishers: {len(finishers)}/{len(results)}")
+    print(f"On the lead lap: {len(finishers)}/{len(results)}")
 
-    # Find DNFs
-    dnfs = results[results["Status"].str.contains("DNF|Retired", na=False)]
-    if not dnfs.empty:
-        print(f"\nDNFs:")
-        for _, driver in dnfs.iterrows():
-            print(f"  {driver['Driver']}: {driver['Status']}")
+    # Drivers that are laps down or did not start
+    behind = results[results["Status"] != "Finished"]
+    if not behind.empty:
+        print("\nNot on the lead lap:")
+        for _, driver in behind.iterrows():
+            print(f"  {driver['Abbreviation']}: {driver['Status']} ({driver['Laps']:.0f} laps)")
 
-    # Points scorers
-    points_scorers = results[results["Points"] > 0]
-    print(f"\nPoints scorers: {len(points_scorers)}")
-    total_points = points_scorers["Points"].sum()
-    print(f"Total points awarded: {total_points}")
+    # Top ten by classification (Points is NaN: the data source has no points)
+    top_ten = results.head(10)
+    print(f"\nTop ten: {', '.join(top_ten['Abbreviation'])}")
 ```
 
 ---
 
 ## DriverResult
 
-The `DriverResult` class represents an individual driver's race result. It inherits from `pandas.Series`, making it a single row from the SessionResults DataFrame.
+The `DriverResult` class represents the result of one driver. It inherits from `pandas.Series`, so it is a single row of the SessionResults DataFrame.
 
 ### Class Overview
 
@@ -2957,13 +2991,13 @@ The `DriverResult` class represents an individual driver's race result. It inher
 ```python
 # From SessionResults
 results = session.results
-if results is not None and not results.empty:
+if not results.empty:
     winner = results.iloc[0]  # DriverResult object
 
     # Iterate over results
     for idx, driver_result in results.iterrows():
         # driver_result is a DriverResult object
-        print(f"{driver_result['Driver']}: P{driver_result['Position']}")
+        print(f"{driver_result['Abbreviation']}: P{driver_result['ClassifiedPosition']}")
 ```
 
 ### Properties
@@ -2972,58 +3006,63 @@ if results is not None and not results.empty:
   Reference to the parent Session object.
 </ResponseField>
 
-<ResponseField name="Position" type="int/float">
-  Final position (available in Series data). Access via `driver_result['Position']`.
+<ResponseField name="Position" type="float">
+  Classification position (in the Series data). Access via `driver_result['Position']`.
 </ResponseField>
 
-<ResponseField name="Driver" type="str">
-  Driver code (available in Series data). Access via `driver_result['Driver']`.
+<ResponseField name="Abbreviation" type="str">
+  3-letter driver code (in the Series data). Access via `driver_result['Abbreviation']`.
 </ResponseField>
 
-<ResponseField name="Points" type="int/float">
-  Points earned (available in Series data). Access via `driver_result['Points']`.
+<ResponseField name="Points" type="float">
+  Always NaN, because the data source has no points. Access via `driver_result['Points']`.
 </ResponseField>
 
 <ResponseField name="Status" type="str">
-  Finish status (available in Series data). Access via `driver_result['Status']`.
+  Finish status (in the Series data), for example "Finished" or "+2 Laps". Access via `driver_result['Status']`.
 </ResponseField>
 
 <ResponseField name="dnf" type="bool">
-  Whether the driver did not finish (computed property). Returns True if status indicates DNF, retirement, or disqualification.
+  Whether the driver did not finish (computed property). tif1 derives `Status` from lap counts, so a retirement shows as "+N Laps".
 
   **Behavior:**
   - Returns `True` if status is NOT one of: "Finished", "+1 Lap", "+2 Laps", "Not classified"
   - Returns `False` otherwise
   - Case-insensitive comparison
+  - A driver three or more laps down ("+3 Laps") counts as DNF, and "Did not start" also returns `True`
 
   **Usage:**
   ```python
+  from tif1.models import DriverResult
+
   result = results.iloc[0]
   if isinstance(result, DriverResult):
       if result.dnf:
-          print(f"{result['Driver']} did not finish")
+          print(f"{result['Abbreviation']} did not finish")
       else:
-          print(f"{result['Driver']} finished the race")
+          print(f"{result['Abbreviation']} finished the race")
   ```
 </ResponseField>
 
 ### Usage Examples
 
 ```python
+from tif1.models import DriverResult
+
 results = session.results
 
-if results is not None and not results.empty:
+if not results.empty:
     # Analyze each result
     for idx, result in results.iterrows():
         if isinstance(result, DriverResult):
-            driver = result['Driver']
-            position = result['Position']
-            points = result.get('Points', 0)
+            driver = result['Abbreviation']
+            position = result['ClassifiedPosition']
+            laps_done = result['Laps']
 
             if result.dnf:
                 print(f"{driver}: DNF ({result['Status']})")
             else:
-                print(f"{driver}: P{position} ({points} points)")
+                print(f"{driver}: P{position} ({laps_done:.0f} laps)")
 ```
 
 ---
@@ -3059,7 +3098,7 @@ if circuit is not None:
   - **`Number`** (int): Corner number
   - **`Letter`** (str): Corner letter designation (if applicable)
   - **`Angle`** (float): Corner angle in degrees
-  - **`Distance`** (float): Distance along track (populated after `add_marker_distance()`)
+  - **`Distance`** (float): Distance along the lap. The source data usually fills it, and `add_marker_distance()` recomputes it from a reference lap
 
   **Usage:**
   ```python
@@ -3192,14 +3231,14 @@ import tif1
 import matplotlib.pyplot as plt
 
 # Load session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 
 # Get all laps
 laps = session.laps
 print(f"Total laps in session: {len(laps)}")
 
-# Analyze top 3 drivers
-top_drivers = ["VER", "HAM", "LEC"]
+# Analyze the top 3 drivers (drivers_df is in classification order)
+top_drivers = session.drivers_df["Driver"].head(3).tolist()
 
 for driver_code in top_drivers:
     print(f"\n{'='*50}")
@@ -3255,7 +3294,7 @@ for driver_code in top_drivers:
             print(f"  Max RPM: {tel['RPM'].max()}")
 
             # DRS usage
-            drs_active = len(tel[tel['DRS'] >= 10])
+            drs_active = len(tel[tel['DRS'] == 1])
             print(f"  DRS usage: {drs_active/len(tel)*100:.1f}% of lap")
 
             # Full throttle
@@ -3264,11 +3303,11 @@ for driver_code in top_drivers:
 
 # Race results
 results = session.results
-if results is not None and not results.empty:
+if not results.empty:
     print(f"\n{'='*50}")
     print("Race Results")
     print(f"{'='*50}")
-    print(results[["Position", "Driver", "Team", "Points", "Status"]].head(10))
+    print(results[["ClassifiedPosition", "Abbreviation", "TeamName", "Status", "Laps"]].head(10))
 ```
 
 ### Example 2: Telemetry Comparison Visualization
@@ -3336,9 +3375,10 @@ plt.show()
 ```python
 import tif1
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Load race session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 
 driver = session.get_driver("VER")
 laps = driver.laps
@@ -3391,11 +3431,14 @@ plt.show()
 class LazyTelemetryDict(dict)
 ```
 
-Lazy-loading dictionary that fetches telemetry data per driver on demand. Constructed with the owning session (any `TelemetryProvider`); indexing by driver code fetches and caches that driver's telemetry on first access.
+Lazy-loading dictionary that fetches telemetry data per driver on demand. Construct it with a session (any `TelemetryProvider`). Indexing by driver code or number loads the telemetry of all laps of that driver. The first access loads it. Later accesses reuse it. The session has no attribute that returns this dictionary; create it directly. It works on the pandas backend only.
 
 ```python
-telemetry_by_driver = session.telemetry  # LazyTelemetryDict
-ver_tel = telemetry_by_driver["VER"]     # fetches on first access
+from tif1.models import LazyTelemetryDict
+
+telemetry_by_driver = LazyTelemetryDict(session)
+ver_tel = telemetry_by_driver["VER"]  # loads every VER lap on first access
+print(f"VER telemetry: {len(ver_tel)} samples over {ver_tel['LapNumber'].nunique()} laps")
 ```
 
 ## TelemetryProvider
@@ -3424,7 +3467,7 @@ lap: Lap = driver.get_lap(1)
 laps: Laps = session.laps  # Laps inherits from DataFrame
 telemetry: Telemetry = lap.telemetry  # Telemetry inherits from DataFrame
 
-# DataFrame types (for polars)
+# Plain pandas annotations also work (the model classes subclass pandas types)
 from pandas import DataFrame
 laps_df: DataFrame = session.laps
 telemetry_df: DataFrame = lap.telemetry
@@ -3470,7 +3513,8 @@ All models support full type hints for better IDE integration, autocomplete, and
 ### Type Annotations
 
 ```python
-from tif1 import Session, Driver, Lap, Laps, Telemetry, SessionResults, DriverResult, CircuitInfo
+from tif1 import Session, Driver, Lap, Laps, Telemetry, CircuitInfo
+from tif1.models import SessionResults, DriverResult
 from tif1.types import DataFrame, LapDataDict, TelemetryDataDict
 import tif1
 
@@ -3491,17 +3535,16 @@ driver_laps: Laps = driver.laps
 telemetry: Telemetry = lap.telemetry
 
 # Results types
-results: SessionResults | None = session.results
-if results is not None and not results.empty:
+results: SessionResults = session.results
+if not results.empty:
     winner: DriverResult = results.iloc[0]
 
 # Circuit info
-circuit: CircuitInfo | None = session.get_circuit_info()
+circuit: CircuitInfo = session.get_circuit_info()
 
-# DataFrame types (for polars backend)
-from pandas import DataFrame as PandasDataFrame
-laps_df: PandasDataFrame = session.laps
-telemetry_df: PandasDataFrame = lap.telemetry
+# Backend-neutral annotation: tif1.types.DataFrame is pandas.DataFrame | polars.DataFrame
+laps_df: DataFrame = session.laps
+telemetry_df: DataFrame = lap.telemetry
 ```
 
 ---
@@ -3561,7 +3604,7 @@ if not laps.empty:
 
 # ✗ Bad: Assume data exists
 fastest = driver.laps.pick_fastest()
-print(f"Fastest: {fastest['LapTime']}")  # May raise AttributeError
+print(f"Fastest: {fastest['LapTime']}")  # Raises TypeError when fastest is None
 ```
 
 ### 2. Use Method Chaining
@@ -3588,7 +3631,7 @@ from tif1.exceptions import LapNotFoundError, DriverNotFoundError
 try:
     lap = driver.get_lap(99)
 except LapNotFoundError as e:
-    print(f"Lap not found: {e.lap_number}")
+    print(f"Lap not found: {e.context['lap_number']}")
 ```
 
 ---

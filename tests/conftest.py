@@ -48,6 +48,56 @@ def block_network(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
+    """Point every cache tier at a per-test temporary directory.
+
+    Tests that build ``Cache()`` or ``tif1.get_cache()`` under a stub config
+    (``cache_dir`` missing or None) used to write into ``./None``; once that
+    fell back to the real default directory they could clear the developer's
+    own ``~/.cache/tif1``. Nothing in the unit suite may touch it.
+    """
+    if request.node.get_closest_marker("real_cache_dir") is not None:
+        yield
+        return
+    if "/integration/" in request.node.nodeid or request.node.nodeid.startswith(
+        "tests/integration"
+    ):
+        yield
+        return
+    from tif1 import cache as cache_module
+    from tif1 import config as config_module
+    from tif1 import fastf1_compat
+
+    cache_dir = tmp_path_factory.mktemp("tif1_cache")
+    monkeypatch.setenv("TIF1_CACHE_DIR", str(cache_dir))
+    # Argos A8: never spawn the background CDN pre-connect thread in tests.
+    monkeypatch.setenv("TIF1_CDN_PRECONNECT", "false")
+    monkeypatch.setattr(config_module, "_default_cache_dir", lambda: cache_dir)
+    monkeypatch.setattr(cache_module, "_default_cache_dir", lambda: cache_dir, raising=False)
+    monkeypatch.setattr(fastf1_compat, "_default_cache_dir", lambda: cache_dir, raising=False)
+    config = config_module.get_config()
+    previous = config.get("cache_dir")
+    config.set("cache_dir", str(cache_dir))
+    previous_preconnect = config.get("cdn_preconnect")
+    config.set("cdn_preconnect", False)
+    monkeypatch.setattr(fastf1_compat.Cache, "_cache_dir", None)
+    stale = cache_module._cache
+    cache_module._cache = None
+    try:
+        yield
+    finally:
+        current = cache_module._cache
+        if current is not None and current is not stale:
+            try:
+                current.close()
+            except Exception:
+                pass
+        cache_module._cache = stale
+        config.set("cache_dir", previous)
+        config.set("cdn_preconnect", previous_preconnect)
+
+
+@pytest.fixture(autouse=True)
 def reset_global_state():
     """Reset global state before each test to prevent cross-test contamination."""
     from tif1 import async_fetch as async_fetch_module

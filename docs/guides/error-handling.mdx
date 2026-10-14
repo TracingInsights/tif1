@@ -43,23 +43,30 @@ Raised when requested data does not exist in the archive.
 import tif1
 from tif1 import DataNotFoundError
 
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
+    # Lap 999 does not exist, so get_lap raises LapNotFoundError
+    lap = session.get_driver("VER").get_lap(999)
 except DataNotFoundError as e:
     print(f"Data not found: {e}")
-    print(f"Context: {e.context}")  # Additional error details
+    print(f"Context: {e.context}")  # {'lap_number': 999, 'driver': 'VER', 'year': 2025, ...}
 ```
 
 **Common causes:**
-- Misspelled event name
+- A lap number or driver code that is not in the session
 - The session has not started yet
 - Data not yet available in archive
 
+<Note>
+  An unknown event name does not raise `DataNotFoundError`. `get_session` maps it to the closest event name with fuzzy matching. An unknown session name raises `ValueError`.
+</Note>
+
 **Solution:**
 ```python
-# Check available events first
+# Check available events first (get_events returns a DataFrame)
 events = tif1.get_events(2025)
-if "Monaco Grand Prix" in events:
+if "Monaco Grand Prix" in events["EventName"].values:
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 ```
 
@@ -146,9 +153,11 @@ Handle errors without stopping the analysis.
 
 ```python
 def safe_load_session(year, gp, session_type):
-    """Load session with fallback to None."""
+    """Load session laps with fallback to None."""
     try:
-        return tif1.get_session(year, gp, session_type)
+        session = tif1.get_session(year, gp, session_type)
+        session.laps  # Trigger the fetch so errors surface here
+        return session
     except DataNotFoundError:
         print(f"No data for {year} {gp} {session_type}")
         return None
@@ -188,9 +197,12 @@ def load_with_retry(year, gp, session_type, max_retries=3):
 Handle errors when processing multiple sessions.
 
 ```python
-def process_season(year):
+def process_season(year, max_events=None):
     """Process all races with error handling."""
-    events = tif1.get_events(year)
+    # get_events() returns a DataFrame; iterate the EventName column
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
+    if max_events:
+        events = events[:max_events]
     results = []
     errors = []
 
@@ -213,8 +225,8 @@ def process_season(year):
 
     return results, errors
 
-# Use it
-results, errors = process_season(2024)
+# Use it (the first three rounds)
+results, errors = process_season(2024, max_events=3)
 print(f"Processed {len(results)} events, {len(errors)} errors")
 ```
 
@@ -277,11 +289,11 @@ All tif1 exceptions include context information.
 
 ```python
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
+    lap = session.get_driver("VER").get_lap(999)
 except tif1.DataNotFoundError as e:
     print(f"Error: {e}")
     print(f"Context: {e.context}")
-    # Context might include: year, gp, session, attempted_urls, etc.
+    # Context includes: lap_number, driver, year, event, session
 ```
 
 ### Check circuit breaker
@@ -306,7 +318,7 @@ if cb.state == "open":
     Check data availability before processing.
     ```python
     events = tif1.get_events(2025)
-    if "Monaco Grand Prix" in events:
+    if "Monaco Grand Prix" in events["EventName"].values:
         session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     ```
 </Step>
@@ -314,7 +326,7 @@ if cb.state == "open":
     Catch specific exceptions rather than broad `Exception`.
     ```python
     try:
-        session = tif1.get_session(2025, "Monaco", "Race")
+        session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     except tif1.DataNotFoundError:
         # Handle missing data
         pass
@@ -330,7 +342,7 @@ if cb.state == "open":
     logger = logging.getLogger(__name__)
 
     try:
-        session = tif1.get_session(2025, "Monaco", "Race")
+        session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     except Exception as e:
         logger.error(f"Failed to load session: {e}", exc_info=True)
 ```
@@ -338,9 +350,10 @@ if cb.state == "open":
   <Step title="Fail Fast">
     Do not continue processing when critical data is missing.
     ```python
-    session = tif1.get_session(2025, "Monaco", "Race")
-    if session is None:
-        raise ValueError("Cannot proceed without session data")
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = session.laps
+    if laps.empty:
+        raise ValueError("Cannot proceed without lap data")
 ```
   </Step>
 </Steps>
@@ -412,7 +425,7 @@ class TIF1Monitor:
 
 ## Summary
 
-Proper error handling makes tif1 applications robust and maintainable. Always use specific exceptions, validate input, and add retry logic for production use.
+Proper error handling keeps tif1 applications stable and maintainable. Always use specific exceptions, validate input, and add retry logic for production use.
 
 ---
 

@@ -37,12 +37,11 @@ laps = race.laps
 
 ## Filter Point Finishers
 
-Get laps for the top 10 finishers (point-scoring positions) and filter out slow laps that would distort the visualization.
+Get laps for the top 10 finishers (point-scoring positions) and filter out slow laps that would distort the visualization. `race.drivers` lists car numbers in finishing order, and `race.results` holds the same order with the driver codes.
 
 ```python
 # Get all the laps for the point finishers only
-# race.drivers returns driver numbers, so translate them to abbreviations first
-point_finishers = [race.get_driver(i)["Abbreviation"] for i in race.drivers[:10]]
+point_finishers = race.results["Abbreviation"].head(10).tolist()
 print(f"Point finishers: {point_finishers}")
 
 # Pick quick laps only (filter out slow laps)
@@ -65,7 +64,7 @@ driver_laps = driver_laps.reset_index(drop=True)
 To plot drivers by finishing order, extract their abbreviations in the correct sequence.
 
 ```python
-# point_finishers already holds the abbreviations in finishing order
+# race.results is in finishing order, so point_finishers already is too
 finishing_order = point_finishers
 print(f"Finishing order: {finishing_order}")
 ```
@@ -128,7 +127,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default, matching the point finishers above). `laptime_cutoff` controls the per-driver outlier removal:
+The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default). `laptime_cutoff` controls the per-driver outlier removal:
 
 ```python
 import tif1
@@ -219,7 +218,7 @@ sns.swarmplot(
     palette=tif1.plotting.get_compound_mapping(session=race),
     size=6,  # Larger markers
     alpha=0.8,  # Add transparency
-    edgecolor='gray',  # Add marker outline
+    edgecolor="#808080",  # Add marker outline
     linewidth=0.5
 )
 ```

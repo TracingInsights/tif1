@@ -9,6 +9,8 @@ from datetime import datetime
 from functools import wraps
 from typing import TypeVar
 
+from .exceptions import CircuitBreakerOpenError
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -128,7 +130,7 @@ class CircuitBreaker:
                     self._state = "half-open"
                     logger.info("Circuit breaker entering half-open state")
                 else:
-                    raise Exception("Circuit breaker is open")
+                    raise CircuitBreakerOpenError
 
             # Capture pre-call state for correct success handling
             pre_call_state = self._state

@@ -206,3 +206,66 @@ def telemetry_ref_from_path(path: str) -> tuple[str, int] | None:
     if not driver or not lap_part.isdigit():
         return None
     return driver, int(lap_part)
+
+
+# Circuit, city and country names users type for an event, mapped to the
+# event names they mean, in priority order (the first one on that season's
+# calendar wins). Keys are normalised by ``tif1.events._event_alias_key``
+# (accents folded, punctuation and "Grand Prix"/"GP" removed, lower case).
+# Fuzzy matching alone resolves several of these to the wrong race: "Spa" is
+# a substring of "Spain", "USA" of "Lusail", and "Interlagos" or "Suzuka"
+# resemble no event string at all. A name is listed only when it identifies
+# one event; countries that hosted several (Germany: German and Eifel GP)
+# are left to fuzzy matching.
+EVENT_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(
+        ("spa", "spa francorchamps", "francorchamps", "belgium"), ("Belgian Grand Prix",)
+    ),
+    **dict.fromkeys(
+        ("interlagos", "sao paulo", "brazil", "brasil"),
+        ("São Paulo Grand Prix", "Brazilian Grand Prix"),
+    ),
+    **dict.fromkeys(
+        ("silverstone", "britain", "great britain", "uk", "united kingdom", "england"),
+        ("British Grand Prix",),
+    ),
+    **dict.fromkeys(("monza", "italy"), ("Italian Grand Prix",)),
+    **dict.fromkeys(("imola", "emilia romagna"), ("Emilia Romagna Grand Prix",)),
+    **dict.fromkeys(("mugello", "tuscany"), ("Tuscan Grand Prix",)),
+    **dict.fromkeys(
+        ("barcelona", "catalunya", "catalonia", "montmelo"),
+        ("Barcelona Grand Prix", "Spanish Grand Prix"),
+    ),
+    **dict.fromkeys(("spain", "madrid", "madring"), ("Spanish Grand Prix",)),
+    **dict.fromkeys(("hungary", "budapest", "hungaroring"), ("Hungarian Grand Prix",)),
+    **dict.fromkeys(("baku", "azerbaijan"), ("Azerbaijan Grand Prix",)),
+    **dict.fromkeys(("jeddah", "saudi", "saudi arabia"), ("Saudi Arabian Grand Prix",)),
+    **dict.fromkeys(("suzuka", "japan"), ("Japanese Grand Prix",)),
+    **dict.fromkeys(("melbourne", "albert park", "australia"), ("Australian Grand Prix",)),
+    **dict.fromkeys(("shanghai", "china"), ("Chinese Grand Prix",)),
+    **dict.fromkeys(("montreal", "canada"), ("Canadian Grand Prix",)),
+    **dict.fromkeys(("spielberg", "red bull ring", "austria"), ("Austrian Grand Prix",)),
+    **dict.fromkeys(("zandvoort", "netherlands", "holland"), ("Dutch Grand Prix",)),
+    **dict.fromkeys(
+        ("austin", "cota", "usa", "us", "united states", "america"),
+        ("United States Grand Prix",),
+    ),
+    **dict.fromkeys(("miami", "miami gardens"), ("Miami Grand Prix",)),
+    **dict.fromkeys(("vegas", "las vegas"), ("Las Vegas Grand Prix",)),
+    **dict.fromkeys(("mexico", "mexico city"), ("Mexico City Grand Prix", "Mexican Grand Prix")),
+    **dict.fromkeys(("lusail", "losail", "qatar"), ("Qatar Grand Prix",)),
+    **dict.fromkeys(
+        ("yas marina", "yas island", "abu dhabi", "uae", "united arab emirates"),
+        ("Abu Dhabi Grand Prix",),
+    ),
+    **dict.fromkeys(("singapore", "marina bay"), ("Singapore Grand Prix",)),
+    **dict.fromkeys(("monaco", "monte carlo"), ("Monaco Grand Prix",)),
+    "bahrain": ("Bahrain Grand Prix",),
+    "sakhir": ("Sakhir Grand Prix", "Bahrain Grand Prix"),
+    **dict.fromkeys(("le castellet", "paul ricard", "france"), ("French Grand Prix",)),
+    "hockenheim": ("German Grand Prix",),
+    **dict.fromkeys(("nurburgring", "eifel"), ("Eifel Grand Prix",)),
+    **dict.fromkeys(("sochi", "russia"), ("Russian Grand Prix",)),
+    **dict.fromkeys(("portimao", "algarve", "portugal"), ("Portuguese Grand Prix",)),
+    **dict.fromkeys(("istanbul", "istanbul park", "turkey"), ("Turkish Grand Prix",)),
+}

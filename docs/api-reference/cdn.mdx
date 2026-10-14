@@ -30,7 +30,7 @@ Formula 1 data fetching presents unique challenges:
 - **Data availability**: Historical and live session data must be reliably accessible across multiple seasons (2018-2026+)
 - **Geographic distribution**: Users worldwide need fast access regardless of location
 - **Network resilience**: CDN providers can experience outages, rate limiting, or degraded performance
-- **Bandwidth optimization**: Session data can be large (telemetry, lap times, weather data)—minification reduces transfer sizes by 20-40%
+- **Bandwidth optimization**: Session data can be large (telemetry, lap times, weather data)
 - **Cost efficiency**: Proper CDN selection and fallback minimize redundant requests and bandwidth waste
 
 The tif1 CDN system addresses these challenges through multi-source management. This management keeps the application fast and reliable.
@@ -46,10 +46,11 @@ The CDN manager maintains a prioritized list of CDN sources and automatically tr
 - If a source fails, the next available source is tried immediately
 - Successful requests reset the failure counter for that source
 - Failed sources are temporarily disabled after reaching the failure threshold
+- A 404 or 403 is a per-file refusal, not a failure. The next source is tried (raced, on the async path) and the counter is untouched. jsDelivr returns 403 for uncached files of a repository over its 50 MB package limit. Counting those would disable the fastest mirror for the rest of the process
 
 **Benefits:**
 - **Zero-downtime failover**: Automatic switching to backup sources without user intervention
-- **Transparent recovery**: Sources automatically re-enable after successful requests
+- **Counter reset on success**: A successful request sets the failure count of that source back to 0
 - **Configurable priorities**: Define preferred CDN providers based on performance, cost, or geographic location
 
 #### 2. Health Tracking and Circuit Breaker Pattern
@@ -59,17 +60,17 @@ Each CDN source is continuously monitored for reliability. The circuit breaker p
 **Circuit breaker states:**
 - **Closed (healthy)**: 0-2 failures—source is available and used normally
 - **Open (disabled)**: 3+ failures—source is excluded from `get_sources()` until reset
-- **Half-open (recovering)**: After a successful request, failure count resets to 0
+- **Recovery**: There is no automatic half-open state. `try_sources()` never tries an open source, so it stays open until a call to `reset()` or `mark_success(name)`
 
 **Failure threshold:**
-- Default: 3 consecutive failures before disabling
+- Default: 3 consecutive failures before disabling (transport errors, timeouts and 5xx; a 403 or 404 never counts)
 - Configurable via `_max_failures` attribute
 - Failures are tracked per-source in `_failure_counts` dictionary
 
 **Benefits:**
 - **Reduced latency**: Skip known-bad sources instead of waiting for timeouts
 - **Prevent cascading failures**: Isolate failing sources to protect overall system health
-- **Automatic recovery**: Sources re-enable after successful requests (self-healing)
+- **Manual recovery**: Call `reset()` after a network outage to re-enable every source
 
 #### 3. Priority-Based Routing
 
@@ -88,26 +89,19 @@ Sources are assigned priority levels (integer values, lower = higher priority) t
 
 #### 4. JSON Minification Support
 
-Optional JSON minification reduces file sizes by 20-40% by removing whitespace and formatting. This improves download speeds and reduces bandwidth costs, especially for large telemetry datasets.
+The `cdn_use_minification` option makes tif1 request `file.min.json` in place of `file.json` from custom mirrors. It is off by default.
+
+<Note>
+  The default CDNs ignore the option. The TracingInsights data repositories have no `.min.json` files, and jsDelivr minifies only JavaScript and CSS. jsDelivr, Hugging Face and StaticDelivr all return 404 for them (checked 2026-10-14). tif1 never sends a minified request to those three sources.
+</Note>
 
 **How it works:**
-- When `use_minification=True`, URLs are transformed: `file.json` → `file.min.json`
-- jsDelivr CDN automatically serves minified versions when available
-- Minification is transparent—parsed data is identical to non-minified versions
-- Can be enabled globally via config or per-source
-- Hugging Face bucket sources never use minification. These sources do not serve `.min.json`. A 404 there would waste a round trip on every request, so these sources are always excluded from minification
-
-**Performance impact:**
-- **Telemetry data**: ~35-40% size reduction (structured, repetitive data)
-- **Lap data**: ~25-30% size reduction
-- **Session metadata**: ~20-25% size reduction
-- **Network transfer time**: Proportional to size reduction (40% smaller = 40% faster download)
+- When `use_minification=True` on a `CDNSource`, URLs are transformed: `file.json` → `file.min.json`
+- The source must serve the `.min.json` file. Otherwise the request returns 404 and tif1 moves to the next source
+- The global `cdn_use_minification` option applies the flag to custom mirrors only. jsDelivr, Hugging Face and StaticDelivr sources always keep it off
 
 **When to enable:**
-- **Bandwidth-constrained environments**: Mobile networks, metered connections
-- **High-volume applications**: Fetching data for multiple sessions/drivers
-- **Performance-critical applications**: Minimizing cold-start latency
-- **Cost optimization**: Reducing CDN bandwidth costs
+- Only for a custom mirror that serves a `.min.json` copy of each payload. Set `use_minification=True` on that `CDNSource` only
 
 #### 5. Configurable Custom Sources
 
@@ -138,7 +132,7 @@ The CDN manager uses a singleton pattern to ensure consistent state across the e
 
 The CDN system operates in the background. Applications typically do not interact with it directly:
 
-- **Automatic initialization**: CDN manager is created on first use
+- **Automatic initialization**: The CDN manager is created when `tif1.cdn` is first imported (the first session load imports it)
 - **Zero-configuration default**: Works out-of-the-box with the jsDelivr → Hugging Face → StaticDelivr chain
 - **Session API integration**: `Session.load()` automatically uses CDN system
 - **Error handling**: Network errors are caught and trigger automatic fallback
@@ -210,7 +204,7 @@ Here's how a typical data fetch flows through the CDN system:
 ```text
 1. Application calls Session.load()
    ↓
-2. Session requests data (e.g., laps.json) from HTTP layer
+2. Session requests data (e.g., session_laptimes.json) from HTTP layer
    ↓
 3. HTTP layer calls cdn.try_sources(year, gp, session, path, fetch_func)
    ↓
@@ -256,6 +250,7 @@ Most users never need to interact with the CDN API directly. It works transparen
 
 2. **Monitoring CDN health**: Track which sources are failing, or build health dashboards
    ```python
+   from tif1.cdn import get_cdn_manager
    cdn = get_cdn_manager()
    for source in cdn.sources:
        failures = cdn._failure_counts[source.name]
@@ -269,31 +264,37 @@ Most users never need to interact with the CDN API directly. It works transparen
    # Logs will show: "Trying CDN: jsDelivr - https://cdn.jsdelivr.net/..."
    ```
 
-4. **Optimizing bandwidth**: Enable minification for faster downloads
+4. **Checking the minification flag**: Keep it off, because the default CDNs return 404 for `.min.json` files
    ```python
    import tif1
    config = tif1.get_config()
-   config.set("cdn_use_minification", True)
+   print(config.get("cdn_use_minification"))  # False
    ```
 
 5. **Testing fallback behavior**: Verify that the application handles CDN failures gracefully
    ```python
+   from tif1.cdn import get_cdn_manager
    cdn = get_cdn_manager()
    # Simulate failures to test fallback
    for _ in range(3):
        cdn.mark_failure("jsDelivr")
-   # Verify backup source is used
-   assert len(cdn.get_sources()) > 0
+   # jsDelivr is now out; Hugging Face is the first source
+   assert cdn.get_sources()[0].name == "HuggingFace"
+   cdn.reset()  # Re-enable jsDelivr
    ```
 
 6. **Implementing custom retry logic**: Build a custom data fetching layer
    ```python
+   from tif1.cdn import get_cdn_manager
+   from tif1.payload_loader import NiquestsTransport
    cdn = get_cdn_manager()
-   data = cdn.try_sources(2021, "Belgian%20Grand%20Prix", "Race", "laps.json", my_fetch_func)
+   fetch_json = NiquestsTransport().get_json  # raises DataNotFoundError on 404
+   data = cdn.try_sources(2021, "Belgian%20Grand%20Prix", "Race", "drivers.json", fetch_json)
    ```
 
 7. **Recovering from widespread failures**: The network was down, and all sources now need a reset
    ```python
+   from tif1.cdn import get_cdn_manager
    cdn = get_cdn_manager()
    cdn.reset()  # Reset all failure counts to 0
    ```
@@ -328,7 +329,6 @@ Most users never need to interact with the CDN API directly. It works transparen
   - **Unlimited bandwidth**: No rate limits or bandwidth caps
   - **Automatic caching**: Cache invalidation and purging
   - **HTTP/2 and HTTP/3 support**: Modern protocols for faster transfers
-  - **Minification support**: Automatic `.min.json` serving on jsDelivr
   - **Hugging Face backup**: Mirrors of the TracingInsights data repos that stay available when GitHub-sourced CDNs are down
 
   For most users, the default configuration needs no changes.
@@ -349,11 +349,11 @@ import tif1
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session.load()  # CDN automatically handles data fetching with fallback
 
-# That's it! The CDN manager:
+# The CDN manager:
 # 1. Tries jsDelivr (default, priority 1)
-# 2. Falls back to other sources if jsDelivr fails
-# 3. Tracks health and disables failing sources
-# 4. Automatically recovers when sources become healthy
+# 2. Falls back to Hugging Face, then StaticDelivr, if jsDelivr fails
+# 3. Tracks health and disables a source after 3 failures
+# 4. Keeps a disabled source out until cdn.reset() is called
 ```
 
 ### Inspecting CDN Status
@@ -386,7 +386,7 @@ cdn = get_cdn_manager()
 regional_cdn = CDNSource(
     name="Europe CDN",
     base_url="https://eu.cdn.example.com/f1data",
-    priority=1,  # Higher priority than default (tries first)
+    priority=0,  # Lower number than jsDelivr (1), so tif1 tries it first
     enabled=True,
     use_minification=True
 )
@@ -396,7 +396,7 @@ cdn.add_source(regional_cdn)
 backup_cdn = CDNSource(
     name="Backup CDN",
     base_url="https://backup.example.com/f1data",
-    priority=3,  # Lower priority (tries last)
+    priority=4,  # Higher number than StaticDelivr (3), so tif1 tries it last
     enabled=True,
     use_minification=False
 )
@@ -410,15 +410,9 @@ for source in cdn.get_sources():
 
 ### Enabling Minification
 
+Keep the global `cdn_use_minification` option off: the default CDNs do not serve `.min.json` files (see [JSON Minification Support](#4-json-minification-support)). Enable minification only on a custom source that serves minified copies:
+
 ```python
-import tif1
-
-# Enable minification globally for all sources
-config = tif1.get_config()
-config.set("cdn_use_minification", True)
-config.save()  # Persist to ~/.tif1rc
-
-# Or enable per-source when adding custom CDNs
 from tif1.cdn import get_cdn_manager, CDNSource
 
 cdn = get_cdn_manager()
@@ -426,7 +420,7 @@ cdn.add_source(CDNSource(
     name="Fast CDN",
     base_url="https://fast.cdn.example.com/f1",
     priority=1,
-    use_minification=True  # Only this source uses minification
+    use_minification=True  # Only this source requests .min.json files
 ))
 ```
 
@@ -469,20 +463,15 @@ Instead of programmatic configuration, define CDN sources in `~/.tif1rc`:
     "https://cdn.jsdelivr.net/gh/TracingInsights",
     "https://eu.cdn.example.com/f1data",
     "https://backup.cdn.example.com/f1data"
-  ],
-  "cdn_use_minification": true
+  ]
 }
 ```
 
 ### Configuration via Environment Variables
 
 ```bash
-# Set CDN sources (comma-separated)
+# Set CDN sources (comma-separated); tif1 reads it once, at the first config access
 export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights,https://backup.cdn.example.com/f1"
-
-# Enable minification
-# cdn_use_minification has no environment variable; set it in code or .tif1rc:
-# python -c 'import tif1; tif1.get_config().set("cdn_use_minification", True)'
 
 # Run your application
 python my_f1_app.py
@@ -576,7 +565,7 @@ def create_cdn_dashboard():
 
     # Per-source details
     print(f"\nSource Details:")
-    print(f"{'Name':&lt;20} {'Priority':&lt;10} {'Failures':&lt;10} {'Status':&lt;15} {'Minification':&lt;15}")
+    print(f"{'Name':<20} {'Priority':<10} {'Failures':<10} {'Status':<15} {'Minification':<15}")
     print("-" * 70)
 
     for source in cdn.sources:
@@ -596,7 +585,7 @@ def create_cdn_dashboard():
 
         minification = "✓ Enabled" if source.use_minification else "✗ Disabled"
 
-        print(f"{source.name:&lt;20} {source.priority:&lt;10} {failures}/{cdn._max_failures:&lt;7} {status:&lt;15} {minification:&lt;15}")
+        print(f"{source.name:<20} {source.priority:<10} {failures}/{cdn._max_failures:<7} {status:<15} {minification:<15}")
 
     print("=" * 70)
 
@@ -607,7 +596,7 @@ create_cdn_dashboard()
 **Example: Singleton Verification**
 
 ```python
-from tif1.cdn import get_cdn_manager
+from tif1.cdn import CDNSource, get_cdn_manager
 
 # Verify singleton behavior
 cdn1 = get_cdn_manager()
@@ -638,13 +627,13 @@ The `CDNManager` class is the core orchestrator of the multi-source CDN system. 
 
 ### Initialization
 
-The CDN manager initializes automatically on the first call to `get_cdn_manager()`. During initialization, the following steps occur:
+The CDN manager initializes once, when `tif1.cdn` is first imported. The first session load imports it. Configuration changes made after that point do not change the existing manager. During initialization, the following steps occur:
 
 **Initialization Sequence:**
 
-1. **Load configuration**: Reads CDN sources from config file (`~/.tif1rc`) or environment variables (`TIF1_CDNS`)
-2. **Parse source URLs**: Splits comma-separated CDN URLs into individual sources
-3. **Validate sources**: Ensures all URLs are HTTPS and not blacklisted (for example, `raw.githubusercontent.com`)
+1. **Load configuration**: Reads the `cdns` list from the tif1 config. The config merges `~/.tif1rc` and the `TIF1_CDNS` environment variable
+2. **Parse source URLs**: The config splits a comma-separated `TIF1_CDNS` value into individual URLs
+3. **Validate sources**: Drops URLs that are not HTTPS and URLs on the blocked host `raw.githubusercontent.com`
 4. **Create CDNSource objects**: Wraps each URL in a `CDNSource` with priority and settings
 5. **Assign priorities**: Sources are assigned priorities based on their order (1, 2, 3, ...)
 6. **Initialize health tracking**: Sets up `_failure_counts` dictionary with all sources at 0 failures
@@ -661,7 +650,7 @@ The CDN manager initializes automatically on the first call to `get_cdn_manager(
 
 - URLs must start with `https://` (HTTP is rejected for security)
 - URLs containing `raw.githubusercontent.com` are rejected (rate limits)
-- Invalid URLs are logged as warnings and skipped
+- A `raw.githubusercontent.com` URL is logged as a warning and skipped. Non-HTTPS URLs are dropped without a warning
 - If all URLs are invalid, falls back to the default jsDelivr → Hugging Face → StaticDelivr chain
 
 **Example: Initialization via Environment Variable**
@@ -669,9 +658,8 @@ The CDN manager initializes automatically on the first call to `get_cdn_manager(
 ```python
 import os
 
-# Set CDN sources before importing tif1
+# Set CDN sources before tif1 reads its configuration
 os.environ["TIF1_CDNS"] = "https://cdn.jsdelivr.net/gh/TracingInsights,https://backup.cdn.com/f1"
-tif1.get_config().set("cdn_use_minification", True)  # no environment variable exists for this key
 
 # Now import and use
 from tif1.cdn import get_cdn_manager
@@ -692,8 +680,7 @@ Create `~/.tif1rc`:
     "https://cdn.jsdelivr.net/gh/TracingInsights",
     "https://eu.cdn.example.com/f1data",
     "https://us.cdn.example.com/f1data"
-  ],
-  "cdn_use_minification": true
+  ]
 }
 ```
 
@@ -716,27 +703,29 @@ for source in cdn.sources:
 
 ```python
 import os
-from tif1.cdn import get_cdn_manager
 
-# Mix of valid and invalid URLs
+# Mix of valid and invalid URLs; set them before tif1 reads its configuration
 os.environ["TIF1_CDNS"] = ",".join([
     "https://cdn.jsdelivr.net/gh/TracingInsights",  # Valid
-    "http://insecure.cdn.com/f1",                   # Invalid (HTTP)
-    "https://raw.githubusercontent.com/user/repo",  # Invalid (blocked)
+    "http://insecure.cdn.com/f1",                   # Dropped (not HTTPS)
+    "https://raw.githubusercontent.com/user/repo",  # Dropped (blocked host)
     "https://backup.cdn.com/f1",                    # Valid
-    "not-a-url",                                    # Invalid (malformed)
+    "not-a-url",                                    # Dropped (not HTTPS)
 ])
+
+from tif1.cdn import get_cdn_manager
 
 cdn = get_cdn_manager()
 
 # Only valid sources are loaded
 print(f"Valid sources: {len(cdn.sources)}")  # 2 (jsDelivr and backup)
 for source in cdn.sources:
-    print(f"  {source.name}: {source.base_url}")
+    print(f"  {source.name} (priority {source.priority}): {source.base_url}")
+# jsDelivr (priority 1): https://cdn.jsdelivr.net/gh/TracingInsights
+# CDN 3 (priority 3): https://backup.cdn.com/f1
 
-# Check logs for warnings about invalid URLs
-# WARNING: Skipping invalid CDN URL: http://insecure.cdn.com/f1
-# WARNING: Skipping unsupported CDN URL: https://raw.githubusercontent.com/user/repo
+# Log output for the blocked host:
+# Skipping unsupported CDN URL: https://raw.githubusercontent.com/user/repo
 ```
 
 ### Attributes
@@ -849,7 +838,7 @@ cdn = get_cdn_manager()
 def monitor_failures():
     """Monitor failure counts for all sources."""
     print("CDN Failure Monitoring:")
-    print(f"{'Source':&lt;20} {'Failures':&lt;10} {'Status':&lt;15}")
+    print(f"{'Source':<20} {'Failures':<10} {'Status':<15}")
     print("-" * 45)
 
     for source in cdn.sources:
@@ -862,7 +851,7 @@ def monitor_failures():
         else:
             status = "🔴 Disabled"
 
-        print(f"{source.name:&lt;20} {failures}/{cdn._max_failures:&lt;7} {status:&lt;15}")
+        print(f"{source.name:<20} {failures}/{cdn._max_failures:<7} {status:<15}")
 
 # Initial state
 monitor_failures()
@@ -1114,7 +1103,7 @@ def monitor_cdn_health():
     print(f"Available Sources: {available_count}/{total_sources}")
 
     # Detailed source status
-    print(f"\n{'Source':&lt;20} {'Priority':&lt;10} {'Failures':&lt;12} {'Status':&lt;15}")
+    print(f"\n{'Source':<20} {'Priority':<10} {'Failures':<12} {'Status':<15}")
     print("-" * 70)
 
     for source in cdn.sources:
@@ -1135,7 +1124,7 @@ def monitor_cdn_health():
 
         failure_str = f"{failures}/{cdn._max_failures}"
 
-        print(f"{source.name:&lt;20} {source.priority:&lt;10} {failure_str:&lt;12} {status:&lt;15}")
+        print(f"{source.name:<20} {source.priority:<10} {failure_str:<12} {status:<15}")
 
     print("=" * 70)
 
@@ -1210,7 +1199,7 @@ def safe_fetch_data(year, gp, session, path):
             raise NetworkError(
                 url=f"{year}/{gp}/{session}/{path}",
                 status_code=None,
-                message="No CDN sources configured or all sources are disabled"
+                reason="No CDN sources configured or all sources are disabled",
             )
 
     # Proceed with fetch using available sources
@@ -1259,7 +1248,7 @@ cdn = get_cdn_manager()
 asia_cdn = CDNSource(
     name="Asia CDN",
     base_url="https://asia.cdn.example.com/f1data",
-    priority=1,  # Higher priority than default (2)
+    priority=0,  # Lower number than jsDelivr (1), so tif1 tries it first
     enabled=True,
     use_minification=True
 )
@@ -1410,7 +1399,7 @@ def mark_success(source_name: str) -> None
 
 Resets the failure count for a CDN source to 0, indicating a successful data fetch. This allows a previously failing source to recover and be used again.
 
-This method enables the self-healing behavior of the CDN system. When an unhealthy source serves a request, its failure count resets. The source is then used normally again.
+When a source with 1 or 2 failures serves a request, `try_sources()` calls this method. The count then goes back to 0. A source with an open circuit is never tried, so only a manual call or `reset()` brings it back.
 
 **Parameters:**
 - `source_name` (`str`): Name of the CDN source that succeeded
@@ -1418,7 +1407,7 @@ This method enables the self-healing behavior of the CDN system. When an unhealt
 **Behavior:**
 - Sets failure count to 0 for the specified source
 - Source becomes immediately available via `get_sources()` if it was disabled
-- Called automatically by `try_sources()` on successful fetch
+- Called automatically by `try_sources()` and `try_sources_async()` on successful fetch
 
 **When This Is Called:**
 `try_sources()` calls this method automatically when a CDN request succeeds. Applications rarely need to call it manually.
@@ -1623,11 +1612,12 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
 - `gp` (`str`): Grand Prix name, **URL-encoded** (for example, "Belgian%20Grand%20Prix", "Monaco%20Grand%20Prix")
   - **Important**: Must be URL-encoded (spaces as `%20`, not `+`)
   - Use `urllib.parse.quote()` if encoding manually
-- `session` (`str`): Session name (for example, "Race", "Qualifying", "Practice 1", "Sprint")
-- `path` (`str`): Resource path relative to session directory (for example, "drivers.json", "laps.json", "telemetry.json")
+- `session` (`str`): Session name, **URL-encoded** like `gp` (for example, "Race", "Qualifying", "Practice%201", "Sprint")
+- `path` (`str`): Resource path relative to session directory (for example, "drivers.json", "session_laptimes.json", "VER/laptimes.json", "VER/1_tel.json")
 - `fetch_func` (`Callable[[str], Any]`): Function that takes a URL string and returns fetched data
   - Should raise `DataNotFoundError` for 404 responses
   - Should raise other exceptions for network/server errors
+  - Pass exception details as context keywords, for example `DataNotFoundError(url=url)`. These classes build their own message, so a `message=` keyword raises `TypeError`
   - Return type can be any (dict, list, bytes, etc.)
 
 **Returns:**
@@ -1640,6 +1630,7 @@ Try fetching data from CDN sources with automatic fallback. This is the **core m
 - `NetworkError`: If all CDN sources failed with non-404 errors
   - Includes URL path and status code from last exception
   - Indicates all sources are unavailable or experiencing issues
+- `InvalidDataError`: Raised at once when `fetch_func` raises it. Another CDN cannot fix an invalid payload, so no other source is tried
 
 **Error Handling Strategy:**
 
@@ -1660,6 +1651,7 @@ The method distinguishes between two types of errors:
 
 ```python
 from tif1.cdn import get_cdn_manager
+from tif1.exceptions import DataNotFoundError, NetworkError
 import requests
 
 cdn = get_cdn_manager()
@@ -1706,17 +1698,17 @@ def fetch_with_error_handling(url: str) -> dict:
 
         if response.status_code == 404:
             # Data doesn't exist - raise DataNotFoundError
-            raise DataNotFoundError(message=f"Resource not found: {url}")
+            raise DataNotFoundError(url=url)
 
         response.raise_for_status()
         return response.json()
 
     except requests.exceptions.Timeout:
         # Timeout - let CDN manager try next source
-        raise NetworkError(url=url, message="Request timeout")
+        raise NetworkError(url=url, reason="Request timeout")
     except requests.exceptions.ConnectionError:
         # Connection failed - let CDN manager try next source
-        raise NetworkError(url=url, message="Connection failed")
+        raise NetworkError(url=url, reason="Connection failed")
 
 # Fetch data with comprehensive error handling
 try:
@@ -1724,12 +1716,13 @@ try:
         year=2021,
         gp="Belgian%20Grand%20Prix",
         session="Race",
-        path="laps.json",
+        path="session_laptimes.json",
         fetch_func=fetch_with_error_handling
     )
 
-    print(f"✓ Fetched {len(data.get('laps', []))} laps")
-    print(f"✓ Used CDN: {cdn.get_sources()[0].name}")
+    # Lap payloads hold one array per column
+    print(f"✓ Fetched {len(data['lap'])} laps")
+    print(f"✓ First CDN in order: {cdn.get_sources()[0].name}")
 
 except DataNotFoundError as e:
     print(f"✗ Data not found: {e}")
@@ -1773,7 +1766,7 @@ def create_fetch_func_with_retries():
         response = session.get(url, timeout=30)
 
         if response.status_code == 404:
-            raise DataNotFoundError(message=f"Not found: {url}")
+            raise DataNotFoundError(url=url)
 
         response.raise_for_status()
         return response.json()
@@ -1791,7 +1784,8 @@ data = cdn.try_sources(
     fetch_func=fetch_func
 )
 
-print(f"✓ Fetched weather data: {len(data.get('weather', []))} entries")
+# The weather payload holds one array per channel; "wT" is the sample time
+print(f"✓ Fetched weather data: {len(data['wT'])} entries")
 ```
 
 **Example: Monitoring Fallback Behavior**
@@ -1813,7 +1807,7 @@ cdn = get_cdn_manager()
 def fetch_json(url: str) -> dict:
     response = requests.get(url, timeout=30)
     if response.status_code == 404:
-        raise DataNotFoundError(message="Not found")
+        raise DataNotFoundError(url=url)
     response.raise_for_status()
     return response.json()
 
@@ -1838,13 +1832,10 @@ try:
 
     print(f"\n✓ Success! Fetched {len(data.get('drivers', []))} drivers")
 
-    # Show which source succeeded
+    # Failure counts after the fetch (a success resets the serving source to 0)
     for source in cdn.sources:
         failures = cdn._failure_counts[source.name]
-        if failures == 0:
-            print(f"✓ {source.name}: Healthy (used for fetch)")
-        else:
-            print(f"✗ {source.name}: {failures} failures")
+        print(f"  {source.name}: {failures}/{cdn._max_failures} failures")
 
 except NetworkError as e:
     print(f"\n✗ All sources failed: {e}")
@@ -1858,39 +1849,32 @@ except NetworkError as e:
 
 **Example: Async Fetch Function**
 
+Async code uses `try_sources_async()`. Its `fetch_func` is a coroutine function that receives the `CDNSource` and the formatted URL:
+
 ```python
-from tif1.cdn import get_cdn_manager
 import asyncio
-import aiohttp
+
+from tif1.cdn import CDNSource, get_cdn_manager
+from tif1.payload_loader import NiquestsTransport
 
 cdn = get_cdn_manager()
+transport = NiquestsTransport()  # raises DataNotFoundError on 404
 
-async def async_fetch(url: str) -> dict:
-    """Async fetch function for use with try_sources."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=30) as response:
-            if response.status == 404:
-                from tif1.exceptions import DataNotFoundError
-                raise DataNotFoundError(message="Not found")
+async def async_fetch(source: CDNSource, url: str) -> dict:
+    """Fetch one URL without blocking the event loop."""
+    return await asyncio.to_thread(transport.get_json, url, timeout=30)
 
-            response.raise_for_status()
-            return await response.json()
+async def main() -> dict:
+    return await cdn.try_sources_async(
+        year=2021,
+        gp="Belgian%20Grand%20Prix",
+        session="Race",
+        path="VER/1_tel.json",
+        fetch_func=async_fetch,
+    )
 
-# Wrap async function for use with try_sources
-def sync_fetch(url: str) -> dict:
-    """Synchronous wrapper for async fetch."""
-    return asyncio.run(async_fetch(url))
-
-# Use with try_sources
-data = cdn.try_sources(
-    year=2021,
-    gp="Belgian%20Grand%20Prix",
-    session="Race",
-    path="telemetry.json",
-    fetch_func=sync_fetch
-)
-
-print(f"✓ Fetched telemetry data")
+data = asyncio.run(main())
+print(f"✓ Fetched telemetry data: {len(data['tel'])} channels")
 ```
 
 **Example: Fetch with Progress Tracking**
@@ -1925,7 +1909,7 @@ class FetchProgress:
                 if response.status_code == 404:
                     attempt["error"] = "Not found (404)"
                     self.attempts.append(attempt)
-                    raise DataNotFoundError(message="Not found")
+                    raise DataNotFoundError(url=url)
 
                 response.raise_for_status()
                 attempt["success"] = True
@@ -1978,14 +1962,14 @@ finally:
 
 - **Latency**: Each failed source adds latency (timeout + retry time). Use reasonable timeouts in `fetch_func`.
 - **Circuit breaker**: After 3 failures, sources are automatically disabled, reducing latency for subsequent requests.
-- **Minification**: Enable `use_minification=True` to reduce download time by 20-40%.
+- **Minification**: Leave `use_minification` off for the default CDNs. They return 404 for `.min.json` files.
 - **Connection pooling**: Reuse HTTP sessions in `fetch_func` for better performance.
 - **Parallel fetching**: `try_sources()` is sequential. For parallel fetching of multiple resources, call it multiple times concurrently.
 
 **Thread Safety:**
 
-- `try_sources()` is thread-safe for concurrent calls
-- Failure counters are updated atomically (though not with locks)
+- `try_sources()` uses no locks. Concurrent calls are safe for reads, but two threads can update the same failure counter at the same time
+- A lost counter update only delays or advances the circuit breaker by one failure
 - In high-concurrency scenarios, consider external synchronization for `mark_failure()` / `mark_success()` calls
 
 ---
@@ -2017,13 +2001,13 @@ class CDNSource:
 ```python
 from tif1.cdn import CDNSource
 
-# Primary source with minification
+# Primary source (the default CDNs serve no .min.json files, so minification stays off)
 primary = CDNSource(
     name="jsDelivr",
     base_url="https://cdn.jsdelivr.net/gh/TracingInsights",
     priority=1,
     enabled=True,
-    use_minification=True
+    use_minification=False
 )
 ```
 
@@ -2042,15 +2026,20 @@ Format a complete CDN URL for a specific resource with optional minification sup
 **Parameters:**
 - `year`: Season year (for example, 2021)
 - `gp`: Grand Prix name, URL-encoded (for example, "Belgian%20Grand%20Prix")
-- `session`: Session name (for example, "Race", "Qualifying")
+- `session`: Session name, URL-encoded (for example, "Race", "Practice%201")
 - `path`: Resource path (for example, "drivers.json")
 
 **Returns:**
 - Complete CDN URL string
 
 **URL Format:**
+
+The format depends on the host in `base_url`:
+
 ```text
-{base_url}/{year}@main/{gp}/{session}/{path}
+jsDelivr and custom hosts:  {base_url}/{year}@main/{gp}/{session}/{path}
+StaticDelivr:               {base_url}/{year}/main/{gp}/{session}/{path}
+Hugging Face buckets:       {base_url}/{year}/resolve/{gp}/{session}/{path}
 ```
 
 If `use_minification=True` and path ends with `.json`, the path is transformed from `file.json` to `file.min.json`.
@@ -2094,7 +2083,7 @@ minified_url = minified_source.format_url(
 
 ## Configuration
 
-CDN behavior can be configured via the global config:
+CDN behavior can be configured via the global config. The CDN manager reads these keys once, when `tif1.cdn` is first imported. Set them before the first session load, or save them and start a new process:
 
 ```python
 import tif1
@@ -2107,10 +2096,10 @@ config.set("cdns", [
     "https://backup.cdn.com/f1data"
 ])
 
-# Enable minification for bandwidth savings
-config.set("cdn_use_minification", True)
+# Keep minification off: the default CDNs do not serve .min.json files
+config.set("cdn_use_minification", False)
 
-# Save configuration
+# Save configuration to ~/.tif1rc
 config.save()
 ```
 
@@ -2186,18 +2175,16 @@ for source in cdn.sources:
 ### Configuration
 
 1. **Use HTTPS only**: HTTP CDN sources are rejected for security
-2. **Enable minification**: Reduces bandwidth by 20-40% for large datasets
+2. **Leave minification off**: The default CDNs return 404 for `.min.json` files
 3. **Configure via file**: Use `~/.tif1rc` for persistent configuration
 4. **Set priorities wisely**: Lower number = higher priority (1 before 2)
 
-```python
-# Good configuration
+```json
 {
   "cdns": [
-    "https://cdn.jsdelivr.net/gh/TracingInsights",  # Priority 1
-    "https://backup.cdn.example.com/f1"             # Priority 2
-  ],
-  "cdn_use_minification": true
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://backup.cdn.example.com/f1"
+  ]
 }
 ```
 
@@ -2208,24 +2195,29 @@ for source in cdn.sources:
 3. **Log failures**: Enable debug logging to see which CDN is being used
 
 ```python
+from tif1.cdn import get_cdn_manager
 from tif1.exceptions import DataNotFoundError, NetworkError
+from tif1.payload_loader import NiquestsTransport
 import logging
 
 logging.getLogger("tif1.cdn").setLevel(logging.DEBUG)
 
+cdn = get_cdn_manager()
+fetch_json = NiquestsTransport().get_json
+
 try:
-    data = cdn.try_sources(...)
+    data = cdn.try_sources(2021, "Belgian%20Grand%20Prix", "Race", "drivers.json", fetch_json)
 except DataNotFoundError:
-    # Data doesn't exist - don't retry
-    pass
+    # No CDN holds the file - do not retry
+    data = None
 except NetworkError:
-    # All sources failed - check network
-    pass
+    # All sources failed - check the network
+    data = None
 ```
 
 ### Performance
 
-1. **Enable minification**: Especially for telemetry data (35-40% size reduction)
+1. **Leave minification off**: A `.min.json` request costs one 404 per payload on the default CDNs
 2. **Use connection pooling**: Reuse HTTP sessions in fetch functions
 3. **Set reasonable timeouts**: Balance between patience and responsiveness
 4. **Monitor circuit breaker**: Check failure counts to identify problematic sources
@@ -2250,7 +2242,7 @@ except NetworkError:
 
 ### All CDN Sources Failing
 
-**Symptoms:** `NetworkError: All CDN sources failed`
+**Symptoms:** `NetworkError: Network request failed: url='2021/Belgian%20Grand%20Prix/Race/drivers.json'`
 
 **Solutions:**
 1. Check network connectivity: `ping cdn.jsdelivr.net`
@@ -2261,6 +2253,8 @@ except NetworkError:
 
 ```python
 import logging
+from tif1.cdn import get_cdn_manager
+
 logging.getLogger("tif1.cdn").setLevel(logging.DEBUG)
 
 cdn = get_cdn_manager()
@@ -2283,7 +2277,7 @@ cdn.reset()  # Give all sources a fresh start
 **Symptoms:** Data fetching is slow
 
 **Solutions:**
-1. Enable minification: `config.set("cdn_use_minification", True)`
+1. Check that `cdn_use_minification` is off: `config.get("cdn_use_minification")`
 2. Add regional CDN: Closer to the user's geographic location
 3. Check network speed: Run speed test
 4. Use connection pooling: Reuse HTTP sessions
@@ -2296,6 +2290,8 @@ cdn.reset()  # Give all sources a fresh start
 **Solution:** Reset failure counts
 
 ```python
+from tif1.cdn import get_cdn_manager
+
 cdn = get_cdn_manager()
 cdn.reset()  # Reset all sources to healthy state
 ```

@@ -13,6 +13,7 @@ these models, so importing it here would create an import cycle.
 
 import logging
 import math
+import re
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, cast, runtime_checkable
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 else:
     # Polars is optional; _ensure_polars_available() (below) imports it on
     # first polars-backend use instead of paying ~260 ms at module load.
-    pl = None  # type: ignore[ty:invalid-assignment]
+    pl = None
 
 POLARS_AVAILABLE = False
 
@@ -363,7 +364,18 @@ class Laps(pd.DataFrame):
         if isinstance(identifiers, str | int) or not isinstance(identifiers, list | tuple | set):
             identifiers = [identifiers]
         identifiers = [self._normalize_driver_identifier(i) for i in identifiers]
-        return self[self["Driver"].isin(identifiers)]
+        mask = self["Driver"].isin(identifiers)
+        # FastF1 accepts driver numbers as well as abbreviations: a numeric
+        # identifier is matched against DriverNumber (strings upstream) too.
+        if "DriverNumber" in self.columns and any(i.isdigit() for i in identifiers):
+            numbers = self["DriverNumber"]
+            if pd.api.types.is_numeric_dtype(numbers):
+                numbers = numbers.astype("Int64").astype("string")
+            elif not numbers.isin(identifiers).any():
+                # object column holding ints (hand-built frames): compare as text
+                numbers = numbers.astype("string")
+            mask = mask | numbers.isin(identifiers)
+        return self[mask]
 
     def pick_lap(self, lap_number):
         return self[self["LapNumber"] == lap_number]
@@ -394,7 +406,16 @@ class Laps(pd.DataFrame):
         if valid.empty:
             return None
         _ = only_by_time
-        fastest = valid.nsmallest(1, "LapTime").iloc[0]
+        # Argos A5: the first minimum by position (what nsmallest(1,
+        # keep="first") selected) without sorting/taking the whole frame;
+        # NaT rows are already filtered out, so the int64 view has no
+        # sentinel to mis-rank.
+        lap_times = cast(pd.Series, valid["LapTime"]).to_numpy()
+        if lap_times.dtype.kind == "m":
+            fastest_pos = int(np.argmin(lap_times.view("i8")))
+        else:
+            fastest_pos = int(np.nanargmin(lap_times.astype("float64")))
+        fastest = valid.iloc[fastest_pos]
         if isinstance(fastest, Lap):
             fastest.session = self.session
         return fastest
@@ -669,27 +690,44 @@ class Laps(pd.DataFrame):
             if column not in self.columns:
                 raise KeyError(f"required column '{column}' is not present")
 
-        for index, lap_row in self.iterrows():
-            lap = lap_row
-            if isinstance(lap, Lap):
-                lap.session = self.session
-
-            null_columns = lap.index[lap.isna()]
-            if len(null_columns):
-                non_null_lap = lap.drop(labels=null_columns)
-                if isinstance(non_null_lap, Lap):
-                    non_null_lap.session = self.session
-            else:
-                non_null_lap = lap
-
-            if any(pd.isna(non_null_lap.get(column)) for column in required_columns):
+        # Argos A5: iterrows built one object Series per row and then ran
+        # isna()/drop() on it (~0.3 ms per lap); one frame-level isna pass and
+        # one object-array interleave give the same per-lap Series (same
+        # values, column order, name and dtype) ~10x cheaper.
+        columns = self.columns
+        null_mask = self.isna().to_numpy(dtype=bool)
+        # Positions by label match (an array per label) so duplicate column
+        # names behave like the per-row ``lap.get(column)`` probe did.
+        required_positions = np.concatenate(
+            [np.flatnonzero(columns == column) for column in required_columns]
+        )
+        row_values = self.to_numpy(dtype=object)
+        row_index = self.index
+        for position in range(len(self)):
+            null_row = null_mask[position]
+            if null_row[required_positions].any():
                 continue
+            if null_row.any():
+                keep = ~null_row
+                non_null_lap = Lap(
+                    row_values[position][keep], index=columns[keep], name=row_index[position]
+                )
+            else:
+                non_null_lap = Lap(row_values[position], index=columns, name=row_index[position])
+            non_null_lap.session = self.session
 
-            yield _IterLapResult(index, non_null_lap)
+            yield _IterLapResult(row_index[position], non_null_lap)
 
     def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
-        """Reset index and drop level_0 column if created."""
+        """Reset index and drop the ``level_0`` column if one was created.
+
+        ``inplace=True`` returns ``None`` and keeps the new column, like pandas
+        (``DataFrame.to_sql(index=True)`` resets the index in place and then
+        inserts that column).
+        """
         result = cast(Any, super()).reset_index(drop=drop, **kwargs)
+        if result is None:  # inplace=True: pandas semantics, the new column stays
+            return None
         # Remove level_0 column if it was created
         if not drop and "level_0" in result.columns:
             result = result.drop(columns=["level_0"])
@@ -791,6 +829,22 @@ class Lap(pd.Series):
         return tel
 
 
+# Offset aliases pandas 3 removed, as FastF1-era code still spells them
+# (``resample_channels("1S")``): upper-case second/milli/minute/hour.
+_LEGACY_OFFSET_ALIASES = {"S": "s", "L": "ms", "T": "min", "H": "h"}
+_LEGACY_OFFSET_RE = re.compile(r"^\s*(\d*\.?\d*)\s*([SLTH])\s*$")
+
+
+def _modern_offset_alias(rule: str) -> str:
+    """Translate a pandas<3 upper-case offset alias (``"1S"``) to its current form."""
+    if not isinstance(rule, str):
+        return rule
+    match = _LEGACY_OFFSET_RE.match(rule)
+    if match is None:
+        return rule
+    return f"{match.group(1)}{_LEGACY_OFFSET_ALIASES[match.group(2)]}"
+
+
 class Telemetry(pd.DataFrame):
     """Multi-channel time series telemetry data."""
 
@@ -881,9 +935,13 @@ class Telemetry(pd.DataFrame):
     def get_first_non_zero_time_index(self):
         if "Time" not in self.columns or self.empty:
             return 0
-        time_vals = pd.to_timedelta(self["Time"], errors="coerce")
-        non_zero = time_vals[time_vals > pd.Timedelta(0)]
-        return int(non_zero.index[0]) if not non_zero.empty else 0
+        # Argos A6: compare on the int64 view instead of building a filtered
+        # Series (NaT is the int64 minimum, so it never compares > 0).
+        time_col = self["Time"]
+        if time_col.dtype.kind != "m":
+            time_col = pd.to_timedelta(time_col, errors="coerce")
+        positions = np.flatnonzero(time_col.to_numpy().view("i8") > 0)
+        return int(self.index[positions[0]]) if len(positions) else 0
 
     def fill_missing(self):
         filled = self.copy()
@@ -980,14 +1038,16 @@ class Telemetry(pd.DataFrame):
         return self._wrap(tel)
 
     def slice_by_mask(self, mask, pad: int | float = 0, pad_side: str = "both"):
-        mask_array = np.asarray(mask, dtype=bool).copy()
+        mask_array = np.asarray(mask, dtype=bool)
         if mask_array.shape[0] != len(self):
             raise ValueError("Mask length must match telemetry length.")
 
-        if pad and np.any(mask_array):
-            true_indices = np.where(mask_array)[0]
-            first_idx = int(true_indices.min())
-            last_idx = int(true_indices.max())
+        if pad and mask_array.any():
+            # Argos A6: copy only when the mask is actually widened.
+            mask_array = mask_array.copy()
+            true_indices = np.flatnonzero(mask_array)
+            first_idx = int(true_indices[0])
+            last_idx = int(true_indices[-1])
 
             if pad_side in ("both", "before"):
                 first_idx = max(0, first_idx - int(pad))
@@ -996,7 +1056,9 @@ class Telemetry(pd.DataFrame):
 
             mask_array[first_idx : last_idx + 1] = True
 
-        return self._wrap(self.loc[mask_array].copy())
+        # A boolean take is already a fresh frame under copy-on-write; the
+        # explicit .loc[...].copy() doubled the block copies.
+        return self._wrap(self[mask_array])
 
     def slice_by_time(
         self,
@@ -1016,9 +1078,11 @@ class Telemetry(pd.DataFrame):
         if pd.isna(start) or pd.isna(end):
             return self._wrap(self.iloc[0:0].copy())
 
-        ref_time = self._coerce_timedelta_series(self[time_ref_col])
-        selection_mask = (ref_time >= start) & (ref_time <= end)
-        data_slice = self.slice_by_mask(selection_mask.to_numpy(copy=False), pad, pad_side)
+        ref_time = self._coerce_timedelta_series(self[time_ref_col]).to_numpy()
+        start_ns = np.timedelta64(start.to_timedelta64())
+        end_ns = np.timedelta64(end.to_timedelta64())
+        selection_mask = (ref_time >= start_ns) & (ref_time <= end_ns)
+        data_slice = self.slice_by_mask(selection_mask, pad, pad_side)
 
         if not data_slice.empty:
             # Keep Time zero-based relative to the start of this slice, matching FastF1.
@@ -1099,6 +1163,19 @@ class Telemetry(pd.DataFrame):
 
         return []
 
+    @staticmethod
+    def _extract_lap_drivers(ref_laps: Any) -> list[str]:
+        """Driver codes referenced by Lap/Laps-compatible inputs (empty if unknown)."""
+        if isinstance(ref_laps, pd.DataFrame):
+            if "Driver" in ref_laps.columns:
+                return [str(v) for v in ref_laps["Driver"].dropna().unique().tolist()]
+            return []
+        if isinstance(ref_laps, pd.Series):
+            value = ref_laps.get("Driver")
+            if value is not None and not pd.isna(value):
+                return [str(value)]
+        return []
+
     def slice_by_lap(
         self,
         ref_laps,
@@ -1111,6 +1188,20 @@ class Telemetry(pd.DataFrame):
                 raise ValueError(
                     "Cannot slice telemetry because 'ref_laps' contains Laps of multiple drivers!"
                 )
+
+        # tif1 telemetry keeps ``Time`` lap-relative (zero at the lap start)
+        # and carries no ``SessionTime``, so a lap's session-time window
+        # (LapStartTime..Time) can never select its samples. Without a
+        # session-time axis, match on LapNumber (and Driver when both sides
+        # carry it); the time window stays the path for FastF1-style frames.
+        if "SessionTime" not in self.columns and "LapNumber" in self.columns:
+            lap_numbers = self._extract_lap_numbers(ref_laps)
+            if lap_numbers:
+                lap_mask = self["LapNumber"].isin(lap_numbers)
+                drivers = self._extract_lap_drivers(ref_laps)
+                if drivers and "Driver" in self.columns:
+                    lap_mask &= self["Driver"].isin(drivers)
+                return self.slice_by_mask(lap_mask.to_numpy(copy=False), pad=pad, pad_side=pad_side)
 
         start_time, end_time = self._extract_lap_time_window(ref_laps)
         if not pd.isna(start_time) and not pd.isna(end_time):
@@ -1150,8 +1241,9 @@ class Telemetry(pd.DataFrame):
             merged = pd.concat([self.reset_index(drop=True), pd.DataFrame(other)], axis=1)
         return self._wrap(merged)
 
-    def resample_channels(self, rule: str = "1S", **kwargs):
+    def resample_channels(self, rule: str = "1s", **kwargs):
         _ = kwargs
+        rule = _modern_offset_alias(rule)
         if "Time" not in self.columns or self.empty:
             return self._wrap(self.copy())
         frame = self.copy()
@@ -1319,10 +1411,13 @@ class Driver(pd.Series):
                         driver_laps = session_laps_pl.filter(pl.col(COL_DRIVER) == self.driver)
                     else:
                         session_laps_pd = cast(pd.DataFrame, self.session._laps)
-                        # Use query() for in-place filtering (avoids copy)
-                        driver_laps = session_laps_pd.query(
-                            f"{COL_DRIVER} == @self.driver", engine="python"
-                        ).reset_index(drop=True)
+                        # Argos A4: a boolean mask; DataFrame.query(engine="python")
+                        # re-tokenised the expression on every call (~1.7 ms vs
+                        # ~0.4 ms on a 1455-row frame) for the same rows.
+                        driver_mask = (session_laps_pd[COL_DRIVER] == self.driver).to_numpy(
+                            dtype=bool, na_value=False
+                        )
+                        driver_laps = session_laps_pd[driver_mask].reset_index(drop=True)
                         if self.session.lib == "pandas":
                             driver_laps = Laps(driver_laps)
                             driver_laps.session = self.session

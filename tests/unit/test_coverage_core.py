@@ -1334,14 +1334,34 @@ class TestCoreHighYieldCoverage:
             },
         ]
         session._refresh_driver_indices()
+        # ["1", "44"] is a plain number sort, so the order comes from the laps:
+        # HAM led the last lap.
+        session._laps = core_module.Laps(
+            pd.DataFrame(
+                {
+                    "Driver": ["VER", "HAM", "VER", "HAM"],
+                    "DriverNumber": ["1", "44", "1", "44"],
+                    "LapNumber": [1.0, 1.0, 2.0, 2.0],
+                    "Position": [1.0, 2.0, 2.0, 1.0],
+                    "LapTimeSeconds": [90.0, 91.0, 89.5, 89.0],
+                    "Deleted": [False, False, False, False],
+                }
+            ),
+            session=session,
+        )
 
-        assert session.drivers == ["1", "44"]
-        assert session.driver_list == ["1", "44"]
+        assert session.drivers == ["44", "1"]
+        assert session.driver_list == ["44", "1"]
         drivers_df = session.drivers_df
         assert {"Driver", "Team", "DriverNumber"}.issubset(drivers_df.columns)
+        assert drivers_df["Driver"].tolist() == ["HAM", "VER"]
 
         results = session.results
         assert len(results) == 2
+        assert results["Abbreviation"].tolist() == ["HAM", "VER"]
+        assert results["Position"].tolist() == [1.0, 2.0]
+        assert results["Laps"].tolist() == [2.0, 2.0]
+        assert results["Status"].tolist() == ["Finished", "Finished"]
         assert session.pos_data is session.car_data
         assert session.total_laps is None
         assert session.session_start_time is pd.NaT
@@ -1405,6 +1425,135 @@ class TestCoreHighYieldCoverage:
         session._laps = pd.DataFrame()
         assert session.track_status.empty
         assert session.get_circuit_info() is not None
+
+    @pytest.mark.parametrize(
+        ("lap", "sector", "expected_lap", "expected_sector"),
+        [
+            # Non-race sessions send the "None" sentinel for every Lap.
+            (["None", "None"], ["None", "None"], [None, None], [None, None]),
+            # Race sessions mix lap numbers with sentinels (polars infers String).
+            ([3, "None"], [7, "None"], [3, None], [7.0, None]),
+        ],
+    )
+    def test_race_control_polars_coerces_none_sentinels(
+        self, lap, sector, expected_lap, expected_sector
+    ):
+        pl = pytest.importorskip("polars")
+        session = Session(2025, "Test GP", "Qualifying", enable_cache=False, lib="polars")
+        session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
+            {
+                "Time": ["2025-06-29T12:20:01", "2025-06-29T12:21:02.5"],
+                "Category": ["Flag", "None"],
+                "Lap": lap,
+                "Sector": sector,
+            },
+            strict=False,
+        )
+        rcm = session.race_control_messages
+        assert isinstance(rcm, pl.DataFrame)
+        assert rcm.schema["Lap"] == pl.Int64
+        assert rcm.schema["Sector"] == pl.Float64
+        assert rcm["Lap"].to_list() == expected_lap
+        assert rcm["Sector"].to_list() == expected_sector
+        assert rcm["Category"].to_list() == ["Flag", None]
+
+    def test_session_table_polars_coerces_sentinels_at_construction(self):
+        """ "None" sentinels become null before the frame is built, so polars
+        infers Boolean/Int64 instead of a String column no cast can recover."""
+        pl = pytest.importorskip("polars")
+        core_module._ensure_polars_available()
+        frame = core_module._create_session_df(
+            {"wR": [True, "None", False], "wWD": [120, "None", 90], "wAT": [24.5, 25.0, "None"]},
+            core_module.WEATHER_RENAME_MAP,
+            "polars",
+        )
+        assert frame.schema["Rainfall"] == pl.Boolean
+        assert frame.schema["WindDirection"] == pl.Int64
+        assert frame.schema["AirTemp"] == pl.Float64
+        assert frame["Rainfall"].to_list() == [True, None, False]
+        assert frame["WindDirection"].to_list() == [120, None, 90]
+
+    def test_weather_polars_tolerates_sentinels_and_rounds_like_pandas(self):
+        """Weather on the polars backend mirrors the pandas branch: sentinels
+        and unparseable values become null, WindDirection is rounded."""
+        pl = pytest.importorskip("polars")
+        payload = {
+            "wT": [14.5, "None"],
+            "wAT": ["None", 24.5],
+            "wR": [True, "None"],
+            "wWD": [123.7, "None"],
+            "wWS": [2.9, "n/a"],
+        }
+        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        session._resolve_ultra_cold_mode = lambda _value: False  # type: ignore[ty:invalid-assignment]
+        session._fetch_json = lambda path: payload  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
+        weather = session.weather
+        assert isinstance(weather, pl.DataFrame)
+        assert weather.schema["Time"] == pl.Duration("ms")
+        assert weather["Time"].dt.total_milliseconds().to_list() == [14500, None]
+        assert weather["AirTemp"].to_list() == [None, 24.5]
+        assert weather["Rainfall"].to_list() == [True, None]
+        assert weather.schema["WindDirection"] == pl.Int64
+        assert weather["WindDirection"].to_list() == [124, None]
+        assert weather["WindSpeed"].to_list() == [2.9, None]
+
+    def test_weather_pandas_tolerates_sentinels_instead_of_dropping_the_table(self):
+        """A "None" sentinel in Rainfall made astype("boolean") raise, which the
+        loader swallowed into an empty weather table; sentinels now become NA."""
+        payload = {
+            "wT": [14.5, "None"],
+            "wAT": ["None", 24.5],
+            "wR": [True, "None"],
+            "wWD": [123.7, "None"],
+        }
+        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        session._resolve_ultra_cold_mode = lambda _value: False  # type: ignore[ty:invalid-assignment]
+        session._fetch_json = lambda path: payload  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
+        weather = session.weather
+        assert isinstance(weather, pd.DataFrame)
+        assert len(weather) == 2
+        assert weather["Time"].dtype.kind == "m"
+        assert weather["Time"].iloc[0] == pd.Timedelta(seconds=14.5)
+        assert pd.isna(weather["Time"].iloc[1])
+        assert weather["AirTemp"].isna().tolist() == [True, False]
+        assert weather["Rainfall"].dtype.name == "boolean"
+        assert bool(weather["Rainfall"].iloc[0]) is True
+        assert weather["Rainfall"].isna().tolist() == [False, True]
+        assert weather["WindDirection"].dtype.name == "Int64"
+        assert weather["WindDirection"].iloc[0] == 124
+        assert weather["WindDirection"].isna().tolist() == [False, True]
+
+    def test_polars_dtype_failure_degrades_like_pandas(self, caplog):
+        """A polars cast polars itself rejects raises a PolarsError (not a
+        ValueError); the optional-table loaders must degrade to an empty frame
+        with a warning, exactly as the pandas branch does for TypeError."""
+        pl = pytest.importorskip("polars")
+        # String → Boolean is unsupported in polars even with strict=False.
+        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
+            {"Time": [1.0], "Rainfall": ["yes"]}
+        )
+        with caplog.at_level("WARNING", logger="tif1.core"):
+            weather = session.weather
+        assert isinstance(weather, pl.DataFrame)
+        assert weather.is_empty()
+        assert "Failed to load weather" in caplog.text
+
+        # List → Int64 is unsupported too; race control takes the same path.
+        rcm_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        rcm_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+        rcm_session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
+            {"Time": ["2025-06-29T12:20:01"], "Lap": [[1, 2]]}
+        )
+        with caplog.at_level("WARNING", logger="tif1.core"):
+            rcm = rcm_session.race_control_messages
+        assert isinstance(rcm, pl.DataFrame)
+        assert rcm.is_empty()
+        assert "Failed to load race control messages" in caplog.text
 
     def test_prefetch_driver_lookup_and_laps_branches(self, monkeypatch):
         session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")

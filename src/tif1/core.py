@@ -7,6 +7,7 @@ import re
 import threading
 from collections.abc import Iterable
 from typing import Any, Literal, cast
+from urllib.parse import unquote
 
 import pandas as pd
 
@@ -33,6 +34,7 @@ from .core_utils.constants import (
     COL_LAP_TIME,
     COL_LAP_TIME_SECONDS,
     COL_TEAM,
+    EVENT_NAME_ALIASES,
     MAX_YEAR,
     MIN_YEAR,
     RACE_CONTROL_RENAME_MAP,
@@ -43,6 +45,7 @@ from .core_utils.constants import (
 from .core_utils.helpers import (
     DataFrame,
     _coerce_lap_number,
+    _coerce_null_like_payload,
     _create_empty_df,
     _create_lap_df,
     _create_telemetry_df,
@@ -56,6 +59,7 @@ from .core_utils.helpers import (
     _numeric_seconds_to_timedelta,
     _process_lap_df,
     _rename_columns,
+    _replace_null_like_strings,
     _telemetry_frame_from_merged,
     _validate_drivers_list,
     _validate_string_param,
@@ -64,6 +68,7 @@ from .core_utils.helpers import (
 from .exceptions import (
     DataNotFoundError,
     DriverNotFoundError,
+    EventNotInSeasonError,
     InvalidDataError,
     LapNotFoundError,  # noqa: F401  # re-exported for backward compatibility
     NetworkError,
@@ -107,6 +112,17 @@ def _ensure_polars_available() -> bool:
         pl = None
         POLARS_AVAILABLE = False
     return POLARS_AVAILABLE
+
+
+def _polars_error_types() -> tuple[type[Exception], ...]:
+    """polars' exception base, or ``()`` when polars is not loaded.
+
+    polars raises ``PolarsError`` subclasses (not ``ValueError``/``TypeError``)
+    for dtype failures, so the optional-table loaders list it next to the
+    pandas equivalents. Never imports polars: pandas sessions must not pay
+    the ~260 ms import for it.
+    """
+    return (pl.exceptions.PolarsError,) if pl is not None else ()
 
 
 # Get configuration
@@ -176,6 +192,108 @@ def _extract_driver_info_map(drivers: list[dict] | None) -> dict[str, dict]:
         if isinstance(code, str):
             driver_info_map[code] = driver_info
     return driver_info_map
+
+
+_RACE_LIKE_SESSION_NAMES = frozenset({"Race", "Sprint"})
+
+
+def _is_number_sorted(numbers: list[str]) -> bool:
+    """True when a driver-number list is merely sorted (as strings or as ints), not classified."""
+    if len(numbers) < 2:
+        return False
+    if numbers == sorted(numbers):
+        return True
+    if all(number.isdigit() for number in numbers):
+        as_int = [int(number) for number in numbers]
+        return as_int == sorted(as_int)
+    return False
+
+
+def _clean_scalar(value: Any) -> Any:
+    """``None`` for missing/sentinel values (None, NaN, NA, "", "None"), else the value."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, str):
+        return None if value in ("", "None", "nan", "NaN") else value
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _summarize_laps_for_classification(laps: Any, lib: str) -> dict[str, dict[str, Any]]:
+    """One pass over the laps table: per driver number, laps completed, last-lap position, best lap.
+
+    Works on either backend by pulling the few needed columns out as Python
+    lists (about 1,000 rows per session), so it costs ~1 ms and needs no
+    backend conversion.
+    """
+    wanted = ["Driver", "DriverNumber", "LapNumber", "Position", "LapTimeSeconds", "Deleted"]
+    present = [column for column in wanted if column in laps.columns]
+    if "Driver" not in present:
+        return {}
+    if lib == "polars":
+        columns = laps.select(present).to_dict(as_series=False)
+    else:
+        columns = {column: laps[column].tolist() for column in present}
+
+    drivers = columns["Driver"]
+    numbers = columns.get("DriverNumber")
+    lap_numbers = columns.get("LapNumber")
+    positions = columns.get("Position")
+    times = columns.get("LapTimeSeconds")
+    deleted = columns.get("Deleted")
+
+    summary: dict[str, dict[str, Any]] = {}
+    for i, raw_code in enumerate(drivers):
+        code = _clean_scalar(raw_code)
+        if code is None:
+            continue
+        key = str(code)
+        entry: dict[str, Any] | None = summary.get(key)
+        if entry is None:
+            entry = {"number": None, "laps": 0, "position": None, "best": None}
+            summary[key] = entry
+        if numbers is not None and entry["number"] is None:
+            number = _clean_scalar(numbers[i])
+            if number is not None:
+                entry["number"] = str(int(number)) if isinstance(number, float) else str(number)
+        if lap_numbers is not None:
+            lap_number = _clean_scalar(lap_numbers[i])
+            if lap_number is not None and int(lap_number) >= entry["laps"]:
+                entry["laps"] = int(lap_number)
+                position = _clean_scalar(positions[i]) if positions is not None else None
+                entry["position"] = float(position) if position is not None else None
+        if times is not None:
+            lap_time = _clean_scalar(times[i])
+            if lap_time is not None and not (deleted is not None and deleted[i] is True):
+                lap_time = float(lap_time)
+                if entry["best"] is None or lap_time < entry["best"]:
+                    entry["best"] = lap_time
+    return summary
+
+
+def _classification_sort(
+    rows: list[dict], summary: dict[str, dict[str, Any]], *, race: bool
+) -> list[dict]:
+    """Order driver rows like a classification; drivers without laps keep their place at the back."""
+
+    def key(item: tuple[int, dict]) -> tuple[int, int, float, int]:
+        index, row = item
+        info = summary.get(str(row.get("driver", "")))
+        if info is None or info["laps"] == 0:
+            return (1, 0, 0.0, index)
+        if race:
+            position = info["position"] if info["position"] is not None else math.inf
+            return (0, -info["laps"], position, index)
+        best = info["best"] if info["best"] is not None else math.inf
+        return (0, 0, best, index)
+
+    return [row for _, row in sorted(enumerate(rows), key=key)]
 
 
 def _coerce_lap_time(lap_time_value: Any) -> float:
@@ -305,7 +423,11 @@ def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
 def _create_session_df(data: dict[str, Any], rename_map: dict[str, str], lib: str) -> DataFrame:
     """Create a session-level DataFrame from a payload dict and rename columns (zero-copy optimized)."""
     if lib == "polars":
-        frame = pl.DataFrame(data, strict=False)
+        # Coerce "None"-style sentinels before construction: polars would
+        # otherwise infer String for a mixed column, which no cast can undo.
+        # pandas keeps its per-table passes instead (coercing here would turn
+        # an all-sentinel string column into float64 NaN rather than None).
+        frame = pl.DataFrame(_coerce_null_like_payload(data), strict=False)
     else:
         # Use copy=False to avoid unnecessary data duplication
         frame = pd.DataFrame(data, copy=False)
@@ -358,8 +480,10 @@ class Session:
 
     Attributes:
         year: Season year
-        gp: Grand Prix name (URL encoded)
+        gp: Grand Prix name (URL encoded; every CDN path is built from it)
         session: Session name (URL encoded)
+        event_name: Grand Prix name as the schedule spells it
+        session_name: Session name as the schedule spells it
         drivers_df: DataFrame with driver information
         laps: DataFrame with all laps
 
@@ -392,6 +516,10 @@ class Session:
         self._driver_codes = None
         self._driver_info_by_code = None
         self._driver_index_source_id = None
+        # Classification-ordered driver rows and the per-driver lap facts they
+        # are built from, keyed on the identity of the payload they came from.
+        self._driver_rows_cache: tuple[int, list[dict], bool] | None = None
+        self._lap_summary_cache: tuple[int, dict[str, dict[str, Any]]] | None = None
         # Single session-tier cache: JSON payloads, telemetry payloads/frames,
         # fastest-lap-reference memo, cache probe result, and failure tracking
         # all live in tif1.cache.SessionMemo.
@@ -740,21 +868,21 @@ class Session:
 
         if not ultra_cold:
             # Force load drivers through property, then return internal list
-            _ = self.drivers
+            _ = self._drivers_data
             return self._drivers if self._drivers is not None else [], []
 
         try:
             drivers_payload = self._fetch_json_unvalidated("drivers.json")
         except (DataNotFoundError, InvalidDataError, NetworkError, TypeError, ValueError) as e:
             logger.debug("Ultra-cold driver fetch failed, falling back to validated path: %s", e)
-            _ = self.drivers
+            _ = self._drivers_data
             return self._drivers if self._drivers is not None else [], []
 
         drivers = drivers_payload.get("drivers") if isinstance(drivers_payload, dict) else None
         self._drivers = drivers if isinstance(drivers, list) else []
         self._refresh_driver_indices()
         if not self._drivers:
-            logger.info(f"No drivers in session: {self.year}/{self.gp}/{self.session}")
+            logger.info(f"No drivers in session: {self.year}/{self.event_name}/{self.session_name}")
 
         cacheable_payloads: list[tuple[str, dict[str, Any]]] = []
         if isinstance(drivers_payload, dict):
@@ -849,26 +977,103 @@ class Session:
 
     @property
     def drivers(self) -> list[str]:
-        """Get list of driver numbers as strings (fastf1 API compatibility).
+        """Driver numbers as strings, in classification order (FastF1 ``Session.drivers``).
+
+        The upstream ``drivers.json`` lists the official classification for most
+        sessions. Where it is only sorted by car number (several seasons before
+        2025) the order is rebuilt from the laps table: laps completed, then
+        position on the last lap for races and sprints; best non-deleted lap
+        time for every other session. Post-session penalties are not visible
+        in lap data, so a rebuilt order can differ from the official result by
+        a place or two. Numbers missing from ``drivers.json`` are filled in
+        from the laps table as well.
 
         Returns:
-            List of driver numbers as strings (e.g., ['1', '11', '16', ...])
+            List of driver numbers as strings (e.g., ['81', '63', '4', ...])
         """
-        drivers_data = self._drivers_data
-        if not drivers_data:
-            return []
+        return [str(d["dn"]) for d in self._driver_rows() if d.get("dn")]
 
-        driver_numbers = []
-        for d in drivers_data:
-            # Skip invalid entries
-            if not isinstance(d, dict):
-                continue
-            # Get driver number from 'dn' field
-            number = d.get("dn")
-            if number:
-                driver_numbers.append(str(number))
+    def _driver_rows(self) -> list[dict]:
+        """Driver payload rows in classification order; see :attr:`drivers`."""
+        return self._driver_rows_info()[0]
 
-        return driver_numbers
+    def _driver_rows_info(self) -> tuple[list[dict], bool]:
+        """``(rows, classified)``: ordered driver rows and whether that order is a classification.
+
+        Cheap for payloads that are already a classification (one pass over the
+        numbers, no laps access). Only a number-sorted or number-less payload
+        reads the laps table, through :meth:`_lap_summary`.
+        """
+        rows = [d for d in self._drivers_data if isinstance(d, dict)]
+        if not rows:
+            return rows, False
+        cache = self._driver_rows_cache
+        if cache is not None and cache[0] == id(self._drivers):
+            return cache[1], cache[2]
+
+        numbers = [str(d.get("dn") or "") for d in rows]
+        needs_numbers = not all(numbers)
+        number_sorted = not needs_numbers and _is_number_sorted(numbers)
+        classified = not number_sorted and not needs_numbers
+        if needs_numbers or number_sorted:
+            summary = self._lap_summary()
+            if summary:
+                if needs_numbers:
+                    for d in rows:
+                        if not d.get("dn"):
+                            info = summary.get(str(d.get("driver", "")))
+                            if info is not None and info["number"]:
+                                d["dn"] = info["number"]  # same dict the lookup indices hold
+                    numbers = [str(d.get("dn") or "") for d in rows]
+                    number_sorted = all(numbers) and _is_number_sorted(numbers)
+                if number_sorted or needs_numbers:
+                    rows = _classification_sort(rows, summary, race=self._is_race_like())
+                classified = True
+        self._driver_rows_cache = (id(self._drivers), rows, classified)
+        return rows, classified
+
+    def _is_race_like(self) -> bool:
+        return self.session_name in _RACE_LIKE_SESSION_NAMES
+
+    def _lap_summary(self) -> dict[str, dict[str, Any]]:
+        """Per-driver lap facts: number, laps completed, last-lap position, best clean lap.
+
+        One pass over the loaded laps table (either backend), memoized on the
+        table's identity. A session without a laps payload yields ``{}`` (logged
+        at info level) so ``drivers``/``results`` still return the entrants.
+        """
+        try:
+            laps = self.laps
+        except DataNotFoundError as exc:
+            logger.info(
+                "No laps to classify %s/%s/%s: %s",
+                self.year,
+                self.event_name,
+                self.session_name,
+                exc,
+            )
+            return {}
+        except NetworkError as exc:
+            # The entrant list itself loaded; only the classification is
+            # degraded, so keep the upstream order and say so.
+            logger.warning(
+                "Laps unavailable, driver order/results left unclassified for %s/%s/%s: %s",
+                self.year,
+                self.event_name,
+                self.session_name,
+                exc,
+            )
+            return {}
+        cache = self._lap_summary_cache
+        if cache is not None and cache[0] == id(laps):
+            return cache[1]
+        summary = (
+            {}
+            if _is_empty_df(laps, self.lib)
+            else _summarize_laps_for_classification(laps, self.lib)
+        )
+        self._lap_summary_cache = (id(laps), summary)
+        return summary
 
     @property
     def _drivers_data(self) -> list[dict]:
@@ -886,40 +1091,25 @@ class Session:
                 data = self._fetch_json("drivers.json")
             self._drivers = data.get("drivers", [])
             if not self._drivers:
-                logger.info(f"No drivers in session: {self.year}/{self.gp}/{self.session}")
+                logger.info(
+                    f"No drivers in session: {self.year}/{self.event_name}/{self.session_name}"
+                )
         self._refresh_driver_indices()
         return self._drivers
 
     @property
     def driver_list(self) -> list[str]:
-        """Get list of driver numbers as strings (fastf1 compatibility).
-
-        Returns:
-            List of driver numbers as strings (e.g., ['1', '11', '16', ...])
-        """
-        drivers_data = self._drivers_data
-        if not drivers_data:
-            return []
-
-        driver_numbers = []
-        for d in drivers_data:
-            # Skip invalid entries
-            if not isinstance(d, dict):
-                continue
-            number = d.get("dn", "")
-            if number:
-                driver_numbers.append(str(number))
-
-        return driver_numbers
+        """Alias of :attr:`drivers` (fastf1 compatibility)."""
+        return self.drivers
 
     @property
     def drivers_df(self) -> pd.DataFrame:
-        """Get drivers as a pandas DataFrame.
+        """Get drivers as a pandas DataFrame, one row per driver in classification order.
 
         Returns:
             DataFrame with columns: Driver, Team, DriverNumber, FirstName, LastName, TeamColor, HeadshotUrl
         """
-        drivers_list = self._drivers_data
+        drivers_list = self._driver_rows()
         if not drivers_list:
             return pd.DataFrame(
                 columns=[
@@ -1052,36 +1242,58 @@ class Session:
 
     @property
     def results(self) -> "SessionResults":
-        """Get session results with driver information."""
+        """Session classification with driver information, one row per driver.
+
+        Rows are in classification order (see :attr:`drivers`). ``Position`` and
+        ``ClassifiedPosition`` number that order; ``Laps`` is the laps completed
+        from the laps table; ``Status`` is derived from lap counts for races and
+        sprints (``"Finished"`` on the leader's lap count, ``"+N Lap(s)"``
+        otherwise, ``"Did not start"`` with no laps) and ``"Finished"`` for
+        other sessions. The data source publishes no official classification,
+        so ``GridPosition`` and ``Points`` are NaN, and a session without a laps
+        payload has NaN ``Position``/``Laps`` and ``None`` ``Status``.
+        """
         if self._results is None:
-            drivers_data = self._drivers_data
-            if not drivers_data:
+            driver_rows, classified = self._driver_rows_info()
+            if not driver_rows:
                 return SessionResults()
+            summary = self._lap_summary()
+            race_like = self._is_race_like()
+            leader_laps = max((info["laps"] for info in summary.values()), default=0)
 
             rows = []
-            for d in drivers_data:
-                row = {
-                    "DriverNumber": str(d.get("dn", "")),
-                    "Abbreviation": d.get("driver", ""),
-                    "TeamName": d.get("team", ""),
-                    "TeamColor": d.get("tc", ""),
-                    "FirstName": d.get("fn", ""),
-                    "LastName": d.get("ln", ""),
-                    "FullName": f"{d.get('fn', '')} {d.get('ln', '')}".strip(),
-                    "HeadshotUrl": d.get("url", ""),
-                }
-                # Add placeholders for result data (might not be available in drivers.json)
-                row.update(
+            for index, d in enumerate(driver_rows, start=1):
+                info = summary.get(str(d.get("driver", "")))
+                laps_done = info["laps"] if info is not None else 0
+                if not summary:
+                    status: str | None = None
+                elif not race_like:
+                    status = "Finished"
+                elif laps_done == 0:
+                    status = "Did not start"
+                elif laps_done == leader_laps:
+                    status = "Finished"
+                else:
+                    gap = leader_laps - laps_done
+                    status = f"+{gap} Lap" if gap == 1 else f"+{gap} Laps"
+                rows.append(
                     {
-                        "Position": None,
-                        "ClassifiedPosition": "",
-                        "GridPosition": None,
-                        "Status": "Finished",
-                        "Points": 0.0,
-                        "Laps": 0.0,
+                        "DriverNumber": str(d.get("dn", "")),
+                        "Abbreviation": d.get("driver", ""),
+                        "TeamName": d.get("team", ""),
+                        "TeamColor": d.get("tc", ""),
+                        "FirstName": d.get("fn", ""),
+                        "LastName": d.get("ln", ""),
+                        "FullName": f"{d.get('fn', '')} {d.get('ln', '')}".strip(),
+                        "HeadshotUrl": d.get("url", ""),
+                        "Position": float(index) if classified else math.nan,
+                        "ClassifiedPosition": str(index) if classified else "",
+                        "GridPosition": math.nan,
+                        "Status": status,
+                        "Points": math.nan,
+                        "Laps": float(laps_done) if summary else math.nan,
                     }
                 )
-                rows.append(row)
 
             self._results = SessionResults(rows)
             self._results.session = self
@@ -1135,12 +1347,13 @@ class Session:
                                 pl.when(pl.col("Sector").cast(pl.Utf8) == "None")
                                 .then(None)
                                 .otherwise(pl.col("Sector"))
-                                .cast(pl.Float64)
+                                .cast(pl.Float64, strict=False)
                                 .alias("Sector")
                             )
-                        # Lap: int64
+                        # Lap: int64; non-race sessions send an all-"None" Lap
+                        # column, so coerce like pandas' to_numeric(errors="coerce").
                         if "Lap" in cols:
-                            exprs.append(pl.col("Lap").cast(pl.Int64))
+                            exprs.append(pl.col("Lap").cast(pl.Int64, strict=False))
                         if exprs:
                             self._race_control_messages = rcm_pl.with_columns(exprs)
                     else:
@@ -1170,7 +1383,8 @@ class Session:
                             rcm_pd["Sector"] = pd.to_numeric(_sector, errors="coerce").astype(
                                 "float64"
                             )
-                        # Lap: int64 (use nullable Int64 to tolerate any NaNs)
+                        # Lap: plain int64 like FastF1; messages without a lap
+                        # (sentinels, non-race sessions) become 0, not NA
                         if "Lap" in rcm_pd.columns:
                             rcm_pd["Lap"] = (
                                 pd.to_numeric(rcm_pd["Lap"], errors="coerce")
@@ -1182,8 +1396,8 @@ class Session:
                 logger.info(
                     "No race control messages in session: %s/%s/%s",
                     self.year,
-                    self.gp,
-                    self.session,
+                    self.event_name,
+                    self.session_name,
                 )
                 self._race_control_messages = _create_empty_df(self.lib)
             except (
@@ -1192,12 +1406,13 @@ class Session:
                 RuntimeError,
                 TypeError,
                 ValueError,
+                *_polars_error_types(),
             ) as e:
                 logger.warning(
                     "Failed to load race control messages for %s/%s/%s: %s",
                     self.year,
-                    self.gp,
-                    self.session,
+                    self.event_name,
+                    self.session_name,
                     e,
                 )
                 self._race_control_messages = _create_empty_df(self.lib)
@@ -1207,8 +1422,8 @@ class Session:
     def session_info(self) -> dict[str, Any]:
         return {
             "Year": self.year,
-            "EventName": self.gp.replace("%20", " "),
-            "SessionName": self.session.replace("%20", " "),
+            "EventName": self.event_name,
+            "SessionName": self.session_name,
         }
 
     @property
@@ -1247,7 +1462,17 @@ class Session:
         Returns:
             Session name (e.g., "Practice 1", "Qualifying", "Race")
         """
-        return self.session.replace("%20", " ")
+        return self.session_name
+
+    @property
+    def event_name(self) -> str:
+        """Grand Prix name as the schedule spells it (``gp`` is its URL-encoded form)."""
+        return unquote(self.gp)
+
+    @property
+    def session_name(self) -> str:
+        """Session name as the schedule spells it (``session`` is its URL-encoded form)."""
+        return unquote(self.session)
 
     @property
     def date(self):
@@ -1275,7 +1500,7 @@ class Session:
         # We will implement Event properly in events.py
         from .events import get_event_by_name
 
-        return get_event_by_name(self.year, self.gp.replace("%20", " "))
+        return get_event_by_name(self.year, self.event_name)
 
     @property
     def weather(self) -> DataFrame:
@@ -1293,10 +1518,15 @@ class Session:
                         weather_pl = cast(Any, self._weather)
                         cols = weather_pl.columns
                         exprs = []
+                        # Casts are non-strict like the pandas branch's
+                        # to_numeric(errors="coerce"): unparseable → null.
                         # Time: seconds float → Duration
                         if "Time" in cols:
                             exprs.append(
-                                pl.col("Time").cast(pl.Float64).mul(1000).cast(pl.Duration("ms"))
+                                pl.col("Time")
+                                .cast(pl.Float64, strict=False)
+                                .mul(1000)
+                                .cast(pl.Duration("ms"))
                             )
                         # Float columns
                         float_cols = [
@@ -1310,17 +1540,26 @@ class Session:
                             )
                             if _col in cols
                         ]
-                        exprs.extend([pl.col(_col).cast(pl.Float64) for _col in float_cols])
-                        # Int column
+                        exprs.extend(
+                            [pl.col(_col).cast(pl.Float64, strict=False) for _col in float_cols]
+                        )
+                        # Int column: round like the pandas branch, not truncate
                         if "WindDirection" in cols:
-                            exprs.append(pl.col("WindDirection").cast(pl.Int64))
+                            exprs.append(
+                                pl.col("WindDirection")
+                                .cast(pl.Float64, strict=False)
+                                .round()
+                                .cast(pl.Int64, strict=False)
+                            )
                         # Bool column
                         if "Rainfall" in cols:
-                            exprs.append(pl.col("Rainfall").cast(pl.Boolean))
+                            exprs.append(pl.col("Rainfall").cast(pl.Boolean, strict=False))
                         if exprs:
                             self._weather = weather_pl.with_columns(exprs)
                     else:
-                        weather_pd = cast(pd.DataFrame, self._weather)
+                        # "None" sentinels first: astype("boolean") below rejects
+                        # the string, which used to empty the whole table.
+                        weather_pd = _replace_null_like_strings(cast(pd.DataFrame, self._weather))
                         # Time: seconds float → timedelta
                         if "Time" in weather_pd.columns:
                             weather_pd["Time"] = _numeric_seconds_to_timedelta(weather_pd["Time"])
@@ -1342,7 +1581,9 @@ class Session:
                             weather_pd["Rainfall"] = weather_pd["Rainfall"].astype("boolean")
                         self._weather = weather_pd
             except DataNotFoundError:
-                logger.info("No weather in session: %s/%s/%s", self.year, self.gp, self.session)
+                logger.info(
+                    "No weather in session: %s/%s/%s", self.year, self.event_name, self.session_name
+                )
                 self._weather = _create_empty_df(self.lib)
             except (
                 InvalidDataError,
@@ -1350,12 +1591,13 @@ class Session:
                 RuntimeError,
                 TypeError,
                 ValueError,
+                *_polars_error_types(),
             ) as e:
                 logger.warning(
                     "Failed to load weather for %s/%s/%s: %s",
                     self.year,
-                    self.gp,
-                    self.session,
+                    self.event_name,
+                    self.session_name,
                     e,
                 )
                 self._weather = _create_empty_df(self.lib)
@@ -2804,14 +3046,15 @@ class Session:
 
         drivers = self._drivers_data
         if not drivers:
-            logger.info(f"No drivers, returning empty: {self.year}/{self.gp}")
+            logger.info(f"No drivers, returning empty: {self.year}/{self.event_name}")
             return _create_empty_df(self.lib)
 
         driver_requests = self._build_driver_laptime_requests(driver_pool=drivers)
         if not driver_requests:
-            logger.info(f"No valid driver requests, returning empty: {self.year}/{self.gp}")
+            logger.info(f"No valid driver requests, returning empty: {self.year}/{self.event_name}")
             return _create_empty_df(self.lib)
 
+        cdn_failures_before = dict(get_cdn_manager()._failure_counts)
         payloads, ultra_cold_payloads = await self._fetch_laptime_payloads_async(
             driver_requests,
             operation="laps_async",
@@ -2838,7 +3081,8 @@ class Session:
                 merged_laps.append((normalized_pl, driver_code, driver_info.get("team", "")))
 
             if not merged_laps:
-                logger.info(f"No valid lap data: {self.year}/{self.gp}")
+                self._raise_if_cdns_failed(cdn_failures_before)
+                logger.info(f"No valid lap data: {self.year}/{self.event_name}")
                 return _create_empty_df(self.lib)
 
             self._laps = pl.DataFrame(_merge_lap_payloads(merged_laps), strict=False)
@@ -2862,7 +3106,8 @@ class Session:
                 merged_payloads.append((normalized, driver_code, driver_info.get("team", "")))
 
             if not merged_payloads:
-                logger.info(f"No valid lap data: {self.year}/{self.gp}")
+                self._raise_if_cdns_failed(cdn_failures_before)
+                logger.info(f"No valid lap data: {self.year}/{self.event_name}")
                 return _create_empty_df(self.lib)
             self._laps = pd.DataFrame(_merge_lap_payloads(merged_payloads), copy=False)
             # Remove duplicate columns if they exist (can happen if upstream data has Driver/Team)
@@ -2915,7 +3160,7 @@ class Session:
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
         all_drivers = self._drivers_data
         if not all_drivers:
-            logger.info(f"No drivers found: {self.year}/{self.gp}")
+            logger.info(f"No drivers found: {self.year}/{self.event_name}")
             return {driver: _create_empty_df(self.lib) for driver in drivers}
 
         # Build driver info map
@@ -2993,9 +3238,7 @@ class Session:
             _validate_string_param(value, "driver")
             # If it looks like a driver number, resolve to driver code first
             if value.isdigit():
-                for info in self._drivers_data:
-                    if not isinstance(info, dict):
-                        continue
+                for info in self._driver_rows():
                     number = info.get("dn")
                     code = info.get("driver")
                     if str(number) == value and isinstance(code, str) and code.strip():
@@ -3037,10 +3280,27 @@ class Session:
         # This may trigger one network fetch when drivers are not loaded yet.
         if not self._has_driver_code(driver_code):
             raise DriverNotFoundError(
-                driver=driver_code, year=self.year, event=self.gp, session=self.session
+                driver=driver_code,
+                year=self.year,
+                event=self.event_name,
+                session=self.session_name,
             )
 
         return Driver(self, driver_code, prefetched_lap_data=prefetched_laps)
+
+    def _raise_if_cdns_failed(self, failures_before: dict[str, int]) -> None:
+        """Raise ``NetworkError`` when a load produced no laps because the CDNs failed.
+
+        404s never count against a source, so a failure count that grew during
+        the load means a real transport error, not a session without laps. An
+        empty table in that case would silently hide the outage.
+        """
+        failures_after = get_cdn_manager()._failure_counts
+        if any(failures_after.get(name, 0) > count for name, count in failures_before.items()):
+            raise NetworkError(
+                url=f"{self.year}/{self.gp}/{self.session}/{SESSION_LAPTIMES_PATH}",
+                status_code=None,
+            )
 
     def _lap_time_sort_column(self, laps) -> str:
         """Resolve the numeric lap-time sort column for fastest-lap operations."""
@@ -4316,17 +4576,9 @@ SESSION_MAPPING = {
     "R": "Race",
 }
 
-GP_ALIAS_MAP = {
-    "silverstone": "British Grand Prix",
-    "hungary": "Hungarian Grand Prix",
-    "azerbaijan": "Azerbaijan Grand Prix",
-    "barcelona": "Spanish Grand Prix",
-    "monza": "Italian Grand Prix",
-    "spa": "Belgian Grand Prix",
-    "interlagos": "São Paulo Grand Prix",
-    "imola": "Emilia Romagna Grand Prix",
-    "jeddah": "Saudi Arabian Grand Prix",
-}
+# Backward-compatible view of the alias table that event resolution uses
+# (``tif1.events`` applies it, with per-season fallbacks).
+GP_ALIAS_MAP = {alias: names[0] for alias, names in EVENT_NAME_ALIASES.items()}
 
 
 def _normalize_event_key(name: str) -> str:
@@ -4336,8 +4588,29 @@ def _normalize_event_key(name: str) -> str:
     return " ".join(normalized.split())
 
 
+# Canonical session names as the schedule stores them, keyed case-insensitively
+# so "race", "qualifying" and "SPRINT" resolve like "Race" and "R" do.
+_CANONICAL_SESSION_NAMES = {
+    name.lower(): name
+    for name in (
+        "Practice 1",
+        "Practice 2",
+        "Practice 3",
+        "Qualifying",
+        "Sprint",
+        "Sprint Shootout",
+        "Sprint Qualifying",
+        "Race",
+    )
+}
+
+
 def _normalize_session_name(session: str) -> str:
-    return SESSION_MAPPING.get(session.upper(), session)
+    key = session.strip()
+    mapped = SESSION_MAPPING.get(key.upper())
+    if mapped is not None:
+        return mapped
+    return _CANONICAL_SESSION_NAMES.get(" ".join(key.lower().split()), session)
 
 
 def _resolve_gp_name(year: int, gp: str | int) -> str:
@@ -4367,6 +4640,11 @@ def _resolve_gp_name(year: int, gp: str | int) -> str:
     try:
         event = get_event_by_name(year, gp_str, exact_match=False)
         return str(event.EventName)
+    except EventNotInSeasonError:
+        # "Suzuka" in 2021: the alias is understood, the race was not held.
+        # Loading a different race or failing later with DataNotFoundError
+        # would hide that, so fail here with the explanatory message.
+        raise
     except (ValueError, AttributeError):
         # If event resolution fails, return the original string
         return gp_str
@@ -4410,8 +4688,8 @@ def get_session(
         >>> session = get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
         >>> session = get_session(2025, 1, "Practice 1")  # Using round number
         >>> session_polars = get_session(2025, "Abu Dhabi Grand Prix", "Practice 1", lib="polars")
-        >>> session.drivers
-        [{'driver': 'VER', 'team': 'Red Bull Racing'}, ...]
+        >>> session.drivers  # car numbers, classification order
+        ['81', '63', '4', ...]
         >>> laps = session.laps
     """
     gp_name = _resolve_gp_name(year, gp)
@@ -4427,4 +4705,58 @@ def get_session(
             f"Available sessions: {', '.join(available_sessions)}"
         )
 
-    return Session(year, gp_name, session_name, enable_cache, lib)
+    new_session = Session(year, gp_name, session_name, enable_cache, lib)
+    _preconnect_cdn(new_session)
+    return new_session
+
+
+_preconnect_started = False
+_preconnect_lock = threading.Lock()
+
+
+def _preconnect_cdn(session: Session) -> None:
+    """Warm the shared CDN connection in the background (Argos A8).
+
+    The first request of a cold load pays DNS + TLS (160-800 ms measured
+    against jsDelivr); opening the connection from a daemon thread while the
+    caller is still between ``get_session()`` and its first ``laps`` access
+    hides most of it. One attempt per process; any failure is swallowed (the
+    real fetch path reports its own errors) and the hook is skipped in
+    offline/CI mode or when ``cdn_preconnect`` is off.
+    """
+    global _preconnect_started
+    if (
+        _preconnect_started
+        or not bool(config.get("cdn_preconnect", True))
+        or bool(config.get("offline_mode", False))
+        or bool(config.get("ci_mode", False))
+    ):
+        return
+    try:
+        # A cached session loads without the network; the warm-up thread
+        # would only steal GIL time from the cache reads (measured +0.1-0.2 s
+        # on warm loads).
+        if session.enable_cache and session._session_cache_available():
+            return
+    except Exception:  # cache probe failures never block the hook
+        return
+    with _preconnect_lock:
+        if _preconnect_started:
+            return
+        _preconnect_started = True
+    year, gp, session_name = session.year, session.gp, session.session
+
+    def _warm() -> None:
+        try:
+            from .http_session import get_session as get_http_session
+
+            sources = get_cdn_manager().get_sources()
+            if not sources:
+                return
+            url = sources[0].format_url(year, gp, session_name, "drivers.json")
+            http = get_http_session()
+            http.head(url, timeout=max(1, config.get("timeout", 10)))
+        except Exception as e:  # best effort, never surfaces
+            logger.debug("CDN pre-connect skipped: %s", e)
+
+    threading.Thread(target=_warm, name="tif1-cdn-preconnect", daemon=True).start()

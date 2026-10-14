@@ -591,9 +591,11 @@ def test_ultra_cold_resolution_and_driver_load_warm_path(monkeypatch):
     monkeypatch.setattr(core, "_resolve_gp_name", lambda _y, _g: "Test GP")
     monkeypatch.setattr(core, "_resolve_session_name", lambda _y, _gp, _s: "Race")
 
+    # The fastest-lap reference loader forces the payload through the
+    # internal ``_drivers_data`` (the public ``drivers`` adds classification).
     class SessionWithDrivers(core.Session):
         @property
-        def drivers(self):
+        def _drivers_data(self):
             self._drivers = [{"driver": "VER"}]
             return self._drivers
 
@@ -608,7 +610,7 @@ def test_ultra_cold_resolution_and_driver_load_warm_path(monkeypatch):
 
     class SessionWithFallbackDrivers(core.Session):
         @property
-        def drivers(self):
+        def _drivers_data(self):
             self._drivers = [{"driver": "HAM"}]
             return self._drivers
 

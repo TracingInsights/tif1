@@ -40,12 +40,20 @@ def fuzzy_matcher(
     for i in range(len(reference)):
         for j in range(len(reference[i])):
             reference[i][j] = reference[i][j].casefold().replace(" ", "")
+    # Events with incomplete metadata give shorter feature lists; pad with ""
+    # (scores 0, never a substring hit) so the 2-D ratio array stays regular
+    # instead of numpy raising on a ragged list.
+    width = max((len(features) for features in reference), default=0)
+    if width == 0:
+        return 0, False
+    for features in reference:
+        features.extend([""] * (width - len(features)))
 
     # Check for exact substring matches first.
     # If exactly one reference has the query as a substring, return it as accurate.
     full_partial_match_indices = []
     for i, feature_strings in enumerate(reference):
-        if any(query in val for val in feature_strings):
+        if any(val and query in val for val in feature_strings):
             full_partial_match_indices.append(i)
 
     if len(full_partial_match_indices) == 1:

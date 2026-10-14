@@ -61,15 +61,15 @@ Messages sent by Race Control (the officials) to teams about track status, penal
 
 | Key | Field | Description | Values |
 | :--- | :--- | :--- | :--- |
-| `time` | Time | Session time when this message was issued | Time |
-| `cat` | Category | Type of message being sent | `"Other"`, `"Flag"`, `"Drs"`, `"CarEvent"` |
+| `time` | Time | Wall-clock date and time when this message was issued | ISO 8601 string, for example `"2025-04-13T14:20:01"` |
+| `cat` | Category | Type of message being sent | `"Other"`, `"Flag"`, `"Drs"`, `"SafetyCar"`, `"CarEvent"` |
 | `msg` | Message | Human-readable description of the event | e.g. `"Yellow Flag"`, `"DRS Enabled"`, `"Unsafe Release"` |
 | `status` | Status | Additional context about the message state | e.g. `"DISABLED"`, `"ENABLED"`, depends on category |
-| `flag` | Flag | Type of flag being waved (if applicable) | `"GREEN"`, `"RED"`, `"YELLOW"`, `"CLEAR"`, `"CHEQUERED"` |
+| `flag` | Flag | Type of flag being waved (if applicable) | `"GREEN"`, `"RED"`, `"YELLOW"`, `"DOUBLE YELLOW"`, `"CLEAR"`, `"CHEQUERED"`, `"BLACK AND WHITE"` |
 | `scope` | Scope | How wide the impact of this message is | `"Track"` (entire track), `"Sector"` (one of 3 sectors), `"Driver"` (specific driver) |
 | `sector` | Sector | Which mini sector is affected (if scope is `"Sector"`). There are 3 sectors, each divided into 8 mini sectors | 1-24 |
 | `dNum` | Driver Number / Racing Number | The driver's car number affected by the message (if scope is `"Driver"`) | String: `"1"`, `"44"`, `"63"`, etc. |
-| `lap` | Lap | Which lap number this message refers to | Integer |
+| `lap` | Lap | Which lap number this message refers to | Integer. Sessions other than Race send `"None"`. |
 
 ### What This Means
 
@@ -97,8 +97,10 @@ Detailed second-by-second (actually 3.7 Hz sampling, roughly 270ms intervals) da
 
 | Key | Field | Description | Type |
 | :--- | :--- | :--- | :--- |
-| `DriverAhead` | Driver Ahead | The car number of the driver directly ahead in the race order | String or `None` |
-| `DistanceToDriverAhead` | Distance To Driver Ahead | How far behind the next car is | meters |
+| `DriverAhead` | Driver Ahead | The car number of the driver directly ahead in the race order | String such as `"44"`; the literal string `"None"` when nobody is ahead |
+| `DistanceToDriverAhead` | Distance To Driver Ahead | How far behind the next car is | meters; the literal string `"None"` when nobody is ahead |
+
+tif1 replaces the `"None"` sentinel in both fields with a missing value: `NaN` or `None` on pandas, and `null` on polars. In tif1 telemetry frames, `DriverAhead` holds driver-number strings and `DistanceToDriverAhead` is a float column.
 
 ### Acceleration Vectors (G-Forces)
 
@@ -150,7 +152,7 @@ Static information about each driver that does not change during a session.
 
 ## Lap Times Data (`laptimes.json`)
 
-Comprehensive timing and performance information for each completed lap, stored per driver.
+Timing and performance information for each completed lap, stored per driver.
 
 ### Core Timing Information
 
@@ -197,7 +199,7 @@ Modern F1 tracks have speed guns that measure top speed at specific locations:
 
 ### Mini-Sector Segment Times (OpenF1)
 
-Three-character encoded strings show the per-mini-sector colour and segment classification for each sector. These fields are available only when OpenF1 data can be matched to the session.
+Encoded digit strings show the colour classification of each mini-sector in a sector. These fields are available only when OpenF1 data can be matched to the session.
 
 | Key | Field | Description | Values |
 | :--- | :--- | :--- | :--- |
@@ -238,8 +240,8 @@ A pit lap is either an **in-lap** (driving into the pits) or an **out-lap** (dri
 
 | Key | Field | Description | Unit | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| `pin` | Pit In Time | When the driver entered the pit lane relative to session start | seconds | `None` if this wasn't an in-lap |
-| `pout` | Pit Out Time | When the driver exited the pit lane relative to session start | seconds | `None` if this wasn't an out-lap |
+| `pin` | Pit In Time | When the driver entered the pit lane relative to session start | seconds | `None` if this was not an in-lap |
+| `pout` | Pit Out Time | When the driver exited the pit lane relative to session start | seconds | `None` if this was not an out-lap. The out-lap is the lap after the in-lap. |
 
 ### Data Quality and Accuracy
 

@@ -14,11 +14,11 @@ keywords:
 
 ## Overview
 
-`tif1` implements a structured exception hierarchy designed for clarity and debuggability when errors occur. Every exception in the library inherits from the base `TIF1Error` class. Each exception includes contextual information that shows what went wrong and why.
+`tif1` implements a structured exception hierarchy designed for clarity and debuggability when errors occur. The data, network, and cache exceptions inherit from the base `TIF1Error` class. Each of them includes contextual information that shows what went wrong and why. Name errors are different: an unknown session name or round number raises a plain `ValueError`, and `EventNotInSeasonError` is a `ValueError` subclass.
 
 The exception system is designed with several key principles:
 
-- **Structured Context**: Every exception carries a `context` dictionary with relevant metadata (year, event, driver, URL, etc.)
+- **Structured Context**: Every `TIF1Error` carries a `context` dictionary with relevant metadata (year, event, driver, URL, etc.)
 - **Clear Hierarchy**: Exceptions are organized in a logical tree structure. Catch errors at the appropriate level of specificity
 - **Actionable Messages**: Error messages are automatically constructed with relevant details to aid debugging
 - **Type Safety**: All exceptions are properly typed for IDE autocomplete and type checking
@@ -32,7 +32,7 @@ This guide covers every exception type in detail. It explains when each exceptio
 
 The exception hierarchy allows errors to be caught at different levels of specificity. Catch broad categories (like `TIF1Error` for any library error) or specific exceptions (like `DriverNotFoundError` for missing drivers).
 
-```python
+```text
 TIF1Error (base exception for all tif1 errors)
 │
 ├── DataNotFoundError (data unavailable in CDN/cache)
@@ -40,13 +40,24 @@ TIF1Error (base exception for all tif1 errors)
 │   └── LapNotFoundError (specific lap not found for driver)
 │
 ├── NetworkError (HTTP request failures after retries)
+│   └── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
 │
 ├── InvalidDataError (data validation/parsing failures)
 │
-├── CacheError (SQLite cache operation failures)
+├── CacheError (defined and exported; tif1 does not raise it)
 │
-└── SessionNotLoadedError (accessing data before load())
+└── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+
+ValueError (built-in)
+├── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
+└── ValueError itself (unknown session name, invalid round, lap number below 1)
 ```
+
+`EventNotInSeasonError` is exported as `tif1.EventNotInSeasonError`. `get_session()` and `get_event_by_name()` raise it, for example for `tif1.get_session(2021, "Suzuka", "Race")`. The message names the event: `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`. It carries no `context` dictionary.
+
+<Note>
+  `get_session()` does not fetch data. A `DataNotFoundError` or `NetworkError` appears on the first data access: `session.load()`, `session.laps`, `session.drivers`, and similar properties. Data properties load on first access, so `SessionNotLoadedError` does not occur. A cache failure is logged as a warning, and `tif1` continues without the SQLite cache, so `CacheError` does not occur either.
+</Note>
 
 ### Catching Strategy
 
@@ -59,6 +70,12 @@ try:
     session = tif1.get_session(2024, "Monaco", "Race")
     driver = session.get_driver("VER")
     lap = driver.get_lap(1)
+except tif1.EventNotInSeasonError:
+    # An alias such as "Suzuka" for a season without that event
+    pass
+except ValueError:
+    # Unknown session name or invalid round number
+    pass
 except tif1.DriverNotFoundError:
     # Handle specific driver not found
     pass
@@ -104,18 +121,24 @@ class TIF1Error(Exception):
 ```python
 import tif1
 
+session = tif1.get_session(2024, "Monaco", "Race")
+
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
+    driver = session.get_driver("XXX")
 except tif1.TIF1Error as e:
     print(f"Error occurred: {e.message}")
     print(f"Error type: {type(e).__name__}")
     print(f"Context data: {e.context}")
 
     # Output:
-    # Error occurred: Data not found: year=2025, event='Invalid GP', session='Race'
-    # Error type: DataNotFoundError
-    # Context data: {'year': 2025, 'event': 'Invalid GP', 'session': 'Race'}
+    # Error occurred: Driver 'XXX' not found in session
+    # Error type: DriverNotFoundError
+    # Context data: {'driver': 'XXX', 'year': 2024, 'event': 'Monaco Grand Prix', 'session': 'Race'}
 ```
+
+<Note>
+  An unknown event name does not raise. Fuzzy matching picks the closest event and logs a warning: `tif1.get_session(2025, "Invalid GP", "Race")` loads the Italian Grand Prix. Check `session.event_name` when the name comes from user input.
+</Note>
 
 **Example - Logging with Context:**
 ```python
@@ -142,10 +165,17 @@ except tif1.TIF1Error as e:
 ```python
 import tif1
 
+def log_to_monitoring(error_info: dict) -> None:
+    """Send the error to a monitoring system (placeholder)."""
+    print(f"Monitoring: {error_info}")
+
 def safe_get_session(year: int, gp: str, session_name: str):
-    """Get session with comprehensive error handling."""
+    """Get and load a session with comprehensive error handling."""
     try:
-        return tif1.get_session(year, gp, session_name)
+        session = tif1.get_session(year, gp, session_name)
+        # get_session() does not fetch data: load() is where the errors occur
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
+        return session
     except tif1.TIF1Error as e:
         # Extract context for custom handling
         error_info = {
@@ -171,7 +201,7 @@ if session is None:
 
 ### `DataNotFoundError`
 
-Raised when requested F1 data is not available in the CDN or cache. This is one of the most common exceptions. It typically occurs when requesting data for sessions that have not happened yet. It also occurs for historical sessions where data was never collected.
+Raised when requested F1 data is not available in the CDN or cache. This is one of the most common exceptions. It typically occurs for a session on the calendar that has not run yet. It also occurs when a data file was never published.
 
 **Signature:**
 ```python
@@ -192,34 +222,34 @@ class DataNotFoundError(TIF1Error):
 - Additional context from `**context` kwargs
 
 **When Raised:**
-- HTTP 404 responses from the CDN (data file does not exist)
-- Requesting future sessions that have not occurred yet
-- Requesting historical data that was never collected or published
-- Requesting data for cancelled sessions (for example, 2020 Australian GP)
-- Invalid year/event/session combinations
+- Every CDN source refuses the file with an HTTP 4xx status, such as 404 (no such file)
+- Requesting a session that is on the calendar but has not run yet
+- Requesting a data file that was never published for a session
+- A file that every CDN refused recently: `tif1` remembers the verdict for `missing_payloads_ttl_days` (default 7) and raises without a new request
+
+`DataNotFoundError` comes from the first data access, not from `get_session()`. A session name that the event does not have, such as "Sprint" on a conventional weekend, raises `ValueError` from `get_session()` instead.
 
 **Common Scenarios:**
 
 1. **Future Sessions**: Requesting data for races that have not happened yet
 2. **Historical Gaps**: Some older seasons have incomplete data coverage
-3. **Cancelled Events**: Sessions that were scheduled but cancelled
-4. **Invalid Combinations**: Requesting "Sprint" for a non-sprint weekend
+3. **Missing Files**: One data file (for example, weather) is absent for a session that has lap data
 
 **Example - Basic Handling:**
 ```python
 import tif1
 
 try:
-    # Trying to get data for a future race
-    session = tif1.get_session(2030, "Future GP", "Race")
+    # The 2026 season finale had not run when this page was written
+    session = tif1.get_session(2026, "Abu Dhabi Grand Prix", "Race")
     laps = session.laps
 except tif1.DataNotFoundError as e:
     print(f"Data not available: {e.message}")
     print(f"Requested: Year {e.context['year']}, {e.context['event']}, {e.context['session']}")
 
     # Output:
-    # Data not available: Data not found: year=2030, event='Future GP', session='Race'
-    # Requested: Year 2030, Future GP, Race
+    # Data not available: Data not found: year=2026, event='Abu Dhabi Grand Prix', session='Race'
+    # Requested: Year 2026, Abu Dhabi Grand Prix, Race
 ```
 
 **Example - Checking Data Availability:**
@@ -227,13 +257,14 @@ except tif1.DataNotFoundError as e:
 import tif1
 
 def is_data_available(year: int, gp: str, session_name: str) -> bool:
-    """Check if data is available without loading it."""
+    """Check if data is available without loading the laps."""
     try:
         session = tif1.get_session(year, gp, session_name)
-        # Try to access a lightweight property
-        _ = session.event_info
+        # session.drivers fetches only the small driver list file
+        _ = session.drivers
         return True
-    except tif1.DataNotFoundError:
+    except (tif1.DataNotFoundError, ValueError):
+        # ValueError: the event has no session with that name
         return False
 
 # Check before attempting expensive operations
@@ -248,20 +279,27 @@ else:
 ```python
 import tif1
 
+def load_laps(year: int, gp: str, session_name: str):
+    """Get a session and load its laps (the step that can raise)."""
+    session = tif1.get_session(year, gp, session_name)
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    return session
+
 def get_session_with_fallback(year: int, gp: str, preferred: str, fallback: str):
     """Try preferred session, fall back to alternative."""
     try:
-        return tif1.get_session(year, gp, preferred)
-    except tif1.DataNotFoundError:
+        return load_laps(year, gp, preferred)
+    except (tif1.DataNotFoundError, ValueError):
+        # ValueError: the event has no session with that name
         print(f"{preferred} not available, trying {fallback}")
         try:
-            return tif1.get_session(year, gp, fallback)
-        except tif1.DataNotFoundError:
+            return load_laps(year, gp, fallback)
+        except (tif1.DataNotFoundError, ValueError):
             print(f"Neither {preferred} nor {fallback} available")
             return None
 
-# Try Sprint, fall back to Race
-session = get_session_with_fallback(2024, "Austrian Grand Prix", "Sprint", "Race")
+# Monaco 2024 had no sprint, so this falls back to the race
+session = get_session_with_fallback(2024, "Monaco", "Sprint", "Race")
 ```
 
 **Example - Batch Processing with Error Tracking:**
@@ -276,6 +314,7 @@ def load_multiple_sessions(requests: list[tuple[int, str, str]]):
     for year, gp, session_name in requests:
         try:
             session = tif1.get_session(year, gp, session_name)
+            _ = session.drivers  # First data access: raises if the data is missing
             results.append((year, gp, session_name, session))
         except tif1.DataNotFoundError as e:
             failures.append({
@@ -292,7 +331,7 @@ def load_multiple_sessions(requests: list[tuple[int, str, str]]):
 requests = [
     (2024, "Monaco", "Race"),
     (2024, "Monaco", "Qualifying"),
-    (2030, "Future GP", "Race"),  # Will fail
+    (2026, "Abu Dhabi Grand Prix", "Race"),  # Not run yet when this page was written
 ]
 
 successful, failed = load_multiple_sessions(requests)
@@ -320,7 +359,7 @@ class DriverNotFoundError(DataNotFoundError):
 - `session` (str | None): Session name (if provided in context)
 
 **When Raised:**
-- Calling `session.get_driver("XXX")` with an invalid driver code
+- Calling `session.get_driver("XXX")` with an invalid driver code or car number
 - Driver code typos (for example, "VET" instead of "VER")
 - Requesting a driver who did not participate in that specific session
 - Driver retired/withdrew before the session
@@ -330,7 +369,9 @@ class DriverNotFoundError(DataNotFoundError):
 1. **Typos**: "HAM" vs "HAN", "VER" vs "VET"
 2. **Wrong Session**: Driver participated in practice but not qualifying
 3. **Historical Changes**: Driver codes changed between seasons
-4. **Case Sensitivity**: Driver codes are case-sensitive
+4. **Case Sensitivity**: Driver codes are case-sensitive (`"ver"` raises; use `"VER"`)
+
+`get_driver()` also accepts the car number (`"1"` or `1`). `session.drivers` holds car numbers in classification order, and `session.drivers_df["Driver"]` holds the three-letter codes.
 
 **Example - Basic Handling:**
 ```python
@@ -343,12 +384,12 @@ try:
 except tif1.DriverNotFoundError as e:
     print(f"Driver not found: {e.message}")
     print(f"Requested driver: {e.context['driver']}")
-    print(f"Available drivers: {session.drivers}")
+    print(f"Available drivers: {session.drivers_df['Driver'].tolist()}")
 
     # Output:
     # Driver not found: Driver 'XXX' not found in session
     # Requested driver: XXX
-    # Available drivers: ['VER', 'PER', 'LEC', 'SAI', ...]
+    # Available drivers: ['LEC', 'PIA', 'SAI', 'NOR', 'RUS', 'VER', ...]
 ```
 
 **Example - Fuzzy Driver Matching:**
@@ -361,8 +402,8 @@ def get_driver_fuzzy(session, driver_code: str):
     try:
         return session.get_driver(driver_code)
     except tif1.DriverNotFoundError:
-        # Try to find close matches
-        available = session.drivers
+        # Try to find close matches among the driver codes
+        available = session.drivers_df["Driver"].tolist()
         matches = get_close_matches(driver_code, available, n=1, cutoff=0.6)
 
         if matches:
@@ -393,8 +434,8 @@ def safe_get_driver(session, driver_code: str, default=None):
 
 # Use with default
 driver = safe_get_driver(session, "VER", default=None)
-if driver:
-    print(f"Found driver: {driver.driver}")
+if driver is not None:  # a Driver is a pandas Series: never test it with `if driver:`
+    print(f"Found driver: {driver['FullName']}")
 else:
     print("Driver not found")
 ```
@@ -460,9 +501,11 @@ analysis = analyze_drivers(session, codes)
 print(analysis)
 ```
 
---- ### `LapNotFoundError`
+---
 
-Raised when attempting to access a specific lap number that does not exist for a driver. This is a subclass of `DataNotFoundError`. It typically occurs when requesting lap numbers beyond what the driver completed. It also occurs when requesting laps that were invalidated or deleted.
+### `LapNotFoundError`
+
+Raised when attempting to access a specific lap number that does not exist for a driver. This is a subclass of `DataNotFoundError`. It typically occurs when requesting lap numbers beyond what the driver completed.
 
 **Signature:**
 ```python
@@ -478,21 +521,20 @@ class LapNotFoundError(DataNotFoundError):
 **Context Keys:**
 - `lap_number` (int | None): The requested lap number (for example, 1, 50, 999)
 - `driver` (str | None): The driver code for whom the lap was requested (for example, "VER", "HAM")
-- Additional context from `**context` kwargs
+- `year`, `event`, `session`: The session of the request, with plain names (`"Monaco Grand Prix"`, `"Race"`)
 
 **When Raised:**
 - Calling `driver.get_lap(N)` where N exceeds the driver's total lap count
-- Requesting lap 0 or negative lap numbers
-- Requesting laps that were deleted due to track limits violations
 - Requesting laps from drivers who retired early in the session
-- Accessing laps before the driver started (for example, lap 1 when driver started from pit lane on lap 2)
+- Requesting a lap number that the driver does not have in the data
+
+A lap number below 1 raises `ValueError` (`lap_number must be positive`), and a non-integer raises `TypeError`. Deleted laps (track limits) stay in the data with `Deleted` set to `True`, so `get_lap()` returns them.
 
 **Common Scenarios:**
 
 1. **Out of Range**: Requesting lap 60 when the driver only completed 45 laps
 2. **Early Retirement**: Driver crashed on lap 10, requesting lap 20
-3. **Invalid Laps**: Lap was deleted due to track limits or red flag
-4. **Formation Laps**: Requesting lap 0 (formation lap) which may not be recorded
+3. **Float Lap Numbers**: `LapNumber` is a float column; pass `int(lap["LapNumber"])`, because `get_lap(10.0)` raises `TypeError`
 
 **Example - Basic Handling:**
 ```python
@@ -533,7 +575,8 @@ def safe_get_lap(driver, lap_number: int, default=None):
 # Use with default
 lap = safe_get_lap(driver, 50, default=None)
 if lap is not None:
-    print(f"Lap {lap['LapNumber'].iloc[0]} time: {lap['LapTime'].iloc[0]}")
+    # get_lap() returns one Lap (a pandas Series): index it without .iloc
+    print(f"Lap {int(lap['LapNumber'])} time: {lap['LapTime']}")
 else:
     print("Lap not found")
 ```
@@ -606,7 +649,7 @@ def analyze_lap_completion(session, lap_number: int):
     completed = []
     did_not_complete = []
 
-    for driver_code in session.drivers:
+    for driver_code in session.drivers_df["Driver"]:
         driver = session.get_driver(driver_code)
         try:
             lap = driver.get_lap(lap_number)
@@ -617,7 +660,7 @@ def analyze_lap_completion(session, lap_number: int):
     return {
         "completed": completed,
         "did_not_complete": did_not_complete,
-        "completion_rate": len(completed) / len(session.drivers) * 100
+        "completion_rate": len(completed) / len(session.drivers_df) * 100
     }
 
 # Analyze lap 50
@@ -626,14 +669,14 @@ print(f"Lap 50 completion: {analysis['completion_rate']:.1f}%")
 print(f"Did not complete: {analysis['did_not_complete']}")
 ```
 
-**Example - Handling Retired Drivers:**
+**Example - Laps Completed per Driver:**
 ```python
 import tif1
 
 session = tif1.get_session(2024, "Monaco", "Race")
 
-def get_retirement_lap(driver):
-    """Find the lap on which a driver retired."""
+def get_last_lap(driver):
+    """Find the last lap that a driver completed."""
     lap_num = 1
     last_valid = None
 
@@ -648,14 +691,17 @@ def get_retirement_lap(driver):
 
     return last_valid
 
-# Check all drivers for retirements
-for driver_code in session.drivers:
+# Drivers that did not complete the full distance: lapped cars and retirements
+for driver_code in session.drivers_df["Driver"]:
     driver = session.get_driver(driver_code)
-    last_lap = get_retirement_lap(driver)
-    total_laps = len(driver.laps)
+    last_lap = get_last_lap(driver)
 
     if last_lap and last_lap < 78:  # Monaco race distance
-        print(f"{driver_code} retired on lap {last_lap}")
+        print(f"{driver_code} completed {last_lap} of 78 laps")
+
+# session.results shows the gap to the leader as Status ("+2 Laps", "+77 Laps").
+# The data has no retirement reason, so a retirement also reads "+N Laps".
+print(session.results[["Abbreviation", "Status", "Laps"]].tail(5))
 ```
 
 ---
@@ -664,9 +710,9 @@ for driver_code in session.drivers:
 
 ### `NetworkError`
 
-Raised when HTTP network requests fail after all retries and CDN fallback mechanisms are exhausted. This exception indicates a persistent network connectivity issue, server unavailability, or infrastructure problem. Such problems prevent data retrieval.
+Raised when HTTP network requests fail after all retries and CDN fallback mechanisms are exhausted. This exception indicates a network connectivity issue, server unavailability, or infrastructure problem. Such problems prevent data retrieval.
 
-The library implements retry logic with exponential backoff and circuit breaker patterns before raising this exception. A `NetworkError` typically means the problem is serious and persistent.
+The library implements retry logic with exponential backoff and circuit breaker patterns before raising this exception. A `NetworkError` means that no CDN source delivered the file. A 4xx refusal from every source raises `DataNotFoundError` instead.
 
 **Signature:**
 ```python
@@ -680,27 +726,49 @@ class NetworkError(TIF1Error):
 ```
 
 **Context Keys:**
-- `url` (str | None): The full URL that failed (for example, "https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
-- `status_code` (int | None): HTTP status code if the server responded (for example, 500, 502, 503, 504)
-- Additional context from `**context` kwargs (may include retry count, timeout info, etc.)
+- `url` (str | None): The CDN path that failed, without the CDN host (for example, `"2024/Monaco%20Grand%20Prix/Race/drivers.json"`). Absolute-URL fetches (schedule files) report the full URL
+- `status_code` (int | None): HTTP status code of the last failed source (for example, 500, 502, 503, 504). `None` when the request failed before a response (timeout, DNS failure)
+- Additional context from `**context` kwargs
 
 **When Raised:**
-- All retries exhausted (typically 3-5 retries with exponential backoff)
-- CDN fallback mechanisms failed
-- HTTP 5xx server errors (500, 502, 503, 504) persisting after retries
-- Connection timeouts exceeding configured thresholds
-- DNS resolution failures
-- SSL/TLS certificate validation errors
+- All CDN sources (jsDelivr, Hugging Face buckets, StaticDelivr) fail with a server error or a transport error
+- HTTP 5xx server errors (500, 502, 503, 504) persisting after retries (`max_retries`, default 3)
+- Connection timeouts exceeding the configured `timeout` (default 30 seconds)
+- DNS resolution failures and SSL/TLS errors
 - Network connectivity issues (no internet connection)
 - Firewall or proxy blocking requests
 
 **Common Scenarios:**
 
 1. **CDN Outage**: One or more CDN sources (jsDelivr, Hugging Face buckets, StaticDelivr) experiencing downtime or degraded performance
-2. **GitHub Issues**: Source repository unavailable or rate-limited
-3. **Local Network**: No internet connection or restrictive firewall
-4. **Server Errors**: Backend infrastructure experiencing issues
-5. **Timeout**: Requests taking too long due to slow network or large files
+2. **Local Network**: No internet connection or restrictive firewall
+3. **Server Errors**: Backend infrastructure experiencing issues
+4. **Timeout**: Requests taking too long due to slow network or large files
+
+**Subclass `CircuitBreakerOpenError`:** The shared circuit breaker (`tif1.retry.CircuitBreaker`) opens after `circuit_breaker_threshold` failures (default 5). While it is open, `CircuitBreaker.call()` refuses calls with `CircuitBreakerOpenError` for `circuit_breaker_timeout` seconds (default 60). The message is `Circuit breaker is open`. It is a `NetworkError`, so `except tif1.NetworkError` also catches it. The class is exported as `tif1.CircuitBreakerOpenError` and `tif1.exceptions.CircuitBreakerOpenError`.
+
+```python
+import tif1
+from tif1.retry import CircuitBreaker
+
+breaker = CircuitBreaker(threshold=2, timeout=60)
+
+def failing_request():
+    raise tif1.NetworkError(url="2024/Monaco%20Grand%20Prix/Race/drivers.json", status_code=503)
+
+for attempt in range(3):
+    try:
+        breaker.call(failing_request)
+    except tif1.CircuitBreakerOpenError as e:
+        print(f"Attempt {attempt + 1}: {e.message}")  # Circuit breaker is open
+    except tif1.NetworkError as e:
+        print(f"Attempt {attempt + 1}: {e.message}")
+
+# Output:
+# Attempt 1: Network request failed: url='2024/Monaco%20Grand%20Prix/Race/drivers.json', status=503
+# Attempt 2: Network request failed: url='2024/Monaco%20Grand%20Prix/Race/drivers.json', status=503
+# Attempt 3: Circuit breaker is open
+```
 
 **HTTP Status Codes:**
 
@@ -722,9 +790,9 @@ except tif1.NetworkError as e:
     print(f"Failed URL: {e.context.get('url')}")
     print(f"Status code: {e.context.get('status_code', 'No response')}")
 
-    # Output:
-    # Network error: Network request failed: url='https://...', status=503
-    # Failed URL: https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...
+    # Output (only when every CDN source fails), for example:
+    # Network error: Network request failed: url='2024/Monaco%20Grand%20Prix/Race/drivers.json', status=503
+    # Failed URL: 2024/Monaco%20Grand%20Prix/Race/drivers.json
     # Status code: 503
 ```
 
@@ -764,36 +832,27 @@ def load_session_with_retry(
 session = load_session_with_retry(2024, "Monaco", "Race", max_retries=5)
 ```
 
-**Example - Fallback to Cached Data:**
+**Example - Offline Mode with Cached Data:**
+
+`tif1` reads the SQLite cache before it contacts a CDN, so a `NetworkError` means that the file is not in the cache. With `offline_mode`, `tif1` uses only cached data and makes no network requests. A lap file that is not in the cache does not raise in this mode. `tif1` logs `Failed to fetch ...` for each missing file and returns fewer laps, or none:
+
 ```python
 import tif1
 
-def load_session_with_cache_fallback(year: int, gp: str, session_name: str):
-    """Try to load session, fall back to cache if network fails."""
-    try:
-        session = tif1.get_session(year, gp, session_name)
-        _ = session.laps  # Trigger network load
-        return session, "live"
-    except tif1.NetworkError as e:
-        print(f"Network error: {e.message}")
-        print("Attempting to load from cache...")
+config = tif1.get_config()
+config.set("offline_mode", True)  # No network requests: cached data only
 
-        try:
-            # Try to get cached version (implementation depends on cache API)
-            session = tif1.get_session(year, gp, session_name)
-            # Check if we have cached data
-            if hasattr(session, '_laps_df') and session._laps_df is not None:
-                print("Loaded from cache")
-                return session, "cached"
-            else:
-                print("No cached data available")
-                raise
-        except Exception:
-            print("Cache fallback failed")
-            raise e
-
-session, source = load_session_with_cache_fallback(2024, "Monaco", "Race")
-print(f"Data source: {source}")
+try:
+    session = tif1.get_session(2024, "Monaco", "Race")
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    if session.laps.empty:
+        print("The laps of this session are not in the cache")
+    else:
+        print(f"Loaded {len(session.laps)} laps from the cache")
+except tif1.TIF1Error as e:
+    print(f"Offline load failed: {e.message}")
+finally:
+    config.set("offline_mode", False)
 ```
 
 **Example - Network Health Check:**
@@ -816,7 +875,7 @@ def check_network_health():
     for year, gp, session_name in test_cases:
         try:
             session = tif1.get_session(year, gp, session_name)
-            _ = session.event_info  # Lightweight check
+            _ = session.drivers  # Small request: the driver list file
             results["reachable"].append((year, gp, session_name))
         except tif1.NetworkError as e:
             results["unreachable"].append((year, gp, session_name))
@@ -848,22 +907,22 @@ if health['errors']:
 ```
 
 **Example - Timeout Configuration:**
+
+The request timeout is the `timeout` configuration key (seconds, default 30):
+
 ```python
 import tif1
 
-# Configure custom timeouts (if supported by library)
-# This is a conceptual example - check actual API
-
 def load_with_custom_timeout(year: int, gp: str, session_name: str, timeout: int = 30):
     """Load session with custom timeout."""
+    tif1.get_config().set("timeout", timeout)
     try:
-        # Assuming the library supports timeout configuration
         session = tif1.get_session(year, gp, session_name)
-        _ = session.laps
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         return session
     except tif1.NetworkError as e:
         if e.context.get('status_code') is None:
-            print("Request timed out - no response received")
+            print("No response received (timeout or connection failure)")
             print(f"Consider increasing timeout (current: {timeout}s)")
         else:
             print(f"Server error: {e.context.get('status_code')}")
@@ -1026,23 +1085,15 @@ class InvalidDataError(TIF1Error):
 
 **When Raised:**
 - JSON parsing failures (malformed JSON syntax)
-- Missing required fields in data structures
-- Data type mismatches (string where number expected)
-- Invalid enum values (unknown session type, compound type, etc.)
-- Corrupted or truncated data files
-- Schema validation failures (pydantic validation errors)
-- Inconsistent data (lap times without lap numbers, etc.)
-- Data integrity violations (negative lap times, impossible speeds, etc.)
-- Encoding issues (invalid UTF-8, etc.)
+- A payload of the wrong type (for example, a list where a JSON object is expected)
+- Schema validation failures (pydantic validation errors). Most of these checks run only when the `validate_data`, `validate_lap_times`, or `validate_telemetry` configuration keys are `True` (all default to `False`)
+- Malformed schedule data (see the [Schedule Schema API](/api-reference/schedule-schema))
 
 **Common Scenarios:**
 
 1. **Malformed JSON**: CDN served corrupted or incomplete JSON
 2. **Schema Changes**: Data structure changed but library not updated
-3. **Missing Fields**: Required columns or fields absent from data
-4. **Type Errors**: Data types do not match expected schema
-5. **Validation Failures**: Data values outside acceptable ranges
-6. **Encoding Issues**: Character encoding problems in text fields
+3. **Validation Enabled**: `validate_data=True` and a payload fails a check
 
 **Example - Basic Handling:**
 ```python
@@ -1055,9 +1106,9 @@ except tif1.InvalidDataError as e:
     print(f"Invalid data: {e.message}")
     print(f"Reason: {e.context.get('reason')}")
 
-    # Output:
-    # Invalid data: Invalid data: Missing required field 'LapTime'
-    # Reason: Missing required field 'LapTime'
+    # Output (only for a broken payload), for example:
+    # Invalid data: Invalid data: Expected dict, got list
+    # Reason: Expected dict, got list
 ```
 
 **Example - Detailed Error Inspection:**
@@ -1130,30 +1181,29 @@ else:
 ```
 
 **Example - Validation Error Recovery:**
+
+Load with validation first, then without it if a check fails:
+
 ```python
 import tif1
 
 def load_with_fallback_validation(year: int, gp: str, session_name: str):
-    """Try to load data with progressively relaxed validation."""
-    validation_levels = ["strict", "normal", "lenient"]
-
-    for level in validation_levels:
-        try:
-            # Conceptual example - actual API may differ
-            session = tif1.get_session(year, gp, session_name)
-            _ = session.laps
-            print(f"Loaded with {level} validation")
-            return session
-        except tif1.InvalidDataError as e:
-            if level == validation_levels[-1]:
-                # Last attempt failed
-                print(f"All validation levels failed")
-                print(f"Final error: {e.message}")
-                print(f"Reason: {e.context.get('reason')}")
-                raise
-            else:
-                print(f"{level.capitalize()} validation failed, trying {validation_levels[validation_levels.index(level) + 1]}")
-                continue
+    """Try a validated load, then fall back to an unvalidated load."""
+    config = tif1.get_config()
+    try:
+        for validate in (True, False):
+            config.set("validate_data", validate)
+            try:
+                session = tif1.get_session(year, gp, session_name)
+                session.load(laps=True, telemetry=False, weather=False, messages=False)
+                print(f"Loaded with validate_data={validate}")
+                return session
+            except tif1.InvalidDataError as e:
+                if not validate:
+                    raise
+                print(f"Validation failed ({e.context.get('reason')}), loading without it")
+    finally:
+        config.set("validate_data", False)  # Restore the default
 
 session = load_with_fallback_validation(2024, "Monaco", "Race")
 ```
@@ -1175,10 +1225,10 @@ def validate_session_data_quality(session):
             if missing_times > 0:
                 issues.append(f"{missing_times} laps missing lap times")
 
-        # Check for negative lap times (data corruption)
-        if 'LapTime' in laps.columns:
-            # Assuming LapTime is in seconds
-            negative_times = (laps['LapTime'] < 0).sum() if laps['LapTime'].dtype in ['float64', 'int64'] else 0
+        # Check for negative lap times (data corruption). LapTime is a
+        # timedelta column; LapTimeSeconds holds the same values as floats.
+        if 'LapTimeSeconds' in laps.columns:
+            negative_times = int((laps['LapTimeSeconds'] < 0).sum())
             if negative_times > 0:
                 issues.append(f"{negative_times} laps with negative times")
 
@@ -1308,18 +1358,18 @@ def load_with_custom_validation(
         if require_telemetry:
             # Check if telemetry data is available
             try:
-                driver = session.get_driver(session.drivers[0])
-                fastest = driver.get_fastest_lap()
-                if 'Speed' not in fastest.columns:
+                driver = session.get_driver(session.drivers[0])  # car number of the winner
+                telemetry = driver.get_fastest_lap_tel()
+                if 'Speed' not in telemetry.columns:
                     raise tif1.InvalidDataError(
                         reason="Telemetry data not available",
                         year=year,
                         event=gp,
                         session=session_name
                     )
-            except Exception as e:
+            except tif1.TIF1Error as e:
                 raise tif1.InvalidDataError(
-                    reason=f"Telemetry validation failed: {str(e)}",
+                    reason=f"Telemetry validation failed: {e.message}",
                     year=year,
                     event=gp,
                     session=session_name
@@ -1393,9 +1443,13 @@ print(json.dumps(report, indent=2))
 
 ### `CacheError`
 
-Raised when cache operations fail, typically due to SQLite database errors, filesystem issues, or resource constraints. The library uses an SQLite-backed cache to store fetched data locally, and this exception indicates problems with that caching layer.
+A `TIF1Error` subclass for cache operation failures. `tif1` defines and exports it, but the current library does not raise it. The SQLite cache handles its own failures:
 
-Cache errors are generally non-fatal for data retrieval. The library can fall back to fetching from CDN. Cache errors may impact performance and offline capabilities.
+- A cache that cannot open (permission denied, read-only filesystem, corrupt file) logs the warning `SQLite cache unavailable: ...`. `tif1` then runs without the SQLite tier and fetches data from the CDN.
+- A failed cache read logs `Cache read error for ...` and counts as a cache miss.
+- `cache.clear()` on a cache without a connection logs `Cannot clear cache (no connection or read-only mode)` and returns.
+
+So cache problems show up as log warnings and slower loads, not as exceptions. `CacheError` stays available for application code that wants to report its own cache problems in the `TIF1Error` tree.
 
 **Signature:**
 ```python
@@ -1404,81 +1458,49 @@ class CacheError(TIF1Error):
 ```
 
 **Context Keys:**
-- Additional context from `**context` kwargs (may include cache path, operation type, SQLite error codes, etc.)
+- Any keyword arguments passed by the code that raises it
 
-**When Raised:**
-- SQLite database corruption or lock errors
-- Insufficient disk space for cache operations
-- Permission denied when accessing cache directory
-- Cache database schema migration failures
-- Concurrent access conflicts (multiple processes)
-- Filesystem errors (read-only filesystem, etc.)
-- Cache directory does not exist and cannot be created
-- Database connection failures
-- Transaction rollback errors
-
-**Common Scenarios:**
-
-1. **Disk Full**: No space left on device for cache writes
-2. **Permissions**: Cache directory not writable by current user
-3. **Corruption**: SQLite database file corrupted
-4. **Locks**: Database locked by another process
-5. **Migration**: Cache schema version mismatch
-
-**Example - Basic Handling:**
+**Example - Raising CacheError in Application Code:**
 ```python
+import os
+
 import tif1
 
+def ensure_cache_dir_writable() -> str:
+    """Raise CacheError when the tif1 cache directory is not writable."""
+    cache_dir = str(tif1.get_cache().cache_dir)
+    if not os.access(cache_dir, os.W_OK):
+        raise tif1.CacheError(f"Cache directory not writable: {cache_dir}", cache_dir=cache_dir)
+    return cache_dir
+
 try:
-    # Assuming cache API exists
-    cache = tif1.get_cache()
-    cache.clear()
+    print(f"Cache directory: {ensure_cache_dir_writable()}")
 except tif1.CacheError as e:
     print(f"Cache error: {e.message}")
     print(f"Context: {e.context}")
-
-    # Output:
-    # Cache error: Failed to clear cache: database is locked
-    # Context: {'operation': 'clear', 'error_code': 5}
 ```
 
-**Example - Cache Operations with Fallback:**
+**Example - Show Cache Warnings:**
+
+Cache failures are logged by the `tif1.cache` logger. Show them while debugging:
+
 ```python
+import logging
+
 import tif1
 
-def safe_cache_operation(operation_func, fallback_value=None):
-    """Execute cache operation with error handling."""
-    try:
-        return operation_func()
-    except tif1.CacheError as e:
-        print(f"Cache operation failed: {e.message}")
-        print("Continuing without cache...")
-        return fallback_value
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("tif1.cache").setLevel(logging.DEBUG)
 
-# Example usage
-def get_cached_session(year: int, gp: str, session_name: str):
-    """Try to get session from cache, fall back to CDN."""
-    def cache_lookup():
-        # Conceptual - actual API may differ
-        cache = tif1.get_cache()
-        return cache.get(year, gp, session_name)
-
-    cached = safe_cache_operation(cache_lookup, fallback_value=None)
-
-    if cached is not None:
-        print("Loaded from cache")
-        return cached
-    else:
-        print("Loading from CDN")
-        return tif1.get_session(year, gp, session_name)
-
-session = get_cached_session(2024, "Monaco", "Race")
+session = tif1.get_session(2024, "Monaco", "Race")
+session.load(laps=True, telemetry=False, weather=False, messages=False)
 ```
 
 **Example - Cache Diagnostics:**
 ```python
-import tif1
 import os
+
+import tif1
 
 def diagnose_cache_issues():
     """Diagnose common cache problems."""
@@ -1489,39 +1511,25 @@ def diagnose_cache_issues():
         "issues": []
     }
 
-    try:
-        # Check if cache is accessible
-        cache = tif1.get_cache()
-        diagnostics["cache_accessible"] = True
+    cache = tif1.get_cache()
+    cache_path = str(cache.cache_dir)
+    diagnostics["cache_accessible"] = os.path.exists(cache_path)
 
-        # Check cache path
-        cache_path = cache.cache_dir if hasattr(cache, 'cache_dir') else None
-        if cache_path:
-            # Check if directory exists
-            if not os.path.exists(cache_path):
-                diagnostics["issues"].append(f"Cache directory doesn't exist: {cache_path}")
+    if not diagnostics["cache_accessible"]:
+        diagnostics["issues"].append(f"Cache directory does not exist: {cache_path}")
+    elif os.access(cache_path, os.W_OK):
+        diagnostics["cache_writable"] = True
+    else:
+        diagnostics["issues"].append(f"Cache directory not writable: {cache_path}")
 
-            # Check if writable
-            if os.path.exists(cache_path) and os.access(cache_path, os.W_OK):
-                diagnostics["cache_writable"] = True
-            else:
-                diagnostics["issues"].append(f"Cache directory not writable: {cache_path}")
-
-            # Check disk space
-            if os.path.exists(cache_path):
-                stat = os.statvfs(cache_path)
-                free_space_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
-                diagnostics["free_space_mb"] = free_space_mb
-
-                if free_space_mb > 100:  # At least 100MB free
-                    diagnostics["disk_space_available"] = True
-                else:
-                    diagnostics["issues"].append(f"Low disk space: {free_space_mb:.1f}MB")
-
-    except tif1.CacheError as e:
-        diagnostics["issues"].append(f"Cache error: {e.message}")
-    except Exception as e:
-        diagnostics["issues"].append(f"Unexpected error: {str(e)}")
+    if diagnostics["cache_accessible"]:
+        stat = os.statvfs(cache_path)  # POSIX only; use shutil.disk_usage on Windows
+        free_space_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
+        diagnostics["free_space_mb"] = free_space_mb
+        if free_space_mb > 100:  # At least 100MB free
+            diagnostics["disk_space_available"] = True
+        else:
+            diagnostics["issues"].append(f"Low disk space: {free_space_mb:.1f}MB")
 
     return diagnostics
 
@@ -1539,250 +1547,77 @@ if diag['issues']:
 ```
 
 **Example - Cache Repair:**
+
+When the cache data looks wrong, clear it. `invalidate()` limits the scope: `"memory"`, `"json"`, `"telemetry"`, or `"all"`:
+
 ```python
 import tif1
-import os
-import shutil
 
-def repair_cache(backup: bool = True):
-    """Attempt to repair corrupted cache."""
-    try:
-        cache = tif1.get_cache()
-        cache_path = cache.cache_dir if hasattr(cache, 'cache_dir') else None
-
-        if not cache_path:
-            print("Cannot determine cache path")
-            return False
-
-        # Backup existing cache if requested
-        if backup and os.path.exists(cache_path):
-            backup_path = f"{cache_path}.backup"
-            print(f"Backing up cache to {backup_path}")
-            shutil.copytree(cache_path, backup_path, dirs_exist_ok=True)
-
-        # Try to clear and reinitialize cache
-        try:
-            print("Clearing cache...")
-            cache.clear()
-            print("Cache cleared successfully")
-            return True
-        except tif1.CacheError as e:
-            print(f"Failed to clear cache: {e.message}")
-
-            # If clearing fails, try to delete and recreate
-            if os.path.exists(cache_path):
-                print("Attempting to delete and recreate cache...")
-                shutil.rmtree(cache_path)
-                os.makedirs(cache_path, exist_ok=True)
-                print("Cache directory recreated")
-                return True
-
-            return False
-    except Exception as e:
-        print(f"Cache repair failed: {str(e)}")
-        return False
-
-# Attempt repair
-if repair_cache(backup=True):
-    print("Cache repaired successfully")
-else:
-    print("Cache repair failed")
+cache = tif1.get_cache()
+cache.invalidate("telemetry")  # Drop cached telemetry only
+cache.clear()                  # Drop everything; the next load fetches from the CDN
 ```
 
 **Example - Cache Monitoring:**
 ```python
-import tif1
 import os
 
-def monitor_cache_health():
-    """Monitor cache health and performance."""
-    metrics = {
-        "status": "unknown",
-        "size_mb": 0,
-        "entry_count": 0,
-        "errors": []
-    }
-
-    try:
-        cache = tif1.get_cache()
-        cache_path = cache.cache_dir if hasattr(cache, 'cache_dir') else None
-
-        if cache_path and os.path.exists(cache_path):
-            # Calculate cache size
-            total_size = 0
-            file_count = 0
-
-            for dirpath, dirnames, filenames in os.walk(cache_path):
-                for filename in filenames:
-                    filepath = os.path.join(dirpath, filename)
-                    try:
-                        total_size += os.path.getsize(filepath)
-                        file_count += 1
-                    except OSError:
-                        pass
-
-            metrics["size_mb"] = total_size / (1024 * 1024)
-            metrics["entry_count"] = file_count
-            metrics["status"] = "healthy"
-
-            # Check for issues
-            if metrics["size_mb"] > 1000:  # Over 1GB
-                metrics["errors"].append(f"Cache size large: {metrics['size_mb']:.1f}MB")
-
-        else:
-            metrics["status"] = "not_found"
-            metrics["errors"].append("Cache directory not found")
-
-    except tif1.CacheError as e:
-        metrics["status"] = "error"
-        metrics["errors"].append(f"Cache error: {e.message}")
-    except Exception as e:
-        metrics["status"] = "error"
-        metrics["errors"].append(f"Unexpected error: {str(e)}")
-
-    return metrics
-
-# Monitor cache
-health = monitor_cache_health()
-print(f"Cache status: {health['status']}")
-print(f"Cache size: {health['size_mb']:.1f}MB")
-print(f"Entries: {health['entry_count']}")
-
-if health['errors']:
-    print("Issues:")
-    for error in health['errors']:
-        print(f"  - {error}")
-```
-
-**Example - Graceful Cache Degradation:**
-```python
 import tif1
 
-class CacheManager:
-    """Wrapper for cache operations with graceful degradation."""
+def monitor_cache_health():
+    """Report the size of the tif1 cache directory."""
+    metrics = {"status": "unknown", "size_mb": 0.0, "file_count": 0, "warnings": []}
 
-    def __init__(self):
-        self.cache_available = True
-        self.cache = None
-        self._initialize_cache()
+    cache_path = str(tif1.get_cache().cache_dir)
+    if not os.path.exists(cache_path):
+        metrics["status"] = "not_found"
+        metrics["warnings"].append("Cache directory not found")
+        return metrics
 
-    def _initialize_cache(self):
-        """Initialize cache with error handling."""
-        try:
-            self.cache = tif1.get_cache()
-            self.cache_available = True
-        except tif1.CacheError as e:
-            print(f"Cache initialization failed: {e.message}")
-            print("Running without cache")
-            self.cache_available = False
+    total_size = 0
+    file_count = 0
+    for dirpath, _dirnames, filenames in os.walk(cache_path):
+        for filename in filenames:
+            try:
+                total_size += os.path.getsize(os.path.join(dirpath, filename))
+                file_count += 1
+            except OSError:
+                pass
 
-    def get(self, key: str, default=None):
-        """Get from cache with fallback."""
-        if not self.cache_available:
-            return default
+    metrics["size_mb"] = total_size / (1024 * 1024)
+    metrics["file_count"] = file_count
+    metrics["status"] = "healthy"
+    if metrics["size_mb"] > 1000:  # Over 1GB
+        metrics["warnings"].append(f"Cache size large: {metrics['size_mb']:.1f}MB")
+    return metrics
 
-        try:
-            return self.cache.get(key)
-        except tif1.CacheError as e:
-            print(f"Cache read failed: {e.message}")
-            self.cache_available = False
-            return default
-
-    def set(self, key: str, value):
-        """Set in cache with error handling."""
-        if not self.cache_available:
-            return False
-
-        try:
-            self.cache.set(key, value)
-            return True
-        except tif1.CacheError as e:
-            print(f"Cache write failed: {e.message}")
-            self.cache_available = False
-            return False
-
-    def clear(self):
-        """Clear cache with error handling."""
-        if not self.cache_available:
-            return False
-
-        try:
-            self.cache.clear()
-            return True
-        except tif1.CacheError as e:
-            print(f"Cache clear failed: {e.message}")
-            # Try to reinitialize
-            self._initialize_cache()
-            return False
-
-# Use cache manager
-cache_mgr = CacheManager()
-
-# Operations continue even if cache fails
-cache_mgr.set("test_key", "test_value")
-value = cache_mgr.get("test_key", default="fallback")
+health = monitor_cache_health()
+print(f"Cache status: {health['status']}")
+print(f"Cache size: {health['size_mb']:.1f}MB in {health['file_count']} files")
+for warning in health["warnings"]:
+    print(f"  - {warning}")
 ```
 
 **Example - Cache Configuration:**
+
+Set the cache directory with the `cache_dir` configuration key (or the `TIF1_CACHE_DIR` environment variable) before the first data access. Turn the cache off with `enable_cache`:
+
 ```python
 import tif1
-import os
 
-def configure_cache(
-    cache_dir: str | None = None,
-    max_size_mb: int = 500,
-    auto_cleanup: bool = True
-):
-    """Configure cache with custom settings."""
-    try:
-        # Conceptual example - actual API may differ
-        if cache_dir:
-            # Ensure directory exists
-            os.makedirs(cache_dir, exist_ok=True)
+config = tif1.get_config()
+config.set("cache_dir", "/tmp/tif1-cache")  # Read when the cache opens first
+print(config.get("cache_dir"))
 
-            # Check if writable
-            if not os.access(cache_dir, os.W_OK):
-                raise tif1.CacheError(
-                    f"Cache directory not writable: {cache_dir}",
-                    cache_dir=cache_dir
-                )
-
-        # Initialize cache with settings
-        cache = tif1.get_cache()
-
-        # Configure settings (conceptual)
-        if hasattr(cache, 'set_max_size'):
-            cache.set_max_size(max_size_mb * 1024 * 1024)
-
-        if hasattr(cache, 'set_auto_cleanup'):
-            cache.set_auto_cleanup(auto_cleanup)
-
-        print(f"Cache configured successfully")
-        print(f"  Directory: {cache_dir or 'default'}")
-        print(f"  Max size: {max_size_mb}MB")
-        print(f"  Auto cleanup: {auto_cleanup}")
-
-        return cache
-
-    except tif1.CacheError as e:
-        print(f"Cache configuration failed: {e.message}")
-        raise
-
-# Configure cache
-cache = configure_cache(
-    cache_dir="/tmp/tif1-cache",
-    max_size_mb=1000,
-    auto_cleanup=True
-)
+# Disable caching for one session
+session = tif1.get_session(2024, "Monaco", "Race", enable_cache=False)
 ```
 
 ## Session State Errors
 
 ### `SessionNotLoadedError`
 
-Raised when attempting to access session data or attributes before the session has been properly loaded. This exception enforces the library's data loading contract, ensuring that users explicitly load data before accessing it.
-
-The library uses lazy loading patterns for performance, meaning session objects can be created without immediately fetching all data. This exception occurs on access to data that requires an explicit load operation.
+A `TIF1Error` subclass for access to session data before a load. `tif1` defines and exports it, but the current library does not raise it. Data properties load on first access: `session.laps`, `session.weather`, `session.race_control_messages`, `session.drivers`, and `session.results` fetch their data when the code reads them. `session.load()` only controls which data is fetched in one call.
 
 **Signature:**
 ```python
@@ -1791,128 +1626,31 @@ class SessionNotLoadedError(TIF1Error):
 ```
 
 **Context Keys:**
-- `attribute` (str | None): The specific attribute or property that was accessed before loading
+- `attribute` (str | None): The attribute that the raising code names
 
-**When Raised:**
-- Accessing `session.laps` before calling `session.load(laps=True)`
-- Accessing `session.telemetry` before loading telemetry data
-- Accessing driver-specific data before session initialization completes
-- Calling methods that require loaded data on an unloaded session
-- Accessing internal data structures (for example, `_laps_df`) before population
+The message is `Session data not loaded. Access '<attribute>' requires loading data first.`, or `Session data not loaded` without an attribute.
 
-**Common Scenarios:**
-
-1. **Forgot to Load**: Created session but did not call load methods
-2. **Partial Loading**: Loaded some data but not the specific data needed
-3. **Lazy Loading**: Accessing properties that trigger lazy loading failures
-4. **Internal Access**: Directly accessing private attributes before initialization
-
-**Example - Basic Handling:**
+**Example - Access Loads the Data:**
 ```python
 import tif1
-
-try:
-    session = tif1.get_session(2024, "Monaco", "Race")
-    # Accessing data without loading first (if lazy loading is disabled)
-    drivers = session._drivers  # Internal attribute
-except tif1.SessionNotLoadedError as e:
-    print(f"Session not loaded: {e.message}")
-    print(f"Attribute accessed: {e.context.get('attribute')}")
-    print("Call session.load() first")
-
-    # Output:
-    # Session not loaded: Session data not loaded. Access '_drivers' requires loading data first.
-    # Attribute accessed: _drivers
-    # Call session.load() first
-```
-
-**Example - Proper Loading Pattern:**
-```python
-import tif1
-
-# WRONG: Accessing data without loading
-try:
-    session = tif1.get_session(2024, "Monaco", "Race")
-    laps = session.laps  # May raise SessionNotLoadedError
-except tif1.SessionNotLoadedError:
-    print("Data not loaded!")
-
-# CORRECT: Explicit loading
-session = tif1.get_session(2024, "Monaco", "Race")
-session.load(laps=True, telemetry=True)  # Explicit load
-laps = session.laps  # Now safe to access
-
-# ALTERNATIVE: Load on creation (if supported)
-session = tif1.get_session(2024, "Monaco", "Race", load=True)
-laps = session.laps  # Already loaded
-```
-
-**Example - Checking Load Status:**
-```python
-import tif1
-
-def safe_access_laps(session):
-    """Safely access laps, loading if necessary."""
-    # Check if data is loaded (conceptual - actual API may differ)
-    if not hasattr(session, '_laps_df') or session._laps_df is None:
-        print("Data not loaded, loading now...")
-        try:
-            session.load(laps=True)
-        except tif1.SessionNotLoadedError as e:
-            print(f"Failed to load: {e.message}")
-            return None
-
-    return session.laps
 
 session = tif1.get_session(2024, "Monaco", "Race")
-laps = safe_access_laps(session)
+
+# No load() call: the first access fetches the laps
+laps = session.laps
+print(f"{len(laps)} laps")
 ```
 
-**Example - Lazy Loading Wrapper:**
+**Example - Explicit Loading Pattern:**
+
+`session.load()` fetches several data types in one call. Its default is `laps=True, telemetry=True, weather=True, messages=True`, and `telemetry=True` fetches the telemetry of every lap. Turn off what is not needed:
+
 ```python
 import tif1
-from functools import wraps
 
-def ensure_loaded(data_type: str):
-    """Decorator to ensure data is loaded before method execution."""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            try:
-                return func(self, *args, **kwargs)
-            except tif1.SessionNotLoadedError as e:
-                print(f"Auto-loading {data_type} data...")
-
-                # Load required data
-                if data_type == "laps":
-                    self.load(laps=True)
-                elif data_type == "telemetry":
-                    self.load(telemetry=True)
-                elif data_type == "all":
-                    self.load(laps=True, telemetry=True, weather=True, messages=True)
-
-                # Retry the operation
-                return func(self, *args, **kwargs)
-        return wrapper
-    return decorator
-
-# Example usage (conceptual)
-class SessionWrapper:
-    def __init__(self, session):
-        self.session = session
-
-    @ensure_loaded("laps")
-    def get_laps(self):
-        return self.session.laps
-
-    @ensure_loaded("telemetry")
-    def get_telemetry(self):
-        return self.session.telemetry
-
-# Use wrapper
 session = tif1.get_session(2024, "Monaco", "Race")
-wrapper = SessionWrapper(session)
-laps = wrapper.get_laps()  # Auto-loads if needed
+session.load(laps=True, telemetry=False, weather=True, messages=False)
+print(f"{len(session.laps)} laps, {len(session.weather)} weather rows")
 ```
 
 **Example - Selective Loading:**
@@ -1939,23 +1677,18 @@ def load_session_selective(
             weather=weather,
             messages=messages
         )
-
-        print(f"Loaded session with:")
-        if laps:
-            print(f"  - Laps: {len(session.laps)} rows")
-        if telemetry:
-            print(f"  - Telemetry: available")
-        if weather:
-            print(f"  - Weather: available")
-        if messages:
-            print(f"  - Messages: available")
-
-        return session
-
-    except tif1.SessionNotLoadedError as e:
+    except tif1.TIF1Error as e:
         print(f"Failed to load: {e.message}")
-        print(f"Attribute: {e.context.get('attribute')}")
         raise
+
+    print("Loaded session with:")
+    if laps:
+        print(f"  - Laps: {len(session.laps)} rows")
+    if weather:
+        print(f"  - Weather: {len(session.weather)} rows")
+    if messages:
+        print(f"  - Messages: {len(session.race_control_messages)} rows")
+    return session
 
 # Load only laps (faster, less memory)
 session = load_session_selective(
@@ -1967,192 +1700,38 @@ session = load_session_selective(
 )
 ```
 
-**Example - Batch Loading with Error Handling:**
-```python
-import tif1
-from typing import List, Tuple
-
-def batch_load_sessions(
-    requests: List[Tuple[int, str, str]],
-    load_config: dict = None
-) -> dict:
-    """Load multiple sessions with consistent configuration."""
-    if load_config is None:
-        load_config = {"laps": True, "telemetry": True}
-
-    results = {
-        "loaded": [],
-        "failed": []
-    }
-
-    for year, gp, session_name in requests:
-        try:
-            session = tif1.get_session(year, gp, session_name)
-            session.load(**load_config)
-
-            results["loaded"].append({
-                "year": year,
-                "gp": gp,
-                "session": session_name,
-                "session_obj": session
-            })
-        except tif1.SessionNotLoadedError as e:
-            results["failed"].append({
-                "year": year,
-                "gp": gp,
-                "session": session_name,
-                "error": "SessionNotLoadedError",
-                "attribute": e.context.get('attribute'),
-                "message": e.message
-            })
-        except tif1.TIF1Error as e:
-            results["failed"].append({
-                "year": year,
-                "gp": gp,
-                "session": session_name,
-                "error": type(e).__name__,
-                "message": e.message
-            })
-
-    print(f"Batch load complete:")
-    print(f"  Loaded: {len(results['loaded'])}")
-    print(f"  Failed: {len(results['failed'])}")
-
-    return results
-
-# Load multiple sessions
-requests = [
-    (2024, "Monaco", "Race"),
-    (2024, "Monaco", "Qualifying"),
-    (2024, "Bahrain", "Race"),
-]
-
-results = batch_load_sessions(
-    requests,
-    load_config={"laps": True, "telemetry": False}
-)
-```
-
 **Example - Progressive Loading:**
 ```python
 import tif1
 
 def progressive_load_session(year: int, gp: str, session_name: str):
-    """Load session data progressively, handling errors at each stage."""
+    """Load session data in stages, handling errors at each stage."""
     session = tif1.get_session(year, gp, session_name)
     loaded_data = []
 
-    # Stage 1: Load basic lap data
-    try:
-        session.load(laps=True)
-        loaded_data.append("laps")
-        print(f"✓ Loaded laps: {len(session.laps)} rows")
-    except tif1.SessionNotLoadedError as e:
-        print(f"✗ Failed to load laps: {e.message}")
-        return session, loaded_data
+    stages = [
+        ("laps", {"laps": True}),
+        ("weather", {"laps": False, "weather": True}),
+        ("messages", {"laps": False, "messages": True}),
+    ]
+    for name, flags in stages:
+        options = {"laps": False, "telemetry": False, "weather": False, "messages": False}
+        options.update(flags)
+        try:
+            session.load(**options)
+            loaded_data.append(name)
+            print(f"✓ Loaded {name}")
+        except tif1.TIF1Error as e:
+            print(f"⚠ {name} not available: {e.message}")
+            if name == "laps":
+                return session, loaded_data
 
-    # Stage 2: Load telemetry (optional)
-    try:
-        session.load(telemetry=True)
-        loaded_data.append("telemetry")
-        print("✓ Loaded telemetry")
-    except tif1.SessionNotLoadedError as e:
-        print(f"⚠ Telemetry not available: {e.message}")
-    except tif1.TIF1Error as e:
-        print(f"⚠ Telemetry load failed: {e.message}")
-
-    # Stage 3: Load weather (optional)
-    try:
-        session.load(weather=True)
-        loaded_data.append("weather")
-        print("✓ Loaded weather")
-    except tif1.SessionNotLoadedError as e:
-        print(f"⚠ Weather not available: {e.message}")
-    except tif1.TIF1Error as e:
-        print(f"⚠ Weather load failed: {e.message}")
-
-    # Stage 4: Load messages (optional)
-    try:
-        session.load(messages=True)
-        loaded_data.append("messages")
-        print("✓ Loaded messages")
-    except tif1.SessionNotLoadedError as e:
-        print(f"⚠ Messages not available: {e.message}")
-    except tif1.TIF1Error as e:
-        print(f"⚠ Messages load failed: {e.message}")
-
+    # Telemetry loads per lap on demand, for example with lap.get_telemetry()
     print(f"\nLoaded data types: {', '.join(loaded_data)}")
     return session, loaded_data
 
-# Progressive load
 session, loaded = progressive_load_session(2024, "Monaco", "Race")
 print(f"Session ready with {len(loaded)} data types")
-```
-
-**Example - Load Status Checker:**
-```python
-import tif1
-
-class SessionLoadStatus:
-    """Check and report session load status."""
-
-    def __init__(self, session):
-        self.session = session
-
-    def check_status(self) -> dict:
-        """Check what data is loaded."""
-        status = {
-            "laps": False,
-            "telemetry": False,
-            "weather": False,
-            "messages": False,
-            "errors": []
-        }
-
-        # Check laps
-        try:
-            _ = self.session.laps
-            status["laps"] = True
-        except tif1.SessionNotLoadedError as e:
-            status["errors"].append(f"Laps: {e.message}")
-        except AttributeError:
-            pass
-
-        # Check telemetry (conceptual)
-        try:
-            if hasattr(self.session, 'telemetry'):
-                _ = self.session.telemetry
-                status["telemetry"] = True
-        except tif1.SessionNotLoadedError as e:
-            status["errors"].append(f"Telemetry: {e.message}")
-
-        return status
-
-    def print_status(self):
-        """Print human-readable status."""
-        status = self.check_status()
-
-        print("Session Load Status:")
-        print(f"  Laps: {'✓' if status['laps'] else '✗'}")
-        print(f"  Telemetry: {'✓' if status['telemetry'] else '✗'}")
-        print(f"  Weather: {'✓' if status['weather'] else '✗'}")
-        print(f"  Messages: {'✓' if status['messages'] else '✗'}")
-
-        if status['errors']:
-            print("\nErrors:")
-            for error in status['errors']:
-                print(f"  - {error}")
-
-# Check status
-session = tif1.get_session(2024, "Monaco", "Race")
-checker = SessionLoadStatus(session)
-checker.print_status()
-
-# Load data
-session.load(laps=True)
-
-# Check again
-checker.print_status()
 ```
 
 ---
@@ -2182,9 +1761,9 @@ except tif1.NetworkError as e:
 except tif1.InvalidDataError as e:
     print(f"Invalid data: {e.message}")
     print(f"Reason: {e.context.get('reason')}")
-except tif1.CacheError as e:
-    print(f"Cache error: {e.message}")
-    print("Continuing without cache...")
+except ValueError as e:
+    # Unknown session name or round, or EventNotInSeasonError
+    print(f"Invalid request: {e}")
 except tif1.TIF1Error as e:
     print(f"General tif1 error: {e.message}")
     print(f"Error type: {type(e).__name__}")
@@ -2206,10 +1785,10 @@ try:
     driver = session.get_driver("XXX")
 except tif1.DriverNotFoundError as e:
     print(f"Driver '{e.context['driver']}' not found")
-    print(f"Available drivers: {session.drivers}")
-    # Fallback to first available driver
+    print(f"Available drivers: {session.drivers_df['Driver'].tolist()}")
+    # Fallback to the first driver in classification order (a car number)
     driver = session.get_driver(session.drivers[0])
-    print(f"Using fallback driver: {driver.driver}")
+    print(f"Using fallback driver: {driver['Abbreviation']}")
 
 # Handle lap not found with alternative
 try:
@@ -2298,7 +1877,7 @@ def retry_with_backoff(
 # Usage
 def load_session():
     session = tif1.get_session(2024, "Monaco", "Race")
-    _ = session.laps  # Force load
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
     return session
 
 session = retry_with_backoff(
@@ -2351,9 +1930,12 @@ class CircuitBreaker:
                 print("Circuit breaker: Attempting recovery (HALF_OPEN)")
             else:
                 time_remaining = self.recovery_timeout - (time.time() - self.last_failure_time)
+                # NetworkError takes url/status_code plus context keywords
+                # (a message= keyword clashes with the base class argument)
                 raise tif1.NetworkError(
-                    message=f"Circuit breaker OPEN. Retry in {time_remaining:.0f}s",
+                    url="circuit-breaker",
                     circuit_breaker_state="open",
+                    retry_in_seconds=round(time_remaining),
                     failure_count=self.failure_count
                 )
 
@@ -2398,7 +1980,7 @@ def load_session_with_breaker(year: int, gp: str, session_name: str):
     """Load session with circuit breaker protection."""
     def load():
         session = tif1.get_session(year, gp, session_name)
-        _ = session.laps
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         return session
 
     try:
@@ -2454,15 +2036,15 @@ class FallbackChain:
                 result = strategy()
                 print(f"✓ Strategy '{name}' succeeded")
                 return result, self.errors
-            except tif1.TIF1Error as e:
+            except (tif1.TIF1Error, ValueError) as e:
                 error_info = {
                     "strategy": name,
                     "error_type": type(e).__name__,
-                    "message": e.message,
-                    "context": e.context
+                    "message": getattr(e, "message", str(e)),  # ValueError has no .message
+                    "context": getattr(e, "context", {})
                 }
                 self.errors.append(error_info)
-                print(f"✗ Strategy '{name}' failed: {e.message}")
+                print(f"✗ Strategy '{name}' failed: {error_info['message']}")
                 continue
 
         print("All strategies failed")
@@ -2472,16 +2054,16 @@ class FallbackChain:
 def load_session_with_fallbacks(year: int, gp: str, session_name: str):
     """Load session with multiple fallback strategies."""
 
-    # Strategy 1: Load with full data
+    # Strategy 1: Load laps, weather, and messages (telemetry loads per lap later)
     def load_full():
         session = tif1.get_session(year, gp, session_name)
-        session.load(laps=True, telemetry=True, weather=True, messages=True)
+        session.load(laps=True, telemetry=False, weather=True, messages=True)
         return session
 
     # Strategy 2: Load with laps only (faster)
     def load_laps_only():
         session = tif1.get_session(year, gp, session_name)
-        session.load(laps=True)
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         return session
 
     # Strategy 3: Try alternative session type
@@ -2489,14 +2071,14 @@ def load_session_with_fallbacks(year: int, gp: str, session_name: str):
         # Try qualifying if race fails
         alt_session = "Qualifying" if session_name == "Race" else "Race"
         session = tif1.get_session(year, gp, alt_session)
-        session.load(laps=True)
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         print(f"Loaded alternative session: {alt_session}")
         return session
 
     # Strategy 4: Try previous year
     def load_previous_year():
         session = tif1.get_session(year - 1, gp, session_name)
-        session.load(laps=True)
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         print(f"Loaded previous year: {year - 1}")
         return session
 
@@ -2533,7 +2115,7 @@ Extract and use structured context for error handling.
 ```python
 import tif1
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Configure structured logging
 logging.basicConfig(
@@ -2594,8 +2176,6 @@ class ContextAwareErrorHandler:
             return "medium"
         elif isinstance(error, tif1.InvalidDataError):
             return "high"  # Data corruption is serious
-        elif isinstance(error, tif1.CacheError):
-            return "low"  # Cache errors are usually non-critical
         else:
             return "medium"
 
@@ -2605,8 +2185,6 @@ class ContextAwareErrorHandler:
             status = error.context.get('status_code')
             # Retry on 5xx errors and timeouts
             return status is None or status >= 500
-        elif isinstance(error, tif1.CacheError):
-            return True  # Cache errors often transient
         else:
             return False  # Data not found, invalid data not retryable
 
@@ -2614,14 +2192,10 @@ class ContextAwareErrorHandler:
         """Generate actionable recommendations."""
         recommendations = []
 
-        if isinstance(error, tif1.DataNotFoundError):
-            recommendations.append("Verify the year/event/session combination is correct")
-            recommendations.append("Check if the session has occurred yet")
-            recommendations.append("Try an alternative session type")
-
-        elif isinstance(error, tif1.DriverNotFoundError):
+        # Subclasses first: DriverNotFoundError and LapNotFoundError are DataNotFoundErrors
+        if isinstance(error, tif1.DriverNotFoundError):
             recommendations.append(f"Check driver code spelling: '{error.context.get('driver')}'")
-            recommendations.append("Use session.drivers to see available drivers")
+            recommendations.append("Use session.drivers_df['Driver'] to see available drivers")
             recommendations.append("Verify driver participated in this session")
 
         elif isinstance(error, tif1.LapNotFoundError):
@@ -2629,6 +2203,11 @@ class ContextAwareErrorHandler:
             recommendations.append(f"Lap {lap_num} may exceed race distance")
             recommendations.append("Check if driver retired early")
             recommendations.append("Use len(driver.laps) to see total laps")
+
+        elif isinstance(error, tif1.DataNotFoundError):
+            recommendations.append("Verify the year/event/session combination is correct")
+            recommendations.append("Check if the session has occurred yet")
+            recommendations.append("Try an alternative session type")
 
         elif isinstance(error, tif1.NetworkError):
             status = error.context.get('status_code')
@@ -2645,11 +2224,6 @@ class ContextAwareErrorHandler:
             recommendations.append("Data may be corrupted or incomplete")
             recommendations.append("Clear cache and retry")
             recommendations.append("Report issue if problem persists")
-
-        elif isinstance(error, tif1.CacheError):
-            recommendations.append("Check disk space availability")
-            recommendations.append("Verify cache directory permissions")
-            recommendations.append("Try clearing cache")
 
         return recommendations
 
@@ -2680,7 +2254,7 @@ handler = ContextAwareErrorHandler()
 try:
     session = tif1.get_session(2024, "Monaco", "Race")
     driver = session.get_driver("VER")
-    lap = driver.get_lap(1)
+    lap = driver.get_lap(999)  # Raises LapNotFoundError: the race had 78 laps
 except tif1.TIF1Error as e:
     analysis = handler.handle_error(e, "Load Monaco Race data")
 
@@ -2841,11 +2415,13 @@ def with_retry(
             # Don't retry non-network errors
             raise
 
-# Usage
-session = with_retry(
-    lambda: tif1.get_session(2024, "Monaco", "Race"),
-    max_retries=5
-)
+# Usage: get_session() does not fetch, so retry the load
+def load_monaco():
+    session = tif1.get_session(2024, "Monaco", "Race")
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    return session
+
+session = with_retry(load_monaco, max_retries=5)
 ```
 
 ### 5. Validate User Input Early
@@ -2860,7 +2436,7 @@ from typing import List
 
 def validate_driver_codes(session, driver_codes: List[str]) -> List[str]:
     """Validate driver codes before processing."""
-    available = set(session.drivers)
+    available = set(session.drivers_df["Driver"])  # session.drivers holds car numbers
     invalid = [code for code in driver_codes if code not in available]
 
     if invalid:
@@ -2901,23 +2477,21 @@ Ensure resources are cleaned up even when errors occur.
 import tif1
 
 # ✓ CORRECT: Cleanup guaranteed
-cache = None
+session = tif1.get_session(2024, "Monaco", "Race")
+output = open("monaco_2024_laps.csv", "w", newline="")
 try:
-    cache = tif1.get_cache()
-    # Perform cache operations...
-    cache.set("key", "value")
-except tif1.CacheError as e:
-    print(f"Cache error: {e.message}")
+    session.laps.to_csv(output, index=False)
+except tif1.TIF1Error as e:
+    print(f"Could not load the laps: {e.message}")
 finally:
-    if cache:
-        cache.close()  # Always cleanup
+    output.close()  # Always cleanup
 
-# ✓ ALSO CORRECT: Context manager (if supported)
+# ✓ ALSO CORRECT: Context manager
 try:
-    with tif1.get_cache() as cache:
-        cache.set("key", "value")
-except tif1.CacheError as e:
-    print(f"Cache error: {e.message}")
+    with open("monaco_2024_laps.csv", "w", newline="") as output:
+        session.laps.to_csv(output, index=False)
+except tif1.TIF1Error as e:
+    print(f"Could not load the laps: {e.message}")
 ```
 
 ### 7. Log Context for Debugging
@@ -2960,24 +2534,29 @@ Translate technical errors into actionable user messages.
 **Why:** Users need clear guidance, not technical jargon.
 
 ```python
+import logging
+
 import tif1
+
+logger = logging.getLogger(__name__)
 
 def get_user_friendly_message(error: tif1.TIF1Error) -> str:
     """Convert technical error to user-friendly message."""
-    if isinstance(error, tif1.DataNotFoundError):
+    # DriverNotFoundError first: it is a subclass of DataNotFoundError
+    if isinstance(error, tif1.DriverNotFoundError):
+        driver = error.context.get('driver')
+        return (
+            f"Driver '{driver}' not found. Please check the spelling or "
+            f"verify the driver participated in this session."
+        )
+
+    elif isinstance(error, tif1.DataNotFoundError):
         year = error.context.get('year')
         event = error.context.get('event')
         session = error.context.get('session')
         return (
             f"Sorry, data for {year} {event} {session} is not available yet. "
             f"Please check back after the session has completed."
-        )
-
-    elif isinstance(error, tif1.DriverNotFoundError):
-        driver = error.context.get('driver')
-        return (
-            f"Driver '{driver}' not found. Please check the spelling or "
-            f"verify the driver participated in this session."
         )
 
     elif isinstance(error, tif1.NetworkError):
@@ -2998,6 +2577,7 @@ def get_user_friendly_message(error: tif1.TIF1Error) -> str:
 # Usage
 try:
     session = tif1.get_session(2024, "Monaco", "Race")
+    driver = session.get_driver("XXX")
 except tif1.TIF1Error as e:
     # Show user-friendly message
     print(get_user_friendly_message(e))
@@ -3026,21 +2606,22 @@ def load_session_with_degradation(year: int, gp: str, session_name: str):
         "messages": False
     }
 
-    # Try to load each data type independently
+    # Try to load each data type independently. Pass every flag:
+    # load() defaults to telemetry=True, which fetches all lap telemetry.
     try:
-        session.load(laps=True)
+        session.load(laps=True, telemetry=False, weather=False, messages=False)
         capabilities["laps"] = True
     except tif1.TIF1Error as e:
         print(f"Warning: Laps not available: {e.message}")
 
     try:
-        session.load(telemetry=True)
+        _ = session.get_fastest_lap_tel()  # Telemetry of one lap
         capabilities["telemetry"] = True
     except tif1.TIF1Error as e:
         print(f"Warning: Telemetry not available: {e.message}")
 
     try:
-        session.load(weather=True)
+        session.load(laps=False, telemetry=False, weather=True, messages=False)
         capabilities["weather"] = True
     except tif1.TIF1Error as e:
         print(f"Warning: Weather not available: {e.message}")
@@ -3086,11 +2667,10 @@ def get_driver_safely(
         default: Default driver code to use if first choice not found
 
     Returns:
-        Driver object or None if not found
+        Driver object or None if neither driver is found
 
     Raises:
-        tif1.DriverNotFoundError: If both driver_code and default not found
-        tif1.SessionNotLoadedError: If session data not loaded
+        tif1.DataNotFoundError: If the session data cannot be loaded
 
     Example:
         >>> session = tif1.get_session(2024, "Monaco", "Race")

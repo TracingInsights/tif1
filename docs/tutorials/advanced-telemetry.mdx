@@ -23,7 +23,7 @@ import tif1
 import matplotlib.pyplot as plt
 import numpy as np
 
-session = tif1.get_session(2025, "Monza Grand Prix", "Qualifying")
+session = tif1.get_session(2025, "Italian Grand Prix", "Qualifying")
 ver = session.get_driver("VER")
 fastest_lap = ver.get_fastest_lap()
 telemetry = ver.get_lap(int(fastest_lap["LapNumber"].iloc[0])).telemetry
@@ -96,7 +96,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 import numpy as np
 
-session = tif1.get_session(2025, "Silverstone Grand Prix", "Qualifying")
+session = tif1.get_session(2025, "British Grand Prix", "Qualifying")
 
 # Get telemetry for two drivers
 ver = session.get_driver("VER")
@@ -280,11 +280,11 @@ plt.show()
 
 ## DRS Usage
 
-Analyze DRS (Drag Reduction System) activation.
+Analyze DRS (Drag Reduction System) activation. The `DRS` column is a 0/1 flag: 1 means the rear wing is open.
 
 ```python
-# Find DRS zones
-drs_active = ver_tel["DRS"] >= 10
+# Find DRS zones (DRS is a 0/1 flag)
+drs_active = ver_tel["DRS"] == 1
 drs_percentage = (drs_active.sum() / len(ver_tel)) * 100
 
 print(f"DRS active for {drs_percentage:.1f}% of lap")

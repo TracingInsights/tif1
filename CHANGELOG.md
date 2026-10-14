@@ -7,6 +7,61 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Argos series (2026-10-14)
+
+Twelve hypotheses measured on a 32-core workstation (every prior series ran on
+1-core sandboxes); nine shipped, three measured and documented
+(`.agents/perf-argos/RESULTS.md`, harnesses `tools/argos_*.py`).
+
+- **Bulk fetch no longer serialises on the event loop (A12).** niquests returns
+  lazy multiplexed responses and the first `status_code` access resolved them
+  on the loop thread: 1461 resolutions summed to 9.7 s of a 10.2 s telemetry
+  batch. The response is now resolved inside the worker hop; interleaved
+  parse-phase A/B on the full Monaco 2026 race: candidate faster 3/3 pairs
+  (−34 % to −72 %). End-to-end cold Monaco 2026 load, 3 interleaved
+  pairs on a warm edge: candidate faster 3/3, steady-state pair 13.2 → 10.65 s
+  (−20 %), medians 86.5 → 10.7 s because the control hit the 403/timeout
+  collapse regime once (614 s) and the candidate never did.
+- **A 403 is a per-file refusal, not a CDN failure (A11).** jsDelivr answers
+  403 "Package size exceeded the configured limit of 50 MB" for files it has
+  not cached from the per-year data repositories; three of them used to
+  disable jsDelivr for the whole process and route every later payload
+  through the slowest mirror. 403 now falls through (and races the remaining
+  mirrors) exactly like 404; deterministic simulation with 20 % cold files:
+  median 1.33 → 0.68 s per 300-file batch, worst case 3.39 → 0.76 s.
+- **Typed telemetry frames are built with `DataFrame._from_arrays` (A1)** from
+  `array.array`-converted channels with a one-pass "None"-sentinel coercion:
+  full-corpus assembly −7 % to −16 % per interleaved pair (1452/1452 frames
+  identical in columns, dtypes and values) and frames leave the builder with
+  2.7x fewer blocks, so the materialized-frame tier unpickles 22 % faster
+  (206 → 160 ms) and every later `copy()`/slice of a frame is cheaper.
+- **Float seconds → `timedelta64[ns]` is a vectorized, bit-exact replica of
+  pandas' cast (A2)** for telemetry `Time` and the laps timedelta columns
+  (91 → 8 µs per 400-sample channel; `pd.to_timedelta` converted every
+  sequence twice).
+- **The deferred payload-tier flush runs after `fetch_all_laps_telemetry`
+  returns (A3)**, in the same joined background writer the frame tier uses
+  (277-293 ms off the cold critical path here, 0.78 s on the K-series sandbox).
+- **Laps frames are consolidated after dtype processing and `Driver.laps`
+  uses a boolean mask instead of `DataFrame.query` (A4)**: one block per
+  column (46 on a race) became 17; `pick_driver` −48 %, `pick_quicklaps`
+  −37 %, row slices ~2x.
+- **`pick_fastest`, `_filter_valid_laptimes` and `iterlaps` stop copying the
+  frame (A5)**: `pick_fastest` 2.74 → 1.19 ms, `iterlaps` 18.3 → 1.9 ms per
+  60 laps, identical rows, names and dtypes.
+- **`Telemetry.slice_by_time`/`slice_by_mask`/`get_first_non_zero_time_index`
+  skip redundant coercions and copies (A6)**: −32 % / −36 % / −67 %.
+- **`http_disable_http3` works (A7).** The replacement adapter dropped the
+  switch, so HTTP/3 was always negotiated; it is now passed through. With the switch working, HTTP/2 was at parity or faster in 5/6 full-session and 3/3 small-batch interleaved pairs, and every stalled fetch seen this series ran over HTTP/3, so **HTTP/2 is now the default** (`TIF1_HTTP_DISABLE_HTTP3=false` re-enables QUIC).
+- **`get_session()` pre-connects the CDN for uncached sessions (A8,
+  `cdn_preconnect`, `TIF1_CDN_PRECONNECT`)**: the first payload request of a
+  cold load skips DNS + TLS (cold laps phase median −6 % to −12 %, 10/14
+  interleaved pairs). Skipped for cached sessions and in offline/CI mode.
+- Measured, documented, not shipped: process-pool parse+assembly (A9: −68 %
+  on the post-gather phase with 8 workers, needs raw-byte plumbing and ~1 GB
+  of worker RSS) and alternative transports (A10: aiohttp −21 % on the raw
+  84 MB transfer; curl_cffi erratic) — see RESULTS.md.
+
 ### Summary — Kroton-series performance work
 
 Ten new hypotheses were measured (full log in
@@ -27,6 +82,11 @@ race benchmark (~1452 telemetry frames, 1455 laps rows):
   direct `BlockManager` construction. Cold per-frame assembly
   **1447 → 1155 ms median (1.25x)**; offline best-of 940 → 576 µs/frame.
   Falls back to the plain constructor on any pandas-internals drift.
+  *Merge note:* the Argos series landed its own version of this builder
+  (`DataFrame._from_arrays`, consolidated blocks, `array.array` channel
+  conversion); measured head-to-head on the same corpus it was faster in
+  5/5 interleaved pairs, so the direct `BlockManager` helpers were dropped in
+  the merge and the vectorized Time cast kept its finite/huge-value guard.
 - Rejected with numbers: typed merged-dict assembly (+5.6% regression — the
   per-frame win does not transfer to 614k-row merged frames), zstd-1 codec
   re-eval (lz4 wins both directions on current deps), pydantic validation
@@ -58,6 +118,295 @@ race benchmark (~1452 telemetry frames, 1455 laps rows):
 - `uv.lock` refreshed for the above (kiwisolver 1.5.1, msgpack 1.2.3,
   numpy 2.5.3 on 3.12+, contourpy 1.4.0, fonttools 4.66.1, pyarrow 26.0.0,
   typing-inspection 0.4.4).
+
+### Changed — polars 2.0
+
+- polars requirement raised to `>=2.0.0,<3` (was `>=1.44.1,<2`); `uv.lock`
+  pins polars 2.0.0. polars 2.0 ships `cp310-abi3` wheels, so Python
+  3.11-3.15 are all covered. tif1 itself needed no API changes: it uses only
+  eager frames (the new streaming default applies to `LazyFrame.collect()`),
+  never casts strings to temporal types, never concatenates horizontally, and
+  calls none of the removed APIs.
+- Verified on real data: every polars-backend output (laps, weather, race
+  control, fastest laps warm and cold, fastest-lap telemetry, and the full
+  476k-row Monaco qualifying telemetry) is identical between polars 1.44.1 and
+  2.0.0 in values, dtypes, and row order. Telemetry frames that polars 1.44.1
+  wrote to the `telemetry_frames_pl` cache tier load unchanged under 2.0, so
+  existing caches stay warm across the upgrade. Polars-backend load and
+  telemetry assembly times are unchanged within noise.
+- Docs: polars version statements updated; `pl.NUMERIC_DTYPES` (removed) →
+  `pl.selectors.numeric()`, `collect(streaming=True)` (removed) →
+  `collect(engine="streaming")`; added a note on the streaming default and row
+  order for lazy queries. Polars examples that were already wrong before 2.0
+  are fixed as well: boolean-mask indexing (`laps[mask]`, which polars reads
+  as a column selector) → `filter`, `.dt.total_seconds()` on the Float64
+  `LapTime` → a `Duration` cast, `map_elements` inside `agg` (called per value,
+  not per group) → an expression or `map_batches(returns_scalar=True)`,
+  horizontal `pl.concat` of laps and telemetry (duplicate `Time` column) → a
+  same-height rank frame, and the pandas-only `to_parquet` in the export
+  tutorial is labelled as such with a pointer to `write_parquet`.
+
+### Fixed — polars backend
+
+- Race control messages no longer crash the polars backend when the `Lap`
+  column carries the upstream `"None"` sentinel (every non-race session, and
+  any race with an unnumbered message). `Lap` and `Sector` are now coerced like
+  the pandas backend's `to_numeric(errors="coerce")`, with sentinels becoming
+  null. Previously the strict cast raised polars' `InvalidOperationError`,
+  which the loader's error handling did not catch, under both polars 1.x and 2.x.
+- Weather and race control tables on the polars backend now get the same
+  sentinel handling as laps: `"None"`-style strings are replaced by null
+  before the frame is built (`_coerce_null_like_payload`, shared with the lap
+  path), so polars infers Boolean/Float/Int columns instead of String ones
+  that no cast can recover (String → Boolean is unsupported even with
+  `strict=False`). The weather casts are non-strict like pandas'
+  `to_numeric(errors="coerce")`, and `WindDirection` is rounded rather than
+  truncated, matching the pandas branch. Outputs for real sessions are
+  byte-identical to before.
+- The pandas backend had the same weather bug with a quieter failure: one
+  `"None"` sentinel in `Rainfall` made `astype("boolean")` raise `TypeError`,
+  which the loader swallowed into an **empty weather table** plus a warning.
+  The pandas branch now runs the existing `_replace_null_like_strings` pass
+  before its casts, so the row keeps its other readings and `Rainfall` becomes
+  `<NA>`. Race control on pandas already coerced sentinels and is unchanged.
+  Verified on four real sessions (two backends, 32 tables): identical output.
+
+### Fixed — static typing (`uv run ty check src/tif1` is clean)
+
+- `cache.py`: the optional `zstandard` and `lz4.frame` codecs are imported
+  with `importlib.import_module` behind a declared `ModuleType | None`, so the
+  checker neither fails to resolve a wheel that is not declared for the
+  running interpreter (`zstandard` on 3.14+, `lz4` on 3.15) nor rejects the
+  `None` fallback assignment. Runtime behaviour is unchanged.
+- `charts/track_maps.py`: gear colorbar tick labels are passed as strings, as
+  `Colorbar.set_ticklabels` is typed; matplotlib rendered them as strings
+  already.
+- `jupyter.py`: pandas is a hard runtime dependency, so the dead
+  `except ImportError: pd = None` guard (which made every `pd.DataFrame`
+  annotation `None | ...`) is gone.
+- Removed four `# type: ignore` comments the checker reported as unused.
+
+### Fixed — behaviour found by running the docs against real data (both backends)
+
+- Telemetry `"None"` sentinels no longer stringify numeric channels. Upstream
+  writes the literal string `"None"` for `DistanceToDriverAhead` on a race
+  leader's lap (nobody ahead) and for `DriverAhead` in the first samples of a
+  lap; one such value made the whole column `str` on pandas and `String` on
+  polars, so `get_fastest_lap_tel()` and `get_lap(n).telemetry` disagreed on
+  dtypes from lap to lap. Every numeric channel (`RPM`, `Speed`, `Throttle`,
+  `Distance`, `RelativeDistance`, `DistanceToDriverAhead`, `AccelerationX/Y/Z`,
+  `X`, `Y`, `Z`) is now float64/Float64 with NaN/null for the sentinel, and
+  `DriverAhead` holds driver-number strings with NaN/null when nobody is
+  ahead. The fast pandas constructor, the legacy per-column pass, the
+  merged-dict assembly and the polars builder all apply the same rule; clean
+  payloads take the same code path as before (verified dtype-identical).
+- Materialized telemetry frames cached by earlier releases carry the
+  stringified column and have no per-row version, so the SQLite cache now
+  records a frame-tier schema version in `PRAGMA user_version` and drops the
+  two frame tables once when it is older. The payload tier is untouched, so
+  the frames rebuild from local data without a network fetch.
+- `Laps.pick_driver` / `pick_drivers` accept driver numbers (`pick_driver(1)`,
+  `"1"`, mixed with codes) by matching `DriverNumber` as well as `Driver`, as
+  FastF1 does; previously a number silently returned an empty frame.
+- `Telemetry.slice_by_lap` returned no rows on tif1 frames: it compared a
+  lap's session-time window (`LapStartTime`..`Time`) with telemetry `Time`,
+  which tif1 keeps lap-relative. Frames without a `SessionTime` column now
+  match on `LapNumber` (and `Driver`, so a multi-driver frame returns only
+  that driver's lap); frames that do carry `SessionTime` keep the window.
+- `Telemetry.resample_channels()` defaulted to `"1S"`, an offset alias pandas 3
+  removed (`ValueError: Invalid frequency`). The default is `"1s"`, and the
+  upper-case aliases FastF1-era code passes (`S`, `L`, `T`, `H`) are translated
+  to their current spelling.
+- `tif1.utils.delta_time` was a placeholder that returned an empty Series. It
+  now implements FastF1's algorithm (comparison-lap time interpolated onto the
+  reference lap's distance axis; positive delta = comparison lap slower at
+  that point), accepts `Lap` series, `Driver.get_lap` laps or telemetry frames
+  on either backend, and adds `Distance` when a frame lacks it.
+- `tif1.jupyter.display_lap_info` raised `AttributeError: '_telemetry'` for
+  laps from `Driver.get_lap` (a `Lap` series keeps its telemetry in the
+  session memo, not on the object); it now probes the memo instead.
+- Session names are case-insensitive: `get_session(2025, "Bahrain", "race")`
+  and `"qualifying"` resolve like `"Race"` and `"R"` instead of raising
+  "does not exist".
+- Event names typed as a circuit, city or country no longer load the wrong
+  race. Fuzzy matching resolved `"Spa"` to the Spanish Grand Prix (`spa` is a
+  substring of `spain`), `"USA"` to Qatar (a substring of `Lusail`),
+  `"Interlagos"` to the Dutch Grand Prix and `"Britain"` to Bahrain, in every
+  season, for `get_event`, `get_event_by_name` and `get_session` alike. A
+  shared alias table (`EVENT_NAME_ALIASES`; the previously unused
+  `core.GP_ALIAS_MAP` is now a view of it) maps such names to the event they
+  mean, per season: `"Barcelona"` is the Spanish Grand Prix until 2025 and the
+  Barcelona Grand Prix in 2026, `"Interlagos"` the Brazilian Grand Prix before
+  2021. An alias whose event is not on that season's calendar
+  (`get_event_by_name(2021, "Suzuka")`) raises a `ValueError` naming the event,
+  instead of returning a different race; `get_session` logs the same message
+  and loading then raises `DataNotFoundError`. Exact event names still win,
+  `exact_match=True` ignores aliases, and countries that hosted several events
+  (Germany in 2020) still use fuzzy matching.
+- The fuzzy matcher now also scores the event's own name (the schedule
+  metadata has no `EventName` key, so `"British"`-like queries were compared
+  only with location, country and the sponsor-laden official name), and it
+  pads incomplete feature lists instead of letting numpy raise on a ragged
+  array.
+- `session.drivers`, `driver_list`, `drivers_df` and `results` are in
+  classification order, as FastF1's `Session.drivers` is. The upstream
+  `drivers.json` already lists the official classification for most sessions,
+  but several seasons before 2025 sort it by car number as strings
+  (`"1", "10", "11", "14", "16", ..., "2", "20"`), so every chart's
+  "top-N finishers" default (`charts._common.finishing_order`) picked the
+  wrong drivers for those sessions and `session.drivers[:10]` in the docs was
+  not a top ten. A number-sorted payload is now reordered from the laps table:
+  laps completed, then position on the last lap for races and sprints; best
+  non-deleted lap time for every other session. Payloads that already are a
+  classification are left alone and never load laps. Post-session penalties
+  are not visible in lap data, so a rebuilt order can differ from the official
+  result by a place or two. `finishing_order` maps numbers through
+  `drivers_df` instead of building one `Driver` per entry.
+- `session.drivers` was empty, `drivers_df["DriverNumber"]` blank and
+  `get_driver("1")` failed for sessions whose `drivers.json` omits car numbers
+  (2023 Monaco Grand Prix Race among others). Numbers are filled in from each
+  driver's lap rows.
+- `session.results` is a classification instead of placeholders. `Position`
+  and `ClassifiedPosition` number the classification order, `Laps` is the laps
+  completed, and `Status` is derived from lap counts for races and sprints
+  (`"Finished"` on the leader's lap count, `"+N Lap(s)"` behind it, `"Did not
+  start"` with no laps) and `"Finished"` otherwise. Previously every driver
+  was `"Finished"` with `Position None`, `Points 0.0` and `Laps 0.0`. The data
+  source publishes no official classification, so `GridPosition` and `Points`
+  are NaN (float64, like FastF1's columns) rather than invented values, and a
+  session without a laps payload keeps its entrants with NaN
+  `Position`/`Laps` and `None` `Status`.
+- `Laps.to_sql(..., index=True)` raised `AttributeError: 'NoneType' object
+  has no attribute 'columns'`: the `Laps.reset_index` override assumed a
+  returned frame, but pandas resets the index in place inside `to_sql` and
+  then inserts that column. `inplace=True` now returns `None` and keeps the
+  new column, like pandas.
+- Error messages and `.context` use the plain event and session names.
+  `DriverNotFoundError` (and every `DataNotFoundError` raised from the fetch
+  path, which builds CDN paths from the encoded form) reported
+  `event='Bahrain%20Grand%20Prix', session='Practice%201'`. `Session` gained
+  `event_name` and `session_name` properties with the names as the schedule
+  spells them (`gp`/`session` stay URL-encoded because every CDN path is built
+  from them), and `session.name`, `session_info` and `session.event` decode
+  every percent-escape instead of only `%20` (`"São Paulo Grand Prix"` was
+  `"S%C3%A3o Paulo Grand Prix"`).
+- `get_session(2021, "Suzuka", "Race")` raises
+  `EventNotInSeasonError("'Suzuka' refers to the Japanese Grand Prix, which is
+  not on the 2021 calendar")` immediately, a `ValueError` subclass exported
+  from `tif1` and `tif1.exceptions`, instead of building a session named
+  "Suzuka" that failed at load with `DataNotFoundError`.
+  `get_event_by_name` raises the same class (previously a plain `ValueError`
+  with the same message, so `except ValueError` still works).
+- `tif1.plot_driver_laptimes` and `plot_qualifying_results` no longer emit
+  numpy 2.5's `DeprecationWarning` about a unit-less `np.timedelta64("NaT")`:
+  it comes from the timple package's own converter, so `setup_mpl` filters
+  that warning for timple's modules only.
+- `charts/track_maps.py` docstring counted five `plot_track_*` charts; there
+  are four (plus the gear-shift and corner-annotation maps).
+- Infrastructure findings from running the API reference pages against the
+  library:
+  - `cdn_use_minification=True` rewrote every request to `.min.json`, which
+    jsDelivr (it minifies only JavaScript and CSS) and StaticDelivr answer
+    with 404, so each fetch paid a wasted round trip before the next CDN
+    served the file. The default CDNs now ignore the option (as Hugging Face
+    already did); it still applies to custom mirrors that serve minified
+    copies, and `CDNSource(use_minification=True)` keeps its per-source meaning.
+  - `DataNotFoundError()` and `NetworkError()` without context read
+    "Data not foundData not found" / "Network request failedNetwork request
+    failed".
+  - The DNS-over-HTTPS fallbacks never worked: `doh://cloudflare` is parsed by
+    niquests as a DoH server literally named "cloudflare". The default
+    `http_resolvers` are now `["standard", "doh+cloudflare://",
+    "doh+google://"]`, the legacy `doh://<provider>` spelling in existing
+    `.tif1rc` files is translated, and the resolver is passed to the pooled
+    `HTTPAdapter` that `_create_session` mounts (it previously dropped it).
+  - Connection-pool statistics counted every request as a reused connection;
+    reuse is now read from niquests' `conn_info` (no new TCP/TLS handshake).
+  - `pool_exhaustion_backoff_*` fallbacks in `async_fetch` matched neither the
+    documented nor the configured defaults (0.5/5.0/0.5 vs 0.01/0.5/0.01).
+  - `validate_race_control()` rejected every real `rcm.json` (`time` holds ISO
+    wall-clock strings, the model allowed only floats) and `validate_laps()`
+    rejected every real `laptimes.json` (`"None"` strings are now normalized
+    first, like the other validators).
+  - `json_dumps`' stdlib fallback used spaced separators; it now emits the
+    same compact shape as orjson.
+  - `Cache.has_session_data()` matched only URL-encoded names; plain names
+    work too.
+  - `tif1 drivers` always crashed (it indexed driver-number strings as dicts)
+    and `tif1 fastest` crashed on the pandas backend (`LapTime` is a
+    Timedelta, formatted with `:.3f`). The drivers table also shows the car
+    number.
+  - Weather and race-control log lines, and the Jupyter lap card, show the
+    plain event name; the lap card title reads "Lap 10", not "Lap 10.0".
+  - `session.laps` / `load()` returned an empty table and only logged when
+    every CDN request failed with a transport error, hiding an outage (and the
+    next `get_lap` then raised a misleading `LapNotFoundError`). A load that
+    produced no laps while the CDN failure counts grew now raises
+    `NetworkError`; a session whose laps genuinely do not exist (404 on every
+    CDN, which never counts as a failure) still returns an empty table.
+  - `get_sessions(year, event)` only matched exact event names, so an alias
+    such as `"Spielberg"` silently returned the generic five-session weekend;
+    it now resolves names like `get_event_by_name` (exact, alias, fuzzy).
+  - `setup_mpl(color_scheme="official")` silently did nothing; an unknown
+    scheme raises `ValueError` listing the valid ones.
+  - Driver-name lookups in `tif1.plotting` fuzzy-matched a name against bare
+    abbreviations when a season publishes no driver names (2024 Belgian Grand
+    Prix: `"Hamilton"` resolved to SAI with only a warning). Such a lookup now
+    raises `KeyError` and asks for the abbreviation.
+  - `CDNManager.reload()` rebuilds the source list from the current config, so
+    `config.set("cdns", ...)` after import can take effect
+    (`get_cdn_manager().reload()`).
+  - `LapNotFoundError.context["event"]` was still URL-encoded (the lap lookup
+    passes the session's encoded `gp`); every `DataNotFoundError` flavour now
+    decodes `event`/`session`.
+  - An open circuit breaker raised a bare `Exception("Circuit breaker is
+    open")`, which `retry_with_backoff` and `except NetworkError` handlers did
+    not catch. It raises `CircuitBreakerOpenError`, a `NetworkError` subclass
+    with the same message, exported from `tif1` and `tif1.exceptions`.
+  - The unit suite isolates the cache directory per test (`tests/conftest.py`):
+    tests that build `Cache()` under a stub config used to write into `./None`,
+    and after that fallback was fixed they wrote into, and cleared, the
+    developer's real cache directory.
+- Regression tests for each item in `tests/unit/test_real_data_regressions.py`.
+
+### Docs — backend data contract
+
+- New "Data Contract by Backend" section in the backends guide: per-column
+  dtype tables for laps, weather, race control messages, and telemetry on
+  both backends (taken from real 2025 Bahrain data, including the pandas-only
+  `index` column and the `LapStartDate` String/datetime difference), how
+  `"None"` sentinels are normalised on each backend, and what an empty
+  weather or race control table means and how to see the warning.
+- New "Polars 2 notes" section: the polars 2.0 changes that affect code built
+  on tif1 frames (streaming default, removed string→temporal casts,
+  horizontal `concat`, strict `is_in`, removed APIs) with the replacement for
+  each, and the cache-compatibility guarantee.
+- The data-flow page's dtype comparison listed types tif1 never produces
+  (`uint8`, `float32`, `Categorical` on polars); replaced with the real table.
+- Examples that failed on real data on **both** backends are fixed: pandas
+  `laps[laps["LapTime"] < 90]` and `query("LapTime < 90")` raise on the
+  timedelta column (use `LapTimeSeconds` or `pd.Timedelta`), `fillna(method=)`
+  was removed in pandas 3 (use `ffill()`), `astype(float)`/`to_datetime` on
+  `LapTime` raise, `dropna()` on laps returns no rows, and `Speed` is not a
+  laps column (use `SpeedST`).
+- Troubleshooting and FAQ entries added for the polars 2 version conflict,
+  an empty weather or race control table, and the `LapTime` comparison
+  `TypeError`; the sessions page documents the weather dtypes per backend.
+- Four pre-existing style-guide violations (sentences over 25 words in the
+  charts and plotting references) and an MDX parse error in
+  `DOCS_STE100_PLAN.md` (angle-bracket autolink) are fixed; `mint validate`,
+  `mint broken-links`, and `tools/ste_check.py --strict` all pass.
+- A dtype failure polars itself raises (`PolarsError`, which is neither a
+  `ValueError` nor a `TypeError`) while loading weather or race control now
+  degrades to an empty frame with a warning, exactly as the pandas branch does
+  for its equivalent errors, instead of aborting `session.load()`. The error
+  tuple is extended only when polars is already loaded, so pandas sessions
+  never pay the polars import.
+- A polars frame-tier cache row that polars cannot deserialize (raising
+  `polars.exceptions.ComputeError`, which is not a `ValueError`) now degrades
+  to a per-row cache miss, as the tier documents, instead of crashing the
+  telemetry load. This guards against future polars serialization-format
+  changes.
 
 ### Fixed — audit follow-ups
 
