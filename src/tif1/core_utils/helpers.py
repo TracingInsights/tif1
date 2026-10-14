@@ -361,7 +361,9 @@ def _typed_telemetry_frame(
                 if seconds is not None and _td_cast_is_safe(seconds):
                     column: Any = _seconds_to_td64ns(seconds)
                 else:
-                    column = pd.to_timedelta(seconds if seconds is not None else v, unit="s")
+                    column = np.asarray(
+                        pd.to_timedelta(seconds if seconds is not None else v, unit="s")
+                    )
             elif k == "Brake" and None not in v:
                 ints = _numeric_channel_array(v)
                 column = (
@@ -637,12 +639,11 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     # pandas conversion and the values are bit-identical to that path.
     seconds = numeric_values.to_numpy(dtype="float64", na_value=np.nan)
     if not _td_cast_is_safe(seconds):
-        valid_mask = numeric_values.notna()
-        result = pd.Series(pd.NaT, index=numeric_values.index, dtype="timedelta64[ns]")
-        if bool(valid_mask.any()):
-            result.loc[valid_mask] = pd.to_timedelta(seconds[valid_mask.to_numpy()], unit="s")
-        result.name = values.name
-        return result
+        # inf / values beyond the nanosecond range: pandas decides (it widens
+        # the resolution or raises), exactly as the constructor path would.
+        return pd.Series(
+            pd.to_timedelta(seconds, unit="s"), index=numeric_values.index, name=values.name
+        )
     return pd.Series(_seconds_to_td64ns(seconds), index=numeric_values.index, name=values.name)
 
 

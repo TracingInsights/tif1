@@ -97,9 +97,24 @@ class TestA1A2TypedFrames:
         assert not _td_cast_is_safe(np.array([1.5, np.inf]))
         assert not _td_cast_is_safe(np.array([1.0e10]))
         assert not _td_cast_is_safe(np.array([], dtype="float64"))
-        huge = pd.Series([1.0, 1.0e10], dtype="float64")
-        with pytest.raises(pd.errors.OutOfBoundsTimedelta):
-            _numeric_seconds_to_timedelta(huge)
+        # Beyond the nanosecond range pandas widens the resolution; the
+        # fallback hands the values to pandas instead of the vectorized cast.
+        huge = _numeric_seconds_to_timedelta(pd.Series([1.0, 1.0e10, None], dtype="float64"))
+        assert huge.dtype.kind == "m"
+        assert huge.iloc[1].total_seconds() == 1.0e10
+        assert pd.isna(huge.iloc[2])
+        with pytest.raises(OverflowError):  # pandas' own behaviour for inf
+            _numeric_seconds_to_timedelta(pd.Series([1.0, np.inf]))
+        # Telemetry Time beyond the ns range: integral seconds widen to a
+        # coarser resolution through pandas; a mix with fractional seconds is
+        # unrepresentable and pandas raises, so the frame drops to None exactly
+        # as the constructor path did.
+        payload = _payload()
+        payload["time"] = [1.0e10 + float(i) for i in range(len(payload["time"]))]
+        frame = _create_telemetry_df(payload, "VER", 3, "pandas")
+        assert frame is not None
+        assert frame["Time"].dtype.kind == "m"
+        assert frame["Time"].iloc[0].total_seconds() == 1.0e10
         payload = _payload()
         payload["time"][0] = 1.0e10
         assert _create_telemetry_df(payload, "VER", 3, "pandas") is None
