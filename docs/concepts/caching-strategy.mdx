@@ -13,14 +13,20 @@ keywords:
 
 ## Overview
 
-`tif1` downloads each payload once and serves later reads from local tiers. A lookup walks the tiers in this order and stops at the first hit:
+`tif1` downloads each payload once and serves later reads from local tiers. The tiers are:
 
 1. **Session memo** - per-`Session` dictionaries that hold the payloads and frames of the current session.
 2. **In-memory LRU tiers** - bounded process-wide caches in front of SQLite.
-3. **SQLite payload tables** - persistent JSON and telemetry payloads in `cache.sqlite`.
-4. **SQLite frame tier** - persistent, pre-built telemetry DataFrames.
+3. **SQLite frame tiers** - persistent, pre-built laps and telemetry DataFrames.
+4. **SQLite payload tables** - persistent JSON and telemetry payloads in `cache.sqlite`.
 5. **Negative-verdict tier** - payload paths that every CDN reported as missing.
 6. **CDN fetch** - jsDelivr first, then Hugging Face buckets, then StaticDelivr.
+
+A load stops at the first hit:
+
+- `session.laps` checks the backend lap LRU, then the laps frame tier, then the payloads.
+- A telemetry load checks the session memo, then the telemetry frame tier, then the payloads.
+- A payload read checks the session memo, the LRU tiers, and the SQLite payload tables, in that order. On a miss, the fetch path checks the negative-verdict tier and then the CDN.
 
 A fresh network result is written back to the memo, the LRU tiers, and SQLite. Every tier lives in `src/tif1/cache.py`.
 
@@ -83,9 +89,9 @@ JSON-tier keys have the form `"{year}/{gp}/{session}/{path}"`. The payload paths
 
 Telemetry payloads (`{driver}/{lap}_tel.json`) are routed to `telemetry_cache`. Their key is the tuple `(year, gp, session, driver, lap)`. All other payloads go to the `cache` table.
 
-### SQLite frame tier
+### SQLite frame tiers
 
-The frame tier stores assembled telemetry DataFrames so a warm load skips JSON parsing and frame construction. Each backend has its own table with the same columns:
+The frame tiers store assembled DataFrames so a warm load skips JSON parsing and frame construction. Each backend has its own tables with the same columns:
 
 ```sql
 CREATE TABLE telemetry_frames (
@@ -94,21 +100,32 @@ CREATE TABLE telemetry_frames (
     PRIMARY KEY (year, gp, session, driver, lap)
 );
 -- telemetry_frames_pl has the same shape and holds polars frames.
+
+CREATE TABLE laps_frames (
+    year INTEGER, gp TEXT, session TEXT,
+    frame BLOB,
+    PRIMARY KEY (year, gp, session)
+);
+-- laps_frames_pl has the same shape and holds polars frames.
 ```
 
-`Session.fetch_all_laps_telemetry()` assembles the frames and then hands the bulk write to a background daemon thread. `register_frame_writer()` starts that thread. `Cache.close()`, `invalidate()`, `clear()`, and the atexit handler join it, so the connection never closes under a live writer.
+`session.laps` reads the processed laps table from the laps frame table of its backend (`Cache.get_laps_frame()`) on a warm cache. After a build from the payload tier, it writes the table there (`Cache.set_laps_frame()`).
+
+`Session.fetch_all_laps_telemetry()` assembles the telemetry frames and then hands the bulk write to a background daemon thread. `register_frame_writer()` starts that thread. `Cache.close()`, `invalidate()`, `clear()`, and the atexit handler join it, so the connection never closes under a live writer.
 
 The payload tables stay the source of truth. A frame row that fails to load becomes a tier miss and the loader falls back to the payload tier.
 
+The telemetry frame tables are versioned through SQLite `PRAGMA user_version` (`_FRAME_TIER_SCHEMA_VERSION`). When the stored version is older, `tif1` drops both telemetry frame tables once. Later loads rebuild the frames from the payload tier. The laps frame tables are not versioned.
+
 ### Negative-verdict tier
 
-When every CDN answers a payload request with a 4xx status, `tif1` records the key in `missing_payloads`:
+On the async fetch path, a 4xx answer from every CDN marks the payload as missing. A 408 or 429 does not count. `tif1` records the key in `missing_payloads`:
 
 ```sql
 CREATE TABLE missing_payloads (key TEXT PRIMARY KEY, recorded_at REAL);
 ```
 
-Later loads consult `is_known_missing()` before the network and raise `DataNotFoundError` without a request. A verdict expires after `missing_payloads_ttl_days` (default `7.0`). A successful write for the same key discards the verdict.
+Later async fetches consult `is_known_missing()` after a cache miss and raise `DataNotFoundError` without a request. A verdict expires after `missing_payloads_ttl_days` (default `7.0`). A successful write for the same key discards the verdict.
 
 ### Live schedule row
 
@@ -166,7 +183,7 @@ Configuration is read through `tif1.get_config().get(key)` and changed with `.se
 |-----|----------------------|---------|--------|
 | `cache_dir` | `TIF1_CACHE_DIR` | platform default | Directory that holds `cache.sqlite` |
 | `enable_cache` | `TIF1_ENABLE_CACHE` | `true` | Default for `get_session(enable_cache=...)` |
-| `offline_mode` | `TIF1_OFFLINE_MODE` | `false` | Serve cache only; raise `NetworkError` on a miss |
+| `offline_mode` | `TIF1_OFFLINE_MODE` | `false` | Serve payloads from the cache only; a miss raises `NetworkError` |
 | `ci_mode` | `TIF1_CI_MODE` | `false` | Skip persistent cache reads and writes for payload fetches |
 | `cache_commit_interval` | `TIF1_CACHE_COMMIT_INTERVAL` | `100` | Writes per SQLite commit |
 | `sqlite_timeout` | `TIF1_SQLITE_TIMEOUT` | `30.0` | SQLite busy timeout in seconds |
@@ -181,8 +198,9 @@ Boolean environment variables accept `1`, `true`, `yes`, and `on`.
 import tif1
 
 config = tif1.get_config()
-config.set("cache_dir", "/data/tif1-cache")
+config.set("cache_dir", "./tif1-cache")  # relative paths resolve against the working directory
 config.set("memory_telemetry_cache_max_items", 4096)
+print(config.get("cache_dir"))
 print(config.get("cache_commit_interval"))
 ```
 
@@ -215,7 +233,7 @@ cache = tif1.get_cache()
 print(cache.cache_dir)
 print(cache.db_path)
 
-# The cache keys hold the URL-encoded names, so pass session.gp and session.session
+# has_session_data() accepts the readable or the URL-encoded event and session names
 session = tif1.get_session(2024, "Monaco", "Race")
 session.load(laps=True, telemetry=False)
 print(cache.has_session_data(session.year, session.gp, session.session))  # True
@@ -227,11 +245,12 @@ print(cache.has_session_data(session.year, session.gp, session.session))  # True
 | `get_async(key)` / `set_async(key, data)` | Async wrappers over `get` and `set` |
 | `get_telemetry(year, gp, session, driver, lap)` / `set_telemetry(...)` | Telemetry tier; `_async` variants exist |
 | `get_telemetry_batch(year, gp, session, driver_laps)` | Batch read of telemetry payloads; `_async` variant exists |
-| `get_telemetry_frames_batch(..., lib=)` / `set_telemetry_frames_batch(..., lib=)` | Frame tier for `"pandas"` or `"polars"` |
+| `get_telemetry_frames_batch(..., lib=)` / `set_telemetry_frames_batch(..., lib=)` | Telemetry frame tier for `"pandas"` or `"polars"` |
+| `get_laps_frame(year, gp, session, lib=)` / `set_laps_frame(year, gp, session, frame, lib=)` | Laps frame tier for `"pandas"` or `"polars"` |
 | `get_entry(kind, key)` / `set_entry(kind, key, value)` | Kind-based interface; `kind` is `"json"` or `"telemetry"` |
 | `invalidate(scope)` | Drop one tier group (see below) |
 | `is_known_missing(key)` / `record_missing(key)` / `discard_missing(key)` | Negative-verdict tier |
-| `has_session_data(year, gp, session)` | True when any payload for the session is cached; `gp` and `session` are the URL-encoded forms (`session.gp`, `session.session`) |
+| `has_session_data(year, gp, session)` | True when any payload for the session is cached; `gp` and `session` can be readable or URL-encoded |
 | `clear()` | Delete every row and empty every memory tier |
 | `close()` | Flush pending writes and close the connection |
 
@@ -242,12 +261,12 @@ import tif1
 
 cache = tif1.get_cache()
 cache.invalidate("memory")     # empty the LRU tiers, keep SQLite
-cache.invalidate("json")       # drop the cache table and its memory tiers
-cache.invalidate("telemetry")  # drop telemetry_cache, both frame tables and memory tiers
+cache.invalidate("json")       # drop the cache table, both laps frame tables and the JSON memory tiers
+cache.invalidate("telemetry")  # drop telemetry_cache, all four frame tables and the telemetry memory tiers
 cache.invalidate("all")        # same as cache.clear()
 ```
 
-Every scope except `"memory"` also deletes the negative verdicts. Each scope first joins a pending frame writer, so a background write cannot re-insert rows after the wipe.
+Every scope except `"memory"` also deletes the negative verdicts. Both laps frame tables go with either payload scope because the laps table is derived from payloads of both tiers. Each scope first joins a pending frame writer, so a background write cannot re-insert rows after the wipe.
 
 ### The FastF1-compatible `tif1.Cache`
 
@@ -255,7 +274,7 @@ Every scope except `"memory"` also deletes the negative verdicts. Each scope fir
 
 | Class method | Effect |
 |--------------|--------|
-| `enable_cache(cache_dir=None, force_renew=False)` | Set `cache_dir`, set `enable_cache=True`, rebuild the global cache; `force_renew` clears it |
+| `enable_cache(cache_dir=None, ignore_version=True, force_renew=False, use_requests_cache=True)` | Set `cache_dir`, set `enable_cache=True`, rebuild the global cache; `force_renew` clears it; the other two flags are accepted for FastF1 compatibility and ignored |
 | `clear_cache(cache_dir=None, deep=False)` | Clear the active cache or the one in `cache_dir`; `deep` removes legacy FastF1 HTTP cache files |
 | `disabled()` | Context manager that disables caching inside the block |
 | `set_disabled()` / `set_enabled()` | Nested disable and restore of `enable_cache` |
@@ -266,7 +285,7 @@ Every scope except `"memory"` also deletes the negative verdicts. Each scope fir
 ```python
 import tif1
 
-tif1.Cache.enable_cache("/data/tif1-cache")
+tif1.Cache.enable_cache("./tif1-cache")
 
 with tif1.Cache.disabled():
     session = tif1.get_session(2024, "Monaco", "Race")
@@ -278,7 +297,7 @@ The methods delegate to `tif1.get_config()` and `tif1.get_cache()`. Code that al
 ### Command line
 
 ```bash
-tif1 cache-info          # directory, file count and total size of cache.sqlite*
+tif1 cache-info          # directory, file count and total size of the cache.sqlite* files
 tif1 cache-clear --yes   # Cache.clear() without the confirmation prompt
 ```
 
@@ -295,7 +314,11 @@ session.load(laps=True, telemetry=False)
 
 Set `TIF1_ENABLE_CACHE=false` or `tif1.get_config().set("enable_cache", False)` to change the default for every new session.
 
-`offline_mode=True` keeps reads enabled but forbids network access. A miss raises `NetworkError`. `ci_mode=True` skips persistent cache reads and writes in the payload fetch path.
+`offline_mode=True` keeps cache reads enabled and skips the network for payload fetches. A miss raises `NetworkError`. `ci_mode=True` skips persistent cache reads and writes for payload fetches.
+
+<Warning>
+The first access that needs two or more of `drivers.json`, `weather.json`, and `rcm.json` prefetches them in one batch, for example `session.load()`. That batch does not check `offline_mode` or `ci_mode`, so it can still use the network and write to the cache. The laps frame tier also ignores `ci_mode`.
+</Warning>
 
 ## Behaviour notes
 
@@ -304,10 +327,10 @@ Set `TIF1_ENABLE_CACHE=false` or `tif1.get_config().set("enable_cache", False)` 
     One `sqlite3` connection is opened with `check_same_thread=False` and guarded by `Cache._sqlite_lock`. Writes are batched and committed every `cache_commit_interval` operations (default 100) and again on `close()`. The connection sets `journal_mode=WAL`, `synchronous=NORMAL`, and `cache_size=-64000` (a 64 MB page cache). Memory-tier reads do not take a lock.
   </Accordion>
   <Accordion title="Cold sessions skip cache reads">
-    On first use, a session probes `has_session_data()`. A session with no cached rows skips cache reads for the rest of the process. It still writes everything it fetches. The next process finds a warm cache.
+    On first use, a session probes `has_session_data()`. A session with no cached rows skips cache reads for the rest of its life. It still writes everything it fetches. The next `Session` object for the same event finds a warm cache.
   </Accordion>
   <Accordion title="close() is final">
-    `close()` flushes pending writes, closes the connection, and sets `conn` to `None`. The object does not reconnect. Later `get` calls return `None` and later `set` calls do nothing. The atexit handler closes the global cache and resets `get_cache()`, so a new process start is unaffected.
+    `close()` flushes pending writes, closes the connection, and sets `conn` to `None`. The object does not reconnect. Later `get` calls return `None` and later `set` calls do nothing. The atexit handler closes the global cache and resets `get_cache()`, so a later `get_cache()` call creates a new instance.
   </Accordion>
   <Accordion title="Corrupt rows become misses">
     A row that fails to decompress, parse, or unpickle is logged and treated as a miss. The row is not deleted. The next successful write for the same key replaces it.

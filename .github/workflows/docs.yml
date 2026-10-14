@@ -37,24 +37,6 @@ jobs:
           fi
           echo "Deploying version: ${VERSION}"
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Update version in docs config
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          cd docs
-
-          # Update docs.json with version information
-          jq --arg version "$VERSION" '.version = $version' docs.json > docs.json.tmp
-          mv docs.json.tmp docs.json
-
-          # Add version to versions array if not already present
-          if ! jq -e --arg version "$VERSION" '.versions | index($version)' docs.json > /dev/null; then
-            jq --arg version "$VERSION" '.versions += [$version]' docs.json > docs.json.tmp
-            mv docs.json.tmp docs.json
-          fi
-
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"

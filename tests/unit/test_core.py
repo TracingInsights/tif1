@@ -10,6 +10,7 @@ import pytest
 from tif1.core import (
     Driver,
     Lap,
+    Laps,
     Session,
     clear_lap_cache,
     get_session,
@@ -273,6 +274,23 @@ class TestSessionAdvanced:
         session = Session(2025, "Test GP", "Race", enable_cache=False)
         laps = asyncio.run(session.laps_async())
         assert isinstance(laps, pd.DataFrame)
+
+    @patch("tif1.core.fetch_multiple_async")
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
+    @patch("tif1.core.Session._fetch_from_cdn")
+    def test_laps_async_first_keeps_laps_type(self, mock_fetch, mock_fetch_async):
+        """Awaiting laps_async() first must not leave session.laps a plain DataFrame."""
+        mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
+        mock_fetch_async.return_value = [
+            {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]}
+        ]
+
+        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        laps = asyncio.run(session.laps_async())
+
+        assert isinstance(laps, Laps)
+        assert session.laps is laps
+        assert laps.session is session
 
     @patch("tif1.core.fetch_multiple_async")
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
@@ -921,3 +939,139 @@ class TestCircuitInfo:
         ci = session.get_circuit_info()
 
         assert (ci.corners["Letter"] == "").all()
+
+
+def _set_config(monkeypatch, key: str, value: object) -> None:
+    """Patch one config key where both ``tif1.core.config`` and ``get_config()`` see it.
+
+    ``tif1.core`` binds the singleton at import, while ``test_config.py`` resets
+    ``Config._instance``; pin the singleton back to the instance core holds.
+    """
+    from tif1 import core
+    from tif1.config import Config
+
+    monkeypatch.setattr(Config, "_instance", core.config)
+    monkeypatch.setitem(core.config._config, key, value)
+
+
+class TestSessionTablePrefetchModes:
+    """The parallel session-table prefetch follows offline_mode and ci_mode."""
+
+    @staticmethod
+    def _session() -> Session:
+        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session._requested_session_tables = {"weather.json", "rcm.json"}
+        return session
+
+    def test_offline_mode_never_opens_a_connection(self, monkeypatch):
+        import niquests
+
+        _set_config(monkeypatch, "offline_mode", True)
+        monkeypatch.setattr(niquests, "Session", lambda *_a, **_k: pytest.fail("network used"))
+
+        session = self._session()
+        session._prefetch_session_tables()
+
+        assert session._get_local_payload("weather.json") is None
+
+    def test_ci_mode_fetches_without_the_persistent_cache(self, monkeypatch):
+        import niquests
+
+        class _Response:
+            status_code = 200
+            content = b'{"ok": true}'
+
+            def raise_for_status(self):
+                return None
+
+        class _Http:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def get(self, _url, timeout=None):  # noqa: ARG002
+                return _Response()
+
+        _set_config(monkeypatch, "ci_mode", True)
+        monkeypatch.setattr(niquests, "Session", _Http)
+        session = self._session()
+        monkeypatch.setattr(
+            session._payload_loader, "_cache_get", lambda _key: pytest.fail("cache read")
+        )
+        monkeypatch.setattr(
+            session._payload_loader, "_cache_set", lambda _key, _value: pytest.fail("cache write")
+        )
+
+        session._prefetch_session_tables()
+
+        assert session._get_local_payload("weather.json") == {"ok": True}
+
+
+def test_ci_mode_disables_every_persistent_cache_tier(monkeypatch):
+    """CI mode turns enable_cache off, which gates the payload and frame tiers alike."""
+    _set_config(monkeypatch, "ci_mode", True)
+
+    assert Session(2025, "Test GP", "Race").enable_cache is False
+    assert Session(2025, "Test GP", "Race", enable_cache=True).enable_cache is False
+
+
+class TestFastestLapSkipsDeletedLaps:
+    """A deleted lap is never the fastest lap (FastF1 ``pick_fastest`` semantics)."""
+
+    @staticmethod
+    def _frame(lib: str):
+        # VER's quickest time (lap 2) was deleted; HAM only set deleted laps.
+        data = {
+            "Driver": ["VER", "VER", "VER", "HAM"],
+            "LapNumber": [1, 2, 3, 1],
+            "LapTime": [91.0, 90.0, 92.0, 89.0],
+            "Deleted": [False, True, False, True],
+        }
+        if lib == "polars":
+            import polars as pl
+
+            return pl.DataFrame(data)
+        frame = pd.DataFrame(data)
+        frame["LapTime"] = pd.to_timedelta(frame["LapTime"], unit="s")
+        return frame
+
+    def test_pick_fastest_skips_deleted_unless_only_by_time(self):
+        laps = Laps(self._frame("pandas"))
+
+        assert laps.pick_fastest()["LapNumber"] == 1
+        assert laps.pick_fastest()["Driver"] == "VER"
+        # only_by_time ignores the deletion, as in FastF1.
+        assert laps.pick_fastest(only_by_time=True)["Driver"] == "HAM"
+        assert laps.pick_drivers("HAM").pick_fastest() is None
+
+    @pytest.mark.parametrize("lib", ["pandas", "polars"])
+    def test_select_fastest_laps_skips_deleted(self, lib):
+        session = Session(2025, "Test GP", "Race", enable_cache=False, lib=lib)
+        frame = self._frame(lib)
+
+        by_driver = session._select_fastest_laps(frame, by_driver=True)
+        overall = session._select_fastest_laps(frame, by_driver=False)
+
+        assert list(by_driver["Driver"]) == ["VER"]
+        assert list(by_driver["LapNumber"]) == [1]
+        assert list(overall["LapNumber"]) == [1]
+
+    @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
+    @patch("tif1.core.Session._fetch_from_cdn")
+    def test_driver_get_fastest_lap_skips_deleted(self, mock_fetch):
+        mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
+        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        driver = Driver(session, "VER")
+        driver._laps = self._frame("pandas").iloc[:3]
+
+        assert list(driver.get_fastest_lap()["LapNumber"]) == [1]
+
+    def test_raw_payload_scan_skips_deleted(self):
+        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        payload = {"lap": [1, 2, 3], "time": [91.0, 90.0, 92.0], "del": [False, True, False]}
+
+        assert session._extract_fastest_lap_candidate("VER", payload) == ("VER", 1, 91.0)
+        payload["del"] = [True, True, True]
+        assert session._extract_fastest_lap_candidate("VER", payload) is None

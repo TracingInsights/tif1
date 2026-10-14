@@ -145,6 +145,7 @@ COL_TEAM = "Team"
 COL_LAP_NUMBER = "LapNumber"
 COL_LAP_TIME = "LapTime"
 COL_LAP_TIME_SECONDS = "LapTimeSeconds"
+COL_DELETED = "Deleted"
 COL_LAP_NUMBER_ALT = "lap"
 
 # FastF1-compatible column order for Laps DataFrame

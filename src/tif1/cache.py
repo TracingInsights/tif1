@@ -1547,6 +1547,13 @@ class Cache:
             self._parsed_cache.clear()
             self._parsed_telemetry_cache.clear()
 
+        # A closed global instance would otherwise keep being handed out by
+        # get_cache(), silently dropping every later read and write.
+        global _cache
+        with _cache_lock:
+            if _cache is self:
+                _cache = None
+
         if conn is not None:
             logger.debug("Cache connection closed")
 

@@ -1,4 +1,5 @@
 """Example: Using get_event_by_round and get_event_by_name"""
+
 import tif1
 
 print("=" * 60)
@@ -22,20 +23,28 @@ print(f"Exact match: {event['EventName']} (Round {event['RoundNumber']})")
 print()
 
 print("=" * 60)
-print("GET EVENT BY NAME - FUZZY MATCH")
+print("GET EVENT BY NAME - ALIASES AND FUZZY MATCH")
 print("=" * 60)
 
-# Fuzzy match by location
+# Circuit and country names resolve through the alias table
 event = tif1.get_event(2021, "Silverstone")
-print(f"By location 'Silverstone': {event['EventName']}")
+print(f"By circuit 'Silverstone': {event['EventName']}")
 
-# Fuzzy match by country
 event = tif1.get_event(2021, "Great Britain")
 print(f"By country 'Great Britain': {event['EventName']}")
 
-# Fuzzy match by partial name
 event = tif1.get_event(2024, "Bahrain")
-print(f"By partial name 'Bahrain': {event['EventName']}")
+print(f"By short name 'Bahrain': {event['EventName']}")
 
-event = tif1.get_event(2021, "Monaco")
-print(f"By partial name 'Monaco': {event['EventName']}")
+# Other names fall back to fuzzy matching (a warning logs the correction)
+event = tif1.get_event(2021, "Monacco")
+print(f"By misspelled name 'Monacco': {event['EventName']}")
+
+# A name that resembles no event: get_event() returns None,
+# get_event_by_name() raises EventNotFoundError
+event = tif1.get_event(2021, "Moon GP")
+print(f"get_event(2021, 'Moon GP'): {event}")
+try:
+    tif1.get_event_by_name(2021, "Moon GP")
+except tif1.EventNotFoundError as e:
+    print(f"get_event_by_name(2021, 'Moon GP'): EventNotFoundError: {e}")

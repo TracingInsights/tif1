@@ -1,6 +1,8 @@
-"""Polars lib example (2x faster for large datasets)."""
+"""Polars backend example: load laps as a polars DataFrame and compare with pandas."""
 
 import time
+
+import polars as pl
 
 import tif1
 
@@ -8,15 +10,16 @@ print("=" * 60)
 print("POLARS vs PANDAS BACKEND COMPARISON")
 print("=" * 60)
 
-# Clear cache for fair comparison
-cache = tif1.get_cache()
-cache.clear()
+# enable_cache=False makes both sessions fetch from the CDN (a cold load)
+# without touching the persistent cache.
 
 # Test with Polars lib
 print("\n1. LOADING WITH POLARS BACKEND")
 print("-" * 60)
 start = time.time()
-session_polars = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1", lib="polars")
+session_polars = tif1.get_session(
+    2025, "Abu Dhabi Grand Prix", "Practice 1", lib="polars", enable_cache=False
+)
 laps_polars = session_polars.laps
 polars_time = time.time() - start
 
@@ -25,10 +28,8 @@ print(f"Total laps: {len(laps_polars)}")
 print(f"DataFrame type: {type(laps_polars).__name__}")
 print(f"Load time: {polars_time:.2f}s")
 
-# Polars operations are faster
+# Aggregate with the polars expression API
 print("\nFastest laps by driver (using Polars):")
-import polars as pl
-
 fastest_by_driver = (
     laps_polars.group_by("Driver")
     .agg(
@@ -41,15 +42,14 @@ fastest_by_driver = (
 )
 print(fastest_by_driver.head(10))
 
-# Clear cache again
-cache.clear()
-
 # Test with Pandas lib
 print("\n" + "=" * 60)
 print("2. LOADING WITH PANDAS BACKEND")
 print("-" * 60)
 start = time.time()
-session_pandas = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1", lib="pandas")
+session_pandas = tif1.get_session(
+    2025, "Abu Dhabi Grand Prix", "Practice 1", lib="pandas", enable_cache=False
+)
 laps_pandas = session_pandas.laps
 pandas_time = time.time() - start
 
@@ -75,8 +75,8 @@ print("=" * 60)
 print(f"Polars load time: {polars_time:.2f}s")
 print(f"Pandas load time: {pandas_time:.2f}s")
 if polars_time > 0:
-    speedup = pandas_time / polars_time
-    print(f"Speedup: {speedup:.1f}x faster with Polars")
+    print(f"Pandas/Polars time ratio: {pandas_time / polars_time:.1f}")
+print("(The first load also opens the HTTPS connection; timings vary per run.)")
 
 # Convert between backends if needed
 print("\n" + "=" * 60)

@@ -26,6 +26,10 @@ The integration lives in the `tif1.jupyter` module. `import tif1` alone does not
 - **Light footprint**: The HTML is a few lines of inline CSS and does not slow data processing
 - **Backend independent**: The cards and the DataFrame summary work with pandas and polars sessions
 
+<Note>
+The examples on this page run in a Jupyter kernel. Install a notebook front end with `pip install jupyterlab`, which includes IPython. The widget examples also need `pip install ipywidgets`.
+</Note>
+
 ---
 
 ## Rich HTML Displays
@@ -40,7 +44,7 @@ When a cell displays a `Session` object, `tif1` renders a table with these rows:
 - **Grand Prix**: The readable event name, for example `Monaco Grand Prix`
 - **Session**: The session name, for example `Race` or `Practice 1`
 - **Library**: The backend in use (`pandas` or `polars`)
-- **Drivers**: The number of drivers, or `Not loaded` before the driver list loads
+- **Drivers**: The number of drivers, or `Not loaded` before the driver list or the laps load
 
 ```python
 import tif1
@@ -81,6 +85,8 @@ verstappen
 This display is useful for work with multiple drivers. It shows which drivers have their laps loaded.
 
 ```python
+from IPython.display import display  # a builtin in notebooks; the import also works in scripts
+
 # Compare multiple drivers side by side
 hamilton = session.get_driver("HAM")
 leclerc = session.get_driver("LEC")
@@ -97,7 +103,7 @@ The card of a `Lap` object shows these rows:
 - **Lap**: The lap number, in the card title
 - **Driver**: The three-letter code of the driver who completed the lap
 - **Session**: The year, event name, and session name
-- **Telemetry loaded**: `Yes` when the telemetry of the lap is in memory, otherwise `No`
+- **Telemetry loaded**: `Yes` when the telemetry payload of the lap is in the session memo, otherwise `No`
 
 The lap time, sector times, and compound are fields of the `Lap` object, for example `lap["LapTime"]` and `lap["Compound"]`.
 
@@ -266,7 +272,7 @@ For maximum performance with large datasets:
 
 1. **Load only the necessary data**: Use selective loading with `session.load(laps=True, telemetry=False)`
 2. **Filter early**: Apply DataFrame filters before displaying to reduce rendering time
-3. **Use Polars backend**: For very large datasets, Polars provides faster operations
+3. **Use Polars backend**: On polars, `display_dataframe_summary()` reads the size from `estimated_size()` instead of a deep memory scan
 4. **Batch displays**: When comparing many objects, use `display()` with multiple arguments rather than evaluating each separately
 
 
@@ -290,7 +296,7 @@ session.laps.style.highlight_min(subset=["LapTimeSeconds"], color="lightgreen")
 session.laps.style.format({"LapTimeSeconds": "{:.3f}s"})
 ```
 
-### Plotly and Matplotlib
+### Plotting Libraries
 
 Rich displays work alongside plotting libraries and combine data inspection with visualization:
 
@@ -314,6 +320,7 @@ plt.show()
 Create interactive dashboards combining `tif1` displays with widgets:
 
 ```python
+# pip install ipywidgets
 from IPython.display import HTML, display
 from ipywidgets import Dropdown, interact
 from tif1.jupyter import display_dataframe_summary
@@ -391,20 +398,11 @@ The built-in notebook support in Visual Studio Code works with `tif1`. Open an `
 
 ### Google Colab
 
-Google Colaboratory supports the Jupyter integration of `tif1`. Install `tif1` in a Colab cell:
-
-```python
-!pip install tif1
-import tif1
-```
+Google Colaboratory runs a Jupyter kernel, so the cards render there. Install `tif1` in a Colab cell with `%pip install tif1`, then run `import tif1`.
 
 ### Kaggle Notebooks
 
-The Kaggle notebook environment supports all `tif1` features. It enables easy sharing of F1 data analysis with the community.
-
-### Databricks Notebooks
-
-For enterprise users, `tif1` works in Databricks notebooks. Databricks notebooks combine F1 data with big data processing capabilities.
+Kaggle notebooks run a Jupyter kernel, so the cards render there.
 
 ### IPython Terminal
 
@@ -676,5 +674,5 @@ For detailed information about the Jupyter module functions, see the [Jupyter AP
 - [IPyWidgets](https://ipywidgets.readthedocs.io/) - Creating interactive notebooks
 
 <Tip>
-  The cards and the DataFrame summary also work with the **polars** backend, and data processing is faster in interactive sessions. Call `tif1.get_config().set("lib", "polars")` before loading data, or pass `lib="polars"` to `get_session()`.
+  The cards and the DataFrame summary also work with the **polars** backend. Call `tif1.get_config().set("lib", "polars")` before loading data, or pass `lib="polars"` to `get_session()`.
 </Tip>

@@ -475,7 +475,7 @@ def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
 
 
 def _enable_timple() -> None:
-    """Enable timedelta plotting support via the optional timple dependency."""
+    """Enable timedelta plotting support via the timple dependency."""
     global _TIMPLE_IMPORT_WARNING_SHOWN
 
     try:
@@ -483,9 +483,9 @@ def _enable_timple() -> None:
     except ImportError:
         if not _TIMPLE_IMPORT_WARNING_SHOWN:
             warnings.warn(
-                "Failed to import optional dependency 'timple'. "
+                "Failed to import dependency 'timple'. "
                 "Plotting of timedelta values will be restricted. "
-                "Install tif1 with the 'plotting' extra for full setup_mpl support.",
+                "Reinstall tif1 or run `pip install timple` for full setup_mpl support.",
                 RuntimeWarning,
                 stacklevel=2,
             )

@@ -14,19 +14,17 @@ keywords:
   - "data validation"
 ---
 
-# Schedule Schema & Validation
-
-The `schedule_schema` module is the validation layer for the tif1 internal schedule data architecture. It implements a validation system that ensures data integrity and structural consistency across all schedule operations in the library.
+The `schedule_schema` module is the validation layer for the tif1 internal schedule data architecture. It checks the structure of the vendored schedule data before the schedule APIs read it, and it can check custom schedule payloads too.
 
 ## Purpose and Role
 
-The schedule validation system guarantees that all schedule payloads conform to the tif1 internal schema before use by higher-level APIs. This applies to the vendored JSON files and to custom data passed to the validator. Years fetched from the f1schedule repository only pass the conversion checks. This validation layer provides these functions:
+The schedule validation system checks that a schedule payload conforms to the tif1 internal schema before higher-level APIs use it. This applies to the vendored JSON files and to custom data passed to the validator. Years fetched from the f1schedule repository only pass the conversion checks. This validation layer provides these functions:
 
 - **Data Integrity Assurance**: Validates that schedule data structures are complete, correctly typed, and internally consistent
 - **Early Error Detection**: Catches malformed or incomplete data at the earliest possible stage, preventing cascading failures
 - **Schema Version Management**: Ensures compatibility between data format versions and library expectations
 - **Type Safety Enforcement**: Verifies that all data elements match their expected types throughout the hierarchy
-- **Consistency Guarantees**: Ensures uniform data structure across all years, events, and data sources
+- **Consistency Guarantees**: Ensures a uniform data structure across all vendored years and events
 
 The validation process is designed for performance and typically completes in under 1 millisecond. It integrates with the tif1 caching system, which minimizes validation overhead in production use.
 
@@ -35,7 +33,7 @@ The validation process is designed for performance and typically completes in un
 </Note>
 
 <Warning>
-  **Schema Version Compatibility**: Now, only schema version 1 is supported. Attempting to validate payloads with different schema versions will raise an `InvalidDataError`. Future versions of tif1 may introduce new schema versions with additional features or structural changes.
+  **Schema Version Compatibility**: Only schema version 1 is supported. A payload with any other `schema_version` raises `InvalidDataError`.
 </Warning>
 
 ---
@@ -48,70 +46,71 @@ The schedule validation system sits at a critical junction in tif1's data pipeli
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Schedule Data Sources                        │
+│                      Schedule Data Sources                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  1. Live f1schedule file (raw.githubusercontent.com)            │
-│     • Current and future seasons, and years without a            │
-│       vendored file                                              │
-│     • Columnar format (pandas-like structure)                    │
-│     • Cached in SQLite for schedule_ttl_hours (default 6)        │
-│                                                                   │
-│  2. Vendored JSON Files (src/tif1/data/schedules/f1schedule/)   │
-│     • Per-year files: schedule_2021.json, schedule_2022.json    │
-│     • Past seasons, and the fallback when the fetch fails        │
-│     • Bundled with library installation                          │
+│     • Current and future seasons, and years without a           │
+│       vendored file                                             │
+│     • Columnar format (pandas-like structure)                   │
+│     • Cached in SQLite for schedule_ttl_hours (default 6)       │
+│                                                                 │
+│  2. Vendored JSON files (src/tif1/data/schedules/f1schedule/)   │
+│     • Per-year files: schedule_2018.json ... schedule_2026.json │
+│     • Past seasons, and the fallback when the fetch fails       │
+│     • Bundled with library installation                         │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Format Conversion Layer                       │
+│                     Format Conversion Layer                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  _convert_f1schedule_year()                                      │
-│  • Transforms columnar format → event-centric structure          │
-│  • Extracts metadata (dates, locations, formats)                 │
-│  • Builds sessions mapping                                       │
-│  • Sorts events by round number                                  │
+│  _convert_f1schedule_year() (both sources)                      │
+│  • Transforms columnar format → event-centric structure         │
+│  • Extracts metadata (dates, locations, formats)                │
+│  • Builds sessions mapping                                      │
+│  • Sorts race events by round, then testing events by date      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│              ★ VALIDATION LAYER (This Module) ★                  │
+│                ★ VALIDATION LAYER (This Module) ★               │
 ├─────────────────────────────────────────────────────────────────┤
-│  validate_schedule_payload()                                     │
-│  • Verifies schema version compatibility                         │
-│  • Validates structural integrity                                │
-│  • Checks type correctness                                       │
-│  • Ensures event-session consistency                             │
-│  • Provides detailed error messages                              │
+│  validate_schedule_payload() (vendored files only)              │
+│  • Verifies schema version compatibility                        │
+│  • Validates structural integrity                               │
+│  • Checks type correctness                                      │
+│  • Ensures event-session consistency                            │
+│  • Provides detailed error messages                             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Caching & Storage                           │
+│                        Caching & Storage                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Validated payload cached via @lru_cache                       │
-│  • Single validation per Python session                          │
-│  • Instant access for subsequent requests                        │
+│  • Vendored payload: validated once, cached via @lru_cache      │
+│  • Per-season memo of the converted payload; a live season      │
+│    expires after schedule_ttl_hours                             │
+│  • Per-season memo of resolved session lists                    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    High-Level Public APIs                        │
+│                      High-Level Public APIs                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  • get_events(year) → EventSchedule DataFrame                    │
-│  • get_sessions(year, event) → List of session names             │
-│  • get_event_schedule(year) → EventSchedule DataFrame            │
-│  • get_event(year, identifier) → Event object                    │
+│  • get_events(year) → EventSchedule DataFrame                   │
+│  • get_sessions(year, event) → List of session names            │
+│  • get_event_schedule(year) → EventSchedule DataFrame           │
+│  • get_event(year, identifier) → Event object                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Principles
 
-1. **Fail-Fast Philosophy**: Validation occurs immediately after data conversion, before any caching or API exposure. This ensures that invalid data never propagates through the system.
+1. **Fail-Fast Philosophy**: Validation of the vendored files occurs immediately after data conversion, before any caching or API exposure. This ensures that invalid data never propagates through the system.
 
 2. **Single Validation Point**: The vendored schedule data passes through one validation function. Years fetched from the f1schedule repository only pass the conversion checks.
 
-3. **Performance Optimization**: Validation is fast (typically &lt;1ms) and runs only once per session due to caching.
+3. **Performance Optimization**: Validation is fast (typically &lt;1ms) and runs only once per process due to caching.
 
 4. **Detailed Error Reporting**: When validation fails, the system provides specific error messages that identify what went wrong and where.
 
-5. **Type Safety**: The validation system enforces strict type checking at every level of the data hierarchy. This prevents type-related bugs downstream.
+5. **Type Safety**: The validation system checks the type of each level it covers: payload, years, events, and session lists. It does not check `metadata`.
 
 ### Validation Scope
 
@@ -131,14 +130,14 @@ The validation system checks multiple aspects of schedule data:
 
 The validation system is optimized for production use:
 
-- **Time Complexity**: O(n × m) where n = number of years, m = average events per year
+- **Time Complexity**: Linear in the total number of events and session names
 - **Typical Runtime**: &lt;1ms for standard multi-year schedules (5-10 years)
 - **Memory Overhead**: Minimal; validates in-place without copying data structures
 - **Caching Strategy**: Results cached via `@lru_cache`; validation runs once per Python session
 - **Scalability**: Handles schedules with 20+ events per year efficiently
 
 <Info>
-  **Benchmark Example**: A 5-year schedule (2020-2024) with ~22 events per year and ~5 sessions per event. Validation completes in 0.3-0.8ms on modern hardware.
+  **Measured**: The full vendored payload (9 seasons, 205 events) validates in about 0.05 ms; one season takes about 0.01 ms.
 </Info>
 
 ---
@@ -187,10 +186,8 @@ The primary and only public validation function in this module. This function pe
 **Raises:**
 
 - **`InvalidDataError`**: Raised when any validation check fails. The exception includes:
-  - **`message`**: Human-readable description of the validation failure
-  - **`context`**: Dictionary containing structured error information, including:
-    - **`reason`**: Detailed explanation of what validation rule was violated
-    - Additional context-specific fields depending on the failure type
+  - **`message`**: Human-readable description of the validation failure (`Invalid data: <reason>`)
+  - **`context`**: Dictionary with a single key, **`reason`**, naming the violated rule (`e.context["reason"]`)
 
 #### Validation Process
 
@@ -198,7 +195,7 @@ The function performs validation in a hierarchical, top-down manner. It checks e
 
 ##### Level 1: Top-Level Structure Validation
 
-```python
+```text
 # Checks performed:
 - payload is a dictionary (not list, string, None, etc.)
 - payload contains "schema_version" key
@@ -218,7 +215,7 @@ payload = {"schema_version": 1, "data": {...}}
 
 ##### Level 2: Schema Version Validation
 
-```python
+```text
 # Checks performed:
 - schema_version exists
 - schema_version is exactly 1 (only supported version)
@@ -237,7 +234,7 @@ payload = {"years": {...}}
 
 ##### Level 3: Years Container Validation
 
-```python
+```text
 # Checks performed:
 - "years" value is a dictionary
 - Each year key is a string of digits (e.g., "2021", not 2021 or "twenty-one")
@@ -267,7 +264,7 @@ payload = {
 
 ##### Level 4: Per-Year Structure Validation
 
-```python
+```text
 # For each year, checks:
 - "events" key exists and is a list
 - All items in "events" list are strings (an empty string passes)
@@ -303,7 +300,7 @@ payload = {
 
 ##### Level 5: Session Mapping Validation
 
-```python
+```text
 # For each event in each year, checks:
 - Event name exists as a key in the "sessions" dictionary
 - Session list for the event is a list
@@ -508,7 +505,7 @@ sprint_payload = {
             "sessions": {
                 "British Grand Prix": [
                     "Practice 1",      # Friday
-                    "Qualifying",      # Friday (for Sunday grid)
+                    "Qualifying",      # Friday (sets the Sprint grid)
                     "Practice 2",      # Saturday
                     "Sprint",          # Saturday (sets Sunday grid)
                     "Race"             # Sunday
@@ -666,17 +663,17 @@ Here is a reference of common validation failures and how to fix them:
 
 The validation function is optimized for production use:
 
-- **Fast Execution**: Typical validation time is 0.3-0.8ms for multi-year schedules
+- **Fast Execution**: Validating the full vendored payload (9 seasons) takes about 0.05 ms
 - **No Data Copying**: Validates in-place without creating copies of the data structure
 - **Early Exit**: Stops at the first validation failure, avoiding unnecessary checks
 - **Minimal Allocations**: Uses efficient iteration patterns to minimize memory allocations
 
-**Benchmark Results** (on modern hardware):
+**Measured** (one development machine; the numbers only show the order of magnitude):
 
 | Schedule Size | Events | Validation Time |
 |---------------|--------|-----------------|
-| 1 year (2021) | 23 events | ~0.1ms |
-| 9 years (vendored 2018-2026) | 205 events | ~0.6ms |
+| 1 year (2021) | 23 events | ~0.01 ms |
+| 9 years (vendored 2018-2026) | 205 events | ~0.05 ms |
 
 <Tip>
   **Integration Tip**: When building custom schedule loaders or data pipelines, call `validate_schedule_payload()` immediately after payload construction. Call it before any caching or API exposure. This ensures data quality at the earliest stage.
@@ -743,6 +740,8 @@ The internal schedule schema is event-centric. It is optimized for the most comm
 
 #### Real-World Example: 2021 Belgian Grand Prix
 
+This excerpt of the converted 2021 payload has the full `events` list but the sessions and metadata of one event only.
+
 ```json
 {
   "schema_version": 1,
@@ -770,7 +769,8 @@ The internal schedule schema is event-centric. It is optimized for the most comm
         "São Paulo Grand Prix",
         "Qatar Grand Prix",
         "Saudi Arabian Grand Prix",
-        "Abu Dhabi Grand Prix"
+        "Abu Dhabi Grand Prix",
+        "Pre-Season Test"
       ],
       "sessions": {
         "Belgian Grand Prix": [
@@ -814,7 +814,7 @@ The internal schedule schema is event-centric. It is optimized for the most comm
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `schema_version` | `int` | ✓ | Schema format version. Must be `1`. Future versions may introduce breaking changes. |
+| `schema_version` | `int` | ✓ | Schema format version. Must be `1`. |
 | `years` | `dict[str, YearPayload]` | ✓ | Dictionary mapping year strings to year-specific schedule data. Keys must be numeric strings (e.g., "2021"). |
 
 #### Year Payload Fields
@@ -830,7 +830,7 @@ The internal schedule schema is event-centric. It is optimized for the most comm
 | Field | Type | Required | Description | Example |
 |-------|------|----------|-------------|---------|
 | `RoundNumber` | `int` | ✗ | Championship round number. `0` for testing events. | `12` |
-| `EventDate` | `str` | ✗ | Main event date (typically race day) in ISO 8601 format (local time). | `"2021-08-29T17:00:00"` |
+| `EventDate` | `str` | ✗ | Main event date (typically race day) as an ISO 8601 string. `Event` keeps only the date part. | `"2021-08-29T17:00:00"` |
 | `Location` | `str` | ✗ | Circuit or city name. | `"Spa-Francorchamps"` |
 | `Country` | `str` | ✗ | Country where the event takes place. | `"Belgium"` |
 | `OfficialEventName` | `str` | ✗ | Full official FIA event name. | `"FORMULA 1 ROLEX BELGIAN GRAND PRIX 2021"` |
@@ -842,15 +842,15 @@ The internal schedule schema is event-centric. It is optimized for the most comm
 | `Session3Date` | `str` | ✗ | Date/time of third session in local time. | `"2021-08-28T12:00:00"` |
 | `Session4Date` | `str` | ✗ | Date/time of fourth session in local time. | `"2021-08-28T15:00:00"` |
 | `Session5Date` | `str` | ✗ | Date/time of fifth session in local time. | `"2021-08-29T15:00:00"` |
-| `Session1DateUtc` | `str` | ✗ | Date/time of first session in UTC (ISO 8601). | `"2021-08-27T09:30:00"` |
+| `Session1DateUtc` | `str` | ✗ | Date/time of first session in UTC: `Session1Date` minus `GmtOffset`. | `"2021-08-27T09:30:00"` |
 | `Session2DateUtc` | `str` | ✗ | Date/time of second session in UTC. | `"2021-08-27T13:00:00"` |
 | `Session3DateUtc` | `str` | ✗ | Date/time of third session in UTC. | `"2021-08-28T10:00:00"` |
 | `Session4DateUtc` | `str` | ✗ | Date/time of fourth session in UTC. | `"2021-08-28T13:00:00"` |
 | `Session5DateUtc` | `str` | ✗ | Date/time of fifth session in UTC. | `"2021-08-29T13:00:00"` |
 
-<Warning>
-  The vendored conversion copies each local `SessionNDate` value into `SessionNDateUtc`. So the `Utc` fields hold the local time, not UTC. For true UTC, subtract `GmtOffset` from the local time.
-</Warning>
+<Note>
+  The f1schedule files carry no UTC columns. The conversion (`_convert_f1schedule_year()`, used for vendored and fetched files alike) computes each `SessionNDateUtc` as the local `SessionNDate` minus `GmtOffset`. When `GmtOffset` is missing or cannot be parsed, the `Utc` fields are left out, and the `Event` holds `NaT` for them.
+</Note>
 
 ### Session Name Standards
 
@@ -873,7 +873,7 @@ Sprint weekends have a different structure:
 | Session Name | Abbreviation | Description | Typical Day |
 |--------------|--------------|-------------|-------------|
 | `Practice 1` | `FP1` | First practice session | Friday |
-| `Qualifying` | `Q` | Qualifying (sets the Sunday grid; Friday until 2023, Saturday from 2024) | Friday |
+| `Qualifying` | `Q` | Qualifying (sets the Sprint grid in 2021-2022 and the Sunday grid from 2023) | Friday (Saturday from 2024) |
 | `Practice 2` | `FP2` | Second practice session (2021-2022 only) | Saturday |
 | `Sprint Shootout` | `SS` | Sprint qualifying in 2023 (sets the Sprint grid) | Saturday |
 | `Sprint Qualifying` | `SQ` | Sprint qualifying from 2024 (sets the Sprint grid) | Friday |
@@ -899,34 +899,18 @@ The `EventFormat` metadata field indicates the weekend structure:
 | `sprint` | Sprint race weekend (2021-2022) | FP1, Qualifying, FP2, Sprint, Race | British GP 2021, Italian GP 2021 |
 | `sprint_shootout` | Sprint race weekend (2023) | FP1, Qualifying, Sprint Shootout, Sprint, Race | Austrian GP 2023 |
 | `sprint_qualifying` | Sprint race weekend (2024 onward) | FP1, Sprint Qualifying, Sprint, Qualifying, Race | Austrian GP 2024 |
-| `testing` | Pre-season or in-season testing | Practice 1, Practice 2, Practice 3 | Pre-Season Test 2021 |
+| `testing` | Pre-season testing | Practice 1, Practice 2, Practice 3 | Pre-Season Test 2021 |
 
 ### Schema Version History
 
 #### Version 1 (Current)
 
-- **Introduced**: tif1 v0.1.0
 - **Status**: Current and only supported version
 - **Features**:
   - Event-centric structure
   - Support for conventional, sprint, and testing formats
   - Metadata with timezone information
-  - Session date tracking (local and UTC)
-
-#### Future Versions (Planned)
-
-Future schema versions may include:
-
-- **Version 2** (Tentative):
-  - Circuit information (length, corners, DRS zones)
-  - Weather forecast data
-  - Tire compound allocations
-  - Support for new session types (for example, "Sprint Shootout")
-  - Enhanced metadata for special events
-
-<Warning>
-  **Breaking Changes**: When new schema versions are introduced, they will be clearly documented with migration guides. The library will maintain backward compatibility where possible, but validation will require explicit version support.
-</Warning>
+  - Session dates in local time and in UTC
 
 ---
 
@@ -1125,7 +1109,7 @@ payload = {
 ```
 
 <Note>
-  **Empty Lists**: Empty event lists and empty session lists pass validation. They may cause issues in higher-level APIs that expect at least one session per event. The validation layer checks structural correctness only, not business logic constraints.
+  **Empty Lists**: Empty event lists and empty session lists pass validation. For an event with an empty session list, `get_sessions()` returns the conventional five-session list. The validation layer checks structural correctness only, not business logic constraints.
 </Note>
 
 #### Scenario 6: Invalid Session Type
@@ -1299,8 +1283,12 @@ TIF1Error (base exception)
 When validation fails, an `InvalidDataError` is raised with the following structure:
 
 ```python
+from typing import Any
+
+from tif1.exceptions import TIF1Error
+
 class InvalidDataError(TIF1Error):
-    def __init__(self, reason: str | None = None, **context: Any):
+    def __init__(self, reason: str | None = None, **context: Any) -> None:
         message = f"Invalid data: {reason}" if reason else "Invalid or corrupted data"
         super().__init__(message, reason=reason, **context)
 ```
@@ -1310,7 +1298,7 @@ class InvalidDataError(TIF1Error):
 - **`message`** (`str`): Human-readable error message
 - **`context`** (`dict[str, Any]`): Structured error context containing:
   - **`reason`** (`str`): Detailed explanation of the validation failure
-  - Additional context fields (varies by error type)
+  - `validate_schedule_payload()` sets no other context keys
 
 ### Error Message Patterns
 
@@ -1559,30 +1547,6 @@ def debug_validate(payload):
         print(f"✗ VALIDATION FAILED: {e}")
 ```
 
-#### Strategy 3: Diff Against Known-Good Payload
-
-Compare a failing payload against a known-good example:
-
-```python
-import json
-from deepdiff import DeepDiff  # pip install deepdiff
-
-def compare_payloads(test_payload, reference_payload):
-    """Compare test payload structure against reference."""
-    diff = DeepDiff(
-        reference_payload,
-        test_payload,
-        ignore_order=True,
-        view='tree'
-    )
-
-    if diff:
-        print("=== Structural Differences ===")
-        print(json.dumps(diff.to_dict(), indent=2))
-    else:
-        print("✓ Structures match")
-```
-
 ### Common Error Scenarios and Solutions
 
 | Scenario | Error | Root Cause | Solution |
@@ -1629,7 +1593,7 @@ def _load_schedule_payload():
 
 ### Public APIs That Use Validation
 
-All schedule-related public APIs depend on validated schedule data:
+For a past season served from the vendored files, every schedule API reads the validated payload. A live season (the current or a future year) goes through the conversion checks instead; see [Data Source Priority](#data-source-priority). The flows below show the vendored path:
 
 #### `get_events(year)`
 
@@ -1645,7 +1609,7 @@ print(events["EventName"].tolist())
 ```
 
 **Internal Flow:**
-```python
+```text
 get_events(2021)
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1655,7 +1619,7 @@ get_events(2021)
 
 #### `get_sessions(year, event)`
 
-Returns a list of session names for a specific event. A name that is not an exact `EventName` resolves like `get_event_by_name()` (alias table, then fuzzy matching).
+Returns a list of session names for a specific event. A name that is not an exact `EventName` resolves like `get_event_by_name()` (alias table, then fuzzy matching). A fuzzy match needs a score of at least 70 (rapidfuzz ratio, 0-100). A name that matches no event raises `EventNotFoundError` (a `ValueError`). An alias of an event that is not on that calendar raises `EventNotInSeasonError`, its subclass.
 
 ```python
 import tif1
@@ -1667,7 +1631,7 @@ print(sessions)
 ```
 
 **Internal Flow:**
-```python
+```text
 get_sessions(2021, "Belgian Grand Prix")
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1688,7 +1652,7 @@ print(schedule[['RoundNumber', 'EventName', 'Location']])
 ```
 
 **Internal Flow:**
-```python
+```text
 get_event_schedule(2021)
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
@@ -1699,7 +1663,7 @@ get_event_schedule(2021)
 
 #### `get_event(year, identifier)`
 
-Returns an Event object for a specific event.
+Returns an Event object for a specific event. A name that matches no event gives `None` instead of an exception. `get_event_by_name()` raises `EventNotFoundError` for the same name.
 
 ```python
 import tif1
@@ -1711,11 +1675,12 @@ print(f"{event['EventName']} at {event['Location']}")
 ```
 
 **Internal Flow:**
-```python
+```text
 get_event(2021, "Belgian Grand Prix")
   → _load_schedule_payload()  # Validates here
     → validate_schedule_payload(payload)
   → Find event by name (exact name, then aliases, then fuzzy matching)
+  → Fuzzy score below 70: return None (get_event_by_name raises EventNotFoundError)
   → Create Event object with metadata
   → Return event
 ```
@@ -1752,7 +1717,7 @@ Past season with a vendored file
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Only the vendored payload goes through `validate_schedule_payload()`. A fetched year is converted, and the conversion raises `InvalidDataError` for a malformed file; a malformed upstream file is logged and ignored (the fallback chain continues). A failed fetch logs a warning and falls back to the stale row or the vendored file, so the current season is still resolvable offline.
+Only the vendored payload goes through `validate_schedule_payload()`. A fetched year only goes through the conversion, which raises `InvalidDataError` for a malformed file. tif1 logs that error and continues down the fallback chain. A failed fetch logs a warning and falls back to the stale row or the vendored file, so the current season is still resolvable offline.
 
 ### Caching Strategy
 
@@ -1782,7 +1747,7 @@ def _get_year_schedule(year):
 
 - **Vendored Data**: Validated once per Python session, cached indefinitely
 - **Live Data**: The raw upstream file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`) and memoized in the process for the same window. A failed fetch keeps the fallback for 5 minutes before the next attempt
-- **Performance Impact**: The first call reads and converts all vendored files (about 25ms). Later calls are cache hits
+- **Performance Impact**: The first call reads and converts all vendored files (a few milliseconds). Later calls are cache hits
 
 ### Custom Schedule Data Integration
 
@@ -2093,7 +2058,7 @@ def _convert_f1schedule_year(raw_year: dict, year: int) -> dict:
 
 **Why Two Formats?**
 
-- **Raw Format**: Optimized for storage and distribution (smaller file size, easier to maintain)
+- **Raw Format**: The format of the upstream f1schedule repository, the files FastF1 reads. Vendored and fetched files share it, so one converter handles both
 - **Internal Format**: Optimized for runtime queries (faster lookups, better API ergonomics)
 
 ### Performance Optimization Techniques
@@ -2105,18 +2070,21 @@ Schedule data is loaded only when first accessed:
 ```python
 from functools import lru_cache
 
+from tif1.events import _load_vendored_f1schedule_years
+from tif1.schedule_schema import validate_schedule_payload
+
 @lru_cache(maxsize=1)
 def _load_schedule_payload():
-    """Load schedule only once per session."""
+    """Load schedule only once per session (as in tif1.events)."""
     # Expensive operations happen here
     vendored_years = _load_vendored_f1schedule_years()
     payload = {"schema_version": 1, "years": vendored_years}
     return validate_schedule_payload(payload)
 
-# First call: loads and validates (about 25ms)
+# First call: reads, converts and validates the vendored files (a few milliseconds)
 schedule1 = _load_schedule_payload()
 
-# Subsequent calls: returns cached result (~0.001ms)
+# Subsequent calls: return the cached result (well under a microsecond)
 schedule2 = _load_schedule_payload()
 ```
 
@@ -2140,9 +2108,8 @@ def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
 ```
 
 **Benefits:**
-- Tuples are hashable (can be used as cache keys)
-- Immutability prevents accidental modification
-- Smaller memory footprint than lists
+- Immutability prevents accidental modification of the memo
+- `get_events()` and `get_sessions()` return new objects built from the tuples, so a caller that changes them does not change the memo
 
 #### Technique 3: Validation Short-Circuiting
 
@@ -2293,74 +2260,21 @@ pipeline = ScheduleValidationPipeline()
 pipeline.add_validator(validate_schedule_payload, "Schema Validation")
 pipeline.add_validator(validate_schedule_with_business_rules, "Business Rules")
 
+my_payload = {
+    "schema_version": 1,
+    "years": {
+        "2021": {
+            "events": ["Bahrain Grand Prix"],
+            "sessions": {"Bahrain Grand Prix": ["Practice 1", "Qualifying", "Race"]},
+        }
+    },
+}
+
 try:
-    validated = pipeline.validate(my_payload)
+    validated = pipeline.validate(my_payload)  # fails the "at least 15 events" rule
     print("✓ All validations passed")
 except InvalidDataError as e:
     print(f"✗ Validation failed: {e.message}")
-```
-
-### Schema Evolution and Migration
-
-#### Handling Future Schema Versions
-
-When schema version 2 is introduced, migration logic may be needed:
-
-```python
-from tif1.schedule_schema import validate_schedule_payload
-from tif1.exceptions import InvalidDataError
-
-def migrate_schedule_to_v1(payload):
-    """
-    Migrate schedule payload to schema version 1.
-
-    Handles:
-    - Version 0 (hypothetical legacy format)
-    - Version 1 (current format)
-    - Version 2 (future format - downgrades to v1)
-    """
-    version = payload.get("schema_version")
-
-    if version == 1:
-        # Already v1, just validate
-        return validate_schedule_payload(payload)
-
-    elif version == 0:
-        # Migrate from v0 to v1
-        migrated = {
-            "schema_version": 1,
-            "years": {}
-        }
-
-        # Migration logic here
-        for year, data in payload.get("schedule", {}).items():
-            migrated["years"][str(year)] = {
-                "events": data.get("event_list", []),
-                "sessions": data.get("session_map", {})
-            }
-
-        return validate_schedule_payload(migrated)
-
-    elif version == 2:
-        # Downgrade from v2 to v1 (strip v2-specific fields)
-        downgraded = {
-            "schema_version": 1,
-            "years": {}
-        }
-
-        for year, data in payload.get("years", {}).items():
-            downgraded["years"][year] = {
-                "events": data.get("events", []),
-                "sessions": data.get("sessions", {}),
-                # Omit v2-specific fields like "circuits", "weather", etc.
-            }
-
-        return validate_schedule_payload(downgraded)
-
-    else:
-        raise InvalidDataError(
-            reason=f"Cannot migrate from unsupported schema version: {version}"
-        )
 ```
 
 ### Troubleshooting Guide
@@ -2387,7 +2301,7 @@ if "metadata" in year_data:
 
 **Symptom**: Validation becomes slow with large schedules.
 
-**Cause**: Validation is O(n×m) where n=years, m=events per year.
+**Cause**: Validation time grows linearly with the total number of events and session names.
 
 **Solution**:
 ```python
@@ -2682,7 +2596,7 @@ sprint_2021 = {
             "sessions": {
                 "British Grand Prix": [
                     "Practice 1",      # Friday
-                    "Qualifying",      # Friday (for Sunday grid)
+                    "Qualifying",      # Friday (sets the Sprint grid)
                     "Practice 2",      # Saturday
                     "Sprint",          # Saturday (sets Sunday grid)
                     "Race"             # Sunday
@@ -2932,14 +2846,14 @@ The `schedule_schema` module provides the foundational validation layer for tif1
 ### Core Concepts
 
 - **Single Validation Function**: `validate_schedule_payload()` is the only public API
-- **Schema Version 1**: Now the only supported version
+- **Schema Version 1**: The only supported version
 - **Event-Centric Structure**: Internal format optimized for fast event/session lookups
 - **Fail-Fast Validation**: Stops at first error with detailed error messages
 - **Performance Optimized**: Typically &lt;1ms validation time, cached results
 
 ### When to Use
 
-- **Automatic**: All tif1 schedule APIs use validation internally
+- **Automatic**: tif1 validates the vendored schedule files the first time a schedule API reads them
 - **Manual**: When working with custom schedule data or building data pipelines
 - **Testing**: To ensure test fixtures have valid structure
 - **Debugging**: To diagnose schedule data issues
@@ -2950,17 +2864,17 @@ The `schedule_schema` module provides the foundational validation layer for tif1
 2. **Handle Errors**: Always catch `InvalidDataError` and provide user-friendly messages
 3. **Preserve Context**: When wrapping validation, preserve error context for debugging
 4. **Build Incrementally**: For complex payloads, validate at each construction stage
-5. **Use Caching**: Use the tif1 built-in caching to minimize validation overhead
+5. **Validate Once**: Cache a validated payload (for example with `functools.lru_cache`), as tif1 does for the vendored files
 
 ### Common Patterns
 
 ```python
-# Pattern 1: Load and validate from file
-with open("schedule.json") as f:
-    payload = json.load(f)
-validated = validate_schedule_payload(payload)
+import json
 
-# Pattern 2: Build programmatically
+from tif1.exceptions import InvalidDataError
+from tif1.schedule_schema import validate_schedule_payload
+
+# Pattern 1: Build programmatically
 payload = {
     "schema_version": 1,
     "years": {
@@ -2970,6 +2884,13 @@ payload = {
         }
     }
 }
+validated = validate_schedule_payload(payload)
+
+# Pattern 2: Load and validate from file (written here first)
+with open("schedule.json", "w") as f:
+    json.dump(payload, f)
+with open("schedule.json") as f:
+    payload = json.load(f)
 validated = validate_schedule_payload(payload)
 
 # Pattern 3: Error handling
@@ -3005,19 +2926,14 @@ For more information on working with schedule data in tif1:
 | Level | What's Checked | Error Pattern |
 |-------|----------------|---------------|
 | **Top-Level** | Payload is dict, has schema_version=1, has years dict | `Schedule payload must be an object` |
-| **Year** | Year keys are numeric strings, values are dicts | `Invalid year key: {key}` |
-| **Events** | Each year has events list with non-empty strings | `Invalid events list for year={year}` |
+| **Year** | Year keys are numeric strings, values are dicts | `Invalid year key: {key!r}` |
+| **Events** | Each year has an events list of strings | `Invalid events list for year={year}` |
 | **Sessions** | Each year has sessions dict | `Invalid sessions map for year={year}` |
-| **Mapping** | Each event has session list with non-empty strings | `Invalid session list for year={year} event={event}` |
+| **Mapping** | Each event has a session list of strings | `Invalid session list for year={year} event={event}` |
 
-#### Performance Benchmarks
+#### Performance
 
-| Operation | Time | Notes |
-|-----------|------|-------|
-| First validation | 0.3-0.8ms | Includes parsing and checking |
-| Cached access | ~0.001ms | LRU cache hit |
-| Multi-year (5 years) | ~0.6ms | ~110 events, ~550 sessions |
-| Multi-year (10 years) | ~1.1ms | ~220 events, ~1100 sessions |
+Validating the full vendored payload (9 seasons, 205 events) takes about 0.05 ms. Reading and converting the vendored files, which happens once per process before that validation, takes a few milliseconds; later calls hit the `lru_cache`.
 
 #### Schema Structure Quick Reference
 
@@ -3053,22 +2969,3 @@ For more information on working with schedule data in tif1:
 - **tif1 GitHub**: [github.com/TracingInsights/tif1](https://github.com/TracingInsights/tif1) - Main repository
 - **Issue Tracker**: Report schedule validation issues on GitHub
 
-### Community
-
-- **Discussions**: Ask questions about schedule validation on GitHub Discussions
-- **Contributing**: Contributions to improve validation are welcome
-
-### Version History
-
-| Version | Changes |
-|---------|---------|
-| **v0.1.0** | Initial release with schema version 1 support |
-| **Current** | Schema version 1 remains the only supported version |
-
-<Info>
-  **Stay Updated**: Watch the tif1 repository for announcements about new schema versions or validation enhancements.
-</Info>
-
----
-
-*Last updated: April 2026*

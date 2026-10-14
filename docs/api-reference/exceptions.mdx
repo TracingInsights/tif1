@@ -14,7 +14,7 @@ keywords:
 
 ## Overview
 
-`tif1` implements a structured exception hierarchy designed for clarity and debuggability when errors occur. The data, network, and cache exceptions inherit from the base `TIF1Error` class. Each of them includes contextual information that shows what went wrong and why. Name errors are different: an unknown session name or round number raises a plain `ValueError`, and `EventNotInSeasonError` is a `ValueError` subclass.
+`tif1` implements a structured exception hierarchy designed for clarity and debuggability when errors occur. The data, network, and cache exceptions inherit from the base `TIF1Error` class. Each of them includes contextual information that shows what went wrong and why. Name errors are different: an unknown session name or round number raises a plain `ValueError`. An event name that matches no event raises `EventNotFoundError`, a `ValueError` subclass.
 
 The exception system is designed with several key principles:
 
@@ -49,11 +49,12 @@ TIF1Error (base exception for all tif1 errors)
 └── SessionNotLoadedError (defined and exported; tif1 does not raise it)
 
 ValueError (built-in)
-├── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
+├── EventNotFoundError (event name that matches no event of the season)
+│   └── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
 └── ValueError itself (unknown session name, invalid round, lap number below 1)
 ```
 
-`EventNotInSeasonError` is exported as `tif1.EventNotInSeasonError`. `get_session()` and `get_event_by_name()` raise it, for example for `tif1.get_session(2021, "Suzuka", "Race")`. The message names the event: `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`. It carries no `context` dictionary.
+`EventNotFoundError` and `EventNotInSeasonError` are not `TIF1Error` subclasses. Refer to [Event Name Errors](#event-name-errors) for details.
 
 <Note>
   `get_session()` does not fetch data. A `DataNotFoundError` or `NetworkError` appears on the first data access: `session.load()`, `session.laps`, `session.drivers`, and similar properties. Data properties load on first access, so `SessionNotLoadedError` does not occur. A cache failure is logged as a warning, and `tif1` continues without the SQLite cache, so `CacheError` does not occur either.
@@ -70,8 +71,9 @@ try:
     session = tif1.get_session(2024, "Monaco", "Race")
     driver = session.get_driver("VER")
     lap = driver.get_lap(1)
-except tif1.EventNotInSeasonError:
-    # An alias such as "Suzuka" for a season without that event
+except tif1.EventNotFoundError:
+    # A name that matches no event, or an alias such as "Suzuka"
+    # for a season without that event (EventNotInSeasonError)
     pass
 except ValueError:
     # Unknown session name or invalid round number
@@ -96,7 +98,7 @@ except tif1.TIF1Error:
 
 ### `TIF1Error`
 
-The root exception class for all tif1 errors. Every exception in the library inherits from this class. A single except clause on `TIF1Error` catches all tif1-specific errors.
+The root exception class for tif1 errors. Every `tif1` exception class except `EventNotFoundError` and its subclass `EventNotInSeasonError` (both `ValueError`) inherits from this class. A single except clause on `TIF1Error` catches all of them.
 
 **Signature:**
 ```python
@@ -137,7 +139,7 @@ except tif1.TIF1Error as e:
 ```
 
 <Note>
-  An unknown event name does not raise. Fuzzy matching picks the closest event and logs a warning: `tif1.get_session(2025, "Invalid GP", "Race")` loads the Italian Grand Prix. Check `session.event_name` when the name comes from user input.
+  An unknown event name does not raise `TIF1Error`. A name that matches no event raises `EventNotFoundError`, a `ValueError`. A typo such as "Monacco" resolves to the closest event and logs a warning. Check `session.event_name` when the name comes from user input.
 </Note>
 
 **Example - Logging with Context:**
@@ -197,6 +199,48 @@ if session is None:
 
 ---
 
+## Event Name Errors
+
+### `EventNotFoundError`
+
+Raised when an event name matches no event of the season. It is a `ValueError` subclass, not a `TIF1Error`. Import it as `tif1.EventNotFoundError` or from `tif1.exceptions`.
+
+**Signature:**
+```python
+class EventNotFoundError(ValueError)
+```
+
+The exception has no `message` attribute and no `context` dictionary. Use `str(e)` to get the message.
+
+**When Raised:**
+- `get_session()` and `get_event_by_name()` get a name that resembles no event. Event resolution tries the exact name (case-insensitive), then the alias table, then fuzzy matching. A fuzzy match needs a score of at least 70 (rapidfuzz ratio, 0-100). The message is `No event matching '<name>' in <year>`.
+- `get_event_by_name(..., exact_match=True)` finds no event with that exact name. The message is `No exact match found for event '<name>' in <year>`.
+
+A season with no events raises a plain `ValueError` (`No events found for <year>`). A typo such as "Monacco" or "Zandvort" still resolves to the closest event and logs a `Correcting user input` warning.
+
+**Example:**
+```python
+import tif1
+
+try:
+    session = tif1.get_session(2025, "Moon GP", "Race")
+except tif1.EventNotFoundError as e:
+    print(e)
+    # Output: No event matching 'Moon GP' in 2025
+
+# A typo resolves to the closest event
+session = tif1.get_session(2025, "Monacco", "Race")
+print(session.event_name)  # Monaco Grand Prix
+```
+
+### `EventNotInSeasonError`
+
+Raised when an alias names a Grand Prix that is not on the calendar of that season. It is a subclass of `EventNotFoundError`, so an except clause on `EventNotFoundError` also catches it. Import it as `tif1.EventNotInSeasonError`.
+
+`get_session()` and `get_event_by_name()` raise it, for example for `tif1.get_session(2021, "Suzuka", "Race")`. The message names the event: `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`.
+
+---
+
 ## Data Errors
 
 ### `DataNotFoundError`
@@ -222,7 +266,7 @@ class DataNotFoundError(TIF1Error):
 - Additional context from `**context` kwargs
 
 **When Raised:**
-- Every CDN source refuses the file with an HTTP 4xx status, such as 404 (no such file)
+- Every CDN source refuses the file with an HTTP 4xx status other than 408 or 429, such as 404 (no such file)
 - Requesting a session that is on the calendar but has not run yet
 - Requesting a data file that was never published for a session
 - A file that every CDN refused recently: `tif1` remembers the verdict for `missing_payloads_ttl_days` (default 7) and raises without a new request
@@ -446,7 +490,7 @@ import tif1
 
 session = tif1.get_session(2024, "Monaco", "Race")
 
-def validate_drivers(session, driver_codes: list[str]) -> tuple[list, list]:
+def split_driver_codes(session, driver_codes: list[str]) -> tuple[list, list]:
     """Validate a list of driver codes, returning valid and invalid."""
     valid = []
     invalid = []
@@ -462,7 +506,7 @@ def validate_drivers(session, driver_codes: list[str]) -> tuple[list, list]:
 
 # Validate a list
 requested = ["VER", "HAM", "XXX", "LEC", "YYY"]
-valid, invalid = validate_drivers(session, requested)
+valid, invalid = split_driver_codes(session, requested)
 
 print(f"Valid drivers: {valid}")
 print(f"Invalid drivers: {invalid}")
@@ -1086,14 +1130,14 @@ class InvalidDataError(TIF1Error):
 **When Raised:**
 - JSON parsing failures (malformed JSON syntax)
 - A payload of the wrong type (for example, a list where a JSON object is expected)
-- Schema validation failures (pydantic validation errors). Most of these checks run only when the `validate_data`, `validate_lap_times`, or `validate_telemetry` configuration keys are `True` (all default to `False`)
+- A `validate_*_data()` call with `strict=True` on a payload that fails a check. The fetch pipeline runs these validators in non-strict mode: a payload that fails a check is logged and passed through
 - Malformed schedule data (see the [Schedule Schema API](/api-reference/schedule-schema))
 
 **Common Scenarios:**
 
 1. **Malformed JSON**: CDN served corrupted or incomplete JSON
 2. **Schema Changes**: Data structure changed but library not updated
-3. **Validation Enabled**: `validate_data=True` and a payload fails a check
+3. **Strict Validation**: A `validate_lap_data(..., strict=True)` call gets a payload that fails a check
 
 **Example - Basic Handling:**
 ```python
@@ -1180,34 +1224,6 @@ else:
     print("Loaded successfully")
 ```
 
-**Example - Validation Error Recovery:**
-
-Load with validation first, then without it if a check fails:
-
-```python
-import tif1
-
-def load_with_fallback_validation(year: int, gp: str, session_name: str):
-    """Try a validated load, then fall back to an unvalidated load."""
-    config = tif1.get_config()
-    try:
-        for validate in (True, False):
-            config.set("validate_data", validate)
-            try:
-                session = tif1.get_session(year, gp, session_name)
-                session.load(laps=True, telemetry=False, weather=False, messages=False)
-                print(f"Loaded with validate_data={validate}")
-                return session
-            except tif1.InvalidDataError as e:
-                if not validate:
-                    raise
-                print(f"Validation failed ({e.context.get('reason')}), loading without it")
-    finally:
-        config.set("validate_data", False)  # Restore the default
-
-session = load_with_fallback_validation(2024, "Monaco", "Race")
-```
-
 **Example - Data Quality Checks:**
 ```python
 import tif1
@@ -1281,7 +1297,7 @@ def batch_validate_sessions(
     for year, gp, session_name in requests:
         try:
             session = tif1.get_session(year, gp, session_name)
-            _ = session.laps  # Trigger validation
+            _ = session.laps  # Raises InvalidDataError for a malformed payload
 
             results["valid"].append({
                 "year": year,
@@ -1762,7 +1778,7 @@ except tif1.InvalidDataError as e:
     print(f"Invalid data: {e.message}")
     print(f"Reason: {e.context.get('reason')}")
 except ValueError as e:
-    # Unknown session name or round, or EventNotInSeasonError
+    # Unknown session name or round, or EventNotFoundError
     print(f"Invalid request: {e}")
 except tif1.TIF1Error as e:
     print(f"General tif1 error: {e.message}")
@@ -2214,7 +2230,6 @@ class ContextAwareErrorHandler:
             if status and status >= 500:
                 recommendations.append("CDN or server experiencing issues")
                 recommendations.append("Retry with exponential backoff")
-                recommendations.append("Check tif1 status page for outages")
             else:
                 recommendations.append("Check internet connection")
                 recommendations.append("Verify firewall/proxy settings")
@@ -2314,7 +2329,7 @@ except tif1.DriverNotFoundError as e:
 
 ### 2. Always Use Context Information
 
-Every tif1 exception includes a `context` dictionary with structured metadata. Use this for debugging, logging, and error recovery.
+Every `TIF1Error` includes a `context` dictionary with structured metadata. Use this for debugging, logging, and error recovery.
 
 **Why:** Context provides actionable information for debugging and monitoring.
 
@@ -2567,8 +2582,8 @@ def get_user_friendly_message(error: tif1.TIF1Error) -> str:
 
     elif isinstance(error, tif1.InvalidDataError):
         return (
-            "The data received appears to be corrupted. "
-            "Please try again or contact support if the problem persists."
+            "The data received appears to be corrupted. Please try again, or report "
+            "the problem at https://github.com/TracingInsights/tif1/issues."
         )
 
     else:

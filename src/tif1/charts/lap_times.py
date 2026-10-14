@@ -118,7 +118,10 @@ def plot_driver_laptimes(
     )
     ax.set_xlabel("Lap Number", fontsize=12)
     ax.set_ylabel("Lap Time", fontsize=12)
-    ax.invert_yaxis()
+    # Fastest laps on top. seaborn already inverts a timedelta y-axis, so an
+    # unconditional invert_yaxis() would flip it back.
+    if not ax.yaxis_inverted():
+        ax.invert_yaxis()
 
     if len(drivers) == 1:
         title = f"{drivers[0]} Lap Times in the {sess.event.year} {sess.event['EventName']}"
@@ -744,19 +747,22 @@ def plot_track_temperature(
         if driver_counts.empty:
             raise ValueError("No lap data available for the track temperature chart.")
         drivers = [driver_counts.idxmax()]
+    else:
+        drivers = _common.resolve_drivers(sess, drivers, 0)
 
     laps = _common.apply_common_filters(sess.laps, drivers=drivers, session=sess)
 
     fig, ax = plt.subplots(figsize=figsize if figsize is not None else _TEMPERATURE_FIGSIZE)
+    single = len(drivers) == 1
     for driver in drivers:
         driver_laps = laps[laps["Driver"] == driver]
-        label = "Track Temperature" if len(drivers) == 1 else driver
         ax.plot(
             driver_laps["LapNumber"],
             driver_laps["TrackTemp"],
-            color="#ff4444",
+            # One shared color would make a multi-driver legend unreadable.
+            color="#ff4444" if single else _driver_color(sess, driver),
             linewidth=2.5,
-            label=label,
+            label="Track Temperature" if single else driver,
         )
 
     ax.set_xlabel("Lap Number", fontsize=12)

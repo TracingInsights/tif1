@@ -396,7 +396,7 @@ class TestSessionLapsProperty:
         mock_async.return_value = [
             {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]}
         ]
-        session = Session(2025, "TestCache GP", "Race", enable_cache=False)
+        session = Session(2025, "Qatar Grand Prix", "Race", enable_cache=False)
         laps1 = session.laps
         laps2 = session.laps
         assert laps1 is laps2

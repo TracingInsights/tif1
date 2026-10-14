@@ -17,15 +17,14 @@ keywords:
 
 tif1 supports two DataFrame libraries: **pandas** (default) and **polars** (installed with tif1, selected with `lib="polars"`). This design balances familiarity, ecosystem compatibility, and raw performance for each use case.
 
-The backend system is integrated into the tif1 core architecture. When tif1 loads session data, telemetry, or lap data, it constructs DataFrames with the selected backend. All subsequent operations then use the strengths of that backend. This abstraction enables a backend switch with minimal code changes and a large performance gain.
+The backend system is integrated into the tif1 core architecture. When tif1 loads session data, telemetry, or lap data, it constructs DataFrames with the selected backend. All subsequent operations then use that backend. A backend switch needs few code changes, but the column types differ (see [Data Contract by Backend](#data-contract-by-backend)).
 
 ## Why Multiple Backends?
 
 The Formula 1 data analysis landscape presents unique challenges:
 
-- **Volume**: A single race session can generate over 1,200 laps. Telemetry sampled at 10-60Hz results in millions of data points.
-- **Velocity**: Real-time analysis during sessions requires fast data processing
-- **Variety**: Different analysis tasks have different requirements. Exploratory analysis benefits from the pandas ecosystem, while production pipelines need polars speed.
+- **Volume**: A race session has more than 1,000 laps (1,128 for the 2025 Bahrain Grand Prix race). One lap of telemetry holds 700-800 samples of 19 columns, so the telemetry of a race holds millions of values.
+- **Variety**: Different analysis tasks have different requirements. Exploratory analysis benefits from the pandas ecosystem, while large pipelines can use the polars query engine.
 - **Compatibility**: Many existing tools and libraries in the Python ecosystem expect pandas DataFrames
 
 By supporting both backends, tif1 allows optimization for specific constraints without loss of functionality.
@@ -68,7 +67,7 @@ graph TB
     style PL4 fill:#51cf66
 ```
 
-The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. When code calls `get_session()` or reads session attributes like `.laps` or `.weather`, tif1 runs these steps internally.
+The backend abstraction layer in tif1 handles the complexity of supporting multiple DataFrame libraries. `get_session()` loads no data. When code reads session attributes such as `.laps` or `.weather`, tif1 runs these steps internally.
 
 1. **Fetches data** from the CDN or cache (backend-agnostic)
 2. **Parses JSON** using orjson (backend-agnostic)
@@ -88,14 +87,11 @@ This architecture applies backend-specific optimizations at the lowest level and
 | **Memory Backend** | NumPy arrays | Apache Arrow | Arrow enables zero-copy operations |
 | **Query Optimization** | ❌ No | ✅ Yes | Polars optimizes query plans before execution |
 | **Lazy Evaluation** | ❌ No | ✅ Yes | Defer computation until `.collect()` |
-| **SIMD Vectorization** | Partial | ✅ Full | Polars leverages CPU SIMD instructions |
 | **Null Handling** | NaN/None mix | Proper nulls | Arrow has native null support |
-| **String Performance** | Moderate | Fast | Polars has optimized string kernels |
 | **Ecosystem Size** | Very Large | Growing | Pandas has 15+ years of libraries |
 | **Learning Curve** | Gentle | Moderate | Polars API is more explicit |
-| **Memory Efficiency** | Baseline | 2-3x better | Polars uses less memory per operation |
-| **Typical Speedup** | 1x | 2-5x | Varies by operation and data size |
-| **Installation Size** | ~50MB | ~30MB | Polars is more compact |
+| **Memory of tif1 frames** | Baseline | About 25% less (laps), 40% less (telemetry) | Measured on the 2025 Bahrain Grand Prix race |
+| **Speed on one session** | About 1 ms per operation | About 1 ms per operation | See [Detailed Performance Comparison](#detailed-performance-comparison) |
 | **Python Version** | >=3.11 | >=3.11 | `tif1` requires 3.11 or later on either backend |
 
 ---
@@ -120,6 +116,7 @@ Pandas is the right choice when:
 
 - **Learning tif1**: The pandas API is more forgiving and has extensive documentation.
 - **Ecosystem compatibility**: Libraries like matplotlib, seaborn, scikit-learn, and statsmodels expect pandas DataFrames.
+- **tif1 charts**: The `tif1.charts` functions accept `lib="pandas"` and `lib="polars"` and draw the same figure. In both cases, the chart loads the session with the pandas backend, because matplotlib and seaborn use pandas frames. Both backends share the same payload cache. Other `lib` values raise `ValueError`.
 - **Exploratory analysis**: The pandas API and Jupyter integration suit interactive work.
 - **Small to medium datasets**: For datasets under 1 million rows, pandas performance is typically sufficient.
 - **The complete pandas API**: Some advanced pandas features (MultiIndex, time series resampling, etc.) are not available in polars.
@@ -134,7 +131,7 @@ Pandas performance varies significantly by operation type:
 - **Moderate operations**: String operations, groupby with multiple aggregations, merges
 - **Slow operations**: Apply with Python functions, iteration, complex string parsing
 
-Typical tif1 workloads include filtering laps, computing statistics, and grouping by driver. Pandas performs well on these workloads up to about 10,000 laps, roughly 5-8 race sessions.
+Typical tif1 workloads include filtering laps, computing statistics, and grouping by driver. On the laps of one race (about 1,100 rows), each of these operations takes about 1 ms on pandas.
 
 ### Example Usage
 
@@ -192,7 +189,7 @@ Polars is built on Apache Arrow and uses a fundamentally different execution mod
 - **Multi-threaded execution**: Automatically parallelizes operations across all CPU cores
 - **Apache Arrow memory format**: Columnar, cache-friendly layout with zero-copy operations
 - **Query optimization**: Analyzes and optimizes query plans before execution (in lazy mode)
-- **SIMD vectorization**: Uses CPU SIMD instructions for 4-8x faster operations
+- **SIMD vectorization**: Uses CPU SIMD instructions
 - **Proper null handling**: Native null support without NaN confusion
 - **Rust implementation**: Memory-safe, no GIL limitations, predictable performance
 
@@ -200,28 +197,20 @@ Polars is built on Apache Arrow and uses a fundamentally different execution mod
 
 Polars is the right choice when:
 
-- **Large datasets**: For datasets over 1 million rows, polars parallelization performs best.
-- **Performance is critical**: Production pipelines need maximum throughput.
-- **Memory is constrained**: Polars uses 50-70% less memory than pandas for equivalent operations.
+- **Large datasets**: Parallel execution helps most on large tables, such as the telemetry of many sessions.
 - **Data pipelines**: Lazy evaluation enables query optimization.
-- **Heavy aggregations**: Groupby operations run 3-5x faster than pandas.
-- **String work**: Polars has highly optimized string kernels.
-- **Predictable performance**: The Rust implementation eliminates GIL and memory management issues.
+- **Memory is constrained**: tif1 polars frames use about 25% less memory for laps and 40% less for telemetry.
+- **Heavy aggregations**: Groupby operations run in parallel on all CPU cores.
 - **A different API**: The polars API is more explicit but requires learning.
 
 ### Performance Characteristics
 
-Polars performs well in every operation type and shows the largest gains in these areas:
+Polars gives the largest gains on large tables, in these areas:
 
-- **Fastest operations**: Groupby aggregations, joins, sorting, filtering large datasets
-- **Strong operations**: String operations, window functions, complex expressions
-- **Good operations**: Simple selections, arithmetic, type conversions
+- Groupby aggregations, joins, sorting, and filters
+- String operations, window functions, and complex expressions
 
-For tif1 workloads, polars typically provides:
-- **2-3x speedup** for single-session analysis
-- **3-5x speedup** for multi-session aggregations
-- **4-8x speedup** for complex groupby operations
-- **2x memory reduction** for typical race data
+The tables of one session are small (about 1,100 laps, or 700-800 telemetry samples per lap). At that size, the two backends take about the same time. See [Detailed Performance Comparison](#detailed-performance-comparison) for measured values.
 
 ### Installation
 
@@ -301,14 +290,14 @@ tif1 requires polars 2.x. tif1 returns eager `DataFrame` objects. Most polars 2.
 | String to `Date`, `Datetime`, and `Time` casts are removed | Use `pl.col("LapStartDate").str.to_datetime()` instead of `.cast(pl.Datetime)`. |
 | `pl.concat(..., how="horizontal")` requires equal heights | Use `how="horizontal_extend"` to pad a shorter frame with nulls. |
 | `is_in()` no longer coerces types with loss | Cast both sides to one type first. `pl.col("LapNumber").is_in([1.0, 2.0])` raises because `LapNumber` is `Int64`; use `[1, 2]`. |
-| Removed APIs: `melt`, `with_row_count`, `GroupBy.count()`, `collect(streaming=True)`, `join(how="outer")`, `pl.NUMERIC_DTYPES` | Use `unpivot`, `with_row_index`, `len()`, `collect(engine="streaming")`, `join(how="full")`, and `pl.selectors.numeric()`. The `AttributeRemovedError` message names the replacement. |
+| Removed APIs: `melt`, `with_row_count`, `GroupBy.count()`, `collect(streaming=True)`, `join(how="outer")`, `pl.NUMERIC_DTYPES` | Use `unpivot`, `with_row_index`, `len()`, `collect(engine="streaming")`, `join(how="full")`, and `pl.selectors.numeric()`. The error message names the replacement. |
 | `pl.Categorical(ordering=...)` is removed; categoricals always sort by string value | `TIF1_POLARS_LAP_CATEGORICAL=true` works as before. |
 
 The complete list is in the [polars 2.0 upgrade guide](https://docs.pola.rs/releases/upgrade/2/). Telemetry frames that polars 1.x wrote to the cache load unchanged under polars 2.x. The same release changes the telemetry dtypes for `DistanceToDriverAhead` and `DriverAhead`, so tif1 rebuilds its cached telemetry frames once. It rebuilds them from the cached payloads, without a network fetch.
 
 ### Polars-Specific Features in tif1
 
-When using the polars backend, tif1 uses these polars capabilities:
+With the polars backend, code can use these polars capabilities on the returned frames:
 
 - **Lazy evaluation**: Call `.lazy()` on a polars frame to build an optimized query plan
 - **Parallel execution**: All operations automatically use available CPU cores
@@ -320,74 +309,52 @@ When using the polars backend, tif1 uses these polars capabilities:
 
 ## Detailed Performance Comparison
 
-Performance varies by operation type, data size, and hardware. The benchmarks below were measured on a modern 8-core CPU with a full race session dataset.
+Performance varies by operation type, data size, and hardware. The values below were measured on one machine, with the tables that tif1 returns for one session.
 
-### Benchmark Methodology
+### Measurement Method
 
-- **Hardware**: Intel i7-12700K (8P+4E cores), 32GB DDR5 RAM
-- **Dataset**: 2024 Abu Dhabi GP Race session (20 drivers, 1,142 laps, full telemetry)
-- **Data size**: ~450MB in pandas, ~220MB in polars
-- **Measurement**: Median of 10 runs, cold cache
-- **Python**: 3.12, pandas 3.0.5, polars 1.43.2 (measured before the move to polars 2; treat the figures as indicative)
+- **Hardware**: Intel Core i9-13900HX (32 threads)
+- **Software**: Python 3.14, pandas 3.0.6, polars 2.0.0
+- **Dataset**: 2025 Bahrain Grand Prix race (1,128 laps; one lap of telemetry has 710 samples)
+- **Measurement**: Median of 25 runs, with the session already in the local cache
 
-### Operation-Level Benchmarks
+### Measured Values
 
-| Operation | Pandas | Polars | Speedup | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **Data Loading** |
-| Load session (no telemetry) | 1.2s | 0.8s | **1.5x** | JSON parsing dominates |
-| Load session (with telemetry) | 2.5s | 1.2s | **2.1x** | Polars parallelizes construction |
-| Load from cache | 0.3s | 0.15s | **2.0x** | Deserialization speedup |
-| **Filtering** |
-| Simple filter (Driver == "VER") | 45ms | 12ms | **3.8x** | Polars uses SIMD |
-| Complex filter (3 conditions) | 78ms | 18ms | **4.3x** | Query optimization helps |
-| String contains | 120ms | 35ms | **3.4x** | Polars string kernels |
-| **Aggregation** |
-| Single column mean | 15ms | 8ms | **1.9x** | Both are vectorized |
-| GroupBy single agg | 120ms | 35ms | **3.4x** | Polars parallelizes groups |
-| GroupBy multiple aggs | 280ms | 65ms | **4.3x** | Larger benefit with complexity |
-| **Sorting** |
-| Sort by single column | 80ms | 25ms | **3.2x** | Polars uses parallel sort |
-| Sort by multiple columns | 145ms | 42ms | **3.5x** | Consistent speedup |
-| **Joining** |
-| Inner join (1k rows) | 25ms | 18ms | **1.4x** | Small joins are fast in both |
-| Inner join (100k rows) | 450ms | 95ms | **4.7x** | Polars scales better |
-| **String Operations** |
-| String upper/lower | 85ms | 22ms | **3.9x** | Optimized string kernels |
-| String split | 180ms | 45ms | **4.0x** | Parallel string processing |
-| Regex match | 320ms | 110ms | **2.9x** | Rust regex engine |
-| **Window Functions** |
-| Rolling mean (window=3) | 250ms | 70ms | **3.6x** | Polars optimizes windows |
-| Rank within groups | 180ms | 55ms | **3.3x** | Parallel ranking |
-| **Memory Usage** |
-| DataFrame in memory | 450MB | 220MB | **2.0x** | Arrow is more compact |
-| Peak during groupby | 680MB | 310MB | **2.2x** | Less intermediate copies |
+| Operation | Pandas | Polars |
+| :--- | :--- | :--- |
+| Load `session.laps` in a new process (SQLite frame tier) | 1.5 ms | 1.4 ms |
+| Build `session.laps` from cached payloads (no frame tier) | 30 ms | 16 ms |
+| Filter `Driver == "VER"` | 0.6 ms | 0.7 ms |
+| Filter with 3 conditions | 0.8 ms | 0.8 ms |
+| Group by `Driver`, one mean | 0.4 ms | 2.0 ms |
+| Group by `Driver`, 4 aggregations | 1.1 ms | 0.3 ms |
+| Sort by `LapTimeSeconds` | 0.7 ms | 0.3 ms |
+| Memory of `session.laps` | 462 KB | 348 KB |
+| Memory of one lap of telemetry | 148 KB | 91 KB |
+
+Memory is `memory_usage(deep=True)` on pandas and `estimated_size()` on polars.
 
 <Note>
-  Benchmarks are representative but vary with hardware, data characteristics, and specific operations. Always profile the actual workloads.
+  At the size of one session, both backends finish each operation in about 2 ms or less. Neither backend is faster for every operation. Measure the actual workload before a backend switch.
 </Note>
 
-### Real-World Use Case Benchmarks
+### Example Workflows
 
-These benchmarks represent complete analysis workflows:
+These code blocks show complete analysis workflows. Run them on both backends to compare the times on the actual hardware.
 
-#### Use Case 1: Single Session Analysis
+#### Workflow 1: Single Session Analysis
 
 ```python
 import tif1
 
 # Load session, filter to one driver, compute statistics (pandas shown;
-# the polars run used filter / group_by on the same session)
+# on polars, use filter / group_by on the same session)
 session = tif1.get_session(2024, "Monaco Grand Prix", "Race", lib="pandas")
 driver_laps = session.laps[session.laps["Driver"] == "VER"]
 stats = driver_laps.groupby("Compound").agg({"LapTimeSeconds": ["mean", "std", "count"]})
 ```
 
-- **Pandas**: 2.8s total (2.5s load, 0.3s analysis)
-- **Polars**: 1.4s total (1.2s load, 0.2s analysis)
-- **Speedup**: 2.0x
-
-#### Use Case 2: Multi-Session Aggregation
+#### Workflow 2: Multi-Session Aggregation
 
 ```python
 import pandas as pd
@@ -402,11 +369,7 @@ for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
 combined = pd.concat(results, ignore_index=True)
 ```
 
-- **Pandas**: 68s total (24 races × ~2.8s)
-- **Polars**: 22s total (24 races × ~0.9s)
-- **Speedup**: 3.1x
-
-#### Use Case 3: Telemetry Analysis
+#### Workflow 3: Telemetry Analysis
 
 ```python
 import tif1
@@ -418,24 +381,8 @@ segment = (telemetry["Distance"] // 500).astype(int)  # 500 m segments; swap in 
 segment_stats = telemetry.groupby(segment)["Speed"].agg(["mean", "max", "std"])
 ```
 
-- **Pandas**: 8.5s total (2.5s load, 6.0s analysis)
-- **Polars**: 3.2s total (1.2s load, 2.0s analysis)
-- **Speedup**: 2.7x
-
-### Scaling Characteristics
-
-How performance scales with data size:
-
-| Dataset Size | Pandas Time | Polars Time | Speedup |
-| :--- | :--- | :--- | :--- |
-| 1k rows | 50ms | 45ms | 1.1x |
-| 10k rows | 180ms | 85ms | 2.1x |
-| 100k rows | 1.8s | 520ms | 3.5x |
-| 1M rows | 18s | 4.2s | 4.3x |
-| 10M rows | 195s | 38s | 5.1x |
-
 <Tip>
-  Polars' advantage grows with dataset size due to better parallelization and memory efficiency. For small datasets (< 10k rows), the difference is minimal.
+  The polars engine runs in parallel and is designed for large tables, such as the telemetry of many sessions. For the tables of one session, the difference is small.
 </Tip>
 
 ---
@@ -504,7 +451,9 @@ For code that runs on both backends, use `LapTimeSeconds` for lap times. Compare
 The upstream payloads encode a missing value in two ways: JSON `null`, and the literal string `"None"`. The string form appears in 2026 lap data and in the `Lap` column of race control messages for every non-race session. It also appears in telemetry when nobody is ahead. tif1 normalizes both forms on both backends before it applies the dtype contract:
 
 - Laps: the strings `"None"`, `"none"`, `"null"`, `"nan"`, and `""` become a missing value. The replacement runs only when a payload contains one of these tokens.
-- Weather and race control messages: the same tokens become a missing value. On polars the replacement runs before the frame is built. A column with one sentinel then keeps its `Boolean`, `Float64`, or `Int64` type instead of becoming `String`. On pandas the replacement runs before the `astype` and `to_numeric` passes.
+- Weather and race control messages: on polars, the same tokens become a missing value before the frame is built. A column with one sentinel then keeps its `Boolean`, `Float64`, or `Int64` type instead of becoming `String`.
+- Weather on pandas: the same tokens become a missing value before the `astype` and `to_numeric` passes.
+- Race control messages on pandas: the exact string `"None"` becomes `None` in the text columns and `NaN` in `Sector`. `Lap` goes through a numeric parse, so any token that is not a number becomes `0`.
 - Telemetry: the same tokens become `NaN` on pandas and `null` on polars. `DistanceToDriverAhead` and the other numeric channels stay `float64` or `Float64`. `DriverAhead` stays a text column of driver numbers.
 - Casts are non-strict on both backends. A value that cannot be parsed becomes a missing value; it does not raise.
 
@@ -512,12 +461,12 @@ The representation of a missing value follows the backend. polars uses `null` fo
 
 ### Empty weather or race control tables
 
-Weather and race control messages are optional tables. When a payload cannot be converted to the dtype contract, tif1 logs a warning. It returns an empty DataFrame for that table instead of raising. `session.load()`, `session.laps`, and telemetry are not affected. The behaviour is the same on both backends.
+Weather and race control messages are optional tables. When a payload cannot be fetched (`NetworkError`), fails validation, or cannot be converted to the dtype contract, tif1 logs a warning. It returns an empty DataFrame for that table instead of raising. `session.load()`, `session.laps`, and telemetry are not affected. The behaviour is the same on both backends.
 
-The warning names the table and the session, then gives the error. The event name is URL-encoded, as in `session.gp`:
+The warning names the table and the session, then gives the error. The event name is decoded, as in `session.event_name`:
 
 ```text
-Failed to load weather for 2025/Bahrain%20Grand%20Prix/Race: <error>
+Failed to load weather for 2025/Bahrain Grand Prix/Race: <error>
 ```
 
 Enable logging to see it, and test for an empty table before plotting:
@@ -540,7 +489,28 @@ A session that has no weather file at all logs `No weather in session` at `INFO`
 
 ## Comprehensive API Differences
 
-While tif1 abstracts many differences, the API variations still matter for idiomatic code in each backend. This section compares common operations.
+While tif1 abstracts many differences, the API variations still matter for idiomatic code in each backend. This section compares common operations. Each tab continues from the setup tab of the same backend:
+
+<CodeGroup>
+```python Pandas
+import numpy as np
+import pandas as pd
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+laps = session.laps
+weather = session.weather
+```
+
+```python Polars
+import polars as pl
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
+laps = session.laps
+weather = session.weather
+```
+</CodeGroup>
 
 ### Data Selection and Filtering
 
@@ -606,8 +576,6 @@ lap_15 = laps.filter(pl.col("LapNumber") == 15)
 
 <CodeGroup>
 ```python Pandas
-import numpy as np
-
 # Select columns
 subset = laps[["Driver", "LapTime", "Compound"]]
 
@@ -618,13 +586,14 @@ numeric_cols = laps.select_dtypes(include=[np.number])
 laps["LapTime_seconds"] = laps["LapTime"].dt.total_seconds()
 laps["SpeedST_mph"] = laps["SpeedST"] / 1.60934
 
-# Rename columns (a "Time" column already exists, so pick a new name)
-laps = laps.rename(columns={"LapTime": "LapDuration", "Driver": "DriverCode"})
+# Rename columns into a new frame (a "Time" column already exists, so pick
+# a new name). The later tabs keep using laps with its original names
+renamed = laps.rename(columns={"LapTime": "LapDuration", "Driver": "DriverCode"})
 
 # Drop columns
-laps = laps.drop(columns=["Deleted", "DeletedReason"])
+trimmed = laps.drop(columns=["Deleted", "DeletedReason"])
 
-# Column operations (LapTimeSeconds is float; LapDuration is a timedelta)
+# Column operations (LapTimeSeconds is float; LapTime is a timedelta)
 laps["LapTime_normalized"] = (
     (laps["LapTimeSeconds"] - laps["LapTimeSeconds"].mean()) / laps["LapTimeSeconds"].std()
 )
@@ -644,11 +613,12 @@ laps = laps.with_columns([
     (pl.col("SpeedST") / 1.60934).alias("SpeedST_mph")
 ])
 
-# Rename columns (a "Time" column already exists; renaming onto it raises DuplicateError)
-laps = laps.rename({"LapTime": "LapDuration", "Driver": "DriverCode"})
+# Rename columns into a new frame (a "Time" column already exists; renaming
+# onto it raises DuplicateError). The later tabs keep using laps
+renamed = laps.rename({"LapTime": "LapDuration", "Driver": "DriverCode"})
 
 # Drop columns
-laps = laps.drop(["Deleted", "DeletedReason"])
+trimmed = laps.drop(["Deleted", "DeletedReason"])
 
 # Column operations (expressions are composable)
 laps = laps.with_columns([
@@ -1030,7 +1000,11 @@ laps = laps.with_columns(pl.col("LapStartDate").str.to_datetime().alias("LapStar
 
 ## Converting Between Backends
 
-tif1 converts DataFrames between backends. This lets different parts of a workflow use the strengths of each library.
+A frame from one backend converts to the other with the polars functions `DataFrame.to_pandas()` and `pl.from_pandas()`. This lets different parts of a workflow use the strengths of each library.
+
+<Note>
+  Both conversions use `pyarrow`. `pip install tif1` installs it, so no extra install is necessary.
+</Note>
 
 ### Basic Conversion
 
@@ -1069,12 +1043,12 @@ result = laps_polars.group_by("Driver").agg([
 
 ### Conversion Performance
 
-Conversion between backends has a cost, so use it strategically:
+Conversion between backends has a cost, so use it strategically. On the machine of the [Measurement Method](#measurement-method), the laps of one race (1,128 rows) took these times:
 
-| Conversion | Time (1k rows) | Time (100k rows) | Time (1M rows) |
-| :--- | :--- | :--- | :--- |
-| Polars → Pandas | 2ms | 45ms | 480ms |
-| Pandas → Polars | 3ms | 65ms | 720ms |
+| Conversion | Time (1,128 laps) |
+| :--- | :--- |
+| Polars → Pandas (`to_pandas()`) | About 1 ms |
+| Pandas → Polars (`pl.from_pandas()`) | About 2.5 ms |
 
 <Warning>
   Frequent conversions can negate the performance benefits of using polars. Design the workflow to minimize backend switches.
@@ -1082,7 +1056,7 @@ Conversion between backends has a cost, so use it strategically:
 
 ### Zero-Copy Conversion (Arrow)
 
-For maximum efficiency, use Apache Arrow as an intermediate format. `pyarrow` is not a `tif1` dependency; install it with `pip install pyarrow` first:
+For maximum efficiency, use Apache Arrow as an intermediate format. `pyarrow` is a `tif1` dependency, so it is already installed:
 
 ```python
 import pyarrow as pa
@@ -1127,10 +1101,10 @@ driver_stats = (
     .sort("avg_time")
 )
 
-# Convert to pandas for plotting (matplotlib expects pandas)
+# Convert to pandas for plotting (DataFrame.plot draws with matplotlib)
 driver_stats_pd = driver_stats.to_pandas()
 
-# Plot with pandas/matplotlib
+# Plot with pandas and matplotlib
 fig, ax = plt.subplots(figsize=(12, 6))
 driver_stats_pd.plot(x="Driver", y="avg_time", kind="bar", ax=ax)
 plt.show()
@@ -1286,6 +1260,16 @@ Each backend has unique features for specific use cases.
 
 ### Pandas-Exclusive Features
 
+The examples in this section use a pandas session and its laps frame:
+
+```python
+import pandas as pd
+import tif1
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race", lib="pandas")
+laps = session.laps
+```
+
 #### MultiIndex (Hierarchical Indexing)
 
 ```python
@@ -1328,6 +1312,8 @@ fast_verstappen = laps.loc[(laps["Driver"] == "VER") & (laps["LapTimeSeconds"] <
 
 #### Rich Ecosystem Integration
 
+seaborn is installed with tif1. scikit-learn and statsmodels are not; install them with `pip install scikit-learn statsmodels`.
+
 ```python
 # Seaborn for statistical visualization (plot float seconds, not the timedelta)
 import seaborn as sns
@@ -1350,10 +1336,14 @@ print(model.summary())
 
 #### Lazy Evaluation and Query Optimization
 
-The Parquet examples on this page read a file written once with `session.laps.write_parquet("race_data.parquet")`.
+The Parquet examples on this page read a file of polars laps. The first block writes it once with `write_parquet`:
 
 ```python
 import polars as pl
+import tif1
+
+laps = tif1.get_session(2024, "Monaco Grand Prix", "Race", lib="polars").laps
+laps.write_parquet("race_data.parquet")
 
 # Create lazy frame (doesn't execute immediately)
 laps_lazy = pl.scan_parquet("race_data.parquet")
@@ -1436,8 +1426,12 @@ result = duckdb.query("SELECT Driver, AVG(LapTime) FROM laps GROUP BY Driver").p
 #### Streaming Mode (Out-of-Core Processing)
 
 ```python
-# Process data larger than RAM. huge_telemetry_data.parquet stands for telemetry
-# saved earlier with write_parquet (for example many laps of get_fastest_lap_tel())
+# Save telemetry to a file first: here the fastest lap of every driver.
+# A real out-of-core job would save many laps or sessions the same way
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race", lib="polars")
+session.get_fastest_laps_tels(by_driver=True).write_parquet("huge_telemetry_data.parquet")
+
+# Process data larger than RAM: the streaming engine reads the file in batches
 result = (
     pl.scan_parquet("huge_telemetry_data.parquet")
     .filter(pl.col("Speed") > 300)
@@ -1459,7 +1453,7 @@ result = (
 | **Ecosystem Size** | ✅ Large | ⚠️ Growing | Integration needs |
 | **SIMD Operations** | ⚠️ Partial | ✅ Full | Numeric performance |
 | **String Performance** | ⚠️ Moderate | ✅ Fast | Text processing |
-| **Memory Efficiency** | Baseline | ✅ 2-3x better | Memory-constrained |
+| **Memory of tif1 frames** | Baseline | ✅ 25-40% less | Memory-constrained |
 | **Streaming** | ❌ | ✅ | Out-of-core processing |
 | **Arrow Native** | ⚠️ Via PyArrow | ✅ Native | Interoperability |
 
@@ -1512,7 +1506,7 @@ Polars applies several optimizations automatically:
 
 #### 1. Predicate Pushdown
 
-Filters are pushed down to the data source, reading only necessary rows:
+Filters are pushed down to the data source. The scan applies them while it reads the file:
 
 ```python
 # Without optimization: Read all data, then filter
@@ -1525,7 +1519,7 @@ verstappen = (
     .filter(pl.col("Driver") == "VER")
     .collect()
 )
-# Only reads Verstappen's rows from disk!
+# The filter runs inside the scan (SELECTION in the query plan)
 ```
 
 #### 2. Projection Pushdown
@@ -1543,28 +1537,10 @@ subset = (
     .select(["Driver", "LapTime"])
     .collect()
 )
-# Only reads 2 columns from disk!
+# Reads only 2 columns from the file
 ```
 
-#### 3. Common Subexpression Elimination
-
-Repeated calculations are computed once:
-
-```python
-laps_lazy = pl.scan_parquet("race_data.parquet")
-
-result = (
-    laps_lazy
-    .with_columns([
-        (pl.col("LapTime").mean().over("Driver")).alias("driver_avg"),
-        (pl.col("LapTime") - pl.col("LapTime").mean().over("Driver")).alias("delta")
-    ])
-    .collect()
-)
-# "LapTime.mean().over('Driver')" computed only once
-```
-
-#### 4. Filter Reordering
+#### 3. Filter Reordering
 
 Cheap filters run before expensive ones:
 
@@ -1604,7 +1580,7 @@ SORT BY [slice: (0, 10, dynamic_pred: ...)] [col("LapTime")]
     Parquet SCAN [race_data.parquet]
     PROJECT 4/45 COLUMNS
     SELECTION: (col("Driver") == "VER") & col("LapTime").dynamic_predicate()
-    ESTIMATED ROWS: 1128
+    ESTIMATED ROWS: 1237
 ```
 
 The plan shows predicate pushdown (`SELECTION`) and projection pushdown (`PROJECT 4/45 COLUMNS`). The scan reads only the rows and columns that the query needs.
@@ -1703,14 +1679,6 @@ def analyze_huge_telemetry(telemetry_file: str):
 
 ### Performance Impact of Lazy Evaluation
 
-| Query Type | Eager Time | Lazy Time | Speedup |
-| :--- | :--- | :--- | :--- |
-| Filter + Select | 450ms | 180ms | 2.5x |
-| Multi-filter | 680ms | 220ms | 3.1x |
-| Filter + GroupBy | 1.2s | 420ms | 2.9x |
-| Join + Aggregate | 2.8s | 950ms | 2.9x |
-| Multi-file read | 8.5s | 2.1s | 4.0x |
-
 <Note>
   Lazy evaluation benefits increase with query complexity and data size. Simple operations may see minimal improvement.
 </Note>
@@ -1757,11 +1725,11 @@ graph TD
 | Exploratory analysis | **Pandas** | Rich Jupyter integration, familiar API |
 | Production pipeline | **Polars** | Predictable performance, optimization |
 | Large datasets (> 1M rows) | **Polars** | Better parallelization, memory efficiency |
-| Memory constrained | **Polars** | 50-70% less memory usage |
+| Memory constrained | **Polars** | 25-40% less memory for tif1 frames |
 | Need matplotlib/seaborn | **Pandas** | Direct compatibility |
 | Need scikit-learn | **Pandas** | Expects pandas DataFrames |
-| Heavy string processing | **Polars** | 3-4x faster string operations |
-| Complex groupby operations | **Polars** | 3-5x faster aggregations |
+| Heavy string processing on large tables | **Polars** | Parallel string kernels |
+| Complex groupby operations on large tables | **Polars** | Parallel aggregations |
 | Multi-file processing | **Polars** | Lazy evaluation, streaming |
 | Time series analysis | **Pandas** | Richer time series functionality |
 | Need MultiIndex | **Pandas** | Polars doesn't support hierarchical indices |
@@ -1801,7 +1769,6 @@ graph TD
 
 2. **Dataset is Large**
    - Over 1,000,000 rows: Polars parallelization performs best
-   - Over 10,000,000 rows: Polars may be 5-10x faster
    - Data does not fit comfortably in RAM: Use streaming
 
 3. **Memory is Constrained**
@@ -1889,10 +1856,9 @@ for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
 # Combine results
 all_fastest = pd.concat(results, ignore_index=True)
 
-# Time: ~68 seconds for 24 races
 ```
 
-```python Polars Approach (3x faster)
+```python Polars Approach
 import tif1
 import polars as pl
 
@@ -1917,7 +1883,6 @@ for event in tif1.get_event_schedule(2024, include_testing=False)["EventName"]:
 # Combine results
 all_fastest = pl.concat(results)
 
-# Time: ~22 seconds for 24 races
 ```
 </CodeGroup>
 
@@ -1936,7 +1901,7 @@ def analyze_telemetry_efficiently(year: int, event: str, driver: str):
     session = tif1.get_session(year, event, "Race", lib="polars")
     driver_obj = session.get_driver(driver)
 
-    # Get the driver's fastest-lap telemetry (polars uses ~50% less memory)
+    # Get the driver's fastest-lap telemetry (about 40% less memory than pandas)
     telemetry = driver_obj.get_fastest_lap_tel()
 
     # Process in chunks using lazy evaluation
@@ -1966,7 +1931,6 @@ def analyze_telemetry_efficiently(year: int, event: str, driver: str):
 
     return corner_analysis
 
-# Memory usage: ~220MB with polars vs ~450MB with pandas
 result = analyze_telemetry_efficiently(2024, "Monaco", "VER")
 ```
 
@@ -2007,7 +1971,8 @@ def process_season_incrementally(year: int, output_dir: Path):
         output_file = output_dir / f"{event.replace(' ', '_')}.parquet"
         stats.write_parquet(output_file)
 
-        # Memory is freed after each iteration
+        # The laps frame stays in the backend lap LRU (up to 100 sessions);
+        # tif1.cache.clear_lap_cache() frees those frames
 
     # Later: combine all results lazily
     all_stats = pl.scan_parquet(output_dir / "*.parquet").collect()
@@ -2035,10 +2000,9 @@ stats = pd.DataFrame({
     "lap_count": lap_count
 })
 
-# Time: ~280ms for 1200 laps
 ```
 
-```python Polars (3-4x Faster)
+```python Polars (Single Pass)
 # Single pass through data
 stats = laps.group_by("Driver").agg([
     pl.col("LapTime").mean().alias("avg_time"),
@@ -2046,7 +2010,6 @@ stats = laps.group_by("Driver").agg([
     pl.col("LapTime").count().alias("lap_count")
 ])
 
-# Time: ~65ms for 1200 laps
 ```
 </CodeGroup>
 
@@ -2069,12 +2032,15 @@ result = laps.filter(
     (pl.col("LapTime") < 85)
 )
 
-# ✅ Also efficient: Chained filters (polars optimizes automatically)
+# ✅ Also efficient: Chained filters on a lazy frame. The query optimizer
+# combines them into one predicate. Eager filters run one after the other
 result = (
     laps
+    .lazy()
     .filter(pl.col("Driver") == "VER")
     .filter(pl.col("Compound") == "SOFT")
     .filter(pl.col("LapTime") < 85)
+    .collect()
 )
 ```
 
@@ -2116,7 +2082,7 @@ stats2 = get_driver_statistics(2024, "Monaco", "VER")
 
 <AccordionGroup>
   <Accordion title="Memory Management">
-    - Use polars for large datasets (50-70% less memory)
+    - Use polars for large datasets (tif1 polars frames use 25-40% less memory)
     - Process data incrementally when possible
     - Use lazy evaluation for multi-step operations
     - Free memory explicitly with `del` when done with large objects
@@ -2208,7 +2174,7 @@ result = filter_driver(session.laps, "VER", lib=session.lib)
 **Solution**: Switch to polars or use chunking
 
 ```python
-# Option 1: Switch to polars (uses 50-70% less memory)
+# Option 1: Switch to polars (tif1 polars frames use 25-40% less memory)
 session = tif1.get_session(2024, "Monaco", "Race", lib="polars")
 
 # Option 2: Process in chunks with pandas
@@ -2223,16 +2189,16 @@ def process_in_chunks(laps, chunk_size=10000):
 
 ### Issue 4: Slow Groupby Operations
 
-**Symptom**: Groupby takes several seconds with pandas
+**Symptom**: Groupby on a large table takes several seconds with pandas
 
-**Solution**: Use polars for 3-5x speedup
+**Solution**: Use polars, which runs the aggregations in parallel in one pass
 
 ```python
-# Before (pandas, slow)
-stats = laps.groupby("Driver").agg({
+# Before (pandas)
+laps_pd = tif1.get_session(2024, "Monaco", "Race", lib="pandas").laps
+stats = laps_pd.groupby("Driver").agg({
     "LapTime": ["mean", "std", "min", "max", "count"]
 })
-# Time: ~280ms
 
 # After (polars, fast)
 import polars as pl
@@ -2244,7 +2210,6 @@ stats = laps_pl.group_by("Driver").agg([
     pl.col("LapTime").max().alias("max"),
     pl.col("LapTime").count().alias("count")
 ])
-# Time: ~65ms
 ```
 
 ### Issue 5: Conversion Overhead
@@ -2406,16 +2371,16 @@ seconds = laps["LapTimeSeconds"]
 ### Quick Summary
 
 - **Pandas**: Default backend, maximum compatibility, gentle learning curve
-- **Polars**: High-performance backend, 2-5x faster, 50-70% less memory
+- **Polars**: Parallel query engine, lazy evaluation, 25-40% less memory for tif1 frames
 - **Choice**: Depends on dataset size, performance needs, and ecosystem requirements
 - **Flexibility**: Use both in the same project, convert as needed
 - **Recommendation**: Start with pandas, migrate to polars for performance-critical code
 
 ### Key Performance Insights
 
-1. **Polars performs best with large datasets**: 3-5x speedup for > 100k rows
-2. **Memory efficiency matters**: Polars uses 50-70% less memory
-3. **Lazy evaluation improves speed**: Query optimization can double performance
+1. **Polars performs best with large datasets**: on one session, both backends take about 1 ms per operation
+2. **Memory efficiency matters**: tif1 polars frames use 25-40% less memory
+3. **Lazy evaluation helps on files**: predicate and projection pushdown read less data
 4. **Conversion has cost**: Minimize backend switches
 5. **Ecosystem compatibility**: Pandas still dominates for visualization and ML
 
@@ -2437,18 +2402,16 @@ seconds = laps["LapTimeSeconds"]
 
 ### Best Practices Checklist
 
-<Checklist>
-  - [ ] Set default backend in `~/.tif1rc` for consistency
-  - [ ] Profile code before optimizing
-  - [ ] Use polars for data processing, pandas for visualization
-  - [ ] Minimize conversions between backends
-  - [ ] Use lazy evaluation for complex polars queries
-  - [ ] Cache expensive computations
-  - [ ] Test with both backends if supporting both
-  - [ ] Document backend choice in code comments
-  - [ ] Monitor memory usage for large datasets
-  - [ ] Use type hints for DataFrame types
-</Checklist>
+- Set default backend in `~/.tif1rc` for consistency
+- Profile code before optimizing
+- Use polars for data processing, pandas for visualization
+- Minimize conversions between backends
+- Use lazy evaluation for complex polars queries
+- Cache expensive computations
+- Test with both backends if supporting both
+- Document backend choice in code comments
+- Monitor memory usage for large datasets
+- Use type hints for DataFrame types
 
 ### Next Steps
 
@@ -2502,19 +2465,18 @@ seconds = laps["LapTimeSeconds"]
 ### External Documentation
 
 - [Pandas Documentation](https://pandas.pydata.org/docs/) - Official pandas documentation
-- [Polars Documentation](https://pola-rs.github.io/polars/) - Official polars documentation
-- [Polars User Guide](https://pola-rs.github.io/polars-book/) - Complete polars guide
+- [Polars Documentation](https://docs.pola.rs/) - Official polars documentation
+- [Polars User Guide](https://docs.pola.rs/user-guide/) - Complete polars guide
 - [Apache Arrow](https://arrow.apache.org/) - Arrow format specification
 
 ### Performance Benchmarks
 
-- [Polars vs Pandas Benchmarks](https://www.pola.rs/benchmarks.html) - Official polars benchmarks
-- [H2O.ai Database-like Ops Benchmark](https://h2oai.github.io/db-benchmark/) - Independent benchmarks
+- [Polars Benchmarks](https://pola.rs/benchmarks/) - Official polars benchmarks
+- [Database-like Ops Benchmark](https://duckdblabs.github.io/db-benchmark/) - Independent benchmarks (maintained by DuckDB Labs)
 
 ### Community Resources
 
 - [Polars Discord](https://discord.gg/4UfP5cfBE7) - Active polars community
-- [Pandas Discourse](https://discuss.pandas.pydata.org/) - Pandas community forum
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/polars+or+pandas) - Q&A for both libraries
 
 ---

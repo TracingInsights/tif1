@@ -4,7 +4,7 @@ import logging
 
 import tif1
 
-# Enable debug logging to see what's happening
+# Log retries, CDN fallbacks and name corrections at INFO level
 tif1.setup_logging(logging.INFO)
 
 print("=" * 60)
@@ -12,24 +12,34 @@ print("ERROR HANDLING EXAMPLES")
 print("=" * 60)
 
 # 1. Handle invalid event
+# A misspelled event name is corrected to the closest event (a warning logs the
+# correction). A name that resembles no event raises tif1.EventNotFoundError.
 print("\n1. HANDLING INVALID EVENT")
 print("-" * 60)
+session = tif1.get_session(2025, "Abu Dabi", "Practice 1")
+print(f"✓ 'Abu Dabi' corrected to {session.event_name}")
+
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Practice 1")
-    laps = session.laps
-except tif1.DataNotFoundError as e:
-    print(f"✗ DataNotFoundError: {e}")
-    print("  → Check event name with tif1.get_events(2025)")
+    session = tif1.get_session(2025, "Invalid GP", "Race")
+except tif1.EventNotFoundError as e:
+    print(f"✗ EventNotFoundError: {e}")
+    print("  → Check event names with tif1.get_events(2025)")
+
+# A known circuit name for an event that was not held that season
+# (EventNotInSeasonError is a subclass of EventNotFoundError)
+try:
+    session = tif1.get_session(2021, "Suzuka", "Race")
+except tif1.EventNotInSeasonError as e:
+    print(f"✗ EventNotInSeasonError: {e}")
 
 # 2. Handle invalid session
 print("\n2. HANDLING INVALID SESSION")
 print("-" * 60)
 try:
     session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Invalid Session")
-    laps = session.laps
-except tif1.DataNotFoundError as e:
-    print(f"✗ DataNotFoundError: {e}")
-    print("  → Check session name with tif1.get_sessions(2025, 'Abu Dhabi Grand Prix')")
+except ValueError as e:
+    print(f"✗ ValueError: {e}")
+    print("  → Check session names with tif1.get_sessions(2025, 'Abu Dhabi Grand Prix')")
 
 # 3. Handle driver not found
 print("\n3. HANDLING DRIVER NOT FOUND")
@@ -83,10 +93,8 @@ try:
             print(f"✓ VER has {len(ver_laps)} laps")
 
             # Get first lap
-            first_lap_num = (
-                ver_laps["lap"].iloc[0] if hasattr(ver_laps, "iloc") else ver_laps["lap"][0]
-            )
-            lap = ver.get_lap(int(first_lap_num))
+            first_lap_num = int(ver_laps["LapNumber"].iloc[0])
+            lap = ver.get_lap(first_lap_num)
             telemetry = lap.telemetry
             print(f"✓ Loaded telemetry for lap {first_lap_num} ({len(telemetry)} points)")
         else:
@@ -102,9 +110,10 @@ except Exception as e:
 # 6. Network error handling (simulated)
 print("\n6. NETWORK ERROR HANDLING")
 print("-" * 60)
-print("Network errors are automatically retried (max 3 attempts)")
-print("If all retries fail, a NetworkError is raised")
-print("Example: tif1.NetworkError: Failed to fetch data from URL")
+print("Failed requests are retried with backoff (max_retries attempts, default 3)")
+print("and then fall back to the next CDN (jsDelivr, Hugging Face, StaticDelivr).")
+print("If every CDN fails, a tif1.NetworkError is raised.")
+print("If every CDN returns 404, a tif1.DataNotFoundError is raised.")
 
 print("\n" + "=" * 60)
 print("💡 TIP: Always validate inputs before making API calls!")

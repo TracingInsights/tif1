@@ -73,7 +73,7 @@ Track temperature patterns show the following:
 
 ## Parameters
 
-The native function accepts the shared filters. With no `drivers`, it automatically uses the driver with the most recorded laps. This is the logic shown above. Pass a list to draw one line per driver:
+The native function accepts a `drivers` list. With no `drivers`, it uses the driver with the most recorded laps. This is the logic shown above. Pass a list to choose the drivers. The chart draws one line per driver, and all lines use the same color:
 
 ```python
 import tif1
@@ -82,10 +82,12 @@ import tif1
 fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R')
 plt.show()
 
-# One line per selected driver
-fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R', drivers=['VER', 'LEC'])
+# Line for a selected driver
+fig, ax = tif1.plot_track_temperature(2023, 'Monaco', 'R', drivers=['LEC'])
 plt.show()
 ```
+
+Unlike the manual code, the native function drops deleted laps and pit in and out laps before it plots. For this race, the default driver is ALO, and the chart skips laps 53 to 57 of ALO.
 
 The session's weather data must be available (it is included in the laps by default).
 

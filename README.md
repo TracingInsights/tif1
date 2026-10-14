@@ -9,7 +9,7 @@ A fast, canonical Formula 1 data library fetched from TracingInsights data https
 
 
 
-Data is available ~30 minutes after the session ends. Data in fastf1 is available ~20-25 minutes after the session ends. So there is a slightly longer delay of 2~5 minutes for data availability in tif1 compared to fastf1, but this is because tif1 has more data and does more processing to enrich the data before making it available.
+Data is available ~30 minutes after the session ends. tif1's files are built from the same F1 timing data that fastf1 reads, so they appear a few minutes after that data reaches fastf1: tif1 has more data and does more processing to enrich it before making it available.
 
 
 ## Why use tif1 instead of fastf1?
@@ -18,23 +18,24 @@ First, a note of respect: `fastf1` is a great library and does a lot for the F1 
 
 ### 1. Fetch only what you need — no full-session downloads
 
-`fastf1` is session-oriented: you call `session.load()` and it downloads the whole session (all drivers, every lap, every telemetry point) before the data is usable. Loading telemetry for all drivers alone can mean **100-300 HTTP requests** and a lot of disk space.
+`fastf1` is session-oriented: you call `session.load()` and, by default, it downloads the whole session (all drivers, every lap, every telemetry point) before the data is usable. Telemetry comes as the session's full car-data and position streams for every driver, so even one lap of telemetry means downloading and storing all of it.
 
 `tif1` is lazy and fine-grained. A `Session` object costs almost nothing until you touch a property, and you can pull exactly the one lap of telemetry you need in seconds:
 
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
-# Fetch only Verstappen's lap 19 telemetry — a single small file, nothing else.
+# Fetch only Verstappen's lap 19 telemetry: the driver list, the session's lap
+# table and that one lap's telemetry file, nothing else.
 telemetry = session.get_driver("VER").get_lap(19).telemetry
 print(telemetry[["Time", "Speed", "Throttle"]].head())
 ```
 
 You pay for exactly the bytes you use: less waiting, less hard-disk space, less bandwidth. That efficiency also makes `tif1` the more energy- and environmentally-friendly choice for large or repeated analysis workloads.
 
-### 2. No API rate limits on the data you fetch
+### 2. No rate-limited API in the loop
 
 `fastf1` pulls historical and current data from the Ergast-compatible **jolpica-f1** API and the unofficial F1 live-timing API. jolpica-f1 rate-limits unauthenticated access to:
 
@@ -45,13 +46,13 @@ and answers excessive traffic with `HTTP 429 Too Many Requests` ("Request was th
 
 Apps that loop over many sessions in a single run — a whole season, an entire grid, backtesting, live dashboards — can approach these ceilings quickly. It's a real consideration in production, and one of the reasons I built `tif1` for my own app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
 
-`tif1` has **no API-side rate limits**. It reads public static files from a free, global CDN network (jsDelivr primary, Hugging Face bucket fallback, StaticDelivr backup) with automatic failover, retries, and a circuit breaker — no API keys, no quotas, no IP-based throttling.
+`tif1` does **not call a rate-limited API**. It reads public static files from free, global CDNs (jsDelivr primary, Hugging Face bucket fallback, StaticDelivr backup) with automatic failover, retries, and a circuit breaker — no API keys, no tokens, no request quotas to track in your code.
 
 Sources: [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
 
 ### 3. Batteries included — 22 one-call chart functions
 
-If you enjoy hand-building charts, fastf1 gives you all the pieces to do so. `tif1` additionally ships **21 ready-made chart functions** that load the data, run the analysis, and plot in a single call:
+If you enjoy hand-building charts, fastf1 gives you all the pieces to do so. `tif1` additionally ships **22 ready-made chart functions** that load the data, run the analysis, and plot in a single call:
 
 ```python
 import tif1
@@ -75,21 +76,21 @@ From track maps, speed traces, and telemetry comparisons to tire degradation, qu
 
 ### 4. Works from anywhere — no IP restrictions
 
-The official F1 live-timing endpoints that `fastf1` uses are known to block VPNs, cloud/data-center IPs, and some hosting providers, which can make fastf1 tricky to run on servers. `tif1` avoids that class of problem by serving data from static CDN files.
+The official F1 live-timing endpoints that `fastf1` uses have been reported to block VPNs, cloud/data-center IPs, and some hosting providers, which can make fastf1 tricky to run on servers. `tif1` avoids that class of problem by serving data from static CDN files.
 
-`tif1` serves its data from free global CDNs used by millions of sites (StaticDelivr + jsDelivr hosting the TracingInsights data repos, with Hugging Face buckets as a backup), so it works from **any** network — home, office, cloud, CI runners, notebooks — with no IP restrictions and no proxies.
+`tif1` serves its data from free global CDNs (jsDelivr hosting the TracingInsights data repos, with Hugging Face buckets as the fallback and StaticDelivr as the last-resort backup), so it works from home, office, cloud, CI runners and notebooks alike, with no proxies.
 
 ### 5. Extra data — mini sectors and more
 
 `tif1` also includes a few things beyond fastf1's current scope:
 
-- **Mini-sector data** — race-control messages include the affected mini-sector (each of the 3 sectors is split into 8 mini-sectors, `1-24`), and lap data is enriched with mini-sector splits.
-- **Per-lap weather** — weather conditions merged into every single lap row.
+- **Mini-sector data** — lap data carries the OpenF1 mini-sector status of every lap (`ms1`/`ms2`/`ms3`: one digit per mini-sector for yellow, green, purple, pit lane, and so on), when OpenF1 data can be matched to the session.
+- **Per-lap weather** — weather conditions (`AirTemp`, `TrackTemp`, `Rainfall`, wind, …) merged into the lap rows.
 - **Derived channels** — `DriverAhead`, `DistanceToDriverAhead`, and acceleration channels (`AccelerationX/Y/Z`) computed and included in the telemetry.
 - **Flexible backends** — pandas *and* polars, with SQLite + in-memory LRU caching under the hood.
-- **FastF1-compatible schema** — same column names, types, and ordering, so migration is often a one-line import change.
+- **FastF1-style schema** — fastf1 column names for the lap and telemetry data (`Sector1Time`, `SpeedST`, `nGear`, …), so migration is often a one-line import change.
 
-One honest trade-off: data becomes available in `tif1` about 2-5 minutes later than in fastf1 (~30 min vs ~20-25 min after a session), because the data is enriched and processed before being published.
+One honest trade-off: data becomes available in `tif1` a few minutes later than in fastf1, because the data is enriched and processed before being published.
 
 ## Installation
 
@@ -113,16 +114,16 @@ pip install tif1[dev]
 ```python
 import tif1
 
-# Get available events for a year
+# Get the event schedule for a year (a DataFrame, one row per event)
 events = tif1.get_events(2025)
-print(events)  # ['Australian Grand Prix', 'Chinese Grand Prix', ...]
+print(events["EventName"].tolist())  # ['Australian Grand Prix', 'Chinese Grand Prix', ...]
 
 # Get sessions for an event
 sessions = tif1.get_sessions(2025, "Chinese Grand Prix")
 print(sessions)  # ['Practice 1', 'Sprint Qualifying', 'Sprint', 'Qualifying', 'Race']
 
 # Get a session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
 # Get all drivers as DataFrame
 print(session.drivers_df)
@@ -150,19 +151,19 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 - **Historical**: Data from 2018-current
 - **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
 - **Async**: Parallel data fetching for better performance
-- **Optimized**: SQLite cache with JSON storage
+- **Optimized**: SQLite cache holding compressed JSON payloads and ready-built DataFrames
 - **Flexible**: Supports both pandas and polars backends
 - **Validated**: Optional data validation with Pydantic models
 - **Configurable**: .tif1rc configuration file support
 - **Type-Safe**: Comprehensive type hints for IDE support
-- **Jupyter-Ready**: Rich HTML display in notebooks
+- **Jupyter-Ready**: Rich HTML display in notebooks after `import tif1.jupyter`
 
 ## Advanced Usage
 
 ### Canonical API Notes
 
 - `tif1` exposes canonical data/session APIs directly (`get_session`, `Session`, `Laps`, `Lap`, `Driver`).
-- Event/session schedules are loaded from packaged JSON assets and schema-validated at runtime.
+- Event/session schedules come from the f1schedule files that fastf1 also reads (`theOehrly/f1schedule`, `schedule_{year}.json`). Past seasons are served from copies vendored in the package. For the current and future seasons, tif1 downloads the live file, caches it in the SQLite cache for `schedule_ttl_hours` (default 6, env `TIF1_SCHEDULE_TTL_HOURS`), and falls back to the last cached copy, then the vendored copy, when the download fails.
 
 ### Configuration File
 
@@ -173,7 +174,7 @@ import tif1
 # {
 #   "max_retries": 5,
 #   "validate_data": true,
-#   "backend": "polars",
+#   "lib": "polars",
 #   "cdns": [
 #     "https://cdn.jsdelivr.net/gh/TracingInsights",
 #     "https://huggingface.co/buckets/tracinginsights",
@@ -216,7 +217,7 @@ if cb.state == "open":
 ```python
 import tif1
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
 # Get fastest lap per driver
 fastest_by_driver = session.get_fastest_laps(by_driver=True)
@@ -231,16 +232,16 @@ ver = session.get_driver("VER")
 ver_fastest = ver.get_fastest_lap()
 
 # Get telemetry from overall fastest lap
-fastest_tel = session.get_fastest_lap_tel()  # ~1.3s
+fastest_tel = session.get_fastest_lap_tel()
 
 # Get telemetry from each driver's fastest lap (parallel fetching!)
-fastest_tels = session.get_fastest_laps_tels(by_driver=True)  # ~0.4s for 19 drivers
+fastest_tels = session.get_fastest_laps_tels(by_driver=True)
 
 # Get telemetry for specific drivers' fastest laps
-top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM", "LEC"])  # ~0.13s
+top3_tels = session.get_fastest_laps_tels(by_driver=True, drivers=["VER", "HAM", "LEC"])
 
 # Get specific driver's fastest lap telemetry
-ver_fastest_tel = ver.get_fastest_lap_tel()  # ~0.08s
+ver_fastest_tel = ver.get_fastest_lap_tel()
 ```
 
 
@@ -254,7 +255,7 @@ import logging
 # Enable debug logging
 tif1.setup_logging(logging.DEBUG)
 
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 ```
 
 ### Cache Management
@@ -270,7 +271,7 @@ print(f"Cache location: {cache.cache_dir}")
 cache.clear()
 
 # Disable caching for a session
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=False)
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race", enable_cache=False)
 ```
 
 ### Error Handling
@@ -279,8 +280,12 @@ session = tif1.get_session(2021, "Belgian Grand Prix", "Race", enable_cache=Fals
 import tif1
 
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Practice 1")
+    # Monaco had no Sprint: a session that is not on the event's schedule raises ValueError.
+    # An event name that matches no event raises tif1.EventNotFoundError, also a ValueError.
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Sprint")
     laps = session.laps
+except ValueError as e:
+    print(f"Invalid event or session: {e}")
 except tif1.DataNotFoundError:
     print("Data not available")
 except tif1.NetworkError:
@@ -300,18 +305,20 @@ except tif1.InvalidDataError:
 - Position data (X, Y, Z coordinates)
 - Acceleration data (X, Y, Z axes)
 - Distance and relative distance
-- Unique data identifiers
+- Driver ahead and distance to the driver ahead
+- `Driver` and `LapNumber` on every telemetry row
 
 ## Data Reference
 
-`tif1` serves every session from the TracingInsights GitHub telemetry data repositories (per-year repos like `{year}`, 2018-current). Each session is stored as a set of raw JSON files. Every field in every file is documented field-by-field in [`DATA_REFERENCE.md`](DATA_REFERENCE.md):
+`tif1` serves every session from the TracingInsights GitHub telemetry data repositories (per-year repos like `{year}`, 2018-current). Each session is stored as a set of raw JSON files. The fields of each file are documented field-by-field in [`DATA_REFERENCE.md`](DATA_REFERENCE.md):
 
 | File | Description |
 | :--- | :--- |
-| `laptimes.json` | Per-driver lap timing: lap/sector times, session times, speed traps (`vi1`/`vi2`/`vfl`/`vst`), tire compound/life/stint, OpenF1 mini-sectors (`ms1`/`ms2`/`ms3`), qualifying segment (`qs`), position, track status, personal best, pit in/out times, and data-quality flags. Also enriched with per-lap weather when it can be matched. |
-| `{lap}_tel.json` | Per-lap telemetry sampled at ~3.7 Hz: RPM, speed, gear, throttle, brake, DRS, distance, relative distance, X/Y/Z position, driver-ahead info (`DriverAhead`, `DistanceToDriverAhead`), and derived acceleration (`acc_x`/`acc_y`/`acc_z`). |
+| `{driver}/laptimes.json` | Per-driver lap timing: lap/sector times, session times, speed traps (`vi1`/`vi2`/`vfl`/`vst`), tire compound/life/stint, OpenF1 mini-sectors (`ms1`/`ms2`/`ms3`), qualifying segment (`qs`), position, track status, personal best, pit in/out times, and data-quality flags. Also enriched with per-lap weather when it can be matched. |
+| `session_laptimes.json` | The same lap fields for every driver of the session in one file (rows in alphabetical driver order). |
+| `{driver}/{lap}_tel.json` | Per-lap telemetry, about 7-8 samples per second (car and position samples merged): RPM, speed, gear, throttle, brake, DRS, distance, relative distance, X/Y/Z position, driver-ahead info (`DriverAhead`, `DistanceToDriverAhead`), and derived acceleration (`acc_x`/`acc_y`/`acc_z`). |
 | `weather.json` | Environmental conditions recorded ~once per minute: air/track temperature, humidity, pressure, rainfall, wind direction, wind speed. |
-| `rcm.json` | Race control messages: category, message, flag, scope (Track/Sector/Driver), affected (mini-)sector, driver number, lap. |
+| `rcm.json` | Race control messages: time, category, message, status, flag, scope (Track/Sector/Driver), affected track sector, driver number, lap. |
 | `drivers.json` | Static driver metadata: 3-letter code, team, car number, first/last name, team color (hex), headshot URL. |
 | `corners.json` | Circuit corner geometry: corner number, X/Y coordinates, angle, distance from start/finish, circuit rotation. |
 
@@ -337,7 +344,7 @@ uv run prek install
 uv run prek run --all-files
 
 # Run example
-uv run python examples/basic_usage.py
+uv run python examples/async_loading.py
 
 # Run tests (parallel by default via xdist)
 uv run pytest tests/ -v
@@ -349,7 +356,7 @@ uv run ruff check src/ tests/
 uv run ty check src/tif1
 
 # Run benchmarks (serial for stable timing)
-uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark-only --no-cov -n 0
+uv run pytest -o addopts='' tests/benchmarks/ -v -m benchmark --benchmark-only --no-cov -n 0
 ```
 
 ## Documentation
@@ -394,7 +401,7 @@ Status key:
 |---|---|---|
 | `get_session` | supported | round/event aliases supported |
 | `get_event` | supported | event lookup supported |
-| `get_event_schedule` | partial | minimal schedule shape |
+| `get_event_schedule` | supported | fastf1 schedule columns plus `GmtOffset`; testing rows (round 0) kept unless `include_testing=False` |
 | `Cache.enable_cache` | supported | compatibility shim |
 | `set_log_level` | supported | compatibility shim |
 | `plotting.setup_mpl` | supported | compatibility helper module |
@@ -410,12 +417,12 @@ Status key:
 | `load` | supported | lazy-load compatible |
 | `laps` | supported | main lap timing surface |
 | `get_driver` | supported | driver validation present |
-| `get_circuit_info` | supported | compatibility object returned |
-| `results` | partial | reduced classification richness |
-| `session_info` | partial | minimal metadata dict |
-| `session_start_time` / `t0_date` | partial | may be placeholder when unavailable |
-| `session_status` | partial | derived compatibility behavior |
-| `track_status` | partial | derived compatibility behavior |
+| `get_circuit_info` | partial | `corners` and `rotation` from `corners.json`; `marshal_lights` / `marshal_sectors` are empty |
+| `results` | partial | classification order, status and laps; no `Q1`/`Q2`/`Q3` or `Time`; `GridPosition` and `Points` are NaN |
+| `session_info` | partial | minimal metadata dict (`Year`, `EventName`, `SessionName`) |
+| `session_start_time` / `t0_date` | partial | placeholder: always `NaT` |
+| `session_status` | partial | returns the race control messages table |
+| `track_status` | partial | returns the per-lap `TrackStatus` column of `session.laps` |
 | `race_control_messages` | partial | available when source data exists |
 | `weather_data` | partial | passthrough compatibility |
 
@@ -426,18 +433,18 @@ Status key:
 | `Laps.pick_driver(s)` | supported | implemented |
 | `Laps.pick_lap(s)` | supported | implemented |
 | `Laps.pick_fastest` | supported | implemented |
-| `Laps.get_car_data` / `get_pos_data` | supported | telemetry-compatible output |
-| `Laps.get_weather_data` | partial | session passthrough |
-| `Laps.split_qualifying_sessions` | partial | tuple contract kept, no true Q1/Q2/Q3 split |
-| `Lap.get_telemetry` / `get_car_data` / `get_pos_data` | supported | implemented |
-| `Telemetry.add_distance` | supported | implemented |
-| `Telemetry.add_relative_distance` | supported | implemented |
+| `Laps.get_car_data` / `get_pos_data` | supported | both return the merged telemetry (car and position channels) |
+| `Laps.get_weather_data` | partial | returns the whole session's weather table |
+| `Laps.split_qualifying_sessions` | supported | splits on the `QualifyingSession` (Q1/Q2/Q3) column; returns three full copies when that column is missing |
+| `Lap.get_telemetry` / `get_car_data` / `get_pos_data` | supported | all return the merged telemetry (car and position channels) |
+| `Telemetry.add_distance` | supported | keeps an existing `Distance` column (`drop_existing` is ignored) |
+| `Telemetry.add_relative_distance` | supported | keeps an existing `RelativeDistance` column |
 | `Telemetry.add_differential_distance` | supported | implemented |
-| `Telemetry.merge_channels` / `resample_channels` | supported | implemented |
-| `Telemetry.slice_by_lap` / `slice_by_time` / `slice_by_mask` | supported | implemented |
+| `Telemetry.merge_channels` / `resample_channels` | partial | extra fastf1 keyword arguments are ignored; `merge_channels` merges on the nearest `Time`, `resample_channels` keeps numeric columns only |
+| `Telemetry.slice_by_lap` / `slice_by_time` / `slice_by_mask` | supported | `interpolate_edges` is accepted but ignored |
 | `Telemetry.fill_missing` | supported | implemented |
-| `Telemetry.add_driver_ahead` | partial | placeholder-compatible behavior |
-| `Telemetry.add_track_status` | partial | column injection compatibility |
+| `Telemetry.add_driver_ahead` | partial | the columns come precomputed in the data; on a frame without them it adds empty (`None`/NaN) columns |
+| `Telemetry.add_track_status` | partial | adds a constant `TrackStatus` of `"1"` when the column is missing |
 
 ## What's planned to be added in tif1 from fastf1
 
@@ -446,13 +453,9 @@ High-priority API gaps for parity with `docs.fastf1.dev`:
 - `get_testing_session`
 - `get_testing_event`
 - `get_events_remaining`
-- richer `get_event_schedule` parity
 - deeper parity for `Session` metadata/classification fields
 
 ## What's out of scope for tif1 from fastf1
 
 - Ergast (`fastf1.ergast`)
 - LiveTiming (`fastf1.livetiming`)
-
-
-Full detailed matrix: `docs/fastf1_compliance_matrix.md`

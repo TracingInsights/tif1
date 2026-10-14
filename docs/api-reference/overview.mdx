@@ -30,13 +30,13 @@ The `tif1` API is a modern Python library for Formula 1 data analysis, telemetry
 
 - **Performance**: Every component, from HTTP fetching to DataFrame construction, is optimized for speed. Async operations run in parallel. Caching happens at multiple layers (memory + SQLite). The opt-in Polars backend gives memory-efficient processing for large datasets.
 
-- **Production Architecture**: `tif1` is built for production use, not only for research. It includes circuit breakers, retry logic, connection pooling, and DNS-over-HTTPS support. Error handling is complete. Loading degrades gracefully when CDN sources fail.
+- **Production Architecture**: `tif1` is built for production use, not only for research. It includes circuit breakers, retry logic, connection pooling, and DNS-over-HTTPS support. Errors carry structured context. Loading falls back to the next CDN source when one source fails.
 
 - **Developer Experience**: Type hints throughout the codebase enable IDE autocomplete and type checking. Clear error messages with structured context make debugging quick. Consistent naming conventions make the API predictable and easy to learn.
 
 - **Flexible Data Access**: Load only the data that the task needs. Skip telemetry for faster lap time analysis. Load everything for full session exploration. The API adapts to each use case.
 
-- **Modern Python Practices**: `tif1` supports Python 3.11 through 3.15. It uses structural pattern matching, improved type hints, and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
+- **Modern Python Practices**: `tif1` supports Python 3.11 through 3.15. It uses modern type hints and async/await patterns. The codebase follows strict linting rules (Ruff) and maintains high test coverage.
 
 ## Design Philosophy
 
@@ -46,17 +46,17 @@ The `tif1` API is built on a foundation of carefully considered design principle
 
 Performance is not just a feature—it is the core reason `tif1` exists. Every component has been profiled, optimized, and benchmarked:
 
-- **Async Operations**: All network I/O uses async/await patterns with `niquests`, a modern fork of `requests`. This enables parallel fetching of multiple data sources at the same time. `tif1` can fetch all data for a 20-driver race session in parallel.
+- **Async Operations**: Network I/O uses `niquests`, a modern fork of `requests`, with async/await for parallel fetches. This enables parallel fetching of multiple data sources at the same time. `tif1` can fetch all data for a 20-driver race session in parallel.
 
 - **Multi-Layer Caching**: An in-memory LRU cache holds hot data. A SQLite-backed persistent cache holds all fetched data. Cache hits return data in milliseconds rather than seconds. Cache keys are the payload paths, and cached payloads do not expire.
 
-- **Parallel Fetching**: When loading session data, `tif1` fetches lap data, telemetry, weather, and race control messages in parallel. The fetches use `asyncio.gather`. This reduces total load time from ~10-15 seconds to ~2-3 seconds for uncached sessions.
+- **Parallel Fetching**: When loading session data, `tif1` fetches the per-driver lap files, weather, and race control messages in one parallel batch. Telemetry payloads are also fetched in parallel. The fetches use `asyncio.gather`.
 
-- **Opt-in Polars Backend**: Polars is installed with `tif1`. The Polars backend serves large datasets, for example multiple seasons and comparative analysis. It provides 2-5x better memory efficiency and faster DataFrame operations than pandas. The backend is lazy-loaded and can be switched at runtime.
+- **Opt-in Polars Backend**: Polars is installed with `tif1`. The Polars backend serves large datasets, for example multiple seasons and comparative analysis. Polars is a columnar library built for fast, memory-efficient DataFrame operations. The backend is lazy-loaded and can be switched at runtime.
 
-- **Optimized JSON Parsing**: `tif1` uses `orjson` (written in Rust) instead of Python's stdlib `json`. This gives 2-3x faster JSON parsing. The speed matters when processing megabytes of telemetry data.
+- **Optimized JSON Parsing**: `tif1` uses `orjson` (written in Rust) instead of Python's stdlib `json`. `orjson` parses JSON faster than the stdlib. The speed matters when processing megabytes of telemetry data.
 
-- **Connection Pooling**: HTTP sessions use connection pooling to reuse TCP connections across requests. This reduces connection overhead by ~50-100ms per request.
+- **Connection Pooling**: HTTP sessions use connection pooling to reuse TCP connections across requests. This avoids a new TCP and TLS handshake for each request.
 
 ### Simplicity and Ergonomics
 
@@ -76,11 +76,11 @@ Complex operations should stay simple. The API hides complexity behind consisten
 
 The API should be easy to learn and remember:
 
-- **Consistent Naming**: All methods follow clear patterns—`get_*` for retrieval operations, `load_*` for data loading, `clear_*` for cache operations. Attributes use snake_case, classes use PascalCase.
+- **Consistent Naming**: Methods follow clear patterns—`get_*` for retrieval operations, `load()` for data loading, `clear()` and `invalidate()` for cache operations. Attributes use snake_case, classes use PascalCase.
 
 - **Clear Data Hierarchies**: The object model mirrors F1's structure: `Session` contains `Driver` objects, which contain `Lap` objects, which contain `Telemetry` data. This mental model matches how most users think about F1 data.
 
-- **Complete Type Hints**: Every public function and method includes complete type hints. An IDE can show the expected parameters and the return values. This reduces the need to consult documentation.
+- **Type Hints**: Most public functions and methods include type hints. An IDE can show the expected parameters and the return values. This reduces the need to consult documentation.
 
 - **Structured Errors**: Exceptions include structured context (not just error messages) for programmatic error handling. A `DataNotFoundError` includes the year, event, and session that were not found.
 
@@ -92,7 +92,7 @@ Existing `fastf1` users should be able to migrate with minimal friction:
 
 - **Compatibility Layer**: The `tif1.fastf1_compat` module provides shims for `fastf1`-specific functions like `set_log_level()` and `Cache.enable_cache()`.
 
-- **DataFrame Compatibility**: DataFrames returned by `tif1` have the same column names and structure as `fastf1`. Existing analysis code does not need changes.
+- **DataFrame Compatibility**: DataFrames returned by `tif1` use the `fastf1` column names. Most existing analysis code needs no changes.
 
 - **Migration Path**: Both libraries can run side-by-side during migration. Validate the behavior of each piece of code, then move it to `tif1`.
 
@@ -102,9 +102,9 @@ Advanced users should be able to customize behavior:
 
 - **Configuration System**: Global configuration via `get_config()` tunes performance parameters (max workers, timeouts, validation). The same call switches backends (pandas/polars). It also controls behavior (ultra cold start mode, DNS-over-HTTPS).
 
-- **Modular Architecture**: The library is split into focused modules (`http_session`, `async_fetch`, `cache`, `cdn`). Each module can be used independently or replaced with a custom implementation.
+- **Modular Architecture**: The library is split into focused modules (`http_session`, `async_fetch`, `cache`, `cdn`). Each module has one job and can be imported on its own.
 
-- **Backend Abstraction**: A common interface abstracts the DataFrame backend. New backends (DuckDB, Arrow) can be added without changing user-facing code.
+- **Backend Abstraction**: pandas and polars sessions share the same entry points. The `lib` setting selects the backend.
 
 - **Cache Management**: `get_cache()` exposes the cache location and tiers. Clear everything, invalidate one tier (memory, JSON, or telemetry), or disable caching per session for testing.
 
@@ -185,7 +185,7 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
 
 ### What Happens Behind the Scenes
 
-`get_session()` orchestrates a complex series of operations to deliver data quickly and reliably:
+`get_session()` resolves the names and returns a `Session` handle without a fetch. The first data access, or `session.load()`, runs the remaining steps:
 
 1. **Input Validation and Normalization**
    - Validates that the year is 2018 or later
@@ -194,7 +194,8 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
    - Raises `ValueError` if validation fails
 
 2. **Schedule Lookup**
-   - Queries the embedded schedule database (JSON files in `src/tif1/data/schedules/`)
+   - Reads the season schedule. Past seasons use the vendored files in `src/tif1/data/schedules/f1schedule/`
+   - The current and future seasons use the live `f1schedule` file, cached for `schedule_ttl_hours` (default 6), with the vendored file as fallback
    - Retrieves event metadata: official name, location, date, session times
    - Determines available sessions for the event (standard vs sprint weekend format)
    - Validates the requested session exists for this event
@@ -217,11 +218,10 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
    - Uses connection pooling to reuse TCP connections
    - Implements retry logic with exponential backoff for transient failures
    - Falls back to alternative CDN sources if primary fails
-   - Typical fetch time: 2-3 seconds for all data sources in parallel
 
 6. **JSON Parsing**
-   - Parses JSON responses using `orjson` (Rust-based, 2-3x faster than stdlib)
-   - Validates JSON structure against expected schema
+   - Parses JSON responses using `orjson` (Rust-based)
+   - Checks that each payload is a JSON object
    - Raises `InvalidDataError` if data is corrupted or malformed
    - Extracts nested data structures (lap arrays, telemetry points, etc.)
 
@@ -232,58 +232,56 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
    - Uses the `category` dtype on pandas for `Driver`, `Team`, `Compound`, and `TrackStatus`
    - Reorders columns to standard layout
    - Adds computed columns (`LapTimeSeconds`, per-lap weather columns, etc.)
-   - Handles missing data gracefully (NaN for missing telemetry, empty DataFrames for missing sessions)
+   - Fills missing values with NaN or NaT
 
-8. **Data Validation (Optional)**
-   - If `validate_data` config is enabled, runs Pydantic validation on data structures
-   - Checks for logical consistency (lap times > 0, sector times sum to lap time, etc.)
-   - Off by default (`validate_data` is `False`), because validation adds load time
+8. **Payload Validation (Optional)**
+   - Runs on each payload fetched from the CDN, before DataFrame construction and caching
+   - `validate_data` covers weather and race control messages, `validate_lap_times` the lap files, and `validate_telemetry` the telemetry files
+   - Checks structure, field aliases, and array lengths with pydantic-free fast paths
+   - Off by default (all three keys are `False`), and ultra-cold loads skip it
 
 9. **Cache Storage**
-   - Stores raw JSON payloads in SQLite, compressed with zstd
-   - Stores built DataFrames as pickled blobs, compressed with lz4
+   - Stores raw JSON payloads in SQLite, compressed with zstd (zlib without a zstd binding)
+   - Stores built DataFrames as pickled blobs, compressed with lz4 (zstd without `lz4`)
    - Writes telemetry payloads to a separate telemetry table
 
 10. **Object Construction**
-    - Creates `Session` object with all loaded data
-    - Initializes `Driver` objects for each driver in the session
-    - Sets up lazy-loading for telemetry data (loaded on first access)
-    - Establishes relationships between objects (Session → Driver → Lap → Telemetry)
-    - Returns fully-initialized `Session` object ready for analysis
+    - `get_session()` returns the `Session` handle before any fetch
+    - Data properties (`laps`, `weather`, `race_control_messages`, ...) fetch their data on first access
+    - `get_driver()` and `get_lap()` build `Driver` and `Lap` objects on request
+    - Telemetry loads per lap on first access (Session → Driver → Lap → Telemetry)
 
-All of this happens transparently in milliseconds for cached data. Fresh downloads with parallel async fetching take a few seconds. The user sees only a simple function call. It returns a ready-to-use `Session` object.
+Cached data loads without network I/O. A cold load spends most of its time on the network.
 
 ### Performance Characteristics
 
 Use this performance profile to optimize workflows:
 
-- **Cache Hit (Warm)**: 1-5 milliseconds
+- **Cache Hit (Warm)**: No network I/O
   - Data loaded from SQLite cache
   - DataFrame deserialization from binary format
   - No network I/O
 
-- **Cache Miss (Cold)**: 2-5 seconds
+- **Cache Miss (Cold)**: Network-bound
   - Parallel async fetching of all data sources
   - JSON parsing and DataFrame construction
   - Cache storage for future use
   - Dominated by network latency, not CPU
 
-- **Partial Cache Hit**: 500ms - 2 seconds
+- **Partial Cache Hit**: Only the missing payloads cost network time
   - Some data sources cached, others fetched
   - Only missing data sources are fetched
   - Faster than full cold start
 
-- **Ultra Cold Start Mode**: 100-300 milliseconds
-  - Optimized for single-query scenarios
-  - Skips some cache checks and optimizations
-  - Trades repeated-query performance for first-query speed
-  - Enable with `config.set("ultra_cold_start", True)`
+- **Ultra Cold Start Mode**: On by default (`ultra_cold_start=True`)
+  - Applies to sessions that are not in the cache yet
+  - Skips cache reads, payload validation, and retry delays
+  - Still writes the fetched payloads to the cache for the next load
+  - Disable with `config.set("ultra_cold_start", False)`
 
-- **Polars Backend**: 30-50% faster for large datasets
-  - Better memory efficiency (2-5x less RAM)
-  - Faster filtering and aggregation operations
-  - Lazy evaluation for complex queries
-  - Enable with `config.set("lib", "polars")`
+- **Polars Backend**: Columnar DataFrames
+  - Time columns hold float seconds instead of timedeltas
+  - Enable with `config.set("lib", "polars")`, or `lib="polars"` for one session
 
 ---
 
@@ -295,7 +293,7 @@ The `tif1` API exposes five primary entry points that serve as the foundation fo
 | :--- | :--- | :--- | :--- | :--- |
 | `get_session()` | Load data for a specific GP session (Practice, Qualifying, Sprint, Race) | `Session` | Primary data access for analysis | [Core API](/api-reference/core#get_session) |
 | `get_events()` | List all available Grand Prix events for a given year with metadata | `EventSchedule` | Event discovery and schedule planning | [Events API](/api-reference/events#get_events) |
-| `get_sessions()` | List all available sessions for a specific event (FP1, FP2, FP3, Q, S, R) | `list[str]` | Session discovery for event | [Events API](/api-reference/events#get_sessions) |
+| `get_sessions()` | List all available sessions for a specific event ("Practice 1", "Sprint", "Race", ...) | `list[str]` | Session discovery for event | [Events API](/api-reference/events#get_sessions) |
 | `get_config()` | Access and modify global configuration (backend, cache, performance) | `Config` | Performance tuning and customization | [Config API](/api-reference/config#get_config) |
 | `get_cache()` | Access cache management for clearing, inspecting, and optimizing storage | `Cache` | Cache maintenance and debugging | [Cache API](/api-reference/cache#get_cache) |
 
@@ -509,6 +507,7 @@ Returns a `Session` object with the following key attributes and methods:
 
 ```python
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
+code = "VER"
 
 # Attributes
 session.laps                    # Laps: All laps from all drivers
@@ -530,7 +529,7 @@ session.get_fastest_laps(by_driver=True)    # Fastest lap per driver (Laps)
 session.get_fastest_lap_tel()               # Telemetry of the overall fastest lap
 session.get_circuit_info()                  # CircuitInfo: corners, rotation
 session.laps.pick_driver(code)              # All laps for one driver
-session.load()                              # Explicitly load data
+session.load(telemetry=False)               # Fetch laps, weather, and messages now
 ```
 
 **Exception Handling:**
@@ -585,7 +584,7 @@ except ValueError as e:
    session = tif1.get_session(2021, "Monaco", "Race")  # Uses cache
    ```
 
-3. **Consider Polars for large datasets**: 2-5x better memory efficiency
+3. **Consider Polars for large datasets**: Polars is built for memory-efficient work
    ```python
    session = tif1.get_session(2021, "Monaco", "Race", lib="polars")
    ```
@@ -727,7 +726,7 @@ print(f"  {sprint['Session5']} - {sprint['Session5Date']}")  # Race
 - `EventFormat` (str): "conventional", "sprint_qualifying" (sprint weekends), or "testing"
 - `Session1-5` (str): Session names ("Practice 1", "Qualifying", "Race", etc.)
 - `Session1-5Date` (datetime): Local date and time for each session, with the UTC offset
-- `Session1-5DateUtc` (datetime64): Intended as UTC. The current release stores the local wall-clock time here, so apply `GmtOffset` for true UTC
+- `Session1-5DateUtc` (datetime64): Session start in UTC, without a timezone (for example, 13:00 for a 15:00+02:00 local start)
 - `F1ApiSupport` (bool): Whether F1 official API supports this event
 - `GmtOffset` (str): UTC offset of the circuit
 
@@ -771,10 +770,8 @@ for year in range(2018, 2026):
 
 **Performance Notes:**
 
-- Schedule data for 2018-2026 ships with the package (no network I/O)
-- Load time: &lt;1ms (reading from JSON files)
-- Data size: ~10-20 KB per year
-- No caching needed (always instant)
+- Schedule files for 2018-2026 ship with the package. Past seasons load from them without network I/O
+- The current and future seasons use the live `f1schedule` file, cached for `schedule_ttl_hours` (default 6). The vendored file is the fallback
 
 See [Events API](/api-reference/events) for complete documentation.
 
@@ -793,10 +790,11 @@ def get_sessions(
 
     Args:
         year: Championship year
-        event: Exact event name from the schedule ("Monaco Grand Prix")
+        event: Event name, resolved like get_session(): exact name,
+            then the alias table, then fuzzy matching
 
     Returns:
-        List of session names. An unknown event name returns the
+        List of session names. A name that does not resolve returns the
         conventional list (FP1-FP3, Qualifying, Race) without an error.
     """
 ```
@@ -816,10 +814,9 @@ sessions = tif1.get_sessions(2024, "Austrian Grand Prix")
 print(sessions)
 # ['Practice 1', 'Sprint Qualifying', 'Sprint', 'Qualifying', 'Race']
 
-# get_sessions() does not apply fuzzy matching: pass the exact EventName.
-# "austria" is not an event name, so it returns the conventional list.
+# get_sessions() resolves names like get_session(): "austria" is the Austrian GP
 sessions = tif1.get_sessions(2024, "austria")
-# ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
+# ['Practice 1', 'Sprint Qualifying', 'Sprint', 'Qualifying', 'Race']
 
 # Iterate through all sessions
 for session_name in tif1.get_sessions(2024, "Monaco Grand Prix"):
@@ -868,16 +865,19 @@ config = tif1.get_config()
 # View current settings
 print(config.get("lib"))            # 'pandas' or 'polars'
 print(config.get("enable_cache"))   # True/False
-print(config.get("max_workers"))    # Concurrent fetch limit
+print(config.get("max_workers"))    # Worker and HTTP pool size (default 20)
 
 # Modify settings
 config.set("lib", "polars")              # Switch to Polars backend
-config.set("ultra_cold_start", True)     # Optimize for single queries
+config.set("ultra_cold_start", True)     # The default: fast loads of uncached sessions
 config.set("max_workers", 100)           # Increase parallelism
-config.set("validate_data", False)       # Default: skip Pydantic validation
+config.set("validate_data", False)       # Default: skip payload validation
 
 # Persist configuration
 config.save()  # Saves to ~/.tif1rc
+
+# The examples below use pandas: switch back for this process
+config.set("lib", "pandas")
 ```
 
 See [Config API](/api-reference/config) for all available settings.
@@ -1311,10 +1311,10 @@ import tif1
 # Get config
 config = tif1.get_config()
 
-# Use polars lib for better performance
+# Use the polars lib for large datasets
 config.set("lib", "polars")
 
-# Enable ultra-cold start for minimal latency
+# Ultra-cold start for uncached sessions (the default)
 config.set("ultra_cold_start", True)
 
 # Increase concurrency
@@ -1322,6 +1322,9 @@ config.set("max_workers", 100)
 
 # Save configuration
 config.save()
+
+# The examples below use pandas: switch back for this process
+config.set("lib", "pandas")
 ```
 
 ---
@@ -1338,9 +1341,14 @@ TIF1Error (base)
 │   ├── DriverNotFoundError
 │   └── LapNotFoundError
 ├── NetworkError
+│   └── CircuitBreakerOpenError
 ├── InvalidDataError
 ├── CacheError
 └── SessionNotLoadedError
+
+ValueError (built-in)
+└── EventNotFoundError
+    └── EventNotInSeasonError
 ```
 
 ### Common Exceptions
@@ -1350,12 +1358,13 @@ TIF1Error (base)
 - **`InvalidDataError`**: The data fetched from the CDN was corrupted
 - **`DriverNotFoundError`**: The driver code provided is not in this session
 - **`LapNotFoundError`**: The requested lap number does not exist for this driver
-- **`CacheError`**: Cache operation failed
+- **`CacheError`**: Reserved for cache failures. `tif1` logs cache failures and does not raise it at present
 - **`SessionNotLoadedError`**: Reserved for data access before a load. `tif1` loads data lazily and does not raise it at present
 
 A year before 2018 or an unknown session name raises `ValueError` from `get_session()`, not `DataNotFoundError`.
-An alias for an event that is not on that season's calendar raises `EventNotInSeasonError`, a `ValueError` subclass.
-An event name that matches nothing resolves to the closest event by fuzzy matching, and `tif1` only logs the correction. Check `session.event_name` when the input is uncertain.
+An event name that matches no event raises `EventNotFoundError`, a `ValueError` subclass. A fuzzy match needs a score of at least 70.
+An alias for an event that is not on that season's calendar raises `EventNotInSeasonError`, a subclass of `EventNotFoundError`.
+A typo such as "Monacco" resolves to the closest event, and `tif1` logs the correction. Check `session.event_name` when the input is uncertain.
 
 ### Error handling example
 
@@ -1388,20 +1397,24 @@ See [Exceptions API](/api-reference/exceptions) for complete documentation.
 
 ## Performance Tips
 
-1. **Use async methods for parallel loading**: 5-10x faster than sequential
+1. **Use async methods for parallel loading**: Several loads can run at the same time
    ```python
-   # Inside an async function
-   laps = await session.laps_async()
+   import asyncio
+
+   async def main():
+       return await session.laps_async()
+
+   laps = asyncio.run(main())
    ```
 
-2. **Enable ultra-cold start for single queries**: Minimal latency
+2. **Keep ultra-cold start on for first loads**: It is the default
    ```python
    config.set("ultra_cold_start", True)
    ```
 
-3. **Use polars lib for large datasets**: Better memory efficiency
+3. **Use polars lib for large datasets**: Select it per session or with `config.set("lib", "polars")`
    ```python
-   config.set("lib", "polars")
+   session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="polars")
    ```
 
 4. **Keep validation off in production**: `validate_data` is `False` by default. Turn it on only to debug a payload
@@ -1420,7 +1433,7 @@ See [Best Practices](/guides/best-practices) for more optimization tips.
 
 ## Type Hints
 
-All public APIs include full type hints for better IDE support:
+Most public APIs include type hints for IDE support:
 
 ```python
 import pandas as pd

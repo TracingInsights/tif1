@@ -67,7 +67,7 @@ from tif1.types import (
 
 `tif1` follows these type system principles:
 
-1. **Explicit over implicit**: All public APIs have explicit type annotations
+1. **Explicit over implicit**: Most public APIs have explicit type annotations
 2. **Strict by default**: Types are as specific as possible (Literal types over str)
 3. **Optional transparency**: Optional fields use `NotRequired` or `Optional` to make None handling explicit
 4. **Backend agnostic**: Union types support both pandas and polars without code changes
@@ -82,7 +82,7 @@ Literal types are a key Python type system feature. They restrict values to a sp
 
 - **Exhaustive checking**: Type checkers can verify all possible values are handled
 - **Autocomplete**: IDEs show exactly which values are valid
-- **Refactoring safety**: Renaming a literal value updates all usages
+- **Refactoring safety**: Type checkers flag every usage of a renamed literal value
 - **Documentation**: The type itself documents valid values
 
 ### `BackendType`
@@ -90,6 +90,8 @@ Literal types are a key Python type system feature. They restrict values to a sp
 The `BackendType` literal specifies which DataFrame library backend to use for data operations. `tif1` is designed to be backend-agnostic: pandas and polars sessions have the same entry points. Column dtypes differ; for example, polars time columns hold float seconds.
 
 ```python
+from typing import Literal
+
 BackendType = Literal["pandas", "polars"]
 ```
 
@@ -99,7 +101,7 @@ BackendType = Literal["pandas", "polars"]
 |---------|--------|--------|
 | **Performance** | Good for small-medium datasets | Excellent for large datasets |
 | **Memory Usage** | Higher memory footprint | Optimized memory usage |
-| **Evaluation** | Eager (immediate) | Lazy (optimized query plans) |
+| **Evaluation** | Eager (immediate) | Eager, plus a lazy API with optimized query plans |
 | **Ecosystem** | Massive ecosystem, 15+ years | Growing ecosystem, modern |
 | **Learning Curve** | Gentle, widely documented | Steeper, but more consistent API |
 | **Parallelization** | Limited (GIL-bound) | Built-in parallel execution |
@@ -157,6 +159,9 @@ print(type(session.laps))  # <class 'polars.dataframe.frame.DataFrame'>
 # Verify backend
 current_backend: BackendType = config.get("lib")
 print(f"Using backend: {current_backend}")  # Using backend: polars
+
+# The examples below use pandas DataFrame methods: switch back
+config.set("lib", "pandas")
 ```
 
 #### Function Parameter Typing
@@ -292,6 +297,8 @@ except ValueError as e:
 The `SessionType` literal defines all valid Formula 1 session types across different weekend formats. Formula 1 has evolved its weekend structure over the years, introducing sprint races and varying qualifying formats. This type ensures that only sessions present in the F1 calendar can be referenced.
 
 ```python
+from typing import Literal
+
 SessionType = Literal[
     "Practice 1",
     "Practice 2",
@@ -447,8 +454,8 @@ def get_qualifying_session(year: int, gp: str) -> Optional[tif1.Session]:
 
     Tries multiple qualifying session types in order of preference:
     1. Standard Qualifying (determines race grid)
-    2. Sprint Qualifying (determines sprint grid, 2023+ format)
-    3. Sprint Shootout (alternative name for sprint qualifying)
+    2. Sprint Qualifying (determines sprint grid, 2024+ format)
+    3. Sprint Shootout (the 2023 name of sprint qualifying)
 
     Args:
         year: Season year
@@ -498,8 +505,8 @@ def detect_weekend_format(year: int, gp: str) -> WeekendFormat:
 
     Args:
         year: Season year
-        gp: Exact event name from the schedule. get_sessions() does no alias or
-            fuzzy matching: an unknown name returns the standard five sessions
+        gp: Event name. get_sessions() resolves it like get_session(): exact
+            name, then the alias table, then fuzzy matching
 
     Returns:
         Weekend format type
@@ -656,6 +663,8 @@ print(pace_comparison)
 The `CompoundType` literal defines all possible tire compound names used in Formula 1. Pirelli, the official tire supplier, provides different compounds for different track conditions and strategies.
 
 ```python
+from typing import Literal
+
 CompoundType = Literal[
     "SOFT",
     "MEDIUM",
@@ -940,6 +949,8 @@ for compound, data in stats.items():
 The `TrackStatusType` literal defines track status codes that indicate race control conditions during a session. These codes are critical for understanding when laps are valid for comparison and when incidents occurred.
 
 ```python
+from typing import Literal
+
 TrackStatusType = Literal[
     "1",  # Green Flag - Normal racing conditions
     "2",  # Yellow Flag - Danger, no overtaking
@@ -1219,6 +1230,9 @@ All TypedDict schemas use `NotRequired` for optional fields, making it explicit 
 The `LapDataDict` TypedDict defines the complete structure of lap timing data in DataFrames. This is the largest data structure in `tif1`, containing timing, speed, tire, weather, and metadata for each lap.
 
 ```python
+import datetime
+from typing import NotRequired, TypedDict
+
 class LapDataDict(TypedDict):
     """Type definition for lap data dictionary (matches DataFrame schema)."""
 
@@ -1289,7 +1303,7 @@ class LapDataDict(TypedDict):
 
 **Core Identity Fields**
 
-These four fields are always present and form the unique identity of each lap:
+These four fields are required keys of `LapDataDict` and are always present:
 
 ```python
 import datetime
@@ -1572,6 +1586,8 @@ if "tire" in analysis:
 Structure of telemetry data. All fields except Time are optional.
 
 ```python
+from typing import NotRequired, TypedDict
+
 class TelemetryDataDict(TypedDict):
     Time: float                                    # Time from lap start (frames: timedelta64 on pandas, Float64 seconds on polars)
     RPM: NotRequired[int | None]                   # Engine RPM (float64 in session frames)
@@ -1622,6 +1638,9 @@ for _, sample in tel.head(10).iterrows():
 Structure of weather data returned by `session.weather`.
 
 ```python
+import datetime
+from typing import NotRequired, TypedDict
+
 class WeatherDataDict(TypedDict):
     Time: datetime.timedelta                       # Session time (timedelta64 on pandas, Duration(ms) on polars)
     AirTemp: NotRequired[float | None]             # Air temperature (°C)
@@ -1655,9 +1674,11 @@ for _, sample in weather.iterrows():
 Structure of race control messages.
 
 ```python
+from typing import NotRequired, TypedDict
+
 class RaceControlDataDict(TypedDict):
     Time: float                                    # Message time (frames: datetime64 timestamp on both backends)
-    Category: NotRequired[str | None]              # Message category ("Flag", "Drs", "SafetyCar", "Other")
+    Category: NotRequired[str | None]              # Message category ("Flag", "Drs", "SafetyCar", "CarEvent", "Other")
     Message: NotRequired[str | None]               # Message text
     Status: NotRequired[str | None]                # Status (for example, DRS "ENABLED")
     Flag: NotRequired[str | None]                  # Flag type
@@ -1693,6 +1714,8 @@ for _, msg in messages.iterrows():
 Structure of driver information.
 
 ```python
+from typing import TypedDict
+
 class DriverInfoDict(TypedDict):
     driver: str                    # 3-letter code (e.g., "VER")
     team: str                      # Team name
@@ -1750,10 +1773,8 @@ weather: pd.DataFrame = session.weather
 import polars as pl
 import tif1
 
-config = tif1.get_config()
-config.set("lib", "polars")
-
-session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
+# lib="polars" selects the backend for this session only
+session = tif1.get_session(2021, "Dutch Grand Prix", "Race", lib="polars")
 
 # Type hint for laps DataFrame
 laps: pl.DataFrame = session.laps
@@ -1823,6 +1844,29 @@ first: DriverResult = results.iloc[0]
 
 # Circuit info
 circuit: CircuitInfo = session.get_circuit_info()
+```
+
+---
+
+## Protocol types
+
+`DataFrameProtocol` is a structural `Protocol` for DataFrame-like objects. It is a typing aid only: `tif1` does not check it at runtime.
+
+```python
+from typing import Protocol
+
+class DataFrameProtocol(Protocol):
+    @property
+    def shape(self) -> tuple[int, int]: ...
+
+    @property
+    def columns(self) -> list[str]: ...
+
+    def head(self, n: int = 5) -> "DataFrameProtocol": ...
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, key): ...
 ```
 
 ---
@@ -2008,7 +2052,7 @@ session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
 # Hovering over 'session' shows: session: Session
 
 laps = session.laps
-# Hovering over 'laps' shows: laps: DataFrame
+# Hovering over 'laps' shows the pandas | polars DataFrame union
 
 driver = session.get_driver("VER")
 # Hovering over 'driver' shows: driver: Driver
@@ -2106,7 +2150,7 @@ def process_lap(lap: dict) -> dict:
 
 Use mypy or pyright in the development workflow:
 
-```bash
+```toml
 # Add to pyproject.toml
 [tool.mypy]
 python_version = "3.11"

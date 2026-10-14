@@ -56,9 +56,10 @@ def display_session_info(session) -> str:
     session_name = html.escape(urllib.parse.unquote(str(session.session)))
     lib = html.escape(str(session.lib))
     year = html.escape(str(session.year))
-    num_drivers = (
-        len(session.drivers) if hasattr(session, "_drivers") and session._drivers else "Not loaded"
-    )
+    # Never fetch for a display: count drivers only once their rows or the laps
+    # (which a warm laps frame-tier hit loads without them) are in memory.
+    loaded = getattr(session, "_drivers", None) or getattr(session, "_laps", None) is not None
+    num_drivers = len(session.drivers) if loaded else "Not loaded"
     num_drivers_str = html.escape(str(num_drivers))
 
     html_content = f"""

@@ -5,6 +5,8 @@ Executes every fenced Python block per page sequentially in one subprocess per
 page (blocks in a page share state, matching the reading order). Blocks that
 raise are reported with the exception; a block whose own text announces an
 error ("Raises", "Error", "try:") is classified as an error demonstration.
+Bodiless signature listings on reference pages (``def f(x: int) -> str``) are
+reported as signatures, not failures.
 
 Usage:
     uv run python tools/run_doc_examples.py [paths ...] [--json] [--timeout 300]
@@ -25,7 +27,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-RUNNER = """
+RUNNER = r"""
 import inspect
 import json
 import os
@@ -38,8 +40,8 @@ from pathlib import Path
 # The pages run against the developer's real data cache (fast, offline), so
 # the cache-maintenance examples they demonstrate (Cache.clear(),
 # invalidate("all"), tif1.Cache.clear_cache(), enable_cache(force_renew=True),
-# shutil.rmtree on the cache dir) would wipe it. Those calls are still
-# argument-checked against the real signature, then skipped.
+# shutil.rmtree on the cache dir, unlinking cache.sqlite) would wipe it. Those
+# calls are still argument-checked against the real signature, then skipped.
 import tif1.cache as _cache_mod
 from tif1 import fastf1_compat as _fastf1_compat
 
@@ -59,25 +61,74 @@ def _guard(owner, name, static=False):
 _guard(_cache_mod.Cache, "clear")
 _guard(_cache_mod.Cache, "invalidate")
 _guard(_fastf1_compat.Cache, "clear_cache", static=True)
-_real_rmtree = shutil.rmtree
+def _touches_protected(path):
+    try:
+        target = Path(path).resolve()
+    except (TypeError, ValueError):
+        return False
+    return target == _PROTECTED or _PROTECTED in target.parents or target in _PROTECTED.parents
 
 
-def _safe_rmtree(path, *args, **kwargs):
-    target = Path(path).resolve()
-    if target == _PROTECTED or _PROTECTED in target.parents or target in _PROTECTED.parents:
-        print(f"[run_doc_examples] refused shutil.rmtree({path})", file=sys.stderr)
-        return None
-    return _real_rmtree(path, *args, **kwargs)
+def _refuse_on_protected(owner, name):
+    real = getattr(owner, name)
+
+    def safe(path, *args, **kwargs):
+        if _touches_protected(path):
+            print(f"[run_doc_examples] refused {name}({path}) on the shared cache", file=sys.stderr)
+            return None
+        return real(path, *args, **kwargs)
+
+    setattr(owner, name, safe)
 
 
-shutil.rmtree = _safe_rmtree
+# Every deletion path, not only rmtree: a page once unlinked cache.sqlite.
+for _owner, _name in (
+    (shutil, "rmtree"),
+    (os, "remove"),
+    (os, "unlink"),
+    (os, "rmdir"),
+    (Path, "unlink"),
+    (Path, "rmdir"),
+):
+    _refuse_on_protected(_owner, _name)
+
+import re as _re
+
+
+def _is_signature(block):
+    lines = block.splitlines()
+    if not lines:
+        return False
+    out = []
+    head = _re.compile(r"^\s*(async\s+def|def|class)\s+\w+")
+    for line in lines:
+        out.append(line + ": ..." if head.match(line) and not line.rstrip().endswith(":") and line == line.lstrip() else line)
+    joined = "\n".join(out)
+    try:
+        compile(joined, "<sig>", "exec")
+    except SyntaxError:
+        # Multi-line signatures: the closing ``) -> T`` line carries the colon.
+        try:
+            compile(_re.sub(r"(\)\s*(?:->\s*[^\n:]+)?)\s*$", r"\1: ...", block, flags=_re.M), "<sig>", "exec")
+        except SyntaxError:
+            return False
+    return True
+
 
 blocks = json.loads(sys.argv[1])
 ns = {}
 results = []
 for i, block in enumerate(blocks):
     try:
-        exec(compile(block, f"<block {i}>", "exec"), ns)
+        code = compile(block, f"<block {i}>", "exec")
+    except SyntaxError as exc:
+        # Reference pages show bodiless signatures (``def f(x: int) -> str``); a
+        # block that compiles once every signature line gets a ``...`` body is a
+        # signature listing, not a broken example.
+        results.append({"index": i, "status": "signature" if _is_signature(block) else "error", "error": f"{type(exc).__name__}: {exc}"})
+        continue
+    try:
+        exec(code, ns)
         results.append({"index": i, "status": "ok"})
     except Exception as exc:  # noqa: BLE001
         results.append({"index": i, "status": "error", "error": f"{type(exc).__name__}: {exc}"})
@@ -100,7 +151,10 @@ def extract_blocks(page: Path) -> list[str]:
                 in_fence = False
             else:
                 in_fence = True
-                lang = stripped.lstrip("`~").strip().lower()
+                # The language is the first word; Mintlify puts a tab or file
+                # title after it (```python Pandas inside a CodeGroup).
+                info = stripped.lstrip("`~").split()
+                lang = info[0].lower() if info else ""
             continue
         if in_fence and lang in {"python", "py"}:
             current.append(line)

@@ -73,7 +73,7 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | `drv`, `team` | `str` | `String` | Plain-string copies of `Driver` and `Team` from the source data. |
 | `Position` | `float64` | `Int64` | Running position at the end of the lap (Race and Sprint only). |
 | `TrackStatus` | `category` | `String` | Status codes (1=Green, 2=Yellow, 4=SC, 6=VSC). A multi-digit value lists every status seen during the lap, for example `"41"`. |
-| `IsPersonalBest` | `bool` | `Boolean` | Whether this was the driver's fastest valid lap. |
+| `IsPersonalBest` | `bool` | `Boolean` | `True` when the lap was the official personal best of the driver at the time it was set. Several laps of one driver can be `True`. |
 | `IsAccurate` | `bool` | `Boolean` | `True` if timing data passed basic accuracy checks. |
 | `Deleted` | `boolean` | `Boolean` | `True` if the lap was deleted (e.g., track limits). Nullable on pandas. |
 | `DeletedReason` | `object` | `String` | Reason for lap deletion if applicable. |
@@ -81,7 +81,7 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | `QualifyingSession` | `object` | `String` | `Q1`, `Q2`, `Q3` (or `SQ1` to `SQ3`). Qualifying sessions only. |
 
 ### Per-Lap Weather
-Every lap carries the weather sample closest to the lap. `session.weather` has no `LapNumber` column, so use these columns to relate weather to laps.
+Every lap carries one weather sample that the data pipeline matched to the lap. `WeatherTime` gives the session time of that sample. `session.weather` has no `LapNumber` column, so use these columns to relate weather to laps.
 
 | Column | pandas dtype | polars dtype | Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -97,7 +97,7 @@ Every lap carries the weather sample closest to the lap. `session.weather` has n
 
 ## 🎯 Telemetry Data (`lap.telemetry`)
 
-High-frequency samples (approx. 4Hz) recorded throughout a lap. `Time` is lap-relative and starts at 0 at the lap start. There is no session-time column.
+Samples recorded throughout a lap, about 0.13 s apart in the 2024 Monaco Race data. `Time` is lap-relative and starts at 0 at the lap start. There is no session-time column.
 
 ### Car Metrics
 | Column | pandas dtype | polars dtype | Unit | Description |
@@ -106,7 +106,7 @@ High-frequency samples (approx. 4Hz) recorded throughout a lap. `Time` is lap-re
 | `Speed` | `float64` | `Float64` | km/h | Current speed of the car. |
 | `RPM` | `float64` | `Float64` | RPM | Engine revolutions per minute. |
 | `nGear` | `Int64` | `Int64` | - | Current gear (1-8, 0 for Neutral). |
-| `Throttle` | `float64` | `Float64` | % | Throttle pedal position (0-100). |
+| `Throttle` | `float64` | `Float64` | % | Throttle pedal position (0-100). Some samples hold values above 100. |
 | `Brake` | `bool` | `Int64` | - | `True` (pandas) or `1` (polars) while the brake pedal is pressed. |
 | `DRS` | `Int64` | `Int64` | - | DRS flag: `0` = closed, `1` = open. The source data maps the raw FastF1 values `10`, `12`, and `14` to `1`. The column never holds a value of 10 or more. |
 
@@ -115,7 +115,7 @@ High-frequency samples (approx. 4Hz) recorded throughout a lap. `Time` is lap-re
 | :--- | :--- | :--- | :--- | :--- |
 | `Distance` | `float64` | `Float64` | Meters | Distance driven since the start of the lap. |
 | `RelativeDistance`| `float64` | `Float64` | - | Normalized distance (0.0 to 1.0). |
-| `X`, `Y`, `Z` | `float64` | `Float64` | Meters | 3D coordinates of the car on the track. |
+| `X`, `Y`, `Z` | `float64` | `Float64` | 1/10 m | 3D coordinates of the car on the track. The path length through `X` and `Y` is about 10 times `Distance`. |
 
 ### Driver Ahead
 | Column | pandas dtype | polars dtype | Unit | Description |
@@ -167,13 +167,13 @@ Official messages issued during the session.
 
 | Column | pandas dtype | polars dtype | Description |
 | :--- | :--- | :--- | :--- |
-| `Time` | `datetime64[ns]` | `Datetime` | Wall-clock timestamp of the message. |
+| `Time` | `datetime64[ns]` | `Datetime` | UTC timestamp of the message, without a time zone. |
 | `Category` | `object` | `String` | Message type (`Flag`, `Drs`, `SafetyCar`, `CarEvent`, `Other`). |
 | `Message` | `object` | `String` | Human-readable description. |
 | `Status` | `object` | `String` | Message state, for example `ENABLED`, `DISABLED`, `DEPLOYED`, `IN THIS LAP`. |
-| `Flag` | `object` | `String` | Type of flag (`GREEN`, `YELLOW`, `DOUBLE YELLOW`, `RED`, `CLEAR`, `CHEQUERED`, `BLACK AND WHITE`). |
-| `Scope` | `object` | `String` | Impact area (`Track`, `Sector`, `Driver`). |
-| `Sector` | `float64` | `Float64` | The affected mini-sector (1-24). `NaN` when the scope is not a sector. |
+| `Flag` | `object` | `String` | Type of flag (`GREEN`, `YELLOW`, `DOUBLE YELLOW`, `BLUE`, `RED`, `CLEAR`, `CHEQUERED`, `BLACK AND WHITE`). Missing for a message without a flag. |
+| `Scope` | `object` | `String` | Impact area (`Track`, `Sector`, `Driver`). Missing when the message has no scope. |
+| `Sector` | `float64` | `Float64` | The affected marshal sector. The number of marshal sectors depends on the circuit. `NaN` (pandas) or `null` (polars) when the scope is not a sector. |
 | `RacingNumber` | `object` | `String` | Car number of the affected driver, if applicable. |
 | `Lap` | `int64` | `Int64` | Lap number the message refers to. A message without a lap holds `0` on pandas and `null` on polars. |
 
@@ -195,7 +195,7 @@ One row per driver, in classification order. `session.results` is a pandas `Sess
 | `TeamColor` | `str` | Hex color without a leading `#` (e.g., `FF8000`). |
 | `FirstName`, `LastName`, `FullName` | `str` | Driver names. |
 | `HeadshotUrl` | `str` | Link to the driver headshot. |
-| `Position` | `float64` | Classification position, `1.0` for the winner. NaN when the session has no laps payload. |
+| `Position` | `float64` | Classification position, `1.0` for the winner. NaN when tif1 cannot set a classification order: `drivers.json` is in car-number order and the session has no laps payload. |
 | `ClassifiedPosition` | `str` | `Position` as text (`"1"`). Empty when the position is unknown. |
 | `GridPosition` | `float64` | Not available: always NaN. |
 | `Status` | `str` | Races and sprints: `"Finished"`, `"+1 Lap"`, `"+2 Laps"`, ... or `"Did not start"`. Other sessions: `"Finished"`. `None` without a laps payload. |

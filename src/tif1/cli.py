@@ -41,6 +41,11 @@ def events(
     from rich.table import Table
 
     events_schedule = tif1.get_events(year)
+    # A year without a schedule (before 2018, or not published yet) comes back
+    # as an empty frame with no columns.
+    if "EventName" not in events_schedule.columns or events_schedule.empty:
+        _rprint(f"[red]No events found for {year}[/red]")
+        raise typer.Exit(code=1)
 
     table = Table(title=f"F1 Events {year}")
     table.add_column("#", style="cyan")

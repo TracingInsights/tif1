@@ -72,15 +72,25 @@ def load_session(
         event: Grand Prix name or round number.
         session: Session name (e.g. ``"Q"``, ``"R"``, ``"Qualifying"``).
         enable_cache: Enable caching; ``None`` uses the configured default.
-        lib: Data backend; defaults to ``"pandas"`` because the chart logic
-            relies on pandas idioms.
+        lib: Data backend of the caller, ``"pandas"`` or ``"polars"``. Both
+            draw the same chart: the session is always loaded with the pandas
+            backend (see below).
 
     Returns:
-        A loaded :class:`tif1.Session`.
+        A loaded :class:`tif1.Session` with the pandas backend.
+
+    Raises:
+        ValueError: ``lib`` is not ``"pandas"`` or ``"polars"``.
     """
+    if lib not in ("pandas", "polars"):
+        raise ValueError(f'lib must be "pandas" or "polars", got {lib!r}')
     from tif1.core import get_session
 
-    return get_session(year, event, session, enable_cache=enable_cache, lib=lib)
+    # Charts hand frames to matplotlib/seaborn and rely on the pandas lap
+    # contract (Laps.pick_*, Timedelta LapTime, Telemetry.add_distance). Both
+    # backends build from the same payloads and payload cache, so a polars
+    # caller gets the identical figure from the pandas view of the session.
+    return get_session(year, event, session, enable_cache=enable_cache, lib="pandas")
 
 
 def setup_theme(color_scheme: str | None) -> None:
@@ -740,14 +750,15 @@ def resolve_drivers(session: Any, drivers: list[str] | None, n: int) -> list[str
 
     Args:
         session: A loaded session.
-        drivers: Explicit driver abbreviations, or ``None`` to auto-select.
+        drivers: Explicit driver identifiers (abbreviations, names or numbers,
+            fuzzy-resolved against the session), or ``None`` to auto-select.
         n: Number of top finishers to auto-select when ``drivers`` is ``None``.
 
     Returns:
         The resolved driver abbreviation list.
     """
     if drivers is not None:
-        return list(drivers)
+        return _resolve_driver_abbreviations(session, list(drivers))
     return finishing_order(session, n)
 
 

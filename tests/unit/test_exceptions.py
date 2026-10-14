@@ -69,6 +69,10 @@ class TestExceptions:
         assert "laps" in str(error)
         assert error.context["attribute"] == "laps"
 
+        # Like every TIF1Error, it accepts structured context.
+        error = SessionNotLoadedError(attribute="laps", year=2024)
+        assert error.context == {"attribute": "laps", "year": 2024}
+
         with pytest.raises(TIF1Error):
             raise SessionNotLoadedError
 

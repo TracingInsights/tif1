@@ -484,6 +484,28 @@ def test_chart_happy_path(fake_session, func, attr):
         assert len(getattr(ax, attr)) > 0
 
 
+def test_driver_laptimes_puts_fastest_laps_on_top(fake_session):
+    # seaborn already inverts a timedelta y-axis; a second invert_yaxis() undid it.
+    _, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "R", drivers=["VER"])
+
+    assert ax.yaxis_inverted()
+
+
+@pytest.mark.parametrize(
+    ("func", "heading"),
+    [
+        (performance.plot_throttle_distance, "Full Throttle Distance"),
+        (performance.plot_downforce_levels, "Downforce Levels"),
+    ],
+)
+def test_title_names_the_loaded_session(fake_session, func, heading):
+    fake_session.name = "Race"
+
+    _, ax = func(2023, "Italian Grand Prix", "R")
+
+    assert f"Italian Grand Prix Race - {heading}" in ax.get_title()
+
+
 # ---------------------------------------------------------------------------
 # Shared filter pipeline
 # ---------------------------------------------------------------------------
@@ -802,6 +824,20 @@ def test_lap_delta_auto_ylim_not_hardcoded(fake_session):
     assert ymax - ymin < 5  # no longer the hardcoded (-2, 2) range
 
 
+def test_explicit_drivers_resolve_to_abbreviations(fake_session):
+    """Names that are not the exact code still select the driver's laps."""
+    _, ax = lap_times.plot_lap_delta(2023, "Italian Grand Prix", "Q", drivers=["ver", "lec"])
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == ["VER faster", "LEC faster"]
+
+    _, ax = lap_times.plot_track_temperature(2023, "Italian Grand Prix", "Q", drivers=["ver"])
+    assert len(ax.get_lines()[0].get_xdata()) > 0
+
+    _, ax = performance.plot_throttle_distance(
+        2023, "Italian Grand Prix", "Q", drivers=["ver", "lec"]
+    )
+    assert sorted(t.get_text() for t in ax.get_yticklabels()) == ["LEC", "VER"]
+
+
 def test_position_changes_ylim_derived_from_data(fake_session):
     _, ax = lap_times.plot_position_changes(2023, "Italian Grand Prix", "Q")
     bottom, top = ax.get_ylim()  # axis is inverted: (max_pos + 0.5, 0.5)
@@ -872,6 +908,20 @@ def test_load_session_error_propagates(monkeypatch):
     monkeypatch.setattr(_common, "load_session", _boom)
     with pytest.raises(DataNotFoundError):
         top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+
+
+def test_polars_callers_get_the_pandas_view(monkeypatch):
+    """Charts draw from pandas frames; lib="polars" loads the same session as pandas."""
+    import tif1.core
+
+    get_session = mock.Mock()
+    monkeypatch.setattr(tif1.core, "get_session", get_session)
+    _common.load_session(2023, "Italian Grand Prix", "R", lib="polars")
+    get_session.assert_called_once_with(
+        2023, "Italian Grand Prix", "R", enable_cache=None, lib="pandas"
+    )
+    with pytest.raises(ValueError, match="pandas"):
+        _common.load_session(2023, "Italian Grand Prix", "R", lib=cast(Any, "arrow"))
 
 
 def test_unknown_driver_fuzzy_resolves_with_warning(fake_session):
@@ -1172,6 +1222,25 @@ def test_track_temperature_legend_stays_in_canvas(n_drivers, monkeypatch):
     assert abs(leg_center - ax_center) <= 30, (
         f"legend not centred on the axes (offset {abs(leg_center - ax_center):.1f}px)"
     )
+    plt.close("all")
+
+
+def test_track_temperature_colors_lines_by_driver(monkeypatch):
+    """Several drivers get their team colors; one driver keeps the single accent line."""
+    from tif1.plotting import get_driver_color
+
+    session = _make_big_session(5)
+    monkeypatch.setattr(_common, "load_session", mock.Mock(return_value=session))
+
+    _, ax = lap_times.plot_track_temperature(
+        2024, "Italian Grand Prix", "R", drivers=["VER", "LEC"]
+    )
+    assert [mpl.colors.to_hex(line.get_color()) for line in ax.lines] == [
+        mpl.colors.to_hex(get_driver_color(drv, session)) for drv in ("VER", "LEC")
+    ]
+
+    _, ax = lap_times.plot_track_temperature(2024, "Italian Grand Prix", "R", drivers=["VER"])
+    assert mpl.colors.to_hex(ax.lines[0].get_color()) == "#ff4444"
     plt.close("all")
 
 

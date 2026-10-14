@@ -541,7 +541,7 @@ def test_setup_mpl_warns_without_timple(monkeypatch):
         return importlib.import_module(name)
 
     monkeypatch.setattr(plotting.importlib, "import_module", fake_import_module)
-    with pytest.warns(RuntimeWarning, match="optional dependency 'timple'"):
+    with pytest.warns(RuntimeWarning, match="pip install timple"):
         plotting.setup_mpl(True, None, misc_mpl_mods=False)
 
 

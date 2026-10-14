@@ -19,12 +19,12 @@ keywords:
 1. **Parsed-object LRUs**: Decoded JSON payloads (128 items) and telemetry payloads (256 items); fixed size
 2. **Blob LRUs**: Serialized JSON bytes (1024 items) and telemetry bytes (2048 items); sized by `memory_cache_max_items` and `memory_telemetry_cache_max_items`
 3. **SQLite payload tables**: Durable `cache` and `telemetry_cache` tables that survive across processes
-4. **SQLite frame tier**: Materialized telemetry DataFrames in `telemetry_frames` (pandas) and `telemetry_frames_pl` (polars)
+4. **SQLite frame tiers**: Materialized telemetry DataFrames in `telemetry_frames` (pandas) and `telemetry_frames_pl` (polars), and the processed laps DataFrame of a session in `laps_frames` / `laps_frames_pl`. Both tiers derive from the payload tables, and the loader rebuilds missing rows. SQLite's `PRAGMA user_version` versions the telemetry frame tables (`_FRAME_TIER_SCHEMA_VERSION`, now `1`). A cache file with an older version drops these two tables once
 5. **Negative-verdict tier**: The `missing_payloads` table remembers payloads that every CDN reported missing, for `missing_payloads_ttl_days` (default 7 days)
 
 The `cache` table also holds one TTL-scoped row per live season, `f1schedule/schedule_{year}.json`, written by `tif1.events` and re-fetched after `schedule_ttl_hours` (default 6).
 
-Two more tiers live outside `Cache`: the per-session `SessionMemo` (`Session._memo`) and the process-global backend lap LRU (`get_backend_lap_cache`). Hot data comes from memory (microsecond latency). Cold data comes from disk (millisecond latency) without a network request (second+ latency). The cache is thread-safe and supports synchronous and asynchronous operations.
+Two more tiers live outside `Cache`: the per-session `SessionMemo` (`Session._memo`) and the process-global backend lap LRU (`get_backend_lap_cache`). Hot data comes from memory (microsecond latency). Cold data comes from disk (millisecond latency) instead of a network request (latency of a second or more). The cache is thread-safe and supports synchronous and asynchronous operations.
 
 <Note>
   `tif1.Cache` (the exported name) is the FastF1-compatible helper class in `tif1.fastf1_compat`. `tif1.get_cache()` returns the SQLite-backed `tif1.cache.Cache` that this page documents.
@@ -37,7 +37,7 @@ The cache stores two primary types of data:
 - **JSON Data**: Session metadata, lap data, driver information, weather data, and race control messages in a key-value table
 - **Telemetry Data**: High-frequency sensor data (speed, throttle, brake, gear, RPM, DRS). Stored in the dedicated `telemetry_cache` table with a composite primary key on (year, gp, session, driver, lap)
 
-All data is automatically cached when loaded through `Session.load()` and can be manually managed through the Cache API.
+With `enable_cache` on (the default), `Session.load()` caches all data that it fetches. The Cache API gives manual control.
 
 ## Getting the Cache Instance
 
@@ -68,9 +68,9 @@ print(f"Database path: {cache.db_path}")
 ```
 
 **Configuration:**
-The cache behavior can be customized through environment variables:
+The cache behavior can be customized through environment variables. The `Cache` reads all of them except `TIF1_ENABLE_CACHE` when it is created (the first `get_cache()` call):
 - `TIF1_CACHE_DIR`: Custom cache directory (default: OS-dependent; see the platform defaults in the configuration reference)
-- `TIF1_ENABLE_CACHE`: Set to `"false"` to disable caching entirely
+- `TIF1_ENABLE_CACHE`: Set to `"false"` so that sessions neither read nor write the cache
 - `TIF1_MEMORY_CACHE_MAX_ITEMS` / `TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS`: Size of the JSON and telemetry blob LRUs (defaults `1024` and `2048`)
 - `TIF1_MISSING_PAYLOADS_TTL_DAYS`: Lifetime of all-CDN-missing verdicts in days (default `7.0`)
 
@@ -84,7 +84,7 @@ The cache behavior can be customized through environment variables:
 def clear() -> None
 ```
 
-Removes all cached data from every in-memory tier and from the SQLite `cache`, `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, and `missing_payloads` tables. This operation is irreversible and forces all later data requests to fetch from the CDN.
+Removes all cached data from every in-memory tier and from the SQLite `cache`, `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` tables. This operation is irreversible and forces all later data requests to fetch from the CDN.
 
 **Use Cases:**
 - Clearing corrupted cache data
@@ -134,8 +134,8 @@ Invalidates cached data by scope. This is the only selective invalidation API; p
 - `scope` (`"all" | "memory" | "json" | "telemetry"`): The tier to drop
   - `"all"` - Every tier, memory and SQLite; equivalent to `clear()`
   - `"memory"` - Only the four in-memory LRU tiers and the in-memory verdict mirror; SQLite rows persist
-  - `"json"` - The JSON payload tier: the `cache` table, `missing_payloads`, and the JSON LRUs
-  - `"telemetry"` - The telemetry tier: `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `missing_payloads`, and the telemetry LRUs
+  - `"json"` - The JSON payload tier: the `cache` table, `missing_payloads`, the derived `laps_frames` / `laps_frames_pl` rows, and the JSON LRUs
+  - `"telemetry"` - The telemetry tier: `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `laps_frames` / `laps_frames_pl`, `missing_payloads`, and the telemetry LRUs
 
 Any other value raises `ValueError`. The method first joins pending background frame writers, so a late write cannot re-insert cleared rows.
 
@@ -160,15 +160,15 @@ cache.invalidate("memory")
 def has_session_data(year: int, gp: str, session: str) -> bool
 ```
 
-Checks whether the cache contains any data for a specific session without actually loading it. The probe scans the JSON blob LRU for the `{year}/{gp}/{session}/` prefix, then the SQLite `cache` and `telemetry_cache` tables. On a probe error it returns `True` to keep cache reads enabled.
+Checks whether the cache contains any data for a specific session without actually loading it. The method URL-encodes `gp` and `session` first, then scans the JSON blob LRU for the `{year}/{gp}/{session}/` prefix and the SQLite `cache` and `telemetry_cache` tables. On a probe error it returns `True` to keep cache reads enabled.
 
 **Parameters:**
 - `year` (int): Season year (for example, `2024`, `2023`)
-- `gp` (str): URL-encoded Grand Prix name, as held in `session.gp` (for example, `"Monaco%20Grand%20Prix"`)
-- `session` (str): URL-encoded session name, as held in `session.session` (for example, `"Race"`, `"Qualifying"`, `"Practice%201"`, `"Sprint%20Qualifying"`)
+- `gp` (str): Grand Prix name, plain (`"Monaco Grand Prix"`) or URL-encoded as held in `session.gp` (`"Monaco%20Grand%20Prix"`)
+- `session` (str): Session name, plain (`"Practice 1"`) or URL-encoded as held in `session.session` (`"Race"`, `"Qualifying"`, `"Practice%201"`, `"Sprint%20Qualifying"`)
 
 <Note>
-The cache keys use the URL-encoded names that the CDN paths use. A plain name such as `"Monaco Grand Prix"` or a snake_case name such as `"Monaco_Grand_Prix"` never matches, so the result is `False`. Read the encoded values from a `Session`: `session.year`, `session.gp`, `session.session`.
+Only `has_session_data()` normalizes its arguments. The cache keys themselves use the URL-encoded names of the CDN paths, so `get()`, `get_telemetry()` and the batch readers need the encoded form (`session.gp`, `session.session`). A snake_case name such as `"Monaco_Grand_Prix"` matches nothing in either method.
 </Note>
 
 **Returns:** `bool` - `True` if any JSON or telemetry data exists for the session, `False` otherwise
@@ -220,7 +220,7 @@ for year, gp, session_type in sessions_to_check:
 def close() -> None
 ```
 
-Explicitly closes the SQLite database connection and releases associated resources. This method runs automatically when the Python process exits, via an `atexit` handler. Invoke it manually for fine-grained resource management.
+Explicitly closes the SQLite database connection and releases associated resources. For the `get_cache()` singleton, an `atexit` handler runs it when the Python process exits. A private `Cache()` instance also closes when it is garbage-collected. Invoke it manually for fine-grained resource management.
 
 **When to Use:**
 - Releasing the SQLite handle of a separate `Cache()` instance after maintenance work
@@ -330,7 +330,7 @@ Stores JSON-serializable data in the cache with the specified key. Updates the b
 
 **Serialization:** Data is serialized with `orjson` for performance. Ensure that the data contains only JSON-compatible types.
 
-**Compression:** Serialized rows of 4096 bytes or more are compressed at the SQLite boundary (zstd level 1). The in-memory LRU keeps the plain bytes.
+**Compression:** Serialized rows of 4096 bytes or more are compressed at the SQLite boundary with zstd level 1. Without a zstd binding, zlib level 3 is used. The in-memory LRU keeps the plain bytes.
 
 **Example:**
 ```python
@@ -380,7 +380,7 @@ def set_raw(key: str, blob: bytes | bytearray | memoryview) -> None
 
 Stores an already-serialized JSON blob without re-encoding. The async fetch pipeline uses this when validation left the payload byte-identical to the HTTP body.
 
-Blobs of 4 KB or larger are compressed with zstd level 1 at the SQLite boundary only. Legacy zlib rows stay readable via magic-byte detection. The in-memory LRU keeps the plain blob. Small rows stay plain TEXT so legacy cache files remain readable. Python 3.14+ uses the standard-library `compression.zstd` binding and 3.11-3.13 use the `zstandard` package; both write identical frames.
+Blobs of 4 KB or larger are compressed with zstd level 1 at the SQLite boundary only. Legacy zlib rows stay readable via magic-byte detection. The in-memory LRU keeps the plain blob. Small rows stay plain TEXT, the legacy storage shape. Python 3.14+ uses the standard-library `compression.zstd` binding and 3.11-3.13 use the `zstandard` package; both write identical frames.
 
 **Parameters:**
 - `key` (str): Cache key in the format `"{year}/{gp}/{session}/{path}"`
@@ -414,6 +414,7 @@ Each telemetry entry is the raw CDN payload of a single lap: a dict of parallel 
 - **`acc_x`**, **`acc_y`**, **`acc_z`** - Accelerations
 - **`x`**, **`y`**, **`z`** - 3D position coordinates
 - **`DriverAhead`**, **`DistanceToDriverAhead`** - Car ahead and the gap to it
+- **`dataKey`** - A string label of the lap (for example `"2024-Monaco Grand Prix-Race-ALB-1"`), not a list
 
 `Telemetry` frames rename these keys (`Time`, `Speed`, `nGear`, ...). The raw payload keeps the lowercase names.
 
@@ -689,9 +690,31 @@ Persists assembled telemetry frames in one bulk write. The payload tier stays th
 
 ---
 
+### `get_laps_frame()` / `set_laps_frame()`
+
+```python
+def get_laps_frame(
+    year: int,
+    gp: str,
+    session: str,
+    lib: Literal["pandas", "polars"] = "pandas",
+) -> Any
+def set_laps_frame(
+    year: int,
+    gp: str,
+    session: str,
+    frame: Any,
+    lib: Literal["pandas", "polars"] = "pandas",
+) -> int
+```
+
+The laps frame tier: one processed laps DataFrame per `(year, gp, session)` and backend, stored in `laps_frames` (pandas) or `laps_frames_pl` (polars) with the same pickle-and-compress format as the telemetry frames. `get_laps_frame()` returns the DataFrame, or `None` on a miss, a corrupt row, or a row written by the other backend. `set_laps_frame()` returns `1` when the row was written and `0` when the tier is unavailable. `invalidate("json")`, `invalidate("telemetry")` and `clear()` drop these rows; the loader rebuilds them from the payloads.
+
+---
+
 ## Negative-Verdict Tier
 
-When every CDN returns a 4xx for a payload, the loader records the key in the `missing_payloads` table. Later loads skip the network probe for that key until the verdict expires. The lifetime is `missing_payloads_ttl_days` (`TIF1_MISSING_PAYLOADS_TTL_DAYS`, default `7.0`). The verdicts load lazily from SQLite once per process.
+When every CDN returns a 4xx other than 408 or 429 for a payload, the loader records the key in the `missing_payloads` table. Later loads skip the network probe for that key until the verdict expires. The lifetime is `missing_payloads_ttl_days` (`TIF1_MISSING_PAYLOADS_TTL_DAYS`, default `7.0`). The verdicts load lazily from SQLite once per process.
 
 ### `is_known_missing()`
 
@@ -733,7 +756,7 @@ if cache.is_known_missing(key):
 
 ## Async Methods
 
-All cache read/write operations have async variants for use in async contexts. These methods enable high-performance async applications to interact with the cache without blocking the event loop.
+The main read and write methods have async variants for use in async contexts. These methods enable high-performance async applications to interact with the cache without blocking the event loop.
 
 ### Async Method Overview
 
@@ -989,7 +1012,7 @@ asyncio.run(build_telemetry_dataset())
 
 ## Cache Instance Attributes
 
-The `Cache` instance exposes several read-only attributes for inspecting cache configuration and state.
+The `Cache` instance exposes several attributes for inspecting cache configuration and state.
 
 ### `cache_dir`
 
@@ -1093,7 +1116,7 @@ Per-session memo tier held as `Session._memo`. It consolidates the session-scope
 
 ## Cache Statistics and Monitoring
 
-The `Cache` class does not expose built-in statistics methods. Query the SQLite database directly for monitoring purposes. The payload tables are `cache` and `telemetry_cache`; the derived tables are `telemetry_frames`, `telemetry_frames_pl`, and `missing_payloads`.
+The `Cache` class does not expose built-in statistics methods. Query the SQLite database directly for monitoring purposes. The payload tables are `cache` and `telemetry_cache`; the derived tables are `telemetry_frames`, `telemetry_frames_pl`, `laps_frames`, `laps_frames_pl`, and `missing_payloads`.
 
 ### Example - Cache Size Analysis
 
@@ -1145,6 +1168,7 @@ def get_cached_sessions():
                    instr(substr(key,
                         instr(key, '/') + instr(substr(key, instr(key, '/') + 1), '/') + 1), '/') - 1) as session
         FROM cache
+        WHERE key NOT LIKE 'f1schedule/%'
         ORDER BY year DESC, gp, session
     """)
 
@@ -1177,26 +1201,13 @@ The cache is most effective when:
 - Working with telemetry-heavy workloads
 - Running batch analyses across multiple sessions
 
-**Typical Performance:**
-- Memory cache hit: ~1-10 microseconds
-- SQLite cache hit: ~1-10 milliseconds
-- CDN fetch (cache miss): ~500-2000 milliseconds
-
 ### Memory Management
 
 Each in-memory LRU tier has a size limit to prevent excessive memory usage. The blob tiers default to 1024 JSON and 2048 telemetry items (`memory_cache_max_items`, `memory_telemetry_cache_max_items`). The parsed-object tiers are fixed at 128 and 256 items. A full tier evicts its least-recently-used entries (they remain in SQLite).
 
-**Memory Usage Estimates:**
-- Session metadata: ~10-50 KB per session
-- Lap data: ~50-200 KB per session
-- Telemetry data: ~500 KB - 5 MB per session (depending on lap count)
-
 ### Disk Space
 
-The SQLite database grows as more data is cached. Typical sizes:
-- Single session (no telemetry): ~100-500 KB
-- Single session (with telemetry): ~5-50 MB
-- Full season (all sessions, all telemetry): ~5-20 GB
+The SQLite database grows as more data is cached. A session with full telemetry adds one `telemetry_cache` row per driver lap, plus the derived frame rows. Telemetry takes most of the file size.
 
 **Disk Space Management:**
 ```python
@@ -1208,7 +1219,7 @@ cache = tif1.get_cache()
 size_mb = cache.db_path.stat().st_size / 1024 / 1024
 print(f"Current cache size: {size_mb:.2f} MB")
 
-# Clear cache if it's too large
+# Clear the cache if it is too large
 if size_mb > 1000:  # 1 GB threshold
     print("Cache exceeds 1 GB, clearing...")
     cache.clear()
@@ -1218,20 +1229,17 @@ if size_mb > 1000:  # 1 GB threshold
 
 1. **Use Batch Operations**: `get_telemetry_batch()` is faster than multiple `get_telemetry()` calls
 2. **Selective Loading**: Only load the data that is needed (for example, `session.load(laps=True, telemetry=False)`)
-3. **Async for Concurrency**: Use async methods when fetching data for multiple sessions in parallel
+3. **Async for Concurrency**: Use the async methods to read the cache from async code without blocking the event loop
 4. **Cache Warming**: Pre-load frequently accessed sessions during off-peak hours
-5. **Selective Invalidation**: Use `cache.invalidate("telemetry")` to refresh derived frames without dropping JSON payloads
+5. **Selective Invalidation**: Use `cache.invalidate("telemetry")` to drop the telemetry payloads and derived frames while the JSON payloads stay cached
 
 **Example - Cache Warming Script:**
 ```python
 import tif1
 
-def warm_cache_for_season(year: int):
-    """Pre-load all race sessions for a season."""
-    schedule = tif1.get_event_schedule(year, include_testing=False)
-
-    # Iterating a DataFrame yields column names; iterate the EventName column
-    for event_name in schedule["EventName"]:
+def warm_cache(year: int, event_names: list[str]):
+    """Pre-load the race sessions of the given events."""
+    for event_name in event_names:
         try:
             session = tif1.get_session(year, event_name, 'Race')
             session.load(laps=True, telemetry=True, weather=True)
@@ -1239,8 +1247,9 @@ def warm_cache_for_season(year: int):
         except Exception as e:
             print(f"✗ Failed to cache {event_name}: {e}")
 
-# Warm cache for 2024 season
-warm_cache_for_season(2024)
+# Warm the cache for selected races. For a whole season pass the calendar:
+# tif1.get_event_schedule(2024, include_testing=False)["EventName"]
+warm_cache(2024, ["Monaco Grand Prix"])
 ```
 
 ---
@@ -1302,7 +1311,7 @@ cache.invalidate("telemetry")
 cache.invalidate("json")
 ```
 
-`invalidate()` has no per-session scope. A per-session purge needs raw SQL and must cover the derived tables too. Otherwise `telemetry_frames`, `telemetry_frames_pl`, and `missing_payloads` keep stale rows for the session.
+`invalidate()` has no per-session scope. A per-session purge needs raw SQL and must cover the derived tables too. Otherwise `telemetry_frames`, `telemetry_frames_pl`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` keep stale rows for the session.
 
 <Warning>
 Run this only when no `Cache` writer is active in the process. The singleton batches writes and commits every `cache_commit_interval` operations, so a second connection can hit `database is locked` while a batch is open. Run the purge from a dedicated maintenance process after every tif1 process that writes to the cache has exited. Do not close the global singleton in a process that keeps using tif1. `close()` is final and disables caching for the rest of that process.
@@ -1329,7 +1338,13 @@ def clear_session_cache(year: int, gp: str, session: str):
 
     # Telemetry payloads plus the derived pandas and polars frame rows
     telemetry_deleted = 0
-    for table in ("telemetry_cache", "telemetry_frames", "telemetry_frames_pl"):
+    for table in (
+        "telemetry_cache",
+        "telemetry_frames",
+        "telemetry_frames_pl",
+        "laps_frames",
+        "laps_frames_pl",
+    ):
         cursor.execute(
             f"DELETE FROM {table} WHERE year = ? AND gp = ? AND session = ?",
             (year, gp, session),
@@ -1341,50 +1356,56 @@ def clear_session_cache(year: int, gp: str, session: str):
 
     print(f"Cleared {year} {gp} {session}:")
     print(f"  JSON entries: {json_deleted}")
-    print(f"  Telemetry rows (payloads + frames): {telemetry_deleted}")
+    print(f"  Telemetry and frame rows: {telemetry_deleted}")
 
-# Clear specific session
-clear_session_cache(2024, "Monaco%20Grand%20Prix", "Race")
+# Clear one session (the URL-encoded names; here the test identity written above)
+try:
+    clear_session_cache(2099, "Test%20Grand%20Prix", "Race")
+except sqlite3.OperationalError as e:
+    # Another connection holds an open write batch (this process or another one)
+    print(f"Purge skipped ({e}): stop every tif1 process that writes to the cache first")
 ```
 
 A process that already holds the singleton keeps the session in its LRU tiers. In that process, call `tif1.get_cache().invalidate("memory")` after the purge. `invalidate("memory")` also drops the in-memory mirror of the verdicts, and the next probe reloads them from SQLite. Call `cache.discard_missing(key)` to delete one verdict outright.
 
 ### Use Case 3: Cache Export/Import
 
-Do not close the `get_cache()` singleton to copy the file: `close()` disables caching for the rest of the process. Run the copy from a separate process, or before the first `get_cache()` call, and resolve the path from the config.
+Do not close the `get_cache()` singleton to copy the file: `close()` disables caching for the rest of the process. Run the copy from a separate process, or before the first `get_cache()` call, and resolve the path from the config. To restore a backup, copy it into a cache directory that no running tif1 process has open. Use a fresh directory, or the real one after every tif1 process exited. Then point `TIF1_CACHE_DIR` at it.
 
 ```python
 import shutil
-import tif1
+import tempfile
 from pathlib import Path
+
+import tif1
 
 def cache_db_path() -> Path:
     """Resolve cache.sqlite without opening the global cache."""
     return Path(tif1.get_config().get("cache_dir")) / "cache.sqlite"
 
-def export_cache(backup_path: str):
+def export_cache(backup_path: Path):
     """Copy the cache database to a backup location (no tif1 session open)."""
-    backup = Path(backup_path).expanduser()
-    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cache_db_path(), backup_path)
+    print(f"Cache exported to {backup_path}")
 
-    shutil.copy2(cache_db_path(), backup)
-    print(f"Cache exported to {backup}")
-
-def import_cache(backup_path: str):
-    """Replace the cache database from a backup (no tif1 session open)."""
-    backup = Path(backup_path).expanduser()
-    if not backup.exists():
-        print(f"Backup not found: {backup}")
+def import_cache(backup_path: Path, cache_dir: Path):
+    """Seed a cache directory from a backup (no tif1 process uses cache_dir)."""
+    if not backup_path.exists():
+        print(f"Backup not found: {backup_path}")
         return
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(backup_path, cache_dir / "cache.sqlite")
+    print(f"Cache imported into {cache_dir}")
 
-    shutil.copy2(backup, cache_db_path())
-    print(f"Cache imported from {backup}")
+work = Path(tempfile.mkdtemp())
+backup = work / "tif1_cache_backup.sqlite"
 
-# Export cache
-export_cache("~/backups/tif1_cache_2024.sqlite")
+# Export the cache
+export_cache(backup)
 
-# Import cache
-import_cache("~/backups/tif1_cache_2024.sqlite")
+# Seed a new cache directory (use it with TIF1_CACHE_DIR=/path/to/tif1-seeded)
+import_cache(backup, work / "tif1-seeded")
 ```
 
 The database runs in WAL mode, so a live writer may hold pending pages in `cache.sqlite-wal`. Copy the file only while no tif1 process uses the cache.
@@ -1516,9 +1537,9 @@ validate_session_cache(2024, "Monaco%20Grand%20Prix", "Race")
    print("Cache cleared - will rebuild on next load")
    ```
 
-2. Delete the database file manually:
+2. Stop every tif1 process, then delete the database file and its WAL files manually (Linux default path):
    ```bash
-   rm ~/.cache/tif1/cache.sqlite
+   rm ~/.cache/tif1/cache.sqlite ~/.cache/tif1/cache.sqlite-wal ~/.cache/tif1/cache.sqlite-shm
    ```
 
 3. Verify database integrity:
@@ -1549,18 +1570,23 @@ validate_session_cache(2024, "Monaco%20Grand%20Prix", "Race")
 1. Reduce the blob LRU sizes with `TIF1_MEMORY_CACHE_MAX_ITEMS` and `TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS` (or `config.set()` before the first `get_cache()` call)
 2. Load data selectively:
    ```python
-   # Only load what you need
+   import tif1
+
+   # Load only the needed data
+   session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
    session.load(laps=True, telemetry=False)
    ```
 
 3. Process data in batches:
    ```python
+   import tif1
+
    # Process one session at a time
-   for event_name in schedule["EventName"]:
-       session = tif1.get_session(year, event_name, 'Race')
-       session.load()
+   for event_name in ["Monaco Grand Prix", "Canadian Grand Prix"]:
+       session = tif1.get_session(2024, event_name, "Race")
+       session.load(laps=True, telemetry=False)
        # ... process ...
-       del session  # Free memory
+       del session  # Drop the reference before the next session
    ```
 
 ---
@@ -1596,9 +1622,14 @@ validate_session_cache(2024, "Monaco%20Grand%20Prix", "Race")
    # Resolve the file from the config: tif1.get_cache() would hold a second connection open
    db_path = Path(tif1.get_config().get("cache_dir")) / "cache.sqlite"
    conn = sqlite3.connect(db_path, timeout=10.0)
-   conn.execute("VACUUM")
-   conn.close()
-   print("Database optimized")
+   try:
+       conn.execute("VACUUM")
+       print("Database optimized")
+   except sqlite3.OperationalError as e:
+       # Another connection holds an open write batch
+       print(f"VACUUM skipped ({e}): stop every tif1 process that uses the cache first")
+   finally:
+       conn.close()
    ```
 
 3. Check disk I/O performance:

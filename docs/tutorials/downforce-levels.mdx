@@ -26,7 +26,7 @@ Downforce Level = (Average Speed / Maximum Speed) × 100
 - **Higher values** indicate more downforce: better cornering speeds but lower top speeds
 - **Lower values** indicate less downforce: higher top speeds but slower through corners
 
-The contrast is clear on tracks like Monaco (high downforce) and Monza (low downforce).
+Compare the metric between drivers in the same session. Across tracks, the circuit layout controls the value. In 2023 qualifying, Monaco gives 55-58 and the low-downforce Monza gives 72-75.
 
 ## Loading the Session
 
@@ -129,7 +129,6 @@ When analyzing downforce levels, consider:
 - **Track characteristics:** Monaco requires high downforce; Monza requires low downforce
 - **Team philosophy:** Some teams prioritize qualifying pace (more downforce) vs race pace (less drag)
 - **Weather conditions:** Wet conditions often favor higher downforce setups
-- **Tire strategy:** High downforce can increase tire wear in races
 
 ## Comparing Teams
 
@@ -176,7 +175,7 @@ plt.show()
 
 ## Parameters
 
-The native function accepts the shared filters. `drivers` restricts the comparison; the default includes every driver in the session:
+The native function accepts a `drivers` list that restricts the comparison. The default includes every driver in the session:
 
 ```python
 import tif1
@@ -208,7 +207,7 @@ plt.show()
 
 ## Next Steps
 
-- Compare downforce levels across different tracks (Monaco vs Monza)
+- Run the same analysis at a low-downforce track such as Monza and compare the driver order
 - Analyze how downforce affects tire degradation in race stints
 - Correlate downforce levels with sector times to identify setup trade-offs
 - Explore the relationship between downforce and weather conditions

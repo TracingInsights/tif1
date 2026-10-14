@@ -106,7 +106,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `drivers` selects the drivers to plot: a single driver for the view above, or several. `laptime_cutoff` removes slow laps. `include_deleted` keeps deleted laps when `True`:
+The native function exposes the same filters as parameters. `drivers` selects the drivers to plot: a single driver for the view above, or several. `laptime_cutoff` (default `1.07`) removes laps slower than that multiple of each driver's fastest lap. The function also removes pit in-laps and out-laps. `include_deleted` keeps deleted laps when `True`:
 
 ```python
 import tif1

@@ -29,39 +29,43 @@ The tif1 architecture follows three core principles:
 
 ```mermaid
 graph TD
-    A[User Code] --> B[Session Object]
-    B --> C{Memory LRU Cache?}
-    C -->|Hit < 1ms| D[Return Data]
-    C -->|Miss| E{SQLite Cache?}
-    E -->|Hit 10-50ms| F[Deserialize & Load]
-    E -->|Miss| G[CDN Manager]
-    G --> H{Circuit Breaker Open?}
-    H -->|Yes| I[Fail Fast]
-    H -->|No| J[Async HTTP Fetcher]
-    J --> K[CDN Manager]
-    K --> L{Try jsDelivr}
-    L -->|Success| M[JSON Data]
-    L -->|Failure| N{Try Hugging Face}
-    N -->|Success| M
-    N -->|Failure| V{Try StaticDelivr}
-    V -->|Success| M
-    V -->|Failure| W[Fail]
-    M --> P[Schema Validator]
-    P --> Q[orjson Parser]
-    Q --> R[DataFrame Constructor]
-    R --> S[Column Transformer]
-    S --> T[Data Enrichment]
-    T --> U[Type Optimization]
-    U --> X[Save to SQLite]
-    X --> Y[Save to Memory]
-    Y --> D
+    A[User Code] --> B[session.laps]
+    B --> C{Backend lap LRU?}
+    C -->|Hit| D[Return DataFrame]
+    C -->|Miss| E{SQLite laps frame tier?}
+    E -->|Hit| D
+    E -->|Miss| F{Session memo or memory LRU?}
+    F -->|Hit| M[Parsed JSON payload]
+    F -->|Miss| G{SQLite payload tier?}
+    G -->|Hit| M
+    G -->|Miss| H{Known missing on every CDN?}
+    H -->|Yes, batch path| X[DataNotFoundError]
+    H -->|No| I{Circuit breaker open?}
+    I -->|Yes| J[NetworkError]
+    I -->|No| K{Try jsDelivr}
+    K -->|Success| N[orjson parse]
+    K -->|Failure or 404| L{Try Hugging Face}
+    L -->|Success| N
+    L -->|Failure or 404| O{Try StaticDelivr}
+    O -->|Success| N
+    O -->|Failure| P[NetworkError or DataNotFoundError]
+    N --> Q[Schema validation, off by default]
+    Q --> R[Write memory and SQLite payload tiers]
+    R --> M
+    M --> S[DataFrame construction and renaming]
+    S --> T[Dtype contract and LapTimeSeconds]
+    T --> U[Write laps frame tier and lap LRU]
+    U --> D
 
     style C fill:#90EE90
-    style E fill:#FFD700
+    style E fill:#90EE90
+    style G fill:#FFD700
     style K fill:#87CEEB
-    style Q fill:#FFA07A
-    style R fill:#DDA0DD
+    style N fill:#FFA07A
+    style S fill:#DDA0DD
 ```
+
+A session with no cached data skips the cache reads (`ultra_cold_start`, on by default). It also fetches each payload with a single attempt per CDN (`ultra_cold_skip_retries`). The fetched payloads still go to the cache, so the next load is warm.
 
 ### Component Responsibilities
 
@@ -82,8 +86,8 @@ graph TD
 **SQLite Persistent Cache (`cache.py`)**
 - Disk-based cache using SQLite database
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
-- Stores JSON payloads (compressed when 4096 bytes or larger) and pickled telemetry frames
-- Tables: `cache`, `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `missing_payloads`
+- Stores JSON payloads (compressed when 4096 bytes or larger) and pickled laps and telemetry frames
+- Tables: `cache`, `telemetry_cache`, `laps_frames`, `laps_frames_pl`, `telemetry_frames`, `telemetry_frames_pl`, `missing_payloads`
 - No expiry: entries persist until `clear()` or `invalidate()`
 - Only negative "missing on every CDN" verdicts expire, after 7 days
 - Thread-safe: one shared connection guarded by a lock, WAL journal mode
@@ -96,19 +100,22 @@ graph TD
 - Tracks failure counts per CDN source
 - Automatically disables failing sources after 3 consecutive failures
 - A 404 from one CDN falls through to the next, because mirrors can be stale
-- A 403 from one CDN falls through the same way. jsDelivr answers 403 ("Package size exceeded the configured limit of 50 MB") for a file its edge has not cached yet. A 403 says nothing about the mirror's health, so it does not count towards disabling it
-- tif1 raises `DataNotFoundError` when every CDN returns a 4xx client error (404 included)
+- A 403 from one CDN also falls through. jsDelivr answers 403 ("Package size exceeded the configured limit of 50 MB") for a file its edge has not cached yet
+- A 403 or 404 says nothing about the health of the mirror, so it does not count towards disabling it
+- tif1 raises `DataNotFoundError` when every CDN refuses the file with a 4xx error other than 408 or 429 (404 and 403 included)
+- A 408 or 429 means "try again later", so it keeps the retryable `NetworkError`. tif1 does not record it as a missing payload
 - Requests for files missing everywhere never burn the retry/backoff budget
 - 5xx and transport errors keep the retryable `NetworkError`
 - Handles URL encoding and path construction
-- Never uses `raw.githubusercontent.com` for session data (strict rate limits); the only raw GitHub request tif1 makes is the one `schedule_{year}.json` of a live season in `events.py`, cached for `schedule_ttl_hours`
+- Never uses `raw.githubusercontent.com` for session data (strict rate limits)
+- The only raw GitHub request is `schedule_{year}.json` of a live season in `events.py`, cached for `schedule_ttl_hours`
 
 **Async HTTP Fetcher (`async_fetch.py`)**
 - Parallel HTTP requests using `niquests` (HTTP/2 support)
 - Connection pooling and keep-alive
-- Automatic retry with exponential backoff
+- Retries a payload with exponential backoff when every CDN fails
 - Timeout management (default: 30s per request)
-- Progress tracking for batch operations
+- Concurrency cap: `max_concurrent_requests` (default 22)
 
 **Circuit Breaker (`retry.py`)**
 - Prevents cascading failures during network issues
@@ -118,10 +125,8 @@ graph TD
 - Automatic state transitions
 
 **JSON Parser (`orjson`)**
-- High-performance JSON parsing (2-3x faster than stdlib `json`)
+- High-performance JSON parsing (3x to 7x faster than stdlib `json` on tif1 payloads)
 - Direct bytes-to-Python object conversion
-- Handles large payloads efficiently (100MB+ telemetry files)
-- Strict validation mode enabled
 
 **Schema Validator (`validation.py`)**
 - Pydantic-based validation of JSON structure (off by default; turn it on with the `validate_data`, `validate_lap_times`, and `validate_telemetry` config keys)
@@ -139,7 +144,8 @@ graph TD
 **Data Enrichment (`core.py`)**
 - Adds the computed `LapTimeSeconds` column (float seconds on both backends)
 - Keeps the per-lap weather fields of the payload as `WeatherTime`, `AirTemp`, ..., `WindSpeed`
-- Takes `Stint`, `IsPersonalBest`, `Driver`, `Team`, and `DriverNumber` from the payload as delivered
+- Takes `Stint`, `IsPersonalBest`, and `DriverNumber` from the payload as delivered
+- Takes `Driver` and `Team` from `drivers.json`; the payload keys `drv` and `team` stay as extra columns
 
 **Type Optimizer (`core_utils/helpers.py`)**
 - Applies the dtype contract of each backend (see [Column types by backend](/concepts/backends#column-types-by-backend))
@@ -166,7 +172,7 @@ laps = session.laps  # Returns pandas/polars DataFrame
 
 # Access specific driver data
 verstappen = session.get_driver("VER")
-verstappen_laps = verstappen.laps  # Filtered view, no additional loading
+verstappen_laps = verstappen.laps  # Filtered from session.laps, no additional loading
 
 # Access telemetry (separate loading pipeline). pandas shown; on polars,
 # get_fastest_lap() returns a plain DataFrame, so call verstappen.get_fastest_lap_tel()
@@ -178,13 +184,12 @@ telemetry = fastest_lap.get_telemetry()  # Triggers telemetry loading
 
 1. Property access runs the `Session.laps` property
 2. Session checks if data is already loaded (`self._laps is not None`)
-3. If not loaded, the property builds the laps table (there is no public loader method to call)
-4. The loader builds the backend lap LRU key `f"{year}_{gp}_{session}_laps"` and the payload key `f"{year}/{gp}/{session}/session_laptimes.json"`
-5. Passes control to cache layer
+3. If not loaded, the property checks the process-wide backend lap LRU under the key `f"{year}_{gp}_{session}_laps"`
+4. On a miss, the property runs `Session.laps_async()` (public, for async code) with `asyncio.run()`
+5. `laps_async()` checks the SQLite laps frame tier, then loads `drivers.json` and `f"{year}/{gp}/{session}/session_laptimes.json"` through the cache layer
 
 **Performance Characteristics:**
-- Property access overhead: < 0.1ms
-- Cache key construction: < 0.01ms
+- A repeated `session.laps` access returns the stored frame in about 1 µs
 - No network I/O at this stage
 
 **Configuration Options:**
@@ -207,7 +212,7 @@ session = tif1.get_session(2025, "Monaco", "Race", lib="pandas")  # Use pandas (
 
 ### Stage 2: Multi-Tier Cache Lookup
 
-tif1 implements a two-tier caching system that reduces load times for frequently accessed data. This section explains the cache behavior needed for performance optimization.
+The JSON payloads have a two-tier cache: memory and SQLite. The built DataFrames have their own tiers: the per-session memo, the process-wide backend lap LRU (100 sessions per backend), and the SQLite frame tables. This section explains the payload tiers first.
 
 #### Tier 1: Memory LRU Cache (L1 Cache)
 
@@ -220,7 +225,7 @@ The memory cache is the fastest tier, holding raw JSON payloads and their parsed
 - DataFrames: held only by the per-session `SessionMemo`, the backend lap LRU, and the SQLite frame tier
 - Capacity: 1024 JSON payloads (`TIF1_MEMORY_CACHE_MAX_ITEMS`), 2048 telemetry payloads (`TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS`)
 - Eviction: Least Recently Used (LRU) algorithm, maintained through writes only
-- Access time: < 1ms (typically 0.1-0.5ms)
+- Access time: about 3 µs for a parsed hit (measured on a 343 KB payload)
 - Thread safety: `LRUCache.set` takes a lock; hot-path reads are lock-free
 - Persistence: None (cleared on process exit)
 
@@ -250,21 +255,21 @@ key = f"{year}_{gp}_{session}_laps"
 # - rcm.json (91 messages): ~13 KB
 
 # The telemetry payloads dominate: 2048 cached laps x ~150 KB ≈ 300 MB
-# Lap and session tables stay small (well under 100 MB for 1024 payloads)
+# One loaded session adds about 370 KB in four JSON payloads
 ```
 
 **Cache Hit Rate Optimization:**
 ```python
-# Good: Reuse session objects
+# Best: Reuse session objects
 session = tif1.get_session(2025, "Monaco", "Race")
 for analysis in range(10):
-    laps = session.laps  # Cache hit after first access
+    laps = session.laps  # Stored on the session after the first access
     # ... analysis code
 
-# Bad: Create new sessions repeatedly
+# Also served from memory, but each loop pays for get_session() again
 for analysis in range(10):
     session = tif1.get_session(2025, "Monaco", "Race")
-    laps = session.laps  # Cache miss every time (different object)
+    laps = session.laps  # Backend lap LRU hit: the same frame object as before
 ```
 
 #### Tier 2: SQLite Persistent Cache (L2 Cache)
@@ -277,7 +282,7 @@ The SQLite cache provides persistent storage that survives process restarts.
 - Location: OS-dependent tif1 cache directory (configurable via `TIF1_CACHE_DIR`); see the platform defaults in the configuration reference
 - Data format: Compressed JSON (zstd level 1; legacy zlib rows stay readable). Python 3.14+ uses the standard-library `compression.zstd` binding, 3.11-3.13 use the `zstandard` package; both write identical frames
 - Capacity: Unlimited (constrained by disk space)
-- Access time: 10-50ms (depends on disk I/O)
+- Access time: about 2 ms to read, decompress, and parse a 343 KB payload (measured)
 - Thread safety: every SQLite call runs under `Cache._sqlite_lock`
 - Write batching: writes commit every `cache_commit_interval` (default 100) operations
 - Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, 64 MB page cache
@@ -309,11 +314,24 @@ CREATE TABLE IF NOT EXISTS telemetry_frames_pl (
     PRIMARY KEY (year, gp, session, driver, lap)
 );
 
--- Negative tier: payloads that returned 4xx on every CDN.
+-- Materialized laps DataFrames, one row per session (same blob format).
+-- `laps_frames` holds pandas frames; `laps_frames_pl` holds polars frames.
+CREATE TABLE IF NOT EXISTS laps_frames (
+    year INTEGER, gp TEXT, session TEXT,
+    frame BLOB,
+    PRIMARY KEY (year, gp, session)
+);
+CREATE TABLE IF NOT EXISTS laps_frames_pl (
+    year INTEGER, gp TEXT, session TEXT,
+    frame BLOB,
+    PRIMARY KEY (year, gp, session)
+);
+
+-- Negative tier: payloads that every CDN refused with a 4xx other than 408 or 429.
 CREATE TABLE IF NOT EXISTS missing_payloads (key TEXT PRIMARY KEY, recorded_at REAL);
 ```
 
-The primary keys are the only indexes; there are no secondary indexes.
+The primary keys are the only indexes; there are no secondary indexes. `PRAGMA user_version` stores the schema version of the telemetry frame tables. When it is older than the library expects, tif1 drops those tables once and rebuilds the frames from the payload tier.
 
 **Compression Strategy:**
 ```python
@@ -335,7 +353,8 @@ if len(json_bytes) >= 4096:
     stored = zstd.compress(json_bytes, 1)  # compressed BLOB row
 else:
     stored = json_bytes.decode("utf-8")   # small rows stay plain TEXT
-# Typical compression ratio: ~4:1 (better than zlib-3, ~4.5x faster)
+# Measured ratio in a tif1 cache: about 6:1 for lap payloads, 2.5:1 for telemetry
+# (slightly better than zlib-3, and zstd-1 compresses about 4.5x faster)
 # zlib level 3 is the fallback only when no zstd binding imports.
 
 # Deserialization (read from cache)
@@ -343,7 +362,7 @@ json_bytes = zstd.decompress(stored) if isinstance(stored, bytes) else stored
 data = orjson.loads(json_bytes)
 ```
 
-Materialized telemetry DataFrames (the frame tier) use lz4 instead. The tier is
+Materialized laps and telemetry DataFrames (the frame tiers) use lz4 instead. These tiers are
 write-once/read-many, and lz4 halves both compress and decompress time.
 zstd is the fallback when lz4 is unavailable, for example on Python 3.15 where
 lz4 publishes no wheels yet. Each row carries its codec's magic prefix, so
@@ -354,10 +373,11 @@ both kinds of row stay readable regardless of which codec wrote them.
 Cached payloads and frames never expire. Session data is immutable once published, so a
 cached row stays valid until `cache.clear()` or `cache.invalidate(scope)` removes it.
 
-The only time-to-live applies to the negative tier. When every CDN returns a 4xx for a
-path, tif1 records the key in `missing_payloads`. Later lookups skip the network for that
-key until the verdict is older than `TIF1_MISSING_PAYLOADS_TTL_DAYS` (default 7.0). A
-successful write for the same key drops the verdict immediately.
+The only time-to-live applies to the negative tier. When every CDN refuses a file in the
+async batch path (laps and telemetry), tif1 records the key in `missing_payloads`. Later
+batch lookups skip the network for that key until the verdict is older than
+`TIF1_MISSING_PAYLOADS_TTL_DAYS` (default 7.0). A successful write for the same key drops
+the verdict immediately.
 
 ```python
 # Negative-tier TTL (the only TTL in the cache)
@@ -375,8 +395,8 @@ cache = tif1.get_cache()  # tif1.cache.Cache
 print(f"Cache directory: {cache.cache_dir}")
 size_mb = cache.db_path.stat().st_size / (1024 * 1024)
 print(f"Cache size: {size_mb:.2f} MB")
-# Pass gp and session URL-encoded, as the cache keys store them (session.gp, session.session)
-print(f"Monaco cached: {cache.has_session_data(2025, 'Monaco%20Grand%20Prix', 'Race')}")
+# Accepts the URL-encoded form (session.gp) and the plain name
+print(f"Monaco cached: {cache.has_session_data(2025, 'Monaco Grand Prix', 'Race')}")
 
 # Clear cache
 cache.clear()                   # Remove every tier (memory + SQLite)
@@ -431,10 +451,11 @@ def get_data(key):
 
 **Performance Comparison:**
 
+Measured for the 343 KB `session_laptimes.json` of a race (Intel Core i9-13900HX, Python 3.14):
+
 | Scenario | Memory Cache | SQLite Cache | CDN Fetch |
 |----------|--------------|--------------|-----------|
-| Access Time | < 1ms | 10-50ms | 2-5s |
-| Throughput | 1000+ req/s | 50-100 req/s | 0.2-0.5 req/s |
+| Access Time | about 3 µs | about 2 ms | Depends on the network |
 | Persistence | No | Yes | N/A |
 | Capacity | Limited (RAM) | Unlimited (disk) | N/A |
 | Thread Safety | Yes (lock-free reads, locked writes) | Yes (shared connection + lock) | N/A |
@@ -492,9 +513,11 @@ cache.invalidate("all")        # Everything (same as cache.clear())
 
 # No automatic invalidation: cached payloads never expire
 
-# Bypass the cache for a process (no per-call force_refresh flag exists)
-import os
-os.environ["TIF1_ENABLE_CACHE"] = "false"
+# Bypass the cache for one session (no per-call force_refresh flag exists)
+fresh = tif1.get_session(2025, "Monaco", "Race", enable_cache=False)
+
+# For a whole process, set TIF1_ENABLE_CACHE=false before Python starts:
+# the config reads the environment once, when tif1 is first used
 ```
 
 ### Stage 3: CDN Fetching with Fallback Strategy
@@ -505,31 +528,22 @@ When both cache tiers miss, tif1 fetches data from the CDN. The fetch uses a mul
 
 **Primary Source: jsDelivr CDN**
 - URL Pattern: `https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{path}`
-- Global CDN with edge locations worldwide
-- Automatic caching and compression
-- No rate limits for reasonable usage
-- HTTPS with HTTP/2 support
-- Average latency: 50-200ms (depending on location)
-- Uptime: 99.9%+
+- Serves the TracingInsights GitHub data repos from a global CDN
 
 **Fallback Source: Hugging Face Buckets**
 - URL Pattern: `https://huggingface.co/buckets/tracinginsights/{year}/resolve/{path}`
 - Mirrors the TracingInsights GitHub data repos with the same layout (no branch segment)
-- Pre-warmed CDN edge locations in the US and EU
-- Used when jsDelivr fails or is unavailable
+- Used when jsDelivr fails, returns 403 or 404, or is unavailable
 
 **Backup Source: StaticDelivr CDN**
 - URL Pattern: `https://cdn.staticdelivr.com/gh/TracingInsights/{year}/main/{path}`
-- Global CDN with edge locations worldwide
-- Automatic caching and compression
-- No rate limits for reasonable usage
-- HTTPS with HTTP/2 support
-- Average latency: 50-200ms (depending on location)
 - Used when both jsDelivr and Hugging Face fail or are unavailable
 
 **Forbidden Source: raw.githubusercontent.com**
-- Never used for session payloads due to strict rate limits. The one exception is the live event schedule: `events.py` fetches `theOehrly/f1schedule/master/schedule_{year}.json` for the current season (one small file, cached for `schedule_ttl_hours`) because that is where calendar changes land first
-- When all three sources fail, tif1 raises `NetworkError` (or `DataNotFoundError` when every source returned a 4xx) instead of trying it
+- Never used for session payloads due to strict rate limits
+- The one exception is the live event schedule. For the current season, `events.py` fetches `theOehrly/f1schedule/master/schedule_{year}.json`, where calendar changes land first
+- That one small file is cached for `schedule_ttl_hours` (default 6)
+- When all three sources fail, tif1 raises `NetworkError` instead of trying it. When every source refused the file with a 4xx other than 408 or 429, it raises `DataNotFoundError`
 
 #### URL Construction
 
@@ -602,9 +616,13 @@ async def fetch_with_fallback(url_path):
     except Exception as e:
         logger.warning(f"StaticDelivr failed: {e}")
 
-    # All sources failed (NetworkError takes the URL and extra context keys)
+    # All sources failed (NetworkError takes the URL and extra context keys).
+    # tif1 raises DataNotFoundError instead when every source refused the
+    # file with a 4xx other than 408 or 429, such as 403 or 404
     raise tif1.NetworkError(url=url_path, attempts=3)
 ```
+
+In the async batch path, a 404 from one source starts the remaining sources at the same time. A missing file then costs one round trip, not three.
 
 #### Circuit Breaker Pattern
 
@@ -623,16 +641,34 @@ tif1 implements a circuit breaker to prevent cascading failures during network i
    - Duration: 60 seconds (`circuit_breaker_timeout`)
 
 3. **`"half-open"` (Testing Recovery)**
-   - The next request is allowed through
+   - Requests are allowed through again
    - Success → transition to `"closed"`
    - Failure → transition back to `"open"`
 
-The block below is a simplified, single-threaded copy of `tif1.retry.CircuitBreaker`. The real class adds a lock and uses `time.monotonic()`. Read the live instance with `tif1.get_circuit_breaker()`.
+The breaker is shared by the process. The async batch path (laps, telemetry) records one failure when every CDN fails in an attempt. The synchronous path (`drivers.json`, `weather.json`, `rcm.json`) records each failed request. Any success resets the count.
+
+A missing, refused (403 or 404), or malformed payload is an answer from a healthy server. It does not count as a failure on either path.
+
+When the breaker is open, the synchronous path raises `CircuitBreakerOpenError` and the async batch path raises `NetworkError`.
+
+The block below is a simplified, single-threaded copy of `tif1.retry.CircuitBreaker`. The real class adds a lock. Read the live instance with `tif1.get_circuit_breaker()`.
 
 ```python
 import time
 
-from tif1.exceptions import CircuitBreakerOpenError
+from tif1.exceptions import (
+    CircuitBreakerOpenError,
+    DataNotFoundError,
+    InvalidDataError,
+    NetworkError,
+)
+
+
+def is_server_answer(error):
+    """A missing, refused, or malformed payload: the server answered."""
+    if isinstance(error, (DataNotFoundError, InvalidDataError)):
+        return True
+    return isinstance(error, NetworkError) and error.context.get("status_code") in (403, 404)
 
 
 class CircuitBreaker:
@@ -659,7 +695,9 @@ class CircuitBreaker:
         # Attempt request
         try:
             result = func(*args, **kwargs)
-        except Exception:
+        except Exception as error:
+            if is_server_answer(error):
+                raise  # Not a network failure: the count does not change
             # Failure - increment count
             self.failures += 1
             self.opened_at = time.monotonic()
@@ -675,7 +713,12 @@ class CircuitBreaker:
 
 #### Retry Strategy
 
-Each CDN source gets its own retry loop (`tif1.retry.retry_with_backoff`, wrapped around the circuit breaker). Only `NetworkError` is retried; a 404 moves on to the next source at once. The block below is a simplified copy:
+tif1 has one retry loop per fetch path:
+
+- **Synchronous path** (`PayloadLoader.fetch_from_cdn`; `drivers.json`, `weather.json`, `rcm.json`): each CDN source gets its own retry loop (`tif1.retry.retry_with_backoff`, wrapped around the circuit breaker). Only `NetworkError` is retried. A 403 or 404 moves on to the next source at once.
+- **Async batch path** (`fetch_json_async`; laps and telemetry): each attempt walks all CDN sources once. tif1 waits and walks again only when every source failed. The wait is `min(retry_backoff_factor ** attempt, max_retry_delay)` seconds, plus up to `retry_jitter_max` seconds of jitter (default 0).
+
+The block below is a simplified copy of the synchronous loop:
 
 ```python
 import logging
@@ -690,18 +733,20 @@ logger = logging.getLogger(__name__)
 def fetch_with_retry(fetch_from_url, url, max_retries=3, backoff_factor=2.0):
     """Exponential backoff with jitter (sync, per CDN source)."""
     # max_retries: TIF1_MAX_RETRIES; backoff_factor: TIF1_RETRY_BACKOFF_FACTOR
-    for attempt in range(max_retries):
+    attempts = max(1, max_retries)  # max_retries=0 still makes one attempt
+    for attempt in range(attempts):
         try:
             return fetch_from_url(url)  # Goes through the circuit breaker
         except NetworkError as e:
-            if attempt == max_retries - 1:
-                raise  # Final attempt failed: try_sources moves on to the next CDN
+            refused = e.context.get("status_code") in (403, 404)
+            if attempt == attempts - 1 or refused:
+                raise  # try_sources moves on to the next CDN
 
             # 1s, 2s, 4s ... multiplied by a random factor between 0.5 and 1.5
             backoff = backoff_factor ** attempt
             backoff *= 0.5 + random.random()  # TIF1_RETRY_JITTER=false turns this off
 
-            logger.warning(f"Retry {attempt + 1}/{max_retries} after {backoff:.2f}s: {e}")
+            logger.warning(f"Retry {attempt + 1}/{attempts} after {backoff:.2f}s: {e}")
             time.sleep(backoff)
 ```
 
@@ -721,37 +766,25 @@ config.set("timeout", 60)
 
 ### Stage 4: Async Parallel Fetching
 
-tif1 fetches data for multiple drivers in parallel with asyncio and HTTP/2. This parallel fetching is one of the most important tif1 performance optimizations.
+tif1 fetches many payloads in parallel with asyncio, for example the telemetry files of many laps. The laps of a session come from one file, `session_laptimes.json`. tif1 fetches per-driver `laptimes.json` files in parallel only for drivers that this file does not cover.
 
-#### Sequential vs Parallel Fetching
+#### Parallel Fetching
 
-**Sequential Fetching (Traditional Approach):**
-```python
-# Sequential fetching - SLOW
-drivers = ["VER", "HAM", "LEC", "NOR", "PIA", ...]  # 20 drivers
-lap_data = []
-
-for driver in drivers:
-    url = construct_url(driver)
-    response = requests.get(url)  # Blocking call
-    data = response.json()
-    lap_data.append(data)
-
-# Time: 20 drivers × 500ms = 10 seconds
-```
-
-**Parallel Fetching (tif1 Approach):**
-
-`async_fetch.py` runs the blocking requests of the shared `niquests.Session` in a thread pool. An `asyncio.Semaphore` caps the number of requests in flight (`max_concurrent_requests`). The block below is a simplified copy:
+`async_fetch.py` runs the blocking requests of the shared `niquests.Session` in a thread pool. An `asyncio.Semaphore` caps the number of requests in flight (`max_concurrent_requests`, default 22). The block below is a simplified copy:
 
 ```python
-# Parallel fetching - FAST
 import asyncio
 
 from tif1.http_session import get_session as get_http_session
 
 
-async def fetch_all_drivers(drivers, max_concurrent=20):
+def construct_url(driver, year=2025, gp="Monaco%20Grand%20Prix", session="Race"):
+    """jsDelivr URL of the laptimes.json file of one driver."""
+    base = f"https://cdn.jsdelivr.net/gh/TracingInsights/{year}@main/{gp}/{session}"
+    return f"{base}/{driver}/laptimes.json"
+
+
+async def fetch_all_drivers(drivers, max_concurrent=22):
     """Fetch data for all drivers in parallel."""
     http = get_http_session()  # Shared niquests.Session (pooled, multiplexed)
     loop = asyncio.get_running_loop()
@@ -764,12 +797,12 @@ async def fetch_all_drivers(drivers, max_concurrent=20):
         response.raise_for_status()
         return response.json()
 
-    # Execute all tasks concurrently
+    # Execute all tasks concurrently; a failure becomes an exception object
     tasks = [fetch_driver(driver) for driver in drivers]
     return await asyncio.gather(*tasks, return_exceptions=True)
 
-# Time: max(500ms across all drivers) ≈ 500-800ms
-# Speedup: 10-15x faster
+
+results = asyncio.run(fetch_all_drivers(["VER", "LEC", "NOR"]))
 ```
 
 #### HTTP/2 Multiplexing
@@ -777,8 +810,8 @@ async def fetch_all_drivers(drivers, max_concurrent=20):
 tif1 uses the `niquests` library. `niquests` supports HTTP/2 and multiplexes requests over a single TCP connection.
 
 **HTTP/1.1 Limitations:**
-- One request per TCP connection
-- Multiple connections required for parallelism (typically 6-8 max)
+- One request at a time per TCP connection
+- Multiple connections required for parallelism
 - High overhead: TCP handshake + TLS handshake per connection
 - Head-of-line blocking
 
@@ -786,13 +819,13 @@ tif1 uses the `niquests` library. `niquests` supports HTTP/2 and multiplexes req
 - Multiple requests over single TCP connection
 - Binary framing for efficiency
 - Header compression (HPACK)
-- Server push capability (not used by tif1)
 - Stream prioritization
 
 ```python
 # HTTP/2 connection reuse with niquests
 import niquests
 
+drivers = ["VER", "LEC", "NOR"]
 with niquests.Session(multiplexed=True) as http:
     # One connection per host; HTTP/2 is negotiated when the server offers it
     responses = [http.get(construct_url(driver)) for driver in drivers]
@@ -800,19 +833,11 @@ with niquests.Session(multiplexed=True) as http:
     # multiplexed=True returns lazy responses: the requests share the
     # connection, and gather() waits for all of them
     http.gather()
+
+print([response.status_code for response in responses])
 ```
 
 tif1 builds this session once per process in `tif1.http_session` (`TIF1_HTTP_MULTIPLEXED`, default `true`).
-
-**Performance Comparison:**
-
-| Metric | HTTP/1.1 | HTTP/2 |
-|--------|----------|--------|
-| Connections | 6-8 | 1 |
-| Handshake Overhead | High | Low |
-| Request Latency | 500-800ms | 300-500ms |
-| Throughput (20 drivers) | 3-4s | 0.5-0.8s |
-| Memory Usage | Higher | Lower |
 
 #### Connection Pooling
 
@@ -834,180 +859,73 @@ http.mount(
 http.trust_env = False  # Skip proxy and netrc lookups on every request
 
 # Connection reuse
-# First request: TCP + TLS handshake (100-200ms overhead)
-# Subsequent requests: No handshake (0ms overhead)
+# First request: DNS + TCP + TLS handshake (160-800 ms measured against jsDelivr)
+# Subsequent requests: no new handshake
 ```
 
 The request timeout is not a session setting: tif1 passes `timeout` (default 30 seconds) to each request.
 
-#### Progress Tracking
-
-```python
-async def fetch_with_progress(drivers):
-    """Fetch data with progress tracking."""
-
-    total = len(drivers)
-    completed = 0
-
-    async def fetch_and_track(driver):
-        nonlocal completed
-        try:
-            data = await fetch_driver(driver)
-            completed += 1
-            progress = (completed / total) * 100
-            logger.info(f"Progress: {progress:.1f}% ({completed}/{total})")
-            return data
-        except Exception as e:
-            logger.error(f"Failed to fetch {driver}: {e}")
-            completed += 1
-            return None
-
-    tasks = [fetch_and_track(driver) for driver in drivers]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    return results
-```
-
 #### Error Handling in Parallel Fetching
 
-```python
-async def fetch_with_error_handling(drivers):
-    """Fetch data with robust error handling."""
-
-    async def fetch_safe(driver):
-        """Fetch with exception handling."""
-        try:
-            return await fetch_driver(driver)
-        except tif1.NetworkError as e:
-            logger.warning(f"Network error for {driver}: {e}")
-            return None
-        except tif1.InvalidDataError as e:
-            logger.error(f"Invalid data for {driver}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error for {driver}: {e}")
-            return None
-
-    # gather with return_exceptions=True prevents one failure from canceling others
-    results = await asyncio.gather(
-        *[fetch_safe(driver) for driver in drivers],
-        return_exceptions=True
-    )
-
-    # Filter out None results (failed fetches)
-    valid_results = [r for r in results if r is not None]
-
-    success_rate = len(valid_results) / len(drivers)
-    logger.info(f"Fetch success rate: {success_rate:.1%}")
-
-    return valid_results
-```
-
-#### Batch Size Optimization
+`fetch_multiple_async()` in `tif1.async_fetch` returns one entry per request. A failed fetch becomes `None`, so one failure does not cancel the others. A file that every CDN reports as missing gives `None` silently. tif1 logs other failures at `WARNING`.
 
 ```python
-# For very large batches, split into smaller chunks to avoid overwhelming the server
-async def fetch_in_batches(drivers, batch_size=10):
-    """Fetch data in batches to control concurrency."""
-
-    results = []
-
-    for i in range(0, len(drivers), batch_size):
-        batch = drivers[i:i + batch_size]
-        logger.info(f"Fetching batch {i // batch_size + 1} ({len(batch)} drivers)")
-
-        batch_results = await fetch_all_drivers(batch)
-        results.extend(batch_results)
-
-        # Optional: Small delay between batches to be respectful to CDN
-        if i + batch_size < len(drivers):
-            await asyncio.sleep(0.1)
-
-    return results
-```
-
-#### Real-World Performance Example
-
-```python
-import time
 import asyncio
 
-# Scenario: Load lap data for all 20 drivers in Monaco 2025 Race
+from tif1.async_fetch import fetch_multiple_async
 
-# Sequential approach (traditional)
-start = time.time()
-for driver in drivers:
-    data = fetch_driver_sync(driver)  # 500ms each
-sequential_time = time.time() - start
-# Result: ~10 seconds
-
-# Parallel approach (tif1)
-start = time.time()
-data = asyncio.run(fetch_all_drivers(drivers))
-parallel_time = time.time() - start
-# Result: ~0.6 seconds
-
-speedup = sequential_time / parallel_time
-print(f"Speedup: {speedup:.1f}x faster")
-# Output: Speedup: 16.7x faster
+requests = [
+    (2025, "Monaco%20Grand%20Prix", "Race", "drivers.json"),
+    (2025, "Monaco%20Grand%20Prix", "Race", "weather.json"),
+    (2025, "Monaco%20Grand%20Prix", "Race", "no_such_file.json"),
+]
+results = asyncio.run(fetch_multiple_async(requests))
+print([type(result).__name__ for result in results])  # ['dict', 'dict', 'NoneType']
 ```
+
+The requests run under the `max_concurrent_requests` semaphore, so a large batch needs no manual splitting.
 
 ### Stage 5: High-Performance JSON Parsing
 
-After the CDN fetch, tif1 parses JSON with `orjson`. This library parses 2-3x faster than the standard Python `json` module.
+After the CDN fetch, tif1 parses JSON with `orjson`. On tif1 payloads, this library parses 3x to 7x faster than the standard Python `json` module.
 
 #### Why orjson?
 
-**Performance Comparison:**
+**Performance Comparison** (median of 7 runs, Intel Core i9-13900HX, Python 3.14):
 
-| Library | Parse Time (10MB) | Serialize Time | Memory Usage |
-|---------|-------------------|----------------|--------------|
-| `json` (stdlib) | 450ms | 380ms | High |
-| `ujson` | 280ms | 220ms | Medium |
-| `orjson` | 150ms | 120ms | Low |
+| Payload | `json` (stdlib) | `orjson` | Speedup |
+|---------|-----------------|----------|---------|
+| `session_laptimes.json` of a race (343 KB) | 1.9 ms | 0.6 ms | 3x |
+| One lap of telemetry (154 KB) | 1.6 ms | 0.24 ms | 7x |
 
 **Key Features:**
-- Written in Rust for maximum performance
+- Written in Rust
 - Direct bytes-to-Python object conversion (no intermediate string)
-- Efficient handling of large payloads (100MB+ telemetry files)
-- Strict validation mode
-- Native support for datetime, UUID, and other types
+- Native support for datetime, UUID, and other types when it serializes
 
 #### Parsing Pipeline
+
+The block below is a simplified copy of the checks in `async_fetch.py`. A body that is not valid JSON, or not a JSON object, raises `InvalidDataError`:
 
 ```python
 import orjson
 
-async def parse_json_response(response_bytes):
-    """Parse JSON response with validation."""
+import tif1
 
-    # Step 1: Parse JSON bytes to Python dict
+
+def parse_json_response(response_bytes):
+    """Parse a payload the way async_fetch.py does (simplified)."""
     try:
         data = orjson.loads(response_bytes)
-    except orjson.JSONDecodeError as e:
-        raise tif1.InvalidDataError(
-            f"Failed to parse JSON: {e}",  # The first argument is the reason
-            raw_data=response_bytes[:1000]  # First 1KB for debugging
-        )
+    except orjson.JSONDecodeError as e:  # a ValueError subclass
+        raise tif1.InvalidDataError(reason=f"JSON parsing failed: {e}")
 
-    # Step 2: Validate structure
     if not isinstance(data, dict):
-        raise tif1.InvalidDataError(
-            f"Expected dict, got {type(data).__name__}",
-            data_type=type(data).__name__
-        )
-
-    # Step 3: Check required fields (a laptimes payload has one list per field)
-    required_fields = ["lap", "time"]
-    missing_fields = [f for f in required_fields if f not in data]
-    if missing_fields:
-        raise tif1.InvalidDataError(
-            f"Missing required fields: {missing_fields}",
-            missing=missing_fields,
-            available=list(data.keys())
-        )
-
+        raise tif1.InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
     return data
+
+
+print(parse_json_response(b'{"lap": [1, 2], "time": [95.1, 94.8]}')["lap"])  # [1, 2]
 ```
 
 #### Data Structure Examples
@@ -1043,9 +961,9 @@ Every payload is columnar: one JSON list per field, with the same length for eve
 }
 ```
 
-The payload has more fields than shown. Examples are `ms1` to `ms3` (mini-sector strings), `s1T` to `s3T`, `vi2`, `vfl`, `fresh`, `lST`, `delR`, `ff1G`, and `iacc`. The other per-lap weather fields are `wT`, `wH`, `wP`, `wR`, `wWD`, and `wWS`. Times are float seconds.
+The payload has 42 fields. The fields not shown are `ms1` to `ms3` (mini-sector strings), `s1T` to `s3T`, `vi2`, `vfl`, `fresh`, `lST`, `delR`, `ff1G`, and `iacc`. The other per-lap weather fields are `wT`, `wH`, `wP`, `wR`, `wWD`, and `wWS`. Times are float seconds.
 
-**Telemetry Data JSON Structure** (`{driver}/{lap}_tel.json`, one file per lap):
+**Telemetry Data JSON Structure** (`{driver}/{lap}_tel.json`, one file per lap; `VER/10_tel.json` shown):
 ```json
 {
   "tel": {
@@ -1066,7 +984,7 @@ The payload has more fields than shown. Examples are `ms1` to `ms3` (mini-sector
     "x": [-360.34, -359.04],
     "y": [1239.32, 1269.65],
     "z": [-160.66, -160.85],
-    "dataKey": "20"
+    "dataKey": "2025-Bahrain Grand Prix-Race-VER-10"
   }
 }
 ```
@@ -1085,99 +1003,13 @@ The payload has more fields than shown. Examples are `ms1` to `ms3` (mini-sector
 }
 ```
 
-#### Parsing Performance Optimization
+#### Payload Size
 
-**Lazy Parsing for Large Files:**
-
-tif1 payloads are small (one telemetry file per lap, about 150 KB), so tif1 parses each one whole with orjson. To read a large JSON file made outside tif1, stream it with the third-party `ijson` package:
-
-```python
-# For very large JSON files made outside tif1 (100MB+), consider streaming
-import ijson  # Iterative JSON parser (pip install ijson)
-
-def parse_large_telemetry(file_path):
-    """Stream parse a large JSON array of telemetry records."""
-    with open(file_path, 'rb') as f:
-        # Parse the top-level array incrementally
-        telemetry_points = ijson.items(f, 'item')
-
-        # Process in chunks
-        chunk_size = 10000
-        chunk = []
-
-        for point in telemetry_points:
-            chunk.append(point)
-
-            if len(chunk) >= chunk_size:
-                yield chunk
-                chunk = []
-
-        if chunk:
-            yield chunk
-```
-
-**Memory-Efficient Parsing:**
-```python
-# For memory-constrained environments
-def parse_with_memory_limit(response_bytes, max_memory_mb=100):
-    """Parse JSON with memory limit check."""
-
-    # Estimate memory usage (rough approximation)
-    estimated_memory = len(response_bytes) * 3  # JSON → Python objects ≈ 3x
-    estimated_mb = estimated_memory / (1024 * 1024)
-
-    if estimated_mb > max_memory_mb:
-        raise tif1.InvalidDataError(
-            f"Data too large: {estimated_mb:.1f}MB (limit: {max_memory_mb}MB)",
-            size_mb=estimated_mb,
-            limit_mb=max_memory_mb
-        )
-
-    return orjson.loads(response_bytes)
-```
-
-#### Error Recovery
-
-```python
-def parse_with_recovery(response_bytes):
-    """Parse JSON with error recovery."""
-
-    try:
-        # Attempt normal parsing
-        return orjson.loads(response_bytes)
-
-    except orjson.JSONDecodeError as e:
-        # Try to identify and fix common issues
-
-        # Issue 1: Trailing commas
-        if "trailing comma" in str(e).lower():
-            logger.warning("Attempting to fix trailing commas")
-            fixed = response_bytes.replace(b',]', b']').replace(b',}', b'}')
-            return orjson.loads(fixed)
-
-        # Issue 2: Incomplete JSON (truncated response)
-        if "unexpected end" in str(e).lower():
-            logger.error("JSON appears truncated - re-fetching")
-            # NetworkError takes url and status_code; extra keywords go to e.context
-            raise tif1.NetworkError(reason="Incomplete response received")
-
-        # Issue 3: Invalid UTF-8
-        if "utf" in str(e).lower():
-            logger.warning("Attempting UTF-8 error recovery")
-            text = response_bytes.decode('utf-8', errors='replace')
-            return orjson.loads(text.encode('utf-8'))
-
-        # Unrecoverable error
-        raise tif1.InvalidDataError(
-            f"JSON parsing failed: {e}",
-            error=str(e),
-            position=e.pos if hasattr(e, 'pos') else None
-        )
-```
+tif1 payloads are small: one telemetry file per lap is about 150 KB. tif1 parses each payload whole with orjson; it does not stream them.
 
 #### Validation After Parsing
 
-Validation is off by default (`validate_data`, `validate_lap_times`, `validate_telemetry`). When on, the models in `tif1.validation` check the columnar payload. Every list must have the same length. Stints must be 1 or more, and tyre life 0 or more. The block below is a cut-down version of `tif1.validation.LapData`:
+Validation is off by default (`validate_data`, `validate_lap_times`, `validate_telemetry`). When on, the models in `tif1.validation` check the columnar payload. Every non-empty list must have the same length. Stints must be 1 or more, and tyre life 0 or more. The block below is a cut-down version of `tif1.validation.LapData`:
 
 ```python
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -1207,7 +1039,7 @@ class LapData(BaseModel):
     def validate_consistent_lengths(self):
         lengths = {len(self.time), len(self.lap), len(self.stint), len(self.life)}
         if len(lengths) > 1:
-            raise ValueError("lap data lists have different lengths")
+            raise ValueError("Inconsistent lap data lengths")
         return self
 
 
@@ -1388,7 +1220,7 @@ def apply_laps_dtypes_polars(df):
 
 #### Column Ordering
 
-tif1 orders lap columns as FastF1 does (`FASTF1_LAPS_COLUMN_ORDER` in `core_utils/constants.py`). The tif1 columns `LapTimeSeconds` and `QualifyingSession` come after the FastF1 columns:
+tif1 orders lap columns as FastF1 does (`FASTF1_LAPS_COLUMN_ORDER` in `core_utils/constants.py`). The tif1 columns `LapTimeSeconds` and `QualifyingSession` come after the FastF1 columns. Payload columns that keep their upstream names come last: `ms1` to `ms3`, `drv`, and `team`. `Driver` and `Team` come from `drivers.json`, so `drv` and `team` are not renamed:
 
 ```python
 COLUMN_ORDER = [
@@ -1445,7 +1277,9 @@ by_driver_lap = df.set_index(["Driver", "LapNumber"])
 
 **Polars Index Strategy:**
 ```python
-df = session.laps  # polars backend (lib="polars")
+import polars as pl
+
+df = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars").laps
 
 # Polars doesn't have traditional indexes
 # Instead, use efficient filtering and sorting
@@ -1535,15 +1369,12 @@ def validate_dataframe(df):
 
 #### Performance Benchmarks
 
-**DataFrame Construction Performance:**
+**DataFrame Construction Performance** (2025 Bahrain Grand Prix race, 1128 laps, Intel Core i9-13900HX):
 
-| Operation | Pandas | Polars | Speedup |
-|-----------|--------|--------|---------|
-| Create from dict | 45ms | 12ms | 3.8x |
-| Rename columns | 8ms | 2ms | 4.0x |
-| Type conversion | 25ms | 5ms | 5.0x |
-| Reorder columns | 3ms | 1ms | 3.0x |
-| **Total** | **81ms** | **20ms** | **4.0x** |
+| Operation | Pandas | Polars |
+|-----------|--------|--------|
+| Build `session.laps` from cached payloads (construction, renaming, dtype contract) | 30 ms | 16 ms |
+| Load `session.laps` from the SQLite laps frame tier instead | 1.5 ms | 1.4 ms |
 
 **Memory Usage** (2025 Bahrain Grand Prix race, as loaded; pandas `memory_usage(deep=True)`, polars `estimated_size()`):
 
@@ -1670,7 +1501,7 @@ def merge_weather_data(lap_df, weather_df):
     """Attach the nearest weather sample to each lap start (pandas)."""
 
     # merge_asof needs sorted keys without missing values
-    laps_sorted = pd.DataFrame(lap_df).dropna(subset=["LapStartTime"]).sort_values("LapStartTime")
+    laps_sorted = lap_df.dropna(subset=["LapStartTime"]).sort_values("LapStartTime")
 
     merged = pd.merge_asof(
         laps_sorted,
@@ -1858,7 +1689,7 @@ import pickle
 from lz4 import frame as lz4_frame
 
 def encode_frame(df) -> bytes:
-    """Encode a materialized telemetry DataFrame for `telemetry_frames`."""
+    """Encode a materialized laps or telemetry DataFrame for a frame table."""
     blob = pickle.dumps(df, protocol=5)
     return lz4_frame.compress(blob, compression_level=0)  # zstd-1 when lz4 is missing
 ```
@@ -1911,8 +1742,8 @@ caller removes them by scope:
 
 ```python
 cache = tif1.get_cache()
-cache.invalidate("json")        # DELETE FROM cache (+ missing_payloads)
-cache.invalidate("telemetry")   # DELETE FROM telemetry_cache, telemetry_frames, telemetry_frames_pl (+ missing_payloads)
+cache.invalidate("json")        # DELETE FROM cache (+ missing_payloads, laps_frames, laps_frames_pl)
+cache.invalidate("telemetry")   # DELETE FROM telemetry_cache and both telemetry and laps frame tables (+ missing_payloads)
 cache.clear()                   # Every table
 ```
 
@@ -1927,19 +1758,20 @@ The cache keeps no hit or miss counters and exposes no statistics API. Measure c
 import time
 
 import tif1
+from tif1.cache import clear_lap_cache
 
 cache = tif1.get_cache()
 cache.invalidate("memory")  # keep SQLite, drop the in-memory tiers
-tif1.cache.clear_lap_cache()  # the backend lap LRU lives outside Cache
+clear_lap_cache()  # the backend lap LRU lives outside Cache
 
 t0 = time.perf_counter()
-laps = tif1.get_session(2024, "Monaco", "Race").laps  # served from SQLite
+laps = tif1.get_session(2024, "Monaco", "Race").laps  # served from the SQLite laps frame tier
 print(f"warm load: {time.perf_counter() - t0:.3f}s")
 
 print(f"database size: {cache.db_path.stat().st_size / 1e6:.1f} MB")
 ```
 
-Set `TIF1_LOG_LEVEL=DEBUG` to see which tier answered each lookup.
+Call `tif1.setup_logging(logging.DEBUG)` to see which tier answered each lookup.
 
 #### Final Data Return
 
@@ -1956,43 +1788,14 @@ print(session.session_info)     # {'Year': 2025, 'EventName': ..., 'SessionName'
 
 #### Complete Pipeline Timing
 
-**End-to-End Performance (Cold Start):**
+Measured for `session.laps` of the 2025 Bahrain Grand Prix race (Intel Core i9-13900HX, Python 3.14, pandas 3.0.6):
 
-| Stage | Time | Cumulative |
-|-------|------|------------|
-| 1. Request Initiation | < 1ms | < 1ms |
-| 2. Cache Lookup (miss) | 2ms | 2ms |
-| 3. CDN Fetching | 2000ms | 2002ms |
-| 4. Async Parallel Fetch | 500ms | 2502ms |
-| 5. JSON Parsing | 100ms | 2602ms |
-| 6. DataFrame Construction | 81ms | 2683ms |
-| 7. Data Enrichment (`LapTimeSeconds`) | < 5ms | 2688ms |
-| 8. Cache Storage | 50ms | 2738ms |
-| **Total** | | **~2.7s** |
-
-**End-to-End Performance (Warm Start - SQLite):**
-
-| Stage | Time | Cumulative |
-|-------|------|------------|
-| 1. Request Initiation | < 1ms | < 1ms |
-| 2. Cache Lookup (SQLite hit) | 30ms | 30ms |
-| 3-7. (Skipped) | 0ms | 30ms |
-| 8. Memory Cache Save | < 1ms | 31ms |
-| **Total** | | **~31ms** |
-
-**End-to-End Performance (Hot Start - Memory):**
-
-| Stage | Time | Cumulative |
-|-------|------|------------|
-| 1. Request Initiation | < 1ms | < 1ms |
-| 2. Cache Lookup (memory hit) | < 1ms | < 1ms |
-| 3-8. (Skipped) | 0ms | < 1ms |
-| **Total** | | **< 1ms** |
-
-**Speedup Summary:**
-- Warm vs Cold: **88x faster** (31ms vs 2738ms)
-- Hot vs Cold: **2700x faster** (< 1ms vs 2738ms)
-- Hot vs Warm: **31x faster** (< 1ms vs 31ms)
+| Start state | What answers | Time |
+|-------------|--------------|------|
+| Cold (empty cache) | CDN fetch of `drivers.json` and `session_laptimes.json`, then construction | Depends on the network; the CDN round trips dominate |
+| Warm, new process | SQLite laps frame tier | About 1.5 ms (plus about 10 ms for `get_session()`) |
+| Warm, frame tier missing | SQLite payload tier, then construction | About 30 ms |
+| Hot, same process | Session attribute or backend lap LRU | About 1 µs |
 
 ## Data Transformation Through the Pipeline
 
@@ -2017,7 +1820,7 @@ The examples follow `VER/laptimes.json` of the 2025 Bahrain Grand Prix race (57 
 ```
 
 **Characteristics:**
-- Format: UTF-8 encoded JSON, one list per field (about 45 fields)
+- Format: UTF-8 encoded JSON, one list per field (42 fields)
 - Size: ~18 KB for one driver, ~340 KB for `session_laptimes.json` (all 20 drivers)
 - Naming: short upstream keys (`s1`, `sesT`, `wAT`, ...)
 - Types: Mixed (strings, numbers, booleans); missing values are the string `"None"`
@@ -2040,6 +1843,11 @@ The examples follow `VER/laptimes.json` of the 2025 Bahrain Grand Prix race (57 
 #### Stage 3: Initial DataFrame (after construction)
 ```python
 import pandas as pd
+
+from tif1.payload_loader import PayloadLoader
+
+# The event and session names are URL-encoded, as in session.gp
+payload = PayloadLoader(2025, "Bahrain%20Grand%20Prix", "Race").get("VER/laptimes.json")
 
 df = pd.DataFrame(payload)  # One column per key
 print(df[["lap", "time", "s1", "s2", "compound", "pb"]].head(3))
@@ -2065,6 +1873,8 @@ print(df[["lap", "time", "s1", "s2", "compound", "pb"]].head(3))
 
 #### Stage 4: Renamed DataFrame (after column renaming)
 ```python
+from tif1.core_utils.constants import LAP_RENAME_MAP
+
 df = df.rename(columns=LAP_RENAME_MAP)
 print(df[["LapNumber", "LapTime", "Sector1Time", "Sector2Time", "Compound"]].head(3))
 #    LapNumber  LapTime Sector1Time  Sector2Time Compound
@@ -2081,6 +1891,9 @@ print(df[["LapNumber", "LapTime", "Sector1Time", "Sector2Time", "Compound"]].hea
 
 #### Stage 5: Typed DataFrame (after the dtype contract)
 ```python
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 laps = session.laps.pick_driver("VER")
 print(laps[["LapNumber", "LapTime", "Sector1Time", "LapTimeSeconds"]].head(3))
 #      LapNumber                LapTime            Sector1Time  LapTimeSeconds
@@ -2119,7 +1932,7 @@ df.info()  # pandas; on polars use df.glimpse()
 **Characteristics:**
 - Format: pandas/polars DataFrame
 - Size: ~0.46 MB (pandas) or ~0.35 MB (polars) for the full race (1128 laps)
-- Cached: the JSON payload (memory and SQLite tiers) and the built frame (backend lap LRU)
+- Cached: the JSON payload (memory and SQLite tiers) and the built frame (backend lap LRU and SQLite laps frame tier)
 - Ready: For immediate analysis
 
 ### Data Type Comparison: Pandas vs Polars
@@ -2153,7 +1966,7 @@ See [Column types by backend](/concepts/backends#column-types-by-backend) for th
 | Stage | Pandas | Polars | Difference |
 |-------|--------|--------|------------|
 | Raw JSON | 343 KB | 343 KB | 0% |
-| Initial DataFrame (default types) | 718 KB | 324 KB | -55% |
+| Initial DataFrame (default types) | 718 KB | 308 KB | -57% |
 | Final `session.laps` | 462 KB | 348 KB | -25% |
 
 On pandas, the dtype contract shrinks the frame: text columns become `category`, and the `"None"` strings leave the `object` columns. Polars stores the same data in about a quarter less memory.
@@ -2170,40 +1983,18 @@ tif1 implements many performance optimizations throughout the data pipeline. Thi
 - One request per TCP connection
 - Connection closed after each request
 - High overhead: TCP handshake (3-way) + TLS handshake (2-3 round trips)
-- Total overhead: ~200-300ms per request
 
 **HTTP/1.1 (Traditional):**
 - Connection keep-alive (reuse connection)
-- Pipelining (limited browser support)
+- Pipelining (limited support)
 - Head-of-line blocking (requests must complete in order)
-- Typical browser limit: 6-8 concurrent connections per domain
 
 **HTTP/2 (tif1):**
 - Binary framing protocol (vs text-based HTTP/1.1)
 - Multiplexing: Multiple requests over single connection
 - Header compression (HPACK algorithm)
-- Server push (not used by tif1)
 - Stream prioritization
 - No head-of-line blocking at HTTP layer
-
-#### Performance Impact
-
-```python
-# Scenario: Fetch lap data for 20 drivers
-
-# HTTP/1.1 (6 concurrent connections)
-# Round 1: 6 requests × 500ms = 500ms
-# Round 2: 6 requests × 500ms = 500ms
-# Round 3: 6 requests × 500ms = 500ms
-# Round 4: 2 requests × 500ms = 500ms
-# Total: 2000ms
-
-# HTTP/2 (single connection, unlimited multiplexing)
-# All 20 requests in parallel over 1 connection
-# Total: 500ms (limited by slowest request)
-
-# Speedup: 4x faster
-```
 
 #### Implementation in tif1
 
@@ -2218,8 +2009,9 @@ http = get_session()  # Shared niquests.Session
 # - niquests.Session(multiplexed=True): HTTP/2 when the CDN offers it,
 #   HTTP/1.1 otherwise; HTTP/3 is off unless TIF1_HTTP_DISABLE_HTTP3=false
 #   (the switch is passed to the mounted adapter as well, which owns negotiation)
-# - get_session() warms this connection in a daemon thread (TIF1_CDN_PRECONNECT)
-#   so the first payload request of a cold load skips DNS and TLS
+# - tif1.get_session() warms this connection once per process in a daemon
+#   thread (TIF1_CDN_PRECONNECT) when the session is not cached yet, so the
+#   first payload request of a cold load skips DNS and TLS
 # - DNS: the system resolver; DNS over HTTPS (Cloudflare, then Google) only
 #   when a session with the system resolver cannot be created (TIF1_HTTP_RESOLVERS)
 # - HTTPAdapter(pool_connections=256, pool_maxsize=1024, pool_block=False)
@@ -2276,48 +2068,39 @@ class Session:
 #### Performance Benefits
 
 ```python
-# Scenario 1: Only need lap data
+# Only the laps table loads; no telemetry, weather, or messages
 session = tif1.get_session(2025, "Monaco", "Race")
-laps = session.laps  # Only laps loaded (~500ms)
-# Total: 500ms
+laps = session.laps
 
-# Scenario 2: Need all data (without lazy loading)
-# Would load: laps + telemetry + weather + messages
-# Total: ~5000ms (all data loaded upfront)
+# Weather loads on its first access, not before
+weather = session.weather
 
-# Scenario 2: Need all data (with lazy loading)
-session = tif1.get_session(2025, "Monaco", "Race")
-laps = session.laps        # 500ms
-weather = session.weather  # 200ms
-# Total: 700ms (only what's needed)
-
-# Savings: 93% reduction in load time
+# session.load() with its defaults (telemetry=True) also fetches the telemetry
+# of every lap: one file per lap, more than a thousand files for a race
 ```
 
 ### 3. Categorical Data Type Optimization
 
-Converting string columns to categoricals gives large memory savings and faster operations.
+Converting string columns to categoricals gives large memory savings for columns with few distinct values.
 
 #### Memory Comparison
 
 ```python
 import pandas as pd
-import numpy as np
 
-# Create sample data (1500 laps, 20 drivers)
+# Create sample data (1500 laps, 5 drivers)
 drivers = ["VER", "HAM", "LEC", "NOR", "PIA"] * 300
 
-# String column (object dtype)
+# String column (pandas 3 "str" dtype)
 df_string = pd.DataFrame({"Driver": drivers})
 memory_string = df_string.memory_usage(deep=True).sum()
-# Result: ~75 KB (each string stored separately)
+# Result: about 16 KB (pyarrow-backed "str" dtype)
 
 # Categorical column
 df_categorical = pd.DataFrame({"Driver": pd.Categorical(drivers)})
 memory_categorical = df_categorical.memory_usage(deep=True).sum()
-# Result: ~2 KB (strings stored once, integers used for values)
+# Result: about 1.6 KB (strings stored once, integer codes for the values)
 
-# Savings: 97% reduction
 print(f"String: {memory_string / 1024:.1f} KB")
 print(f"Categorical: {memory_categorical / 1024:.1f} KB")
 print(f"Savings: {(1 - memory_categorical / memory_string) * 100:.1f}%")
@@ -2336,19 +2119,18 @@ df_categorical = pd.DataFrame({"Driver": pd.Categorical(drivers)})
 
 # Groupby performance
 # String column
-start = time.time()
+start = time.perf_counter()
 df_string.groupby("Driver").size()
-time_string = time.time() - start
+time_string = time.perf_counter() - start
 
 # Categorical column
-start = time.time()
-df_categorical.groupby("Driver").size()
-time_categorical = time.time() - start
+start = time.perf_counter()
+df_categorical.groupby("Driver", observed=True).size()
+time_categorical = time.perf_counter() - start
 
-# Categorical is 3-5x faster for groupby operations
+# On 1,500 rows both take well under a millisecond (median: categorical about 1.2x faster)
 print(f"String groupby: {time_string * 1000:.2f}ms")
 print(f"Categorical groupby: {time_categorical * 1000:.2f}ms")
-print(f"Speedup: {time_string / time_categorical:.1f}x")
 ```
 
 #### Automatic Categorization in tif1
@@ -2371,60 +2153,34 @@ CATEGORICAL_COLUMNS = [
 
 ### 4. Backend Selection: Pandas vs Polars
 
-Select the backend that matches the workload to maximize performance.
-
-#### Performance Benchmarks
-
-**Operation Speed (1500 laps):**
-
-| Operation | Pandas | Polars | Speedup |
-|-----------|--------|--------|---------|
-| Load from JSON | 86ms | 20ms | 4.3x |
-| Filter (single condition) | 2.5ms | 0.8ms | 3.1x |
-| Filter (multiple conditions) | 5.2ms | 1.2ms | 4.3x |
-| Groupby + aggregation | 12ms | 3ms | 4.0x |
-| Sort | 8ms | 2ms | 4.0x |
-| Join (merge) | 15ms | 4ms | 3.8x |
-| Column selection | 0.5ms | 0.1ms | 5.0x |
-| Row iteration | 450ms | 120ms | 3.8x |
-
-**Memory Usage (1500 laps):**
-
-| Data Type | Pandas | Polars | Savings |
-|-----------|--------|--------|---------|
-| Lap data | 7 MB | 3.5 MB | 50% |
-| Telemetry (15k samples) | 25 MB | 12 MB | 52% |
-| Weather | 0.3 MB | 0.15 MB | 50% |
+Select the backend that matches the workload. [Data Backends](/concepts/backends#detailed-performance-comparison) lists measured times and memory for both backends. On the tables of one session, both backends finish common operations in about 1 ms. The polars frames use about 25% less memory for laps.
 
 #### When to Use Each Backend
 
 **Use Pandas When:**
 - Compatibility with existing pandas code is required
-- A library requires pandas (matplotlib, seaborn, and others)
+- A library requires pandas (seaborn, scikit-learn, and others)
 - Mutable DataFrames are required (in-place operations)
 - Dataset is small (&lt;10k rows)
 - The complete pandas ecosystem is required
 
 **Use Polars When:**
-- Performance is critical
-- The datasets are large (>100k rows)
+- The datasets are large (>100k rows), such as the telemetry of many sessions
 - Memory is constrained
 - Lazy evaluation is required
-- Type safety and better error messages are preferred
-- The project is new
 
 #### Switching Backends
 
 ```python
 # Load with pandas (default)
 session_pandas = tif1.get_session(2025, "Monaco", "Race", lib="pandas")
-laps_pandas = session_pandas.laps  # pandas DataFrame
+laps_pandas = session_pandas.laps  # pandas DataFrame (tif1 Laps)
 
 # Load with polars
 session_polars = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 laps_polars = session_polars.laps  # polars DataFrame
 
-# Convert between backends
+# Convert between backends (both directions use pyarrow, a tif1 dependency)
 import polars as pl
 
 # Pandas → Polars
@@ -2436,108 +2192,42 @@ laps_pandas = laps_polars.to_pandas()
 
 ### 5. Async Parallel Fetching
 
-Async fetching is one of the most important tif1 performance optimizations.
+See [Stage 4](#stage-4-async-parallel-fetching). Two settings control the parallelism:
 
-#### Sequential vs Parallel Comparison
-
-```python
-import time
-import asyncio
-
-# Sequential fetching
-def fetch_sequential(drivers):
-    results = []
-    start = time.time()
-
-    for driver in drivers:
-        result = fetch_driver_sync(driver)  # 500ms each
-        results.append(result)
-
-    duration = time.time() - start
-    print(f"Sequential: {duration:.2f}s for {len(drivers)} drivers")
-    return results
-
-# Parallel fetching
-async def fetch_parallel(drivers):
-    start = time.time()
-
-    tasks = [fetch_driver_async(driver) for driver in drivers]
-    results = await asyncio.gather(*tasks)
-
-    duration = time.time() - start
-    print(f"Parallel: {duration:.2f}s for {len(drivers)} drivers")
-    return results
-
-# Test with 20 drivers
-drivers = ["VER", "HAM", "LEC", ...] # 20 drivers
-
-# Sequential: 10.00s for 20 drivers (20 × 500ms)
-fetch_sequential(drivers)
-
-# Parallel: 0.58s for 20 drivers (max of all requests)
-asyncio.run(fetch_parallel(drivers))
-
-# Speedup: 17.2x faster
-```
-
-#### Concurrency Control
-
-```python
-import asyncio
-from asyncio import Semaphore
-
-async def fetch_with_limit(drivers, max_concurrent=10):
-    """Fetch with concurrency limit."""
-
-    semaphore = Semaphore(max_concurrent)
-
-    async def fetch_limited(driver):
-        async with semaphore:
-            return await fetch_driver(driver)
-
-    tasks = [fetch_limited(driver) for driver in drivers]
-    results = await asyncio.gather(*tasks)
-
-    return results
-
-# Limit to 10 concurrent requests
-# Prevents overwhelming the CDN (tif1 itself uses max_concurrent_requests, default 22)
-results = asyncio.run(fetch_with_limit(drivers, max_concurrent=10))
-```
+- `max_concurrent_requests` (`TIF1_MAX_CONCURRENT_REQUESTS`, default 22): requests in flight for one batch
+- `telemetry_prefetch_max_concurrent_requests` (`TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS`, default 32): requests in flight for a telemetry prefetch
 
 ### 6. JSON Parsing Optimization
 
-orjson provides 2-3x faster JSON parsing than stdlib json.
+orjson parses tif1 payloads 3x to 7x faster than stdlib `json` (see [Stage 5](#stage-5-high-performance-json-parsing)).
 
 #### Benchmark Comparison
 
 ```python
 import json
-import orjson
 import time
 
-# Sample JSON data (10 MB)
-with open("large_telemetry.json", "rb") as f:
-    json_bytes = f.read()
+import orjson
+
+from tif1.payload_loader import PayloadLoader
+
+# A real payload: the session_laptimes.json of a race (about 340 KB)
+loader = PayloadLoader(2025, "Bahrain%20Grand%20Prix", "Race")
+json_bytes = orjson.dumps(loader.get("session_laptimes.json"))
 
 # stdlib json
-start = time.time()
-data_json = json.loads(json_bytes.decode('utf-8'))
-time_json = time.time() - start
+start = time.perf_counter()
+data_json = json.loads(json_bytes.decode("utf-8"))
+time_json = time.perf_counter() - start
 
 # orjson
-start = time.time()
+start = time.perf_counter()
 data_orjson = orjson.loads(json_bytes)
-time_orjson = time.time() - start
+time_orjson = time.perf_counter() - start
 
 print(f"stdlib json: {time_json * 1000:.2f}ms")
 print(f"orjson: {time_orjson * 1000:.2f}ms")
-print(f"Speedup: {time_json / time_orjson:.1f}x")
-
-# Results:
-# stdlib json: 450ms
-# orjson: 150ms
-# Speedup: 3.0x
+print(f"Speedup: {time_json / time_orjson:.1f}x")  # About 3x for this payload
 ```
 
 ### 7. Cache Optimization Strategies
@@ -2572,18 +2262,18 @@ def warm_cache_intelligent(year):
 
 #### Cache Size Tuning
 
-```python
-import os
+The config reads the environment once, when tif1 is first used, so set these variables before Python starts:
 
+```bash
 # Increase memory cache capacity for a better hit rate
-os.environ["TIF1_MEMORY_CACHE_MAX_ITEMS"] = "2048"            # Default: 1024
-os.environ["TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS"] = "4096"  # Default: 2048
+export TIF1_MEMORY_CACHE_MAX_ITEMS=2048            # Default: 1024
+export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=4096  # Default: 2048
 
 # Cached payloads never expire; only "missing on every CDN" verdicts have a TTL
-os.environ["TIF1_MISSING_PAYLOADS_TTL_DAYS"] = "14"  # Default: 7.0
+export TIF1_MISSING_PAYLOADS_TTL_DAYS=14  # Default: 7.0
 
 # Custom cache directory (e.g., SSD for faster access)
-os.environ["TIF1_CACHE_DIR"] = "/mnt/fast-ssd/tif1-cache"
+export TIF1_CACHE_DIR=/mnt/fast-ssd/tif1-cache
 ```
 
 ### 8. Batch Operations
@@ -2591,40 +2281,28 @@ os.environ["TIF1_CACHE_DIR"] = "/mnt/fast-ssd/tif1-cache"
 Process multiple items together for better performance.
 
 ```python
-# Bad: Individual operations
+# Slower: one fastest-lap lookup and one telemetry request per driver
 for code in session.drivers_df["Driver"]:
     lap = session.get_driver(code).get_fastest_lap()
     telemetry = lap.get_telemetry()
-    # 20 drivers × 500ms = 10s
 
-# Good: Batch operation (one DataFrame with a Driver column)
+# Faster: one batch call; the telemetry requests run in parallel
 fastest_laps = session.get_fastest_laps(by_driver=True)
-telemetries = session.get_fastest_laps_tels(by_driver=True)
-# Single batch operation: 600ms
-
-# Speedup: 16.7x faster
+telemetries = session.get_fastest_laps_tels(by_driver=True)  # One DataFrame with a Driver column
 ```
 
 ### Performance Summary
 
-**Key Optimizations and Their Impact:**
+**Key Optimizations and Their Effect** (measured on one machine, see the sections above):
 
-| Optimization | Speedup | Memory Savings |
-|--------------|---------|----------------|
-| HTTP/2 Multiplexing | 4x | - |
-| Async Parallel Fetching | 17x | - |
-| Lazy Loading | 10x | 80% |
-| Categorical Types | 1.2x | 90% |
-| orjson Parsing | 3x | - |
-| Polars Backend | 4x | 50% |
-| Multi-tier Caching | 2700x | - |
-| Batch Operations | 16x | - |
-
-**Combined Impact:**
-- Cold start: ~3s
-- Warm start: ~30ms (100x faster)
-- Hot start: &lt;1ms (3000x faster)
-- Memory usage: 50-70% reduction vs naive implementation
+| Optimization | Effect |
+|--------------|--------|
+| SQLite laps frame tier | Warm `session.laps` in about 1.5 ms instead of about 30 ms |
+| Memory tiers | Repeated payload reads in about 3 µs; repeated `session.laps` in about 1 µs |
+| orjson parsing | 3x to 7x faster than stdlib `json` |
+| Categorical types (pandas) | About 90% less memory for the `Driver`, `Team`, `Compound`, and `TrackStatus` columns |
+| Async parallel fetching | Many files in flight at once (`max_concurrent_requests`, default 22) |
+| zstd compression | About 6:1 for lap payloads, 2.5:1 for telemetry payloads on disk |
 
 ## Comprehensive Error Handling
 
@@ -2632,11 +2310,12 @@ tif1 implements an error handling system with a hierarchical exception structure
 
 ### Exception Hierarchy
 
-`src/tif1/exceptions.py` defines nine exception classes. Every one is exported from `tif1`. Eight of them form the `TIF1Error` hierarchy:
+`src/tif1/exceptions.py` defines eleven exception classes. Every one is exported from `tif1`. Nine of them form the `TIF1Error` hierarchy:
 
 ```text
 TIF1Error (base exception)
 ├── NetworkError
+│   └── CircuitBreakerOpenError
 ├── DataNotFoundError
 │   ├── DriverNotFoundError
 │   └── LapNotFoundError
@@ -2645,7 +2324,15 @@ TIF1Error (base exception)
 └── SessionNotLoadedError
 ```
 
-The ninth, `EventNotInSeasonError`, is a `ValueError` subclass, not a `TIF1Error`. `get_session()` and `get_event_by_name()` raise it when a circuit or country alias names an event that is not on that season's calendar. An example is `"Suzuka"` in 2021.
+The other two are `ValueError` subclasses, not `TIF1Error` subclasses:
+
+```text
+ValueError
+└── EventNotFoundError
+    └── EventNotInSeasonError
+```
+
+`get_session()` and `get_event_by_name()` raise `EventNotFoundError` when an event name matches no event of the season. They raise `EventNotInSeasonError` when a circuit or country alias names an event that is not on that season's calendar. An example is `"Suzuka"` in 2021.
 
 Every exception carries `message` (the formatted text) and `context` (a dict of keyword arguments passed at raise time). The constructors accept extra `**context` keys, so handlers should read `e.context.get(...)` rather than rely on attributes.
 
@@ -2661,7 +2348,7 @@ Every exception carries `message` (the formatted text) and `context` (a dict of 
 
 ### Network Errors
 
-`NetworkError` is raised when every CDN source fails or when `offline_mode` is on and the cache misses. The CDN fallback loop in `cdn.py` logs each failed source at `WARNING` before raising.
+`NetworkError` is raised when every CDN source fails, when the circuit breaker is open, or when `offline_mode` is on and the cache misses. The synchronous path raises the subclass `CircuitBreakerOpenError` for the open breaker. The CDN fallback loop in `cdn.py` logs each failed source at `WARNING` before raising.
 
 ```python
 import time
@@ -2690,7 +2377,7 @@ Timeouts and connection failures surface as `NetworkError` too; raise `TIF1_TIME
 
 ### Data Not Found Errors
 
-`DataNotFoundError` means every CDN returned a 4xx for the payload, or the negative-verdict tier already knows it is missing.
+`DataNotFoundError` means every CDN refused the payload with a 4xx other than 408 or 429. It also means that the negative-verdict tier already knows the payload is missing.
 
 ```python
 import tif1
@@ -2703,7 +2390,14 @@ except tif1.DataNotFoundError as e:  # LapNotFoundError is a subclass
     print(e.context)  # {'lap_number': 999, 'driver': 'VER', 'year': 2025, 'event': ..., 'session': 'Race'}
 ```
 
-An unknown event name does not raise `DataNotFoundError`. tif1 resolves the name with fuzzy matching, so `"Nonexistent Grand Prix"` loads the Japanese Grand Prix. Check `session.event["EventName"]` after the call.
+An unknown event name does not raise `DataNotFoundError`. tif1 resolves the name with fuzzy matching, so a typo such as `"Monacco"` loads the Monaco Grand Prix. A fuzzy match needs a score of at least 70 out of 100. A name below that score, such as `"Nonexistent Grand Prix"`, raises `tif1.EventNotFoundError`:
+
+```python
+try:
+    session = tif1.get_session(2025, "Nonexistent Grand Prix", "Race")
+except tif1.EventNotFoundError as e:  # a ValueError, not a TIF1Error
+    print(e)  # No event matching 'Nonexistent Grand Prix' in 2025
+```
 
 `DriverNotFoundError` and `LapNotFoundError` are subclasses, so one `except tif1.DataNotFoundError` handler covers all three.
 
@@ -2747,32 +2441,46 @@ Each case degrades to a cache miss, so the loader fetches from the CDN instead.
 
 ```python
 import logging
-import os
+
+import tif1
+from tif1.cache import clear_lap_cache
 
 # Surface cache warnings ("Cache read error for ...", "SQLite cache unavailable: ...")
 logging.getLogger("tif1.cache").setLevel(logging.WARNING)
 
 laps = session.laps  # Works even when the cache is unavailable; it fetches instead
 
-# Recover from a damaged database: wipe every tier and reload
+# Recover from a damaged database: wipe every tier, then load a new session
 cache = tif1.get_cache()
-cache.clear()
+cache.clear()       # SQLite tables and the in-memory payload tiers
+clear_lap_cache()   # The backend lap LRU lives outside Cache
+session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps
 
-# Last resort: disable the cache for this process
-os.environ["TIF1_ENABLE_CACHE"] = "false"
+# Last resort: load without the cache (TIF1_ENABLE_CACHE=false set before
+# Python starts does the same for a whole process)
+session = tif1.get_session(2025, "Monaco", "Race", enable_cache=False)
+laps = session.laps
 ```
 
 If SQLite cannot open `cache.sqlite` at startup, tif1 logs `SQLite cache unavailable`
-and runs with the in-memory tiers only.
+and runs without the payload cache: reads return nothing and writes are skipped. The
+per-session memo and the backend lap LRU still work.
 
 ### Error Recovery Strategies
 
 #### Automatic Retry with Exponential Backoff
 
 ```python
+import logging
+import random
 import time
 from functools import wraps
+
+import tif1
+
+logger = logging.getLogger(__name__)
+
 
 def retry_with_backoff(max_retries=3, base_delay=1.0):
     """Decorator for automatic retry with exponential backoff."""
@@ -2949,30 +2657,33 @@ The lines below use the custom format from the previous example. The messages co
 ```text
 2025-04-19 14:30:15 [DEBUG] tif1.core: Session initialized: year=2025, gp=Monaco Grand Prix, session=Race, lib=pandas
 2025-04-19 14:30:15 [DEBUG] tif1.cache: SQLite cache initialized at /home/user/.cache/tif1/cache.sqlite with WAL mode
+2025-04-19 14:30:15 [INFO] tif1.core: Loading laps async (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
+2025-04-19 14:30:15 [INFO] tif1.core: Laps frame tier hit: 2025/Monaco%20Grand%20Prix/Race
+2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/weather.json
 2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/drivers.json
-2025-04-19 14:30:15 [DEBUG] tif1.async_fetch: Thread pool executor initialized (max_workers=32)
-2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/session_laptimes.json
-2025-04-19 14:30:16 [DEBUG] tif1.cache: Cache hit (SQLite): 2025/Monaco%20Grand%20Prix/Race/weather.json
 ```
 
-On a cache miss, the CDN lines appear instead:
+When one payload of a cached session is missing, the CDN lines appear:
 ```text
 2025-04-19 14:30:15 [DEBUG] tif1.cache: Cache miss: 2025/Monaco%20Grand%20Prix/Race/weather.json
 2025-04-19 14:30:15 [DEBUG] tif1.cdn: Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Monaco%20Grand%20Prix/Race/weather.json
-2025-04-19 14:30:16 [INFO] tif1.payload_loader: Fetched: 2025/Monaco%20Grand%20Prix/Race/weather.json
 2025-04-19 14:30:16 [DEBUG] tif1.cache: Cached: 2025/Monaco%20Grand%20Prix/Race/weather.json
+2025-04-19 14:30:16 [INFO] tif1.payload_loader: Fetched: 2025/Monaco%20Grand%20Prix/Race/weather.json
 ```
+
+A session with nothing in the cache skips the cache reads, so it logs no `Cache miss` lines. Its batch fetches log `Fetched: ... from jsDelivr` at `DEBUG` (`tif1.async_fetch`).
 
 **INFO Level:**
 ```text
 2025-04-19 14:30:15 [INFO] tif1.core: Loading laps async (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
 2025-04-19 14:30:16 [INFO] tif1.core: Lap cache hit (pandas): 2025_Monaco%20Grand%20Prix_Race_laps
+2025-04-19 14:30:16 [INFO] tif1.http_session: Connection pool stats: 1 requests, 0 reused (0.0%), 1 pools created
 2025-04-19 14:30:16 [INFO] tif1.cache: Cache tier invalidated: telemetry
 ```
 
 **WARNING Level:**
 ```text
-2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN jsDelivr failed: NetworkError: Network request failed: url='https://cdn.jsdelivr.net/...', status=503
+2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN jsDelivr failed: HTTPError: 503 Server Error: Service Unavailable for url: https://cdn.jsdelivr.net/...
 2025-04-19 14:30:16 [WARNING] tif1.cdn: CDN source 'jsDelivr' disabled after 3 failures
 2025-04-19 14:30:16 [WARNING] tif1.cache: Cache read error for 2025/Monaco%20Grand%20Prix/Race/weather.json: Corrupt compressed cache entry: ...
 2025-04-19 14:30:16 [WARNING] tif1.retry: Circuit breaker opened after 5 failures
@@ -3110,6 +2821,9 @@ print(f"  Entries: {json_rows} JSON payloads, {tel_rows} telemetry payloads")
 ```python
 import time
 
+from tif1.cache import clear_lap_cache
+
+
 def test_cache_performance():
     """Test cache performance."""
 
@@ -3118,26 +2832,27 @@ def test_cache_performance():
     # Test 1: Cold start (cache miss)
     cache = tif1.get_cache()
     cache.clear()
+    clear_lap_cache()
 
-    start = time.time()
+    start = time.perf_counter()
     laps = session.laps
-    cold_time = time.time() - start
+    cold_time = time.perf_counter() - start
 
     # Test 2: Warm start (SQLite cache hit)
     # Clear the in-memory tiers only; SQLite persists. Use a fresh session
     # so the per-session memo does not answer the request.
     cache.invalidate("memory")
-    tif1.cache.clear_lap_cache()  # the backend lap LRU lives outside Cache
+    clear_lap_cache()  # the backend lap LRU lives outside Cache
     session = tif1.get_session(2025, "Monaco", "Race")
 
-    start = time.time()
+    start = time.perf_counter()
     laps = session.laps
-    warm_time = time.time() - start
+    warm_time = time.perf_counter() - start
 
     # Test 3: Hot start (memory cache hit)
-    start = time.time()
+    start = time.perf_counter()
     laps = session.laps
-    hot_time = time.time() - start
+    hot_time = time.perf_counter() - start
 
     print(f"Cache Performance:")
     print(f"  Cold start: {cold_time * 1000:.2f}ms")
@@ -3237,6 +2952,8 @@ print(f"  Total downloaded: {summary['total_size_mb']:.2f} MB")
 ```
 
 ### Memory Monitoring
+
+The memory examples use `psutil`, which tif1 does not install. Install it with `pip install psutil`.
 
 ```python
 import psutil
@@ -3362,199 +3079,144 @@ dashboard.print_dashboard()
 
 ## Data Flow Patterns and Scenarios
 
-Common data flow patterns help with code optimization for different use cases.
+Common data flow patterns help with code optimization for different use cases. The times are measured for the laps of the 2025 Bahrain Grand Prix race (Intel Core i9-13900HX, Python 3.14, pandas 3.0.6).
 
 ### Pattern 1: Cold Start (First Load)
 
 **Scenario:** First time loading data, no cache available.
 
 ```text
-User Request
+User Request (session.laps)
     ↓
-Memory Cache Miss (< 1ms)
+Backend lap LRU miss; cache reads skipped (no cached data for the session)
     ↓
-SQLite Cache Miss (2ms)
+drivers.json: CDN fetch, one attempt per CDN
     ↓
-Circuit Breaker Check (< 1ms)
+session_laptimes.json: async CDN fetch
     ↓
-CDN URL Construction (< 1ms)
+orjson parse (validation skipped on a cold load)
     ↓
-Async HTTP Fetch - jsDelivr (500-800ms)
-    │
-    ├─ Driver 1: 523ms
-    ├─ Driver 2: 534ms
-    ├─ Driver 3: 512ms
-    └─ ... (parallel)
+Payloads written to the memory and SQLite tiers
     ↓
-JSON Parsing - orjson (100ms)
+DataFrame construction, renaming, dtype contract, LapTimeSeconds
     ↓
-Schema Validation (off by default)
-    ↓
-DataFrame Construction (81ms)
-    ↓
-Column Renaming (8ms)
-    ↓
-Type Optimization (25ms)
-    ↓
-LapTimeSeconds Column (< 5ms)
-    ↓
-SQLite Cache Save (50ms)
-    ↓
-Memory Cache Save (< 1ms)
+Laps frame written to the SQLite laps frame tier and the backend lap LRU
     ↓
 Return DataFrame
 ```
 
-**Total Time:** ~2.5-3.0 seconds
-**Network I/O:** ~500-800ms (parallel)
-**CPU Processing:** ~220ms
-**Cache Operations:** ~52ms
-**Overhead:** ~5ms
+**Total Time:** Depends on the network; the CDN round trips dominate. Building the frame takes about 30 ms on pandas.
 
 **Optimization Tips:**
 - Pre-warm cache during application startup
 - Use async loading for non-blocking operation
-- Consider loading only required data (laps vs telemetry)
+- Load only the required data (laps vs telemetry)
 
 ### Pattern 2: Warm Start (SQLite Cache Hit)
 
-**Scenario:** Data exists in SQLite cache, but not in memory.
+**Scenario:** Data exists in the SQLite cache, but not in memory (for example, a new process).
 
 ```text
-User Request
+User Request (session.laps)
     ↓
-Memory Cache Miss (< 1ms)
+Backend lap LRU miss
     ↓
-SQLite Cache Hit (30ms)
-    │
-    ├─ Database query (5ms)
-    ├─ Decompress data (15ms)
-    └─ Deserialize JSON (10ms)
-    ↓
-DataFrame Reconstruction (5ms)
-    ↓
-Memory Cache Save (< 1ms)
+SQLite laps frame tier hit (one row: decompress and unpickle)
     ↓
 Return DataFrame
 ```
 
-**Total Time:** ~30-50ms
-**Network I/O:** 0ms (no network)
-**CPU Processing:** ~30ms
-**Cache Operations:** ~35ms
-
-**Speedup vs Cold Start:** ~93x faster (30ms vs 2800ms)
+**Total Time:** About 1.5 ms, plus about 10 ms for `get_session()`. Without a laps frame row, tif1 reads the payload tier and builds the frame (about 30 ms on pandas).
+**Network I/O:** None
 
 **Optimization Tips:**
 - Keep SQLite cache on SSD for faster access
 - Keep the cache directory between runs; cached payloads never expire
 - Compare warm and cold load times (the cache keeps no hit counters)
 
-### Pattern 3: Hot Start (Memory Cache Hit)
+### Pattern 3: Hot Start (Memory Hit)
 
-**Scenario:** Data exists in memory cache.
+**Scenario:** Data exists in memory in the same process.
 
 ```text
-User Request
+User Request (session.laps)
     ↓
-Memory Cache Hit (< 1ms)
+Session attribute or backend lap LRU hit
     ↓
 Return DataFrame
 ```
 
-**Total Time:** < 1ms
-**Network I/O:** 0ms
-**CPU Processing:** < 1ms
-**Cache Operations:** < 1ms
-
-**Speedup vs Cold Start:** ~2800x faster (< 1ms vs 2800ms)
-**Speedup vs Warm Start:** ~30x faster (< 1ms vs 30ms)
+**Total Time:** About 1 µs
+**Network I/O:** None
 
 **Optimization Tips:**
-- Reuse session objects to maximize memory cache hits
+- Reuse session objects to maximize memory hits
 - Increase the memory cache size when RAM is available
 - Keep frequently accessed data in memory
 
 ### Pattern 4: Partial Cache Hit
 
-**Scenario:** Some drivers cached, others need fetching.
+**Scenario:** A telemetry batch (`get_fastest_laps_tels()`) where some laps are cached and others need fetching.
 
 ```text
-User Request (20 drivers)
+User Request (20 telemetry files)
     ↓
-Memory Cache Check
+Session memo check per file
+    ↓
+One batched cache read (memory tiers, then SQLite)
     │
-    ├─ 15 drivers: Cache Hit (< 1ms each)
-    └─ 5 drivers: Cache Miss
+    ├─ Cached files: parsed from the cache
+    └─ Missing files
         ↓
-        SQLite Cache Check
-        │
-        ├─ 3 drivers: Cache Hit (30ms each)
-        └─ 2 drivers: Cache Miss
-            ↓
-            CDN Fetch (500ms parallel)
-            ↓
-            Process & Cache (200ms)
+        Parallel CDN fetch (max_concurrent_requests)
+        ↓
+        Payloads written to the telemetry tier
 ```
 
-**Total Time:** ~700ms
-**Breakdown:**
-- 15 drivers from memory: < 1ms
-- 3 drivers from SQLite: ~90ms
-- 2 drivers from CDN: ~700ms
-
 **Optimization Tips:**
-- Batch fetch missing drivers
-- Pre-warm cache for commonly accessed drivers
+- Batch fetch missing laps with one call instead of one call per lap
+- Pre-warm cache for commonly accessed sessions
 - Use selective loading (only load needed drivers)
 
 ### Pattern 5: Network Failure with Retry
 
-**Scenario:** jsDelivr times out, so tif1 retries it with backoff and then falls back to Hugging Face. The timings assume the default settings (`timeout` 30 s, `max_retries` 3, `retry_backoff_factor` 2.0, jitter on).
+**Scenario:** jsDelivr times out on a cached session, so tif1 falls back to Hugging Face. The timings assume the default settings (`timeout` 30 s, `max_retries` 3, `retry_backoff_factor` 2.0, jitter on).
+
+The **async batch path** (laps and telemetry) walks all CDNs in one attempt:
 
 ```text
-User Request
+jsDelivr: timeout after 30s (one failure recorded for jsDelivr)
     ↓
-Memory Cache Miss
+Hugging Face: SUCCESS
     ↓
-SQLite Cache Miss
-    ↓
-jsDelivr - Attempt 1
-    ↓
-FAILURE (timeout after 30s, NetworkError)
+Process & Cache
+```
+
+This takes about 30 seconds plus the Hugging Face response. A second attempt (wait 1 s, then 2 s) starts only when every CDN fails.
+
+The **synchronous path** (`drivers.json`, `weather.json`, `rcm.json`) retries each CDN before it moves on:
+
+```text
+jsDelivr - Attempt 1: timeout after 30s (NetworkError)
     ↓
 Exponential Backoff (~1s, randomized 0.5-1.5s)
     ↓
-jsDelivr - Attempt 2
-    ↓
-FAILURE (timeout after 30s)
+jsDelivr - Attempt 2: timeout after 30s
     ↓
 Exponential Backoff (~2s, randomized 1-3s)
     ↓
-jsDelivr - Attempt 3
+jsDelivr - Attempt 3: timeout after 30s (one failure recorded for jsDelivr)
     ↓
-FAILURE (timeout after 30s): jsDelivr is marked failed
-    ↓
-Hugging Face - Attempt 1
-    ↓
-SUCCESS (500ms)
-    ↓
-Process & Cache
-    ↓
-Return DataFrame
+Hugging Face - Attempt 1: SUCCESS
 ```
 
-**Total Time:** ~94 seconds (with failures)
-**Breakdown:**
-- jsDelivr: 3 tries × 30s (timeouts) + ~3s of backoff
-- Hugging Face: 500ms (success)
-- Processing: well under 1s
+This takes about 93 seconds: 3 tries × 30 s plus about 3 s of backoff. A session with nothing in the cache fetches with a single attempt per CDN (`ultra_cold_skip_retries`), so it skips the backoff.
 
-A 404 does not trigger this loop. tif1 moves to the next CDN at once, and raises `DataNotFoundError` when every CDN returns 404.
+A 403 or 404 does not trigger these loops. tif1 moves to the next CDN at once. It raises `DataNotFoundError` when every CDN refuses the file with a 4xx other than 408 or 429.
 
 **Optimization Tips:**
 - Reduce `timeout` (`TIF1_TIMEOUT`) or `max_retries` (`TIF1_MAX_RETRIES`) for faster failure detection
-- After 3 failed fetches, tif1 skips a CDN source
+- After 3 failed fetches, tif1 skips a CDN source for the rest of the process
 - After 5 consecutive failures, the circuit breaker fails fast for 60 seconds
 
 ### Pattern 6: Batch Loading Multiple Sessions
@@ -3568,15 +3230,14 @@ import tif1
 
 events = tif1.get_event_schedule(2025, include_testing=False)["EventName"]
 
-# Sequential loading (slow)
+# Sequential loading: one session after the other
 sessions = []
 for event in events:
     session = tif1.get_session(2025, event, "Race")
-    laps = session.laps  # 3s each
+    laps = session.laps
     sessions.append((session, laps))
-# Total: 3s × 20 events = 60s
 
-# Parallel loading (fast)
+# Concurrent loading: the payload fetches of all sessions overlap
 async def load_session_async(event):
     session = tif1.get_session(2025, event, "Race")
     laps = await session.laps_async()
@@ -3586,9 +3247,6 @@ async def load_all():
     return await asyncio.gather(*[load_session_async(event) for event in events])
 
 sessions = asyncio.run(load_all())  # In Jupyter, use: sessions = await load_all()
-# Total: ~5s (parallel loading)
-
-# Speedup: 12x faster
 ```
 
 ### Pattern 7: Incremental Data Loading
@@ -3599,16 +3257,14 @@ sessions = asyncio.run(load_all())  # In Jupyter, use: sessions = await load_all
 # Load session (no data yet)
 session = tif1.get_session(2025, "Monaco", "Race")
 
-# Load laps only (500ms)
+# Load laps only
 laps = session.laps
 
-# Analyze laps
-fastest_lap = laps.loc[laps["LapTime"].idxmin()]
+# Analyze laps: the fastest lap as a Lap object
+fastest_lap = laps.pick_fastest()
 
-# Load telemetry only for fastest lap (200ms)
+# Load telemetry only for the fastest lap (one file, not one per lap)
 telemetry = fastest_lap.get_telemetry()
-
-# Total: 700ms (vs 5s if loading all data upfront)
 ```
 
 ### Pattern 8: Cache Warming Strategy
@@ -3769,30 +3425,23 @@ tif1.get_config().set("timeout", int(adaptive_timeout.get_timeout()))
 Load only the required data.
 
 ```python
-# Bad: Load everything (slow, high memory)
-session = tif1.get_session(2025, "Monaco", "Race")
-laps = session.laps  # Loads all drivers
-telemetry = session.car_data  # Loads telemetry for every lap of every driver
-weather = session.weather
-messages = session.race_control_messages
-# Total: ~5s, ~100 MB
+# Bad: Load everything. session.car_data fetches one telemetry file per lap
+# of every driver (more than a thousand files for a race):
+#   session.load()  # laps, telemetry of every lap, weather, messages
 
-# Good: Load selectively (fast, low memory)
+# Good: Load selectively
 session = tif1.get_session(2025, "Monaco", "Race")
 
-# Only load laps
-laps = session.laps  # 500ms, ~7 MB
+# Only load laps (about 0.5 MB for a race on pandas)
+laps = session.laps
 
 # Only load specific drivers
 verstappen = session.get_driver("VER")
-verstappen_laps = verstappen.laps  # Filtered view, no additional loading
+verstappen_laps = verstappen.laps  # Filtered from session.laps, no additional loading
 
-# Only load fastest lap telemetry
+# Only load fastest lap telemetry (one file, about 150 KB on pandas)
 fastest_lap = verstappen.get_fastest_lap()
-telemetry = fastest_lap.get_telemetry()  # 200ms, ~25 MB
-
-# Total: ~700ms, ~32 MB
-# Savings: 7x faster, 68% less memory
+telemetry = fastest_lap.get_telemetry()
 ```
 
 ### Strategy 4: Batch Operations for Multiple Analyses
@@ -3809,15 +3458,12 @@ for code in session.drivers_df["Driver"]:
     fastest_lap = session.get_driver(code).get_fastest_lap()
     telemetry = fastest_lap.get_telemetry()
     results.append(analyze_telemetry(telemetry))
-# Time: 20 drivers × 200ms = 4s
 
 # Good: Batch operation. get_fastest_laps_tels() returns one DataFrame
 # with a Driver column (polars: for (driver,), tel in telemetries.group_by("Driver"))
 fastest_laps = session.get_fastest_laps(by_driver=True)
 telemetries = session.get_fastest_laps_tels(by_driver=True)
 results = [analyze_telemetry(tel) for _, tel in telemetries.groupby("Driver")]
-# Time: 600ms (parallel fetching)
-# Speedup: 6.7x faster
 ```
 
 ### Strategy 5: Memory-Efficient Iteration
@@ -3840,7 +3486,7 @@ all_sessions = []
 for event in events:
     session = tif1.get_session(2025, event, "Race")
     all_sessions.append(session.laps)
-# Memory: 20 events × 7 MB = 140 MB
+# Memory: every laps frame stays referenced (about 0.5 MB per race on pandas)
 
 # Good: Process iteratively
 for event in events:
@@ -3851,10 +3497,12 @@ for event in events:
     result = analyze_laps(laps)
     save_result(result)
 
-    # Data can be garbage collected
     del laps, session
-# Memory: ~7 MB (constant)
-# Savings: 95% less memory
+# The backend lap LRU still holds up to 100 laps frames per backend.
+# Release them with clear_lap_cache() when memory matters
+from tif1.cache import clear_lap_cache
+
+clear_lap_cache()
 ```
 
 ### Strategy 6: Polars for Large-Scale Analysis
@@ -3875,9 +3523,10 @@ result_pandas = (
         "Position": "last"
     })
 )
-# Time: 45ms
 
 # Polars (faster for large data)
+import polars as pl
+
 session_polars = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 laps_polars = session_polars.laps
 
@@ -3892,39 +3541,22 @@ result_polars = (
         pl.col("Position").last().alias("final_position")
     ])
 )
-# Time: 12ms
-# Speedup: 3.8x faster
 ```
 
 ### Strategy 7: Connection Pooling Optimization
 
-Optimize HTTP connection pooling for the workload.
+tif1 builds one shared niquests session per process, so tune it through the config, not through a custom adapter. Set these variables before Python starts:
 
-```python
-import niquests
+```bash
+# Requests in flight for one batch (default 22)
+export TIF1_MAX_CONCURRENT_REQUESTS=32
 
-# Default configuration (good for most cases)
-session = niquests.Session()
+# Connection pool sizes (defaults: 256 pools, 1024 connections)
+export TIF1_POOL_CONNECTIONS=256
+export TIF1_POOL_MAXSIZE=1024
 
-# High-concurrency configuration (many parallel requests)
-session = niquests.Session()
-adapter = niquests.adapters.HTTPAdapter(
-    pool_connections=20,  # More connection pools
-    pool_maxsize=200,     # More connections per pool
-    pool_block=False,     # Don't block when pool is full
-    max_retries=3         # Automatic retries
-)
-session.mount('https://', adapter)
-
-# Low-latency configuration (minimize overhead)
-session = niquests.Session()
-adapter = niquests.adapters.HTTPAdapter(
-    pool_connections=5,
-    pool_maxsize=50,
-    pool_block=True,      # Block to reuse connections
-    max_retries=1
-)
-session.mount('https://', adapter)
+# HTTP/2 multiplexing over one connection per host (default true)
+export TIF1_HTTP_MULTIPLEXED=true
 ```
 
 ### Strategy 8: Lazy Evaluation with Polars
@@ -3933,6 +3565,8 @@ Use Polars lazy evaluation for complex pipelines.
 
 ```python
 import polars as pl
+
+session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 
 # Eager evaluation (executes immediately)
 laps = session.laps
@@ -3955,13 +3589,12 @@ result = (
     .collect()  # Execute optimized plan
 )
 
-# Polars optimizes:
+# Polars optimizes the plan before it runs, for example:
 # - Predicate pushdown (filter early)
 # - Projection pushdown (select only needed columns)
-# - Common subexpression elimination
 # - Parallel execution
-
-# Speedup: 2-3x faster for complex pipelines
+# On the laps of one session both forms finish in about a millisecond; the
+# plan optimizations matter for large tables and files
 ```
 
 ### Strategy 9: Compression for Cache Storage
@@ -3975,7 +3608,7 @@ The codec and level are fixed; there is no compression-level setting.
 #   rows >= 4096 bytes -> zstd level 1 (zlib level 3 only when no zstd binding imports)
 #   smaller rows       -> plain TEXT, no compression
 #
-# Frame tier (telemetry_frames, telemetry_frames_pl):
+# Frame tiers (laps_frames, laps_frames_pl, telemetry_frames, telemetry_frames_pl):
 #   pickle protocol 5 -> lz4 (zstd level 1 when lz4 is unavailable)
 #
 # zstd-1 was chosen over zlib because it compresses ~4.5x faster at a
@@ -4078,66 +3711,59 @@ The tif1 data flow architecture targets maximum performance, reliability, and de
 
 **1. Performance First**
 - Every component optimized for speed
-- Multi-tier caching reduces latency by 2800x
+- Multi-tier caching: a warm `session.laps` loads in about 1.5 ms, a repeated access in about 1 µs
 - HTTP/2 multiplexing enables parallel fetching
-- orjson provides 3x faster JSON parsing
-- Categorical types reduce memory by 90%
-- Polars backend offers 4x faster operations
+- orjson parses tif1 payloads 3x to 7x faster than stdlib `json`
+- Categorical types cut the memory of the text columns by about 90% (pandas)
+- Polars frames use 25-40% less memory than pandas frames
 
 **2. Resilience and Reliability**
 - Circuit breaker prevents cascading failures
 - Automatic retry with exponential backoff
 - Multi-source CDN fallback (jsDelivr → Hugging Face → StaticDelivr)
-- Comprehensive error handling with detailed context
+- Error handling with structured context (`e.context`)
 - Graceful degradation for non-critical data
 
 **3. Developer Experience**
 - Lazy loading minimizes unnecessary work
 - Intuitive API with sensible defaults
 - Detailed logging and monitoring capabilities
-- Detailed error messages with recovery suggestions
+- Exceptions carry the year, event, session, and other keys of the failed request
 - Flexible backend selection (pandas/polars)
 
 ### Performance Characteristics
 
-**Load Time Comparison:**
+**Load Time Comparison** (laps of the 2025 Bahrain Grand Prix race, pandas, Intel Core i9-13900HX):
 
-| Scenario | Time | Speedup vs Cold |
-|----------|------|-----------------|
-| Cold start (no cache) | 2.8s | 1x (baseline) |
-| Warm start (SQLite cache) | 30ms | 93x faster |
-| Hot start (memory cache) | < 1ms | 2800x faster |
+| Scenario | Time |
+|----------|------|
+| Cold start (no cache) | Depends on the network |
+| Warm start (SQLite laps frame tier) | About 1.5 ms |
+| Warm start, payload tier only | About 30 ms |
+| Hot start (memory) | About 1 µs |
 
-**Memory Usage:**
+**Memory Usage** (same race):
 
-| Data Type | Unoptimized | Optimized | Savings |
-|-----------|-------------|-----------|---------|
-| Lap data (1500 laps) | 15 MB | 4 MB | 73% |
-| Telemetry (15k samples) | 45 MB | 18 MB | 60% |
-| Weather (150 samples) | 0.8 MB | 0.3 MB | 63% |
-
-**Backend Comparison:**
-
-| Operation | Pandas | Polars | Speedup |
-|-----------|--------|--------|---------|
-| Load from JSON | 86ms | 20ms | 4.3x |
-| Filter | 2.5ms | 0.8ms | 3.1x |
-| Groupby | 12ms | 3ms | 4.0x |
-| Memory usage | 7 MB | 3.5 MB | 50% less |
+| Data Type | Pandas | Polars |
+|-----------|--------|--------|
+| Lap data (1128 laps) | 462 KB | 348 KB |
+| Telemetry (one lap, 710 samples) | 148 KB | 91 KB |
+| Weather (158 samples) | 9.5 KB | 8.9 KB |
 
 ### Key Optimizations
 
 **1. Multi-Tier Caching**
-- L1 (Memory): < 1ms access, 1024 items
-- L2 (SQLite): 30ms access, unlimited capacity
-- Automatic promotion from L2 to L1
+- Memory: about 3 µs per payload read; 1024 JSON and 2048 telemetry payloads
+- SQLite: about 2 ms per 343 KB payload read; unlimited capacity
+- Laps frame tier: the built laps DataFrame in one SQLite row
+- Automatic promotion from SQLite to memory
 - No expiry: cached payloads persist until cleared
 
 **2. Async Parallel Fetching**
 - HTTP/2 multiplexing over single connection
-- 20 drivers fetched in 500ms (vs 10s sequential)
-- 17x speedup for multi-driver operations
-- Automatic error handling and retry
+- Up to `max_concurrent_requests` (default 22) requests in flight
+- A failed fetch in a batch becomes `None` without cancelling the others
+- Automatic retry when every CDN fails
 
 **3. Type Optimization**
 - Categorical encoding for string columns (pandas)
@@ -4168,7 +3794,7 @@ session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps  # Don't load telemetry if not needed
 
 # 4. Batch operations
-fastest_laps = session.get_fastest_laps(by_driver=True)  # Parallel
+fastest_laps = session.get_fastest_laps(by_driver=True)  # One call for every driver
 
 # 5. Pre-warm cache (warm_cache_background from the cache warming strategies above)
 warm_cache_background(2025)  # Background thread
@@ -4178,7 +3804,6 @@ warm_cache_background(2025)  # Background thread
 
 ```python
 import logging
-import os
 
 import tif1
 
@@ -4199,8 +3824,8 @@ if cb.state == "open":
 # 3. Enable logging
 tif1.setup_logging(logging.INFO)
 
-# 4. Use timeouts
-os.environ["TIF1_TIMEOUT"] = "30"
+# 4. Use timeouts (seconds per request; TIF1_TIMEOUT set before Python starts does the same)
+tif1.get_config().set("timeout", 30)
 ```
 
 **For Memory Efficiency:**
@@ -4214,14 +3839,17 @@ for event in tif1.get_event_schedule(2025, include_testing=False)["EventName"]:
     session = tif1.get_session(2025, event, "Race")
     laps = session.laps
     process(laps)
-    del laps, session  # Allow garbage collection
+    del laps, session  # The backend lap LRU still holds the frame (see step 3)
 
-# 2. Use Polars (50% less memory)
+# 2. Use Polars (about 25% less memory for laps)
 session = tif1.get_session(2025, "Monaco", "Race", lib="polars")
 
 # 3. Clear cache tiers when needed
+from tif1.cache import clear_lap_cache
+
 cache = tif1.get_cache()
-cache.invalidate("memory")     # Free the in-memory tiers; SQLite persists
+cache.invalidate("memory")     # Free the in-memory payload tiers; SQLite persists
+clear_lap_cache()              # Free the laps frames held by the backend lap LRU
 cache.invalidate("telemetry")  # Drop telemetry payloads and frames from disk
 ```
 
@@ -4229,38 +3857,39 @@ cache.invalidate("telemetry")  # Drop telemetry payloads and frames from disk
 
 **Pitfall 1: Creating New Sessions Repeatedly**
 ```python
-# Bad: Cache miss every time
+# Avoid: each loop repeats get_session() (event and session lookup). The laps
+# come from the process-wide backend lap LRU, so they are not reloaded
 for i in range(10):
     session = tif1.get_session(2025, "Monaco", "Race")
-    laps = session.laps  # 2.8s each time
+    laps = session.laps
 
-# Good: Reuse session
+# Better: Reuse session
 session = tif1.get_session(2025, "Monaco", "Race")
 for i in range(10):
-    laps = session.laps  # < 1ms after first access
+    laps = session.laps  # About 1 µs after the first access
 ```
 
 **Pitfall 2: Loading All Data When Only Laps Needed**
 ```python
-# Bad: Load everything (5s)
+# Bad: Load everything
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps
-telemetry = session.car_data  # Not needed: telemetry for every lap
 weather = session.weather  # Not needed
+# telemetry = session.car_data  # Not needed: one telemetry file per lap, more than a thousand
 
-# Good: Load only laps (500ms)
+# Good: Load only laps
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps
 ```
 
 **Pitfall 3: Sequential Operations**
 ```python
-# Bad: Sequential (10s)
+# Bad: Sequential (one request at a time)
 for code in session.drivers_df["Driver"]:
     lap = session.get_driver(code).get_fastest_lap()
     tel = lap.get_telemetry()
 
-# Good: Batch (600ms)
+# Good: Batch (telemetry requests in parallel)
 fastest_laps = session.get_fastest_laps(by_driver=True)
 telemetries = session.get_fastest_laps_tels(by_driver=True)
 ```
@@ -4310,32 +3939,15 @@ except tif1.NetworkError as e:
 - [ ] Consider CDN proximity
 - [ ] Review and optimize data loading patterns
 
-### Future Enhancements
-
-The tif1 data flow architecture is designed to evolve. Planned enhancements include:
-
-**Short Term:**
-- Streaming data support for live sessions
-- GraphQL API for selective field loading
-- Redis cache tier for distributed systems
-- Automatic cache warming based on ML predictions
-
-**Long Term:**
-- Edge caching with CloudFlare Workers
-- WebSocket support for real-time updates
-- Distributed cache with automatic sharding
-- Query result caching with automatic invalidation
-- Advanced prefetching based on access patterns
-
 ### Conclusion
 
 The tif1 data flow architecture takes a complete approach to high-performance data loading and processing. Combine the eight-stage pipeline, multi-tier caching, async parallel fetching, and these best practices to get:
 
-- **93-2800x faster** data access through caching
-- **17x faster** multi-driver operations through parallelization
+- **About 1.5 ms** for a warm `session.laps` from the SQLite laps frame tier, and about 1 µs for a repeated access
+- **Parallel fetches** of many payloads, up to `max_concurrent_requests` at a time
 - **About a third less** memory for pandas laps through the dtype contract
-- **4x faster** operations through Polars backend
-- **99%+ reliability** through error handling and circuit breakers
+- **25-40% less** memory for the frames of the polars backend
+- **CDN fallback** across three mirrors, with retries and a circuit breaker
 
 The architecture is transparent, observable, and tunable. For a simple analysis script or a production data pipeline, tif1 provides the needed performance and reliability.
 
@@ -4392,8 +4004,7 @@ export TIF1_TIMEOUT="30"
 export TIF1_MAX_RETRIES="3"
 export TIF1_RETRY_BACKOFF_FACTOR="2.0"
 
-# Logging configuration
-export TIF1_LOG_LEVEL="INFO"
+# Logging: no environment variable; call tif1.setup_logging(logging.INFO) in Python
 ```
 
 ### Common Code Patterns

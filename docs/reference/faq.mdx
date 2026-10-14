@@ -56,7 +56,7 @@ pip install tif1
 
 Python 3.11 or higher is required. Versions 3.11 through 3.15 are tested in CI.
 
-On Python 3.14 and later, the cache uses the standard-library `compression.zstd` module instead of the `zstandard` package. On Python 3.15, the `lz4` package is not installed because it has no 3.15 wheels yet. The telemetry frame cache uses zstd instead. Cached data stays compatible across these versions.
+On Python 3.14 and later, the cache uses the standard-library `compression.zstd` module instead of the `zstandard` package. On Python 3.15, the `lz4` package is not installed because it has no 3.15 wheels yet. The frame cache uses zstd instead. Cached payloads read on every version. On Python 3.15, a cached frame written with lz4 is a cache miss. tif1 rebuilds it from the cached payload.
 
 ### Do I need an API key?
 
@@ -72,14 +72,13 @@ By default, data uses FastF1-style OS-specific cache locations: Windows `%LOCALA
 
 ### Why is my first load slow?
 
-The first access to a session downloads data from the CDN. Subsequent loads are instant from the cache. Use `laps_async()` for parallel initial loads (3x+ vs sequential in the benchmark suite).
+The first access to a session downloads data from the CDN. Later loads read the local cache. `session.laps` already fetches the lap payloads in parallel. Inside a running event loop, use `await session.laps_async()` instead.
 
 ### How do I load data faster?
 
-1. Use async loading: `await session.laps_async()`
+1. Keep caching enabled (default)
 2. Enable the polars lib: `lib="polars"`
 3. Use batch telemetry fetching: `session.get_fastest_laps_tels()`
-4. Keep caching enabled (default)
 
 ### Can I access live timing data?
 
@@ -87,7 +86,7 @@ No, tif1 focuses on historical data (2018-current). For live timing, use fastf1.
 
 ### How recent is the data?
 
-Data is typically available 30 minutes after a session ends. This is slightly longer than fastf1 (~20-25 minutes) because tif1 includes additional enriched data.
+The TracingInsights data repositories publish a session some time after it ends. Scheduled jobs in those repositories do the publication, so the delay varies. A session that is not published yet raises `DataNotFoundError`.
 
 ### Why am I getting DataNotFoundError?
 
@@ -95,9 +94,10 @@ Common causes:
 - The data has not been published yet (check whether the session ended recently)
 - The session did not take place (cancelled or postponed)
 - A driver code or lap number does not exist in the session (`DriverNotFoundError`, `LapNotFoundError`)
-- The event name is not on the calendar of that season, for example `"Suzuka"` in 2021
 
-tif1 resolves circuit, city, and country names such as `"Spa"` or `"Silverstone"` to the correct event. A misspelled event name does not raise: tif1 corrects it to the closest event name. Check the result with `session.event["EventName"]`. A session name that does not exist raises `ValueError` and lists the available session names.
+An event name that matches no event of that season raises a different error. `get_session` raises `EventNotFoundError`, a `ValueError` subclass, with the message `No event matching '<name>' in <year>`. An event that is not on the calendar of that season, for example `"Suzuka"` in 2021, raises `EventNotInSeasonError`, a subclass of `EventNotFoundError`.
+
+tif1 resolves circuit, city, and country names such as `"Spa"` or `"Silverstone"` to the correct event. A misspelled event name such as `"Monacco"` does not raise: tif1 corrects it to the closest event name and logs a warning. Check the result with `session.event["EventName"]`. A name that resembles no event, such as `"Paris"`, raises `EventNotFoundError`. A session name that does not exist raises `ValueError` and lists the available session names.
 
 ---
 
@@ -105,10 +105,10 @@ tif1 resolves circuit, city, and country names such as `"Spa"` or `"Silverstone"
 
 ### How can I reduce memory usage?
 
-1. Use the polars lib (50% less memory)
+1. Use the polars lib
 2. Process drivers one at a time instead of loading all at once
 3. Delete DataFrames when done: `del laps`
-4. Use categorical dtypes (automatic in tif1)
+4. Use categorical dtypes (automatic for `Driver`, `Team`, `Compound`, and `TrackStatus` on pandas)
 
 ### Why is polars faster?
 
@@ -123,6 +123,8 @@ Polars is written in Rust and uses:
 Yes, each session can use a different backend:
 
 ```python
+import tif1
+
 session1 = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="pandas")
 session2 = tif1.get_session(2025, "Italian Grand Prix", "Race", lib="polars")
 ```
@@ -189,11 +191,14 @@ for driver, tel in tels.groupby("Driver"):
 Yes, use standard DataFrame filtering:
 
 ```python
-# Pandas
+import polars as pl
+
+# pandas
 lap_10 = laps[laps["LapNumber"] == 10]
 
-# Polars
-lap_10 = laps.filter(pl.col("LapNumber") == 10)
+# polars
+laps_pl = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars").laps
+lap_10_pl = laps_pl.filter(pl.col("LapNumber") == 10)
 ```
 
 ### Why does `laps["LapTime"] < 90` fail?
@@ -205,7 +210,7 @@ lap_10 = laps.filter(pl.col("LapNumber") == 10)
 fast = laps[laps["LapTimeSeconds"] < 90]
 
 # polars
-fast = laps.filter(pl.col("LapTimeSeconds") < 90)
+fast_pl = laps_pl.filter(pl.col("LapTimeSeconds") < 90)
 ```
 
 On pandas, `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` also works. See [Column types by backend](/concepts/backends#column-types-by-backend).
@@ -233,21 +238,22 @@ weather = session.weather
 
 ### Are lap times accurate?
 
-Yes, lap times come from official timing data. Missing lap times are filled from Ergast/Jolpica where available.
+Lap times come from the official timing data that FastF1 reads. For Race sessions, the data pipeline replaces them with the official Ergast/Jolpica lap times where available.
 
 ### Why are some lap times missing?
 
 Lap times can be missing due to:
 - Pit stops
-- Track limits violations (deleted laps)
 - Timing system issues
-- Very slow laps (> 2m30s in some sources)
+- Very slow laps (FastF1 can drop laps slower than 2:30)
 
-tif1 fills gaps where possible using alternative data sources.
+A lap deleted for track limits keeps its `LapTime`. The `Deleted` column flags it, and the fastest-lap functions skip it.
+
+For Race sessions, the data pipeline adds laps that FastF1 drops, such as lap 1, from Ergast/Jolpica. tif1 itself does not fill gaps.
 
 ### Is telemetry data validated?
 
-Yes, tif1 includes optional Pydantic validation (enabled by default). Invalid data raises `InvalidDataError`.
+Only on request. Pydantic validation is off by default. Set `TIF1_VALIDATE_TELEMETRY=true` and `TIF1_ULTRA_COLD_START=false` to validate downloaded telemetry. A payload that fails validation raises `InvalidDataError`. See [Environment Variables](/reference/environment-variables).
 
 ---
 
@@ -306,10 +312,6 @@ laps = asyncio.run(main())
 
 Inside a running event loop, such as a Jupyter cell, call `await session.laps_async()` directly.
 
----
-
-
-
 ### How do I analyze tire degradation?
 
 Tire degradation analysis requires tracking lap times over tire life:
@@ -349,7 +351,7 @@ plt.show()
 
 ### How do I compare two drivers' telemetry?
 
-Use the telemetry comparison utilities:
+Load the fastest lap of each driver and plot the telemetry:
 
 ```python
 import tif1
@@ -520,7 +522,7 @@ print(f"Fastest S3: {fastest_laps.loc[fastest_laps['Sector3Time'].idxmin(), 'Dri
 
 ### How do I use tif1 with Streamlit?
 
-tif1 works with Streamlit for interactive dashboards:
+tif1 works with Streamlit for interactive dashboards. Install Streamlit first with `pip install streamlit`, then start the script with `streamlit run app.py`:
 
 ```python
 import streamlit as st

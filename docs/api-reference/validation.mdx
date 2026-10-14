@@ -15,11 +15,11 @@ keywords:
 
 # Data Validation
 
-The validation module provides a Pydantic-based validation system. It ensures data integrity and catches malformed responses from the CDN before they reach the application code.
+The validation module provides a Pydantic-based validation system. It ensures data integrity and catches malformed responses from the CDN before they reach the application code. The fetch pipeline calls the pydantic-free `validate_*_data()` fast paths, which check structure, aliases, and array lengths. The pydantic models back the manual `validate_laps()`, `validate_telemetry()`, `validate_weather()`, `validate_race_control()`, and `validate_drivers()` functions.
 
 ## Overview
 
-The tif1 validation system acts as a quality gate between raw CDN JSON data and the application. It performs deep structural validation, type checking, and anomaly detection. This ensures that the data is clean and consistent.
+The tif1 validation system acts as a quality gate between raw CDN JSON data and the application. It provides structural validation, type checking, and anomaly detection. This ensures that the data is clean and consistent.
 
 ### What Validation Catches
 
@@ -28,23 +28,23 @@ The validation system detects and handles:
 - **Missing Required Fields**: Ensures all mandatory data fields are present
 - **Incorrect Data Types**: Validates that numeric fields contain numbers, booleans are booleans, etc.
 - **Inconsistent Array Lengths**: Verifies all parallel arrays have matching lengths (critical for DataFrame construction)
-- **Invalid Enum Values**: Checks tire compounds, session types, and other categorical data against known valid values
 - **Null-like String Values**: Automatically converts "", "none", "null", "nan" to proper None values
-- **Out-of-Range Values**: Validates numeric constraints (for example, RPM &lt; 20,000, gear &lt;= 8, stint &gt;= 1)
+- **Out-of-Range Values**: Validates numeric constraints on lap payloads (stint &gt;= 1, tire life &gt;= 0). The per-sample `TelemetryPoint` model also bounds RPM (&lt;= 20,000), speed, gear (&lt;= 8), throttle, and acceleration; the batch telemetry model does not
+- **Known Enum Values**: `TireCompound`, `SessionType`, and `LapStatus` list the known categorical values for application code to check against. The payload validators do not reject unknown compounds, and `SessionData` only logs a warning for an unknown session type
 - **Data Anomalies**: Detects missing laps, duplicate lap numbers, and statistical outliers
 - **Field Aliases**: Handles both verbose and abbreviated field names from different CDN formats
 
 ### Performance Considerations
 
 <Note>
-  **Validation is disabled by default** for optimal performance. The library is designed for speed, and validation adds 10-15% overhead. Enable validation during development, debugging, or when working with untrusted data sources.
+  **Validation is disabled by default** for optimal performance. The library is designed for speed, and validation adds work to every fetch. Enable validation during development, debugging, or when working with untrusted data sources. Validation only runs on payloads fetched from the CDN outside ultra-cold mode. With the default `ultra_cold_start=True`, a session that is not in the cache yet loads in ultra-cold mode and skips validation. Set `ultra_cold_start` to `False` as well (see [Configuration](#configuration)).
 </Note>
 
 **When to Enable Validation:**
 - Development and testing environments
 - First-time data exploration for new seasons/events
 - Debugging data quality issues
-- Working with experimental or beta CDN endpoints
+- Working with custom CDN sources (the `cdns` setting)
 - Building data quality monitoring pipelines
 
 **When to Keep Validation Disabled:**
@@ -82,7 +82,7 @@ Validates raw lap timing JSON from the CDN. Ensures that all required fields are
 - All non-empty arrays must have identical length
 - Stint numbers must be >= 1
 - Tire life must be >= 0
-- `validate_laps()` does not convert null-like strings ("", "none", "null", "nan"). `validate_lap_data()` converts them to None
+- Null-like strings ("", "none", "null", "nan") in any list field are converted to None before the model is built
 - Optional fields (session_time, pit times, speed traps, weather) are validated if present
 
 **Example:**
@@ -130,7 +130,7 @@ bad_data = {
     "lap": [1.0, 2.0, 3.0],  # 3 elements - MISMATCH!
     # ... other fields
 }
-# Raises: ValueError: Inconsistent lap data lengths
+# Raises pydantic.ValidationError: Value error, Inconsistent lap data lengths
 
 # Error: Invalid stint number
 bad_data = {
@@ -139,7 +139,7 @@ bad_data = {
     "stint": [0],  # Must be >= 1
     # ... other fields
 }
-# Raises: ValueError: Stint numbers must be >= 1
+# Raises pydantic.ValidationError: Value error, Stint numbers must be >= 1
 
 # Error: Negative tire life
 bad_data = {
@@ -148,7 +148,7 @@ bad_data = {
     "life": [-1],  # Must be >= 0
     # ... other fields
 }
-# Raises: ValueError: Tire life must be >= 0
+# Raises pydantic.ValidationError: Value error, Tire life must be >= 0
 ```
 
 ---
@@ -258,7 +258,7 @@ print(f"Speed: {validated.speed}")  # [250.0, 251.0]
 ```
 
 **Performance Note:**
-Batch validation is ~50x faster than point-by-point validation. Always use `validate_telemetry()` for array data rather than validating individual telemetry points.
+Batch validation checks whole arrays in one model. Use `validate_telemetry()` for array data rather than the per-sample `TelemetryPoint` model.
 
 ---
 
@@ -341,7 +341,7 @@ bad_data = {
         # ... other fields
     }]
 }
-# Raises: ValidationError: driver must match pattern ^[A-Z]{3}$
+# Raises: ValidationError: String should have at most 3 characters
 
 # Error: Driver code not uppercase
 bad_data = {
@@ -351,7 +351,7 @@ bad_data = {
         # ... other fields
     }]
 }
-# Raises: ValidationError: driver must match pattern ^[A-Z]{3}$
+# Raises: ValidationError: String should match pattern '^[A-Z]{3}$'
 
 # Error: Team name too long
 bad_data = {
@@ -361,7 +361,7 @@ bad_data = {
         # ... other fields
     }]
 }
-# Raises: ValidationError: team must be at most 100 characters
+# Raises: ValidationError: String should have at most 100 characters
 ```
 
 **Integration with Session:**
@@ -374,12 +374,14 @@ import tif1
 # Enable validation of weather.json and rcm.json
 config = tif1.get_config()
 config.set("validate_data", True)
+config.set("ultra_cold_start", False)  # ultra-cold loads skip validation
 
 session = tif1.get_session(2025, "Monaco", "Race")
 session.load(laps=False, telemetry=False)
 # Payloads fetched from the CDN are validated in non-strict mode:
 # a malformed payload is logged and passed through unchanged
 print(f"Weather samples: {len(session.weather)}")
+config.set("ultra_cold_start", True)
 ```
 
 ---
@@ -451,7 +453,7 @@ raw_data = {
     "wP": [1013.0, 1013.2, 1013.5, 1013.7],  # Pressure (mbar)
     "wR": [False, False, False, True],    # Rainfall
     "wWD": [180.0, 185.0, 190.0, 195.0],  # Wind direction (degrees)
-    "wWS": [5.0, 5.5, 6.0, 6.5],          # Wind speed (km/h)
+    "wWS": [5.0, 5.5, 6.0, 6.5],          # Wind speed (m/s)
 }
 
 try:
@@ -476,14 +478,14 @@ except Exception as e:
 | `wP` | `Pressure` | `pressure` | Atmospheric pressure (mbar) |
 | `wR` | `Rainfall` | `rainfall` | Rainfall indicator (bool) |
 | `wWD` | `WindDirection` | `wind_direction` | Wind direction (degrees) |
-| `wWS` | `WindSpeed` | `wind_speed` | Wind speed (km/h) |
+| `wWS` | `WindSpeed` | `wind_speed` | Wind speed (m/s) |
 
 **Handling Mixed Formats:**
 
 ```python
 from tif1.validation import validate_weather
 
-# CDN might return mixed naming conventions
+# The validator also accepts mixed naming conventions
 mixed_data = {
     "Time": [0.0, 60.0],        # PascalCase
     "wAT": [25.5, 25.7],        # Aliased
@@ -518,8 +520,7 @@ Validates race control message data from the CDN, ensuring message timestamps, c
 - `pydantic.ValidationError`: If validation fails
 
 **Validation Rules:**
-- Required field: `time` - message timestamp in seconds
-- The CDN `rcm.json` stores `time` as ISO 8601 date strings, which `RaceControlData` rejects. For CDN payloads, use `validate_race_control_data()`: it checks the structure and the lengths only
+- Required field: `time` - message timestamps. The CDN `rcm.json` stores ISO 8601 wall-clock strings; session-relative seconds are accepted as well
 - All non-empty arrays must have identical length
 - Supports aliased field names (`cat`, `msg`, `dNum`)
 - Null-like strings converted to None
@@ -584,19 +585,20 @@ Race control message categories in the CDN data:
 - `Flag`: Track flag changes (GREEN, YELLOW, RED, BLUE, etc.)
 - `SafetyCar`: Safety car and virtual safety car (VSC) deployment and withdrawal
 - `Drs`: DRS enabled/disabled
+- `CarEvent`: Incidents of one car (for example, "CAR 5 (VET) SPUN AND CONTINUED AT TURN 3")
 - `Other`: Other messages, including penalties and investigations
 
 **Field Reference:**
 
 | Field | Alias | Type | Description |
 |-------|-------|------|-------------|
-| `time` | - | `float` | Message timestamp (seconds from session start) |
-| `category` | `cat` | `str` | Message category (Flag, SafetyCar, Drs, Other) |
+| `time` | - | `str\|float` | Message timestamp (ISO 8601 string in CDN payloads, or seconds) |
+| `category` | `cat` | `str` | Message category (Flag, SafetyCar, Drs, CarEvent, Other) |
 | `message` | `msg` | `str` | Full message text |
 | `status` | - | `str` | Status text ("DEPLOYED", "ENABLED", "DISABLED", etc.) |
 | `flag` | - | `str` | Flag type (GREEN, YELLOW, RED, BLUE, etc.) |
 | `scope` | - | `str` | Message scope (Track, Sector, Driver) |
-| `sector` | - | `int\|str` | Affected sector number (1, 2, or 3) |
+| `sector` | - | `int\|str` | Affected marshal sector number (for example, 7) |
 | `racing_number` | `dNum` | `str` | Affected driver number (for driver-specific messages) |
 | `lap` | - | `int` | Lap number when message was issued |
 
@@ -698,7 +700,7 @@ Inherits from `ConsistentLengthsMixin` which provides automatic array length val
 | `lap_start_date` | `lSD` | `list[str \| None]` | Lap start date/time |
 | `deleted` | `del` | `list[bool \| None]` | Deleted lap indicator |
 | `deleted_reason` | `delR` | `list[str \| None]` | Reason for lap deletion |
-| `fastf1_generated` | `ff1G` | `list[bool \| None]` | FastF1 compatibility flag |
+| `fastf1_generated` | `ff1G` | `list[bool \| None]` | Lap added by FastF1 (limited data) |
 | `is_accurate` | `iacc` | `list[bool \| None]` | Data accuracy indicator |
 
 **Weather Fields (per-lap):**
@@ -712,14 +714,14 @@ Inherits from `ConsistentLengthsMixin` which provides automatic array length val
 | `rainfall` | `wR` | `list[bool \| None]` | Rainfall indicator |
 | `track_temp` | `wTT` | `list[float \| None]` | Track temperature (°C) |
 | `wind_direction` | `wWD` | `list[float \| None]` | Wind direction (degrees) |
-| `wind_speed` | `wWS` | `list[float \| None]` | Wind speed (km/h) |
+| `wind_speed` | `wWS` | `list[float \| None]` | Wind speed (m/s) |
 
 **Validation Behavior:**
 
 1. **Length Consistency**: All non-empty lists must have the same length
 2. **Stint Validation**: All stint values must be >= 1
 3. **Tire Life Validation**: All tire life values must be >= 0
-4. **Null Normalization**: The model does not convert null-like strings. `validate_lap_data()` converts them to None
+4. **Null Normalization**: `validate_laps()` and `validate_lap_data()` convert null-like strings to None before they build the model; `LapData(...)` itself does not
 5. **Alias Support**: Accepts both verbose and aliased field names
 
 **Example:**
@@ -819,9 +821,9 @@ Represents validated telemetry sensor data with support for multiple CDN formats
 | `x` | - | `list[float \| None]` | X coordinate | Circuit-specific |
 | `y` | - | `list[float \| None]` | Y coordinate | Circuit-specific |
 | `z` | - | `list[float \| None]` | Z coordinate (elevation) | Circuit-specific |
-| `acc_x` | - | `list[float \| None]` | X acceleration (m/s²) | -500 to 500 |
-| `acc_y` | - | `list[float \| None]` | Y acceleration (m/s²) | -500 to 500 |
-| `acc_z` | - | `list[float \| None]` | Z acceleration (m/s²) | -500 to 500 |
+| `acc_x` | - | `list[float \| None]` | X acceleration (m/s²) | Not bounded (`TelemetryPoint`: ±500) |
+| `acc_y` | - | `list[float \| None]` | Y acceleration (m/s²) | Not bounded (`TelemetryPoint`: ±500) |
+| `acc_z` | - | `list[float \| None]` | Z acceleration (m/s²) | Not bounded (`TelemetryPoint`: ±500) |
 | `data_key` | `dataKey` | `list[str \| None]` | Data source identifier | - |
 
 **Special Handling:**
@@ -941,7 +943,7 @@ Represents validated weather sensor data with support for multiple naming conven
 | `pressure` | `wP` | `Pressure` | `list[float \| None]` | Atmospheric pressure | mbar |
 | `rainfall` | `wR` | `Rainfall` | `list[bool \| None]` | Rainfall indicator | boolean |
 | `wind_direction` | `wWD` | `WindDirection` | `list[float \| None]` | Wind direction | degrees (0-360) |
-| `wind_speed` | `wWS` | `WindSpeed` | `list[float \| None]` | Wind speed | km/h |
+| `wind_speed` | `wWS` | `WindSpeed` | `list[float \| None]` | Wind speed | m/s |
 
 **Validation Behavior:**
 
@@ -992,18 +994,18 @@ Represents validated race control message data including flags, safety car deplo
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `time` | `list[float \| None]` | Message timestamp (seconds from session start) |
+| `time` | `list[str \| float \| None]` | Message timestamp (ISO 8601 string in CDN payloads, or seconds) |
 
 **Optional Fields:**
 
 | Field | Alias | Type | Description |
 |-------|-------|------|-------------|
-| `category` | `cat` | `list[str \| None]` | Message category (Flag, SafetyCar, Drs, Other) |
+| `category` | `cat` | `list[str \| None]` | Message category (Flag, SafetyCar, Drs, CarEvent, Other) |
 | `message` | `msg` | `list[str \| None]` | Full message text |
 | `status` | - | `list[str \| None]` | Status text (DEPLOYED, ENABLED, DISABLED, etc.) |
 | `flag` | - | `list[str \| None]` | Flag type (GREEN, YELLOW, RED, etc.) |
 | `scope` | - | `list[str \| None]` | Message scope (Track, Sector, Driver) |
-| `sector` | - | `list[int \| str \| None]` | Affected sector number |
+| `sector` | - | `list[int \| str \| None]` | Affected marshal sector number |
 | `racing_number` | `dNum` | `list[str \| None]` | Affected driver number |
 | `lap` | - | `list[int \| None]` | Lap number |
 
@@ -1102,6 +1104,8 @@ print(f"Team: {driver.team} (#{driver.tc})")
 Enumeration of valid tire compound values used in F1 sessions.
 
 ```python
+from enum import StrEnum
+
 class TireCompound(StrEnum):
     SOFT = "SOFT"
     MEDIUM = "MEDIUM"
@@ -1142,6 +1146,8 @@ assert TireCompound.INTERMEDIATE == "INTERMEDIATE"
 Enumeration of valid F1 session types.
 
 ```python
+from enum import StrEnum
+
 class SessionType(StrEnum):
     PRACTICE_1 = "Practice 1"
     PRACTICE_2 = "Practice 2"
@@ -1185,6 +1191,8 @@ is_sprint_weekend = session in [
 Enumeration of valid lap status values.
 
 ```python
+from enum import StrEnum
+
 class LapStatus(StrEnum):
     VALID = "VALID"
     INVALID = "INVALID"
@@ -1230,6 +1238,8 @@ The `status` field of CDN lap payloads holds track status codes ("1", "4", ...),
 Enumeration of data anomaly types detected by the validation system.
 
 ```python
+from enum import StrEnum
+
 class AnomalyType(StrEnum):
     MISSING_LAPS = "missing_laps"
     DUPLICATE_LAPS = "duplicate_laps"
@@ -1429,7 +1439,7 @@ anomaly_dict = anomaly.model_dump()
 
 **Severity Levels:**
 
-- **low**: Minor issues that do not affect analysis (for example, statistical outliers from pit stops)
+- **low**: Minor issues that do not affect analysis (for example, a lap time over 3x the average)
 - **medium**: Moderate issues that may affect completeness (for example, missing laps)
 - **high**: Critical issues that indicate data corruption (for example, duplicate lap numbers)
 
@@ -1449,12 +1459,15 @@ import tif1
 # Get configuration instance
 config = tif1.get_config()
 
-# Enable validation for all data types
+# Enable validation of weather.json and rcm.json
 config.set("validate_data", True)
+# Ultra-cold loads (the default for a session that is not cached yet) skip
+# validation, so turn that mode off too
+config.set("ultra_cold_start", False)
 
-# Now all CDN data will be validated
 session = tif1.get_session(2025, "Monaco", "Race")
 # weather.json and rcm.json are validated when they are fetched from the CDN
+config.set("ultra_cold_start", True)
 ```
 
 #### Disable Validation (Default)
@@ -1465,7 +1478,7 @@ import tif1
 config = tif1.get_config()
 config.set("validate_data", False)  # Default setting
 
-# Validation skipped for ~10-15% performance improvement
+# Validation skipped: no extra work on the fetch path
 session = tif1.get_session(2025, "Monaco", "Race")
 ```
 
@@ -1527,7 +1540,7 @@ Validation runs on payloads fetched from the CDN, not on payloads served from th
 | `laptimes.json` | `validate_lap_data()` | `validate_lap_times` |
 | `*_tel.json` | `validate_telemetry_data()` | `validate_telemetry` |
 
-The pipeline does not validate `drivers.json`. Validation is also skipped in ultra-cold start mode.
+The pipeline does not validate `drivers.json`. Validation is also skipped in ultra-cold mode. `ultra_cold_start` is `True` by default, and a session that is not in the cache yet then loads in ultra-cold mode. Set `ultra_cold_start` to `False` to validate a cold load.
 
 #### Validation Modes
 
@@ -1553,7 +1566,9 @@ raw_data = {
     "pb": [False, True, True],
 }
 
-# Non-strict: returns the input payload (null-like strings converted) on failure
+# This payload passes: the result maps CDN aliases to field names and fills
+# absent optional fields with []. On failure, non-strict mode returns the
+# input payload with null-like strings converted instead of raising
 validated = validate_lap_data(raw_data, strict=False)
 print(validated["compound"])  # ['SOFT', 'SOFT', None]
 ```
@@ -1612,17 +1627,17 @@ print(f"{len(drivers_data.drivers)} drivers, {len(weather_data.time)} weather sa
 
 #### Ultra Cold Start Mode
 
-Validation is automatically disabled in ultra-cold start mode for maximum performance:
+Validation is automatically disabled in ultra-cold mode for maximum performance. `ultra_cold_start` is `True` by default and applies to sessions that are not in the cache yet:
 
 ```python
 import tif1
 
 config = tif1.get_config()
-config.set("ultra_cold_start", True)  # Enables ultra-fast loading
-config.set("validate_data", True)     # Ignored in ultra-cold mode
+config.set("ultra_cold_start", True)  # The default: fast cold loads
+config.set("validate_data", True)     # Ignored while a session loads in ultra-cold mode
 
 session = tif1.get_session(2025, "Monaco", "Race")
-# Validation is skipped regardless of validate_data setting
+# A cold load of this session skips validation regardless of validate_data
 ```
 
 #### Performance Tuning
@@ -1643,7 +1658,7 @@ config.set("validate_lap_times", False)
 config.set("validate_telemetry", False)
 
 # Hybrid: Validate critical data only
-config.set("validate_data", True)      # Drivers, weather, RCM
+config.set("validate_data", True)      # Weather, RCM
 config.set("validate_lap_times", False)  # Skip lap validation
 config.set("validate_telemetry", False)  # Skip telemetry validation
 ```
@@ -1687,9 +1702,10 @@ config = tif1.get_config()
 ```python
 import tif1
 
-# Enable validation
+# Enable validation (ultra-cold loads skip it, so turn that mode off)
 config = tif1.get_config()
 config.set("validate_data", True)
+config.set("ultra_cold_start", False)
 
 # Validation happens automatically during session load
 session = tif1.get_session(2025, "Monaco", "Race")
@@ -1699,6 +1715,7 @@ session = tif1.get_session(2025, "Monaco", "Race")
 print(f"Drivers: {len(session.results)}")
 print(f"Weather samples: {len(session.weather)}")
 print(f"Race control messages: {len(session.race_control_messages)}")
+config.set("ultra_cold_start", True)
 ```
 
 #### Manual Validation (Custom Workflows)
@@ -1774,9 +1791,11 @@ import tif1
 # For example, in a scheduled daily job
 config = tif1.get_config()
 config.set("validate_data", True)
+config.set("ultra_cold_start", False)
 session = tif1.get_session(2025, "Monaco", "Race")
 session.load(laps=False, telemetry=False)
 # Payloads fetched from the CDN are validated; check the "tif1.validation" logger output
+config.set("ultra_cold_start", True)
 ```
 
 ---
@@ -1957,9 +1976,9 @@ except ValidationError as e:
 
 3. **Run anomaly detection periodically**: Monitor data quality over time.
 
-4. **Clean data before validation**: Remove obvious errors first using normalization functions.
+4. **Clean data before validation**: Remove obvious errors first, as `clean_lap_data()` does in [Custom Validation](#custom-validation).
 
-5. **Use null-like string conversion**: `validate_lap_data()`, `validate_telemetry()`, `validate_weather()` and `validate_race_control()` convert "", "none", "null", "nan" to None. `validate_laps()` does not.
+5. **Use null-like string conversion**: `validate_laps()`, `validate_lap_data()`, `validate_telemetry()`, `validate_weather()` and `validate_race_control()` convert "", "none", "null", "nan" to None. The model constructors (`LapData(...)`, `TelemetryData(...)`) do not.
 
 ---
 
@@ -2013,6 +2032,7 @@ data = {"time": [90.1], "lap": [1.0]}
 # For manual validation, use the pydantic-free non-strict mode
 validated = validate_lap_data(data, strict=False)
 
-# Or skip validation entirely by not calling validation functions
-# The library handles this automatically based on performance settings
+# Or skip validation entirely by not calling validation functions.
+# Automatic validation stays off unless validate_data, validate_lap_times,
+# or validate_telemetry is True
 ```

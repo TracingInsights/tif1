@@ -402,10 +402,11 @@ class Laps(pd.DataFrame):
     def pick_fastest(self, only_by_time=False):
         if self.empty:
             return None
-        valid = _filter_valid_laptimes(self, "pandas")
+        # FastF1 semantics: a deleted lap is not a candidate unless
+        # only_by_time asks for the plain minimum.
+        valid = _filter_valid_laptimes(self, "pandas", exclude_deleted=not only_by_time)
         if valid.empty:
             return None
-        _ = only_by_time
         # Argos A5: the first minimum by position (what nsmallest(1,
         # keep="first") selected) without sorting/taking the whole frame;
         # NaT rows are already filtered out, so the int64 view has no
@@ -737,7 +738,9 @@ class Laps(pd.DataFrame):
 class Lap(pd.Series):
     """Object for accessing lap (timing) data of a single lap."""
 
-    _metadata: ClassVar[list[str]] = ["session"]
+    # "_name" is pandas' own Series metadata; dropping it loses the name on
+    # every copy (and with it the key names of a Laps.groupby).
+    _metadata: ClassVar[list[str]] = ["_name", "session"]
     session: TelemetryProvider | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
@@ -1286,7 +1289,7 @@ class SessionResults(pd.DataFrame):
 class DriverResult(pd.Series):
     """Driver and result information for a single driver."""
 
-    _metadata: ClassVar[list[str]] = ["session"]
+    _metadata: ClassVar[list[str]] = ["_name", "session"]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow Series-style subclass construction without re-implementing __new__."""
@@ -1324,7 +1327,7 @@ class Driver(pd.Series):
 
     # Only identity/configuration fields propagate through pandas' finalize
     # hook. Derived lookup caches must remain local to each reconstructed object.
-    _metadata: ClassVar[list[str]] = ["session", "driver", "_prefetched_lap_data"]
+    _metadata: ClassVar[list[str]] = ["_name", "session", "driver", "_prefetched_lap_data"]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow Series-style subclass construction without re-implementing __new__."""
@@ -1593,12 +1596,12 @@ class Driver(pd.Series):
         raise LapNotFoundError(lap_number=lap_number, driver=self.driver)
 
     def get_fastest_lap(self) -> DataFrame:
-        """Get driver's fastest lap (returns empty DataFrame if no valid laps)."""
+        """Get driver's fastest non-deleted lap (empty DataFrame if there is none)."""
         laps = self.laps
         if _is_empty_df(laps, self.session.lib):
             return _create_empty_df(self.session.lib)
 
-        valid = _filter_valid_laptimes(laps, self.session.lib)
+        valid = _filter_valid_laptimes(laps, self.session.lib, exclude_deleted=True)
         if _is_empty_df(valid, self.session.lib):
             return _create_empty_df(self.session.lib)
 

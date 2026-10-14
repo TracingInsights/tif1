@@ -2,6 +2,7 @@
 
 import pytest
 
+from tif1.exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from tif1.retry import (
     CircuitBreaker,
     get_circuit_breaker,
@@ -84,6 +85,38 @@ class TestCircuitBreakerCall:
 
         assert breaker.state == "open"
         assert breaker.failures == 3
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            DataNotFoundError(url="x"),
+            InvalidDataError(reason="bad"),
+            NetworkError(url="x", status_code=403),
+            NetworkError(url="x", status_code=404),
+        ],
+        ids=["404", "invalid", "net-403", "net-404"],
+    )
+    def test_answers_from_a_healthy_server_do_not_open_the_circuit(self, error):
+        """Missing, refused or malformed payloads are not outages (async path agrees)."""
+        breaker = CircuitBreaker(threshold=1, timeout=60)
+
+        def fail():
+            raise error
+
+        with pytest.raises(type(error)):
+            breaker.call(fail)
+        assert breaker.state == "closed"
+        assert breaker.failures == 0
+
+    def test_transport_errors_still_open_the_circuit(self):
+        breaker = CircuitBreaker(threshold=1, timeout=60)
+
+        def fail():
+            raise NetworkError(url="x", status_code=503)
+
+        with pytest.raises(NetworkError):
+            breaker.call(fail)
+        assert breaker.state == "open"
 
 
 class TestRecordSuccess:
@@ -169,3 +202,31 @@ class TestRetryWithBackoff:
         result = flaky()
         assert result == "recovered"
         assert call_count == 3
+
+    def test_file_refusals_are_not_retried(self):
+        """A 403/404 refusal will not change on retry; the async path does not retry it."""
+        reset_circuit_breaker()
+        calls = 0
+
+        @retry_with_backoff(
+            max_retries=3, backoff_factor=0, jitter=False, exceptions=(NetworkError,)
+        )
+        def refused():
+            nonlocal calls
+            calls += 1
+            raise NetworkError(url="x", status_code=403)
+
+        with pytest.raises(NetworkError):
+            refused()
+        assert calls == 1
+
+    @pytest.mark.parametrize("max_retries", [0, -1])
+    def test_non_positive_max_retries_still_makes_one_attempt(self, max_retries):
+        """max_retries below 1 means one attempt, as on the async fetch path."""
+        reset_circuit_breaker()
+
+        @retry_with_backoff(max_retries=max_retries, backoff_factor=0, jitter=False)
+        def succeed():
+            return "ok"
+
+        assert succeed() == "ok"

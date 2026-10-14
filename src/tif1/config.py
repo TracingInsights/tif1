@@ -65,7 +65,6 @@ class Config:
         # Default configuration
         self._config = {
             "cache_dir": str(_default_cache_dir()),
-            "log_level": "WARNING",
             "timeout": 30,
             "max_retries": 3,
             "retry_backoff_factor": 2.0,
@@ -74,8 +73,6 @@ class Config:
             "max_retry_delay": 60.0,
             "circuit_breaker_threshold": 5,
             "circuit_breaker_timeout": 60,
-            "http2_max_connections": 10,
-            "http2_max_pool_size": 20,
             "max_workers": 20,
             # Real-CDN 96-file telemetry batches: 22 beat 20 (median -26%, 5/5
             # interleaved pairs); 64 was slower than 20. See RESULTS.md H7.
@@ -180,7 +177,6 @@ class Config:
         """Load configuration from environment variables."""
         env_mapping = {
             "TIF1_CACHE_DIR": "cache_dir",
-            "TIF1_LOG_LEVEL": "log_level",
             "TIF1_TIMEOUT": ("timeout", int),
             "TIF1_MAX_RETRIES": ("max_retries", int),
             "TIF1_RETRY_BACKOFF_FACTOR": ("retry_backoff_factor", float),
@@ -189,8 +185,6 @@ class Config:
             "TIF1_MAX_RETRY_DELAY": ("max_retry_delay", float),
             "TIF1_CIRCUIT_BREAKER_THRESHOLD": ("circuit_breaker_threshold", int),
             "TIF1_CIRCUIT_BREAKER_TIMEOUT": ("circuit_breaker_timeout", int),
-            "TIF1_HTTP2_MAX_CONNECTIONS": ("http2_max_connections", int),
-            "TIF1_HTTP2_MAX_POOL_SIZE": ("http2_max_pool_size", int),
             "TIF1_POOL_CONNECTIONS": ("pool_connections", int),
             "TIF1_POOL_MAXSIZE": ("pool_maxsize", int),
             "TIF1_MAX_WORKERS": ("max_workers", int),
@@ -271,8 +265,6 @@ class Config:
             "max_retry_delay",
             "circuit_breaker_threshold",
             "circuit_breaker_timeout",
-            "http2_max_connections",
-            "http2_max_pool_size",
             "cache_commit_interval",
             "memory_cache_max_items",
             "memory_telemetry_cache_max_items",

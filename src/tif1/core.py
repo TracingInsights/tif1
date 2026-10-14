@@ -28,6 +28,7 @@ from .config import get_config
 
 # Import from core utilities modules
 from .core_utils.constants import (
+    COL_DELETED,
     COL_DRIVER,
     COL_LAP_NUMBER,
     COL_LAP_NUMBER_ALT,
@@ -68,7 +69,7 @@ from .core_utils.helpers import (
 from .exceptions import (
     DataNotFoundError,
     DriverNotFoundError,
-    EventNotInSeasonError,
+    EventNotFoundError,
     InvalidDataError,
     LapNotFoundError,  # noqa: F401  # re-exported for backward compatibility
     NetworkError,
@@ -451,6 +452,10 @@ def _resolve_session_options(
         if log_warnings:
             logger.warning("Invalid enable_cache=%s, falling back to True", resolved_enable_cache)
         resolved_enable_cache = True
+    # CI mode never reads or writes the persistent cache; turning the session's
+    # cache off gates every tier at once (payloads, laps/telemetry frames).
+    if config.get("ci_mode", False):
+        resolved_enable_cache = False
 
     resolved_lib = config.get("lib", "pandas") if lib is None else lib
     if resolved_lib not in {"pandas", "polars"}:
@@ -734,23 +739,30 @@ class Session:
 
         if len(paths_to_fetch) < 2:
             return
+        # Offline mode: the per-table loaders serve cache hits and raise on a
+        # miss, so this network shortcut has nothing to add.
+        if config.get("offline_mode", False):
+            return
+        # CI mode keeps the parallel fetch but never touches the persistent cache.
+        use_persistent_cache = not config.get("ci_mode", False)
 
         # Persistent-cache hits satisfy the prefetch without the network;
         # network results are persisted below so a cold load() warms the
         # cache for the *next* process (previously these tables were
         # memo-only and re-downloaded by every fresh process).
-        still_to_fetch: list[str] = []
-        for path in paths_to_fetch:
-            cached = None
-            try:
-                cached = self._payload_loader._cache_get(self._payload_loader.cache_key(path))
-            except Exception:
+        if use_persistent_cache:
+            still_to_fetch: list[str] = []
+            for path in paths_to_fetch:
                 cached = None
-            if isinstance(cached, dict):
-                self._remember_local_payload(path, cached)
-            else:
-                still_to_fetch.append(path)
-        paths_to_fetch = still_to_fetch
+                try:
+                    cached = self._payload_loader._cache_get(self._payload_loader.cache_key(path))
+                except Exception:
+                    cached = None
+                if isinstance(cached, dict):
+                    self._remember_local_payload(path, cached)
+                else:
+                    still_to_fetch.append(path)
+            paths_to_fetch = still_to_fetch
 
         if not paths_to_fetch:
             return
@@ -793,12 +805,13 @@ class Session:
                             result = future.result()
                             if isinstance(result, dict):
                                 self._remember_local_payload(path, result)
-                                try:
-                                    self._payload_loader._cache_set(
-                                        self._payload_loader.cache_key(path), result
-                                    )
-                                except Exception:
-                                    pass
+                                if use_persistent_cache:
+                                    try:
+                                        self._payload_loader._cache_set(
+                                            self._payload_loader.cache_key(path), result
+                                        )
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
         except Exception as e:
@@ -2376,7 +2389,8 @@ class Session:
 
         Returns:
             List of (index, lap_number, lap_time) tuples for all valid laps,
-            sorted by lap time (fastest first)
+            sorted by lap time (fastest first). Deleted laps (``del`` flag) are
+            not valid: a deleted time never counts as the fastest lap.
         """
         if not isinstance(lap_data, dict):
             return []
@@ -2392,8 +2406,16 @@ class Session:
         if not isinstance(lap_values, list | tuple) or not isinstance(time_values, list | tuple):
             return []
 
+        deleted_values = lap_data.get("del")
+        if deleted_values is None:
+            deleted_values = lap_data.get("deleted", lap_data.get(COL_DELETED))
+        if not isinstance(deleted_values, list | tuple):
+            deleted_values = ()
+
         valid_laps: list[tuple[int, int, float]] = []
         for idx, (lap_value, lap_time_value) in enumerate(zip(lap_values, time_values)):
+            if idx < len(deleted_values) and deleted_values[idx] is True:
+                continue
             try:
                 lap_num = _coerce_lap_number(lap_value)
                 lap_time = _coerce_lap_time(lap_time_value)
@@ -2998,17 +3020,20 @@ class Session:
 
             logger.info(f"Loading laps async ({self.lib}): {cache_key}")
             _ensure_nested_loop_support("laps property")
-            laps_df = asyncio.run(self.laps_async())
-            if self.lib == "pandas":
-                self._laps = Laps(cast(pd.DataFrame, laps_df))
-                self._laps.session = self
-            else:
-                self._laps = laps_df
+            self._laps = self._as_session_laps(asyncio.run(self.laps_async()))
             if lap_cache is not None:
                 lap_cache.set(cache_key, self._laps)
             self._maybe_start_background_telemetry_prefetch()
 
         return self._laps
+
+    def _as_session_laps(self, frame: DataFrame) -> DataFrame:
+        """Expose pandas laps as :class:`Laps` bound to this session; polars stays plain."""
+        if self.lib == "pandas" and isinstance(frame, pd.DataFrame):
+            if not isinstance(frame, Laps):
+                frame = Laps(frame)
+            frame.session = self
+        return frame
 
     async def laps_async(self) -> DataFrame:
         """Get all laps data asynchronously (faster for multiple drivers).
@@ -3041,7 +3066,7 @@ class Session:
             )
             if cached_frame is not None:
                 logger.info("Laps frame tier hit: %s/%s/%s", self.year, self.gp, self.session)
-                self._laps = cached_frame
+                self._laps = self._as_session_laps(cached_frame)
                 return self._laps
 
         drivers = self._drivers_data
@@ -3124,6 +3149,8 @@ class Session:
                 get_cache().set_laps_frame(
                     self.year, self.gp, self.session, self._laps, lib="polars"
                 )
+        # Wrapped only after the frame-tier write: a pickled Laps would carry its session.
+        self._laps = self._as_session_laps(self._laps)
 
         if ultra_cold_payloads and self._should_backfill_ultra_cold_cache(ultra_cold_enabled):
             self._schedule_background_cache_fill(json_payloads=ultra_cold_payloads)
@@ -3332,7 +3359,7 @@ class Session:
             if _is_empty_df(laps, self.lib):
                 return _create_empty_df(self.lib)
 
-        valid = _filter_valid_laptimes(laps, self.lib)
+        valid = _filter_valid_laptimes(laps, self.lib, exclude_deleted=True)
         if _is_empty_df(valid, self.lib):
             return _create_empty_df(self.lib)
 
@@ -4640,10 +4667,10 @@ def _resolve_gp_name(year: int, gp: str | int) -> str:
     try:
         event = get_event_by_name(year, gp_str, exact_match=False)
         return str(event.EventName)
-    except EventNotInSeasonError:
-        # "Suzuka" in 2021: the alias is understood, the race was not held.
-        # Loading a different race or failing later with DataNotFoundError
-        # would hide that, so fail here with the explanatory message.
+    except EventNotFoundError:
+        # "Suzuka" in 2021 (alias understood, race not held) or "Invalid GP"
+        # (resembles no event). Loading a different race or failing later with
+        # DataNotFoundError would hide that, so fail here with the message.
         raise
     except (ValueError, AttributeError):
         # If event resolution fails, return the original string

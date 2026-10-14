@@ -10,11 +10,11 @@ keywords:
   - "F1 visualizations"
 ---
 
-`tif1` provides built-in plotting utilities. It also integrates with matplotlib, plotly, and seaborn.
+`tif1` provides built-in chart functions. Its DataFrames also work directly with matplotlib, plotly, and seaborn.
 
 ## Built-in Plotting
 
-The `charts` module provides 22 one-call chart functions. They are re-exported at the top level as `tif1.plot_*`.
+The `charts` module provides 22 one-call chart functions. They are re-exported at the top level as `tif1.plot_*`. Each function accepts `lib="pandas"` (the default) or `lib="polars"` and draws the same figure with either value.
 
 ### Speed Comparison
 
@@ -58,13 +58,13 @@ Each bar chart tightens its y-limits around the bar rows with `tif1.charts._comm
 
 ### Bar labels always fit inside the canvas
 
-Charts that export with `bbox_inches="tight"` crop the canvas around their content, so bar labels are never clipped in the saved output. `plot_race_launch_ratings` is the exception: it exports the full canvas (no `bbox_inches` crop) to mirror the v2 script. Labels placed past the longest bar would be clipped at the right edge. The chart calls `tif1.charts._common.fit_labels_inside_xlim(ax, labels)`, which iterates the x-limit to a fixed point. The iteration stops when the measured extent of every label sits inside the axes. Labels stay fully visible at any bar width.
+Charts that export with `bbox_inches="tight"` crop the canvas around their content, so bar labels are never clipped in the saved output. `plot_race_launch_ratings` is the exception: it exports the full canvas (no `bbox_inches` crop). Labels placed past the longest bar would be clipped at the right edge. The chart calls `tif1.charts._common.fit_labels_inside_xlim(ax, labels)`, which iterates the x-limit to a fixed point. The iteration stops when the measured extent of every label sits inside the axes. Labels stay fully visible at any bar width.
 
 The value-label bar charts (`plot_downforce_levels`, `plot_throttle_distance`, `plot_top_speeds`) apply the same guarantee for inline display, where no crop happens. `finalize_figure` accepts a `label_fit=(ax, labels)` pair and runs `fit_labels_inside_xlim` after `tight_layout`. Value labels then stay inside the axes box at any grid size and under any theme's font sizes. Labels fitted before layout can overflow once large fonts resize the axes.
 
 ### Reuse the helpers in custom charts
 
-Both helpers are part of `tif1.charts._common`'s public API, so custom bar charts can opt in to the same guarantees:
+Both helpers are importable from `tif1.charts._common`, so custom bar charts can opt in to the same guarantees:
 
 ```python
 import matplotlib.pyplot as plt
@@ -171,7 +171,7 @@ plt.show()
 Plotly enables interactive visualizations in Jupyter notebooks.
 
 <Note>
-This section requires the optional plotting library. Install it with `pip install plotly`.
+Plotly is not installed with tif1. Install it with `pip install plotly` before running this section.
 </Note>
 
 ### Interactive speed trace
@@ -228,15 +228,17 @@ fig = go.Figure(data=[go.Scatter3d(
         width=4,
         colorbar=dict(title="Speed (km/h)")
     ),
-    hovertemplate="X: %{x:.0f}<br>Y: %{y:.0f}<br>Z: %{z:.0f}<br>Speed: %{marker.color:.0f} km/h<extra></extra>"
+    customdata=tel["Speed"],
+    hovertemplate="X: %{x:.0f}<br>Y: %{y:.0f}<br>Z: %{z:.0f}<br>Speed: %{customdata:.0f} km/h<extra></extra>"
 )])
 
 fig.update_layout(
     title="3D Track Map - Suzuka",
     scene=dict(
-        xaxis_title="X (m)",
-        yaxis_title="Y (m)",
-        zaxis_title="Z (m)",
+        # Position coordinates are in 1/10 m, not meters
+        xaxis_title="X (1/10 m)",
+        yaxis_title="Y (1/10 m)",
+        zaxis_title="Z (1/10 m)",
         aspectmode="data"
     ),
     template="plotly_dark"
@@ -352,7 +354,7 @@ plt.plot(tel_downsampled["Distance"], tel_downsampled["Speed"])
 
 ## Export for external tools
 
-Save data for use in other visualization tools.
+Save data for use in other visualization tools. Parquet export uses `pyarrow`, which tif1 installs. Excel export needs `openpyxl`, which tif1 does not install: run `pip install openpyxl` first.
 
 ```python
 import pandas as pd
@@ -360,7 +362,7 @@ import pandas as pd
 # Export to CSV
 laps.to_csv("race_laps.csv", index=False)
 
-# Export to Parquet (smaller, faster)
+# Export to Parquet (pyarrow is a tif1 dependency)
 laps.to_parquet("race_laps.parquet")
 
 # Export to Excel (requires openpyxl)
@@ -374,13 +376,16 @@ with pd.ExcelWriter("race_analysis.xlsx") as writer:
 ## Related Pages
 
 <CardGroup cols={2}>
-<Card title="Plotting API" href="/api-reference/plotting">
-    Plotting reference.
+  <Card title="Charts API" href="/api-reference/charts">
+    The `plot_*` chart functions.
   </Card>
-<Card title="Examples" href="/examples">
+  <Card title="Plotting API" href="/api-reference/plotting">
+    Colors, styles, and compound mappings.
+  </Card>
+  <Card title="Examples" href="/examples">
     Visualization examples.
   </Card>
-<Card title="Telemetry Tutorial" href="/tutorials/advanced-telemetry">
+  <Card title="Telemetry Tutorial" href="/tutorials/advanced-telemetry">
     Telemetry visualizations.
   </Card>
 </CardGroup>

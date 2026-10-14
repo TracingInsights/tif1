@@ -13,7 +13,7 @@ keywords:
   - "events"
 ---
 
-The `schedule_schema` module validates the shape of packaged F1 schedule payloads. It contains one function, `validate_schedule_payload`. The `tif1.events` module calls it on the combined payload of the packaged schedule files before any event data is read.
+The `schedule_schema` module validates the shape of packaged F1 schedule payloads. It contains one function, `validate_schedule_payload`. The `tif1.events` module calls it on the combined payload of the packaged schedule files the first time it reads them.
 
 ## Overview
 
@@ -39,7 +39,7 @@ The `metadata` key holds per-event metadata. The validator does not check its co
 ## validate_schedule_payload
 
 ```python
-validate_schedule_payload(payload: Any) -> dict[str, Any]
+def validate_schedule_payload(payload: Any) -> dict[str, Any]
 ```
 
 Validate the shape of a schedule payload. The checks are plain type checks; this module does not use pydantic.
@@ -55,11 +55,14 @@ The function checks, in this order:
 1. `payload` is a dict.
 2. `payload["schema_version"]` equals `1`.
 3. `payload["years"]` is a dict.
-4. Every key in `years` is a string of digits, for example `"2025"`.
-5. Every value in `years` is a dict.
-6. For every year: `events` is a list of strings.
-7. For every year: `sessions` is a dict.
-8. For every event name in `events`: `sessions[event_name]` is a list of strings.
+
+Then it checks each year in turn, and does all of these checks for one year before the next year:
+
+4. The key is a string of digits, for example `"2025"`.
+5. The value is a dict.
+6. `events` is a list of strings.
+7. `sessions` is a dict.
+8. For every event name in `events`: `sessions[event_name]` is a list of strings. An empty list passes.
 
 The first failed check raises `InvalidDataError` with a `reason` string that names the problem and, where possible, the year and event involved. The module raises no other exception type.
 
@@ -105,11 +108,11 @@ Each failed check has its own reason string:
 
 ## Where tif1 uses it
 
-`tif1.events` loads the packaged schedule files from `tif1/data/schedules/f1schedule/schedule_{year}.json` and converts each year to the shape above. `validate_schedule_payload` then validates the combined payload. A validation failure stops event and schedule lookups before they read malformed data. The current season and years outside the packaged files come from the live `theOehrly/f1schedule` repository and skip this validator. Only the conversion step checks them.
+`tif1.events` loads the packaged schedule files from `tif1/data/schedules/f1schedule/schedule_{year}.json` and converts each year to the shape above. `validate_schedule_payload` then validates the combined payload, once per process. A validation failure stops event and schedule lookups before they read malformed data. The current season, future seasons, and years outside the packaged files come from the live `theOehrly/f1schedule` repository and skip this validator. Only the conversion step checks them. A live season that falls back to its packaged file reads it from the validated payload.
 
 ## Related APIs
 
 - **[Events API](/api-reference/events)**: the event schedule built on this validator
-- **[Schedule API](/api-reference/schedule)**: schedule data access
+- **[Schedule Schema & Validation](/api-reference/schedule)**: validation rules, schedule data sources, and longer examples
 - **[Validation API](/api-reference/validation)**: pydantic validators for session payloads
 - **[Exceptions API](/api-reference/exceptions)**: `InvalidDataError` and the exception hierarchy

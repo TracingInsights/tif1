@@ -9,7 +9,7 @@ import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from importlib.resources import files
 from typing import Any, ClassVar, Self, cast
@@ -22,6 +22,7 @@ from .core_utils.constants import EVENT_NAME_ALIASES
 from .exceptions import (
     CacheError,
     DataNotFoundError,
+    EventNotFoundError,
     EventNotInSeasonError,
     InvalidDataError,
     NetworkError,
@@ -92,6 +93,18 @@ def _extract_sessions_for_index(raw_year: dict[str, Any], index: str) -> list[st
     return sessions
 
 
+def _parse_gmt_offset(value: Any) -> timedelta | None:
+    """Parse an f1schedule ``gmt_offset`` such as ``"+02:00"`` or ``"-04:30"``."""
+    if not isinstance(value, str) or ":" not in value:
+        return None
+    sign = -1 if value.startswith("-") else 1
+    hours, minutes = value.lstrip("+-").split(":")[:2]
+    try:
+        return sign * timedelta(hours=int(hours), minutes=int(minutes))
+    except ValueError:
+        return None
+
+
 def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, Any]:
     event_name_col = raw_year.get("event_name")
     round_col = raw_year.get("round_number")
@@ -119,6 +132,9 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
         if event_sessions:
             sessions[event_name] = event_sessions
 
+        # f1schedule session dates are local track time; UTC is local minus
+        # the event's GMT offset (left unset when the offset is unknown).
+        gmt_offset = _parse_gmt_offset(gmt_offset_col.get(index))
         session_dates = {}
         session_dates_utc = {}
         for i in range(1, 6):
@@ -126,7 +142,10 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
             session_date = session_date_col.get(index)
             if session_date:
                 session_dates[f"Session{i}Date"] = session_date
-                session_dates_utc[f"Session{i}DateUtc"] = session_date
+                if gmt_offset is not None:
+                    session_dates_utc[f"Session{i}DateUtc"] = (
+                        datetime.fromisoformat(session_date) - gmt_offset
+                    ).isoformat()
 
         event_metadata[event_name] = {
             "RoundNumber": round_col.get(index),
@@ -343,7 +362,9 @@ def _build_sessions_for_event(year: int, event: str) -> list[str]:
 
     ``event`` is resolved like ``get_event_by_name`` (exact name, then alias,
     then fuzzy match), so ``get_sessions(2025, "Spielberg")`` answers for the
-    Austrian Grand Prix instead of the generic five-session weekend.
+    Austrian Grand Prix instead of the generic five-session weekend. A name
+    that matches no event of the season raises ``EventNotFoundError``
+    (``EventNotInSeasonError`` for an alias of an event not held that year).
     """
     standard = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
     year_payload = _resolve_year_payload(year)
@@ -351,10 +372,11 @@ def _build_sessions_for_event(year: int, event: str) -> list[str]:
     if not isinstance(sessions, dict):
         return standard
     event_sessions = sessions.get(event)
-    if event_sessions is None and event:
-        resolved = _find_event_by_name(year, list(_get_events_cached(year)), event)
-        if resolved is not None:
-            event_sessions = sessions.get(str(resolved.EventName))
+    if event_sessions is None and event and _get_events_cached(year):
+        # Raises for a name that matches no event, as get_session does: the
+        # generic five sessions would describe a race that does not exist.
+        resolved = get_event_by_name(year, event)
+        event_sessions = sessions.get(str(resolved.EventName))
     if not isinstance(event_sessions, list) or not event_sessions:
         return standard
     return list(event_sessions)
@@ -386,7 +408,7 @@ def get_sessions(year: int, event: str) -> list[str]:
 
 
 class Event(pd.Series):
-    _metadata: ClassVar[list[str]] = ["_year", "_event_name"]
+    _metadata: ClassVar[list[str]] = ["_name", "_year", "_event_name"]
     _year: int
     _event_name: str
 
@@ -395,7 +417,6 @@ class Event(pd.Series):
         return cast(Self, super().__new__(cls))
 
     def __init__(self, year: int, name: str, metadata: dict | None = None):
-        from datetime import datetime, timedelta
         from datetime import timezone as tz
 
         sessions = get_sessions(year, name)
@@ -417,21 +438,15 @@ class Event(pd.Series):
         data["F1ApiSupport"] = True
 
         if metadata:
-            gmt_offset = metadata.get("GmtOffset")
+            gmt_offset = _parse_gmt_offset(metadata.get("GmtOffset"))
             for key, value in metadata.items():
                 if key == "EventDate" and value:
                     data[key] = pd.Timestamp(value.split("T")[0])
                 elif key.endswith("DateUtc") and value:
                     data[key] = pd.Timestamp(value)
-                elif key.endswith("Date") and value and gmt_offset:
-                    # Parse as tz-aware datetime
-                    dt = datetime.fromisoformat(value)
-                    # Apply GMT offset
-                    hours = int(gmt_offset.split(":")[0])
-                    minutes = int(gmt_offset.split(":")[1])
-
-                    offset = timedelta(hours=hours, minutes=minutes)
-                    data[key] = dt.replace(tzinfo=tz(offset))
+                elif key.endswith("Date") and value and gmt_offset is not None:
+                    # Local track time, made tz-aware with the event's GMT offset
+                    data[key] = datetime.fromisoformat(value).replace(tzinfo=tz(gmt_offset))
                 else:
                     data[key] = value
 
@@ -640,6 +655,11 @@ def _create_event(year: int, event_name: str, metadata: Any) -> Event:
     return cast(Event, event_factory(year, event_name, event_metadata))
 
 
+# Lowest fuzzy score (rapidfuzz ratio, 0-100) that still counts as a match.
+# Typos of real events score 75-97 ("Sao Paolo" 75, "Monacco" 92); names unlike
+# every event score 67 or less ("Moon GP", "Paris", "Invalid GP" 57).
+_FUZZY_MIN_SCORE = 70.0
+
 _ALIAS_NOISE_RE = re.compile(r"\b(?:grand prix|gp|formula 1|f1)\b")
 
 
@@ -707,7 +727,7 @@ def _find_event_by_name(
         )
         return None
 
-    from .fuzzy import fuzzy_matcher
+    from .fuzzy import _fuzzy_match
 
     def _remove_common_words(event_name: str) -> str:
         common_words = ["formula 1", str(year), "grand prix", "gp"]
@@ -739,8 +759,19 @@ def _find_event_by_name(
         )
         for event_name in event_names
     ]
-    index, exact = fuzzy_matcher(name, reference)
+    index, exact, score = _fuzzy_match(name, reference)
     matched_event_name = event_names[index]
+
+    if score < _FUZZY_MIN_SCORE:
+        # Resembles no event: loading the least-bad match would be a wrong race.
+        logger.info(
+            "'%s' matches no %s event (closest: '%s', score %.0f)",
+            user_input,
+            year,
+            matched_event_name,
+            score,
+        )
+        return None
 
     if not exact:
         logger.warning(f"Correcting user input '{user_input}' to '{matched_event_name}'")
@@ -796,7 +827,11 @@ def get_event_by_name(year: int, name: str, exact_match: bool = False) -> Event:
             raise EventNotInSeasonError(
                 f"'{name}' refers to the {alias_targets[0]}, which is not on the {year} calendar"
             )
-        raise ValueError(f"No exact match found for event '{name}' in {year}")
+        if not events:
+            raise ValueError(f"No events found for {year}")
+        if exact_match:
+            raise EventNotFoundError(f"No exact match found for event '{name}' in {year}")
+        raise EventNotFoundError(f"No event matching '{name}' in {year}")
     return event
 
 

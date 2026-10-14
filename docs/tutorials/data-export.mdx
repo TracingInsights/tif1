@@ -41,14 +41,14 @@ writes it as a normal column. Drop it with `laps.drop(columns="index")` when it 
 
 ## Export to Parquet
 
-Parquet is a columnar storage format. It is more efficient than CSV for large datasets. The pandas backend needs `pyarrow` (`pip install pyarrow`). The polars backend writes Parquet natively with `write_parquet`; see [Working with Polars Backend](#working-with-polars-backend).
+Parquet is a columnar storage format. It is more efficient than CSV for large datasets. On the pandas backend, `to_parquet` uses `pyarrow`, which `pip install tif1` installs. The polars backend writes Parquet natively with `write_parquet`; see [Working with Polars Backend](#working-with-polars-backend).
 
 ```python
 # Export to Parquet (pandas backend)
 laps.to_parquet("monaco_race_laps.parquet")
 
-# With compression
-laps.to_parquet("monaco_race_laps.parquet", compression="snappy")
+# snappy is the default codec; zstd gives a smaller file
+laps.to_parquet("monaco_race_laps.parquet", compression="zstd")
 
 # Read back
 import pandas as pd
@@ -67,7 +67,7 @@ laps.to_json("monaco_race_laps.json", orient="records", indent=2, date_format="i
 # Compact format
 laps.to_json("monaco_race_laps_compact.json", orient="records", date_format="iso")
 
-# Split format (better for large datasets)
+# Split format (smaller file: column names are written once)
 laps.to_json("monaco_race_laps_split.json", orient="split", date_format="iso")
 ```
 
@@ -151,15 +151,15 @@ conn.close()
 For production databases.
 
 <Note>
-This section requires the optional SQL toolkit. Install it with `pip install sqlalchemy`,
-plus a PostgreSQL driver such as `psycopg2-binary`.
+This section requires the optional SQL toolkit and a PostgreSQL driver.
+Install them with `pip install sqlalchemy psycopg2-binary`. The `postgresql+psycopg2://` URL selects that driver.
 </Note>
 
 ```python
 from sqlalchemy import create_engine
 
 # Create engine
-engine = create_engine("postgresql://user:password@localhost:5432/f1_data")
+engine = create_engine("postgresql+psycopg2://user:password@localhost:5432/f1_data")
 
 # Export data; laps_sql comes from the SQLite example (time columns in seconds)
 laps_sql.to_sql("laps", engine, if_exists="replace", index=False)
@@ -232,7 +232,7 @@ Export to formats these tools can read.
 laps.to_csv("monaco_for_tableau.csv", index=False, encoding="utf-8-sig")
 
 # Or use Hyper format for Tableau (requires tableauhyperapi)
-# From tableauhyperapi import hyperprocess, connection, tabledefinition
+# from tableauhyperapi import HyperProcess, Connection, TableDefinition
 # ... (see Tableau documentation)
 ```
 
@@ -326,9 +326,8 @@ import polars as pl
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
 laps = session.laps
 
-# Polars writes Parquet natively; pyarrow is not needed
+# Polars writes Parquet natively (zstd by default)
 laps.write_parquet("monaco_polars.parquet")
-laps.write_parquet("monaco_polars.parquet", compression="zstd")  # smaller file
 laps.write_csv("monaco_polars.csv")
 laps.write_json("monaco_polars.json")
 laps.write_ipc("monaco_polars.arrow")  # Apache Arrow format
@@ -348,19 +347,18 @@ laps_pandas = laps.to_pandas()
 Efficiently export telemetry for multiple drivers.
 
 ```python
-def export_all_telemetry(session, lap_type="fastest", output_dir="telemetry"):
-    """Export telemetry for all drivers."""
+def export_all_telemetry(session, output_dir="telemetry"):
+    """Export the fastest-lap telemetry of every driver."""
     import os
     os.makedirs(output_dir, exist_ok=True)
 
-    if lap_type == "fastest":
-        # Use parallel fetching for speed
-        tels = session.get_fastest_laps_tels(by_driver=True)
+    # Use parallel fetching for speed
+    tels = session.get_fastest_laps_tels(by_driver=True)
 
-        for driver, tel in tels.groupby("Driver"):
-            filename = f"{output_dir}/{driver}_fastest.parquet"
-            tel.to_parquet(filename)
-            print(f"Exported: {driver}")
+    for driver, tel in tels.groupby("Driver"):
+        filename = f"{output_dir}/{driver}_fastest.parquet"
+        tel.to_parquet(filename)
+        print(f"Exported: {driver}")
 
     return tels["Driver"].nunique()
 
@@ -373,16 +371,16 @@ print(f"Exported telemetry for {count} drivers")
 
 <CardGroup cols={2}>
   <Card title="Use Parquet" icon="file">
-    Parquet is 5-10x smaller than CSV and faster to read/write.
+    A race laps table is roughly 3-4x smaller as Parquet than as CSV, and faster to read/write.
   </Card>
   <Card title="Batch Operations" icon="layer-group">
     Use async loading and batch exports for multiple sessions.
   </Card>
   <Card title="Compression" icon="compress">
-    Enable compression for large datasets (snappy, gzip, zstd).
+    pandas compresses Parquet with snappy by default. Use zstd or gzip for smaller files.
   </Card>
   <Card title="Type Preservation" icon="database">
-    Parquet and HDF5 preserve data types. CSV does not.
+    Parquet preserves timedelta and categorical columns. CSV writes them as text.
   </Card>
 </CardGroup>
 

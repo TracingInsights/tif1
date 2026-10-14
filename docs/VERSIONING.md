@@ -1,10 +1,10 @@
 # Documentation Versioning
 
-This document explains how versioned documentation works for tif1.
+This document explains how the tif1 documentation is deployed and how it relates to package releases.
 
 ## Overview
 
-The tif1 documentation uses Mintlify's free plan with a separate branch deployment strategy. Documentation is automatically deployed when releases are published.
+The documentation runs on the Mintlify free plan and uses a separate branch deployment strategy. One documentation version is live at a time, and it describes the latest published release.
 
 ## Deployment Strategy (Free Plan)
 
@@ -24,19 +24,14 @@ The Mintlify free plan has no API access. Deployment uses a dedicated branch:
 
 ### On Release
 
-1. The owner publishes a new release (for example, `v0.2.0`)
-2. GitHub Actions workflow triggers
-3. Workflow updates `docs.json` with the new version
-4. Workflow pushes docs to `docs-production` branch
-5. Mintlify auto-deploys within minutes
-6. Version appears in the version selector
+1. The owner publishes a new release (for example, `v0.8.0`)
+2. The "Deploy Documentation" workflow (`.github/workflows/docs.yml`) triggers
+3. The workflow copies `docs/` from the release commit to the `docs-production` branch
+4. Mintlify auto-deploys within minutes
 
-### Version Selector
+### One Live Version
 
-Users can switch between documentation versions using the version selector in the navbar:
-- Each release creates a versioned snapshot
-- Versions are listed in the `versions` array in `docs.json`
-- The `version` field shows the deployed version
+The site has no version selector. `docs.json` does not declare `versions`: Mintlify's `navigation.versions` needs one navigation tree per version, and the project keeps a single tree that always documents the latest release. Readers who need the documentation for an older release can browse the `docs/` directory of that release tag on GitHub.
 
 ## Mintlify Configuration
 
@@ -58,47 +53,24 @@ To deploy docs without creating a release:
 1. Go to GitHub Actions
 2. Select "Deploy Documentation" workflow
 3. Click "Run workflow"
-4. Enter the version (for example, `v0.2.0`)
+4. Enter the version (for example, `v0.8.0`); it is only used in the commit message
 5. Click "Run workflow"
 
 This is useful for:
 - Fixing documentation bugs between releases
-- Updating docs for an existing version
 - Testing the deployment process
-
-## Version Management
-
-### Automatic Updates
-
-The GitHub Actions workflow automatically:
-- Extracts the version from the release tag (for example, `v0.2.0` → `0.2.0`)
-- Updates the `version` field in `docs.json`
-- Adds the version to the `versions` array (if not present)
-- Commits and pushes to `docs-production`
-
-### Manual Updates
-
-To manage versions manually:
-
-```bash
-# Edit docs/docs.json
-{
-  "version": "0.2.0",
-  "versions": ["latest", "0.2.0", "0.1.0"]
-}
-```
 
 ## Best Practices
 
 1. **Always test locally** before merging doc changes:
    ```bash
    cd docs
-   npx mintlify dev
+   npx mint dev
    ```
 
-2. **Keep versions in sync**: The workflow handles this, but verify after deployment
+2. **Validate before merging**: run `npx mint validate` and `npx mint broken-links` in `docs/`, and run `uv run python tools/run_doc_examples.py` from the repository root to execute the code blocks
 
-3. **Use semantic versioning**: Match the package versions (for example, `0.2.0`, `0.2.1`)
+3. **Match the package**: when a release changes the public API, update the pages in the same pull request. Then the deployed docs match the released package
 
 4. **Do not push to docs-production directly**: Always use the GitHub Actions workflow
 
@@ -113,12 +85,6 @@ To manage versions manually:
 - Check GitHub Actions logs for errors
 - Ensure `docs-production` branch exists and has recent commits
 
-### Version Selector Not Showing
-
-- Verify `versionSelector.enabled: true` in `docs.json`
-- Check that `versions` array has multiple entries
-- Clear browser cache and reload
-
 ### Deployment Delayed
 
 - Mintlify auto-deploy can take 2-5 minutes
@@ -129,7 +95,7 @@ To manage versions manually:
 
 To move to a Pro plan later:
 
-1. Update `.github/workflows/docs.yml` to use Mintlify CLI
+1. Update `.github/workflows/docs.yml` to use the Mintlify CLI
 2. Add `MINTLIFY_API_KEY` to GitHub Secrets
 3. Change deployment branch back to `main` in Mintlify settings
 4. Remove the `docs-production` branch strategy
