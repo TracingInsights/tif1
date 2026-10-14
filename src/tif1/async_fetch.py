@@ -177,6 +177,21 @@ def _get_executor() -> Any:  # Returns ThreadPoolExecutor
             raise NetworkError(url="executor_init", status_code=None) from e
 
 
+def _get_resolved(session_client: Any, url: str, timeout: Any) -> Any:
+    """GET ``url`` and resolve the response inside the worker thread (Argos A12).
+
+    With ``multiplexed=True`` niquests returns a *lazy* response: ``get()``
+    comes back in ~1 ms and the first attribute access (``status_code``)
+    blocks until the body has arrived. That access used to happen on the
+    event-loop thread, so every in-flight response was waited for serially
+    on the loop (instrumented: 1461 resolutions, 9.7 s of a 10.2 s batch).
+    Touching ``status_code`` here moves the wait into the worker thread.
+    """
+    response = session_client.get(url, timeout=timeout)
+    _ = getattr(response, "status_code", None)
+    return response
+
+
 def _parse_json_payload_bytes(payload: bytes | bytearray | memoryview) -> Any:
     """Parse raw JSON bytes in a worker process."""
     return json_loads(payload)
@@ -479,7 +494,7 @@ async def fetch_json_async(
         """
         try:
             response = await loop.run_in_executor(
-                executor, partial(session_client.get, url, timeout=timeout)
+                executor, partial(_get_resolved, session_client, url, timeout)
             )
 
             from .http_session import _response_reused_connection, _track_request
@@ -729,11 +744,16 @@ async def fetch_multiple_async(
             _deferred_telemetry_writes.reset(collector_token)
 
     if collector:
+        # Argos A3: the flush (orjson dumps + zstd + SQLite for ~1450 rows,
+        # ~0.4-0.8 s) only matters to the *next* process, so it runs in a
+        # background writer thread after the batch returns - the same
+        # registry the frame-tier write uses (Ithome U5), joined by
+        # Cache.close()/invalidate()/clear() and the atexit cache close, so
+        # every row is on disk before the process exits.
+        from .cache import register_frame_writer
+
         cache_for_flush = get_cache()
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            _get_executor(), _flush_telemetry_writes, cache_for_flush, collector
-        )
+        register_frame_writer(partial(_flush_telemetry_writes, cache_for_flush, collector))
 
     return _process_fetch_results(requests, results)
 

@@ -148,6 +148,10 @@ def _create_session() -> Any:
 
             # The adapter owns name resolution in niquests, so the resolver
             # must be handed to the replacement adapter or it is silently lost.
+            # Argos A7: the replacement adapter owns protocol negotiation
+            # too, so the HTTP/3 switch must be handed to it as well or the
+            # ``http_disable_http3`` knob is silently lost (E7 could not
+            # measure an h2-only variant for exactly this reason).
             session.mount(
                 "https://",
                 niquests.adapters.HTTPAdapter(
@@ -155,6 +159,7 @@ def _create_session() -> Any:
                     pool_maxsize=pool_maxsize,
                     pool_block=False,
                     resolver=resolver,
+                    disable_http3=disable_http3,
                 ),
             )
             # Enable connection keep-alive with timeout and max requests

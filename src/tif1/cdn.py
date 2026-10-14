@@ -224,10 +224,19 @@ class CDNManager:
             except InvalidDataError:
                 raise
             except Exception as e:
-                logger.warning(f"CDN {source.name} failed: {e}")
-                self.mark_failure(source.name)
+                status = self._response_status(e)
+                if CDNManager._is_file_refusal(status):
+                    # Argos A11: a 403 is per-file on jsDelivr ("Package size
+                    # exceeded the configured limit of 50 MB" for files its
+                    # edge has not cached) - like a 404 it says nothing about
+                    # the mirror's health, so it must not count towards
+                    # disabling the source for the rest of the process.
+                    logger.debug(f"CDN {source.name} refused {path} ({status}), trying next source")
+                else:
+                    logger.warning(f"CDN {source.name} failed: {e}")
+                    self.mark_failure(source.name)
                 last_exception = e
-                statuses.append(self._response_status(e))
+                statuses.append(status)
 
         # Called via the class so Mock-bound instances keep the real decision logic.
         if CDNManager._all_client_refusals(statuses):
@@ -237,6 +246,17 @@ class CDNManager:
             url=f"{year}/{gp}/{session}/{path}",
             status_code=self._response_status(last_exception),
         )
+
+    @staticmethod
+    def _is_file_refusal(status: int | None) -> bool:
+        """True for statuses that refuse one file without saying the mirror is down.
+
+        404: the mirror does not (yet) hold the file. 403: jsDelivr's answer for
+        a file it cannot fetch from a repository over its 50 MB package limit -
+        intermittent and per-file (files already in its cache keep serving).
+        Neither is a health signal; both fall through to the next source.
+        """
+        return status in (403, 404)
 
     async def try_sources_async(
         self,
@@ -299,11 +319,32 @@ class CDNManager:
             except InvalidDataError:
                 raise
             except Exception as e:
-                logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
-                if self._response_status(e) != 404:
+                status = self._response_status(e)
+                if not CDNManager._is_file_refusal(status):
+                    logger.warning(f"CDN {source.name} failed: {type(e).__name__}: {e}")
                     self.mark_failure(source.name)
+                    last_exception = e
+                    statuses.append(status)
+                    continue
+                # Argos A11: a per-file refusal (403 on jsDelivr's over-limit
+                # repository, or a 404 surfaced as an HTTP error) is handled
+                # exactly like the DataNotFoundError branch above - no health
+                # penalty, race the remaining sources.
+                logger.debug(f"CDN {source.name} refused {path} ({status}), racing remaining")
                 last_exception = e
-                statuses.append(self._response_status(e))
+                statuses.append(status)
+                remaining = sources[index + 1 :]
+                if not remaining:
+                    break
+                result, race_error, race_statuses = await self._race_remaining_async(
+                    year, gp, session, path, fetch_func, remaining
+                )
+                statuses.extend(race_statuses)
+                if result is not None:
+                    return result
+                if race_error is not None:
+                    last_exception = race_error
+                break
 
         # Called via the class so Mock-bound instances keep the real decision logic.
         if CDNManager._all_client_refusals(statuses):
@@ -363,11 +404,14 @@ class CDNManager:
                         continue
                     if isinstance(error, InvalidDataError):
                         raise error from race_failure
-                    logger.warning(
-                        f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
-                    )
                     status = self._response_status(error)
-                    if status != 404:
+                    if CDNManager._is_file_refusal(status):
+                        # Per-file refusal (Argos A11): no health penalty.
+                        logger.debug(f"CDN {race_failure.source_name} refused the file ({status})")
+                    else:
+                        logger.warning(
+                            f"CDN {race_failure.source_name} failed: {type(error).__name__}: {error}"
+                        )
                         self.mark_failure(race_failure.source_name)
                     last_error = error
                     statuses.append(status)
