@@ -96,6 +96,7 @@ graph TD
 - Tracks failure counts per CDN source
 - Automatically disables failing sources after 3 consecutive failures
 - A 404 from one CDN falls through to the next, because mirrors can be stale
+- A 403 from one CDN falls through the same way. jsDelivr answers 403 ("Package size exceeded the configured limit of 50 MB") for a file its edge has not cached yet. A 403 says nothing about the mirror's health, so it does not count towards disabling it
 - tif1 raises `DataNotFoundError` when every CDN returns a 4xx client error (404 included)
 - Requests for files missing everywhere never burn the retry/backoff budget
 - 5xx and transport errors keep the retryable `NetworkError`
@@ -2215,7 +2216,10 @@ http = get_session()  # Shared niquests.Session
 
 # What tif1 configured on it (see the connection pooling section):
 # - niquests.Session(multiplexed=True): HTTP/2 when the CDN offers it,
-#   HTTP/1.1 otherwise; HTTP/3 stays on unless TIF1_HTTP_DISABLE_HTTP3=true
+#   HTTP/1.1 otherwise; HTTP/3 is off unless TIF1_HTTP_DISABLE_HTTP3=false
+#   (the switch is passed to the mounted adapter as well, which owns negotiation)
+# - get_session() warms this connection in a daemon thread (TIF1_CDN_PRECONNECT)
+#   so the first payload request of a cold load skips DNS and TLS
 # - DNS: the system resolver; DNS over HTTPS (Cloudflare, then Google) only
 #   when a session with the system resolver cannot be created (TIF1_HTTP_RESOLVERS)
 # - HTTPAdapter(pool_connections=256, pool_maxsize=1024, pool_block=False)

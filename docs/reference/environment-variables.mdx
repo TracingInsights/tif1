@@ -275,14 +275,26 @@ export TIF1_HTTP_MULTIPLEXED=false
 
 ### TIF1_HTTP_DISABLE_HTTP3
 
-Disable HTTP/3 (QUIC) support.
+Disable HTTP/3 (QUIC) support. HTTP/2 over TCP is the default. Set it to `false` to negotiate HTTP/3 again.
 
 ```bash
-export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_HTTP_DISABLE_HTTP3=false
 ```
 
 <Info>
-  Type: `bool`. Default: `false`
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_CDN_PRECONNECT
+
+Warm the shared CDN connection (DNS and TLS) in a background thread while `get_session()` returns. The first payload request of a cold load then rides an open connection. Set to `false` to keep `get_session()` free of network activity.
+
+```bash
+export TIF1_CDN_PRECONNECT=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`. Skipped automatically in offline and CI mode.
 </Info>
 
 ### TIF1_HTTP2_MAX_CONNECTIONS
