@@ -7,6 +7,61 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Argos series (2026-10-14)
+
+Twelve hypotheses measured on a 32-core workstation (every prior series ran on
+1-core sandboxes); nine shipped, three measured and documented
+(`.agents/perf-argos/RESULTS.md`, harnesses `tools/argos_*.py`).
+
+- **Bulk fetch no longer serialises on the event loop (A12).** niquests returns
+  lazy multiplexed responses and the first `status_code` access resolved them
+  on the loop thread: 1461 resolutions summed to 9.7 s of a 10.2 s telemetry
+  batch. The response is now resolved inside the worker hop; interleaved
+  parse-phase A/B on the full Monaco 2026 race: candidate faster 3/3 pairs
+  (−34 % to −72 %). End-to-end cold Monaco 2026 load, 3 interleaved
+  pairs on a warm edge: candidate faster 3/3, steady-state pair 13.2 → 10.65 s
+  (−20 %), medians 86.5 → 10.7 s because the control hit the 403/timeout
+  collapse regime once (614 s) and the candidate never did.
+- **A 403 is a per-file refusal, not a CDN failure (A11).** jsDelivr answers
+  403 "Package size exceeded the configured limit of 50 MB" for files it has
+  not cached from the per-year data repositories; three of them used to
+  disable jsDelivr for the whole process and route every later payload
+  through the slowest mirror. 403 now falls through (and races the remaining
+  mirrors) exactly like 404; deterministic simulation with 20 % cold files:
+  median 1.33 → 0.68 s per 300-file batch, worst case 3.39 → 0.76 s.
+- **Typed telemetry frames are built with `DataFrame._from_arrays` (A1)** from
+  `array.array`-converted channels with a one-pass "None"-sentinel coercion:
+  full-corpus assembly −7 % to −16 % per interleaved pair (1452/1452 frames
+  identical in columns, dtypes and values) and frames leave the builder with
+  2.7x fewer blocks, so the materialized-frame tier unpickles 22 % faster
+  (206 → 160 ms) and every later `copy()`/slice of a frame is cheaper.
+- **Float seconds → `timedelta64[ns]` is a vectorized, bit-exact replica of
+  pandas' cast (A2)** for telemetry `Time` and the laps timedelta columns
+  (91 → 8 µs per 400-sample channel; `pd.to_timedelta` converted every
+  sequence twice).
+- **The deferred payload-tier flush runs after `fetch_all_laps_telemetry`
+  returns (A3)**, in the same joined background writer the frame tier uses
+  (277-293 ms off the cold critical path here, 0.78 s on the K-series sandbox).
+- **Laps frames are consolidated after dtype processing and `Driver.laps`
+  uses a boolean mask instead of `DataFrame.query` (A4)**: one block per
+  column (46 on a race) became 17; `pick_driver` −48 %, `pick_quicklaps`
+  −37 %, row slices ~2x.
+- **`pick_fastest`, `_filter_valid_laptimes` and `iterlaps` stop copying the
+  frame (A5)**: `pick_fastest` 2.74 → 1.19 ms, `iterlaps` 18.3 → 1.9 ms per
+  60 laps, identical rows, names and dtypes.
+- **`Telemetry.slice_by_time`/`slice_by_mask`/`get_first_non_zero_time_index`
+  skip redundant coercions and copies (A6)**: −32 % / −36 % / −67 %.
+- **`http_disable_http3` works (A7).** The replacement adapter dropped the
+  switch, so HTTP/3 was always negotiated; it is now passed through. With the switch working, HTTP/2 was at parity or faster in 5/6 full-session and 3/3 small-batch interleaved pairs, and every stalled fetch seen this series ran over HTTP/3, so **HTTP/2 is now the default** (`TIF1_HTTP_DISABLE_HTTP3=false` re-enables QUIC).
+- **`get_session()` pre-connects the CDN for uncached sessions (A8,
+  `cdn_preconnect`, `TIF1_CDN_PRECONNECT`)**: the first payload request of a
+  cold load skips DNS + TLS (cold laps phase median −6 % to −12 %, 10/14
+  interleaved pairs). Skipped for cached sessions and in offline/CI mode.
+- Measured, documented, not shipped: process-pool parse+assembly (A9: −68 %
+  on the post-gather phase with 8 workers, needs raw-byte plumbing and ~1 GB
+  of worker RSS) and alternative transports (A10: aiohttp −21 % on the raw
+  84 MB transfer; curl_cffi erratic) — see RESULTS.md.
+
 ### Added — Python 3.15 support
 
 - Python 3.15 is a supported, CI-tested interpreter: the `3.15` trove

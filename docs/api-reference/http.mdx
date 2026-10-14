@@ -268,7 +268,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
   "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
   "cdns": [
     "https://cdn.jsdelivr.net/gh/TracingInsights",
@@ -314,7 +314,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 
 **Protocol Configuration:**
 - `http_multiplexed` (bool, default: true): Enable HTTP/2 multiplexing for reduced latency.
-- `http_disable_http3` (bool, default: false): Disable HTTP/3 if experiencing compatibility issues.
+- `http_disable_http3` (bool, default: true): HTTP/2 over TCP is the default. Set it to `false` to negotiate HTTP/3.
 - `http_resolvers` (array, default: ["standard", "doh+cloudflare://", "doh+google://"]): DNS resolver priority order.
 
 **CDN Configuration:**
@@ -362,7 +362,7 @@ export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=32
 
 # Protocol
 export TIF1_HTTP_MULTIPLEXED=true
-export TIF1_HTTP_DISABLE_HTTP3=false
+export TIF1_HTTP_DISABLE_HTTP3=true
 export TIF1_HTTP_RESOLVERS="standard,doh+cloudflare://,doh+google://"
 
 # CDN
@@ -504,7 +504,7 @@ The session will try each resolver in order until one succeeds. If all resolvers
   - Header compression reduces bandwidth usage
   - Server push support (though not used by current CDNs)
   - Automatic protocol negotiation via ALPN
-- **HTTP/3 support** (can be disabled via `http_disable_http3`, default: `false`)
+- **HTTP/3 support** (off by default; set `http_disable_http3` to `false` to negotiate it)
   - QUIC-based protocol for improved performance over lossy networks
   - Faster connection establishment (0-RTT)
   - Better handling of packet loss
@@ -541,18 +541,18 @@ export TIF1_HTTP_MULTIPLEXED=false
 
 **HTTP/3 Considerations:**
 
-HTTP/3 provides benefits for high-latency or lossy networks, but may have compatibility issues with some CDNs or corporate firewalls. To solve connection issues, try disabling HTTP/3:
+HTTP/3 (QUIC) is off by default. In interleaved live A/Bs of the bulk telemetry fetch, HTTP/2 over TCP was at parity or faster, and every stalled fetch observed ran over HTTP/3. To negotiate HTTP/3 again:
 
 ```json
 {
-  "http_disable_http3": true
+  "http_disable_http3": false
 }
 ```
 
 Or via environment variable:
 
 ```bash
-export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_HTTP_DISABLE_HTTP3=false
 ```
 
 **Performance Optimizations:**
@@ -2357,8 +2357,8 @@ cdn_manager.add_source(
 config = get_config()
 config.set("http_resolvers", ["doh+cloudflare://", "doh+google://", "standard"])
 
-# Solution 5: Disable HTTP/3 if experiencing protocol issues
-config.set("http_disable_http3", True)
+# Solution 5: HTTP/3 is off by default; re-enable it only to test QUIC paths
+config.set("http_disable_http3", False)
 ```
 
 ---

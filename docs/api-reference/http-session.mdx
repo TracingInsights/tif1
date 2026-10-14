@@ -207,7 +207,7 @@ The HTTP session is configured via the global config object. Key settings:
 | Config Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `http_multiplexed` | `bool` | `True` | Enable HTTP/2 multiplexing |
-| `http_disable_http3` | `bool` | `False` | Disable HTTP/3 support |
+| `http_disable_http3` | `bool` | `True` | Disable HTTP/3 (QUIC); HTTP/2 over TCP is the default |
 | `pool_connections` | `int` | Dynamic (min 256) | Number of connection pools (auto-sized based on concurrency) |
 | `pool_maxsize` | `int` | Dynamic (min 512) | Maximum connections per pool (auto-sized to 4x pool_connections; a set value below 512 is raised to 512) |
 | `keepalive_timeout` | `int` | `120` | Keep-alive timeout in seconds |

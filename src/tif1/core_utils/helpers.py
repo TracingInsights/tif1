@@ -1,5 +1,6 @@
 """Helper functions for tif1 core."""
 
+import array
 import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
@@ -151,24 +152,27 @@ def _filter_valid_laptimes(laps, lib: str):
 
     # For pandas: check if already timedeltas (any resolution, e.g. timedelta64[us]
     # with pandas 3.0 unit inference)
-    if pd.api.types.is_timedelta64_dtype(laps[COL_LAP_TIME]):
-        valid = laps[laps[COL_LAP_TIME].notna()].copy()
+    # Argos A5: a boolean take already yields a fresh frame under pandas 3's
+    # copy-on-write, so the explicit ``.copy()`` that followed it doubled the
+    # per-block copies on every pick_fastest/get_fastest_lap call. A shallow
+    # copy keeps the all-valid case free of a block copy too.
+    lap_time = cast(pd.Series, laps[COL_LAP_TIME])
+    if pd.api.types.is_timedelta64_dtype(lap_time):
+        mask = lap_time.notna().to_numpy()
+        valid = laps[mask] if not mask.all() else laps.copy(deep=False)
         valid[COL_LAP_TIME_SECONDS] = (
             cast(pd.Series, valid[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
         )
         return valid
 
-    # For pandas: minimize copies by filtering before copying
-    lap_time_numeric = pd.to_numeric(laps[COL_LAP_TIME], errors="coerce")
-    valid_mask = lap_time_numeric.notna()
-
-    # Filter first (view operation), then copy only the filtered result
-    valid = laps[valid_mask].copy()
+    lap_time_numeric = pd.to_numeric(lap_time, errors="coerce")
+    valid_mask = lap_time_numeric.notna().to_numpy()
+    valid = laps[valid_mask]
     if valid.empty:
         return valid
 
     # Canonical pandas contract: Timedelta LapTime + numeric LapTimeSeconds.
-    lap_time_seconds = lap_time_numeric[valid_mask].to_numpy(copy=False)
+    lap_time_seconds = lap_time_numeric.to_numpy()[valid_mask]
     valid[COL_LAP_TIME] = pd.to_timedelta(lap_time_seconds, unit="s")
     valid[COL_LAP_TIME_SECONDS] = lap_time_seconds
     return valid
@@ -332,56 +336,98 @@ def _typed_telemetry_frame(
     full 2026 Monaco race telemetry set). Returns None when a canonical
     conversion fails; the caller then uses the legacy build+convert path.
     """
+    # Argos A1: every column is handed to the frame as a ready array and the
+    # frame is assembled with ``DataFrame._from_arrays(verify_integrity=False)``
+    # - no per-column sanitize pass and consolidated blocks (7-9 instead of
+    # one block per column), which also makes the frame-tier pickle/unpickle
+    # and every later copy/slice of the frame cheaper. Column dtypes are
+    # exactly the ones the dict constructor inferred (verified frame-by-frame
+    # on the full Monaco 2026 set); on any conversion error the caller falls
+    # back to the legacy build+convert path.
     try:
-        frame_data: dict[str, Any] = {}
+        arrays: list[Any] = []
+        columns: list[str] = []
         for k, v in normalized_data.items():
             if k == "Time":
-                # np.asarray first: pd.to_timedelta on a Python list re-boxes
-                # every element through its object path (~790 us/frame vs
-                # ~215 us on the ndarray path, parity-identical output).
-                try:
-                    frame_data[k] = pd.to_timedelta(np.asarray(v, dtype="float64"), unit="s")
-                except (TypeError, ValueError):
-                    frame_data[k] = pd.to_timedelta(v, unit="s")
+                seconds = _float_channel_array(v)
+                if seconds is None:
+                    seconds = np.asarray(v, dtype="float64")
+                column: Any = _seconds_to_td64ns(seconds)
             elif k == "Brake" and None not in v:
-                frame_data[k] = np.asarray(v, dtype=bool)
+                ints = _numeric_channel_array(v)
+                column = (
+                    ints.astype(bool)
+                    if ints is not None and ints.dtype.kind == "i"
+                    else np.asarray(v, dtype=bool)
+                )
             elif k in ("nGear", "DRS"):
                 # Integer lists (the common case) build the IntegerArray
                 # directly: one C conversion + zero mask beats pd.array's
                 # generic mask inference (~23 us/frame on Monaco-size rows).
-                arr = np.asarray(v)
+                arr = _numeric_channel_array(v)
+                if arr is None:
+                    arr = np.asarray(v)
                 if arr.dtype.kind in "iu":
-                    frame_data[k] = pd.arrays.IntegerArray(arr, np.zeros(len(arr), dtype=bool))
+                    column = pd.arrays.IntegerArray(
+                        arr.astype("int64", copy=False), np.zeros(len(arr), dtype=bool)
+                    )
                 else:
-                    frame_data[k] = pd.array(v, dtype="Int64")
+                    column = pd.array(v, dtype="Int64")
             elif k in _NUMERIC_TELEMETRY_CHANNELS:
-                # Numeric channels pass ndarray straight to the constructor:
-                # pandas' list path re-validates per element (~150 us/frame
-                # extra on 19-column Monaco frames). A "None" sentinel in the
-                # list makes numpy build a str array; that column is coerced
-                # to float64 NaN instead of being stringified.
-                arr = np.asarray(v)
-                frame_data[k] = arr if arr.dtype.kind in "if" else _coerce_numeric_channel(v, arr)
+                # A "None" sentinel in the list would make numpy build a str
+                # array; that column is coerced to float64 NaN instead of
+                # being stringified.
+                arr = _numeric_channel_array(v)
+                if arr is None:
+                    arr = _numeric_channel_with_sentinels(v)
+                if arr is None:
+                    arr = np.asarray(v)
+                    column = arr if arr.dtype.kind in "if" else _coerce_numeric_channel(v, arr)
+                else:
+                    column = arr
             elif k == _DRIVER_AHEAD_CHANNEL:
-                # Driver numbers as strings; "None" means nobody ahead.
-                frame_data[k] = _without_null_tokens(v)
+                # Driver numbers as strings; "None" means nobody ahead. Series
+                # inference keeps the dict constructor's dtype (str).
+                column = pd.Series(_without_null_tokens(v)).array
             else:
-                # Unknown channels keep the raw list so dtype inference is
-                # unchanged.
-                frame_data[k] = v
+                # Unknown channels keep pandas' list inference.
+                column = pd.Series(v).array
+            arrays.append(column)
+            columns.append(k)
         # pandas 3 infers str dtype from object arrays at construction; the
-        # FastF1-compatible Driver contract is object.
-        frame_data["Driver"] = pd.Series(np.full(max_len, driver, dtype=object), dtype=object)
-        frame_data["LapNumber"] = pd.arrays.IntegerArray(
-            np.full(max_len, lap_num, dtype="int64"), np.zeros(max_len, dtype=bool)
+        # FastF1-compatible Driver contract is object (no inference here).
+        arrays.append(np.full(max_len, driver, dtype=object))
+        columns.append("Driver")
+        arrays.append(
+            pd.arrays.IntegerArray(
+                np.full(max_len, lap_num, dtype="int64"), np.zeros(max_len, dtype=bool)
+            )
         )
-        frame = pd.DataFrame(frame_data, copy=False)
-    except (TypeError, ValueError):
+        columns.append("LapNumber")
+        frame = _frame_from_arrays(arrays, columns, max_len)
+    except (AttributeError, TypeError, ValueError):
         return None
     for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
         if col not in frame.columns:
             frame[col] = pd.NA
     return frame
+
+
+def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+    """One-shot DataFrame from ready column arrays (no sanitize, consolidated).
+
+    ``DataFrame._from_arrays`` is the constructor pandas' own readers use for
+    pre-typed columns; it is private but stable across pandas 1.x-3.x. Should
+    it ever disappear, the public constructor (slower, unconsolidated) is the
+    fallback, so behaviour never depends on it.
+    """
+    from_arrays: Any = getattr(pd.DataFrame, "_from_arrays", None)
+    if from_arrays is None:  # pragma: no cover - pandas internals changed
+        return pd.DataFrame(dict(zip(columns, arrays)), copy=False)
+    return cast(
+        pd.DataFrame,
+        from_arrays(arrays, columns=columns, index=pd.RangeIndex(n_rows), verify_integrity=False),
+    )
 
 
 def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
@@ -580,13 +626,11 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     numeric_values = (
         values if pd.api.types.is_numeric_dtype(values) else pd.to_numeric(values, errors="coerce")
     )
-    valid_mask = numeric_values.notna()
-    result = pd.Series(pd.NaT, index=numeric_values.index, dtype="timedelta64[ns]")
-    if bool(valid_mask.any()):
-        result.loc[valid_mask] = pd.to_timedelta(
-            numeric_values.loc[valid_mask].to_numpy(copy=False), unit="s"
-        )
-    return result
+    # Argos A2: one vectorized cast (NaN -> NaT inside) replaces the NaT
+    # template + masked ``pd.to_timedelta`` assignment; NaN never reaches a
+    # pandas conversion and the values are bit-identical to that path.
+    seconds = numeric_values.to_numpy(dtype="float64", na_value=np.nan)
+    return pd.Series(_seconds_to_td64ns(seconds), index=numeric_values.index, name=values.name)
 
 
 _NULL_LIKE_TOKEN_PROBE = _NULL_LIKE_STRINGS | {"None"}
@@ -614,6 +658,83 @@ _NUMERIC_TELEMETRY_CHANNELS = frozenset(
 )
 # String channel (driver number ahead) whose missing values arrive as "None".
 _DRIVER_AHEAD_CHANNEL = "DriverAhead"
+
+
+_NS_PER_SECOND = 1_000_000_000
+_NAT_INT64 = np.iinfo("int64").min
+
+
+def _seconds_to_td64ns(seconds: np.ndarray) -> np.ndarray:
+    """float64 seconds -> ``timedelta64[ns]`` exactly as ``pd.to_timedelta(unit="s")``.
+
+    Vectorized replica of pandas' ``cast_from_unit_vectorized``: truncate to
+    whole seconds, round the fraction to 9 decimals, scale both to
+    nanoseconds and truncate; NaN becomes NaT. Bit-identical to the pandas
+    path on every Monaco 2026 telemetry frame (Argos A2), at ~8 us instead of
+    ~90 us per 400-sample channel (pandas converts the sequence twice:
+    ``_convert_listlike`` and again inside ``TimedeltaIndex.__new__``).
+    """
+    with np.errstate(invalid="ignore"):
+        whole = seconds.astype("int64")
+        fraction = np.round(seconds - whole, 9)
+        nanos = whole * _NS_PER_SECOND + (fraction * _NS_PER_SECOND).astype("int64")
+    missing = np.isnan(seconds)
+    if missing.any():
+        nanos[missing] = _NAT_INT64
+    return nanos.view("m8[ns]")
+
+
+def _float_channel_array(values: list[Any]) -> np.ndarray | None:
+    """float64 ndarray for a list of Python numbers, or None if anything else is in it."""
+    try:
+        return np.frombuffer(array.array("d", values), dtype="float64")
+    except TypeError:
+        return None
+
+
+def _numeric_channel_array(values: list[Any]) -> np.ndarray | None:
+    """int64 for an all-int list, float64 for an int/float list, None otherwise.
+
+    ``array.array`` converts a list of Python numbers in one C loop with no
+    per-element dtype inference (~2x faster than ``np.asarray`` on 400-sample
+    channels); the dtype outcome matches ``np.asarray``'s for these inputs
+    (ints -> int64, any float -> float64). Bools and non-numbers return None so
+    the caller keeps numpy's inference for them.
+    """
+    if values and isinstance(values[0], bool):
+        return None
+    if values and type(values[0]) is not float:
+        try:
+            return np.frombuffer(array.array("q", values), dtype="int64")
+        except (TypeError, OverflowError):
+            pass
+    try:
+        return np.frombuffer(array.array("d", values), dtype="float64")
+    except TypeError:
+        return None
+
+
+def _numeric_channel_with_sentinels(values: list[Any]) -> np.ndarray | None:
+    """float64 array for a numeric channel whose only non-numbers are null tokens.
+
+    Upstream writes the literal string ``"None"`` into numeric channels (five
+    channels on ~90% of 2026 Monaco frames); numpy would build a str array
+    for the whole channel and the generic coercion then masks and re-parses
+    it (~48 us per 675-sample channel). Swapping the known tokens for NaN in
+    one Python pass and converting with ``array.array`` halves that. Any
+    other non-number (an unexpected string, ``None``) returns None so the
+    caller keeps the generic coercion, which also parses numeric strings.
+    """
+    try:
+        return np.frombuffer(
+            array.array(
+                "d",
+                [np.nan if (type(x) is str and x in _NULL_LIKE_TOKEN_PROBE) else x for x in values],
+            ),
+            dtype="float64",
+        )
+    except TypeError:
+        return None
 
 
 def _coerce_numeric_channel(values: list[Any], arr: np.ndarray | None = None) -> np.ndarray:
@@ -934,6 +1055,12 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
         return lap_df
     lap_df = _apply_categorical(lap_df, CATEGORICAL_COLS, lib)
     lap_df = _reorder_laps_columns(lap_df, lib)
+    if lib == "pandas":
+        # Argos A4: the per-column dtype assignments above leave one block per
+        # column (46 blocks on a race laps frame); every later row selection
+        # (pick_*, Driver.laps, iterrows) then pays a per-block take. One
+        # consolidation here (~0.1 ms) halves pick_driver on the same frame.
+        cast(Any, lap_df)._consolidate_inplace()
     return lap_df
 
 

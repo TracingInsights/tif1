@@ -46,6 +46,7 @@ The CDN manager maintains a prioritized list of CDN sources and automatically tr
 - If a source fails, the next available source is tried immediately
 - Successful requests reset the failure counter for that source
 - Failed sources are temporarily disabled after reaching the failure threshold
+- A 404 or 403 is a per-file refusal, not a failure. The next source is tried (raced, on the async path) and the counter is untouched. jsDelivr returns 403 for uncached files of a repository over its 50 MB package limit. Counting those would disable the fastest mirror for the rest of the process
 
 **Benefits:**
 - **Zero-downtime failover**: Automatic switching to backup sources without user intervention
@@ -62,7 +63,7 @@ Each CDN source is continuously monitored for reliability. The circuit breaker p
 - **Recovery**: There is no automatic half-open state. `try_sources()` never tries an open source, so it stays open until a call to `reset()` or `mark_success(name)`
 
 **Failure threshold:**
-- Default: 3 consecutive failures before disabling
+- Default: 3 consecutive failures before disabling (transport errors, timeouts and 5xx; a 403 or 404 never counts)
 - Configurable via `_max_failures` attribute
 - Failures are tracked per-source in `_failure_counts` dictionary
 

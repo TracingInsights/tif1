@@ -407,7 +407,8 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
-export TIF1_HTTP_DISABLE_HTTP3=false
+export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_CDN_PRECONNECT=true
 # export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
 # export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
@@ -983,11 +984,19 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="http_disable_http3" type="bool" default="False">
-  Disable HTTP/3 support.
+<ResponseField name="http_disable_http3" type="bool" default="True">
+  Disable HTTP/3 (QUIC). The default is HTTP/2 over TCP. In interleaved live A/Bs, HTTP/2 was at parity or faster for the bulk telemetry fetch, and every stalled fetch observed ran over HTTP/3. Set it to `False` to negotiate HTTP/3 again.
 
   ```python
-  config.set("http_disable_http3", True)
+  config.set("http_disable_http3", False)  # negotiate HTTP/3 again
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_preconnect" type="bool" default="True">
+  Warm the shared CDN connection in a daemon thread during `get_session()`, so the first request of a cold load skips the DNS and TLS handshake. Skipped in offline and CI mode.
+
+  ```python
+  config.set("cdn_preconnect", False)  # keep get_session() network-free
   ```
 </ResponseField>
 
@@ -1397,7 +1406,8 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "pool_connections": 512,
   "pool_maxsize": 1024,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "keepalive_timeout": 300,
   "keepalive_max_requests": 5000,
   "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
@@ -2550,7 +2560,8 @@ Legend: ↑ = Increases, ↓ = Decreases
   "pool_exhaustion_backoff_max": 0.5,
   "pool_exhaustion_backoff_jitter": 0.01,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,
