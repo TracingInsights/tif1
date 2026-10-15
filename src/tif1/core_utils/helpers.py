@@ -578,7 +578,7 @@ def _probe_direct_blocks() -> bool:
             and direct.equals(public)
             and len(direct._mgr.blocks) == len(public._mgr.blocks)
         )
-    except Exception:  # noqa: BLE001 - any drift disables the fast path
+    except Exception:
         return False
 
 

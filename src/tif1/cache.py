@@ -1256,10 +1256,21 @@ class Cache:
             from polars.exceptions import PolarsError
 
             frame_errors = (*frame_errors, PolarsError)
+        if lib == "pandas":
+            from .core_utils.frame_codec import FRAME_CODEC_MAGIC, decode_frame
+        else:
+            FRAME_CODEC_MAGIC, decode_frame = b"", None
         with _suspend_gc():
             for driver_code, lap_num, blob in rows:
                 try:
-                    frame = pickle.loads(_decompress_frame_blob(blob))
+                    raw = _decompress_frame_blob(blob)
+                    # Thebes TH1: typed-columnar rows rebuild through direct
+                    # block assembly (~80 us/frame vs ~130 us unpickling);
+                    # rows written by earlier releases are still pickles.
+                    if decode_frame is not None and raw[:4] == FRAME_CODEC_MAGIC:
+                        frame = decode_frame(raw)
+                    else:
+                        frame = pickle.loads(raw)
                     # A foreign-backend blob (hand-migrated cache) degrades to
                     # a tier miss instead of surfacing in caller maps.
                     if not hasattr(frame, _foreign_marker):
@@ -1290,6 +1301,20 @@ class Cache:
             return 0
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         written = 0
+        if lib == "pandas":
+            from .core_utils.frame_codec import encode_frame
+        else:
+            encode_frame = None
+
+        def _serialize(frame: Any) -> bytes:
+            # Thebes TH1: typed-columnar encoding when every block is a known
+            # kind (the telemetry contract's dtypes); pickle otherwise.
+            if encode_frame is not None:
+                encoded = encode_frame(frame)
+                if encoded is not None:
+                    return encoded
+            return pickle.dumps(frame, protocol=5)
+
         try:
             with self._sqlite_lock:
                 # executemany batches the 1400+ per-session frame rows into
@@ -1307,7 +1332,7 @@ class Cache:
                                 session,
                                 driver,
                                 lap,
-                                _compress_frame_blob(pickle.dumps(frame, protocol=5)),
+                                _compress_frame_blob(_serialize(frame)),
                             )
                             for driver, lap, frame in frames
                         ),

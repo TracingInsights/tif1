@@ -66,7 +66,11 @@ def main() -> None:
     args = parser.parse_args()
     a_runs, b_runs = [], []
     for i in range(args.pairs):
-        order = [("A", args.src_a), ("B", args.src_b)] if i % 2 == 0 else [("B", args.src_b), ("A", args.src_a)]
+        order = (
+            [("A", args.src_a), ("B", args.src_b)]
+            if i % 2 == 0
+            else [("B", args.src_b), ("A", args.src_a)]
+        )
         for label, src in order:
             t = run(src, args.corpus, args.lib, args.reps)
             (a_runs if label == "A" else b_runs).append(t)

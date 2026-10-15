@@ -86,7 +86,7 @@ def _work(item: tuple[tuple, bytes]) -> tuple[tuple, tuple]:
     driver, lap = str(key[-2]), int(key[-1])
     try:
         df = _create_telemetry_df(tel, driver, lap, _LIB)
-    except Exception as e:  # noqa: BLE001 - parity harness records the failure mode
+    except Exception as e:
         return key, ("<raise>", type(e).__name__)
     fp = _polars_fingerprint(df) if _LIB == "polars" else fingerprint(df)
     return key, fp
@@ -132,7 +132,9 @@ def main() -> None:
         bad = [k for k in results if control.get(k) != results[k]]
         print(f"parity: {len(results) - len(bad)}/{len(results)} identical, {len(bad)} mismatches")
         for k in bad[:10]:
-            print("  ", k, "control:", control.get(k, "<missing>")[:3], "candidate:", results[k][:3])
+            print(
+                "  ", k, "control:", control.get(k, "<missing>")[:3], "candidate:", results[k][:3]
+            )
         if bad:
             sys.exit(1)
 
