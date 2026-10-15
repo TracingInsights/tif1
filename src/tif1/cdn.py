@@ -401,9 +401,8 @@ class CDNManager:
                 # past the hedge delay; a primary refusal or failure is
                 # re-raised into the handlers below. Stand-in managers that
                 # borrow this loop without the hedge machinery stay sequential.
-                hedged_fetch = getattr(self, "_hedged_primary_async", None)
-                if index == 0 and len(sources) > 1 and hedged_fetch is not None:
-                    payload, primary_error = await hedged_fetch(
+                if index == 0 and len(sources) > 1 and isinstance(self, CDNManager):
+                    payload, primary_error = await self._hedged_primary_async(
                         source, sources[1], url, year, gp, session, path, fetch_func
                     )
                     if primary_error is None:

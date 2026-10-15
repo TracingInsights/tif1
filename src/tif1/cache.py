@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote, unquote
 
 from .core_utils.constants import MAX_CACHE_SIZE
-from .core_utils.json_utils import json_dumps_bytes, json_loads
+from .core_utils.json_utils import decode_telemetry_payload, json_dumps_bytes, json_loads
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -169,6 +169,12 @@ _PARSED_TELEMETRY_CACHE_MAX_ITEMS = 256
 # so both backends can keep a warm frame tier without PK collisions and
 # without migrating existing caches.
 _FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "telemetry_frames_pl"}
+# Thebes TH8: polars frames are materialized per driver as one Arrow IPC
+# blob (lz4 inside the IPC stream, decoded multi-threaded by polars) with
+# the lap boundaries alongside; a lap is a zero-copy slice of the driver
+# frame. The per-frame ``telemetry_frames_pl`` table stays readable (rows
+# from earlier releases, and drivers whose laps do not share one schema).
+_POLARS_IPC_TABLE = "telemetry_frames_pl_ipc"
 # Schema version of the materialized-frame tier, stored in SQLite's
 # ``user_version``. Frame rows carry no per-row version, so when the stored
 # version is older the frame tables are dropped once and rebuild from the
@@ -616,6 +622,7 @@ class Cache:
                 # Derived tier only: dropping it costs one rebuild, never a fetch.
                 conn.execute("DROP TABLE IF EXISTS telemetry_frames")
                 conn.execute("DROP TABLE IF EXISTS telemetry_frames_pl")
+                conn.execute(f"DROP TABLE IF EXISTS {_POLARS_IPC_TABLE}")
                 conn.execute(f"PRAGMA user_version = {_FRAME_TIER_SCHEMA_VERSION}")
 
             conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT)")
@@ -646,6 +653,19 @@ class Cache:
                     lap INTEGER,
                     frame BLOB,
                     PRIMARY KEY (year, gp, session, driver, lap)
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {_POLARS_IPC_TABLE} (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    driver TEXT,
+                    laps TEXT,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session, driver)
                 )
                 """
             )
@@ -897,7 +917,7 @@ class Cache:
                 self.conn.execute(f"DELETE FROM {laps_table}")
             if scope == "telemetry":
                 # Frames are derived from telemetry payloads (both backends).
-                for frame_table in _FRAME_TABLES.values():
+                for frame_table in (*_FRAME_TABLES.values(), _POLARS_IPC_TABLE):
                     self.conn.execute(f"DELETE FROM {frame_table}")
             self.conn.commit()
             self._pending_writes = 0
@@ -1045,7 +1065,7 @@ class Cache:
 
             if json_data is not None:
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
-                parsed = json_loads(json_data)
+                parsed = decode_telemetry_payload(json_data)
                 self._parsed_telemetry_cache.set(cache_key, parsed)
                 return parsed
 
@@ -1061,7 +1081,7 @@ class Cache:
             # Update memory cache outside SQLite lock
             if json_data is not None:
                 self._memory_telemetry_cache.set(cache_key, json_data)
-                parsed = json_loads(json_data)
+                parsed = decode_telemetry_payload(json_data)
                 self._parsed_telemetry_cache.set(cache_key, parsed)
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
                 return parsed
@@ -1116,7 +1136,7 @@ class Cache:
                 continue
             json_data = self._memory_telemetry_cache.get(key, ordered=False)
             if json_data:
-                parsed = json_loads(json_data)
+                parsed = decode_telemetry_payload(json_data)
                 self._parsed_telemetry_cache.set(key, parsed)
                 results[(driver, lap)] = parsed
             else:
@@ -1143,7 +1163,7 @@ class Cache:
                             (year, gp, session, driver_code, lap_num),
                             decoded,
                         )
-                        parsed = json_loads(decoded)
+                        parsed = decode_telemetry_payload(decoded)
                         self._parsed_telemetry_cache.set(
                             (year, gp, session, driver_code, lap_num), parsed
                         )
@@ -1195,6 +1215,11 @@ class Cache:
             return {}
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         results: dict[tuple[str, int], Any] = {}
+        if lib == "polars":
+            results = self._get_polars_ipc_frames(year, gp, session, driver_laps)
+            driver_laps = [ref for ref in driver_laps if ref not in results]
+            if not driver_laps:
+                return results
         try:
             with self._sqlite_lock:
                 # Whole-session batches (fetch_all_laps_telemetry) read far
@@ -1301,6 +1326,10 @@ class Cache:
             return 0
         table = _FRAME_TABLES.get(lib, "telemetry_frames")
         written = 0
+        if lib == "polars":
+            frames, written = self._set_polars_ipc_frames(year, gp, session, frames)
+            if not frames:
+                return written
         if lib == "pandas":
             from .core_utils.frame_codec import encode_frame
         else:
@@ -1344,6 +1373,126 @@ class Cache:
             logger.debug("Telemetry frames write skipped: %s", e)
             return 0
         return written
+
+    # -- polars per-driver Arrow IPC frame tier (Thebes TH8) ----------------
+
+    def _get_polars_ipc_frames(
+        self, year: int, gp: str, session: str, driver_laps: list[tuple[str, int]]
+    ) -> dict[tuple[str, int], Any]:
+        """Serve polars frames from the per-driver IPC rows (missing refs are absent)."""
+        wanted: dict[str, set[int]] = {}
+        for driver, lap in driver_laps:
+            wanted.setdefault(driver, set()).add(lap)
+        results: dict[tuple[str, int], Any] = {}
+        try:
+            placeholders = ", ".join("?" for _ in wanted)
+            with self._sqlite_lock:
+                rows = self.conn.execute(
+                    f"SELECT driver, laps, frame FROM {_POLARS_IPC_TABLE} WHERE year = ? "
+                    f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                    (year, gp, session, *wanted),
+                ).fetchall()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Polars frame tier read error: %s", e)
+            return results
+        if not rows:
+            return results
+        import polars as pl
+        from polars.exceptions import PolarsError
+
+        for driver, laps_json, blob in rows:
+            try:
+                lap_spans = json_loads(laps_json)
+                frame = pl.read_ipc(bytes(blob))
+                offset = 0
+                for raw_lap, raw_rows in lap_spans:
+                    lap, n_rows = int(raw_lap), int(raw_rows)
+                    if lap in wanted[driver]:
+                        results[(driver, lap)] = frame.slice(offset, n_rows)
+                    offset += n_rows
+                if offset != frame.height:
+                    raise ValueError("lap spans do not cover the driver frame")
+            except (PolarsError, TypeError, ValueError, OSError) as e:
+                logger.debug("Corrupt polars frame row skipped: %s: %s", driver, e)
+                for lap in wanted[driver]:
+                    results.pop((driver, lap), None)
+        return results
+
+    def _set_polars_ipc_frames(
+        self, year: int, gp: str, session: str, frames: list[tuple[str, int, Any]]
+    ) -> tuple[list[tuple[str, int, Any]], int]:
+        """Write per-driver IPC rows; returns ``(leftover frames, frames written)``.
+
+        A driver's laps are merged with the laps already stored for it, so a
+        partial batch never drops frames. Drivers whose laps do not share one
+        schema are handed back to the per-frame pickle path.
+        """
+        import io
+
+        import polars as pl
+        from polars.exceptions import PolarsError
+
+        by_driver: dict[str, dict[int, Any]] = {}
+        for driver, lap, frame in frames:
+            by_driver.setdefault(driver, {})[int(lap)] = frame
+        leftovers: list[tuple[str, int, Any]] = []
+        existing: dict[str, tuple[list, bytes]] = {}
+        try:
+            placeholders = ", ".join("?" for _ in by_driver)
+            with self._sqlite_lock:
+                for driver, laps_json, blob in self.conn.execute(
+                    f"SELECT driver, laps, frame FROM {_POLARS_IPC_TABLE} WHERE year = ? "
+                    f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                    (year, gp, session, *by_driver),
+                ).fetchall():
+                    existing[driver] = (json_loads(laps_json), bytes(blob))
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Polars frame tier merge read skipped: %s", e)
+            existing = {}
+        rows: list[tuple[Any, ...]] = []
+        written = 0
+        for driver, lap_frames in by_driver.items():
+            merged = dict(lap_frames)
+            if driver in existing:
+                try:
+                    spans, blob = existing[driver]
+                    stored = pl.read_ipc(blob)
+                    offset = 0
+                    for lap, n_rows in spans:
+                        if int(lap) not in merged:
+                            merged[int(lap)] = stored.slice(offset, int(n_rows))
+                        offset += int(n_rows)
+                except (PolarsError, TypeError, ValueError, OSError):
+                    pass  # unreadable row: rewrite it from this batch
+            ordered = [merged[lap] for lap in sorted(merged)]
+            schema = ordered[0].schema
+            if any(f.schema != schema for f in ordered[1:]):
+                leftovers.extend((driver, lap, frame) for lap, frame in lap_frames.items())
+                continue
+            try:
+                driver_frame = pl.concat(ordered, how="vertical", rechunk=True)
+                buffer = io.BytesIO()
+                driver_frame.write_ipc(buffer, compression="lz4")
+            except (PolarsError, TypeError, ValueError) as e:
+                logger.debug("Polars IPC encode failed for %s: %s", driver, e)
+                leftovers.extend((driver, lap, frame) for lap, frame in lap_frames.items())
+                continue
+            spans_json = json_dumps_bytes([[lap, len(merged[lap])] for lap in sorted(merged)])
+            rows.append((year, gp, session, driver, spans_json.decode("utf-8"), buffer.getvalue()))
+            written += len(lap_frames)
+        if rows:
+            try:
+                with self._sqlite_lock:
+                    self.conn.executemany(
+                        f"INSERT OR REPLACE INTO {_POLARS_IPC_TABLE} VALUES (?, ?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                    self._pending_writes += len(rows)
+                    self._commit_if_needed()
+            except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+                logger.debug("Polars frame tier write skipped: %s", e)
+                return frames, 0
+        return leftovers, written
 
     def get_laps_frame(
         self,
@@ -1528,7 +1677,7 @@ class Cache:
         with self._sqlite_lock:
             self.conn.execute("DELETE FROM cache")
             self.conn.execute("DELETE FROM telemetry_cache")
-            for frame_table in _FRAME_TABLES.values():
+            for frame_table in (*_FRAME_TABLES.values(), _POLARS_IPC_TABLE):
                 self.conn.execute(f"DELETE FROM {frame_table}")
             for laps_table in _LAPS_FRAME_TABLES.values():
                 self.conn.execute(f"DELETE FROM {laps_table}")

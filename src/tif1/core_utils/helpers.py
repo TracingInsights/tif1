@@ -23,6 +23,7 @@ from .constants import (
     COL_TEAM,
     FASTF1_LAPS_COLUMN_ORDER,
     LAP_RENAME_MAP,
+    NUMERIC_TELEMETRY_CHANNELS,
     TELEMETRY_RENAME_MAP,
 )
 
@@ -289,7 +290,9 @@ def _create_telemetry_df(
     expected_len: int | None = None
 
     for k, v in tel_data.items():
-        if not isinstance(v, list):
+        # Native-decoded payloads (Thebes TH4) carry numpy arrays for the
+        # numeric channels; the typed builder consumes them directly.
+        if not isinstance(v, list | np.ndarray):
             continue
         renamed_key = TELEMETRY_RENAME_MAP.get(k, k)
         col_data[renamed_key] = v
@@ -305,9 +308,20 @@ def _create_telemetry_df(
                 col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(
                     col_data[_DRIVER_AHEAD_CHANNEL]
                 )
+            # A natively decoded sentinel is NaN in a float array; polars
+            # must see null there (the list path casts "None" to null).
+            nan_channels = [
+                k
+                for k, v in col_data.items()
+                if isinstance(v, np.ndarray) and v.dtype.kind == "f" and np.isnan(v).any()
+            ]
             telemetry_df = pl.DataFrame(col_data, strict=False)
             if telemetry_df.is_empty():
                 return None
+            if nan_channels:
+                telemetry_df = telemetry_df.with_columns(
+                    [pl.col(k).fill_nan(None) for k in nan_channels]
+                )
             telemetry_df = _coerce_polars_telemetry_sentinels(telemetry_df)
             for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
                 if col not in telemetry_df.columns:
@@ -325,8 +339,10 @@ def _create_telemetry_df(
         normalized_data = {}
         for k, v in col_data.items():
             if len(v) < max_len:
-                # Pad with None (becomes NaN in pandas)
-                normalized_data[k] = v + [None] * (max_len - len(v))
+                # Pad with None (becomes NaN in pandas); arrays go back to
+                # lists for this (never seen in real payloads) path.
+                values = v.tolist() if isinstance(v, np.ndarray) else v
+                normalized_data[k] = values + [None] * (max_len - len(values))
             else:
                 normalized_data[k] = v
 
@@ -375,6 +391,13 @@ def _typed_telemetry_frame(
         arrays: list[Any] = []
         columns: list[str] = []
         for k, v in normalized_data.items():
+            if isinstance(v, np.ndarray):
+                column = _typed_channel_from_array(k, v)
+                if column is None:
+                    column = pd.Series(v).array
+                arrays.append(column)
+                columns.append(k)
+                continue
             if k == "Time":
                 # Bit-exact vectorized replica of pandas' base/frac cast
                 # (A2 / KR-2); the exact pd.to_timedelta call stays the path
@@ -446,6 +469,35 @@ def _typed_telemetry_frame(
     except (AttributeError, TypeError, ValueError):
         return None
     return frame
+
+
+def _typed_channel_from_array(name: str, values: np.ndarray) -> Any | None:
+    """Canonical column for a natively decoded channel (int64/float64 ndarray).
+
+    Mirrors the list branches of :func:`_typed_telemetry_frame`: an int64
+    array is what ``array.array("q")`` produced for an all-int list, a
+    float64 array (NaN for sentinels) what the sentinel coercion produced.
+    Returns None for shapes the list path would hand to pandas' inference.
+    """
+    kind = values.dtype.kind
+    if kind not in "iuf":
+        return None
+    if name == "Time":
+        seconds = values if kind == "f" else values.astype("float64")
+        if _td_cast_is_safe(seconds):
+            return _seconds_to_td64ns(seconds)
+        return np.asarray(pd.to_timedelta(seconds, unit="s"))
+    if name == "Brake":
+        return values.astype(bool) if kind in "iu" else None
+    if name in ("nGear", "DRS"):
+        if kind in "iu":
+            return pd.arrays.IntegerArray(
+                values.astype("int64", copy=False), np.zeros(len(values), dtype=bool)
+            )
+        return pd.array(values, dtype="Int64")
+    if name in _NUMERIC_TELEMETRY_CHANNELS:
+        return values
+    return None
 
 
 def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
@@ -811,22 +863,7 @@ _NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
 # value as the literal string "None" (e.g. ``DistanceToDriverAhead`` on a race
 # leader's lap, where nobody is ahead); left alone, one sentinel stringifies
 # the whole column on both backends. The frame builders coerce it to NaN/null.
-_NUMERIC_TELEMETRY_CHANNELS = frozenset(
-    {
-        "RPM",
-        "Speed",
-        "Throttle",
-        "Distance",
-        "RelativeDistance",
-        "DistanceToDriverAhead",
-        "AccelerationX",
-        "AccelerationY",
-        "AccelerationZ",
-        "X",
-        "Y",
-        "Z",
-    }
-)
+_NUMERIC_TELEMETRY_CHANNELS = NUMERIC_TELEMETRY_CHANNELS
 # String channel (driver number ahead) whose missing values arrive as "None".
 _DRIVER_AHEAD_CHANNEL = "DriverAhead"
 
@@ -1284,7 +1321,9 @@ def _merge_telemetry_payloads(
         if not isinstance(tel_payload, dict) or not tel_payload:
             continue
         col_data = {
-            TELEMETRY_RENAME_MAP.get(k, k): v for k, v in tel_payload.items() if isinstance(v, list)
+            TELEMETRY_RENAME_MAP.get(k, k): (v.tolist() if isinstance(v, np.ndarray) else v)
+            for k, v in tel_payload.items()
+            if isinstance(v, list | np.ndarray)
         }
         if not col_data:
             continue

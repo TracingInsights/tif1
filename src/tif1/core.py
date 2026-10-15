@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from typing import Any, Literal, cast
 from urllib.parse import unquote
 
+import numpy as np
 import pandas as pd
 
 from .async_fetch import _validate_json_payload as _validate_json_impl
@@ -415,7 +416,7 @@ def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
         return False
     expected_len: int | None = None
     for value in tel_payload.values():
-        if isinstance(value, list):
+        if isinstance(value, list | np.ndarray):
             expected_len = len(value)
             break
     return expected_len is not None and expected_len > 0
@@ -870,9 +871,12 @@ class Session:
 
         fetched_any = False
         for path, result in zip(paths, results):
-            if isinstance(result, dict) and result:
-                self._remember_local_payload(path, result)
-                fetched_any = True
+            if not isinstance(result, dict) or not result:
+                continue
+            if path == "drivers.json" and not isinstance(result.get("drivers"), list):
+                continue  # not a driver list: leave it to the validated loader
+            self._remember_local_payload(path, result)
+            fetched_any = True
         if fetched_any:
             # The sync per-table prefetch has nothing left to add.
             self._session_tables_prefetched = True

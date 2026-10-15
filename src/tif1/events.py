@@ -216,6 +216,9 @@ class _YearSchedule:
     events: tuple[str, ...]
     expires_at: float
     sessions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Refresh generation the record was built from; a background refresh
+    # that lands bumps the season's generation so the memo re-reads the row.
+    generation: int = 0
 
 
 _year_schedules: dict[int, _YearSchedule] = {}
@@ -281,6 +284,16 @@ def _fetch_f1schedule_year(year: int) -> dict[str, Any] | None:
 
 
 _refreshing_years: set[int] = set()
+_refresh_threads: dict[int, threading.Thread] = {}
+_schedule_generation: dict[int, int] = {}
+
+
+def _join_schedule_refreshes(timeout: float | None = None) -> None:
+    """Wait for in-flight background calendar refreshes (tests and shutdown hooks)."""
+    with _year_schedules_lock:
+        threads = list(_refresh_threads.values())
+    for thread in threads:
+        thread.join(timeout)
 
 
 def _refresh_schedule_in_background(year: int) -> None:
@@ -300,15 +313,18 @@ def _refresh_schedule_in_background(year: int) -> None:
         try:
             if _fetch_f1schedule_year(year) is not None:
                 with _year_schedules_lock:
-                    record = _year_schedules.get(year)
-                    if record is not None:
-                        # Next lookup re-reads the fresh SQLite row.
-                        record.expires_at = 0.0
+                    # Next lookup re-reads the fresh SQLite row, whether the
+                    # stale record is already memoized or still being built.
+                    _schedule_generation[year] = _schedule_generation.get(year, 0) + 1
         finally:
             with _year_schedules_lock:
                 _refreshing_years.discard(year)
+                _refresh_threads.pop(year, None)
 
-    threading.Thread(target=_run, name=f"tif1-schedule-refresh-{year}", daemon=True).start()
+    thread = threading.Thread(target=_run, name=f"tif1-schedule-refresh-{year}", daemon=True)
+    with _year_schedules_lock:
+        _refresh_threads[year] = thread
+    thread.start()
 
 
 def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], float]:
@@ -352,29 +368,46 @@ def _build_year_schedule(year: int, now: float) -> _YearSchedule:
         vendored = _load_schedule_payload()["years"].get(str(year))
         if isinstance(vendored, dict) and vendored:
             return _YearSchedule(vendored, tuple(vendored.get("events", ())), float("inf"))
+    with _year_schedules_lock:
+        generation = _schedule_generation.get(year, 0)
     payload, expires_at = _load_live_year_payload(year, now)
     events = payload.get("events", [])
-    return _YearSchedule(payload, tuple(events) if isinstance(events, list) else (), expires_at)
+    return _YearSchedule(
+        payload,
+        tuple(events) if isinstance(events, list) else (),
+        expires_at,
+        generation=generation,
+    )
 
 
 def _get_year_schedule(year: int) -> _YearSchedule:
     """Return the memoized season schedule, refreshing a live season past its TTL."""
     now = time.time()
     record = _year_schedules.get(year)
-    if record is not None and record.expires_at > now:
+    if record is not None and record.expires_at > now and _is_current_generation(record, year):
         return record
     fresh = _build_year_schedule(year, now)
     with _year_schedules_lock:
         current = _year_schedules.get(year)
-        if current is not None and current.expires_at > now:
+        if (
+            current is not None
+            and current.expires_at > now
+            and current.generation == _schedule_generation.get(year, 0)
+        ):
             # Another thread refreshed while this one fetched.
             return current
         if current is not None and current.payload == fresh.payload:
             # Unchanged upstream: keep the memoized session lookups.
             current.expires_at = fresh.expires_at
+            current.generation = fresh.generation
             return current
         _year_schedules[year] = fresh
     return fresh
+
+
+def _is_current_generation(record: _YearSchedule, year: int) -> bool:
+    with _year_schedules_lock:
+        return record.generation == _schedule_generation.get(year, 0)
 
 
 def _resolve_year_payload(year: int) -> dict[str, Any]:
@@ -382,9 +415,17 @@ def _resolve_year_payload(year: int) -> dict[str, Any]:
 
 
 def _clear_schedule_memo() -> None:
-    """Drop the per-process schedule memo (tests and explicit refreshes)."""
+    """Drop the per-process schedule memo (tests and explicit refreshes).
+
+    In-flight background refreshes are joined first so a refresh started by
+    an earlier lookup cannot land in (or block) the next one.
+    """
+    _join_schedule_refreshes(timeout=5.0)
     with _year_schedules_lock:
         _year_schedules.clear()
+        _refreshing_years.clear()
+        _refresh_threads.clear()
+        _schedule_generation.clear()
 
 
 @lru_cache(maxsize=1)

@@ -78,6 +78,11 @@ class Scenario:
             if "huggingface" in host:
                 return r.lognormvariate(-0.7, 0.35), 200
             return r.lognormvariate(0.4, 0.5), 200
+        if self.name == "clean":
+            # Warm edge without stragglers: isolates in-process costs.
+            if "jsdelivr" in host:
+                return r.lognormvariate(-3.0, 0.3), 200
+            return r.lognormvariate(-1.2, 0.3), 200
         if self.name == "warm":
             if "jsdelivr" in host:
                 if r.random() < 0.005:
@@ -119,6 +124,75 @@ class Scenario:
         return _Resp(status, PAYLOAD if status == 200 else b"")
 
 
+def _run_laps_mode(args: argparse.Namespace, scenario: Scenario) -> None:
+    """Time ``session.laps`` on a cold session: every table request goes through the fake."""
+    import sqlite3
+
+    import niquests
+
+    from tif1.cache import _decode_sqlite_value
+
+    conn = sqlite3.connect(f"file:{args.payload_cache}/cache.sqlite?mode=ro", uri=True)
+    rows = conn.execute(
+        "SELECT key, data FROM cache WHERE key LIKE '2026/Monaco%20Grand%20Prix/Race/%'"
+    ).fetchall()
+    payloads: dict[str, bytes] = {}
+    for key, data in rows:
+        blob = _decode_sqlite_value(data)
+        payloads[key.rsplit("/", 1)[-1]] = blob.encode() if isinstance(blob, str) else bytes(blob)
+    if "drivers.json" not in payloads or "session_laptimes.json" not in payloads:
+        raise SystemExit("payload cache lacks drivers.json / session_laptimes.json rows")
+
+    def fake_get(url: str, timeout: float = 30.0, **_kwargs) -> _Resp:
+        name = url.rsplit("/", 1)[-1]
+        resp = scenario.get(url, timeout)
+        if resp.status_code == 200:
+            resp.content = payloads.get(name, b"{}")
+        return resp
+
+    from tif1 import async_fetch
+
+    async_fetch._get_resolved = lambda _client, url, timeout: fake_get(url, timeout)
+
+    class FakeSession:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def get(self, url, timeout=30.0, **kwargs):
+            return fake_get(url, timeout, **kwargs)
+
+    niquests.Session = FakeSession  # the sync session-table prefetch
+    from tif1 import http_session
+
+    http_session.get_session = lambda: FakeSession()  # the sync payload loader
+    import tif1
+
+    t0 = time.perf_counter()
+    session = tif1.get_session(2026, "Monaco Grand Prix", "Race")
+    t1 = time.perf_counter()
+    laps = session.laps
+    t2 = time.perf_counter()
+    print(
+        json.dumps(
+            {
+                "scenario": args.scenario,
+                "seed": args.seed,
+                "mode": "laps",
+                "get_session_s": round(t1 - t0, 2),
+                "laps_s": round(t2 - t1, 2),
+                "rows": len(laps),
+                "requests": dict(scenario.requests),
+            }
+        )
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--src-dir", required=True)
@@ -126,6 +200,17 @@ def main() -> None:
     parser.add_argument("--files", type=int, default=300)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=0)
+    parser.add_argument("--mode", default="fetch", choices=["fetch", "laps"])
+    parser.add_argument(
+        "--payload-corpus",
+        default=None,
+        help="Argos corpus pickle; its raw payload bytes are served for _tel.json requests",
+    )
+    parser.add_argument(
+        "--payload-cache",
+        default="/tmp/tif1-perf/warm-a",
+        help="primed cache dir whose drivers/session_laptimes rows feed the laps mode",
+    )
     args = parser.parse_args()
 
     os.environ["TIF1_CACHE_DIR"] = tempfile.mkdtemp(prefix="tif1-sim-")
@@ -134,9 +219,20 @@ def main() -> None:
     from tif1 import async_fetch
 
     scenario = Scenario(args.scenario, args.seed)
+    corpus_payloads: list[bytes] = []
+    if args.payload_corpus:
+        import pickle
+
+        with open(args.payload_corpus, "rb") as f:
+            corpus = pickle.load(f)
+        corpus_payloads = [corpus["raw"][r] for r in corpus["refs"]]
 
     def fake_get_resolved(session_client, url, timeout):
-        return scenario.get(url, timeout)
+        resp = scenario.get(url, timeout)
+        if corpus_payloads and resp.status_code == 200:
+            index = int(url.rsplit("/", 1)[-1].split("_")[0]) * 20 + int(url.rsplit("/", 2)[-2][1:])
+            resp.content = corpus_payloads[index % len(corpus_payloads)]
+        return resp
 
     async_fetch._get_resolved = fake_get_resolved
     async_fetch._get_async_session = lambda: object()
@@ -145,11 +241,43 @@ def main() -> None:
 
     http_session._response_reused_connection = lambda _r: False
 
+    if args.mode == "laps":
+        _run_laps_mode(args, scenario)
+        return
+
     requests = [
         (2026, "Sim%20Grand%20Prix", "Race", f"D{i % 20:02d}/{i // 20 + 1}_tel.json")
         for i in range(args.files)
     ]
     kwargs = {"use_cache": False, "write_cache": False, "validate_payload": False}
+    if corpus_payloads:
+        # Measure the full in-process cost: fetch + parse in the worker
+        # threads, then the frame assembly the session performs post-gather.
+        from tif1.core_utils.helpers import _create_telemetry_df
+
+        t0 = time.perf_counter()
+        results = asyncio.run(async_fetch.fetch_multiple_async(requests, **kwargs))
+        t_fetch = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        frames = [
+            _create_telemetry_df(r.get("tel", r), "D", i, "pandas")
+            for i, r in enumerate(results)
+            if isinstance(r, dict)
+        ]
+        t_assembly = time.perf_counter() - t0
+        print(
+            json.dumps(
+                {
+                    "scenario": args.scenario,
+                    "files": args.files,
+                    "frames": sum(f is not None for f in frames),
+                    "fetch_parse_s": round(t_fetch, 3),
+                    "assembly_s": round(t_assembly, 3),
+                    "total_s": round(t_fetch + t_assembly, 3),
+                }
+            )
+        )
+        return
     if args.concurrency:
         kwargs["max_concurrent_requests"] = args.concurrency
     t0 = time.perf_counter()

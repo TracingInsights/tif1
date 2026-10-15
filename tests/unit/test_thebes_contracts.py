@@ -432,3 +432,101 @@ def test_no_cached_row_still_fetches_inline(monkeypatch):
     )
     payload, _ = events._load_live_year_payload(2099, time.time())
     assert payload == {"events": ["live"]}
+
+
+# -- TH8: polars per-driver Arrow IPC frame tier -----------------------------
+
+
+def _polars_frame(driver: str, lap: int, n: int = 4):
+    import polars as pl
+
+    return pl.DataFrame(
+        {
+            "Time": [0.1 * i for i in range(n)],
+            "Speed": [250.0 + i for i in range(n)],
+            "nGear": [7] * n,
+            "Driver": [driver] * n,
+            "LapNumber": [lap] * n,
+        }
+    )
+
+
+def test_polars_tier_round_trips_through_driver_ipc_rows(tmp_path):
+    from tif1.cache import _POLARS_IPC_TABLE
+
+    cache = Cache(cache_dir=tmp_path)
+    try:
+        frames = [
+            ("VER", 1, _polars_frame("VER", 1)),
+            ("VER", 2, _polars_frame("VER", 2, 6)),
+            ("LEC", 1, _polars_frame("LEC", 1)),
+        ]
+        assert cache.set_telemetry_frames_batch(2026, "GP", "Race", frames, lib="polars") == 3
+        rows = cache.conn.execute(f"SELECT driver, laps FROM {_POLARS_IPC_TABLE}").fetchall()
+        assert sorted(r[0] for r in rows) == ["LEC", "VER"]
+        assert cache.conn.execute("SELECT COUNT(*) FROM telemetry_frames_pl").fetchone()[0] == 0
+        hits = cache.get_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 2), ("LEC", 1), ("VER", 9)], lib="polars"
+        )
+        assert set(hits) == {("VER", 2), ("LEC", 1)}
+        assert hits[("VER", 2)].equals(frames[1][2])
+        assert hits[("VER", 2)].schema == frames[1][2].schema
+        assert hits[("LEC", 1)].equals(frames[2][2])
+    finally:
+        cache.close()
+
+
+def test_polars_tier_merges_partial_batches_per_driver(tmp_path):
+    cache = Cache(cache_dir=tmp_path)
+    try:
+        cache.set_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 1, _polars_frame("VER", 1))], lib="polars"
+        )
+        cache.set_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 3, _polars_frame("VER", 3, 5))], lib="polars"
+        )
+        hits = cache.get_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 1), ("VER", 3)], lib="polars"
+        )
+        assert set(hits) == {("VER", 1), ("VER", 3)}
+        assert hits[("VER", 1)].equals(_polars_frame("VER", 1))
+        assert hits[("VER", 3)].equals(_polars_frame("VER", 3, 5))
+    finally:
+        cache.close()
+
+
+def test_polars_tier_falls_back_to_per_frame_rows_on_schema_mismatch(tmp_path):
+    import polars as pl
+
+    cache = Cache(cache_dir=tmp_path)
+    try:
+        odd = _polars_frame("VER", 2).with_columns(pl.col("nGear").cast(pl.Float64))
+        frames = [("VER", 1, _polars_frame("VER", 1)), ("VER", 2, odd)]
+        assert cache.set_telemetry_frames_batch(2026, "GP", "Race", frames, lib="polars") == 2
+        assert cache.conn.execute("SELECT COUNT(*) FROM telemetry_frames_pl").fetchone()[0] == 2
+        hits = cache.get_telemetry_frames_batch(
+            2026, "GP", "Race", [("VER", 1), ("VER", 2)], lib="polars"
+        )
+        assert hits[("VER", 2)].equals(odd)
+        assert hits[("VER", 1)].equals(frames[0][2])
+    finally:
+        cache.close()
+
+
+def test_polars_tier_corrupt_driver_row_is_a_miss(tmp_path):
+    from tif1.cache import _POLARS_IPC_TABLE
+
+    cache = Cache(cache_dir=tmp_path)
+    try:
+        cache.conn.execute(
+            f"INSERT INTO {_POLARS_IPC_TABLE} VALUES (?, ?, ?, ?, ?, ?)",
+            (2026, "GP", "Race", "VER", "[[1, 4]]", b"not arrow"),
+        )
+        cache.conn.commit()
+        assert (
+            cache.get_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1)], lib="polars") == {}
+        )
+        cache.invalidate("telemetry")
+        assert cache.conn.execute(f"SELECT COUNT(*) FROM {_POLARS_IPC_TABLE}").fetchone()[0] == 0
+    finally:
+        cache.close()

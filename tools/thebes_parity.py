@@ -78,8 +78,8 @@ def _work(item: tuple[tuple, bytes]) -> tuple[tuple, tuple]:
 
     key, blob = item
     try:
-        from tif1.core_utils.json_utils import telemetry_json_loads as _loads
-    except ImportError:  # control trees without the Thebes decoder
+        from tif1.core_utils.json_utils import decode_telemetry_payload as _loads
+    except ImportError:  # control trees without the Thebes decoder seam
         _loads = orjson.loads
     data = _loads(blob)
     tel = data.get("tel", data) if isinstance(data, dict) else data

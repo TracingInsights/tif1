@@ -270,3 +270,34 @@ EVENT_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     **dict.fromkeys(("portimao", "algarve", "portugal"), ("Portuguese Grand Prix",)),
     **dict.fromkeys(("istanbul", "istanbul park", "turkey"), ("Turkish Grand Prix",)),
 }
+
+
+# Telemetry channels that are numeric by contract (see
+# ``core_utils.helpers._NUMERIC_TELEMETRY_CHANNELS``): upstream writes the
+# literal string "None" for a missing sample, which the frame builders coerce
+# to NaN/null instead of letting one sentinel stringify the whole column.
+NUMERIC_TELEMETRY_CHANNELS = frozenset(
+    {
+        "RPM",
+        "Speed",
+        "Throttle",
+        "Distance",
+        "RelativeDistance",
+        "DistanceToDriverAhead",
+        "AccelerationX",
+        "AccelerationY",
+        "AccelerationZ",
+        "X",
+        "Y",
+        "Z",
+    }
+)
+# The same channels under the raw payload keys (before TELEMETRY_RENAME_MAP).
+NUMERIC_TELEMETRY_PAYLOAD_KEYS = frozenset(
+    {
+        raw
+        for raw, canonical in TELEMETRY_RENAME_MAP.items()
+        if canonical in NUMERIC_TELEMETRY_CHANNELS
+    }
+    | NUMERIC_TELEMETRY_CHANNELS
+)
