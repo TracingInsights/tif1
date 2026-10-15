@@ -91,7 +91,7 @@ def plot_track_speed_map(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "plasma",
@@ -109,7 +109,8 @@ def plot_track_speed_map(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         cmap: Matplotlib colormap used for the speed values.
@@ -156,7 +157,7 @@ def plot_track_throttle_map(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdYlGn",
@@ -174,7 +175,8 @@ def plot_track_throttle_map(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         cmap: Matplotlib colormap used for the throttle values.
@@ -221,7 +223,7 @@ def plot_track_brake_zones(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdYlGn_r",
@@ -239,7 +241,8 @@ def plot_track_brake_zones(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         cmap: Matplotlib colormap used for the brake values.
@@ -288,7 +291,7 @@ def plot_track_acceleration_map(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdBu_r",
@@ -308,7 +311,8 @@ def plot_track_acceleration_map(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         cmap: Matplotlib colormap used for the acceleration values.
@@ -358,7 +362,7 @@ def plot_gear_shifts(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "Paired",
@@ -380,7 +384,8 @@ def plot_gear_shifts(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         cmap: Matplotlib colormap used for the gear values.
@@ -444,7 +449,7 @@ def plot_multi_driver_speed_comparison(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -467,7 +472,8 @@ def plot_multi_driver_speed_comparison(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 6.75)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations to overlay; defaults to the top-3

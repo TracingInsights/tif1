@@ -15,6 +15,6 @@ if __name__ == "__main__":
         drivers=["VER", "PER", "LEC"],
         save_path=Path(__file__).resolve().parent / "multi_driver_speed_comparison.png",
         dpi=300,
-        color_scheme="default-dark",
+        color_scheme="dark",
     )
     print("Chart saved to docs/assets/multi_driver_speed_comparison.png")

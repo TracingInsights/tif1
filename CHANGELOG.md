@@ -27,6 +27,23 @@ Upgrade notes:
 - polars `>=2.0.0,<3` and pyarrow are runtime dependencies; pandas `>=3.0.6`.
 - The unused `log_level`, `http2_max_connections` and `http2_max_pool_size`
   config keys (and their environment variables) were removed.
+- Charts default to the `dark` theme (was `fastf1`); pass
+  `color_scheme="fastf1"` for the previous look.
+- Chart themes are `fastf1`, `dark` and `light`. `default-dark` and
+  `default-light` were renamed to `dark` and `light`; the old names still work
+  with a `DeprecationWarning`. The former plain `light` theme was removed, so
+  `light` now also hides the top/right spines and y tick marks.
+
+### Changed — chart theme names
+
+- `setup_mpl(color_scheme=...)`, every chart's `color_scheme` and
+  `get_plot_style()` accept `"dark"` (`#011627` background, lime text) and
+  `"light"` (lightblue background, black text), the TracingInsights v2
+  themes formerly called `default-dark`/`default-light`.
+  Every chart function now defaults to `color_scheme="dark"` (all but
+  `plot_race_launch_ratings` used `"fastf1"`); `setup_mpl()` still applies no
+  theme unless one is passed, as in FastF1. `get_plot_style()` defaults to
+  `"light"`. The documentation charts are rendered with `dark`.
 
 ### Fixed — found by the documentation audit (2026-10-14)
 

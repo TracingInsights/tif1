@@ -60,7 +60,7 @@ def plot_speed_traces(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -78,7 +78,8 @@ def plot_speed_traces(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations to compare; defaults to the top-2
@@ -145,7 +146,7 @@ def plot_annotated_speed_trace(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
 ) -> tuple[Figure, Axes]:
@@ -162,7 +163,8 @@ def plot_annotated_speed_trace(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
 
@@ -255,7 +257,7 @@ def plot_telemetry_comparison(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -278,7 +280,8 @@ def plot_telemetry_comparison(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(16, 12)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Exactly two driver abbreviations; defaults to the top-2
@@ -413,7 +416,7 @@ def plot_gg_diagram(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -434,7 +437,8 @@ def plot_gg_diagram(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 12)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations to compare; defaults to the top-3

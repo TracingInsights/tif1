@@ -14,6 +14,6 @@ if __name__ == "__main__":
         "Q",
         save_path=Path(__file__).resolve().parent / "track_acceleration_map.png",
         dpi=300,
-        color_scheme="default-dark",
+        color_scheme="dark",
     )
     print("Chart saved to docs/assets/track_acceleration_map.png")

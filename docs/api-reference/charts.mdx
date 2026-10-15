@@ -31,7 +31,7 @@ All functions are available from both `tif1.charts` and the top-level `tif1` nam
 - **Return `(fig, ax)`**: call `plt.show()`, save the figure later, or further customize it. Nothing is shown or written unless requested.
 - **Optional `save_path`**: pass a path to write the figure with `bbox_inches="tight"` at the requested `dpi`. The race-launch chart saves the full canvas instead. Alternatively, enable automatic saving to a `year/event/session` folder tree with `tif1.configure_chart_saving`.
 - **Shared filter vocabulary**: `drivers`, `teams`, `n_drivers`, `laptime_cutoff`, `include_deleted`, `include_pit_laps`, `laps` work consistently across charts
-- **Consistent styling**: charts apply the fastf1 theme by default (`plot_race_launch_ratings` uses `default-dark`); `color_scheme=None` leaves matplotlib's global state untouched
+- **Consistent styling**: charts apply the `dark` theme by default; `color_scheme=None` leaves matplotlib's global state untouched
 - **Stable bar-chart layout**: horizontal bar charts keep tight y-limits at any driver count. The full-canvas race-launch export keeps its bar labels in-canvas (see [bar-chart layout guarantees](/guides/data-visualization#bar-chart-layout-guarantees)).
 - **Both backends**: `lib="pandas"` and `lib="polars"` draw the identical figure. Chart logic relies on pandas idioms, so the chart always loads the session with the pandas backend. Both backends share the same payloads and payload cache.
 
@@ -92,7 +92,7 @@ def plot_name(
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,  # None keeps the theme background
     # theme
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     # get_session passthrough
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
@@ -117,9 +117,9 @@ def plot_name(
 
 ### Theme parameters
 
-- **`color_scheme`** (`str | None`, default: `"fastf1"`) — theme passed to `tif1.plotting.setup_mpl`. Supported values are `"fastf1"`, `"light"`, `"default-light"` and `"default-dark"`. The `default-*` values are the TracingInsights v2 Fastest_Lap-style themes, with bundled car/tyre images available via `tif1.assets`. `None` skips the theme call entirely and leaves `matplotlib.rcParams` untouched. Any other string raises `ValueError` from `setup_mpl`.
+- **`color_scheme`** (`str | None`, default: `"dark"`) — theme passed to `tif1.plotting.setup_mpl`. Supported values are `"fastf1"`, `"dark"` and `"light"`. `"dark"` and `"light"` are the TracingInsights v2 themes, with bundled car/tyre images available via `tif1.assets`. `None` skips the theme call entirely and leaves `matplotlib.rcParams` untouched. Any other string raises `ValueError` from `setup_mpl`.
 
-Every chart follows the active theme. Grid lines, zero lines, bar edges, and colorbar ticks take the theme's text colour, not a fixed white or black. Highlight text uses a green that contrasts with the background: brand `lime` on dark themes, dark green on light ones. Some data-coloured labels can blend into the background, for example the compound names on the tire degradation chart. These labels get a thin outline. The branded `TRACINGINSIGHTS.COM` footer follows the polarity of the active background. It is black on light themes and lime on dark ones. Switching between named schemes resets every rcParams key the schemes manage. A `default-dark` chart followed by a `fastf1` one never inherits hidden spines or the dark legend frame.
+Every chart follows the active theme. Grid lines, zero lines, bar edges, and colorbar ticks take the theme's text colour, not a fixed white or black. Highlight text uses a green that contrasts with the background: brand `lime` on dark themes, dark green on light ones. Some data-coloured labels can blend into the background, for example the compound names on the tire degradation chart. These labels get a thin outline. The branded `TRACINGINSIGHTS.COM` footer follows the polarity of the active background. It is black on light themes and lime on dark ones. Switching between named schemes resets every rcParams key the schemes manage. A `dark` chart followed by a `fastf1` one never inherits hidden spines or the dark legend frame.
 
 ### Session passthrough
 
@@ -149,7 +149,7 @@ def plot_track_speed_map(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "plasma",
 ) -> tuple[Figure, Axes]
@@ -168,7 +168,7 @@ def plot_track_throttle_map(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdYlGn",
 ) -> tuple[Figure, Axes]
@@ -187,7 +187,7 @@ def plot_track_brake_zones(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdYlGn_r",
 ) -> tuple[Figure, Axes]
@@ -206,7 +206,7 @@ def plot_track_acceleration_map(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "RdBu_r",
 ) -> tuple[Figure, Axes]
@@ -225,7 +225,7 @@ def plot_gear_shifts(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     cmap: str = "Paired",
 ) -> tuple[Figure, Axes]
@@ -244,7 +244,7 @@ def plot_multi_driver_speed_comparison(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     cmap: str = "plasma",
@@ -270,7 +270,7 @@ def plot_speed_traces(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
 ) -> tuple[Figure, Axes]
@@ -289,7 +289,7 @@ def plot_annotated_speed_trace(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
 ) -> tuple[Figure, Axes]
 ```
@@ -307,7 +307,7 @@ def plot_telemetry_comparison(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     distance_min: float = 1000,
@@ -332,7 +332,7 @@ def plot_gg_diagram(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
 ) -> tuple[Figure, Axes]
@@ -353,7 +353,7 @@ def plot_race_launch_ratings(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "default-dark",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     speed_threshold: int = 50,
@@ -361,7 +361,7 @@ def plot_race_launch_ratings(
 ) -> tuple[Figure, Axes]
 ```
 
-Interpolates each driver's lap-1 telemetry to find the time to reach the 50/100/150/200 km/h marks. Derives a 0-10 rating for the chosen speed window. The rating is plotted as a horizontal bar chart in the `default-dark` style. The style uses a `#011627` background, lime text, white labels, Coolvetica/Azonix/GreatVibes fonts, and bundled tyre images. Bundled car images are drawn only on bars that exceed the style's `car_threshold` (2.5) and are long enough to hold the image.
+Interpolates each driver's lap-1 telemetry to find the time to reach the 50/100/150/200 km/h marks. Derives a 0-10 rating for the chosen speed window. The rating is plotted as a horizontal bar chart in the `dark` style. The style uses a `#011627` background, lime text, white labels, Coolvetica/Azonix/GreatVibes fonts, and bundled tyre images. Bundled car images are drawn only on bars that exceed the style's `car_threshold` (2.5) and are long enough to hold the image.
 
 ```python
 tif1.plot_race_launch_ratings(2024, "Monaco Grand Prix", "R", speed_threshold=100)
@@ -371,7 +371,7 @@ Parameters:
 
 - **`speed_threshold`** (`int`, default: `50`) — one of 50, 100, 150, 200; the "lights out to X km/h" rating.
 - **`speed_range`** (`tuple[int, int] | None`) — optional `(start, end)` speed window for a range rating (for example `(50, 100)`); takes precedence over `speed_threshold`.
-- **`color_scheme`** (`str | None`, default: `"default-dark"`) — the chart's theme and visual config. Passing `"default-light"` switches to the light style (no car threshold, Tenada fonts). Any other scheme (`"fastf1"`, `"light"`, `None`) picks the style that matches the active matplotlib background. A dark figure background gets the dark style, and a light one gets the light style.
+- **`color_scheme`** (`str | None`, default: `"dark"`) — the chart's theme and visual config. Passing `"light"` switches to the light style (no car threshold, Tenada fonts). Any other scheme (`"fastf1"`, `None`) picks the style that matches the active matplotlib background. A dark figure background gets the dark style, and a light one gets the light style.
 
 ```python
 tif1.plot_race_launch_ratings(
@@ -390,7 +390,7 @@ def plot_driver_laptimes(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     laptime_cutoff: float | None = 1.07,
@@ -411,7 +411,7 @@ def plot_laptimes_distribution(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int = 10,
     laptime_cutoff: float | None = 1.10,
@@ -431,7 +431,7 @@ def plot_laptime_heatmap(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     include_deleted: bool = False,
     include_pit_laps: bool = False,
@@ -454,7 +454,7 @@ def plot_qualifying_grid(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int | None = None,
     include_deleted: bool = False,
@@ -474,7 +474,7 @@ def plot_lap_delta(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     laps: list[int] | None = None,
@@ -497,7 +497,7 @@ def plot_position_changes(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     n_drivers: int | None = None,
@@ -517,7 +517,7 @@ def plot_track_temperature(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
 ) -> tuple[Figure, Axes]
@@ -538,7 +538,7 @@ def plot_downforce_levels(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
 ) -> tuple[Figure, Axes]
@@ -557,7 +557,7 @@ def plot_throttle_distance(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
     throttle_threshold: float = 98,
@@ -577,7 +577,7 @@ def plot_tire_degradation(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 300,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     compounds: list[str] | None = None,
     fuel_correction: float = 0.03,
@@ -602,7 +602,7 @@ def plot_top_speeds(
     year: int, event: str | int, session: str | int, *,
     save_path: str | None = None, auto_save: bool | None = None, dpi: int = 150,
     figsize: tuple[float, float] | None = None, facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None, lib: Literal["pandas", "polars"] = "pandas",
     teams: list[str] | None = None,
     speed_trap: str | None = None,

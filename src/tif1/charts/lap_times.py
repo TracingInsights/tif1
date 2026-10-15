@@ -60,7 +60,7 @@ def plot_driver_laptimes(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -80,7 +80,8 @@ def plot_driver_laptimes(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations; defaults to the top-3 finishers.
@@ -155,7 +156,7 @@ def plot_laptimes_distribution(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int = 10,
@@ -177,7 +178,8 @@ def plot_laptimes_distribution(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 5)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         n_drivers: Number of top finishers to include (default 10).
@@ -252,7 +254,7 @@ def plot_laptime_heatmap(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     include_deleted: bool = False,
@@ -277,7 +279,8 @@ def plot_laptime_heatmap(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(16, 10)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         include_deleted: Keep deleted laps when ``True``.
@@ -362,7 +365,7 @@ def plot_qualifying_grid(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     n_drivers: int | None = None,
@@ -381,7 +384,8 @@ def plot_qualifying_grid(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(10, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         n_drivers: Keep only the top-N finishers (all when ``None``).
@@ -481,7 +485,7 @@ def plot_lap_delta(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -507,7 +511,8 @@ def plot_lap_delta(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(14, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Exactly two driver abbreviations; defaults to the top-2
@@ -613,7 +618,7 @@ def plot_position_changes(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -635,7 +640,8 @@ def plot_position_changes(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(8.0, 4.9)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations; all drivers when ``None``.
@@ -672,7 +678,7 @@ def plot_position_changes(
     # Centring the anchor keeps it balanced; more than 10 entries wrap into
     # two columns so the legend stays inside the canvas at any grid size. The
     # explicit fontsize also shields it from themes with a large legend font
-    # rcParam (e.g. the default-* styles).
+    # rcParam (e.g. the light and dark styles).
     n_entries = len(laps["Driver"].unique())
     ax.legend(
         bbox_to_anchor=(1.02, 0.5),
@@ -706,7 +712,7 @@ def plot_track_temperature(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -730,7 +736,8 @@ def plot_track_temperature(
         dpi: Resolution used when saving.
         figsize: Figure size; defaults to ``(12, 6)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations; defaults to the driver with the most

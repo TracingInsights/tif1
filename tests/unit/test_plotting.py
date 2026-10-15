@@ -377,9 +377,9 @@ def test_setup_mpl_fastf1_compatible_call_patterns():
     plotting.setup_mpl("fastf1")
 
 
-def test_setup_mpl_default_light_theme():
-    """Test the default-light (Fastest_Lap.py) matplotlib theme."""
-    plotting.setup_mpl(color_scheme="default-light", mpl_timedelta_support=False)
+def test_setup_mpl_light_theme():
+    """Test the light (Fastest_Lap.py) matplotlib theme."""
+    plotting.setup_mpl(color_scheme="light", mpl_timedelta_support=False)
     assert plt.rcParams["figure.facecolor"] == "lightblue"
     assert plt.rcParams["axes.facecolor"] == "lightblue"
     assert plt.rcParams["text.color"] == "black"
@@ -391,9 +391,9 @@ def test_setup_mpl_default_light_theme():
     assert plt.rcParams["ytick.major.size"] == 0
 
 
-def test_setup_mpl_default_dark_theme():
-    """Test the default-dark (TracingInsights brand) matplotlib theme."""
-    plotting.setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+def test_setup_mpl_dark_theme():
+    """Test the dark (TracingInsights brand) matplotlib theme."""
+    plotting.setup_mpl(color_scheme="dark", mpl_timedelta_support=False)
     assert plt.rcParams["figure.facecolor"] == "#011627"
     assert plt.rcParams["axes.facecolor"] == "#011627"
     assert plt.rcParams["text.color"] == "lime"
@@ -401,8 +401,8 @@ def test_setup_mpl_default_dark_theme():
 
 
 def test_get_plot_style_light_matches_fastest_lap_constants():
-    """Test the default-light style config mirrors Fastest_Lap.py constants."""
-    style = plotting.get_plot_style("default-light")
+    """Test the light style config mirrors Fastest_Lap.py constants."""
+    style = plotting.get_plot_style("light")
     assert style["colors"]["background"] == "lightblue"
     assert style["colors"]["text"] == "black"
     assert style["figure"] == {"size": (20, 20), "dpi": 300, "constrained_layout": True}
@@ -421,8 +421,8 @@ def test_get_plot_style_light_matches_fastest_lap_constants():
 
 
 def test_get_plot_style_dark_matches_race_launch_script():
-    """Test the default-dark style mirrors Race_Launch_Performance_Ratings.py."""
-    style = plotting.get_plot_style("default-dark")
+    """Test the dark style mirrors Race_Launch_Performance_Ratings.py."""
+    style = plotting.get_plot_style("dark")
     assert style["colors"]["background"] == "#011627"
     assert style["colors"]["text"] == "lime"
     # The script's black axvline is invisible on the navy background; the
@@ -446,18 +446,38 @@ def test_get_plot_style_dark_matches_race_launch_script():
     assert style["watermark"] == "@TracingInsights"
 
 
+@pytest.mark.parametrize(("old", "new"), [("default-dark", "dark"), ("default-light", "light")])
+def test_deprecated_scheme_names_map_to_new_names(old, new):
+    """The pre-0.9 default-* names still work, with a DeprecationWarning."""
+    with pytest.warns(DeprecationWarning, match=f"use '{new}'"):
+        plotting.setup_mpl(color_scheme=old, mpl_timedelta_support=False)
+    deprecated_rc = {key: plt.rcParams[key] for key in ("figure.facecolor", "text.color")}
+    plotting.setup_mpl(color_scheme=new, mpl_timedelta_support=False)
+    assert deprecated_rc == {key: plt.rcParams[key] for key in ("figure.facecolor", "text.color")}
+    with pytest.warns(DeprecationWarning, match=f"use '{new}'"):
+        assert plotting.get_plot_style(old) == plotting.get_plot_style(new)
+
+
+def test_light_scheme_is_the_tracinginsights_light_theme():
+    """'light' is the former default-light theme (hidden top/right spines, no y ticks)."""
+    plotting.setup_mpl(color_scheme="light", mpl_timedelta_support=False)
+    assert plt.rcParams["figure.facecolor"] == "lightblue"
+    assert plt.rcParams["axes.spines.top"] is False
+    assert plt.rcParams["ytick.major.size"] == 0
+
+
 def test_get_plot_style_defaults_and_errors():
     """Test get_plot_style defaults and unknown-style errors."""
-    assert plotting.get_plot_style()["name"] == "default-light"
+    assert plotting.get_plot_style()["name"] == "light"
     with pytest.raises(ValueError, match="Unknown plot style"):
         plotting.get_plot_style("nope")
 
 
 def test_get_plot_style_returns_copy():
     """Test get_plot_style returns a mutable copy."""
-    style = plotting.get_plot_style("default-light")
+    style = plotting.get_plot_style("light")
     style["colors"]["background"] = "red"
-    assert plotting.get_plot_style("default-light")["colors"]["background"] == "lightblue"
+    assert plotting.get_plot_style("light")["colors"]["background"] == "lightblue"
 
 
 def test_team_code_mapping():
@@ -641,14 +661,14 @@ def test_override_team_constants_session_requires_exact_match():
 def test_setup_mpl_resets_theme_rcparams_between_schemes():
     """Switching schemes never inherits the previous scheme's rcParams.
 
-    ``default-dark`` hides the top/right spines and restyles the legend; a
+    ``dark`` hides the top/right spines and restyles the legend; a
     following ``fastf1`` call must start from matplotlib's defaults for every
-    key the schemes manage, so charts rendered after a default-* chart look
+    key the schemes manage, so charts rendered after a light or dark chart look
     exactly like charts rendered on a fresh interpreter.
     """
     import matplotlib as mpl
 
-    plotting.setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+    plotting.setup_mpl(color_scheme="dark", mpl_timedelta_support=False)
     assert plt.rcParams["axes.spines.top"] is False
     assert plt.rcParams["ytick.major.size"] == 0
 
@@ -660,14 +680,14 @@ def test_setup_mpl_resets_theme_rcparams_between_schemes():
 
 
 def test_default_schemes_do_not_force_large_fonts():
-    """The default-* schemes leave tick/legend/label font sizes at defaults.
+    """The light and dark schemes leave tick/legend/label font sizes at defaults.
 
     The v2 scripts' 32pt fonts were tuned for 20x20 inch canvases and swamp
     the 10x8 inch charts (legends covering data, colliding tick labels).
     """
     import matplotlib as mpl
 
-    for scheme in ("default-light", "default-dark"):
+    for scheme in ("light", "dark"):
         plotting.setup_mpl(color_scheme=scheme, mpl_timedelta_support=False)
         for key in ("xtick.labelsize", "ytick.labelsize", "legend.fontsize", "axes.labelsize"):
             assert plt.rcParams[key] == mpl.rcParamsDefault[key], f"{scheme} forces {key}"

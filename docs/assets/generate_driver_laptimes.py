@@ -15,6 +15,6 @@ if __name__ == "__main__":
         drivers=["ALO"],
         save_path=Path(__file__).resolve().parent / "driver_laptimes_example.png",
         dpi=150,
-        color_scheme="default-dark",
+        color_scheme="dark",
     )
     print("Chart saved to docs/assets/driver_laptimes_example.png")

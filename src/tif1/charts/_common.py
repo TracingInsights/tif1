@@ -507,13 +507,13 @@ def ensure_readable_text(text: Any, *, min_contrast: float = 3.0, linewidth: flo
 def resolve_plot_style(color_scheme: str | None) -> dict[str, Any]:
     """Resolve a plot style dict from a color scheme name.
 
-    ``"default-light"``/``"default-dark"`` map to themselves. Any other
-    scheme (``"fastf1"``, ``"light"``, ``None`` ...) picks the style whose
-    polarity matches the *active* matplotlib background: ``default-dark`` on
-    dark figure backgrounds, ``default-light`` on light ones. This keeps the
-    branded footer and the launch chart's label colors readable whatever
-    theme is in effect (a dark-style lime footer on the ``light`` scheme's
-    ``lightblue`` background has a contrast ratio of 1.1).
+    ``"light"``/``"dark"`` map to themselves (as do the deprecated
+    ``"default-light"``/``"default-dark"``). Any other scheme (``"fastf1"``,
+    ``None`` ...) picks the style whose polarity matches the *active*
+    matplotlib background: ``dark`` on dark figure backgrounds, ``light`` on
+    light ones. This keeps the branded footer and the launch chart's label
+    colors readable whatever theme is in effect (a dark-style lime footer on
+    a ``lightblue`` background has a contrast ratio of 1.1).
 
     Args:
         color_scheme: A matplotlib theme name, or ``None``.
@@ -521,12 +521,14 @@ def resolve_plot_style(color_scheme: str | None) -> dict[str, Any]:
     Returns:
         A plot style dict from :func:`tif1.plotting.get_plot_style`.
     """
-    from tif1.plotting import get_plot_style
+    from tif1.plotting import _canonical_color_scheme, get_plot_style
 
-    if color_scheme in ("default-light", "default-dark"):
+    if color_scheme is not None:
+        color_scheme = _canonical_color_scheme(color_scheme)
+    if color_scheme in ("light", "dark"):
         style_name = color_scheme
     else:
-        style_name = "default-dark" if is_dark_background() else "default-light"
+        style_name = "dark" if is_dark_background() else "light"
     return get_plot_style(style_name)
 
 
@@ -648,7 +650,7 @@ def set_tight_barh_ylim(ax: Any, n_bars: int) -> None:
 
     Note:
         Assumes the default 0.8 bar height. The launch chart's
-        ``default-light`` style (height 0.1, negative label padding) calls
+        ``light`` style (height 0.1, negative label padding) calls
         this too; its wider rows are intentional, reproducing the v2
         ``Fastest_Lap.py`` look.
 
@@ -698,7 +700,7 @@ def fit_labels_inside_xlim(ax: Any, labels: Any) -> None:
 def keep_bar_labels_inside_axes(ax: Any, labels: Any, *, padding: float) -> None:
     """Flip inside-bar labels that overflow the axes to the outside of the bar.
 
-    Styles with a negative ``label_padding`` (``default-light``: -330pt) draw
+    Styles with a negative ``label_padding`` (``light``: -330pt) draw
     bar labels *inside* the bar, measured back from its end. A short bar
     (e.g. a ``0.0`` rating) pushes such a label past the left edge of the
     axes, off-canvas and across the y tick labels. Every label whose window

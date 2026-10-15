@@ -790,8 +790,15 @@ _FASTF1_KEYS = [
 ]
 
 
-def test_default_theme_applies_fastf1(fake_session):
+def test_default_theme_applies_dark(fake_session):
+    """Charts apply the ``dark`` theme when ``color_scheme`` is not passed."""
     top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
+    assert plt.rcParams["figure.facecolor"] == "#011627"
+    assert plt.rcParams["text.color"] == "lime"
+
+
+def test_fastf1_theme_still_available(fake_session):
+    top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", color_scheme="fastf1")
     assert plt.rcParams["figure.facecolor"] == "#292625"
 
 
@@ -944,7 +951,7 @@ def test_race_launch_ratings_happy_path(launch_session):
     # one tyre image per driver, plus cars hidden by the 2.5 threshold
     assert len(ax.artists) >= len(DRIVERS)
     assert len(ax.artists) < 2 * len(DRIVERS)
-    # default-dark theme applied
+    # dark theme applied
     assert plt.rcParams["figure.facecolor"] == "#011627"
     # title mentions the event
     title_texts = " ".join(text.get_text() for text in fig.texts)
@@ -979,9 +986,9 @@ def test_race_launch_ratings_drivers_filter(launch_session):
 
 
 def test_race_launch_ratings_light_scheme(launch_session):
-    """A default-light color_scheme switches the theme and style config."""
+    """A light color_scheme switches the theme and style config."""
     _, ax = performance.plot_race_launch_ratings(
-        2024, "Italian Grand Prix", "Q", color_scheme="default-light"
+        2024, "Italian Grand Prix", "Q", color_scheme="light"
     )
     assert plt.rcParams["figure.facecolor"] == "lightblue"
     assert len(ax.patches) == len(DRIVERS)
@@ -1025,7 +1032,7 @@ def test_race_launch_ratings_bottom_space_is_compact(launch_session):
     """The launch chart must not waste canvas space at the bottom.
 
     The v2 script's 15% bottom subplot margin left a large empty band below
-    the footer on the full-canvas export. The default-* styles now use a slim
+    the footer on the full-canvas export. The light and dark styles now use a slim
     bottom margin with a matching footer position, and the y-limits are
     tightened to the bar range so the bars span the axes.
     """
@@ -1109,11 +1116,11 @@ def test_bar_charts_value_labels_fit_inside_xlim(n_drivers, monkeypatch):
         performance.plot_throttle_distance,
         top_speeds.plot_top_speeds,
     ):
-        # default-dark is the harshest layout: its large fonts widen the value
+        # dark is the harshest layout: its large fonts widen the value
         # labels, and labels fitted before tight_layout overflow once the axes
         # are resized for those fonts. Exercising it here makes the test
         # deterministic regardless of what earlier tests left in rcParams.
-        fig, ax = func(2024, "Italian Grand Prix", "Q", color_scheme="default-dark")
+        fig, ax = func(2024, "Italian Grand Prix", "Q", color_scheme="dark")
         fig.canvas.draw()
         xlim_right = ax.get_xlim()[1]
         for label in ax.texts:
@@ -1332,7 +1339,7 @@ def test_add_style_branding_footer_not_clipped_full_canvas():
     """
     from tif1.plotting import get_plot_style
 
-    style = get_plot_style("default-dark")
+    style = get_plot_style("dark")
     fig = plt.figure(figsize=(20, 20))
 
     _common.add_style_branding(fig, style)  # no ax -> full-canvas path
@@ -1446,7 +1453,7 @@ def test_all_function_names_are_exposed():
 # Theme safety: contrast, overlap and clipping under every color scheme
 # ---------------------------------------------------------------------------
 
-_THEMES = ["fastf1", "default-light", "default-dark"]
+_THEMES = ["fastf1", "light", "dark"]
 _THEME_CASES = [case[0] for case in CHART_CASES] + [performance.plot_race_launch_ratings]
 
 
@@ -1545,7 +1552,7 @@ def test_chart_text_readable_under_every_theme(func, theme, monkeypatch):
 
 
 def test_race_launch_light_labels_inside_axes_and_clear_of_cars(monkeypatch):
-    """default-light inside-bar labels never leave the axes or hide under cars.
+    """light inside-bar labels never leave the axes or hide under cars.
 
     The light style draws bar labels 330pt back from the bar end. On short
     bars that ran off the left edge across the driver names, and matplotlib's
@@ -1557,7 +1564,7 @@ def test_race_launch_light_labels_inside_axes_and_clear_of_cars(monkeypatch):
 
     session = _make_big_session(22, launch=True)
     fig, ax = _render_under_theme(
-        performance.plot_race_launch_ratings, "default-light", session, monkeypatch
+        performance.plot_race_launch_ratings, "light", session, monkeypatch
     )
     renderer = cast(Any, fig.canvas).get_renderer()
     axes_box = ax.get_window_extent(renderer)
@@ -1589,12 +1596,10 @@ def test_facecolor_default_follows_theme(fake_session):
     """With no explicit facecolor the saved/returned figure uses the theme background."""
     from matplotlib.colors import to_rgba
 
-    fig, _ = top_speeds.plot_top_speeds(
-        2023, "Italian Grand Prix", "Q", color_scheme="default-light"
-    )
+    fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q", color_scheme="light")
     assert fig.get_facecolor() == to_rgba("lightblue")
     fig, _ = top_speeds.plot_top_speeds(2023, "Italian Grand Prix", "Q")
-    assert fig.get_facecolor() == to_rgba("#292625")  # fastf1 figure background
+    assert fig.get_facecolor() == to_rgba("#011627")  # dark (default) figure background
 
 
 def test_resolve_plot_style_follows_background_polarity():
@@ -1602,26 +1607,26 @@ def test_resolve_plot_style_follows_background_polarity():
     from tif1.plotting import setup_mpl
 
     setup_mpl(color_scheme="fastf1", mpl_timedelta_support=False)
-    assert _common.resolve_plot_style("fastf1")["name"] == "default-dark"
+    assert _common.resolve_plot_style("fastf1")["name"] == "dark"
     setup_mpl(color_scheme="light", mpl_timedelta_support=False)
-    assert _common.resolve_plot_style("light")["name"] == "default-light"
-    # Explicit default-* names win regardless of the background.
-    assert _common.resolve_plot_style("default-dark")["name"] == "default-dark"
+    assert _common.resolve_plot_style("light")["name"] == "light"
+    # Explicit light/dark names win regardless of the background.
+    assert _common.resolve_plot_style("dark")["name"] == "dark"
     mpl.rcdefaults()  # white canvas
-    assert _common.resolve_plot_style(None)["name"] == "default-light"
+    assert _common.resolve_plot_style(None)["name"] == "light"
 
 
 def test_theme_colors_follow_background():
     """Foreground/accent helpers contrast with both the dark and light themes."""
     from tif1.plotting import setup_mpl
 
-    setup_mpl(color_scheme="default-dark", mpl_timedelta_support=False)
+    setup_mpl(color_scheme="dark", mpl_timedelta_support=False)
     assert _common.is_dark_background()
     assert _common.accent_color() == "lime"
     assert _common.contrast_ratio(_common.accent_color(), "#011627") >= 4.5
     assert _common.contrast_ratio(_common.foreground_color(), "#011627") >= 4.5
 
-    setup_mpl(color_scheme="default-light", mpl_timedelta_support=False)
+    setup_mpl(color_scheme="light", mpl_timedelta_support=False)
     assert not _common.is_dark_background()
     assert _common.contrast_ratio(_common.accent_color(), "lightblue") >= 4.5
     assert _common.contrast_ratio(_common.foreground_color(), "lightblue") >= 4.5

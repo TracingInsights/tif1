@@ -3,7 +3,7 @@
 Contains the per-driver fastest-lap metrics charts (downforce levels, full
 throttle distance), the tire degradation chart with fuel correction, and the
 race-launch performance ratings chart (v2 ``Race_Launch_Performance_Ratings``
-style, rendered with the ``default-dark`` plot style).
+style, rendered with the ``dark`` plot style).
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def plot_downforce_levels(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -110,7 +110,8 @@ def plot_downforce_levels(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations; all drivers when ``None``.
@@ -230,7 +231,7 @@ def plot_throttle_distance(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -249,7 +250,8 @@ def plot_throttle_distance(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(12, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         drivers: Driver abbreviations; all drivers when ``None``.
@@ -387,7 +389,7 @@ def plot_tire_degradation(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "fastf1",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     compounds: list[str] | None = None,
@@ -413,7 +415,8 @@ def plot_tire_degradation(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to ``(14, 8)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; ``None`` leaves rcParams untouched.
+        color_scheme: Matplotlib theme (default ``"dark"``); ``None`` leaves rcParams
+            untouched.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
         compounds: Compounds to plot; defaults to SOFT/MEDIUM/HARD.
@@ -616,7 +619,7 @@ def plot_race_launch_ratings(
     dpi: int = 300,
     figsize: tuple[float, float] | None = None,
     facecolor: str | None = None,
-    color_scheme: str | None = "default-dark",
+    color_scheme: str | None = "dark",
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] = "pandas",
     drivers: list[str] | None = None,
@@ -632,7 +635,7 @@ def plot_race_launch_ratings(
     driver to 0 and the fastest to 10.
 
     The chart reproduces the TracingInsights v2 ``Race_Launch_Performance_Ratings.py``
-    look: the ``default-dark`` plot style (``#011627`` background, lime text,
+    look: the ``dark`` plot style (``#011627`` background, lime text,
     white bar/ytick labels, Coolvetica/Azonix/GreatVibes fonts), bundled car
     images drawn only when the rating exceeds the style's 2.5 ``car_threshold``,
     tyre compound images, footer and watermarks.
@@ -648,8 +651,8 @@ def plot_race_launch_ratings(
         dpi: Resolution used when saving (default 300).
         figsize: Figure size; defaults to the style's ``(20, 20)``.
         facecolor: Figure background; ``None`` keeps the theme background.
-        color_scheme: Matplotlib theme; defaults to ``"default-dark"``. When a
-            ``default-*`` style is selected, the chart's visuals (colors, fonts,
+        color_scheme: Matplotlib theme; defaults to ``"dark"``. When the
+            ``light`` or ``dark`` style is selected, the chart's visuals (colors, fonts,
             margins, car threshold) follow that style's configuration.
         enable_cache: Caching passthrough to :func:`tif1.get_session`.
         lib: Data backend passthrough (defaults to ``"pandas"``).
@@ -807,7 +810,7 @@ def plot_race_launch_ratings(
         fontproperties=heading_font,
     )
     if label_padding < 0:
-        # Inside-bar labels (default-light): matplotlib keeps them left
+        # Inside-bar labels (light style): matplotlib keeps them left
         # aligned, so the text runs from ``padding`` back *towards* the bar
         # end and ends up underneath the car artwork drawn there. Right
         # aligning makes the label end at the padding point, clear of the car.
@@ -874,7 +877,7 @@ def plot_race_launch_ratings(
     # subplots_adjust), so bar labels rendered past the longest bar would
     # otherwise be clipped at the figure edge. Expand the x-limit to a fixed
     # point so every label sits inside the full-canvas export (styles whose
-    # labels already fit, e.g. default-light with negative label padding,
+    # labels already fit, e.g. the light style with negative label padding,
     # are left untouched).
     _common.fit_labels_inside_xlim(ax, bar_labels)
     # Inside-bar labels (negative padding) on short bars would run off the

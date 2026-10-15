@@ -68,10 +68,10 @@ DEFAULT_PLOT_CONFIG = {
     },
 }
 
-#: Registered named plot styles. ``default-light`` reproduces the TracingInsights
+#: Registered named plot styles. ``light`` reproduces the TracingInsights
 #: v2 ``Fastest_Lap.py`` look (lightblue background, black text, Tenada headings,
 #: 20x20 figures at 300 dpi, tight bar rows with negative label padding), while
-#: ``default-dark`` reproduces the ``Race_Launch_Performance_Ratings.py`` look
+#: ``dark`` reproduces the ``Race_Launch_Performance_Ratings.py`` look
 #: (``#011627`` background, lime text, white bar/ytick labels, Coolvetica/Azonix/
 #: GreatVibes fonts, default-width bars, and a car-image threshold of 2.5 on the
 #: rating axis). ``bar.linewidth`` is ``None`` in the dark style, meaning
@@ -82,8 +82,8 @@ DEFAULT_PLOT_CONFIG = {
 #: keeps the footer near the edge and clears the suptitle (see
 #: ``tif1.charts.performance.plot_race_launch_ratings``).
 PLOT_STYLES: dict[str, dict[str, Any]] = {
-    "default-light": {
-        "name": "default-light",
+    "light": {
+        "name": "light",
         "figure": {"size": (20, 20), "dpi": 300, "constrained_layout": True},
         "fonts": {
             "title_size": 48,
@@ -122,8 +122,8 @@ PLOT_STYLES: dict[str, dict[str, Any]] = {
         "footer": "TRACINGINSIGHTS.COM",
         "watermark": "@TracingInsights",
     },
-    "default-dark": {
-        "name": "default-dark",
+    "dark": {
+        "name": "dark",
         "figure": {"size": (20, 20), "dpi": 300, "constrained_layout": False},
         "fonts": {
             "title_size": 48,
@@ -166,11 +166,12 @@ PLOT_STYLES: dict[str, dict[str, Any]] = {
 }
 
 
-def get_plot_style(name: str = "default-light") -> dict[str, Any]:
+def get_plot_style(name: str = "light") -> dict[str, Any]:
     """Get a registered plot style configuration.
 
     Args:
-        name: Style name (``"default-light"`` or ``"default-dark"``).
+        name: Style name (``"light"`` or ``"dark"``). The deprecated
+            ``"default-light"``/``"default-dark"`` names are still accepted.
 
     Returns:
         A deep copy of the style configuration dict.
@@ -178,6 +179,7 @@ def get_plot_style(name: str = "default-light") -> dict[str, Any]:
     Raises:
         ValueError: If the style name is not registered.
     """
+    name = _canonical_color_scheme(name)
     if name not in PLOT_STYLES:
         raise ValueError(f"Unknown plot style '{name}'. Available styles: {list(PLOT_STYLES)}")
     return copy.deepcopy(PLOT_STYLES[name])
@@ -227,17 +229,18 @@ def setup_mpl(
         mpl_timedelta_support: Enable timedelta support. A positional string is
             also accepted for backwards compatibility and interpreted as
             ``color_scheme``.
-        color_scheme: Color scheme to use ('fastf1', 'light', 'default-light',
-            'default-dark', or None). 'default-light' reproduces the
-            TracingInsights v2 Fastest_Lap.py theme (lightblue background, black
-            text, hidden top/right spines) and 'default-dark' is its
-            TracingInsights-brand dark counterpart (``#011627`` background,
-            lime text). Every named scheme first resets the rcParams keys the
-            schemes manage, so themes never leak into one another.
+        color_scheme: Color scheme to use ('fastf1', 'dark', 'light', or None).
+            'light' reproduces the TracingInsights v2 Fastest_Lap.py theme
+            (lightblue background, black text, hidden top/right spines) and
+            'dark' is its TracingInsights-brand dark counterpart (``#011627``
+            background, lime text). The deprecated 'default-light' and
+            'default-dark' names map to 'light' and 'dark' with a
+            ``DeprecationWarning``. Every named scheme first resets the rcParams
+            keys the schemes manage, so themes never leak into one another.
         misc_mpl_mods: Apply style-related matplotlib changes
         **kwargs: Additional configuration overrides
 
-    Supported kwargs for 'light' and 'default-*' schemes:
+    Supported kwargs for the 'light' and 'dark' schemes:
         - background: Background color (default: 'lightblue' or '#011627')
         - text_color: Text color (default: 'black' or 'lime')
     """
@@ -251,6 +254,8 @@ def setup_mpl(
     if not misc_mpl_mods:
         return
 
+    if color_scheme is not None:
+        color_scheme = _canonical_color_scheme(color_scheme)
     if color_scheme is not None and color_scheme not in _COLOR_SCHEMES:
         raise ValueError(
             f"Unknown color_scheme {color_scheme!r}; choose one of {', '.join(_COLOR_SCHEMES)}"
@@ -258,23 +263,18 @@ def setup_mpl(
 
     if color_scheme in _COLOR_SCHEMES:
         # Every scheme starts from matplotlib's defaults for the keys the
-        # schemes manage, so switching e.g. from ``default-dark`` back to
+        # schemes manage, so switching e.g. from ``dark`` back to
         # ``fastf1`` does not keep hidden spines or the dark legend frame.
         _reset_theme_rcparams()
 
     if color_scheme == "fastf1":
         _enable_fastf1_color_scheme()
     elif color_scheme == "light":
-        _enable_light_color_scheme(
-            background=kwargs.get("background", "lightblue"),
-            text_color=kwargs.get("text_color", "black"),
-        )
-    elif color_scheme == "default-light":
         _enable_default_color_scheme(
             background=kwargs.get("background", "lightblue"),
             text_color=kwargs.get("text_color", "black"),
         )
-    elif color_scheme == "default-dark":
+    elif color_scheme == "dark":
         _enable_default_color_scheme(
             background=kwargs.get("background", "#011627"),
             text_color=kwargs.get("text_color", "lime"),
@@ -375,7 +375,33 @@ def set_default_colormap(colormap: Literal["fastf1", "official"]) -> None:
 
 
 #: Color scheme names accepted by :func:`setup_mpl`.
-_COLOR_SCHEMES = ("fastf1", "light", "default-light", "default-dark")
+_COLOR_SCHEMES = ("fastf1", "dark", "light")
+
+#: Pre-0.9 scheme names, still accepted with a ``DeprecationWarning``.
+_DEPRECATED_COLOR_SCHEMES = {"default-dark": "dark", "default-light": "light"}
+
+
+def _canonical_color_scheme(name: str) -> str:
+    """Map a deprecated color scheme name to its current name.
+
+    Args:
+        name: A color scheme or plot style name.
+
+    Returns:
+        ``"dark"``/``"light"`` for the deprecated ``"default-dark"``/
+        ``"default-light"`` names (with a ``DeprecationWarning``); any other
+        name unchanged.
+    """
+    new = _DEPRECATED_COLOR_SCHEMES.get(name)
+    if new is None:
+        return name
+    warnings.warn(
+        f"color scheme {name!r} is deprecated; use {new!r}",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return new
+
 
 #: Every rcParams key written by any color scheme. Reset to matplotlib's
 #: defaults before a scheme is applied so themes never leak into each other.
@@ -437,23 +463,12 @@ def _enable_fastf1_color_scheme() -> None:
     plt.rcParams["axes.axisbelow"] = True
 
 
-def _enable_light_color_scheme(*, background: str, text_color: str) -> None:
-    """Apply tif1's light plotting color scheme."""
-    plt.rcParams["axes.facecolor"] = background
-    plt.rcParams["figure.facecolor"] = background
-    plt.rcParams["axes.edgecolor"] = text_color
-    plt.rcParams["axes.labelcolor"] = text_color
-    plt.rcParams["xtick.color"] = text_color
-    plt.rcParams["ytick.color"] = text_color
-    plt.rcParams["text.color"] = text_color
-
-
 def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
     """Apply the TracingInsights v2 matplotlib theme (from ``Fastest_Lap.py``).
 
-    Reproduces ``utils.setup_plot_style`` from the v2 analysis scripts: it
-    layers the v2-specific settings (hidden top/right spines, legend styling,
-    no y tick marks) on top of the base light theme.
+    Reproduces ``utils.setup_plot_style`` from the v2 analysis scripts: the
+    background/text colors plus the v2-specific settings (hidden top/right
+    spines, legend styling, no y tick marks).
 
     The v2 scripts also forced 32pt tick, legend and axis-label fonts. Those
     sizes were tuned for 20x20 inch canvases and swamp the 10x8 inch charts
@@ -461,7 +476,13 @@ def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
     applied globally. The 20x20 race-launch chart still draws its labels at
     the style's 32pt ``label_size`` explicitly.
     """
-    _enable_light_color_scheme(background=background, text_color=text_color)
+    plt.rcParams["axes.facecolor"] = background
+    plt.rcParams["figure.facecolor"] = background
+    plt.rcParams["axes.edgecolor"] = text_color
+    plt.rcParams["axes.labelcolor"] = text_color
+    plt.rcParams["xtick.color"] = text_color
+    plt.rcParams["ytick.color"] = text_color
+    plt.rcParams["text.color"] = text_color
 
     plt.rcParams["axes.spines.top"] = False
     plt.rcParams["axes.spines.right"] = False
