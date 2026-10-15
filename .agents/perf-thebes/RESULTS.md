@@ -51,13 +51,22 @@ control cache primed by main, candidate cache primed by this branch,
 Warm polars (same protocol, 6 pairs): telemetry 0.146 → 0.077 s (−47 %),
 total 0.501 → 0.414 s (−17 %), candidate faster 6/6.
 
-Cold path: the live cold-edge slices (TH3) and the simulated replay are the
-reproducible measurements on this vantage; the end-to-end cold Monaco load is
-dominated by whichever CDN regime the edge is in (7.9-43 s for the same
-code within an hour), so no single-number claim is made beyond the paired
-slices above. The in-process post-fetch work of a cold load (parse + typed
-assembly) drops from ~1.3 s to ~0.6 s with TH2 alone and to ~0.3 s with the
-native decoder.
+Cold Monaco 2026 (`tools/monaco_ab_suite.py`, fresh process + throwaway cache
+per run, 3 interleaved pairs, warm edge, `cold_ab.json`):
+
+| pair | control total / telemetry | candidate total / telemetry |
+|---|---:|---:|
+| 1 | 26.3 / 25.2 s | 7.5 / 6.8 s |
+| 2 | 28.7 / 27.9 s | 13.1 / 12.4 s |
+| 3 | 29.2 / 28.5 s | 13.9 / 13.2 s |
+
+Candidate faster 3/3; medians 28.7 → 13.1 s total (−54 %), telemetry
+27.9 → 12.4 s (−55 %). Two earlier pairs from a run that was cut short by a
+session restart agreed: 35.5 / 48.9 s → 11.5 / 14.9 s. The control spends
+its time in jsDelivr stragglers and 30 s read timeouts that the hedging
+routes around; the in-process post-fetch work (parse + typed assembly)
+drops from ~1.3 s to ~0.6 s with TH2 alone and to ~0.3 s with the native
+decoder.
 
 ## Findings worth keeping
 
@@ -91,7 +100,7 @@ native decoder.
   shipped change, with the native decoder installed.
 - Frame-tier round trips: TH1 codec 0 mismatches on both corpora; TH8 IPC
   tier 0/1452 (`equals` + schema).
-- Unit suite green with the native decoder installed (the four
+- Unit suite (1541), property suite (81) and integration suite (13) green with the native decoder installed (the four
   `get_telemetry(...) == dict` assertions now compare through a
   list-normalising helper because channels may be numpy arrays when
   `tif1-native` is present); `ruff check`, `ruff format`, `ty check src/tif1`
