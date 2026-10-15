@@ -14,6 +14,6 @@ if __name__ == "__main__":
         "Q",
         save_path=Path(__file__).resolve().parent / "qualifying_grid.png",
         dpi=150,
-        facecolor="#1a1a1a",
+        color_scheme="default-dark",
     )
     print("Chart saved to docs/assets/qualifying_grid.png")

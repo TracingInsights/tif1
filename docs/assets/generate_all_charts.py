@@ -26,7 +26,9 @@ from matplotlib.patches import Patch
 import tif1
 
 OUT = Path(__file__).resolve().parent
-SAVE_KW = {"bbox_inches": "tight", "facecolor": "#1a1a1a"}
+# Docs charts use the TracingInsights-brand dark theme (#011627 background, lime text).
+THEME = "default-dark"
+SAVE_KW = {"bbox_inches": "tight"}
 
 print("Starting chart generation...")
 
@@ -36,49 +38,49 @@ NATIVE_CHARTS = [
         "Top speeds by team",
         tif1.charts.plot_top_speeds,
         (2023, "Italian Grand Prix", "Q"),
-        {"save_path": OUT / "top_speeds.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "top_speeds.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Track speed map",
         tif1.charts.plot_track_speed_map,
         (2023, "Monaco", "Q"),
-        {"save_path": OUT / "track_speed_map.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "track_speed_map.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Track throttle map",
         tif1.charts.plot_track_throttle_map,
         (2023, "Silverstone", "Q"),
-        {"save_path": OUT / "track_throttle_map.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "track_throttle_map.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Track brake zones",
         tif1.charts.plot_track_brake_zones,
         (2023, "Monza", "Q"),
-        {"save_path": OUT / "track_brake_zones.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "track_brake_zones.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Track acceleration map",
         tif1.charts.plot_track_acceleration_map,
         (2023, "Suzuka", "Q"),
-        {"save_path": OUT / "track_acceleration_map.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "track_acceleration_map.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Gear shifts on track",
         tif1.charts.plot_gear_shifts,
         (2021, "Austrian Grand Prix", "Q"),
-        {"save_path": OUT / "gear_shifts_on_track.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "gear_shifts_on_track.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Annotated speed trace",
         tif1.charts.plot_annotated_speed_trace,
         (2021, "Spanish Grand Prix", "Q"),
-        {"save_path": OUT / "annotated_speed_trace.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "annotated_speed_trace.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Speed traces comparison",
         tif1.charts.plot_speed_traces,
         (2023, "Spanish Grand Prix", "Q"),
-        {"save_path": OUT / "speed_traces.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "speed_traces.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Multi-driver speed comparison",
@@ -88,7 +90,7 @@ NATIVE_CHARTS = [
             "drivers": ["VER", "PER", "LEC"],
             "save_path": OUT / "multi_driver_speed_comparison.png",
             "dpi": 300,
-            "facecolor": "#1a1a1a",
+            "color_scheme": THEME,
         },
     ),
     (
@@ -99,14 +101,14 @@ NATIVE_CHARTS = [
             "drivers": ["VER", "LEC"],
             "save_path": OUT / "lap_delta.png",
             "dpi": 300,
-            "facecolor": None,
+            "color_scheme": THEME,
         },
     ),
     (
         "Telemetry comparison",
         tif1.charts.plot_telemetry_comparison,
         (2024, "Monaco Grand Prix", "Q"),
-        {"save_path": OUT / "telemetry_comparison.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "telemetry_comparison.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "G-G diagram",
@@ -116,7 +118,7 @@ NATIVE_CHARTS = [
             "drivers": ["VER", "LEC", "NOR"],
             "save_path": OUT / "gg_diagram.png",
             "dpi": 300,
-            "facecolor": None,
+            "color_scheme": THEME,
         },
     ),
     (
@@ -127,20 +129,20 @@ NATIVE_CHARTS = [
             "drivers": ["ALO"],
             "save_path": OUT / "driver_laptimes_example.png",
             "dpi": 150,
-            "facecolor": "#1a1a1a",
+            "color_scheme": THEME,
         },
     ),
     (
         "Lap times distribution",
         tif1.charts.plot_laptimes_distribution,
         (2023, "Azerbaijan Grand Prix", "R"),
-        {"save_path": OUT / "laptimes_distribution.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "laptimes_distribution.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Lap time heatmap",
         tif1.charts.plot_laptime_heatmap,
         (2023, "Monaco Grand Prix", "R"),
-        {"save_path": OUT / "laptime_heatmap.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "laptime_heatmap.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Qualifying grid",
@@ -149,32 +151,32 @@ NATIVE_CHARTS = [
         {
             "save_path": OUT / "qualifying_grid.png",
             "dpi": 150,
-            "facecolor": "#1a1a1a",
+            "color_scheme": THEME,
         },
     ),
     (
         "Track temperature",
         tif1.charts.plot_track_temperature,
         (2023, "Monaco Grand Prix", "R"),
-        {"save_path": OUT / "track_temperature.png", "dpi": 150, "facecolor": "#1a1a1a"},
+        {"save_path": OUT / "track_temperature.png", "dpi": 150, "color_scheme": THEME},
     ),
     (
         "Downforce levels",
         tif1.charts.plot_downforce_levels,
         (2023, "Monaco Grand Prix", "Q"),
-        {"save_path": OUT / "downforce_levels.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "downforce_levels.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Throttle distance",
         tif1.charts.plot_throttle_distance,
         (2023, "Bahrain Grand Prix", "Q"),
-        {"save_path": OUT / "throttle_distance.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "throttle_distance.png", "dpi": 300, "color_scheme": THEME},
     ),
     (
         "Tire degradation",
         tif1.charts.plot_tire_degradation,
         (2024, "Hungarian Grand Prix", "Race"),
-        {"save_path": OUT / "tire_degradation.png", "dpi": 300, "facecolor": None},
+        {"save_path": OUT / "tire_degradation.png", "dpi": 300, "color_scheme": THEME},
     ),
 ]
 
@@ -193,6 +195,7 @@ def _render_native_charts() -> None:
 
 def _render_tire_strategy() -> None:
     """Orchestrator-only output: tire strategy bar chart."""
+    tif1.plotting.setup_mpl(color_scheme=THEME)
     print("\nGenerating tire strategy chart...")
     try:
         session = tif1.get_session(2024, "Abu Dhabi Grand Prix", "Race")
@@ -202,8 +205,7 @@ def _render_tire_strategy() -> None:
         final_lap = laps[laps["LapNumber"] == laps["LapNumber"].max()]
         drivers_sorted = final_lap.sort_values("Position")["Driver"].tolist()[:15]
 
-        _, ax = plt.subplots(figsize=(16, 12), facecolor="#1a1a1a")
-        ax.set_facecolor("#1a1a1a")
+        _, ax = plt.subplots(figsize=(16, 12))
         for idx, driver in enumerate(drivers_sorted):
             driver_laps = laps[laps["Driver"] == driver].sort_values("LapNumber")
             for stint in driver_laps["Stint"].unique():
@@ -220,11 +222,10 @@ def _render_tire_strategy() -> None:
                 )
 
         ax.set_yticks(range(len(drivers_sorted)))
-        ax.set_yticklabels(drivers_sorted, color="white")
-        ax.set_xlabel("Lap Number", color="white")
-        ax.set_ylabel("Driver (by finish position)", color="white")
-        ax.set_title("Tire Strategy - Full Race", color="white")
-        ax.tick_params(colors="white")
+        ax.set_yticklabels(drivers_sorted)
+        ax.set_xlabel("Lap Number")
+        ax.set_ylabel("Driver (by finish position)")
+        ax.set_title("Tire Strategy - Full Race")
         ax.invert_yaxis()
         legend_elements = [
             Patch(facecolor=compound_colors["SOFT"], label="Soft"),
@@ -234,9 +235,6 @@ def _render_tire_strategy() -> None:
         ax.legend(
             handles=legend_elements,
             loc="upper right",
-            facecolor="#1a1a1a",
-            edgecolor="white",
-            labelcolor="white",
         )
         plt.tight_layout()
         plt.savefig(OUT / "race_tire_strategy.png", dpi=150, **SAVE_KW)
@@ -248,6 +246,7 @@ def _render_tire_strategy() -> None:
 
 def _render_race_pace() -> None:
     """Orchestrator-only output: race pace box plot of the top 5 finishers."""
+    tif1.plotting.setup_mpl(color_scheme=THEME)
     print("\nGenerating race pace comparison chart...")
     try:
         session = tif1.get_session(2024, "Abu Dhabi Grand Prix", "Race")
@@ -267,23 +266,25 @@ def _render_race_pace() -> None:
         top_5_drivers = final_positions.head(5)["Driver"].tolist()
         top_5_laps = clean_laps[clean_laps["Driver"].isin(top_5_drivers)]
 
-        _, ax = plt.subplots(figsize=(12, 6), facecolor="#1a1a1a")
-        ax.set_facecolor("#1a1a1a")
+        _, ax = plt.subplots(figsize=(12, 6))
         colors_list = [tif1.plotting.get_driver_color(d, session=session) for d in top_5_drivers]
         bp = ax.boxplot(
             [top_5_laps[top_5_laps["Driver"] == d]["LapTime"].values for d in top_5_drivers],
             tick_labels=top_5_drivers,
             patch_artist=True,
             showmeans=True,
+            # Matplotlib draws whiskers/caps black, invisible on the dark theme.
+            whiskerprops={"color": plt.rcParams["text.color"]},
+            capprops={"color": plt.rcParams["text.color"]},
+            flierprops={"markeredgecolor": plt.rcParams["text.color"]},
         )
         for patch, color in zip(bp["boxes"], colors_list):
             patch.set_facecolor(color)
             patch.set_alpha(0.6)
-        ax.set_xlabel("Driver", color="white")
-        ax.set_ylabel("Lap Time (s)", color="white")
-        ax.set_title("Race Pace Distribution - Top 5 Finishers", color="white")
-        ax.tick_params(colors="white")
-        ax.grid(True, alpha=0.3, axis="y", color="white")
+        ax.set_xlabel("Driver")
+        ax.set_ylabel("Lap Time (s)")
+        ax.set_title("Race Pace Distribution - Top 5 Finishers")
+        ax.grid(True, alpha=0.3, axis="y")
         plt.tight_layout()
         plt.savefig(OUT / "race_pace_boxplot.png", dpi=150, **SAVE_KW)
         plt.close()
@@ -294,6 +295,7 @@ def _render_race_pace() -> None:
 
 def _render_weather_impact() -> None:
     """Orchestrator-only output: track temperature vs lap time scatter + trend."""
+    tif1.plotting.setup_mpl(color_scheme=THEME)
     print("\nGenerating weather impact chart...")
     try:
         session = tif1.get_session(2024, "Singapore Grand Prix", "Race")
@@ -308,21 +310,19 @@ def _render_weather_impact() -> None:
             & (laps["LapNumber"] > 1)
         ]
 
-        _, ax = plt.subplots(figsize=(12, 6), facecolor="#1a1a1a")
-        ax.set_facecolor("#1a1a1a")
+        _, ax = plt.subplots(figsize=(12, 6))
         ax.scatter(clean_laps["TrackTemp"], clean_laps["LapTime"], alpha=0.3, color="cyan")
-        ax.set_xlabel("Track Temperature (°C)", color="white")
-        ax.set_ylabel("Lap Time (s)", color="white")
-        ax.set_title("Track Temperature Impact on Lap Times", color="white")
-        ax.tick_params(colors="white")
+        ax.set_xlabel("Track Temperature (°C)")
+        ax.set_ylabel("Lap Time (s)")
+        ax.set_title("Track Temperature Impact on Lap Times")
 
         valid_data = clean_laps[["TrackTemp", "LapTime"]].dropna()
         z = np.polyfit(valid_data["TrackTemp"], valid_data["LapTime"], 1)
         p = np.poly1d(z)
         temp_range = np.linspace(valid_data["TrackTemp"].min(), valid_data["TrackTemp"].max(), 100)
         ax.plot(temp_range, p(temp_range), "r--", linewidth=2, label=f"Trend: {z[0]:.3f}s/°C")
-        ax.legend(facecolor="#1a1a1a", edgecolor="white", labelcolor="white")
-        ax.grid(True, alpha=0.3, color="white")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(OUT / "weather_temperature_impact.png", dpi=150, **SAVE_KW)
         plt.close()
