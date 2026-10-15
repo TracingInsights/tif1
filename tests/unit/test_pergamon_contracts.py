@@ -110,6 +110,7 @@ def test_decode_builds_requested_frame_class():
 
 
 def test_lz4_content_size_is_read_from_the_frame_header():
+    pytest.importorskip("lz4.frame")  # no lz4 wheels on 3.15: the tier writes zstd there
     blob = _compress_frame_blob(b"x" * 1000)
     assert _lz4_frame_content_size(blob) == 1000
     assert _lz4_frame_content_size(b"not lz4") == -1
@@ -865,7 +866,8 @@ def test_q13_encoder_round_trips_every_branch_into_one_writable_buffer():
         _same(decoded[lap], frame)
     # Compressing the view directly keeps the lz4 content size pyarrow needs.
     compressed = _compress_frame_blob(blob)
-    assert _lz4_frame_content_size(compressed) == len(blob)
+    if cache_mod._lz4_frame is not None:
+        assert _lz4_frame_content_size(compressed) == len(blob)
 
 
 def test_q13_encoder_body_layout_is_the_concatenation_of_the_group_blocks():
@@ -930,7 +932,8 @@ def test_q13_multi_driver_write_compresses_on_a_pool(tmp_path, monkeypatch):
         assert cache.set_telemetry_frames_batch(2026, GP, "Race", batch) == 6
         assert cache.set_telemetry_frames_batch(2026, GP, "Race", [("VER", 3, _frame(lap=3))]) == 1
         assert [n for n, _ in pools] == [3, 1]
-        assert pools[0][1] is not None
+        # Only lz4 releases the GIL, so the zstd fallback (3.15) compresses serially.
+        assert (pools[0][1] is not None) == (cache_mod._lz4_frame is not None)
         assert pools[1][1] is None
         refs = [(d, lap) for d, lap, _ in batch] + [("VER", 3)]
         hits = cache.get_telemetry_frames_batch(2026, GP, "Race", refs)

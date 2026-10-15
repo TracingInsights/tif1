@@ -17,7 +17,7 @@ import asyncio
 
 import pandas as pd
 
-from tif1.cache import Cache
+from tif1.cache import Cache, _join_frame_writers
 
 
 def _make_session(monkeypatch, tmp_path, cache=None):
@@ -45,6 +45,7 @@ class TestN1ColdFetchMaterializesFrames:
 
         tel_map = asyncio.run(session.fetch_all_laps_telemetry_async())
         assert len(tel_map) == 2
+        _join_frame_writers()  # frames are written on a background thread
 
         hits = cache.get_telemetry_frames_batch(
             session.year, session.gp, session.session, [("VER", 1), ("VER", 2)]
