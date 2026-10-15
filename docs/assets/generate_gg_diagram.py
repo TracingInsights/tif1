@@ -15,6 +15,6 @@ if __name__ == "__main__":
         drivers=["VER", "LEC", "NOR"],
         save_path=Path(__file__).resolve().parent / "gg_diagram.png",
         dpi=300,
-        facecolor=None,
+        color_scheme="default-dark",
     )
     print("Chart saved to docs/assets/gg_diagram.png")

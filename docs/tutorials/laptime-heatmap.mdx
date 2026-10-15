@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Setup plotting
-tif1.plotting.setup_mpl(color_scheme='fastf1')
+tif1.plotting.setup_mpl(color_scheme='default-dark')
 
 # Load race session
 session = tif1.get_session(2023, 'Monaco Grand Prix', 'R')
@@ -96,7 +96,7 @@ sns.heatmap(
     vmax=fastest_lap * 1.07,
     cbar_kws={'label': 'Lap Time (seconds)', 'aspect': 40},
     linewidths=0.5,
-    linecolor='#1a1a1a',
+    linecolor='#011627',
     xticklabels=5,  # Show every 5th lap number
     ax=ax
 )
@@ -157,7 +157,7 @@ sns.heatmap(
     vmax=heatmap_fuel.min().min() * 1.07,
     cbar_kws={'label': 'Fuel-Corrected Lap Time (s)', 'aspect': 40},
     linewidths=0.5,
-    linecolor='#1a1a1a',
+    linecolor='#011627',
     xticklabels=5,
     ax=ax
 )

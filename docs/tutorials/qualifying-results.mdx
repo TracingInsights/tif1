@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Setup plotting with timedelta support
-tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
+tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='default-dark')
 
 # Load qualifying session
 session = tif1.get_session(2023, 'Spanish Grand Prix', 'Q')
@@ -204,7 +204,7 @@ Save the visualization for reports or presentations:
 ```python
 # Save as high-resolution PNG
 plt.savefig('qualifying_results.png', dpi=300, bbox_inches='tight',
-            facecolor='#1a1a1a')
+            facecolor='#011627')
 
 # Save as vector format for publications
 plt.savefig('qualifying_results.svg', bbox_inches='tight')

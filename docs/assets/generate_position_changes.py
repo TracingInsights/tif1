@@ -14,6 +14,6 @@ if __name__ == "__main__":
         "R",
         save_path=Path(__file__).resolve().parent / "race_position_changes.png",
         dpi=150,
-        facecolor=None,
+        color_scheme="default-dark",
     )
     print("Chart saved to docs/assets/race_position_changes.png")
