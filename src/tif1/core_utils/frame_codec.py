@@ -219,7 +219,7 @@ def decode_frame(blob: bytes | bytearray | memoryview) -> pd.DataFrame:
         for spec in specs:
             kind = spec[0]
             if kind == "np":
-                _, dtype_str, ncols, placement, offset, nbytes = spec
+                _, dtype_str, ncols, placement, offset, _nbytes = spec
                 dtype = np.dtype(dtype_str)
                 arr = np.frombuffer(body, dtype=dtype, count=ncols * n, offset=offset)
                 blocks.append(_numpy_block(arr.reshape(ncols, n), _placement(placement)))
@@ -230,7 +230,7 @@ def decode_frame(blob: bytes | bytearray | memoryview) -> pd.DataFrame:
                     if col_spec[0] == "const":
                         values[row, :] = col_spec[1]
                     else:
-                        _, cats, offset, nbytes = col_spec
+                        _, cats, offset, _nbytes = col_spec
                         codes = np.frombuffer(body, dtype="int32", count=n, offset=offset)
                         values[row, :] = _decode_object(cats, codes)
                 blocks.append(_numpy_block(values, _placement(placement)))
@@ -248,7 +248,7 @@ def decode_frame(blob: bytes | bytearray | memoryview) -> pd.DataFrame:
                 )
                 blocks.append(new_block(ea, placement=BlockPlacement(placement[0]), ndim=2))
             elif kind == "str":
-                _, placement, cats, offset, nbytes = spec
+                _, placement, cats, offset, _nbytes = spec
                 codes = np.frombuffer(body, dtype="int32", count=n, offset=offset)
                 ea = _decode_str(cats, codes)
                 blocks.append(new_block(ea, placement=BlockPlacement(placement[0]), ndim=2))

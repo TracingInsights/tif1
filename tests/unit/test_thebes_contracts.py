@@ -168,7 +168,7 @@ def test_codec_rejects_malformed_blobs():
     with pytest.raises(ValueError, match="typed-columnar"):
         frame_codec.decode_frame(b"not a frame")
     blob = frame_codec.encode_frame(_frame())
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="corrupt frame"):
         frame_codec.decode_frame(blob[:40])
 
 
