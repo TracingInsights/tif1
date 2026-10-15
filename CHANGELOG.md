@@ -7,6 +7,27 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-15
+
+### Summary
+
+`0.9.0` adds Python 3.15 support, moves to polars 2.0, and reads the current
+season's calendar live from `theOehrly/f1schedule`. Several performance series
+(K, L, N, Rhodes, Tyria, Ithome, Halikarnassos, Kroton, Argos) add materialized
+laps and telemetry frame tiers, a negative-result cache, and a cache that works
+under the default config, so repeat loads of a cached session skip most of the
+payload parsing and frame assembly (per-series numbers below). A documentation
+audit fixed behaviour bugs across offline/CI mode, the circuit breaker, schedule
+UTC dates, deleted fastest laps, and charts on polars sessions.
+
+Upgrade notes:
+
+- Names that resemble no event now raise `tif1.EventNotFoundError` (a
+  `ValueError`) instead of loading the closest event.
+- polars `>=2.0.0,<3` and pyarrow are runtime dependencies; pandas `>=3.0.6`.
+- The unused `log_level`, `http2_max_connections` and `http2_max_pool_size`
+  config keys (and their environment variables) were removed.
+
 ### Fixed — found by the documentation audit (2026-10-14)
 
 - **`Laps.groupby` keeps its key names.** `Lap`, `DriverResult`, `Driver` and
@@ -621,7 +642,7 @@ config never starts the background thread), merged-loop numpy concatenation
 (the 4.7 ms list merge has no headroom), and batched prefetch payload
 persistence (−2.5%, within noise).
 
-### Summary
+### Summary — Rhodes-series performance work
 
 Rhodes-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-rhodes/RESULTS.md`). The headline: **warm loads get GC-aware
@@ -693,10 +714,7 @@ uncompressed blobs (parity at 4.3× storage), and cold orchestration overlap
   (`.agents/perf-tyria/tools/offline_assembly_bench.py`,
   `.agents/perf-tyria/PLAN.md`, `.agents/perf-tyria/RESULTS.md`).
 
-
-## [Unreleased]
-
-### Summary
+### Summary — N-series performance work
 
 N-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-lindos/RESULTS.md`). The headline: **the second load of a
@@ -758,10 +776,7 @@ alternatives — all documented with their numbers.
 - N-series measurement harnesses and reports (`tools/lindos_*.py`,
   `.agents/perf-lindos/`).
 
-
-## [Unreleased] — L-series performance work (prior series)
-
-### Summary
+### Summary — L-series performance work
 
 L-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-sestos/RESULTS.md`). The headline: **warm loads of a cached
@@ -819,10 +834,7 @@ measured at +23%/+36% cold regression on 1-core vantages, and reverted.
   does zero probes), L10 trimming the `get_session` schedule path (5.2 ms;
   the 0.42–0.65 s is the already-adjudicated lazy-import chain).
 
-
-## [Unreleased]
-
-### Summary
+### Summary — K-series performance work
 
 K-series performance work (10 hypotheses, all run; full log in
 `.agents/perf-kalchedon/RESULTS.md`). The headline: **the persistent cache now

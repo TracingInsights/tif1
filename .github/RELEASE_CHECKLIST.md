@@ -33,7 +33,7 @@ Use this checklist before creating a new release.
 - [ ] Property-based tests pass
 - [ ] Benchmarks show no regression
 - [ ] Manual smoke test completed
-- [ ] Tested on Python 3.11, 3.12, 3.13, 3.14
+- [ ] Tested on Python 3.11, 3.12, 3.13, 3.14, 3.15
 
 ### Build & Package
 - [ ] Package builds successfully: `uv build`
@@ -129,6 +129,14 @@ If critical issues are found:
    - Provide workaround if available
 
 ## Version-Specific Notes
+
+### v0.9.0 (Python 3.15, polars 2.0, live schedule)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.9.0"`
+- [ ] Confirm `pip install tif1` on Python 3.15 installs from wheels only
+- [ ] Confirm polars 2.x and pyarrow install as runtime dependencies
+- [ ] Confirm `get_session(2025, "Invalid GP", "Race")` raises `EventNotFoundError`
+- [ ] Confirm the current season's schedule is fetched from `theOehrly/f1schedule` and cached
+- [ ] Confirm `offline_mode` never makes a request
 
 ### v0.8.0 (Performance Release)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.8.0"`
