@@ -28,7 +28,8 @@ _DUMPS_OPTIONS = orjson.OPT_SERIALIZE_NUMPY
 # so the fetch threads parse in parallel; without it every path uses orjson.
 _native_decode_telemetry: Any
 try:
-    _native_decode_telemetry = importlib.import_module("tif1_native").decode_telemetry
+    _native_name = "decode_telemetry"  # the extension ships no stubs
+    _native_decode_telemetry = getattr(importlib.import_module("tif1_native"), _native_name)
 except (ImportError, AttributeError):  # pragma: no cover - depends on the optional wheel
     _native_decode_telemetry = None
 

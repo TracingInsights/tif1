@@ -283,6 +283,30 @@ export TIF1_CDN_PRECONNECT=false
   Type: `bool`. Default: `true`. Skipped automatically in offline and CI mode.
 </Info>
 
+### TIF1_CDN_HEDGE
+
+Re-issue a slow request on the next CDN source. Each source keeps a moving average of its request latency. A request on the first source waits two times that average, clamped to `TIF1_CDN_HEDGE_MAX_DELAY`. If it has not answered by then, the same request is sent to the next source too, and the first answer wins. A source that measures more than twice as slow as a lower-priority source moves behind it for the rest of the process. Set to `false` to try the sources one after the other.
+
+```bash
+export TIF1_CDN_HEDGE=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`. Only requests that stall send a second request; a healthy source sends one request per file.
+</Info>
+
+### TIF1_CDN_HEDGE_MAX_DELAY
+
+Upper bound, in seconds, for the wait before a stalled request is re-issued on the next CDN source. The lower bound is 1 second. A source without latency samples uses this value.
+
+```bash
+export TIF1_CDN_HEDGE_MAX_DELAY=2.0
+```
+
+<Info>
+  Type: `float`. Default: `4.0`.
+</Info>
+
 ### TIF1_POOL_CONNECTIONS
 
 Number of connection pools. The library clamps explicit values to a minimum of `10`.

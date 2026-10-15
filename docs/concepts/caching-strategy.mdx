@@ -99,7 +99,15 @@ CREATE TABLE telemetry_frames (
     frame BLOB,
     PRIMARY KEY (year, gp, session, driver, lap)
 );
--- telemetry_frames_pl has the same shape and holds polars frames.
+-- telemetry_frames_pl has the same shape and holds polars frames written by
+-- earlier releases, or by drivers whose laps have different schemas.
+
+CREATE TABLE telemetry_frames_pl_ipc (
+    year INTEGER, gp TEXT, session TEXT, driver TEXT,
+    laps TEXT,      -- JSON list of [lap, row count] in storage order
+    frame BLOB,     -- Arrow IPC file (lz4) with every lap of the driver
+    PRIMARY KEY (year, gp, session, driver)
+);
 
 CREATE TABLE laps_frames (
     year INTEGER, gp TEXT, session TEXT,
@@ -159,9 +167,13 @@ zstd-1 compresses about 4.5x faster and decompresses about 2x faster than the pr
 
 ### Frame rows
 
-Frame rows hold a pickle (protocol 5) of the DataFrame, compressed with lz4 frame at level 0. When `lz4` is not installed, the writer falls back to zstd-1. Python 3.15 has no `lz4` wheels yet, so the frame tier uses zstd there. The reader detects the codec from the magic prefix, so lz4 and zstd rows coexist in one table.
+Pandas telemetry frame rows hold a typed-columnar encoding of the frame. The row stores the raw bytes of each block (one block per dtype), a dictionary for the string columns, and a small header. The header lists the column names, dtypes and block layout. The reader rebuilds the frame from these blocks directly, without the DataFrame constructor. A frame with a column outside the telemetry dtype contract is pickled instead. Rows written by earlier releases are pickles too. The reader tells the formats apart by a magic prefix. Laps frame rows hold a pickle (protocol 5).
 
-On the 1452-frame 2026 Monaco race set, lz4 cut frame decompression from 75 ms to 40 ms. Compression fell from 170 ms to 79 ms. The stored bytes grew by 26%. The frame tier is write-once and read-many, so read speed wins over ratio.
+The blob is compressed with lz4 frame at level 0. When `lz4` is not installed, the writer falls back to zstd-1. Python 3.15 has no `lz4` wheels yet, so the frame tier uses zstd there. The reader detects the codec from the magic prefix, so lz4 and zstd rows coexist in one table.
+
+Polars telemetry frames are stored per driver in `telemetry_frames_pl_ipc` as one Arrow IPC file with lz4 inside the stream. A lap is a slice of the driver frame; the row's `laps` column lists the lap numbers and row counts in storage order. A partial write merges with the laps already stored for the driver.
+
+On the 1452-frame 2026 Monaco race set, the typed-columnar rows read in 115 ms against 187 ms for pickled rows. The polars driver rows read in 47 ms against 68 ms. The frame tier is write-once and read-many, so read speed wins over ratio.
 
 ## Cache location and configuration
 

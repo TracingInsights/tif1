@@ -88,6 +88,10 @@ Sources are assigned priority levels (integer values, lower = higher priority) t
 - Priority can be set when creating `CDNSource` objects
 - Sources are automatically re-sorted when added via `add_source()`
 
+**Measured latency adjusts the order.** Each source keeps a moving average of its request latency (`record_latency()`, `latency_estimate()`). A source can measure more than twice as slow as a lower-priority source, with at least eight samples on each. Then `get_sources()` moves it behind that source for the rest of the process. Sources without samples keep their configured position. `reset()` clears the estimates.
+
+**Stalled requests are hedged.** In the async pipeline the first source's request waits `hedge_delay()` seconds. That delay is two times the source's moving average, clamped between 1 second and `cdn_hedge_max_delay`. A request that has not answered by then is re-issued on the next source, and the first usable answer wins. The abandoned request counts as a latency sample at the hedge delay, so a slow mirror's estimate stays honest. A healthy source sends one request per file. `cdn_hedge=false` restores the one-after-the-other loop.
+
 #### 4. JSON Minification Support
 
 The `cdn_use_minification` option makes tif1 request `file.min.json` in place of `file.json` from custom mirrors. It is off by default.

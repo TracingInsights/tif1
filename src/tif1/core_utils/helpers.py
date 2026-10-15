@@ -536,9 +536,10 @@ try:  # pragma: no cover - import-time probe of pandas internals
     # stubs do not describe them); any ImportError/AttributeError disables
     # the direct path and ``_from_arrays`` is used instead.
     _BlockPlacement = importlib.import_module("pandas._libs.internals").BlockPlacement
-    _ensure_wrapped_if_datetimelike = importlib.import_module(
-        "pandas.core.construction"
-    ).ensure_wrapped_if_datetimelike
+    _wrap_name = "ensure_wrapped_if_datetimelike"  # absent from the pandas stubs
+    _ensure_wrapped_if_datetimelike = getattr(
+        importlib.import_module("pandas.core.construction"), _wrap_name
+    )
     _BlockManager = importlib.import_module("pandas.core.internals").BlockManager
     _new_block = importlib.import_module("pandas.core.internals.blocks").new_block
     _dataframe_from_mgr: Any = getattr(pd.DataFrame, "_from_mgr", None)
