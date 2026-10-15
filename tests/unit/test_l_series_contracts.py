@@ -19,7 +19,7 @@ import time
 import pandas as pd
 
 from tif1.async_fetch import fetch_multiple_async
-from tif1.cache import Cache
+from tif1.cache import Cache, _join_frame_writers
 
 
 def _make_config(monkeypatch, overrides: dict | None = None):
@@ -309,6 +309,7 @@ class TestL7MaterializedFrames:
         # The memo-sourced payload materialized its frame; a network-fresh
         # payload (none in this test) would not.
         assert len(tel_map) == 1
+        _join_frame_writers()  # frames are written on a background thread
         hits = cache.get_telemetry_frames_batch(2026, session.gp, "Race", [("VER", 1)])
         assert ("VER", 1) in hits
         assert hits[("VER", 1)].equals(tel_map[("VER", 1)])
