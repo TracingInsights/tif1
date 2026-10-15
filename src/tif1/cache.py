@@ -1527,6 +1527,23 @@ class Cache:
         # connection closes (atexit calls this), or their writes would be
         # dropped mid-flight.
         _join_frame_writers()
+        self._release_resources()
+
+        # A closed global instance would otherwise keep being handed out by
+        # get_cache(), silently dropping every later read and write.
+        global _cache
+        with _cache_lock:
+            if _cache is self:
+                _cache = None
+
+    def _release_resources(self) -> None:
+        """Close the connection and drop the memory tiers (this instance only).
+
+        Takes only this instance's own locks, so it is safe from ``__del__``:
+        a finalizer runs on whichever thread triggered GC, possibly one that
+        already holds the module-level ``_cache_lock`` (inside ``get_cache()``)
+        or is a frame-writer thread, and must never block on either.
+        """
         # Acquire both locks to ensure clean shutdown.
         # Snapshot `self.conn` inside the sqlite lock so concurrent close() calls
         # cannot race into `None.close()`.
@@ -1547,19 +1564,17 @@ class Cache:
             self._parsed_cache.clear()
             self._parsed_telemetry_cache.clear()
 
-        # A closed global instance would otherwise keep being handed out by
-        # get_cache(), silently dropping every later read and write.
-        global _cache
-        with _cache_lock:
-            if _cache is self:
-                _cache = None
-
         if conn is not None:
             logger.debug("Cache connection closed")
 
     def __del__(self):
-        """Destructor to ensure connection is closed."""
-        self.close()
+        """Destructor to ensure connection is closed.
+
+        Unregistering from ``_cache`` and joining frame writers are not needed
+        here (an instance still held by ``_cache`` or by a running writer is
+        reachable, so it is never finalized) and would risk a GC-time deadlock.
+        """
+        self._release_resources()
 
 
 _cache = None

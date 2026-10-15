@@ -35,6 +35,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # A full run takes ~3 minutes; a hung xdist worker must fail the job, not
+    # hold a runner until GitHub's 6-hour default.
+    timeout-minutes: 25
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
@@ -59,7 +62,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          python -m uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=xml --cov-report=term --cov-fail-under=80 -m "not slow and not integration and not benchmark"
+          python -m uv run pytest -o addopts='' -o faulthandler_timeout=300 tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=xml --cov-report=term --cov-fail-under=80 -m "not slow and not integration and not benchmark"
 
       - name: Run integration tests
         if: matrix.python-version == env.DEFAULT_PYTHON

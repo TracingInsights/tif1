@@ -456,6 +456,31 @@ class TestTelemetryBatchCoverage:
         reopened.set("x", {"a": 1})
         assert cache_module.get_cache().get("x") == {"a": 1}
 
+    def test_finalizer_never_takes_the_global_cache_lock(self, tmp_path, monkeypatch):
+        """GC can finalize a Cache inside get_cache() while _cache_lock is held.
+
+        ``__del__`` used to call ``close()``, which re-acquired the non-reentrant
+        ``_cache_lock`` and deadlocked that thread (and every later
+        ``get_cache()``), hanging CI workers at random tests.
+        """
+        import threading
+
+        import tif1.cache as cache_module
+
+        # A private lock, so a regression cannot poison the real one for later tests.
+        monkeypatch.setattr(cache_module, "_cache_lock", threading.Lock())
+        doomed = Cache(tmp_path)
+
+        def finalize_under_lock() -> None:
+            with cache_module._cache_lock:
+                doomed.__del__()
+
+        worker = threading.Thread(target=finalize_under_lock, daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "Cache.__del__ blocked on _cache_lock"
+        assert doomed.conn is None
+
     def test_closing_a_private_cache_keeps_the_global_one(self, tmp_path, monkeypatch):
         import tif1.cache as cache_module
 
