@@ -50,6 +50,17 @@ def _manager_with_statuses(statuses: list[int | None]):
     return manager, _fetch
 
 
+def _plain(payload):
+    """Telemetry payloads may carry numpy arrays when tif1-native is installed."""
+    import numpy as np
+
+    if isinstance(payload, dict):
+        return {k: _plain(v) for k, v in payload.items()}
+    if isinstance(payload, np.ndarray):
+        return payload.tolist()
+    return payload
+
+
 class TestK9AllClientRefusal:
     def test_all_404_raises_data_not_found(self):
         manager, fetch = _manager_with_statuses([404, 404, 404])
@@ -209,7 +220,7 @@ class TestK4K1DeferredSingleTierWrites:
 
         _join_frame_writers()
         assert calls == ["telemetry"]
-        assert cache.get_telemetry(2026, "GP", "Race", "VER", 1) == tel
+        assert _plain(cache.get_telemetry(2026, "GP", "Race", "VER", 1)) == tel
 
     def test_ultra_cold_session_persists_for_next_process(self, tmp_path):
         """K1: default-config cold loads write the cache (read skip only)."""
@@ -218,4 +229,4 @@ class TestK4K1DeferredSingleTierWrites:
 
         data = {"tel": {"speed": [280.0] * 100}}
         assert _cache_telemetry_payload(cache, 2026, "GP", "Race", "VER/1_tel.json", data)
-        assert cache.get_telemetry(2026, "GP", "Race", "VER", 1) == {"speed": [280.0] * 100}
+        assert _plain(cache.get_telemetry(2026, "GP", "Race", "VER", 1)) == {"speed": [280.0] * 100}

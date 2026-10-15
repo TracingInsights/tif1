@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any, Protocol, cast
 
@@ -25,9 +26,10 @@ _DUMPS_OPTIONS = orjson.OPT_SERIALIZE_NUMPY
 # Thebes TH4: optional Rust decoder (``tif1-native``). It parses one
 # telemetry payload straight into typed numpy arrays with the GIL released,
 # so the fetch threads parse in parallel; without it every path uses orjson.
+_native_decode_telemetry: Any
 try:
-    from tif1_native import decode_telemetry as _native_decode_telemetry
-except ImportError:  # pragma: no cover - depends on the optional wheel
+    _native_decode_telemetry = importlib.import_module("tif1_native").decode_telemetry
+except (ImportError, AttributeError):  # pragma: no cover - depends on the optional wheel
     _native_decode_telemetry = None
 
 NATIVE_TELEMETRY_DECODER_AVAILABLE = _native_decode_telemetry is not None

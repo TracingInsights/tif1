@@ -1,6 +1,7 @@
 """Helper functions for tif1 core."""
 
 import array
+import importlib
 import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
@@ -531,14 +532,17 @@ def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd
 # round-trip against the public constructor; if anything drifted, or a
 # build raises, ``_frame_from_arrays`` is used instead.
 try:  # pragma: no cover - import-time probe of pandas internals
-    from pandas._libs.internals import BlockPlacement as _BlockPlacement
-    from pandas.core.construction import (
-        ensure_wrapped_if_datetimelike as _ensure_wrapped_if_datetimelike,
-    )
-    from pandas.core.internals import BlockManager as _BlockManager
-    from pandas.core.internals.blocks import new_block as _new_block
-
-    _DIRECT_BLOCKS_AVAILABLE = callable(getattr(pd.DataFrame, "_from_mgr", None))
+    # importlib keeps the static checker out of pandas' private modules (the
+    # stubs do not describe them); any ImportError/AttributeError disables
+    # the direct path and ``_from_arrays`` is used instead.
+    _BlockPlacement = importlib.import_module("pandas._libs.internals").BlockPlacement
+    _ensure_wrapped_if_datetimelike = importlib.import_module(
+        "pandas.core.construction"
+    ).ensure_wrapped_if_datetimelike
+    _BlockManager = importlib.import_module("pandas.core.internals").BlockManager
+    _new_block = importlib.import_module("pandas.core.internals.blocks").new_block
+    _dataframe_from_mgr: Any = getattr(pd.DataFrame, "_from_mgr", None)
+    _DIRECT_BLOCKS_AVAILABLE = callable(_dataframe_from_mgr)
 except (ImportError, AttributeError):  # pragma: no cover - pandas internals changed
     _DIRECT_BLOCKS_AVAILABLE = False
 
@@ -564,7 +568,7 @@ def _frame_from_blocks(blocks: tuple[Any, ...], columns: list[str], n_rows: int)
     mgr = _BlockManager(
         blocks, [_shared_column_index(columns), pd.RangeIndex(n_rows)], verify_integrity=False
     )
-    return cast(pd.DataFrame, pd.DataFrame._from_mgr(mgr, axes=mgr.axes))
+    return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
 
 
 def _numpy_block(values: np.ndarray, placement: Any) -> Any:

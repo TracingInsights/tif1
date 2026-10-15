@@ -33,6 +33,7 @@ freshly assembled ones.
 
 from __future__ import annotations
 
+import importlib
 import pickle
 import struct
 from typing import Any
@@ -104,7 +105,8 @@ def _decode_str(cats: list[str], codes: np.ndarray) -> Any:
     strings = pa.DictionaryArray.from_arrays(indices, dictionary).dictionary_decode()
     if _STR_PANDAS_DTYPE is None:
         _STR_PANDAS_DTYPE = pd.StringDtype("pyarrow", na_value=np.nan)
-    return pd.arrays.ArrowStringArray(strings, dtype=_STR_PANDAS_DTYPE)
+    string_array: Any = pd.arrays.ArrowStringArray
+    return string_array(strings, dtype=_STR_PANDAS_DTYPE)
 
 
 def encode_frame(frame: pd.DataFrame) -> bytes | None:
@@ -212,8 +214,8 @@ def decode_frame(blob: bytes | bytearray | memoryview) -> pd.DataFrame:
     # One copy into a writable buffer: every array below is a view into it.
     body = memoryview(bytearray(view[body_start:]))
     blocks: list[Any] = []
-    from pandas._libs.internals import BlockPlacement
-    from pandas.core.internals.blocks import new_block
+    BlockPlacement = importlib.import_module("pandas._libs.internals").BlockPlacement
+    new_block = importlib.import_module("pandas.core.internals.blocks").new_block
 
     try:
         for spec in specs:

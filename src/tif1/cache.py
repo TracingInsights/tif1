@@ -175,6 +175,41 @@ _FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "teleme
 # frame. The per-frame ``telemetry_frames_pl`` table stays readable (rows
 # from earlier releases, and drivers whose laps do not share one schema).
 _POLARS_IPC_TABLE = "telemetry_frames_pl_ipc"
+
+try:  # pragma: no cover - pyarrow is a declared dependency
+    from pyarrow import ArrowException as ArrowError
+except ImportError:  # pragma: no cover
+    ArrowError = ValueError  # type: ignore[misc,assignment]
+
+
+def _write_polars_ipc(frame: Any) -> bytes:
+    """Arrow IPC file bytes (lz4 frames) for a polars DataFrame.
+
+    pyarrow's writer/reader pair costs ~1 ms per driver blob where polars'
+    ``read_ipc`` on an in-memory buffer measured 4-60 ms per call (Thebes
+    TH8 probe: 22 blobs 18 ms via pyarrow vs 105-1284 ms via polars).
+    """
+    import pyarrow as pa
+    import pyarrow.ipc as pa_ipc
+
+    table = frame.to_arrow()
+    sink = pa.BufferOutputStream()
+    options = pa_ipc.IpcWriteOptions(compression="lz4")
+    with pa_ipc.new_file(sink, table.schema, options=options) as writer:
+        writer.write_table(table)
+    return sink.getvalue().to_pybytes()
+
+
+def _read_polars_ipc(blob: bytes) -> Any:
+    """polars DataFrame from Arrow IPC file bytes written by :func:`_write_polars_ipc`."""
+    import polars as pl
+    import pyarrow as pa
+    import pyarrow.ipc as pa_ipc
+
+    table = pa_ipc.open_file(pa.BufferReader(blob)).read_all()
+    return pl.from_arrow(table, rechunk=True)
+
+
 # Schema version of the materialized-frame tier, stored in SQLite's
 # ``user_version``. Frame rows carry no per-row version, so when the stored
 # version is older the frame tables are dropped once and rebuild from the
@@ -1384,10 +1419,13 @@ class Cache:
         for driver, lap in driver_laps:
             wanted.setdefault(driver, set()).add(lap)
         results: dict[tuple[str, int], Any] = {}
+        conn = self.conn
+        if conn is None:
+            return results
         try:
             placeholders = ", ".join("?" for _ in wanted)
             with self._sqlite_lock:
-                rows = self.conn.execute(
+                rows = conn.execute(
                     f"SELECT driver, laps, frame FROM {_POLARS_IPC_TABLE} WHERE year = ? "
                     f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
                     (year, gp, session, *wanted),
@@ -1397,13 +1435,12 @@ class Cache:
             return results
         if not rows:
             return results
-        import polars as pl
         from polars.exceptions import PolarsError
 
         for driver, laps_json, blob in rows:
             try:
                 lap_spans = json_loads(laps_json)
-                frame = pl.read_ipc(bytes(blob))
+                frame = _read_polars_ipc(bytes(blob))
                 offset = 0
                 for raw_lap, raw_rows in lap_spans:
                     lap, n_rows = int(raw_lap), int(raw_rows)
@@ -1412,7 +1449,7 @@ class Cache:
                     offset += n_rows
                 if offset != frame.height:
                     raise ValueError("lap spans do not cover the driver frame")
-            except (PolarsError, TypeError, ValueError, OSError) as e:
+            except (PolarsError, TypeError, ValueError, OSError, ArrowError) as e:
                 logger.debug("Corrupt polars frame row skipped: %s: %s", driver, e)
                 for lap in wanted[driver]:
                     results.pop((driver, lap), None)
@@ -1427,8 +1464,6 @@ class Cache:
         partial batch never drops frames. Drivers whose laps do not share one
         schema are handed back to the per-frame pickle path.
         """
-        import io
-
         import polars as pl
         from polars.exceptions import PolarsError
 
@@ -1437,10 +1472,13 @@ class Cache:
             by_driver.setdefault(driver, {})[int(lap)] = frame
         leftovers: list[tuple[str, int, Any]] = []
         existing: dict[str, tuple[list, bytes]] = {}
+        conn = self.conn
+        if conn is None:
+            return frames, 0
         try:
             placeholders = ", ".join("?" for _ in by_driver)
             with self._sqlite_lock:
-                for driver, laps_json, blob in self.conn.execute(
+                for driver, laps_json, blob in conn.execute(
                     f"SELECT driver, laps, frame FROM {_POLARS_IPC_TABLE} WHERE year = ? "
                     f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
                     (year, gp, session, *by_driver),
@@ -1456,13 +1494,13 @@ class Cache:
             if driver in existing:
                 try:
                     spans, blob = existing[driver]
-                    stored = pl.read_ipc(blob)
+                    stored = _read_polars_ipc(blob)
                     offset = 0
                     for lap, n_rows in spans:
                         if int(lap) not in merged:
                             merged[int(lap)] = stored.slice(offset, int(n_rows))
                         offset += int(n_rows)
-                except (PolarsError, TypeError, ValueError, OSError):
+                except (PolarsError, TypeError, ValueError, OSError, ArrowError):
                     pass  # unreadable row: rewrite it from this batch
             ordered = [merged[lap] for lap in sorted(merged)]
             schema = ordered[0].schema
@@ -1471,19 +1509,18 @@ class Cache:
                 continue
             try:
                 driver_frame = pl.concat(ordered, how="vertical", rechunk=True)
-                buffer = io.BytesIO()
-                driver_frame.write_ipc(buffer, compression="lz4")
-            except (PolarsError, TypeError, ValueError) as e:
+                blob = _write_polars_ipc(driver_frame)
+            except (PolarsError, TypeError, ValueError, ArrowError) as e:
                 logger.debug("Polars IPC encode failed for %s: %s", driver, e)
                 leftovers.extend((driver, lap, frame) for lap, frame in lap_frames.items())
                 continue
             spans_json = json_dumps_bytes([[lap, len(merged[lap])] for lap in sorted(merged)])
-            rows.append((year, gp, session, driver, spans_json.decode("utf-8"), buffer.getvalue()))
+            rows.append((year, gp, session, driver, spans_json.decode("utf-8"), blob))
             written += len(lap_frames)
         if rows:
             try:
                 with self._sqlite_lock:
-                    self.conn.executemany(
+                    conn.executemany(
                         f"INSERT OR REPLACE INTO {_POLARS_IPC_TABLE} VALUES (?, ?, ?, ?, ?, ?)",
                         rows,
                     )

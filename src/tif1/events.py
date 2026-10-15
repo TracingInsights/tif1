@@ -339,14 +339,16 @@ def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], floa
     offline = bool(get_config().get("offline_mode", False))
     cached = _read_cached_f1schedule_year(year)
     cached_payload: dict[str, Any] | None = None
+    fetched_at = 0.0
     if cached is not None:
+        fetched_at = cached[0]
         try:
             cached_payload = _convert_f1schedule_year(cached[1], year)
         except InvalidDataError as exc:
             logger.debug("Discarding malformed cached schedule_%s.json: %s", year, exc)
     if cached_payload is not None:
-        if now - cached[0] < ttl:
-            return cached_payload, cached[0] + ttl
+        if now - fetched_at < ttl:
+            return cached_payload, fetched_at + ttl
         if offline:
             return cached_payload, now + _F1SCHEDULE_RETRY_AFTER_SECONDS
         # Stale-while-revalidate: answer from the stale row now, refresh it

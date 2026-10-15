@@ -161,7 +161,7 @@ class TestCache:
         cache.set_telemetry(2025, "Abu Dhabi", "Race", "VER", 1, test_data)
         result = cache.get_telemetry(2025, "Abu Dhabi", "Race", "VER", 1)
 
-        assert result == test_data
+        assert _plain(result) == test_data
 
         # Test miss
         miss = cache.get_telemetry(2025, "Abu Dhabi", "Race", "HAM", 1)
