@@ -773,7 +773,9 @@ class TestEnsureNestedLoopSupport:
 
         original_flag = core_module._NEST_ASYNCIO2_APPLIED
         core_module._NEST_ASYNCIO2_APPLIED = False
-        monkeypatch.setattr(core_module.asyncio, "get_running_loop", lambda: object())
+        import asyncio  # core imports asyncio lazily (Pergamon P5); patch the module itself
+
+        monkeypatch.setattr(asyncio, "get_running_loop", lambda: object())
         monkeypatch.setitem(sys.modules, "nest_asyncio2", _FakeNestAsyncio2())
 
         try:

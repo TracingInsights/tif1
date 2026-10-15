@@ -1,8 +1,10 @@
 """tif1 - A faster alternative to fastf1 with the same bindings."""
 
 import logging
+import os
+import sys
 from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .exceptions import (
     CacheError,
@@ -17,6 +19,9 @@ from .exceptions import (
     SessionNotLoadedError,
     TIF1Error,
 )
+
+if TYPE_CHECKING:
+    import threading
 
 __all__ = [
     "BackendType",
@@ -185,6 +190,65 @@ def __getattr__(name: str) -> Any:
         value = getattr(import_module(module_name), attr_name)
     globals()[name] = value
     return value
+
+
+_PRELOAD_ENV = "TIF1_PRELOAD_IMPORTS"
+_PRELOAD_MODULES = ("numpy", "pandas", "pyarrow")
+
+
+def _interactive_interpreter() -> bool:
+    """Return True in a REPL, under ``python -i`` or inside an IPython/Jupyter kernel."""
+    return "IPython" in sys.modules or hasattr(sys, "ps1") or bool(sys.flags.interactive)
+
+
+def _preload_wanted() -> bool:
+    """Decide whether to warm the third-party imports in the background.
+
+    ``TIF1_PRELOAD_IMPORTS=1`` forces the preload on (scripts, benchmarks),
+    ``0`` forces it off; otherwise it runs only in interactive interpreters,
+    where the user types the next cell while pandas loads.
+    """
+    override = os.environ.get(_PRELOAD_ENV)
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    return _interactive_interpreter()
+
+
+def _preload_third_party() -> None:
+    """Worker body: import the heavy third-party modules ``tif1.core`` needs.
+
+    Third-party modules only. A ``tif1`` submodule imported here would read
+    configuration (environment variables) before the user had set it, and could
+    deadlock against a main-thread ``import tif1.core``. Import errors are left
+    for the main thread, which reports them on its own import.
+    """
+    for name in _PRELOAD_MODULES:
+        try:
+            import_module(name)
+        except Exception:
+            return
+
+
+def _start_preload() -> "threading.Thread | None":
+    """Start the background import of numpy/pandas/pyarrow when it pays off.
+
+    ``import tif1`` is lazy (~7 ms); the first ``get_session`` then imports
+    ``tif1.core`` and pays ~220 ms for pandas, numpy and pyarrow. In a notebook
+    that import runs while the user types the next cell: a daemon thread
+    started here imports the third-party modules, and the later main-thread
+    import finds them in ``sys.modules`` (or waits on the module lock, which
+    costs nothing extra). Non-interactive processes never start the thread.
+    """
+    if not _preload_wanted() or "pandas" in sys.modules:
+        return None
+    import threading
+
+    thread = threading.Thread(target=_preload_third_party, name="tif1-preload", daemon=True)
+    thread.start()
+    return thread
+
+
+_preload_thread = _start_preload()
 
 
 def setup_logging(level: int = logging.WARNING) -> None:

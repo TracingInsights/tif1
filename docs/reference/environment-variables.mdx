@@ -89,6 +89,18 @@ export TIF1_POLARS_LAP_CATEGORICAL=true
   Type: `bool`. Default: `false`
 </Info>
 
+### TIF1_PRELOAD_IMPORTS
+
+Start a background thread at `import tif1` that imports numpy, pandas, and pyarrow. The thread never imports a `tif1` submodule, so configuration set after `import tif1` still applies. By default the thread starts only in an interactive interpreter: IPython, Jupyter, `python -i`, or a REPL. There, the import overlaps the time before the next cell runs. Set `1` to always start it, or `0` to never start it. `tif1` reads this variable from the environment directly, not through `.tif1rc`.
+
+```bash
+export TIF1_PRELOAD_IMPORTS=0
+```
+
+<Info>
+  Type: `bool`. Default: unset (start only in an interactive interpreter)
+</Info>
+
 ## Network Configuration
 
 ### TIF1_CDNS

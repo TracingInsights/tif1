@@ -107,7 +107,7 @@ class TestR4PolarsFrameTier:
         # Simulate a foreign/migrated cache: pandas object in the polars table.
         cache.set_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1, pd_frame)])
         blob = cache.conn.execute(
-            "SELECT frame FROM telemetry_frames WHERE driver = 'VER'"
+            "SELECT frame FROM telemetry_frames_drv WHERE driver = 'VER'"
         ).fetchone()[0]
         cache.conn.execute(
             "INSERT OR REPLACE INTO telemetry_frames_pl VALUES (?, ?, ?, ?, ?, ?)",

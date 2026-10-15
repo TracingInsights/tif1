@@ -29,6 +29,7 @@ __all__ = [
     "configure_chart_saving",
     "contrast_ratio",
     "driver_colors",
+    "ensure_colormap",
     "ensure_readable_text",
     "fastest_lap",
     "finalize_figure",
@@ -764,6 +765,29 @@ def resolve_drivers(session: Any, drivers: list[str] | None, n: int) -> list[str
     return finishing_order(session, n)
 
 
+def ensure_colormap(cmap: Any) -> Any:
+    """Register seaborn's named colormaps when ``cmap`` names one of them.
+
+    seaborn is imported lazily (only the lap-time charts draw with it), so
+    its colormaps (``"rocket"``, ``"mako"``, ``"flare"``, ...) are not
+    registered with matplotlib until it is imported. A colormap name that
+    matplotlib does not know triggers that import, keeping those names valid
+    for every chart without paying the seaborn/scipy import up front.
+
+    Args:
+        cmap: A colormap name or object.
+
+    Returns:
+        ``cmap`` unchanged.
+    """
+    if isinstance(cmap, str):
+        from matplotlib import colormaps
+
+        if cmap not in colormaps:
+            import seaborn as sns  # noqa: F401  (registers its colormaps on import)
+    return cmap
+
+
 def track_segments(x: Any, y: Any) -> tuple[Any, Any]:
     """Build ``(points, segments)`` arrays for a ``LineCollection``.
 
@@ -888,13 +912,22 @@ def apply_common_filters(
     Returns:
         The filtered lap data frame.
     """
-    df = laps_df.copy()
+    # Every row filter is evaluated on the input frame and combined into one
+    # mask, so the (wide, ~17-block) lap frame is taken once instead of once
+    # per filter (~0.7 ms per take on a race). Row filters commute, so the
+    # selected rows, their order and the dtypes equal the step-by-step result.
+    keep: np.ndarray | None = None
+
+    def _restrict(condition: Any) -> None:
+        nonlocal keep
+        values = np.asarray(condition, dtype=bool)
+        keep = values if keep is None else keep & values
 
     if laps is not None:
-        df = df[df["LapNumber"].isin(laps)]
+        _restrict(laps_df["LapNumber"].isin(laps))
 
     if drivers is not None:
-        df = df[df["Driver"].isin(_resolve_driver_abbreviations(session, list(drivers)))]
+        _restrict(laps_df["Driver"].isin(_resolve_driver_abbreviations(session, list(drivers))))
 
     if teams is not None:
         team_drivers: list[str] = []
@@ -905,21 +938,21 @@ def apply_common_filters(
                 from tif1.plotting import get_driver_abbreviations_by_team
 
                 team_drivers.extend(get_driver_abbreviations_by_team(team, session))
-        df = df[df["Driver"].isin(team_drivers)]
+        _restrict(laps_df["Driver"].isin(team_drivers))
 
     if n_drivers is not None and finish_order:
-        df = df[df["Driver"].isin(finish_order[:n_drivers])]
+        _restrict(laps_df["Driver"].isin(finish_order[:n_drivers]))
 
-    if not include_deleted and "Deleted" in df.columns:
-        df = df[~df["Deleted"].fillna(False).astype(bool)]
+    if not include_deleted and "Deleted" in laps_df.columns:
+        _restrict(~laps_df["Deleted"].fillna(False).astype(bool))
 
     if not include_pit_laps:
-        keep = pd.Series(True, index=df.index)
-        if "PitInTime" in df.columns:
-            keep &= df["PitInTime"].isna()
-        if "PitOutTime" in df.columns:
-            keep &= df["PitOutTime"].isna()
-        df = df[keep]
+        if "PitInTime" in laps_df.columns:
+            _restrict(laps_df["PitInTime"].isna())
+        if "PitOutTime" in laps_df.columns:
+            _restrict(laps_df["PitOutTime"].isna())
+
+    df = laps_df.copy() if keep is None else laps_df[keep]
 
     if laptime_cutoff is not None and "LapTime" in df.columns:
         df = apply_laptime_cutoff(df, laptime_cutoff, laptime_cutoff_scope)

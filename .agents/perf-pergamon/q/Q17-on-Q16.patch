@@ -1,0 +1,52 @@
+--- a/src/tif1/payload_loader.py
++++ b/src/tif1/payload_loader.py
+@@ -290,6 +290,23 @@
+ 
+         return get_cache().is_known_missing(cache_key)
+ 
++    def _set_missing_verdict(self, cache_key: str, *, missing: bool) -> None:
++        """Record (all-CDN 4xx) or drop (payload fetched) the verdict for ``cache_key``.
++
++        Q17: the sync walk keeps the negative-result tier in step exactly like
++        ``fetch_json_async`` does, so refs only ever touched through per-lap
++        access get verdicts too.
++        """
++        if not self.enable_cache or self.year is None:
++            return
++        from .cache import get_cache
++
++        cache = get_cache()
++        if missing:
++            cache.record_missing(cache_key)
++        else:
++            cache.discard_missing(cache_key)
++
+     def _cache_set(self, cache_key: str, data: dict[str, Any]) -> None:
+         if self._cache_set_fn is not None:
+             self._cache_set_fn(cache_key, data)
+@@ -402,7 +419,14 @@
+             raise NetworkError(url=cache_key, status_code=None)
+ 
+         try:
+-            result = self._fetch(path, fast=fast)
++            try:
++                result = self._fetch(path, fast=fast)
++            except DataNotFoundError:
++                # Every CDN refused with 4xx: later loads (any process, within
++                # the TTL) skip the walk. CI mode leaves the cache untouched.
++                if use_cache or write_cache:
++                    self._set_missing_verdict(cache_key, missing=True)
++                raise
+             data = self._coerce_payload(result)
+             if validate:
+                 data = self._validate_payload(path, data)
+@@ -416,6 +440,9 @@
+         self._memo_set(path, data)
+         if write_cache:
+             self._cache_set(cache_key, data)
++            # The payload exists: drop any stale verdict (cache-bypassing
++            # reads skip the verdict check, so one may still be on record).
++            self._set_missing_verdict(cache_key, missing=False)
+         if validate:
+             logger.info(f"Fetched: {cache_key}")
+         return data

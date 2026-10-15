@@ -7,6 +7,123 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Pergamon wave 2 (2026-10-15)
+
+Twenty more warm-path hypotheses, each run in its own worktree against the
+wave-1 tree (`.agents/perf-pergamon/q/RESULTS.md`, one report per
+hypothesis); fifteen shipped, five rejected by measurement. Analysis-notebook
+benchmark on a warm 2026 Monaco race (fresh process, 8 interleaved rounds):
+whole process 988 → 705 ms against wave 1 and 1350 → 705 ms against the
+Thebes base, faster 8/8. Warm telemetry phase 98.7 → 74.6 ms (pandas, 10/10)
+and 90.6 → 58.8 ms (polars, 8/8) against wave 1.
+
+- **Lazy lap frames in `load()` (Q1).** `load()` decodes every driver row but
+  builds a lap's frame when it is first touched (58 → 39 ms);
+  `fetch_all_laps_telemetry()` still returns built frames.
+- **Interactive preload (Q2).** In IPython, Jupyter or a REPL, `import tif1`
+  starts a daemon thread that imports numpy, pandas and pyarrow (never a
+  `tif1` submodule), so `get_session` in the next cell takes 0.02-0.03 s
+  instead of 0.22-0.30 s. Scripts are unchanged. `TIF1_PRELOAD_IMPORTS=0/1`
+  overrides the detection.
+- **No subclass re-wrapping (Q4, Q8).** `Laps`, `Lap` and `Telemetry` results
+  wrap the operation's fresh manager instead of calling `__init__` (a shallow
+  copy each time): every `pick_*` 15-28 % faster; `Telemetry` methods 24-89 %
+  faster (`fill_missing`, `resample_channels`, `merge_channels`, distance and
+  slicing helpers).
+- **Row access (Q7).** `iterlaps()` and `laps.iloc[i]` 2-3x faster; an
+  `iterlaps()` loop calling `lap.telemetry` 4.7x faster.
+- **Frame tiers (Q6, Q11, Q13, Q18).** Streamed SQLite cursors into a shared
+  decompression pool; one lz4 task per large driver row; single-threaded IPC
+  reads and `string_view` storage for polars rows (old rows still read);
+  a per-group plan for lap frames; the writer encodes into one buffer and
+  compresses in a thread pool (1452-frame write 157 → 83 ms).
+- **Payload-tier warm load (Q15).** When the frame tiers are empty, zstd and
+  the native decoder run in worker threads and the load skips asyncio:
+  1.07 → 0.65 s with `tif1-native`.
+- **Fastest-lap and `Driver` paths (Q10, Q19).** Cache hits no longer go
+  through `asyncio.run`; the fastest lap comes from the laps frame tier;
+  `Driver.laps` is built directly from the payload (41 → 7.5 ms).
+- **Charts and CLI (Q14, Q20).** seaborn/scipy and pyarrow are imported only
+  where used, and `tif1.cache`/`tif1.events` no longer import pandas: first
+  chart to PNG 1.84 → 1.05 s; `cache-info`, `events`, `sessions` and
+  `cache-clear` 3.5x faster. `Event`/`EventSchedule` live in
+  `tif1.event_frames` (still importable from `tif1.events`).
+- **Memory (Q9).** The process-wide laps cache stores a session-free copy, so
+  deleted sessions and their telemetry can be collected (11 sessions: full GC
+  0.10 → 0.017 s, RSS 1.4 → 0.4 GB after collection).
+- **Fixed:** inside Jupyter, `load()` / `fetch_all_laps_telemetry()` raised
+  `asyncio.run() cannot be called from a running event loop` when some
+  telemetry was not in the frame tier (Q16). The synchronous payload path now
+  reads and records missing-everywhere verdicts, so a missing lap no longer
+  costs a CDN walk (up to a 30 s timeout) in every process (Q16, Q17). Frame
+  rows read from worker threads no longer share one zstd decompressor (Q15).
+- Rejected by measurement: tif1's own import trim (Q3, 2.7 ms), tiers for
+  weather/race control (Q5, 3.8 ms under noise), stronger lz4 levels (Q12,
+  ~2 ms read gain for 10x write cost), and a Rust lap-frame builder (inside
+  Q18, 1 ms per session).
+
+### Performance — Pergamon series (2026-10-15)
+
+Ten hypotheses on the warm path (sessions already in the persistent cache),
+measured on a 32-core workstation (`.agents/perf-pergamon/RESULTS.md`,
+harnesses `tools/pergamon_*.py`); seven shipped, three rejected by measurement.
+Warm pandas load of the 2026 Monaco race (1452 frames, fresh process,
+8 interleaved pairs vs the Thebes tree): total 0.430 → 0.279 s (−35 %),
+telemetry 0.179 → 0.057 s (−68 %), candidate faster 8/8. Warm polars:
+telemetry 0.087 → 0.053 s (−40 %), 6/6. Caches written by earlier releases
+read 65-67 % faster after a one-time background rewrite (2018-2025 sessions).
+
+- **Per-driver typed-columnar frame rows (P3, `telemetry_frames_drv`,
+  `core_utils/frame_codec.py`).** Pandas telemetry frames are materialized
+  per driver: the laps are grouped by block layout and each group stores one
+  array per block over all of its rows. A lap frame is a set of views into
+  those arrays (no copy, no constructor), and a session reads ~22 rows
+  instead of ~1450. Rows from earlier releases (per-lap pickles and per-lap
+  typed-columnar blobs) stay readable; a session served from them is
+  rewritten as driver rows in a background thread and the per-lap rows are
+  deleted. Frames the codec cannot encode keep the per-lap table.
+  Materialization write 237 → 141 ms, stored bytes −14 %. Parity: 0
+  mismatches on 1452 (2026) + 9859 (2018-2025) frames.
+- **Fast frame-decode primitives (P1, `core_utils/helpers.py`).** Block
+  classes are resolved once and called directly (no `new_block` dispatch),
+  `TimedeltaArray`/`IntegerArray` are built through `_simple_new`, and
+  `RangeIndex`/`BlockPlacement` objects are shared between frames. Per-lap
+  decode 80 → 42 ms per 1452 frames; the cold typed assembly uses the same
+  primitives.
+- **GIL-released parallel lz4 decompression (P2, `cache.py`).** Frame-tier
+  blobs are decompressed through pyarrow's lz4 codec (same stored format,
+  releases the GIL, returns a mutable buffer) in a thread pool, and decoded
+  chunk by chunk as they complete: 33 → 10 ms for 1452 blobs on 8 threads,
+  no bytearray copy. python-lz4 stays the serial fallback.
+- **Batched polars tier read (P4, `cache.py`).** The per-driver IPC blobs are
+  read in a thread pool and converted to polars once from the concatenated
+  table (25 → 10 ms for 22 drivers); laps are slices at a global offset.
+- **asyncio-free warm path (P5, `core.py`, `cache.py`, `cdn.py`,
+  `async_fetch.py`).** `asyncio` is imported lazily (23 ms of the import
+  chain, with `ssl` and `concurrent.futures`), laps and telemetry tier hits
+  are served synchronously, and laps the negative-result cache knows are
+  missing everywhere do not start the fetch pipeline. A warm `load()` never
+  creates an event loop.
+- **Single-lap telemetry from the frame tier (P6, `core.py`).**
+  `lap.get_telemetry()` / `lap.telemetry` read the driver's frame-tier row
+  before the payload tier and memoize every lap of that driver: the next lap
+  of the same driver 1.1 → 0.2 ms (first touch of a driver 1.6 → 4.3 ms,
+  the cost of decoding the whole row once). Frames are built as `Telemetry`
+  objects directly, so a memo hit no longer pays a shallow manager copy
+  (memo hit 28 → 1 µs); the wrapped object is kept in the memo.
+- **Driver-merged telemetry from the driver row (P10, `models.py`,
+  `Cache.get_driver_merged_frame`).** `laps.pick_driver(x).telemetry` is a
+  slice of the driver's arrays (one slice per run of consecutively stored
+  laps) instead of a concat of 60-80 lap frames: 14 → 5.4 ms for a 76-lap
+  driver, dtypes and values equal to the concat.
+- Measured and rejected: speculative tier prefetch under the pandas import
+  (P7: the import lock and GIL made the overlapped run slower, 0.29-0.36 →
+  0.38-0.65 s), batch orchestration trimming (P8: 2.5 ms left after P5),
+  compact integer encoding of float channels (P9: no telemetry channel is
+  integral — RPM, Speed and Throttle are interpolated floats).
+- Fixed while wiring the tier: `set_telemetry_frames_batch` reported only the
+  per-lap fallback rows when a batch mixed driver rows and fallback rows.
+
 ### Performance — Thebes series (2026-10-15)
 
 Ten hypotheses measured on a 32-core workstation (`.agents/perf-thebes/RESULTS.md`,

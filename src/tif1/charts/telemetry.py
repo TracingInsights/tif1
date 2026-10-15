@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Literal
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator
-from scipy.spatial import ConvexHull
 
 from . import _acceleration, _common
 
@@ -36,7 +35,7 @@ _ACTION_COLORS = {"Full Throttle": "lime", "Lift": "grey", "Brake": "red"}
 
 def _driver_team_color(sess, driver: str, fallback: str) -> str:
     """Resolve a driver's team color, falling back for unknown drivers."""
-    team = sess.laps[sess.laps["Driver"] == driver]["Team"].dropna()
+    team = sess.laps["Team"][sess.laps["Driver"] == driver].dropna()
     if team.empty:
         return fallback
     from tif1.plotting import get_team_color
@@ -447,6 +446,9 @@ def plot_gg_diagram(
     Returns:
         The ``(fig, ax)`` pair.
     """
+    # Lazy: scipy.spatial costs ~0.13 s to import and only this chart needs it.
+    from scipy.spatial import ConvexHull
+
     _common.setup_theme(color_scheme)
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     drivers = _common.resolve_drivers(sess, drivers, 3)

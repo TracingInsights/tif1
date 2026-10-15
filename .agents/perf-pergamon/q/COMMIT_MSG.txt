@@ -1,0 +1,22 @@
+perf: Pergamon wave 2 — 15 of 20 warm-path hypotheses shipped (lazy load frames, no subclass re-wrapping, row access, Telemetry methods, frame-tier read/write, fastest-lap and Driver paths, charts/CLI imports, interactive preload)
+
+Twenty hypotheses run by subagents in isolated worktrees against the wave-1
+tree (ef221ad), integrated by hand. Analysis-notebook benchmark on a warm
+2026 Monaco race (fresh process, 8 interleaved rounds): 988 -> 705 ms vs
+wave 1, 1350 -> 705 ms vs the Thebes base, faster 8/8. Warm telemetry
+phase 98.7 -> 74.6 ms (pandas 10/10), 90.6 -> 58.8 ms (polars 8/8).
+
+Kept: Q1 lazy lap frames in load(), Q2 interactive preload, Q4 Laps/Lap
+constructor hooks, Q6 polars tier read + string_view rows, Q7 iterlaps/iloc,
+Q8 Telemetry methods, Q9 session-free laps LRU (memory), Q10 fastest-lap
+paths, Q11 streamed driver-row reads, Q13 writer, Q14 chart imports, Q15
+parallel payload-tier load, Q16 Jupyter fix + sync known-missing reads, Q17
+sync verdict recording, Q18 per-group lap-frame plan, Q19 Driver.laps
+builder, Q20 CLI imports (event_frames.py).
+Rejected: Q3 import trim, Q5 weather/rcm tiers, Q12 lz4 level, Rust lap
+builder (in Q18).
+
+Parity: 1452/1452 pandas + polars frames vs wave 1 (incl. after a full
+re-materialization), 9859/9859 frames of the 2018-2025 cache. Unit +
+property + integration 1875 passed (86.9 %); ruff, ty, docs STE clean.
+Results: .agents/perf-pergamon/q/RESULTS.md.
