@@ -211,3 +211,224 @@ def test_frame_tier_falls_back_to_pickle_for_unsupported_frames(tmp_path):
         assert hits[("VER", 1)].equals(frame)
     finally:
         cache.close()
+
+
+# -- TH3: latency-aware CDN routing + straggler hedging -----------------------
+
+import asyncio  # noqa: E402
+
+from tif1.cdn import CDNManager, CDNSource  # noqa: E402
+from tif1.exceptions import DataNotFoundError, NetworkError  # noqa: E402
+
+
+def _manager(hedge_max_delay: float = 0.05) -> CDNManager:
+    manager = CDNManager()
+    manager.sources = [
+        CDNSource(name="primary", base_url="https://primary.test", priority=1),
+        CDNSource(name="backup", base_url="https://backup.test", priority=2),
+    ]
+    manager.reset()
+    manager._failure_counts = {s.name: 0 for s in manager.sources}
+    manager._hedge_enabled = True
+    manager._hedge_max_delay = hedge_max_delay
+    return manager
+
+
+def _fetch_func(
+    latencies: dict[str, float], failures: dict[str, Exception] | None = None, calls=None
+):
+    failures = failures or {}
+
+    async def fetch(source, url):
+        if calls is not None:
+            calls.append(source.name)
+        await asyncio.sleep(latencies.get(source.name, 0.0))
+        if source.name in failures:
+            raise failures[source.name]
+        return {"from": source.name, "url": url}
+
+    return fetch
+
+
+def test_hedge_fires_only_for_stragglers_and_backup_wins():
+    manager = _manager(hedge_max_delay=0.05)
+    calls: list[str] = []
+    fetch = _fetch_func({"primary": 0.5, "backup": 0.01}, calls=calls)
+    result = asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+    assert result["from"] == "backup"
+    assert calls == ["primary", "backup"]
+    # The abandoned primary request counts as a sample at the hedge delay.
+    assert manager.latency_estimate("primary") == pytest.approx(0.05, abs=0.01)
+    assert manager.latency_estimate("backup") is not None
+
+
+def test_fast_primary_never_hedges():
+    manager = _manager(hedge_max_delay=0.5)
+    calls: list[str] = []
+    fetch = _fetch_func({"primary": 0.0, "backup": 0.0}, calls=calls)
+    result = asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+    assert result["from"] == "primary"
+    assert calls == ["primary"]
+
+
+def test_backup_refusal_does_not_decide_the_request():
+    manager = _manager(hedge_max_delay=0.02)
+    fetch = _fetch_func(
+        {"primary": 0.1, "backup": 0.0},
+        failures={"backup": DataNotFoundError(year=2026, event="GP", session="Race")},
+    )
+    result = asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+    assert result["from"] == "primary"
+    assert manager._failure_counts["backup"] == 0
+
+
+def test_primary_refusal_after_hedge_still_raises_data_not_found():
+    manager = _manager(hedge_max_delay=0.02)
+    fetch = _fetch_func(
+        {"primary": 0.1, "backup": 0.05},
+        failures={
+            "primary": DataNotFoundError(year=2026, event="GP", session="Race"),
+            "backup": DataNotFoundError(year=2026, event="GP", session="Race"),
+        },
+    )
+    with pytest.raises(DataNotFoundError):
+        asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+
+
+def test_primary_transport_failure_falls_through_to_backup_result():
+    manager = _manager(hedge_max_delay=0.02)
+    fetch = _fetch_func(
+        {"primary": 0.1, "backup": 0.2},
+        failures={"primary": NetworkError(url="x", status_code=503)},
+    )
+    result = asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+    assert result["from"] == "backup"
+    assert manager._failure_counts["primary"] == 1
+
+
+def test_hedging_can_be_disabled():
+    manager = _manager(hedge_max_delay=0.02)
+    manager._hedge_enabled = False
+    calls: list[str] = []
+    fetch = _fetch_func({"primary": 0.1, "backup": 0.0}, calls=calls)
+    result = asyncio.run(manager.try_sources_async(2026, "GP", "Race", "VER/1_tel.json", fetch))
+    assert result["from"] == "primary"
+    assert calls == ["primary"]
+
+
+def test_slow_primary_is_reranked_behind_a_measured_backup():
+    manager = _manager()
+    for _ in range(8):
+        manager.record_latency("primary", 3.0)
+        manager.record_latency("backup", 0.5)
+    assert [s.name for s in manager.get_sources()] == ["backup", "primary"]
+    manager.reset()
+    assert [s.name for s in manager.get_sources()] == ["primary", "backup"]
+
+
+def test_rerank_needs_enough_samples_on_both_sources():
+    manager = _manager()
+    for _ in range(8):
+        manager.record_latency("primary", 3.0)
+    manager.record_latency("backup", 0.1)
+    assert [s.name for s in manager.get_sources()] == ["primary", "backup"]
+
+
+def test_sync_fallback_records_latency():
+    manager = _manager()
+    manager.try_sources(2026, "GP", "Race", "drivers.json", lambda _url: {"ok": True})
+    assert manager.latency_estimate("primary") is not None
+
+
+# -- TH6: laps session tables in one wave -------------------------------------
+
+
+def test_laps_wave_fetches_drivers_and_laptimes_together(monkeypatch):
+    from tif1 import core
+
+    session = core.Session(2026, "Monaco Grand Prix", "Race", enable_cache=False)
+    session._requested_session_tables.update({"weather.json", "rcm.json"})
+    seen: list[list[str]] = []
+
+    async def fake_fetch_multiple(requests, **_kwargs):
+        seen.append([r[3] for r in requests])
+        return [{"payload": r[3]} for r in requests]
+
+    monkeypatch.setattr(core, "fetch_multiple_async", fake_fetch_multiple)
+    asyncio.run(session._prefetch_laps_wave_async(False))
+    assert seen == [["drivers.json", "session_laptimes.json", "weather.json", "rcm.json"]]
+    assert session._get_local_payload("session_laptimes.json") == {
+        "payload": "session_laptimes.json"
+    }
+    assert session._session_tables_prefetched is True
+    # A second call has nothing left to fetch.
+    asyncio.run(session._prefetch_laps_wave_async(False))
+    assert len(seen) == 1
+
+
+def test_laps_wave_skips_single_missing_table(monkeypatch):
+    from tif1 import core
+
+    session = core.Session(2026, "Monaco Grand Prix", "Race", enable_cache=False)
+    session._remember_local_payload("drivers.json", {"drivers": []})
+    called = []
+
+    async def fake_fetch_multiple(requests, **_kwargs):
+        called.append(requests)
+        return [None] * len(requests)
+
+    monkeypatch.setattr(core, "fetch_multiple_async", fake_fetch_multiple)
+    asyncio.run(session._prefetch_laps_wave_async(False))
+    assert called == []
+
+
+# -- TH7: stale-while-revalidate schedule -------------------------------------
+
+
+def test_stale_schedule_row_is_served_while_a_background_refresh_runs(monkeypatch):
+    import threading
+    import time
+
+    from tif1 import events
+
+    year = 2099
+    raw_year = {"events": []}
+    monkeypatch.setattr(
+        events, "_read_cached_f1schedule_year", lambda _y: (time.time() - 10**6, raw_year)
+    )
+    monkeypatch.setattr(
+        events, "_convert_f1schedule_year", lambda raw, _y: {"events": [], "raw": raw}
+    )
+    monkeypatch.setattr(events, "_schedule_ttl_seconds", lambda: 3600.0)
+    refreshed = threading.Event()
+
+    def slow_fetch(_year):
+        time.sleep(0.2)
+        refreshed.set()
+        return {"events": []}
+
+    monkeypatch.setattr(events, "_fetch_f1schedule_year", slow_fetch)
+    monkeypatch.setattr(
+        events.get_config(), "_config", dict(events.get_config()._config, offline_mode=False)
+    )
+    t0 = time.perf_counter()
+    payload, expires_at = events._load_live_year_payload(year, time.time())
+    elapsed = time.perf_counter() - t0
+    assert payload["raw"] is raw_year
+    assert elapsed < 0.15
+    assert expires_at <= time.time() + events._F1SCHEDULE_STALE_GRACE_SECONDS + 1
+    assert refreshed.wait(2.0)
+
+
+def test_no_cached_row_still_fetches_inline(monkeypatch):
+    import time
+
+    from tif1 import events
+
+    monkeypatch.setattr(events, "_read_cached_f1schedule_year", lambda _y: None)
+    monkeypatch.setattr(events, "_fetch_f1schedule_year", lambda _y: {"events": ["live"]})
+    monkeypatch.setattr(
+        events.get_config(), "_config", dict(events.get_config()._config, offline_mode=False)
+    )
+    payload, _ = events._load_live_year_payload(2099, time.time())
+    assert payload == {"events": ["live"]}

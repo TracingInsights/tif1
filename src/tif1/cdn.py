@@ -20,6 +20,8 @@ budget on files that are missing everywhere.
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +29,25 @@ from typing import Any
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError, TIF1Error
 
 logger = logging.getLogger(__name__)
+
+# Thebes TH3: latency-aware routing + straggler hedging.
+#
+# Per-source request latency is tracked as an exponentially weighted moving
+# average. Sources keep their configured order unless one has measured
+# clearly slower than a lower-priority mirror (both with enough samples), in
+# which case it is demoted for the rest of the process. A request on the
+# first source that has not answered within the hedge delay (a multiple of
+# that source's EWMA, clamped) is re-issued on the next source and the first
+# answer wins; the abandoned request is counted against the slow source so
+# its EWMA stays honest. Only stragglers pay the extra request - the happy
+# path sends exactly one request per file, unlike the per-request hedging of
+# every CDN that Experiment 11 rejected.
+_LATENCY_EWMA_ALPHA = 0.2
+_RERANK_MIN_SAMPLES = 8
+_RERANK_FACTOR = 2.0
+_HEDGE_FACTOR = 2.0
+_HEDGE_MIN_DELAY = 1.0
+_HEDGE_MAX_DELAY_DEFAULT = 4.0
 
 
 @dataclass
@@ -140,6 +161,16 @@ class CDNManager:
 
         self._failure_counts = {source.name: 0 for source in self.sources}
         self._max_failures = 3
+        self._latency_lock = threading.Lock()
+        self._latency_ewma: dict[str, float] = {}
+        self._latency_samples: dict[str, int] = {}
+        self._hedge_enabled = bool(config.get("cdn_hedge", True))
+        max_delay = config.get("cdn_hedge_max_delay", _HEDGE_MAX_DELAY_DEFAULT)
+        self._hedge_max_delay = (
+            float(max_delay)
+            if isinstance(max_delay, int | float) and max_delay > 0
+            else _HEDGE_MAX_DELAY_DEFAULT
+        )
 
     @staticmethod
     def _is_default_cdn(base_url: str) -> bool:
@@ -164,12 +195,75 @@ class CDNManager:
         self._failure_counts[source.name] = 0
 
     def get_sources(self) -> list[CDNSource]:
-        """Get enabled CDN sources sorted by priority."""
-        return [
+        """Get enabled CDN sources in routing order.
+
+        Configured priority order, except that a source measured at more
+        than ``_RERANK_FACTOR`` times the latency of a lower-priority source
+        (both with at least ``_RERANK_MIN_SAMPLES`` requests) is moved behind
+        it. Sources without enough samples keep their configured position.
+        """
+        enabled = [
             s
             for s in self.sources
             if s.enabled and self._failure_counts[s.name] < self._max_failures
         ]
+        if len(enabled) < 2 or not self._latency_ewma:
+            return enabled
+        with self._latency_lock:
+            measured = {
+                name: self._latency_ewma[name]
+                for name in self._latency_ewma
+                if self._latency_samples.get(name, 0) >= _RERANK_MIN_SAMPLES
+            }
+        if len(measured) < 2:
+            return enabled
+        ordered = list(enabled)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(ordered) - 1):
+                left, right = ordered[i], ordered[i + 1]
+                if (
+                    left.name in measured
+                    and right.name in measured
+                    and measured[left.name] > _RERANK_FACTOR * measured[right.name]
+                ):
+                    ordered[i], ordered[i + 1] = right, left
+                    changed = True
+        return ordered
+
+    def record_latency(self, source_name: str, seconds: float) -> None:
+        """Feed one request latency (successful or abandoned) into the source's EWMA."""
+        if seconds < 0:
+            return
+        with self._latency_lock:
+            current = self._latency_ewma.get(source_name)
+            if current is None:
+                self._latency_ewma[source_name] = seconds
+            else:
+                self._latency_ewma[source_name] = current + _LATENCY_EWMA_ALPHA * (
+                    seconds - current
+                )
+            self._latency_samples[source_name] = self._latency_samples.get(source_name, 0) + 1
+
+    def latency_estimate(self, source_name: str) -> float | None:
+        """Current EWMA latency of a source in seconds, or None before any sample."""
+        with self._latency_lock:
+            return self._latency_ewma.get(source_name)
+
+    def hedge_delay(self, source_name: str) -> float | None:
+        """Seconds to wait on ``source_name`` before re-issuing a request elsewhere.
+
+        ``None`` when hedging is disabled. A source with no samples hedges
+        at the maximum delay, so a warm edge (tens of milliseconds) never
+        hedges and a cold edge (seconds) starts hedging on its first wave.
+        """
+        if not self._hedge_enabled:
+            return None
+        estimate = self.latency_estimate(source_name)
+        if estimate is None:
+            return self._hedge_max_delay
+        return min(self._hedge_max_delay, max(_HEDGE_MIN_DELAY, _HEDGE_FACTOR * estimate))
 
     def mark_failure(self, source_name: str):
         """Mark a CDN source as failed."""
@@ -179,13 +273,18 @@ class CDNManager:
                 f"CDN source '{source_name}' disabled after {self._max_failures} failures"
             )
 
-    def mark_success(self, source_name: str):
-        """Mark a CDN source as successful."""
+    def mark_success(self, source_name: str, latency: float | None = None):
+        """Mark a CDN source as successful (optionally recording the request latency)."""
         self._failure_counts[source_name] = 0
+        if latency is not None:
+            self.record_latency(source_name, latency)
 
     def reset(self):
-        """Reset all failure counts."""
+        """Reset all failure counts and latency estimates."""
         self._failure_counts = {source.name: 0 for source in self.sources}
+        with self._latency_lock:
+            self._latency_ewma.clear()
+            self._latency_samples.clear()
 
     def try_sources(
         self, year: int, gp: str, session: str, path: str, fetch_func: Callable[[str], Any]
@@ -213,8 +312,9 @@ class CDNManager:
             try:
                 url = source.format_url(year, gp, session, path)
                 logger.debug(f"Trying CDN: {source.name} - {url}")
+                started = time.monotonic()
                 result = fetch_func(url)
-                self.mark_success(source.name)
+                self.mark_success(source.name, time.monotonic() - started)
                 return result
             except DataNotFoundError:
                 # 404 can be CDN-specific (stale cache, divergent mirror);
@@ -297,8 +397,21 @@ class CDNManager:
             try:
                 url = source.format_url(year, gp, session, path)
                 logger.debug(f"Trying CDN: {source.name} - {url}")
+                # Thebes TH3: the primary attempt is hedged on the next source
+                # past the hedge delay; a primary refusal or failure is
+                # re-raised into the handlers below. Stand-in managers that
+                # borrow this loop without the hedge machinery stay sequential.
+                hedged_fetch = getattr(self, "_hedged_primary_async", None)
+                if index == 0 and len(sources) > 1 and hedged_fetch is not None:
+                    payload, primary_error = await hedged_fetch(
+                        source, sources[1], url, year, gp, session, path, fetch_func
+                    )
+                    if primary_error is None:
+                        return payload
+                    raise primary_error
+                started = time.monotonic()
                 result = await fetch_func(source, url)
-                self.mark_success(source.name)
+                self.mark_success(source.name, time.monotonic() - started)
                 return result
             except DataNotFoundError:
                 # Mirror may be stale or divergent; race the remaining sources
@@ -354,6 +467,104 @@ class CDNManager:
             url=f"{year}/{gp}/{session}/{path}",
             status_code=self._response_status(last_exception),
         )
+
+    async def _hedged_primary_async(
+        self,
+        primary: CDNSource,
+        backup: CDNSource,
+        url: str,
+        year: int,
+        gp: str,
+        session: str,
+        path: str,
+        fetch_func: Callable[[CDNSource, str], Awaitable[Any]],
+    ) -> tuple[Any, BaseException | None]:
+        """Fetch from ``primary``; past the hedge delay also try ``backup``.
+
+        Returns ``(payload, None)`` when either source succeeded, or
+        ``(None, error)`` with the primary's own refusal/transport error for
+        the sequential loop to handle. A backup that answers first with a
+        404/403 or an error is ignored (the primary still decides); a backup
+        that succeeds first wins, the primary's request is abandoned and
+        counted as a latency sample of the hedge delay (so a slow mirror's
+        estimate stays honest), and ``InvalidDataError`` from either source
+        propagates.
+        """
+        awaitable = fetch_func(primary, url)
+        delay = self.hedge_delay(primary.name)
+        started = time.monotonic()
+        if delay is None or not (
+            asyncio.iscoroutine(awaitable) or isinstance(awaitable, asyncio.Future)
+        ):
+            try:
+                payload = await awaitable
+            except Exception as e:
+                return None, e
+            self.mark_success(primary.name, time.monotonic() - started)
+            return payload, None
+
+        primary_task = asyncio.ensure_future(awaitable)
+        done, _pending = await asyncio.wait({primary_task}, timeout=delay)
+        if primary_task in done:
+            return self._settle_primary(primary, primary_task, started)
+
+        # Straggler: re-issue on the backup; the first usable answer wins.
+        self.record_latency(primary.name, delay)
+        logger.debug(
+            f"CDN {primary.name} slow on {path} (> {delay:.1f}s), hedging on {backup.name}"
+        )
+        backup_started = time.monotonic()
+        backup_task = asyncio.ensure_future(
+            fetch_func(backup, backup.format_url(year, gp, session, path))
+        )
+        pending = {primary_task, backup_task}
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if backup_task in done and not backup_task.cancelled():
+                error = backup_task.exception()
+                if error is None:
+                    self.mark_success(backup.name, time.monotonic() - backup_started)
+                    if not primary_task.done():
+                        primary_task.cancel()
+                    elif primary_task.exception() is not None:
+                        # The primary failed meanwhile: a transport error is a
+                        # health signal even though the backup answered.
+                        self._note_primary_failure(primary, primary_task.exception())
+                    return backup_task.result(), None
+                if isinstance(error, InvalidDataError):
+                    if not primary_task.done():
+                        primary_task.cancel()
+                    return None, error
+                if not isinstance(error, DataNotFoundError) and not self._is_file_refusal(
+                    self._response_status(error)
+                ):
+                    logger.warning(f"CDN {backup.name} failed: {type(error).__name__}: {error}")
+                    self.mark_failure(backup.name)
+                # A refusal or failure on the backup: the primary decides.
+            if primary_task in done:
+                if backup_task.done() or primary_task.exception() is None:
+                    if not backup_task.done():
+                        backup_task.cancel()
+                    return self._settle_primary(primary, primary_task, started)
+                # Primary failed while the backup is still running: wait for it.
+        return self._settle_primary(primary, primary_task, started)
+
+    def _note_primary_failure(self, primary: CDNSource, error: BaseException | None) -> None:
+        if error is None or isinstance(error, DataNotFoundError | InvalidDataError):
+            return
+        if self._is_file_refusal(self._response_status(error)):
+            return
+        logger.warning(f"CDN {primary.name} failed: {type(error).__name__}: {error}")
+        self.mark_failure(primary.name)
+
+    def _settle_primary(
+        self, primary: CDNSource, task: asyncio.Future, started: float
+    ) -> tuple[Any, BaseException | None]:
+        error = task.exception()
+        if error is None:
+            self.mark_success(primary.name, time.monotonic() - started)
+            return task.result(), None
+        return None, error
 
     async def _race_remaining_async(
         self,
