@@ -7,6 +7,61 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Thebes series (2026-10-15)
+
+Ten hypotheses measured on a 32-core workstation (`.agents/perf-thebes/RESULTS.md`,
+harnesses `tools/thebes_*.py`); eight shipped, two rejected by measurement.
+
+- **Latency-aware CDN routing and straggler hedging (TH3, `cdn.py`).** Each
+  source keeps a moving average of its request latency; a request on the
+  primary that has not answered within twice that average (clamped to 1 s -
+  `cdn_hedge_max_delay`, default 4 s) is re-issued on the next source and the
+  first answer wins. A source measured at more than twice the latency of a
+  lower-priority mirror is re-ranked behind it for the process. Only stalled
+  requests send a second request; `cdn_hedge=false` (`TIF1_CDN_HEDGE`) restores
+  the sequential loop. Replay of the live cold-edge distributions, 300 files:
+  79.6 → 13.6 s cold, 31.1 → 4.4 s with 503s and read timeouts, 6.9 → 4.6 s
+  warm. Live cold edge (2026 Hungarian GP race, disjoint 200-file slices):
+  47.3 / 72.3 s → 20.1 / 18.7 s, no read timeouts.
+- **Typed-columnar frame-tier rows (TH1, `core_utils/frame_codec.py`).**
+  Pandas telemetry frames are stored as their blocks' raw bytes behind a small
+  header and rebuilt without the DataFrame constructor (most of a frame's
+  unpickle time was the pandas skeleton). Rows from earlier releases stay
+  readable. Warm telemetry phase 0.247 → 0.167 s (−32 %), total warm load
+  0.552 → 0.446 s (−19 %), 8/8 interleaved pairs; 0 parity mismatches.
+- **Direct block assembly for telemetry frames (TH2, `core_utils/helpers.py`).**
+  `_typed_telemetry_frame` lays out the blocks itself instead of calling
+  `DataFrame._from_arrays`, which re-sanitized every column: assembly of the
+  1452 Monaco frames 877 → 562 ms (−36 %), identical frames on 10 335 payloads
+  of 2018-2026. Probed at import; any drift falls back to `_from_arrays`.
+- **Optional native telemetry decoder (TH4, `native/`, `tif1-native`).** A
+  pyo3 extension parses one telemetry payload into typed numpy arrays with the
+  GIL released; `tif1` uses it when importable and falls back to orjson. Decode
+  of the Monaco corpus 413 → 223 ms serial and 35 ms on 8 threads; the
+  post-fetch parse + assembly of a cold load 1.25 → 0.57 s. Built from source
+  (`uvx maturin develop --release` in `native/`); `pip install tif1` is
+  unchanged. With the decoder installed, telemetry payload channels returned
+  by `Cache.get_telemetry()` may be numpy arrays.
+- **One-wave laps prefetch (TH6, `core.py`).** `drivers.json`,
+  `session_laptimes.json` and the requested weather/race-control tables are
+  fetched in one concurrent async wave; the laps phase of a cold load costs
+  one CDN round trip instead of two (simulated cold edge: 9.6 / 5.0 / 6.4 s →
+  4.7 / 3.5 / 4.5 s).
+- **Stale-while-revalidate live schedule (TH7, `events.py`).** After
+  `schedule_ttl_hours` the cached calendar is served immediately and refreshed
+  in a daemon thread; `get_session` no longer blocks on GitHub.
+- **Polars frames as per-driver Arrow IPC rows (TH8, `cache.py`,
+  `telemetry_frames_pl_ipc`).** Read through pyarrow and sliced per lap. Warm
+  polars telemetry 0.146 → 0.077 s (−47 %), total 0.501 → 0.414 s, 6/6 pairs.
+  Partial batches merge per driver; per-lap rows from earlier releases stay
+  readable.
+- Rejected with numbers: pysimdjson typed decode (TH5, parity with orjson on
+  the sentinel-heavy 2026 corpus), byte-level `"None"` → `null` rewriting (TH9,
+  `bytes.replace` costs more than the parse saves), cold-edge concurrency above
+  22 (TH10, more read timeouts on the slow mirror, parity on the fast one).
+- Fixed while measuring: an all-null numeric telemetry channel on the polars
+  backend is cast to `Float64` like the all-`"None"` case.
+
 ## [0.9.0] - 2026-10-15
 
 ### Summary

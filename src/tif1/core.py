@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from typing import Any, Literal, cast
 from urllib.parse import unquote
 
+import numpy as np
 import pandas as pd
 
 from .async_fetch import _validate_json_payload as _validate_json_impl
@@ -415,7 +416,7 @@ def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
         return False
     expected_len: int | None = None
     for value in tel_payload.values():
-        if isinstance(value, list):
+        if isinstance(value, list | np.ndarray):
             expected_len = len(value)
             break
     return expected_len is not None and expected_len > 0
@@ -816,6 +817,71 @@ class Session:
                             pass
         except Exception as e:
             logger.debug("Session table prefetch failed: %s", e)
+
+    async def _prefetch_laps_wave_async(self, ultra_cold: bool) -> None:
+        """Fetch the laps-path session tables in one concurrent wave (Thebes TH6).
+
+        Collects the tables still missing from the session memo - ``drivers.json``,
+        ``session_laptimes.json`` and, when requested, ``weather.json``/``rcm.json`` -
+        and fetches them together through :func:`fetch_multiple_async` (cache
+        reads, write-back, validation and CDN fallback as on every other async
+        path). Results land in the memo, so the driver lookup, the laptime wave
+        and the table loaders that follow find them without another request.
+        Failures stay graceful: a table that did not arrive is fetched by its
+        own loader as before.
+        """
+        paths: list[str] = []
+        if self._drivers is None and self._get_local_payload("drivers.json") is None:
+            paths.append("drivers.json")
+        if self._get_local_payload(SESSION_LAPTIMES_PATH) is None:
+            paths.append(SESSION_LAPTIMES_PATH)
+        for table, attr in (("weather.json", "_weather"), ("rcm.json", "_race_control_messages")):
+            if (
+                table in self._requested_session_tables
+                and self._get_local_payload(table) is None
+                and getattr(self, attr) is None
+            ):
+                paths.append(table)
+        if len(paths) < 2:
+            return
+        if config.get("offline_mode", False):
+            return
+
+        use_cache = self.enable_cache and not ultra_cold and self._session_cache_available()
+        write_cache = self.enable_cache
+        validate_payload = not ultra_cold
+        max_retries = 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
+        requests = [(self.year, self.gp, self.session, path) for path in paths]
+        try:
+            try:
+                results = await fetch_multiple_async(
+                    requests,
+                    use_cache=use_cache,
+                    write_cache=write_cache,
+                    validate_payload=validate_payload,
+                    max_retries=max_retries,
+                )
+            except TypeError as e:
+                if "unexpected keyword argument" not in str(e):
+                    raise
+                results = await fetch_multiple_async(requests)
+        except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+            logger.debug("Laps-wave prefetch skipped: %s", e)
+            return
+
+        fetched_any = False
+        for path, result in zip(paths, results):
+            if not isinstance(result, dict) or not result:
+                continue
+            if path == "drivers.json" and not isinstance(result.get("drivers"), list):
+                continue  # not a driver list: leave it to the validated loader
+            self._remember_local_payload(path, result)
+            fetched_any = True
+        if fetched_any:
+            # The sync per-table prefetch has nothing left to add.
+            self._session_tables_prefetched = True
+            if write_cache:
+                self._mark_session_cache_populated()
 
     def _resolve_telemetry_ultra_cold_mode(self, ultra_cold: bool | None) -> bool:
         """Resolve telemetry-specific ultra-cold mode.
@@ -3068,6 +3134,13 @@ class Session:
                 logger.info("Laps frame tier hit: %s/%s/%s", self.year, self.gp, self.session)
                 self._laps = self._as_session_laps(cached_frame)
                 return self._laps
+
+        # Thebes TH6: every session table the laps build needs (drivers,
+        # session laptimes, and weather/rcm when requested) is fetched in ONE
+        # concurrent wave through the async pipeline. The laptimes file does
+        # not depend on the driver list, so the cold laps phase costs one CDN
+        # round trip instead of two (drivers first, laptimes after).
+        await self._prefetch_laps_wave_async(ultra_cold_enabled)
 
         drivers = self._drivers_data
         if not drivers:

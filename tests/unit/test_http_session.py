@@ -697,6 +697,7 @@ def test_successful_request_records_circuit_breaker_success():
                             # Verify circuit breaker recorded success
                             circuit_breaker.record_success.assert_called_once()
                             # Verify CDN manager recorded success
-                            cdn_manager.mark_success.assert_called_once_with("test-cdn")
+                            cdn_manager.mark_success.assert_called_once()
+                            assert cdn_manager.mark_success.call_args.args[0] == "test-cdn"
                             # Verify result
                             assert result == {"drivers": ["VER", "HAM"]}

@@ -51,6 +51,17 @@ def _payload(n: int = 50, leader: bool = False) -> dict:
     }
 
 
+def _plain(payload):
+    """Telemetry payloads may carry numpy arrays when tif1-native is installed."""
+    import numpy as np
+
+    if isinstance(payload, dict):
+        return {k: _plain(v) for k, v in payload.items()}
+    if isinstance(payload, np.ndarray):
+        return payload.tolist()
+    return payload
+
+
 class TestA1A2TypedFrames:
     @pytest.mark.parametrize("leader", [False, True])
     def test_frame_matches_dict_constructor_semantics(self, leader):
@@ -142,7 +153,9 @@ class TestA3DeferredFlush:
         register_frame_writer(partial(_flush_telemetry_writes, cache, entries))
         _join_frame_writers()
         for lap in range(5):
-            assert cache.get_telemetry(2026, "GP", "Race", "VER", lap) == {"speed": [1.0] * 10}
+            assert _plain(cache.get_telemetry(2026, "GP", "Race", "VER", lap)) == {
+                "speed": [1.0] * 10
+            }
         cache.close()
 
 

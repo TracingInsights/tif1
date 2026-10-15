@@ -43,6 +43,10 @@ _F1SCHEDULE_FETCH_TIMEOUT = 15
 # A failed refresh keeps the fallback (stale cache row or vendored file) for
 # this long before the next lookup tries the network again.
 _F1SCHEDULE_RETRY_AFTER_SECONDS = 300.0
+# A stale cached calendar is served while a background refresh runs; the
+# memo re-reads the cache row after this many seconds (or as soon as the
+# refresh lands, whichever comes first).
+_F1SCHEDULE_STALE_GRACE_SECONDS = 60.0
 _DEFAULT_SCHEDULE_TTL_HOURS = 6.0
 
 logger = logging.getLogger(__name__)
@@ -212,6 +216,9 @@ class _YearSchedule:
     events: tuple[str, ...]
     expires_at: float
     sessions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Refresh generation the record was built from; a background refresh
+    # that lands bumps the season's generation so the memo re-reads the row.
+    generation: int = 0
 
 
 _year_schedules: dict[int, _YearSchedule] = {}
@@ -276,31 +283,84 @@ def _fetch_f1schedule_year(year: int) -> dict[str, Any] | None:
     return payload
 
 
-def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], float]:
-    """Resolve a season that may still change: live source first, then fallbacks.
+_refreshing_years: set[int] = set()
+_refresh_threads: dict[int, threading.Thread] = {}
+_schedule_generation: dict[int, int] = {}
 
-    Order: SQLite row younger than ``schedule_ttl_hours`` -> live fetch ->
-    stale SQLite row -> vendored file -> empty. Returns the payload and the
+
+def _join_schedule_refreshes(timeout: float | None = None) -> None:
+    """Wait for in-flight background calendar refreshes (tests and shutdown hooks)."""
+    with _year_schedules_lock:
+        threads = list(_refresh_threads.values())
+    for thread in threads:
+        thread.join(timeout)
+
+
+def _refresh_schedule_in_background(year: int) -> None:
+    """Re-fetch a stale cached calendar in a daemon thread (one per season at a time).
+
+    Thebes TH7: the first ``get_session`` after the TTL expired used to block
+    on the GitHub fetch (hundreds of milliseconds to seconds); the stale row
+    is served immediately instead and the memo expires shortly after the
+    refresh lands.
+    """
+    with _year_schedules_lock:
+        if year in _refreshing_years:
+            return
+        _refreshing_years.add(year)
+
+    def _run() -> None:
+        try:
+            if _fetch_f1schedule_year(year) is not None:
+                with _year_schedules_lock:
+                    # Next lookup re-reads the fresh SQLite row, whether the
+                    # stale record is already memoized or still being built.
+                    _schedule_generation[year] = _schedule_generation.get(year, 0) + 1
+        finally:
+            with _year_schedules_lock:
+                _refreshing_years.discard(year)
+                _refresh_threads.pop(year, None)
+
+    thread = threading.Thread(target=_run, name=f"tif1-schedule-refresh-{year}", daemon=True)
+    with _year_schedules_lock:
+        _refresh_threads[year] = thread
+    thread.start()
+
+
+def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], float]:
+    """Resolve a season that may still change: cached row first, live source, fallbacks.
+
+    Order: SQLite row younger than ``schedule_ttl_hours`` -> stale SQLite row
+    served immediately while a background thread refreshes it -> live fetch
+    (no usable row) -> vendored file -> empty. Returns the payload and the
     memo expiry.
     """
     ttl = _schedule_ttl_seconds()
+    offline = bool(get_config().get("offline_mode", False))
     cached = _read_cached_f1schedule_year(year)
-    if cached is not None and now - cached[0] < ttl:
+    cached_payload: dict[str, Any] | None = None
+    fetched_at = 0.0
+    if cached is not None:
+        fetched_at = cached[0]
         try:
-            return _convert_f1schedule_year(cached[1], year), cached[0] + ttl
+            cached_payload = _convert_f1schedule_year(cached[1], year)
         except InvalidDataError as exc:
             logger.debug("Discarding malformed cached schedule_%s.json: %s", year, exc)
+    if cached_payload is not None:
+        if now - fetched_at < ttl:
+            return cached_payload, fetched_at + ttl
+        if offline:
+            return cached_payload, now + _F1SCHEDULE_RETRY_AFTER_SECONDS
+        # Stale-while-revalidate: answer from the stale row now, refresh it
+        # off the critical path, and re-check the row again soon.
+        _refresh_schedule_in_background(year)
+        return cached_payload, now + _F1SCHEDULE_STALE_GRACE_SECONDS
 
-    if not get_config().get("offline_mode", False):
+    if not offline:
         fetched = _fetch_f1schedule_year(year)
         if fetched is not None:
             return fetched, now + ttl
 
-    if cached is not None:
-        try:
-            return _convert_f1schedule_year(cached[1], year), now + _F1SCHEDULE_RETRY_AFTER_SECONDS
-        except InvalidDataError as exc:
-            logger.debug("Discarding malformed cached schedule_%s.json: %s", year, exc)
     vendored = _load_schedule_payload()["years"].get(str(year), {})
     return vendored, now + _F1SCHEDULE_RETRY_AFTER_SECONDS
 
@@ -310,29 +370,46 @@ def _build_year_schedule(year: int, now: float) -> _YearSchedule:
         vendored = _load_schedule_payload()["years"].get(str(year))
         if isinstance(vendored, dict) and vendored:
             return _YearSchedule(vendored, tuple(vendored.get("events", ())), float("inf"))
+    with _year_schedules_lock:
+        generation = _schedule_generation.get(year, 0)
     payload, expires_at = _load_live_year_payload(year, now)
     events = payload.get("events", [])
-    return _YearSchedule(payload, tuple(events) if isinstance(events, list) else (), expires_at)
+    return _YearSchedule(
+        payload,
+        tuple(events) if isinstance(events, list) else (),
+        expires_at,
+        generation=generation,
+    )
 
 
 def _get_year_schedule(year: int) -> _YearSchedule:
     """Return the memoized season schedule, refreshing a live season past its TTL."""
     now = time.time()
     record = _year_schedules.get(year)
-    if record is not None and record.expires_at > now:
+    if record is not None and record.expires_at > now and _is_current_generation(record, year):
         return record
     fresh = _build_year_schedule(year, now)
     with _year_schedules_lock:
         current = _year_schedules.get(year)
-        if current is not None and current.expires_at > now:
+        if (
+            current is not None
+            and current.expires_at > now
+            and current.generation == _schedule_generation.get(year, 0)
+        ):
             # Another thread refreshed while this one fetched.
             return current
         if current is not None and current.payload == fresh.payload:
             # Unchanged upstream: keep the memoized session lookups.
             current.expires_at = fresh.expires_at
+            current.generation = fresh.generation
             return current
         _year_schedules[year] = fresh
     return fresh
+
+
+def _is_current_generation(record: _YearSchedule, year: int) -> bool:
+    with _year_schedules_lock:
+        return record.generation == _schedule_generation.get(year, 0)
 
 
 def _resolve_year_payload(year: int) -> dict[str, Any]:
@@ -340,9 +417,17 @@ def _resolve_year_payload(year: int) -> dict[str, Any]:
 
 
 def _clear_schedule_memo() -> None:
-    """Drop the per-process schedule memo (tests and explicit refreshes)."""
+    """Drop the per-process schedule memo (tests and explicit refreshes).
+
+    In-flight background refreshes are joined first so a refresh started by
+    an earlier lookup cannot land in (or block) the next one.
+    """
+    _join_schedule_refreshes(timeout=5.0)
     with _year_schedules_lock:
         _year_schedules.clear()
+        _refreshing_years.clear()
+        _refresh_threads.clear()
+        _schedule_generation.clear()
 
 
 @lru_cache(maxsize=1)

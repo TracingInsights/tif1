@@ -106,7 +106,9 @@ Requires Python 3.11 or newer. Versions 3.11 through 3.15 are tested in CI.
 # For development
 pip install tif1[dev]
 
-
+# Native telemetry decoder (Rust, optional): parses telemetry payloads into
+# typed numpy arrays with the GIL released. tif1 works without it.
+cd native && uvx maturin develop --release
 ```
 
 ## Quick Start

@@ -56,7 +56,7 @@ The events module is built on several key design principles:
 
 Schedule data is sourced from two locations:
 
-- **Live f1schedule file**: The current and future seasons are fetched from the `theOehrly/f1schedule` GitHub repository (`raw.githubusercontent.com`). FastF1 reads the same file. The raw file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`). A rescheduled or cancelled round shows up once that cached copy expires. Years without a vendored file use the same path
+- **Live f1schedule file**: The current and future seasons are fetched from the `theOehrly/f1schedule` GitHub repository (`raw.githubusercontent.com`). FastF1 reads the same file. The raw file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`). After that window the cached copy is still served, and a background thread fetches the new file; the next lookup uses it. A rescheduled or cancelled round shows up with that refresh. Years without a vendored file use the same path
 - **Vendored JSON files**: The seasons 2018-2026 are packaged with `tif1`. Past seasons are served from them without a network request. When the fetch fails or `offline_mode` is on, the current season uses the last cached copy, even an expired one. Without a cached copy, it uses its vendored file
 
 **Supported years**: 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026
@@ -130,7 +130,7 @@ A year without schedule data does not raise: when the repository has no file for
 - **Caching**: The raw schedule data is cached in memory after the first request. Later calls for the same year make no network requests until `schedule_ttl_hours` have passed for a live season, but each call builds a new `EventSchedule`.
 - **Data Source**: The current and future seasons come from the live `theOehrly/f1schedule` repository (`raw.githubusercontent.com`, the same file FastF1 reads). tif1 fetches the file again once the cached copy is older than `schedule_ttl_hours` (default 6). Past seasons come from the vendored JSON files (2018 onwards); earlier years fall back to the repository.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Testing rows have `RoundNumber` 0 and come after the race weekends. Use `get_event_schedule(year, include_testing=False)` to exclude them.
-- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. The first fetch of a live season (once per TTL window per cache directory) adds the network time.
+- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. Only the first fetch of a live season into an empty cache directory adds the network time. A later refresh runs in a background thread while the cached copy is served.
 
 **Example Usage:**
 

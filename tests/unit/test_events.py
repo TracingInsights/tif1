@@ -746,9 +746,17 @@ class TestLiveSchedule:
                 _raw_f1schedule_year(2026, (1, "Fresh Grand Prix")),
             )
 
-            assert _event_names(get_events(2026)) == ["Fresh Grand Prix"]
+            # Thebes TH7: the stale row answers immediately while a background
+            # thread refreshes it; the next lookup sees the fresh calendar.
+            import tif1.events as events_mod
+
+            # (The in-memory transport can land the refresh before the first
+            # lookup returns, so either calendar is acceptable right away.)
+            assert _event_names(get_events(2026))[0] in {"Stale Grand Prix", "Fresh Grand Prix"}
+            events_mod._join_schedule_refreshes(timeout=5.0)
             assert len(live_schedule.calls) == 1
             assert _cache_row(2026)["schedule"]["event_name"] == {"0": "Fresh Grand Prix"}
+            assert _event_names(get_events(2026)) == ["Fresh Grand Prix"]
         finally:
             get_config().set("schedule_ttl_hours", 6.0)
 
@@ -851,6 +859,10 @@ class TestLiveSchedule:
         )
         clock["now"] += 6 * 3600 + 1
 
+        # Thebes TH7: past the TTL the memo serves the stale calendar once and
+        # refreshes it in the background; the refreshed row lands next.
+        assert _event_names(get_events(2026))[0] in {"First Grand Prix", "Renamed Grand Prix"}
+        events_mod._join_schedule_refreshes(timeout=5.0)
         assert _event_names(get_events(2026)) == ["Renamed Grand Prix"]
         assert get_sessions(2026, "Renamed Grand Prix") == ["Practice 1", "Qualifying", "Race"]
         assert len(live_schedule.calls) == 2

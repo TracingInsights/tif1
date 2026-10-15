@@ -1,6 +1,7 @@
 """Helper functions for tif1 core."""
 
 import array
+import importlib
 import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
@@ -23,6 +24,7 @@ from .constants import (
     COL_TEAM,
     FASTF1_LAPS_COLUMN_ORDER,
     LAP_RENAME_MAP,
+    NUMERIC_TELEMETRY_CHANNELS,
     TELEMETRY_RENAME_MAP,
 )
 
@@ -289,7 +291,9 @@ def _create_telemetry_df(
     expected_len: int | None = None
 
     for k, v in tel_data.items():
-        if not isinstance(v, list):
+        # Native-decoded payloads (Thebes TH4) carry numpy arrays for the
+        # numeric channels; the typed builder consumes them directly.
+        if not isinstance(v, list | np.ndarray):
             continue
         renamed_key = TELEMETRY_RENAME_MAP.get(k, k)
         col_data[renamed_key] = v
@@ -305,9 +309,20 @@ def _create_telemetry_df(
                 col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(
                     col_data[_DRIVER_AHEAD_CHANNEL]
                 )
+            # A natively decoded sentinel is NaN in a float array; polars
+            # must see null there (the list path casts "None" to null).
+            nan_channels = [
+                k
+                for k, v in col_data.items()
+                if isinstance(v, np.ndarray) and v.dtype.kind == "f" and np.isnan(v).any()
+            ]
             telemetry_df = pl.DataFrame(col_data, strict=False)
             if telemetry_df.is_empty():
                 return None
+            if nan_channels:
+                telemetry_df = telemetry_df.with_columns(
+                    [pl.col(k).fill_nan(None) for k in nan_channels]
+                )
             telemetry_df = _coerce_polars_telemetry_sentinels(telemetry_df)
             for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
                 if col not in telemetry_df.columns:
@@ -325,8 +340,10 @@ def _create_telemetry_df(
         normalized_data = {}
         for k, v in col_data.items():
             if len(v) < max_len:
-                # Pad with None (becomes NaN in pandas)
-                normalized_data[k] = v + [None] * (max_len - len(v))
+                # Pad with None (becomes NaN in pandas); arrays go back to
+                # lists for this (never seen in real payloads) path.
+                values = v.tolist() if isinstance(v, np.ndarray) else v
+                normalized_data[k] = values + [None] * (max_len - len(values))
             else:
                 normalized_data[k] = v
 
@@ -363,18 +380,25 @@ def _typed_telemetry_frame(
     full 2026 Monaco race telemetry set). Returns None when a canonical
     conversion fails; the caller then uses the legacy build+convert path.
     """
-    # Argos A1: every column is handed to the frame as a ready array and the
-    # frame is assembled with ``DataFrame._from_arrays(verify_integrity=False)``
-    # - no per-column sanitize pass and consolidated blocks (7-9 instead of
-    # one block per column), which also makes the frame-tier pickle/unpickle
-    # and every later copy/slice of the frame cheaper. Column dtypes are
-    # exactly the ones the dict constructor inferred (verified frame-by-frame
-    # on the full Monaco 2026 set); on any conversion error the caller falls
-    # back to the legacy build+convert path.
+    # Argos A1: every column is handed to the frame as a ready array. Thebes
+    # TH2: the frame is then assembled block by block (``_frame_from_columns``)
+    # instead of through ``DataFrame._from_arrays``, which re-sanitizes and
+    # re-forms every column (~250 us of the ~640 us per frame). Column dtypes
+    # are exactly the ones the dict constructor inferred (verified
+    # frame-by-frame on the 2026 Monaco set and 8883 payloads of 2018-2025);
+    # on any conversion error the caller falls back to the legacy
+    # build+convert path.
     try:
         arrays: list[Any] = []
         columns: list[str] = []
         for k, v in normalized_data.items():
+            if isinstance(v, np.ndarray):
+                column = _typed_channel_from_array(k, v)
+                if column is None:
+                    column = pd.Series(v).array
+                arrays.append(column)
+                columns.append(k)
+                continue
             if k == "Time":
                 # Bit-exact vectorized replica of pandas' base/frac cast
                 # (A2 / KR-2); the exact pd.to_timedelta call stays the path
@@ -442,10 +466,39 @@ def _typed_telemetry_frame(
             )
         )
         columns.append("LapNumber")
-        frame = _frame_from_arrays(arrays, columns, max_len)
+        frame = _frame_from_columns(arrays, columns, max_len)
     except (AttributeError, TypeError, ValueError):
         return None
     return frame
+
+
+def _typed_channel_from_array(name: str, values: np.ndarray) -> Any | None:
+    """Canonical column for a natively decoded channel (int64/float64 ndarray).
+
+    Mirrors the list branches of :func:`_typed_telemetry_frame`: an int64
+    array is what ``array.array("q")`` produced for an all-int list, a
+    float64 array (NaN for sentinels) what the sentinel coercion produced.
+    Returns None for shapes the list path would hand to pandas' inference.
+    """
+    kind = values.dtype.kind
+    if kind not in "iuf":
+        return None
+    if name == "Time":
+        seconds = values if kind == "f" else values.astype("float64")
+        if _td_cast_is_safe(seconds):
+            return _seconds_to_td64ns(seconds)
+        return np.asarray(pd.to_timedelta(seconds, unit="s"))
+    if name == "Brake":
+        return values.astype(bool) if kind in "iu" else None
+    if name in ("nGear", "DRS"):
+        if kind in "iu":
+            return pd.arrays.IntegerArray(
+                values.astype("int64", copy=False), np.zeros(len(values), dtype=bool)
+            )
+        return pd.array(values, dtype="Int64")
+    if name in _NUMERIC_TELEMETRY_CHANNELS:
+        return values
+    return None
 
 
 def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
@@ -463,6 +516,140 @@ def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd
         pd.DataFrame,
         from_arrays(arrays, columns=columns, index=pd.RangeIndex(n_rows), verify_integrity=False),
     )
+
+
+# -- direct block assembly (Thebes TH2) ---------------------------------------
+#
+# ``DataFrame._from_arrays`` still runs pandas' generic column pipeline
+# (sanitize every array, form blocks, consolidate, build a fresh column
+# Index) - ~250 us per telemetry frame, i.e. ~40 % of the cold assembly.
+# The typed builder already knows every column's dtype, so it can lay the
+# blocks out itself: numpy columns of one dtype become one 2-D block (the
+# same consolidated layout ``_from_arrays`` produces), extension arrays
+# become one block each, and the column Index is shared between frames with
+# identical columns. The private pandas API involved (``BlockManager``,
+# ``new_block``, ``DataFrame._from_mgr``) is probed once at import with a
+# round-trip against the public constructor; if anything drifted, or a
+# build raises, ``_frame_from_arrays`` is used instead.
+try:  # pragma: no cover - import-time probe of pandas internals
+    # importlib keeps the static checker out of pandas' private modules (the
+    # stubs do not describe them); any ImportError/AttributeError disables
+    # the direct path and ``_from_arrays`` is used instead.
+    _BlockPlacement = importlib.import_module("pandas._libs.internals").BlockPlacement
+    _wrap_name = "ensure_wrapped_if_datetimelike"  # absent from the pandas stubs
+    _ensure_wrapped_if_datetimelike = getattr(
+        importlib.import_module("pandas.core.construction"), _wrap_name
+    )
+    _BlockManager = importlib.import_module("pandas.core.internals").BlockManager
+    _new_block = importlib.import_module("pandas.core.internals.blocks").new_block
+    _dataframe_from_mgr: Any = getattr(pd.DataFrame, "_from_mgr", None)
+    _DIRECT_BLOCKS_AVAILABLE = callable(_dataframe_from_mgr)
+except (ImportError, AttributeError):  # pragma: no cover - pandas internals changed
+    _DIRECT_BLOCKS_AVAILABLE = False
+
+# Column ``Index`` objects shared between frames with identical columns
+# (an Index is immutable; building one costs ~100 us per frame otherwise).
+_COLUMN_INDEX_CACHE: dict[tuple[str, ...], pd.Index] = {}
+_COLUMN_INDEX_CACHE_MAX = 64
+
+
+def _shared_column_index(columns: list[str]) -> pd.Index:
+    key = tuple(columns)
+    index = _COLUMN_INDEX_CACHE.get(key)
+    if index is None:
+        if len(_COLUMN_INDEX_CACHE) >= _COLUMN_INDEX_CACHE_MAX:
+            _COLUMN_INDEX_CACHE.clear()
+        index = pd.Index(list(columns))
+        _COLUMN_INDEX_CACHE[key] = index
+    return index
+
+
+def _frame_from_blocks(blocks: tuple[Any, ...], columns: list[str], n_rows: int) -> pd.DataFrame:
+    """DataFrame over ready 2-D blocks (``(ncols, n_rows)`` values + placements)."""
+    mgr = _BlockManager(
+        blocks, [_shared_column_index(columns), pd.RangeIndex(n_rows)], verify_integrity=False
+    )
+    return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
+
+
+def _numpy_block(values: np.ndarray, placement: Any) -> Any:
+    """A 2-D numpy block; datetime-like values are wrapped the way pandas does."""
+    if values.dtype.kind in "mM":
+        values = _ensure_wrapped_if_datetimelike(values)
+    return _new_block(values, placement=_BlockPlacement(placement), ndim=2)
+
+
+def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+    """Assemble ready 1-D columns into a consolidated frame without sanitizing."""
+    numpy_groups: dict[np.dtype, list[tuple[int, np.ndarray]]] = {}
+    ea_columns: list[tuple[int, Any]] = []
+    for position, column in enumerate(arrays):
+        if isinstance(column, np.ndarray):
+            arr = column
+        elif type(column).__name__ == "NumpyExtensionArray":
+            arr = np.asarray(column)
+        else:
+            if len(column) != n_rows:
+                raise ValueError("column length mismatch")
+            ea_columns.append((position, column))
+            continue
+        if arr.ndim != 1 or arr.shape[0] != n_rows:
+            raise ValueError("column shape mismatch")
+        numpy_groups.setdefault(arr.dtype, []).append((position, arr))
+    blocks: list[Any] = []
+    for dtype, items in numpy_groups.items():
+        if len(items) == 1:
+            position, arr = items[0]
+            blocks.append(_numpy_block(arr.reshape(1, n_rows), position))
+        else:
+            values = np.vstack([arr for _, arr in items])
+            placement = np.fromiter((pos for pos, _ in items), dtype="int64", count=len(items))
+            blocks.append(_numpy_block(values, placement))
+        del dtype
+    for position, column in ea_columns:
+        blocks.append(_new_block(column, placement=_BlockPlacement(position), ndim=2))
+    return _frame_from_blocks(tuple(blocks), columns, n_rows)
+
+
+def _probe_direct_blocks() -> bool:
+    """Round-trip a small typed frame through the direct path and the public one."""
+    if not _DIRECT_BLOCKS_AVAILABLE:
+        return False
+    try:
+        columns = ["Time", "RPM", "Speed", "nGear", "Brake", "DriverAhead", "Driver", "LapNumber"]
+        arrays: list[Any] = [
+            np.array([0, 16_000_000, 256_000_000], dtype="m8[ns]"),
+            np.array([10000.0, 10500.0, np.nan]),
+            np.array([250.0, 251.5, 252.0]),
+            pd.arrays.IntegerArray(np.array([7, 8, 8]), np.zeros(3, dtype=bool)),
+            np.array([False, True, False]),
+            pd.Series(["1", None, "44"]).array,
+            np.full(3, "VER", dtype=object),
+            pd.arrays.IntegerArray(np.full(3, 5), np.zeros(3, dtype=bool)),
+        ]
+        direct = _direct_frame_from_columns(arrays, columns, 3)
+        public = _frame_from_arrays(arrays, columns, 3)
+        return bool(
+            list(direct.columns) == list(public.columns)
+            and direct.dtypes.equals(public.dtypes)
+            and direct.equals(public)
+            and len(direct._mgr.blocks) == len(public._mgr.blocks)
+        )
+    except Exception:
+        return False
+
+
+_DIRECT_BLOCKS_OK = _probe_direct_blocks()
+
+
+def _frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+    """Consolidated DataFrame from ready 1-D columns (direct blocks, else ``_from_arrays``)."""
+    if _DIRECT_BLOCKS_OK:
+        try:
+            return _direct_frame_from_columns(arrays, columns, n_rows)
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return _frame_from_arrays(arrays, columns, n_rows)
 
 
 def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
@@ -681,22 +868,7 @@ _NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
 # value as the literal string "None" (e.g. ``DistanceToDriverAhead`` on a race
 # leader's lap, where nobody is ahead); left alone, one sentinel stringifies
 # the whole column on both backends. The frame builders coerce it to NaN/null.
-_NUMERIC_TELEMETRY_CHANNELS = frozenset(
-    {
-        "RPM",
-        "Speed",
-        "Throttle",
-        "Distance",
-        "RelativeDistance",
-        "DistanceToDriverAhead",
-        "AccelerationX",
-        "AccelerationY",
-        "AccelerationZ",
-        "X",
-        "Y",
-        "Z",
-    }
-)
+_NUMERIC_TELEMETRY_CHANNELS = NUMERIC_TELEMETRY_CHANNELS
 # String channel (driver number ahead) whose missing values arrive as "None".
 _DRIVER_AHEAD_CHANNEL = "DriverAhead"
 
@@ -842,10 +1014,13 @@ def _coerce_polars_telemetry_sentinels(frame):
     polars infers a String column with nulls directly.
     """
     schema = frame.schema
+    # A channel that is a sentinel on every sample arrives as String (the
+    # "None" spelling) or as Null (the null spelling, Thebes TH9); both
+    # become the Float64 column the contract promises.
     exprs = [
         pl.col(col).cast(pl.Float64, strict=False)
         for col in _NUMERIC_TELEMETRY_CHANNELS
-        if schema.get(col) == pl.String
+        if schema.get(col) in (pl.String, pl.Null)
     ]
     if schema.get(_DRIVER_AHEAD_CHANNEL) == pl.Null:
         # Every sample was a sentinel (a race leader's lap): keep the String
@@ -1151,7 +1326,9 @@ def _merge_telemetry_payloads(
         if not isinstance(tel_payload, dict) or not tel_payload:
             continue
         col_data = {
-            TELEMETRY_RENAME_MAP.get(k, k): v for k, v in tel_payload.items() if isinstance(v, list)
+            TELEMETRY_RENAME_MAP.get(k, k): (v.tolist() if isinstance(v, np.ndarray) else v)
+            for k, v in tel_payload.items()
+            if isinstance(v, list | np.ndarray)
         }
         if not col_data:
             continue

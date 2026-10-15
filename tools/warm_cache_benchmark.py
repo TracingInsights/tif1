@@ -33,6 +33,7 @@ def main() -> None:
     parser.add_argument("--session", default="Race")
     parser.add_argument("--src-dir", default=None)
     parser.add_argument("--prime", action="store_true", help="prime the persistent cache only")
+    parser.add_argument("--lib", default="pandas", choices=["pandas", "polars"])
     args = parser.parse_args()
 
     if args.src_dir:
@@ -46,14 +47,14 @@ def main() -> None:
     import tif1
 
     if args.prime:
-        session = tif1.get_session(args.year, args.gp, args.session)
+        session = tif1.get_session(args.year, args.gp, args.session, lib=args.lib)
         session.load()
         n = len(session.fetch_all_laps_telemetry())
         print(json.dumps({"primed": True, "telemetry_frames": n, "cache_dir": WARM_CACHE_DIR}))
         return
 
     t0 = time.perf_counter()
-    session = tif1.get_session(args.year, args.gp, args.session)
+    session = tif1.get_session(args.year, args.gp, args.session, lib=args.lib)
     t_get = time.perf_counter() - t0
 
     t0 = time.perf_counter()

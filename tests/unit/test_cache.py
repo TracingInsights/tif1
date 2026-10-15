@@ -16,6 +16,17 @@ from tif1.cache import (
 )
 
 
+def _plain(payload):
+    """Telemetry payloads may carry numpy arrays when tif1-native is installed."""
+    import numpy as np
+
+    if isinstance(payload, dict):
+        return {k: _plain(v) for k, v in payload.items()}
+    if isinstance(payload, np.ndarray):
+        return payload.tolist()
+    return payload
+
+
 class TestCache:
     """Test Cache class."""
 
@@ -76,7 +87,7 @@ class TestCache:
         cache.set("test_key", test_data)
         result = cache.get("test_key")
 
-        assert result == test_data
+        assert _plain(result) == test_data
 
     def test_cache_get_missing(self, tmp_path):
         """Test getting non-existent cache key."""
@@ -150,7 +161,7 @@ class TestCache:
         cache.set_telemetry(2025, "Abu Dhabi", "Race", "VER", 1, test_data)
         result = cache.get_telemetry(2025, "Abu Dhabi", "Race", "VER", 1)
 
-        assert result == test_data
+        assert _plain(result) == test_data
 
         # Test miss
         miss = cache.get_telemetry(2025, "Abu Dhabi", "Race", "HAM", 1)
@@ -280,7 +291,7 @@ class TestTelemetryMemoryCache:
         cache_key = (2025, "Bahrain", "Race", "VER", 1)
         assert cache_key in cache._memory_telemetry_cache
         result = cache.get_telemetry(2025, "Bahrain", "Race", "VER", 1)
-        assert result == data
+        assert _plain(result) == data
 
     def test_set_telemetry_read_only_does_nothing(self, tmp_path):
         """set_telemetry() with read_only=True skips writes."""
@@ -355,7 +366,7 @@ class TestAsyncOperations:
         data = {"speed": [150]}
         cache.set_telemetry(2025, "Jeddah", "FP1", "HAM", 3, data)
         result = await cache.get_telemetry_async(2025, "Jeddah", "FP1", "HAM", 3)
-        assert result == data
+        assert _plain(result) == data
 
     async def test_set_telemetry_async(self, tmp_path):
         """set_telemetry_async stores data retrievable by get_telemetry."""
@@ -363,7 +374,7 @@ class TestAsyncOperations:
         data = {"throttle": [80, 90]}
         await cache.set_telemetry_async(2025, "Jeddah", "FP1", "LEC", 5, data)
         result = cache.get_telemetry(2025, "Jeddah", "FP1", "LEC", 5)
-        assert result == data
+        assert _plain(result) == data
 
 
 class TestCloseEdgeCases:
@@ -602,7 +613,7 @@ class TestTelemetryBatchCoverage:
         assert isinstance(row, bytes)
         cache._memory_telemetry_cache.clear()
         cache._parsed_telemetry_cache.clear()
-        assert cache.get_telemetry(2025, "Monza", "Race", "VER", 1) == payload
+        assert _plain(cache.get_telemetry(2025, "Monza", "Race", "VER", 1)) == payload
 
 
 class TestLRUCache:

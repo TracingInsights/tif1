@@ -47,6 +47,19 @@ keywords:
       ```
     </CodeGroup>
   </Step>
+  <Step title="Optional: build the native telemetry decoder">
+    `tif1-native` is a small Rust extension in the `native/` directory of the repository. When it is importable, `tif1` decodes telemetry payloads with it. The JSON scan runs without the GIL and produces typed numpy arrays. This makes cold loads, and the first warm load after a cold load, faster on multi-core machines. `tif1` works without it. It needs a Rust toolchain and `maturin`:
+    ```bash
+    git clone https://github.com/TracingInsights/tif1
+    cd tif1/native
+    uvx maturin develop --release
+    ```
+    Check that it is active:
+    ```python
+    from tif1.core_utils.json_utils import NATIVE_TELEMETRY_DECODER_AVAILABLE
+    print(NATIVE_TELEMETRY_DECODER_AVAILABLE)
+    ```
+  </Step>
   <Step title="Verify the installation">
     Run this check to confirm that the installation works:
     ```python

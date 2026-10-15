@@ -113,6 +113,13 @@ class Config:
             # thread while get_session() returns, so the first payload request
             # of a cold load rides an already-open connection.
             "cdn_preconnect": True,
+            # Thebes TH3: a request on the primary CDN that has not answered
+            # within a multiple of that CDN's measured latency (clamped to
+            # cdn_hedge_max_delay seconds) is re-issued on the next mirror and
+            # the first answer wins; mirrors measured much slower than a
+            # fallback are re-ranked behind it for the process.
+            "cdn_hedge": True,
+            "cdn_hedge_max_delay": 4.0,
             "cdns": [
                 "https://cdn.jsdelivr.net/gh/TracingInsights",
                 "https://huggingface.co/buckets/tracinginsights",
@@ -209,6 +216,8 @@ class Config:
             "TIF1_HTTP_MULTIPLEXED": ("http_multiplexed", _to_bool),
             "TIF1_HTTP_DISABLE_HTTP3": ("http_disable_http3", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
+            "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
+            "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),
             "TIF1_CDNS": ("cdns", _to_list),
             "TIF1_VALIDATE_DATA": ("validate_data", _to_bool),
             "TIF1_VALIDATE_LAP_TIMES": ("validate_lap_times", _to_bool),
@@ -290,6 +299,7 @@ class Config:
         # Validate float values (can be positive floats)
         if key in (
             "sqlite_timeout",
+            "cdn_hedge_max_delay",
             "connection_stats_log_interval",
             "pool_exhaustion_backoff_base",
             "pool_exhaustion_backoff_max",

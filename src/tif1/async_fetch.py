@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
 from .core_utils.constants import telemetry_ref_from_path
-from .core_utils.json_utils import json_loads, parse_response_json
+from .core_utils.json_utils import decode_telemetry_payload, json_loads, parse_response_json
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .http_session import close_session as close_http_session
 from .http_session import get_session as get_http_session
@@ -202,15 +202,19 @@ def _response_bytes(response: Any) -> Any:
     return getattr(response, "content", None)
 
 
-def _decode_and_parse(response: Any) -> tuple[Any, Any]:
+def _decode_and_parse(response: Any, *, telemetry: bool = False) -> tuple[Any, Any]:
     """Decode the lazy response body and parse JSON off the event loop.
 
     Returns ``(parsed, raw_content)`` so the caller can persist the original
     bytes without re-touching the lazy attribute on the event loop.
+    ``telemetry`` payloads go through :func:`decode_telemetry_payload` (the
+    native decoder when installed, which releases the GIL so the worker
+    threads parse concurrently).
     """
     content = getattr(response, "content", None)
     if isinstance(content, bytes | bytearray | memoryview):
-        return json_loads(content), content
+        parsed = decode_telemetry_payload(content) if telemetry else json_loads(content)
+        return parsed, content
     return parse_response_json(response), None
 
 
@@ -524,8 +528,13 @@ async def fetch_json_async(
                     # niquests' lazy content decode plus orjson parse cost
                     # milliseconds per response; paying that on the event loop
                     # serializes the whole batch. Decode + parse in a worker.
+                    # The typed decoder only when the pydantic-free telemetry
+                    # validator (list-shaped) will not run on the payload.
+                    typed_decode = is_telemetry_payload and not (
+                        validate_payload and config.get("validate_telemetry", True)
+                    )
                     data, content = await loop.run_in_executor(
-                        executor, _decode_and_parse, response
+                        executor, partial(_decode_and_parse, response, telemetry=typed_decode)
                     )
             except (ValueError, TypeError, AttributeError) as e:
                 raise InvalidDataError(reason=f"JSON parsing failed: {e}")

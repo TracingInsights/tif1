@@ -186,7 +186,7 @@ telemetry = fastest_lap.get_telemetry()  # Triggers telemetry loading
 2. Session checks if data is already loaded (`self._laps is not None`)
 3. If not loaded, the property checks the process-wide backend lap LRU under the key `f"{year}_{gp}_{session}_laps"`
 4. On a miss, the property runs `Session.laps_async()` (public, for async code) with `asyncio.run()`
-5. `laps_async()` checks the SQLite laps frame tier, then loads `drivers.json` and `f"{year}/{gp}/{session}/session_laptimes.json"` through the cache layer
+5. `laps_async()` checks the SQLite laps frame tier, then loads `drivers.json`, `f"{year}/{gp}/{session}/session_laptimes.json"` and the requested `weather.json` / `rcm.json` in one concurrent wave through the cache layer
 
 **Performance Characteristics:**
 - A repeated `session.laps` access returns the stored frame in about 1 µs

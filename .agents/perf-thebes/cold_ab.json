@@ -1,0 +1,147 @@
+{
+  "label": "thebes-final",
+  "timestamp": "2026-10-15T09:17:38.406744+00:00",
+  "src_a": "/tmp/tif1-control/src",
+  "src_b": "src",
+  "runs": [
+    {
+      "import_s": 0.0068,
+      "get_session_s": 0.8495,
+      "laps_s": 0.2443,
+      "telemetry_s": 25.1658,
+      "total_s": 26.2596,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0059,
+      "get_session_s": 0.4967,
+      "laps_s": 0.2044,
+      "telemetry_s": 6.8211,
+      "total_s": 7.5222,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "b"
+    },
+    {
+      "import_s": 0.0053,
+      "get_session_s": 0.5908,
+      "laps_s": 0.1987,
+      "telemetry_s": 27.8792,
+      "total_s": 28.6687,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0056,
+      "get_session_s": 0.4637,
+      "laps_s": 0.1968,
+      "telemetry_s": 12.4167,
+      "total_s": 13.0771,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "b"
+    },
+    {
+      "import_s": 0.0053,
+      "get_session_s": 0.4404,
+      "laps_s": 0.1999,
+      "telemetry_s": 28.5237,
+      "total_s": 29.164,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "a"
+    },
+    {
+      "import_s": 0.0051,
+      "get_session_s": 0.4715,
+      "laps_s": 0.2021,
+      "telemetry_s": 13.2261,
+      "total_s": 13.8997,
+      "n_laps": 1455,
+      "expected_refs": 1455,
+      "n_telemetry": 1452,
+      "completeness": 0.9979,
+      "telemetry_rows": 614258,
+      "python": "3.13.15",
+      "variant": "b"
+    }
+  ],
+  "failures": [],
+  "stats": {
+    "a": {
+      "n": 3,
+      "total_s": {
+        "mean": 28.0308,
+        "median": 28.6687,
+        "min": 26.2596,
+        "max": 29.164,
+        "values": [
+          26.2596,
+          28.6687,
+          29.164
+        ]
+      },
+      "telemetry_s": {
+        "mean": 27.1896,
+        "median": 27.8792,
+        "min": 25.1658,
+        "max": 28.5237,
+        "values": [
+          25.1658,
+          27.8792,
+          28.5237
+        ]
+      }
+    },
+    "b": {
+      "n": 3,
+      "total_s": {
+        "mean": 11.4997,
+        "median": 13.0771,
+        "min": 7.5222,
+        "max": 13.8997,
+        "values": [
+          7.5222,
+          13.0771,
+          13.8997
+        ]
+      },
+      "telemetry_s": {
+        "mean": 10.8213,
+        "median": 12.4167,
+        "min": 6.8211,
+        "max": 13.2261,
+        "values": [
+          6.8211,
+          12.4167,
+          13.2261
+        ]
+      }
+    }
+  },
+  "b_vs_a_total_pct": -54.39,
+  "b_vs_a_telemetry_pct": -55.46
+}
