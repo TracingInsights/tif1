@@ -42,7 +42,7 @@ The configuration system is implemented as a **singleton pattern**. This pattern
 - **Efficiency**: No redundant configuration loading or memory overhead
 - **Simplicity**: Single source of truth for all configuration values
 - **Thread-safe reads**: Multiple threads can safely read configuration values
-- **Dynamic updates**: Changes propagate immediately to all components
+- **Dynamic updates**: Most keys are read on each operation, so a change applies to the next call (see `set()` for the exceptions)
 
 The singleton is lazily initialized on first access, loading configuration from files and environment variables in the correct precedence order. Once initialized, the configuration remains in memory for the lifetime of the Python process.
 
@@ -55,7 +55,7 @@ Consider customizing the configuration when:
 - **Resource constraints exist** — Memory usage, connection pools, or concurrent requests need limits due to system limitations
 - **Data validation is needed** — Data issues need debugging, quality checks need implementing, or compliance needs strict validation
 - **Caching behavior matters** — Fresh data, shared storage, or access patterns need different cache settings
-- **Backend preferences differ** — Polars gives better performance than pandas, or a workflow needs specific DataFrame behavior
+- **Backend preferences differ** — A workflow needs the polars backend or specific DataFrame behavior
 - **Deployment environment differs** — Production, staging, development, or CI/CD environments have different performance, reliability, and debugging requirements
 - **Workload characteristics change** — The workload switches between interactive analysis (low concurrency) and batch processing (high concurrency)
 - **Compliance requirements exist** — Data storage locations need control, certain features need disabling, or regulatory requirements apply
@@ -84,7 +84,7 @@ Different use cases benefit from different configuration strategies:
 - Complete logging for monitoring
 
 **CI/CD Pipelines**
-- CI mode enabled for optimized testing
+- CI mode enabled, so payload fetches skip the persistent cache
 - Shorter timeouts to fail fast
 - Minimal caching to ensure fresh data
 - Validation enabled to catch data issues early
@@ -111,7 +111,7 @@ This layered approach works as follows. Set baseline configuration in a file. Ov
 
 **Configuration File Search Order:**
 
-The library searches for configuration files in a specific order and uses the **first file found**:
+The library searches for configuration files in a specific order and uses the **first file that loads**. A file that is not valid JSON, or not a JSON object, is skipped with a warning:
 
 1. **Explicit path** (`TIF1_CONFIG_FILE` env var) — Highest priority, useful for testing or custom deployments
 2. **Current directory** (`./.tif1rc`) — Only checked if `TIF1_TRUST_CWD_CONFIG=true` for security
@@ -139,12 +139,12 @@ The library searches for configuration files in a specific order and uses the **
 
 The configuration system performs validation when values are **read** (via `get()`), not when they are **set**. This design allows any value to be set programmatically. Invalid values are rejected when accessed, falling back to the provided default. Validation includes:
 
-- Type checking (int, float, bool, str, list)
+- Type checking of numeric keys and lists
 - Range validation (positive numbers, valid enums)
 - Format validation (HTTPS URLs for CDNs)
 - Path expansion (~ to home directory)
 
-Invalid values trigger warnings in the logs and return the default value instead.
+Invalid values trigger warnings in the logs. `get()` then returns its `default` argument (`None` when no default is given).
 
 ---
 
@@ -189,7 +189,7 @@ The configuration file must be valid JSON with a single object containing key-va
 {
   "lib": "polars",
   "enable_cache": true,
-  "cache_dir": "<platform-specific default>",
+  "cache_dir": "~/.cache/tif1",
   "timeout": 60,
   "max_workers": 50,
   "max_retries": 5,
@@ -209,7 +209,7 @@ The configuration file must be valid JSON with a single object containing key-va
 
 **Invalid File Handling:**
 
-If the configuration file is invalid (malformed JSON, wrong type), the library logs a warning. It then continues with default values. The library never crashes due to invalid configuration files.
+If the configuration file is invalid (malformed JSON, or not a JSON object), the library logs a warning. It then tries the next location in the search order, and otherwise keeps the defaults. The library never crashes due to invalid configuration files. A value of the wrong type is loaded as it is, and `get()` rejects it when it is read.
 
 ### Creating Configuration Files
 
@@ -275,8 +275,7 @@ cat > ~/.tif1rc.dev << 'EOF'
 {
   "enable_cache": false,
   "validate_data": true,
-  "max_workers": 5,
-  "log_level": "DEBUG"
+  "max_workers": 5
 }
 EOF
 
@@ -286,7 +285,6 @@ cat > ~/.tif1rc.prod << 'EOF'
   "enable_cache": true,
   "validate_data": false,
   "max_workers": 100,
-  "log_level": "WARNING",
   "cache_dir": "/var/cache/tif1"
 }
 EOF
@@ -330,7 +328,7 @@ python my_analysis.py
 
 ## Environment Variables
 
-All configuration keys can be overridden using environment variables with the `TIF1_` prefix. Environment variables take precedence over configuration files but are overridden by programmatic `config.set()` calls.
+Every configuration key except `cdn_use_minification` can be overridden using environment variables with the `TIF1_` prefix. Environment variables take precedence over configuration files but are overridden by programmatic `config.set()` calls.
 
 ### Environment Variable Naming
 
@@ -338,7 +336,6 @@ Configuration keys are converted to environment variables by:
 
 1. Adding the `TIF1_` prefix
 2. Converting to uppercase
-3. Replacing underscores with underscores (no change)
 
 **Examples:**
 - `lib` → `TIF1_LIB`
@@ -376,7 +373,6 @@ export TIF1_RETRY_BACKOFF_FACTOR=2.5
 ```bash
 export TIF1_LIB=polars
 export TIF1_CACHE_DIR=/var/cache/tif1
-export TIF1_LOG_LEVEL=DEBUG
 ```
 
 **List Values:**
@@ -384,7 +380,7 @@ export TIF1_LOG_LEVEL=DEBUG
 
 ```bash
 export TIF1_CDNS=https://cdn1.example.com,https://cdn2.example.com
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://,doh+google://
 ```
 
 ### Complete Environment Variable Reference
@@ -407,12 +403,13 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
-export TIF1_HTTP_DISABLE_HTTP3=false
-export TIF1_POOL_CONNECTIONS=256
-export TIF1_POOL_MAXSIZE=512
+export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_CDN_PRECONNECT=true
+# export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
+# export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=10000
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare,doh://google
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://,doh+google://
 
 # Retry & Circuit Breaker
 export TIF1_RETRY_BACKOFF_FACTOR=2.0
@@ -422,19 +419,17 @@ export TIF1_MAX_RETRY_DELAY=60.0
 export TIF1_CIRCUIT_BREAKER_THRESHOLD=5
 export TIF1_CIRCUIT_BREAKER_TIMEOUT=60
 
-# HTTP/2 Configuration
-export TIF1_HTTP2_MAX_CONNECTIONS=10
-export TIF1_HTTP2_MAX_POOL_SIZE=20
-
 # Cache Configuration
 export TIF1_CACHE_COMMIT_INTERVAL=100
 export TIF1_SQLITE_TIMEOUT=30.0
 export TIF1_MEMORY_CACHE_MAX_ITEMS=1024
 export TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS=2048
+export TIF1_MISSING_PAYLOADS_TTL_DAYS=7.0
+export TIF1_SCHEDULE_TTL_HOURS=6.0
 
 # CDN Configuration
 export TIF1_CDNS=https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingface.co/buckets/tracinginsights,https://cdn.staticdelivr.com/gh/TracingInsights
-export TIF1_CDN_USE_MINIFICATION=false
+# cdn_use_minification has no environment variable; set it in .tif1rc or with config.set()
 
 # Validation
 export TIF1_VALIDATE_LAP_TIMES=false
@@ -451,7 +446,6 @@ export TIF1_ULTRA_COLD_SKIP_RETRIES=true
 export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=32
 
 # Logging
-export TIF1_LOG_LEVEL=WARNING
 export TIF1_CONNECTION_STATS_LOG_INTERVAL=60.0
 
 # Connection Pool Exhaustion
@@ -642,6 +636,8 @@ timeout = config.get("timeout")  # Returns 60
 
 config.set("max_retries", 0)  # Valid (0 means no retries)
 retries = config.get("max_retries")  # Returns 0
+
+config.set("lib", "pandas")  # Restore a valid backend
 ```
 
 ---
@@ -663,7 +659,11 @@ def set(key: str, value: Any) -> None
 
 **Behavior:**
 
-- Changes take effect **immediately** for all subsequent operations
+- Most keys apply to the next operation that reads them
+- Cache keys (`cache_dir`, `memory_*_max_items`, `cache_commit_interval`, `sqlite_timeout`, `missing_payloads_ttl_days`) apply when the cache is created. Set them before the first data load
+- HTTP session keys (pool sizes, keep-alive, resolvers, HTTP/2 and HTTP/3 switches) and the thread-pool size also apply only at creation
+- `cdns` and `cdn_use_minification` apply after `tif1.get_cdn_manager().reload()`
+- The circuit breaker keys apply after `tif1.reset_circuit_breaker()`
 - Changes are **session-only** unless `save()` is called
 - No validation is performed during `set()` — validation happens in `get()`
 - Custom keys that are not part of the default configuration can be set
@@ -726,7 +726,7 @@ try:
 
     # Perform operations with adjusted settings
     session = tif1.get_session(2024, 1, "R")
-    session.load()
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
 
 finally:
     # Restore original settings
@@ -779,10 +779,10 @@ def save(path: Path | None = None) -> None
 **Behavior:**
 
 - Writes the **entire** current configuration (including defaults) to the specified file
-- Creates the file if it does not exist
+- Creates the file if it does not exist (the parent directory must already exist)
 - Overwrites the file if it already exists
 - Uses JSON format with 2-space indentation for readability
-- Logs success or failure messages
+- Never raises: a failed write (missing directory, no permission) is logged as an error and the method returns `None`
 
 **File Format:**
 
@@ -811,11 +811,9 @@ config.set("max_workers", 100)
 # Save to default location (~/.tif1rc)
 config.save()
 
-# Save to custom location
+# Save to a custom location (the parent directory must exist)
 from pathlib import Path
 config.save(Path("./my-config.json"))
-config.save(Path("/etc/tif1/config.json"))
-config.save(Path.home() / ".config" / "tif1" / "config.json")
 ```
 
 **Workflow Patterns:**
@@ -915,7 +913,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="validate_data" type="bool" default="False">
-  Enable Pydantic validation of incoming JSON data.
+  Enable Pydantic validation of the race-control (`rcm.json`) and weather payloads. Lap times and telemetry have their own keys (`validate_lap_times`, `validate_telemetry`).
 
   <Note>
     Validation adds overhead. Disabled by default for performance.
@@ -927,10 +925,10 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="ultra_cold_start" type="bool" default="True">
-  Enable ultra-low latency mode for first-time loads. Skips loading full session data when only specific data is needed.
+  Cold-start fast path. When the session is not yet in the persistent cache, payloads skip the cache read and Pydantic validation, and (with `ultra_cold_skip_retries`) the per-source retry delays. Fetched payloads are still written to the cache. A session that is already cached loads from the cache as usual.
 
   ```python
-  config.set("ultra_cold_start", False)  # Disable for full data loading
+  config.set("ultra_cold_start", False)  # Always use the cached, validated path
   ```
 </ResponseField>
 
@@ -947,7 +945,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="max_retries" type="int" default="3">
-  Number of times to retry a failed CDN request.
+  Total attempts for each payload fetch, the first included: `3` means up to two retries. Set it to `0` or `1` for a single attempt without retries.
 
   ```python
   config.set("max_retries", 5)
@@ -955,7 +953,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="max_workers" type="int" default="20">
-  Maximum number of concurrent workers for parallel requests.
+  Lower bound for the size of the fetch thread pool. The pool size is the largest of `max_workers`, `max_concurrent_requests` and `telemetry_prefetch_max_concurrent_requests`.
 
   ```python
   config.set("max_workers", 50)
@@ -963,7 +961,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="max_concurrent_requests" type="int" default="22">
-  Maximum number of concurrent HTTP requests.
+  Maximum number of concurrent requests in one batch fetch. The bulk telemetry prefetch uses `telemetry_prefetch_max_concurrent_requests` instead.
 
   ```python
   config.set("max_concurrent_requests", 50)
@@ -982,11 +980,19 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="http_disable_http3" type="bool" default="False">
-  Disable HTTP/3 support.
+<ResponseField name="http_disable_http3" type="bool" default="True">
+  Disable HTTP/3 (QUIC). The default is HTTP/2 over TCP. In interleaved live A/Bs, HTTP/2 was at parity or faster for the bulk telemetry fetch, and every stalled fetch observed ran over HTTP/3. Set it to `False` to negotiate HTTP/3 again.
 
   ```python
-  config.set("http_disable_http3", True)
+  config.set("http_disable_http3", False)  # negotiate HTTP/3 again
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_preconnect" type="bool" default="True">
+  Warm the shared CDN connection in a daemon thread during `get_session()`, so the first request of a cold load skips the DNS and TLS handshake. Skipped in offline and CI mode.
+
+  ```python
+  config.set("cdn_preconnect", False)  # keep get_session() network-free
   ```
 </ResponseField>
 
@@ -997,6 +1003,8 @@ config.set("pool_connections", 1024)
     Most users should rely on automatic sizing. Only set explicitly for specific performance tuning.
   </Note>
 
+  An explicit value below `10` is raised to `10`.
+
   ```python
   config.set("pool_connections", 512)  # Override automatic sizing
   ```
@@ -1006,7 +1014,7 @@ config.set("pool_connections", 1024)
   Maximum connections per pool. If not set, automatically calculated as `max(512, pool_connections * 4)` to handle burst traffic.
 
   <Note>
-    Automatically sized to 4x pool_connections with a minimum of 512. Only override for specific use cases.
+    Automatically sized to 4x pool_connections with a minimum of 512. An explicit value is also floored at `max(512, pool_connections)`, so it cannot shrink the pool below 512. Only override for specific use cases.
   </Note>
 
   ```python
@@ -1015,7 +1023,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="keepalive_timeout" type="int" default="120">
-  Keep-alive timeout in seconds.
+  Keep-alive timeout in seconds, sent in the `Keep-Alive` request header.
 
   ```python
   config.set("keepalive_timeout", 300)
@@ -1023,22 +1031,24 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="keepalive_max_requests" type="int" default="10000">
-  Maximum requests per keep-alive connection.
+  Maximum requests per keep-alive connection, sent in the `Keep-Alive` request header.
 
   ```python
   config.set("keepalive_max_requests", 5000)
   ```
 </ResponseField>
 
-<ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh://cloudflare", "doh://google"]'>
-  DNS resolver configuration with DNS-over-HTTPS (DoH) fallback support. The library tries resolvers in order until one succeeds.
+<ResponseField name="http_resolvers" type="list[str]" default='["standard", "doh+cloudflare://", "doh+google://"]'>
+  DNS resolver list, with DNS-over-HTTPS (DoH) support. `tif1` creates the HTTP session with the first resolver in the list. It moves to the next entry only when the session cannot be created with the current one. A DNS failure during a request does not switch the resolver.
 
-  **Default:** `["standard", "doh://cloudflare", "doh://google"]`
+  **Default:** `["standard", "doh+cloudflare://", "doh+google://"]`
 
   **Resolver Types:**
   - `standard` — System DNS resolver (fastest, but may be blocked or censored)
-  - `doh://cloudflare` — Cloudflare DNS-over-HTTPS (1.1.1.1)
-  - `doh://google` — Google DNS-over-HTTPS (8.8.8.8)
+  - `doh+cloudflare://` — Cloudflare DNS-over-HTTPS (1.1.1.1)
+  - `doh+google://` — Google DNS-over-HTTPS (8.8.8.8)
+
+  The resolvers use the niquests `<protocol>+<provider>://` form. `tif1` translates the older spelling (`doh://cloudflare`, `doh://google`, `doh://quad9`, `doh://adguard`, `doh://nextdns`) to this form.
 
   **Benefits of DoH:**
   - Bypass DNS blocking or censorship
@@ -1049,17 +1059,17 @@ config.set("pool_connections", 1024)
   **Performance Considerations:**
   - System DNS (`standard`) is fastest when working correctly
   - DoH adds latency due to HTTPS overhead
-  - DoH is useful as fallback, not primary resolver
+  - Keep `standard` first unless system DNS is blocked or misconfigured
 
   ```python
   # Use only system DNS (fastest)
   config.set("http_resolvers", ["standard"])
 
   # Use only DoH (most private)
-  config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+  config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
-  # Custom order (try Cloudflare first, then system)
-  config.set("http_resolvers", ["doh://cloudflare", "standard"])
+  # Cloudflare DoH first; system DNS only if the session cannot be created with it
+  config.set("http_resolvers", ["doh+cloudflare://", "standard"])
   ```
 </ResponseField>
 
@@ -1080,7 +1090,7 @@ config.set("pool_connections", 1024)
 ### Logging Settings
 
 <ResponseField name="connection_stats_log_interval" type="float" default="60.0">
-  Interval in seconds for logging connection pool statistics.
+  Interval in seconds for logging connection pool statistics. The statistics are logged at `INFO` level, so they show only with `tif1.setup_logging(logging.INFO)` or lower.
 
   ```python
   config.set("connection_stats_log_interval", 120.0)
@@ -1098,7 +1108,7 @@ config.set("pool_connections", 1024)
 <Accordion title="Cache Internals">
 
 <ResponseField name="cache_commit_interval" type="int" default="100">
-  Number of cache operations before committing to SQLite.
+  Number of SQLite writes batched before a commit.
 
   ```python
   config.set("cache_commit_interval", 50)
@@ -1129,12 +1139,28 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="missing_payloads_ttl_days" type="float" default="7.0">
+  Lifetime in days of an all-CDN-missing verdict (`missing_payloads` table). Within the window, tif1 skips the CDN probe for that payload. Environment variable: `TIF1_MISSING_PAYLOADS_TTL_DAYS`.
+
+  ```python
+  config.set("missing_payloads_ttl_days", 1.0)  # re-probe missing payloads daily
+  ```
+</ResponseField>
+
+<ResponseField name="schedule_ttl_hours" type="float" default="6.0">
+  Age in hours after which the live event schedule of the current or a future season is re-fetched from the `theOehrly/f1schedule` repository. `0` re-fetches on every lookup; negative values are rejected. Past seasons come from the vendored files and never refresh. Environment variable: `TIF1_SCHEDULE_TTL_HOURS`.
+
+  ```python
+  config.set("schedule_ttl_hours", 1.0)  # pick up calendar changes within the hour
+  ```
+</ResponseField>
+
 </Accordion>
 
 <Accordion title="CDN Configuration">
 
 <ResponseField name="cdns" type="list[str]" default='["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"]'>
-  List of CDN URLs to use for data fetching, in priority order (jsDelivr primary, Hugging Face buckets fallback, StaticDelivr backup). Must be HTTPS URLs.
+  List of CDN URLs to use for data fetching, in priority order (jsDelivr primary, Hugging Face buckets fallback, StaticDelivr backup). Must be HTTPS URLs; `raw.githubusercontent.com` URLs are skipped. The CDN manager reads this key when it is created: call `tif1.get_cdn_manager().reload()` after a change.
 
   ```python
   config.set("cdns", ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"])
@@ -1142,7 +1168,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="cdn_use_minification" type="bool" default="False">
-  Use minified CDN resources (reserved for future use).
+  Request `.min.json` payloads instead of `.json`. The three default CDNs do not serve `.min.json`. jsDelivr and StaticDelivr answer 404, and Hugging Face mirrors the files as they are. So `tif1` ignores this key for them. It has an effect only for a custom mirror in `cdns` that serves minified files. No environment variable maps to this key.
 
   ```python
   config.set("cdn_use_minification", False)
@@ -1170,7 +1196,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="retry_jitter_max" type="float" default="0.0">
-  Maximum jitter amount in seconds. Must be > 0 to have effect.
+  Upper bound in seconds of the random delay added to each retry wait in the batch fetch path when `retry_jitter` is on; `0.0` adds nothing. The `retry_with_backoff` decorator uses multiplicative jitter (50-150% of the delay) instead and ignores this key.
 
   ```python
   config.set("retry_jitter_max", 1.0)
@@ -1178,7 +1204,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="max_retry_delay" type="float" default="60.0">
-  Maximum delay between retries in seconds.
+  Maximum delay between retries in seconds, in the batch fetch path. The `retry_with_backoff` decorator does not cap its delays.
 
   ```python
   config.set("max_retry_delay", 120.0)
@@ -1186,7 +1212,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="circuit_breaker_threshold" type="int" default="5">
-  Number of consecutive failures before circuit breaker opens.
+  Number of consecutive failures before circuit breaker opens. Read when the global circuit breaker is created (at import) and by `reset_circuit_breaker()`; call the latter after changing it at runtime.
 
   ```python
   config.set("circuit_breaker_threshold", 10)
@@ -1194,30 +1220,10 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="circuit_breaker_timeout" type="int" default="60">
-  Seconds to wait before attempting to close circuit breaker.
+  Seconds the circuit stays open before a request is let through to test recovery. Applied like `circuit_breaker_threshold`.
 
   ```python
   config.set("circuit_breaker_timeout", 120)
-  ```
-</ResponseField>
-
-</Accordion>
-
-<Accordion title="HTTP/2 Configuration">
-
-<ResponseField name="http2_max_connections" type="int" default="10">
-  Maximum HTTP/2 connections per host.
-
-  ```python
-  config.set("http2_max_connections", 20)
-  ```
-</ResponseField>
-
-<ResponseField name="http2_max_pool_size" type="int" default="20">
-  HTTP/2 connection pool size.
-
-  ```python
-  config.set("http2_max_pool_size", 40)
   ```
 </ResponseField>
 
@@ -1294,7 +1300,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="prefetch_all_telemetry_after_laps_load" type="bool" default="False">
-  Prefetch all telemetry data immediately after loading laps.
+  Start the all-laps telemetry prefetch in a background thread once laps are loaded. Takes effect only when `prefetch_all_telemetry_on_first_lap_request` is also `True`.
 
   ```python
   config.set("prefetch_all_telemetry_after_laps_load", True)
@@ -1321,16 +1327,8 @@ config.set("pool_connections", 1024)
 
 <Accordion title="Other Advanced Settings">
 
-<ResponseField name="log_level" type="str" default="WARNING">
-  Default logging level. Use `setup_logging()` to change at runtime.
-
-  ```python
-  config.set("log_level", "DEBUG")
-  ```
-</ResponseField>
-
 <ResponseField name="offline_mode" type="bool" default="False">
-  Enable offline mode (cache-only, no network requests).
+  Offline mode: payloads come from the persistent cache only. A payload that is not cached fails with `NetworkError`, and no request is sent. The live schedule is not downloaded.
 
   ```python
   config.set("offline_mode", True)
@@ -1338,7 +1336,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="ci_mode" type="bool" default="False">
-  Enable CI mode (optimized for continuous integration environments).
+  CI mode: payload fetches neither read nor write the persistent cache (the per-session memo still applies), and `get_session()` skips the CDN preconnect.
 
   ```python
   config.set("ci_mode", True)
@@ -1346,7 +1344,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="polars_lap_categorical" type="bool" default="False">
-  Use categorical types for string columns in polars DataFrames.
+  Cast the `Driver`, `Team`, `Compound` and `TrackStatus` lap columns to `pl.Categorical` in polars laps frames. Pandas laps frames always use the `category` dtype for these columns.
 
   ```python
   config.set("polars_lap_categorical", True)
@@ -1354,7 +1352,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="json_parse_workers" type="int" default="0">
-  Number of worker processes for parallel JSON parsing. 0 disables multiprocessing.
+  Number of worker processes for parallel JSON parsing in the batch fetch path. 0 disables multiprocessing. Telemetry payloads are always parsed in threads.
 
   <Warning>
     Process-pool JSON parsing can hurt performance due to IPC overhead for telemetry-heavy workloads. Keep it disabled unless a specific use case requires it.
@@ -1377,7 +1375,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
 {
   "lib": "pandas",
   "enable_cache": true,
-  "cache_dir": "<platform-specific default>",
+  "cache_dir": "~/.cache/tif1",
   "timeout": 60,
   "max_retries": 5,
   "validate_data": false,
@@ -1386,22 +1384,23 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "pool_connections": 512,
   "pool_maxsize": 1024,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "keepalive_timeout": 300,
   "keepalive_max_requests": 5000,
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
 }
 ```
 
 **Location:**
 - Default: `~/.tif1rc`
-- Custom: Specify path with `TIF1_CONFIG_PATH` environment variable
+- Custom: Specify path with `TIF1_CONFIG_FILE` environment variable
 
 ---
 
 ## Environment Variables
 
-All configuration keys can be set via environment variables with the `TIF1_` prefix:
+Every configuration key except `cdn_use_minification` can be set via environment variables with the `TIF1_` prefix:
 
 ```bash
 # Set lib
@@ -1428,7 +1427,7 @@ export TIF1_POOL_CONNECTIONS=512
 export TIF1_POOL_MAXSIZE=1024
 
 # Configure DNS resolvers (comma-separated)
-export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
+export TIF1_HTTP_RESOLVERS=standard,doh+cloudflare://
 ```
 
 ---
@@ -1438,7 +1437,7 @@ export TIF1_HTTP_RESOLVERS=standard,doh://cloudflare
 Configuration is loaded in this order (later overrides earlier):
 
 1. **Default values** (hardcoded in library)
-2. **`.tif1rc` file** (`~/.tif1rc` or `TIF1_CONFIG_PATH`)
+2. **`.tif1rc` file** (`~/.tif1rc` or `TIF1_CONFIG_FILE`)
 3. **Environment variables** (`TIF1_*`)
 4. **Programmatic calls** (`config.set()`)
 
@@ -1490,8 +1489,8 @@ config = tif1.get_config()
 # Enable ultra cold start
 config.set("ultra_cold_start", True)
 
-# Use DoH for faster DNS
-config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+# Use DoH resolvers (for a slow or misconfigured system DNS)
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
 # Aggressive connection pooling
 config.set("pool_connections", 256)
@@ -1552,7 +1551,7 @@ config.save()
 
 ## Setting Log Level
 
-While not part of the `Config` object, the log level can be set using `setup_logging`:
+`tif1` has no log-level config key. Set the log level with `setup_logging`:
 
 ```python
 import tif1
@@ -1565,6 +1564,8 @@ tif1.setup_logging(logging.DEBUG)  # DEBUG, INFO, WARNING, ERROR
 Or use the fastf1-compatible function:
 
 ```python
+import logging
+
 import tif1
 
 # Set log level (fastf1 compatibility)
@@ -1586,7 +1587,7 @@ import tif1
 
 config = tif1.get_config()
 
-# Use polars for better performance
+# Use the polars backend
 config.set("lib", "polars")
 
 # Maximize concurrency
@@ -1607,7 +1608,8 @@ config.set("validate_data", False)
 config.set("validate_lap_times", False)
 config.set("validate_telemetry", False)
 
-# Enable aggressive prefetching
+# Enable aggressive prefetching (the after-laps prefetch needs both keys)
+config.set("prefetch_all_telemetry_on_first_lap_request", True)
 config.set("prefetch_all_telemetry_after_laps_load", True)
 config.set("prefetch_driver_laps_on_get_driver", True)
 
@@ -1629,7 +1631,7 @@ config.save()
 - Large caches reduce redundant network requests
 
 **Trade-offs:**
-- High memory usage (4-8GB+)
+- High memory usage
 - May overwhelm slower systems
 - Not suitable for resource-constrained environments
 
@@ -1648,8 +1650,8 @@ config = tif1.get_config()
 config.set("ultra_cold_start", True)
 config.set("ultra_cold_skip_retries", True)
 
-# Use DoH for faster DNS resolution
-config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+# Use DoH resolvers (for a slow or misconfigured system DNS)
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
 # Moderate concurrency (avoid overwhelming)
 config.set("max_workers", 32)
@@ -1672,7 +1674,7 @@ config.save()
 ```
 
 **Why these settings:**
-- Ultra cold start skips unnecessary data loading
+- Ultra cold start skips cache reads, validation and retry delays on uncached sessions
 - DoH can be faster than misconfigured system DNS
 - Moderate concurrency balances speed and resource usage
 - Short timeout fails fast on slow connections
@@ -1711,7 +1713,7 @@ config.set("max_concurrent_requests", 5)
 # Longer timeout for debugging
 config.set("timeout", 120)
 
-# Disable ultra cold start to load all data
+# Disable ultra cold start so every load runs the validated path
 config.set("ultra_cold_start", False)
 
 # Enable verbose logging
@@ -1728,7 +1730,7 @@ config.save()
 - Validation catches data quality issues early
 - Low concurrency makes logs easier to follow
 - Long timeout accommodates debugging pauses
-- Full data loading helps understand data structure
+- The validated load path runs on every session
 - Verbose logging provides detailed diagnostic information
 
 **Trade-offs:**
@@ -1743,11 +1745,13 @@ config.save()
 For production services that need reliability, performance, and observability:
 
 ```python
+import logging
+
 import tif1
 
 config = tif1.get_config()
 
-# Use polars for performance
+# Use the polars backend
 config.set("lib", "polars")
 
 # Enable cache with production location
@@ -1768,6 +1772,7 @@ config.set("max_retry_delay", 120.0)
 # Circuit breaker for fault tolerance
 config.set("circuit_breaker_threshold", 10)
 config.set("circuit_breaker_timeout", 120)
+tif1.reset_circuit_breaker()  # Apply the breaker settings in this process
 
 # Reasonable timeout
 config.set("timeout", 60)
@@ -1776,7 +1781,7 @@ config.set("timeout", 60)
 config.set("validate_data", False)
 
 # Production-appropriate logging
-config.set("log_level", "WARNING")
+tif1.setup_logging(logging.WARNING)
 config.set("connection_stats_log_interval", 300.0)
 
 # Optimized connection pooling
@@ -1831,19 +1836,19 @@ config.set("timeout", 30)
 # Fewer retries to fail fast
 config.set("max_retries", 2)
 
-# Use system DNS (faster in CI)
+# Use only the system DNS resolver
 config.set("http_resolvers", ["standard"])
 
 config.save()
 ```
 
 **Why these settings:**
-- CI mode enables CI-specific optimizations
+- CI mode skips the persistent cache and the CDN preconnect
 - Disabled cache ensures tests use fresh data
 - Validation catches data quality regressions
 - Low concurrency respects CI runner limits
 - Short timeout and few retries fail fast
-- System DNS is faster in CI environments
+- Only the system resolver is configured
 
 **Trade-offs:**
 - Slower than production configuration
@@ -1861,17 +1866,10 @@ import tif1
 
 config = tif1.get_config()
 
-# Use pandas (lower memory overhead)
-config.set("lib", "pandas")
-
 # Minimal concurrency
 config.set("max_workers", 5)
 config.set("max_concurrent_requests", 5)
 config.set("telemetry_prefetch_max_concurrent_requests", 8)
-
-# Small connection pools
-config.set("pool_connections", 32)
-config.set("pool_maxsize", 64)
 
 # Small cache sizes
 config.set("memory_cache_max_items", 256)
@@ -1889,12 +1887,10 @@ config.save()
 ```
 
 **Why these settings:**
-- Pandas has lower memory overhead than polars
 - Minimal concurrency reduces CPU and memory usage
-- Small pools reduce memory footprint
 - Small caches limit memory usage
 - Disabled prefetching reduces unnecessary fetches
-- Ultra cold start loads only needed data
+- Ultra cold start skips cache reads and validation on uncached sessions
 
 **Trade-offs:**
 - Much slower than high-performance configuration
@@ -1921,7 +1917,7 @@ config.set("enable_cache", True)
 # Set cache location
 config.set("cache_dir", "/tmp/tif1-cache")
 
-# Disable retries (no network anyway)
+# No retries (no network anyway)
 config.set("max_retries", 0)
 
 # Short timeout (will fail immediately)
@@ -1934,7 +1930,7 @@ config.save()
 - Offline mode prevents network requests
 - Cache must be enabled to serve data
 - No retries since network is unavailable
-- Short timeout fails fast on cache misses
+- Cache misses fail at once, without a request
 
 **Trade-offs:**
 - Only works with previously cached data
@@ -1969,9 +1965,10 @@ config.set("timeout", 120)
 # Conservative circuit breaker
 config.set("circuit_breaker_threshold", 20)
 config.set("circuit_breaker_timeout", 300)
+tif1.reset_circuit_breaker()  # Apply the breaker settings in this process
 
-# Multiple DNS resolvers
-config.set("http_resolvers", ["standard", "doh://cloudflare", "doh://google"])
+# Resolver list (the default order)
+config.set("http_resolvers", ["standard", "doh+cloudflare://", "doh+google://"])
 
 # Enable cache for redundancy
 config.set("enable_cache", True)
@@ -1984,7 +1981,7 @@ config.save()
 - Aggressive retries handle transient failures
 - Long timeout accommodates slow networks
 - Conservative circuit breaker tolerates more failures
-- Multiple DNS resolvers provide fallback
+- Later resolvers apply only when the HTTP session cannot be created with earlier ones
 - Cache provides redundancy
 
 **Trade-offs:**
@@ -2003,9 +2000,6 @@ import tif1
 
 config = tif1.get_config()
 
-# Use pandas (lower memory overhead)
-config.set("lib", "pandas")
-
 # Moderate concurrency
 config.set("max_workers", 20)
 config.set("max_concurrent_requests", 20)
@@ -2014,12 +2008,8 @@ config.set("max_concurrent_requests", 20)
 config.set("memory_cache_max_items", 512)
 config.set("memory_telemetry_cache_max_items", 1024)
 
-# Frequent cache commits (reduce memory buffer)
+# Commit SQLite writes more often
 config.set("cache_commit_interval", 10)
-
-# Smaller connection pools
-config.set("pool_connections", 128)
-config.set("pool_maxsize", 256)
 
 # Disable aggressive prefetching
 config.set("prefetch_all_telemetry_after_laps_load", False)
@@ -2031,11 +2021,9 @@ config.save()
 ```
 
 **Why these settings:**
-- Pandas has lower memory overhead
 - Moderate concurrency balances speed and memory
 - Small caches reduce memory footprint
-- Frequent commits reduce memory buffer size
-- Smaller pools reduce connection overhead
+- Frequent commits keep fewer writes pending in an open transaction
 - Disabled prefetching reduces memory usage
 
 **Trade-offs:**
@@ -2063,6 +2051,7 @@ config.save()
 4. Check config file location (use `TIF1_CONFIG_FILE` to specify)
 5. Restart Python process after changing config file
 6. Check for validation failures in logs
+7. For keys that apply only when an object is created, see `set()`
 
 ```python
 import tif1
@@ -2125,9 +2114,7 @@ print(f"Cache enabled: {config.get('enable_cache')}")
 **Solutions:**
 1. Reduce cache sizes
 2. Lower concurrency
-3. Use pandas instead of polars
-4. Disable prefetching
-5. Enable ultra cold start
+3. Disable prefetching
 
 ```python
 import tif1
@@ -2141,9 +2128,6 @@ config.set("memory_telemetry_cache_max_items", 512)
 # Lower concurrency
 config.set("max_workers", 10)
 config.set("max_concurrent_requests", 10)
-
-# Use pandas
-config.set("lib", "pandas")
 
 # Disable prefetching
 config.set("prefetch_all_telemetry_after_laps_load", False)
@@ -2163,7 +2147,7 @@ config.set("prefetch_all_telemetry_after_laps_load", False)
 2. Check network connectivity
 3. Try different DNS resolvers
 4. Reduce concurrency
-5. Enable retries
+5. Increase retries
 
 ```python
 import tif1
@@ -2174,9 +2158,9 @@ config = tif1.get_config()
 config.set("timeout", 120)
 
 # Try DoH resolvers
-config.set("http_resolvers", ["doh://cloudflare", "doh://google", "standard"])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://", "standard"])
 
-# Enable retries
+# Increase retries
 config.set("max_retries", 5)
 config.set("retry_backoff_factor", 2.5)
 ```
@@ -2198,8 +2182,10 @@ config.set("retry_backoff_factor", 2.5)
 5. Verify SQLite timeout is not too short
 
 ```python
-import tif1
+import os
 from pathlib import Path
+
+import tif1
 
 config = tif1.get_config()
 
@@ -2242,17 +2228,17 @@ config.set("sqlite_timeout", 60.0)
 
 1. **Let pool sizing auto-calculate** — Only override `pool_connections` and `pool_maxsize` for specific tuning needs. The automatic sizing works well for most cases.
 
-2. **Monitor connection reuse** — Enable connection stats logging to track connection reuse rate. Low reuse indicates pool exhaustion.
+2. **Monitor connection reuse** — Enable connection stats logging to track connection reuse rate. Low reuse means that many requests open new connections.
 
 3. **Balance concurrency and resources** — Higher concurrency is not always better. Find the right level for the system and network.
 
-4. **Use polars for large datasets** — Polars provides better performance for large-scale analysis, but pandas has lower memory overhead.
+4. **Try the polars backend for large datasets** — Set `lib` to `"polars"` and benchmark the workload; the better backend depends on the analysis.
 
 5. **Enable caching** — Cache improves performance for repeated queries. Only disable for debugging or when fresh data is critical.
 
 6. **Tune prefetching** — Enable prefetching for common access patterns, but disable for memory-constrained environments.
 
-7. **Use ultra cold start** — Enable for interactive analysis where first-byte latency matters. Disable for batch processing that needs all data.
+7. **Use ultra cold start** — Keep it enabled for the fastest first load of an uncached session. Disable it to run the validated path on every load.
 
 ### Reliability
 
@@ -2264,7 +2250,7 @@ config.set("sqlite_timeout", 60.0)
 
 4. **Use circuit breakers** — Configure circuit breaker thresholds to prevent cascading failures.
 
-5. **Multiple DNS resolvers** — Use DoH as fallback for reliability, but prefer system DNS for performance.
+5. **DNS resolvers** — Keep system DNS (`standard`) first. Put a DoH resolver first only when system DNS is blocked or misconfigured.
 
 6. **Monitor error rates** — Track timeout, retry, and circuit breaker events to identify configuration issues.
 
@@ -2278,13 +2264,11 @@ config.set("sqlite_timeout", 60.0)
 
 4. **Limit cache locations** — Store cache in secure locations with appropriate permissions.
 
-5. **Custom user agents** — Use descriptive user agents to identify the application in logs.
-
 ### Development Workflow
 
 1. **Separate dev and prod configs** — Maintain different configurations for development and production environments.
 
-2. **Use CI mode in pipelines** — Enable `ci_mode` for CI/CD-specific optimizations.
+2. **Use CI mode in pipelines** — Enable `ci_mode` so payload fetches skip the persistent cache.
 
 3. **Enable validation in dev** — Catch data quality issues early by enabling validation in development.
 
@@ -2298,11 +2282,9 @@ config.set("sqlite_timeout", 60.0)
 
 2. **Reduce cache sizes** — Lower cache sizes if memory usage is too high.
 
-3. **Use pandas for low memory** — Pandas has lower memory overhead than polars.
+3. **Disable prefetching** — Reduce memory usage by disabling aggressive prefetching.
 
-4. **Disable prefetching** — Reduce memory usage by disabling aggressive prefetching.
-
-5. **Frequent cache commits** — Reduce memory buffer size by committing cache more frequently.
+4. **Frequent cache commits** — Lower `cache_commit_interval` to commit SQLite writes more often.
 
 ### Troubleshooting
 
@@ -2360,7 +2342,7 @@ The `tif1` configuration system controls library behavior through multiple confi
 - **Retry & circuit breaker** — Backoff, jitter, thresholds
 - **Prefetch strategies** — Automatic data prefetching
 - **Telemetry settings** — Telemetry-specific concurrency
-- **Logging** — Log levels, connection stats
+- **Logging** — Connection stats interval
 - **Advanced settings** — Polars options, JSON parsing, offline mode
 
 ### Common Use Cases
@@ -2372,7 +2354,7 @@ The `tif1` configuration system controls library behavior through multiple confi
 - **CI/CD** — CI mode, disabled cache, fast failure
 - **Resource-constrained** — Low concurrency, small caches, minimal prefetching
 - **Offline** — Cache-only mode, no network requests
-- **High-reliability** — Aggressive retries, long timeouts, multiple resolvers
+- **High-reliability** — Aggressive retries, long timeouts, conservative circuit breaker
 
 ### Best Practices Summary
 
@@ -2415,7 +2397,6 @@ The configuration system is flexible and easy to use. Interactive notebooks, pro
 | `timeout` | `30` | `60` | `120` | `30` |
 | `max_retries` | `3` | `5` | `3` | `2` |
 | `ultra_cold_start` | `True` | `True` | `False` | `True` |
-| `log_level` | `WARNING` | `WARNING` | `DEBUG` | `INFO` |
 
 ### Quick Reference: Performance Impact
 
@@ -2427,31 +2408,9 @@ The configuration system is flexible and easy to use. Interactive notebooks, pro
 | `validate_data` | High ↓ | Low | High ↑ |
 | `ultra_cold_start` | High ↑ | Low ↓ | Low |
 | `prefetch_*` | Medium ↑ | Medium ↑ | Low |
-| `lib=polars` | Medium ↑ | Medium ↑ | Low |
 | `max_retries` | Low ↓ | Low | High ↑ |
 
 Legend: ↑ = Increases, ↓ = Decreases
-
-### Quick Reference: Memory Usage
-
-| Configuration | Estimated Memory | Use Case |
-|---------------|------------------|----------|
-| Minimal | 100-200 MB | Resource-constrained |
-| Default | 200-500 MB | General use |
-| High-performance | 1-2 GB | Batch processing |
-| Maximum | 4-8 GB+ | Large-scale analysis |
-
-*Memory estimates are approximate and depend on workload*
-
-### Quick Reference: Concurrency Settings
-
-| Workload | `max_workers` | `pool_connections` | `pool_maxsize` |
-|----------|---------------|-------------------|----------------|
-| Interactive | 5-20 | 128-256 | 256-512 |
-| Batch | 50-200 | 512-1024 | 2048-4096 |
-| Production | 50-100 | 256-512 | 1024-2048 |
-| CI/CD | 5-10 | 64-128 | 128-256 |
-| Resource-constrained | 5-10 | 32-64 | 64-128 |
 
 ---
 
@@ -2470,8 +2429,8 @@ Legend: ↑ = Increases, ↓ = Decreases
   <Card title="Installation" href="/installation">
     Setup guide and initial configuration.
   </Card>
-  <Card title="CLI Configuration" href="/concepts/cli">
-    Configure tif1 via the command-line interface.
+  <Card title="CLI" href="/concepts/cli">
+    Command-line tools for events, sessions, drivers and the cache.
   </Card>
   <Card title="Backends" href="/concepts/backends">
     Pandas vs Polars backend comparison and configuration.
@@ -2497,17 +2456,19 @@ Legend: ↑ = Increases, ↓ = Decreases
 {
   "lib": "polars",
   "enable_cache": true,
-  "cache_dir": "<platform-specific default>",
+  "cache_dir": "~/.cache/tif1",
   "max_workers": 50,
   "timeout": 60
 }
 ```
 
 **Complete Configuration (All Defaults):**
+
+`cache_dir` shows a placeholder: the real default depends on the OS (see `cache_dir` above).
+
 ```json
 {
   "cache_dir": "<platform-specific default>",
-  "log_level": "WARNING",
   "timeout": 30,
   "max_retries": 3,
   "retry_backoff_factor": 2.0,
@@ -2516,8 +2477,6 @@ Legend: ↑ = Increases, ↓ = Decreases
   "max_retry_delay": 60.0,
   "circuit_breaker_threshold": 5,
   "circuit_breaker_timeout": 60,
-  "http2_max_connections": 10,
-  "http2_max_pool_size": 20,
   "max_workers": 20,
   "max_concurrent_requests": 22,
   "enable_cache": true,
@@ -2529,6 +2488,8 @@ Legend: ↑ = Increases, ↓ = Decreases
   "sqlite_timeout": 30.0,
   "memory_cache_max_items": 1024,
   "memory_telemetry_cache_max_items": 2048,
+  "missing_payloads_ttl_days": 7.0,
+  "schedule_ttl_hours": 6.0,
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "connection_stats_log_interval": 60.0,
@@ -2536,7 +2497,8 @@ Legend: ↑ = Increases, ↓ = Decreases
   "pool_exhaustion_backoff_max": 0.5,
   "pool_exhaustion_backoff_jitter": 0.01,
   "http_multiplexed": true,
-  "http_disable_http3": false,
+  "http_disable_http3": true,
+  "cdn_preconnect": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,
@@ -2550,7 +2512,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "prefetch_all_telemetry_after_laps_load": false,
   "telemetry_prefetch_max_concurrent_requests": 32,
   "json_parse_workers": 0,
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
 }
 ```
 
@@ -2642,6 +2604,7 @@ def generate_env_vars(config_path: Path):
     with open(config_path) as f:
         config = json.load(f)
 
+    # Keys without a TIF1_ mapping (cdn_use_minification, custom keys) have no effect
     print("# tif1 Environment Variables")
     print("# Generated from", config_path)
     print()
@@ -2676,31 +2639,31 @@ A: Config files are persistent and user-specific. Environment variables are depl
 
 **Q: Can I use multiple config files?**
 
-A: Yes, use the `TIF1_CONFIG_FILE` environment variable to specify which config file to load. Only one config file is loaded at a time (first found in search order).
+A: Yes, use the `TIF1_CONFIG_FILE` environment variable to specify which config file to load. Only one config file is loaded at a time (the first valid file in the search order).
 
 **Q: How do I reset to default configuration?**
 
 A: Delete or rename the `.tif1rc` file and unset all `TIF1_*` environment variables. The library then uses hardcoded defaults.
 
-**Q: Why is not my configuration taking effect?**
+**Q: Why does my configuration not take effect?**
 
 A: Check configuration precedence (programmatic > env > file > defaults). Verify environment variable names are correct (`TIF1_` prefix, uppercase). Ensure config file is valid JSON. Check logs for validation warnings.
 
 **Q: What is the performance impact of validation?**
 
-A: Validation adds 10-30% overhead depending on workload. Disable in production for maximum performance.
+A: Validation parses every payload through Pydantic models, which costs CPU time on every load. Keep it disabled in production unless the data quality checks are needed.
 
 **Q: Should I use pandas or polars?**
 
-A: Polars is faster for large datasets but uses more memory. Pandas has lower memory overhead and better compatibility. Start with pandas, then switch to polars when more performance is needed.
+A: Pandas is the default and has the widest compatibility with the plotting and analysis ecosystem. Switch `lib` to `"polars"` and benchmark the workload when more performance is needed.
 
 **Q: How much memory does tif1 use?**
 
-A: Depends on configuration and workload. Typical usage: 200-500 MB. High-performance: 1-2 GB. Maximum: 4-8 GB+. Reduce cache sizes and concurrency to lower memory usage.
+A: It depends on the configuration and workload, mostly on how many sessions and telemetry laps are loaded. Reduce the in-memory cache sizes and concurrency, and disable prefetching, to lower memory usage.
 
 **Q: What is ultra cold start mode?**
 
-A: Ultra cold start skips loading full session data when only specific data is needed. It reduces initial load time by 50-80%. Enable for interactive analysis, disable for batch processing.
+A: Ultra cold start is the fast path for sessions that are not yet in the persistent cache. Payloads skip the cache read, Pydantic validation and (with `ultra_cold_skip_retries`) the retries. They are still written to the cache. Already cached sessions load from the cache as usual.
 
 **Q: How do I optimize for my use case?**
 
@@ -2708,7 +2671,7 @@ A: See the "Configuration Patterns and Recipes" section for detailed configurati
 
 **Q: Can I change configuration at runtime?**
 
-A: Yes, use `config.set()` to change values at runtime. Changes take effect immediately but are not persisted unless `config.save()` is called.
+A: Yes, use `config.set()` to change values at runtime. Most keys apply to the next operation; the `set()` reference lists the keys that apply only when an object is created. Changes are not persisted unless `config.save()` is called.
 
 **Q: What is the recommended production configuration?**
 
@@ -2736,7 +2699,7 @@ A: Enable `ci_mode`, disable cache, enable validation, use lower concurrency, sh
 
 **Q: Can I use tif1 offline?**
 
-A: Yes, enable `offline_mode` to use only cached data. Requires previously cached data. See "Offline/Cache-Only Configuration" for details.
+A: Yes, enable `offline_mode` to use only cached data. A payload that is not cached raises `NetworkError` without a request. See "Offline/Cache-Only Configuration" for details.
 
 **Q: What is the impact of HTTP/2 multiplexing?**
 
@@ -2744,7 +2707,7 @@ A: HTTP/2 multiplexing reduces connection overhead by reusing connections for mu
 
 **Q: How do I configure DNS resolvers?**
 
-A: Use `http_resolvers` to specify resolver order. Default tries system DNS first, then DoH fallbacks. Use DoH for privacy or when system DNS is blocked.
+A: Use `http_resolvers` to specify the resolver order. The HTTP session uses the first resolver with which it can be created, by default system DNS. Put a DoH resolver first for privacy or when system DNS is blocked.
 
 **Q: What is the circuit breaker for?**
 

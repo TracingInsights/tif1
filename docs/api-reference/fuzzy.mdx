@@ -18,7 +18,7 @@ keywords:
 
 # Fuzzy Matching in tif1
 
-The fuzzy matching module is a performance-optimized component of `tif1`. It provides fault-tolerant string matching for resolving Formula 1 event and session names. The system uses RapidFuzz's high-performance C++ implementation of Levenshtein distance algorithms. Users can reference races and sessions with partial names, informal abbreviations, location names, circuit names, or country names. Slightly misspelled variants also work. All matching maintains sub-millisecond performance characteristics.
+The fuzzy matching module is a performance-optimized component of `tif1`. It provides fault-tolerant string matching for resolving Formula 1 event names. The system uses the `fuzz.ratio()` scorer of RapidFuzz, a C++ string similarity library. Users can reference races with partial names, informal abbreviations, location names, circuit names, or country names. Slightly misspelled variants also work. Session names use a fixed lookup table instead. All matching takes less than one millisecond.
 
 This guide explores the architecture, algorithms, implementation details, and practical usage patterns of the fuzzy matching system. It provides high-level conceptual understanding and low-level technical insights. The audience is developers and data scientists working with Formula 1 data.
 
@@ -28,11 +28,11 @@ This guide explores the architecture, algorithms, implementation details, and pr
 
 When working with Formula 1 data, users face a significant cognitive burden: remembering and typing exact official event names. The burden applies to programmatic and interactive work. Consider the 2024 Belgian Grand Prix. Its official designation might be "Formula 1 Rolex Belgian Grand Prix 2024" or simply "Belgian Grand Prix". The designation depends on the data source. Users naturally conceptualize this event through multiple mental models:
 
-- **Geographic location**: "Belgium", "Spa", "Spa-Francorchamps", "Ardennes"
+- **Geographic location**: "Belgium", "Spa", "Spa-Francorchamps"
 - **Informal abbreviations**: "Belgian GP", "Spa GP"
 - **Circuit name**: "Circuit de Spa-Francorchamps"
 - **Country name**: "Belgium"
-- **Colloquial references**: "Spa weekend", "Belgium race"
+- **Colloquial references**: "Belgium race"
 
 The fuzzy matching system is a translation layer. It connects natural human language patterns with the precise, canonical data identifiers of the underlying data infrastructure. Users do not need to consult documentation, memorize exact naming conventions, or perform manual string matching. This reduces friction in both exploratory data analysis and production data pipelines.
 
@@ -50,13 +50,13 @@ Accepts multiple valid representations of the same event through a feature-based
 Handles minor typos, spelling variations, and incomplete names through Levenshtein distance-based similarity scoring. A query like "Monac" will correctly resolve to "Monaco" even though it is technically incorrect.
 
 #### 4. Performance Optimization
-Achieves sub-millisecond matching times through a hybrid algorithm. The algorithm prioritizes fast exact substring matching before falling back to more expensive fuzzy ratio calculations. Typical event name resolution completes in 0.3-0.8ms.
+Achieves sub-millisecond matching times through a hybrid algorithm. The algorithm prioritizes fast exact substring matching before falling back to more expensive fuzzy ratio calculations. A full event name lookup takes about 0.1-0.3ms on a current workstation.
 
 #### 5. Deterministic Consistency
 Provides reproducible results with clear exact/fuzzy match indicators. The same query against the same reference data will always produce identical results, enabling reliable automated systems and testing.
 
 #### 6. Cross-Season Compatibility
-Works across different Formula 1 seasons (2018-2026+) despite evolving naming conventions, event formats (conventional vs. sprint weekends), and schedule changes. The system adapts to each season's unique characteristics.
+Works across the Formula 1 seasons that ship with `tif1` (2018-2026) despite evolving naming conventions, event formats (conventional vs. sprint weekends), and schedule changes. The system adapts to each season's unique characteristics.
 
 #### 7. Transparency and Debuggability
 Returns both the matched result and a boolean flag. The flag indicates whether the match was exact or fuzzy. This enables applications to provide user feedback, logging, and validation workflows.
@@ -66,6 +66,8 @@ Returns both the matched result and a boolean flag. The flag indicates whether t
 In practice, this system transforms the user experience from:
 
 ```python
+import tif1
+
 # Without fuzzy matching - requires exact knowledge
 session = tif1.get_session(2024, "Belgian Grand Prix", "Qualifying")
 ```
@@ -73,12 +75,16 @@ session = tif1.get_session(2024, "Belgian Grand Prix", "Qualifying")
 To a much more natural interaction pattern:
 
 ```python
+import tif1
+
 # With fuzzy matching - works with natural language
 session = tif1.get_session(2024, "Belgium", "Q")
-session = tif1.get_session(2024, "Spa", "quali")
-session = tif1.get_session(2024, "belgian", "qualifying")
+session = tif1.get_session(2024, "Spa", "qualifying")
+session = tif1.get_session(2024, "belgian", "Qualifying")
 # All three resolve correctly
 ```
+
+Session names do not use fuzzy matching: `"quali"` raises `ValueError`. The [Session Name Resolution](#session-name-resolution) section lists the accepted forms.
 
 This flexibility is particularly valuable in:
 - **Interactive Jupyter notebooks** where users are exploring data
@@ -92,7 +98,14 @@ The `tif1` fuzzy matching system uses a **hybrid multi-stage matching strategy**
 
 ### Event Name Matching: Multi-Stage Fuzzy Algorithm
 
-Event names use a three-stage matching pipeline powered by RapidFuzz's optimized Levenshtein distance implementation:
+Two direct lookups run before the fuzzy pipeline (see `_find_event_by_name` in `tif1/events.py`):
+
+1. **Exact name**: A case-insensitive match against the `EventName` values of that season returns at once.
+2. **Alias table**: `EVENT_NAME_ALIASES` in `tif1/core_utils/constants.py` maps circuit, city, and country names ("Spa", "Silverstone", "Monza", "Interlagos", "COTA", "USA") to events. The lookup folds accents and case, turns punctuation into spaces, and drops "Grand Prix", "GP", "Formula 1", and "F1". An alias resolves against the calendar of the requested season. An alias of an event that is not on that calendar raises `EventNotInSeasonError` (a `ValueError`) from `get_event_by_name()` and `get_session()`.
+
+Only names that miss both lookups reach `fuzzy_matcher`. The fuzzy step sent several circuit names to the wrong race. For a name that resolves wrongly, add an alias; do not change the scorer.
+
+Names that reach `fuzzy_matcher` go through a four-stage pipeline powered by RapidFuzz:
 
 #### Stage 1: String Normalization
 All query and reference strings undergo normalization to maximize match success rates while preserving distinguishing characteristics:
@@ -111,8 +124,8 @@ normalized = original.casefold().replace(" ", "")
 
 **Normalization rules:**
 - Convert to lowercase using `casefold()` (Unicode-aware, handles international characters)
-- Remove all whitespace characters (spaces, tabs, newlines)
-- Preserve special characters (hyphens, apostrophes, accents) for disambiguation
+- Remove space characters (`replace(" ", "")`); tabs and newlines stay
+- Keep all other characters (hyphens, apostrophes, accents) as they are
 - No stemming or lemmatization (preserves exact character sequences)
 
 #### Stage 2: Exact Substring Matching (Fast Path)
@@ -120,69 +133,74 @@ The system first tries exact substring matching. This fast path scans all featur
 
 ```python
 query = "monaco"
-features = ["monacograndprix", "monaco", "montecarlo"]
+reference = [
+    ["monacograndprix", "monaco", "montecarlo"],
+    ["britishgrandprix", "silverstone"],
+]
 
-# Check if query is substring of any feature
+# Indices of the elements with a feature that contains the query
 matches = [i for i, feature_list in enumerate(reference)
            if any(query in feature for feature in feature_list)]
+print(matches)  # [0]
 
-# If exactly ONE element contains the substring, return immediately
-if len(matches) == 1:
-    return matches[0], True  # Exact match, no fuzzy needed
+# Exactly ONE element contains the substring: fuzzy_matcher() returns (0, True)
+# at once, with no fuzzy scoring
 ```
 
 **Performance characteristics:**
-- O(n×m) complexity where n=number of events, m=features per event
-- Typical execution: 0.1-0.3ms for 24 events
-- Handles 80-90% of queries without fuzzy matching
-- Zero false positives (substring match is definitive)
+- O(n×m) substring checks, where n=number of events, m=features per event
+- Typical execution: about 0.01-0.03ms for 24 events
+- A unique substring hit skips the fuzzy scoring
 
 #### Stage 3: Fuzzy Ratio Matching (Fallback Path)
-When substring matching fails, the system falls back to Levenshtein distance-based scoring. Failure means zero matches or multiple matches:
+When substring matching fails, the system falls back to edit-distance scoring. Failure means zero matches or multiple matches:
 
 ```python
 from rapidfuzz import fuzz
 
-query = "monac"  # Typo
+query = "monac"  # Missing letter
 feature = "monaco"
 
 # Calculate similarity ratio (0-100 scale)
 ratio = fuzz.ratio(query, feature)
-# Result: 91 (very high similarity despite typo)
+# Result: 90.9 (very high similarity despite the missing letter)
 ```
 
 **Algorithm details:**
-- Uses RapidFuzz's `fuzz.ratio()` (normalized Levenshtein distance)
+- Uses RapidFuzz's `fuzz.ratio()` (normalized Indel similarity, a Levenshtein variant without substitutions)
 - Scores range from 0 (completely different) to 100 (identical)
-- Computed for ALL features of ALL events
+- The scores go into a float array and keep their fractional part (90.9 stays 90.9)
+- Computed for all features of the candidate events: the events with a substring hit, or all events if none has one
 - Returns event with highest-scoring feature
-- Typical execution: 0.5-0.8ms for 24 events
+- Typical execution: about 0.07-0.09ms for 24 events
+
+**Score floor:** Event resolution (`_find_event_by_name` in `tif1/events.py`) rejects a best score below 70. Then `get_event_by_name()` and `get_session()` raise `EventNotFoundError` with the message `No event matching '<name>' in <year>`. The floor is not part of `fuzzy_matcher`, which always returns the best index. Typos of real events score 75-97 ("Sao Paolo" 75, "Monacco" 92). Names that resemble no event score 67 or less ("Moon GP", "Paris", "Invalid GP").
 
 #### Stage 4: Disambiguation (Tie-Breaking)
 When multiple events achieve the same maximum similarity score, the system uses a disambiguation strategy:
 
 ```python
-# Example: Query "Grand Prix" matches multiple events
+# Example: the query "practice" is a substring of all three elements
 reference = [
-    ["Monaco Grand Prix", "Monaco"],
-    ["British Grand Prix", "Silverstone"]
+    ["practice1", "fp1", "practice"],
+    ["practice2", "fp2", "practice"],
+    ["practice3", "fp3", "practice"],
 ]
 
-# Both have "Grand Prix" with ratio=100
-# Disambiguate by zeroing out common features
-
-# Count feature occurrences across all events
-feature_counts = {"Grand Prix": 2, "Monaco": 1, "Silverstone": 1}
-
-# Zero out features that appear in multiple events
-# This prioritizes unique features like "Monaco" and "Silverstone"
+# Each element scores 100 on its "practice" feature: a three-way tie.
+# All three tied elements share "practice", so that feature is not compared.
+# The features that only one tied element has ("practice1", "fp1", ...) decide.
+# Here they tie again (94.1 each), so element 0 wins.
 ```
 
 **Disambiguation rules:**
-1. Identify all features that appear in multiple events
-2. Zero out similarity scores for these common features
-3. Re-evaluate maximum scores using only unique features
-4. If still tied, return first match (deterministic ordering)
+1. Find the elements that hold the top score (the tied elements). An element outside the tie never wins.
+2. Count how many tied elements have each feature string.
+3. Score each tied element on the features that no other tied element has. Use the Stage 3 scores.
+4. Return the tied element with the highest such score.
+5. If still tied, return the tied element with the lowest index (deterministic ordering).
+
+This tie-break fixes typos such as "Bahrein". In 2025, the query ties the Bahrain Grand Prix and the pre-season testing event, which share the location and country. The official event names then decide, and "Bahrein" resolves to the Bahrain Grand Prix.
 
 ### Session Name Matching: Dictionary-Based Lookup
 
@@ -194,6 +212,8 @@ Session names use a fundamentally different approach—**deterministic dictionar
 
 #### Dictionary Structure
 
+`tif1/events.py` defines these tables for `Event.get_session_name()`. `get_session()` uses the same mappings from `tif1/core.py` (`SESSION_MAPPING` and `_CANONICAL_SESSION_NAMES`).
+
 ```python
 # Canonical session types
 _SESSION_TYPES = (
@@ -202,7 +222,7 @@ _SESSION_TYPES = (
     "Sprint Qualifying", "Race"
 )
 
-# Abbreviation mappings (exact match required)
+# Abbreviation mappings (looked up with the input in uppercase)
 _SESSION_TYPE_ABBREVIATIONS = {
     "FP1": "Practice 1",
     "FP2": "Practice 2",
@@ -214,48 +234,48 @@ _SESSION_TYPE_ABBREVIATIONS = {
     "R": "Race",
 }
 
-# Case-insensitive full name lookup
-_SESSION_TYPES_BY_CASEFOLD = {
-    "practice 1": "Practice 1",
-    "practice 2": "Practice 2",
-    # ... etc
-}
+# Case-insensitive full name lookup ({"practice 1": "Practice 1", ...})
+_SESSION_TYPES_BY_CASEFOLD = {session.casefold(): session for session in _SESSION_TYPES}
 ```
 
 #### Lookup Algorithm
 
 ```python
-def resolve_session_name(identifier: str) -> str:
-    # Step 1: Try case-insensitive full name match
-    canonical = _SESSION_TYPES_BY_CASEFOLD.get(identifier.casefold())
-    if canonical:
-        return canonical
+def resolve_session_name(identifier: str, available_sessions: list[str]) -> str:
+    """Simplified from get_session() in tif1/core.py."""
+    key = identifier.strip()
 
-    # Step 2: Try abbreviation match (case-sensitive uppercase)
-    canonical = _SESSION_TYPE_ABBREVIATIONS.get(identifier.upper())
-    if canonical:
-        return canonical
+    # Step 1: Try abbreviation match (case-insensitive: the input is upper-cased)
+    canonical = _SESSION_TYPE_ABBREVIATIONS.get(key.upper())
 
-    # Step 3: No match - raise error
-    raise ValueError(f"Invalid session type '{identifier}'")
+    # Step 2: Try full name match (case-insensitive, extra spaces ignored)
+    if canonical is None:
+        canonical = _SESSION_TYPES_BY_CASEFOLD.get(" ".join(key.casefold().split()), identifier)
+
+    # Step 3: The event must have the session - raise error
+    if canonical not in available_sessions:
+        raise ValueError(f"Session '{canonical}' does not exist for this event")
+    return canonical
 ```
+
+`Event.get_session_name()` tries the full name first and the abbreviation second. For an unknown name, its error message is `Invalid session type '...'`.
 
 **Performance characteristics:**
 - O(1) dictionary lookup (hash table)
-- Typical execution: &lt;0.1ms
-- Zero false positives or fuzzy matches
+- Typical execution: about 0.001ms
+- No fuzzy matches: an unknown name raises `ValueError`
 - Deterministic and predictable
 
 ### Architectural Rationale
 
-The hybrid approach (fuzzy for events, dictionary for sessions) was chosen based on empirical usage patterns:
+The hybrid approach (fuzzy for events, dictionary for sessions) follows from these differences:
 
 | Aspect | Event Names | Session Names |
 |--------|-------------|---------------|
-| **Variability** | High (24+ per year, changing names) | Low (8 fixed types) |
+| **Variability** | High (about 20-24 per year, changing names) | Low (8 fixed types) |
 | **User Input** | Diverse (location, circuit, country) | Standardized (FP1, Q, R) |
 | **Typo Tolerance** | Critical (long names, international) | Less critical (short abbreviations) |
-| **Performance** | 0.5-0.8ms acceptable | Must be &lt;0.1ms (tight loops) |
+| **Performance** | About 0.1-0.3ms | About 0.001ms |
 | **Ambiguity** | Common (multiple "Grand Prix") | Rare (distinct abbreviations) |
 
 This architecture serves both use cases and keeps the user experience simple.
@@ -282,12 +302,11 @@ The search string to match against the reference data. This represents the user'
 
 **Examples:**
 - `"Monaco"` - Location name
-- `"Q"` - Session abbreviation
 - `"Spa-Francorchamps"` - Circuit name
 - `"british grand prix"` - Full event name
 - `"Monac"` - Typo/partial name
 
-**Preprocessing:** The query undergoes normalization (casefold + space removal) before matching, so case and whitespace are irrelevant.
+**Preprocessing:** The query undergoes normalization (casefold + space removal) before matching, so case and spaces are irrelevant.
 
 #### `reference: list[list[str]]`
 A list of lists where each inner list represents one matchable element (for example, one event). Each inner list contains multiple "feature strings" that describe that element.
@@ -306,7 +325,7 @@ reference = [
 ]
 ```
 
-**Design rationale:** The multi-feature approach allows each event to be described through multiple lenses (official name, location, country, circuit). This increases match success rates. Users do not need to know which descriptor to use.
+**Design rationale:** The multi-feature approach allows each event to be described through multiple lenses. `tif1` uses the location, country, event name, and official name of each event. This increases match success rates. Users do not need to know which descriptor to use.
 
 ### Return Value
 
@@ -317,6 +336,8 @@ The zero-based index of the best matching element in the reference list.
 
 **Example:**
 ```python
+from tif1.fuzzy import fuzzy_matcher
+
 reference = [
     ["Monaco Grand Prix", "Monaco"],
     ["British Grand Prix", "Silverstone"],
@@ -327,10 +348,14 @@ index, exact = fuzzy_matcher("Silverstone", reference)
 # index = 1 (British Grand Prix is at index 1)
 ```
 
+<Note>
+  `fuzzy_matcher()` changes `reference` in place: it normalizes every feature string and pads short feature lists with `""`. Keep a copy of the display names before the call, or pass `copy.deepcopy(reference)`.
+</Note>
+
 #### `exact: bool`
 A boolean flag indicating the match quality:
 
-- `True`: The query was an exact substring of exactly one feature string in exactly one element. This indicates high confidence—the user's input unambiguously identifies a single event.
+- `True`: The query was a substring of at least one feature string in exactly one element. This indicates high confidence—the user's input unambiguously identifies a single event. A partial name such as `"monac"` is a substring of `"monaco"`, so it also gives `True`.
 
 - `False`: Fuzzy ratio matching was used because either:
   - Zero substring matches were found (typo or very partial name)
@@ -339,16 +364,37 @@ A boolean flag indicating the match quality:
 **Usage:** Applications can use this flag to provide user feedback, logging, or validation:
 
 ```python
-index, exact = fuzzy_matcher("Monac", reference)
+import logging
+
+from tif1.fuzzy import fuzzy_matcher
+
+logger = logging.getLogger(__name__)
+
+reference = [
+    ["Monaco Grand Prix", "Monaco"],
+    ["British Grand Prix", "Silverstone"],
+]
+names = [features[0] for features in reference]  # before the in-place normalization
+
+query = "Monaoc"  # Transposed letters: not a substring of any feature
+index, exact = fuzzy_matcher(query, reference)
 if not exact:
-    resolved_name = reference[index][0]
+    resolved_name = names[index]
     logger.warning(f"Fuzzy match: '{query}' → '{resolved_name}'")
     # Optionally prompt user for confirmation
 ```
 
 ### Matching Algorithm (Detailed)
 
-The function implements a four-stage pipeline:
+The function implements a four-stage pipeline. The blocks in this section run the steps one by one on this input:
+
+```python
+query = "Monaoc"
+reference = [
+    ["Monaco Grand Prix", "Monaco"],
+    ["British Grand Prix", "Silverstone"],
+]
+```
 
 #### Stage 1: Normalization
 
@@ -360,13 +406,19 @@ query = query.casefold().replace(" ", "")
 for i in range(len(reference)):
     for j in range(len(reference[i])):
         reference[i][j] = reference[i][j].casefold().replace(" ", "")
+
+# Pad shorter feature lists with "" (scores 0, never a substring hit)
+# (an empty reference makes fuzzy_matcher() return (0, False) here)
+width = max((len(features) for features in reference), default=0)
+for features in reference:
+    features.extend([""] * (width - len(features)))
 ```
 
-**Why casefold?** Unlike `lower()`, `casefold()` is Unicode-aware and handles international characters correctly:
+**Why casefold?** Unlike `lower()`, `casefold()` applies the full Unicode case folding, for example German ß becomes "ss":
 ```python
 "STRASBOURG".lower() == "strasbourg"  # True
-"STRAẞE".lower() == "straße"  # False (German ß)
-"STRAẞE".casefold() == "straße"  # True
+"Straße".lower() == "STRASSE".lower()  # False: "straße" != "strasse"
+"Straße".casefold() == "STRASSE".casefold()  # True: both give "strasse"
 ```
 
 #### Stage 2: Exact Substring Matching
@@ -374,12 +426,12 @@ for i in range(len(reference)):
 ```python
 full_partial_match_indices = []
 for i, feature_strings in enumerate(reference):
-    if any(query in val for val in feature_strings):
+    if any(val and query in val for val in feature_strings):
         full_partial_match_indices.append(i)
 
-# If exactly one element contains the query as substring, return it
-if len(full_partial_match_indices) == 1:
-    return full_partial_match_indices[0], True
+# If exactly one element contains the query as substring,
+# fuzzy_matcher() returns (full_partial_match_indices[0], True) here
+print(full_partial_match_indices)  # []: "monaoc" is not a substring, so go to Stage 3
 ```
 
 **Examples:**
@@ -402,17 +454,17 @@ reference = [
 ]
 # "grand" appears in both elements
 # Falls through to fuzzy matching
-# Returns: (0 or 1, False) depending on fuzzy scores
+# Returns: (0, False) - "monacograndprix" scores 50, "britishgrandprix" 47
 
 # Example 3: No substring matches (typo)
-query = "monac"
+query = "monaoc"
 reference = [
     ["monacograndprix", "monaco"],
     ["britishgrandprix", "silverstone"]
 ]
-# "monac" is not a substring of any feature
+# "monaoc" is not a substring of any feature
 # Falls through to fuzzy matching
-# Returns: (0, False) - closest match via Levenshtein
+# Returns: (0, False) - closest match by fuzz.ratio()
 ```
 
 #### Stage 3: Fuzzy Ratio Matching
@@ -421,59 +473,77 @@ reference = [
 import numpy as np
 from rapidfuzz import fuzz
 
-# Create numpy array for vectorized operations
-reference_arr = np.array(reference)
-ratios = np.zeros_like(reference_arr, dtype=int)
-
 # Determine which elements to score
 if full_partial_match_indices:
     # If we had multiple substring matches, only score those
     candidate_indices = full_partial_match_indices
 else:
     # If we had zero substring matches, score all elements
-    candidate_indices = range(len(reference_arr))
+    candidate_indices = range(len(reference))
 
-# Compute Levenshtein ratio for each feature of each candidate
+# Compute fuzz.ratio() for each feature of each candidate
+# (a float array: 47.6 stays 47.6; padding "" scores 0)
+ratios = np.zeros((len(reference), width), dtype=float)
 for i in candidate_indices:
-    feature_strings = reference_arr[i]
-    ratios[i] = [fuzz.ratio(val, query) for val in feature_strings]
+    ratios[i] = [fuzz.ratio(val, query) if val else 0.0 for val in reference[i]]
+
+print(np.round(ratios, 1).tolist())  # [[47.6, 83.3], [9.1, 23.5]]
 ```
 
 **Levenshtein Distance Explained:**
 
-The Levenshtein distance measures the minimum number of single-character edits (insertions, deletions, substitutions) required to transform one string into another. RapidFuzz's `fuzz.ratio()` normalizes this to a 0-100 scale:
+The Levenshtein distance measures the minimum number of single-character edits (insertions, deletions, substitutions) required to transform one string into another. RapidFuzz's `fuzz.ratio()` uses a close relative, the Indel distance, and scales it to 0-100:
 
 ```python
+from rapidfuzz import fuzz
+
 fuzz.ratio("monaco", "monaco")    # 100 (identical)
-fuzz.ratio("monaco", "monac")     # 91  (1 deletion)
-fuzz.ratio("monaco", "monaca")    # 91  (1 substitution)
-fuzz.ratio("monaco", "silverstone")  # 18  (very different)
+fuzz.ratio("monaco", "monac")     # 90.9 (1 deletion)
+fuzz.ratio("monaco", "monaca")    # 83.3 (1 substitution = 1 deletion + 1 insertion)
+fuzz.ratio("monaco", "silverstone")  # 23.5 (very different)
 ```
 
-**Formula:**
+**Formula:** `fuzz.ratio()` is the normalized Indel similarity. The Indel distance counts insertions and deletions only, so a substitution counts as 2:
 ```python
-ratio = 100 * (1 - (levenshtein_distance / max(len(s1), len(s2))))
+from rapidfuzz.distance import Indel
+
+s1, s2 = "monaco", "silverstone"
+indel_distance = Indel.distance(s1, s2)  # 13
+ratio = 100 * (1 - indel_distance / (len(s1) + len(s2)))
+print(round(ratio, 1), round(fuzz.ratio(s1, s2), 1))  # 23.5 23.5
 ```
 
 #### Stage 4: Disambiguation
 
 ```python
-max_ratio = np.max(ratios)
-max_row_ratios = np.max(ratios, axis=1)
+max_ratio = float(ratios.max())
+tied = np.flatnonzero(ratios.max(axis=1) == max_ratio)
 
-# If multiple elements have the same max ratio, disambiguate
-if np.sum(max_row_ratios == max_ratio) > 1:
-    # Count how many times each feature appears across all elements
-    unique, counts = np.unique(reference_arr, return_counts=True)
-    count_dict = dict(zip(unique, counts))
+if len(tied) == 1:
+    result = int(tied[0])
+else:
+    # Several elements share the best score. Count how many tied
+    # elements have each feature: a shared feature cannot tell them apart.
+    rows_with_feature = {}
+    for i in tied:
+        for val in set(reference[i]):
+            if val:
+                rows_with_feature[val] = rows_with_feature.get(val, 0) + 1
 
-    # Zero out scores for features that appear in multiple elements
-    mask = (np.vectorize(count_dict.get)(reference_arr) > 1) & (ratios == max_ratio)
-    ratios[mask] = 0
+    # Score each tied element on the features only it has
+    tie_scores = [
+        max(
+            (ratio for val, ratio in zip(reference[i], ratios[i])
+             if val and rows_with_feature[val] == 1),
+            default=0.0,
+        )
+        for i in tied
+    ]
+    # argmax returns the first (lowest-index) element on a further tie
+    result = int(tied[int(np.argmax(tie_scores))])
 
-# Return element with highest remaining score
-max_index = np.argmax(ratios) // ratios.shape[1]
-return int(max_index), False
+# fuzzy_matcher() returns (result, False)
+print(result, False)  # 0 False: "monaco" scores 83.3
 ```
 
 **Disambiguation Example:**
@@ -485,23 +555,17 @@ reference = [
     ["britishgrandprix", "silverstone"]
 ]
 
-# Initial ratios:
-# Element 0: [100, 50]  (max=100 for "monacograndprix")
-# Element 1: [100, 50]  (max=100 for "britishgrandprix")
+# "grandprix" is a substring of both elements, so both are scored
+# Ratios (rounded):
+# Element 0: [75.0, 13.3]  (max=75.0 for "monacograndprix")
+# Element 1: [72.0, 20.0]  (max=72.0 for "britishgrandprix")
 
-# Both have max_ratio=100 (tie!)
-
-# Count features:
-# "monacograndprix": 1 occurrence
-# "britishgrandprix": 1 occurrence
-# "monaco": 1 occurrence
-# "silverstone": 1 occurrence
-
-# No features appear multiple times, so no disambiguation needed
-# Returns first match (element 0) by argmax behavior
+# No tie: element 0 wins (75 > 72) and the disambiguation step does not run.
+# With a tie, the two elements share no feature, so each would be scored
+# on all its features, and the higher one would win.
 ```
 
-**Real disambiguation scenario:**
+**Substring hits in several elements:**
 
 ```python
 query = "grand"
@@ -519,13 +583,13 @@ reference = [
 # Substring matching finds "grand" in both "monacograndprix" and "britishgrandprix"
 # Falls to fuzzy matching
 
-# Fuzzy ratios:
+# Fuzzy ratios (rounded):
 # Element 0: [fuzz.ratio("monacograndprix", "grand"), fuzz.ratio("monaco", "grand")]
-#          = [35, 27]
+#          = [50.0, 18.2]
 # Element 1: [fuzz.ratio("britishgrandprix", "grand"), fuzz.ratio("silverstone", "grand")]
-#          = [31, 18]
+#          = [47.6, 25.0]
 
-# Element 0 wins with score 35
+# Element 0 wins with score 50
 # Returns: (0, False)
 ```
 
@@ -547,13 +611,13 @@ reference = [
 index, exact = fuzzy_matcher("Monaco", reference)
 print(f"Index: {index}, Exact: {exact}")
 # Output: Index: 0, Exact: True
-# Explanation: "monaco" is substring of "monaco grand prix" and exact match of "monaco"
+# Explanation: "monaco" is substring of "monacograndprix" and exact match of "monaco"
 
 # Fuzzy match (typo)
-index, exact = fuzzy_matcher("Monac", reference)
+index, exact = fuzzy_matcher("Monaoc", reference)
 print(f"Index: {index}, Exact: {exact}")
 # Output: Index: 0, Exact: False
-# Explanation: No exact substring, but "monac" is very similar to "monaco"
+# Explanation: No exact substring, but "monaoc" is very similar to "monaco"
 
 # Circuit name match
 index, exact = fuzzy_matcher("Silverstone", reference)
@@ -593,6 +657,9 @@ reference = [
     ["Italian Grand Prix", "Italy", "Monza", "Autodromo Nazionale di Monza"]
 ]
 
+# fuzzy_matcher() normalizes `reference` in place, so keep the display names first
+names = [features[0] for features in reference]
+
 # Test various user inputs
 test_queries = [
     "Belgium",           # Country name
@@ -604,7 +671,7 @@ test_queries = [
 
 for query in test_queries:
     index, exact = fuzzy_matcher(query, reference)
-    event_name = reference[index][0]
+    event_name = names[index]
     match_type = "exact" if exact else "fuzzy"
     print(f"'{query}' → '{event_name}' ({match_type})")
 
@@ -620,17 +687,17 @@ for query in test_queries:
 
 #### Time Complexity
 
-- **Best case (exact substring, single match):** O(n×m) where n=elements, m=features per element
-  - Typical: 0.1-0.3ms for 24 events with 4 features each
+- **Best case (exact substring, single match):** O(n×m) substring checks where n=elements, m=features per element
+  - Measured: about 0.01-0.03ms for 24 events with 4 features each
 
-- **Worst case (fuzzy matching all elements):** O(n×m×k) where k=average string length
-  - Typical: 0.5-0.8ms for 24 events with 4 features each
-  - RapidFuzz's C++ implementation provides 10-100x speedup over pure Python
+- **Worst case (fuzzy matching all elements):** O(n×m) `fuzz.ratio()` calls
+  - Measured: about 0.07-0.09ms for 24 events with 4 features each
+  - RapidFuzz is about 70 times faster than the pure Python Levenshtein function in "Performance Comparison with Alternatives"
 
 #### Space Complexity
 
 - O(n×m) for the reference array and ratios matrix
-- Typical: &lt;10KB for 24 events with 4 features each
+- The string array stores every feature at the length of the longest one. For the 2024 schedule (25 events, 4 features, up to 54 characters), that is about 22KB
 
 #### Benchmark Results
 
@@ -650,7 +717,7 @@ for _ in range(1000):
     fuzzy_matcher("Location 5", reference)
 elapsed = (time.perf_counter() - start) / 1000
 print(f"Exact substring: {elapsed*1000:.3f}ms")
-# Output: Exact substring: 0.250ms
+# Output (one Linux workstation, Python 3.14): Exact substring: 0.022ms
 
 # Benchmark fuzzy matching
 start = time.perf_counter()
@@ -658,45 +725,59 @@ for _ in range(1000):
     fuzzy_matcher("Locaton 5", reference)  # Typo forces fuzzy
 elapsed = (time.perf_counter() - start) / 1000
 print(f"Fuzzy matching: {elapsed*1000:.3f}ms")
-# Output: Fuzzy matching: 0.680ms
+# Output: Fuzzy matching: 0.078ms
 ```
 
 ### Integration with tif1
 
-The `fuzzy_matcher` function is used internally by `events.py` to resolve event names:
+`events.py` resolves event names with `_fuzzy_match`, a private variant of `fuzzy_matcher` that also returns the best score (0-100):
 
 ```python
-# From events.py
-def _find_event_by_name(year: int, event_names: list[str], name: str, exact_match: bool = False):
+# Simplified from tif1/events.py
+def _find_event_by_name(year, event_names, name, exact_match=False):
     if exact_match:
-        # Skip fuzzy matching, use exact string comparison
-        query = name.lower()
+        # No aliases, no fuzzy matching: case-insensitive comparison only
         for event_name in event_names:
-            if event_name.lower() == query:
+            if event_name.lower() == name.lower():
                 return create_event(year, event_name)
-        return None
+        return None  # get_event_by_name() raises EventNotFoundError
 
-    # Build reference with multiple features per event
-    reference = []
+    # 1. Exact EventName (case-insensitive)
     for event_name in event_names:
-        metadata = get_event_metadata(year, event_name)
-        features = [
-            metadata.get("Location", ""),
-            metadata.get("Country", ""),
-            remove_common_words(metadata.get("EventName", "")),
-            remove_common_words(metadata.get("OfficialEventName", ""))
-        ]
-        reference.append(features)
+        if event_name.casefold() == name.casefold():
+            return create_event(year, event_name)
 
-    # Use fuzzy matcher
-    index, exact = fuzzy_matcher(name, reference)
+    # 2. Alias table (EVENT_NAME_ALIASES): "Spa", "Monza", "Interlagos", "USA"
+    targets = EVENT_NAME_ALIASES.get(alias_key(name), ())
+    if targets:
+        for target in targets:
+            if target in event_names:
+                return create_event(year, target)
+        return None  # get_event_by_name() raises EventNotInSeasonError
+
+    # 3. Fuzzy matching on Location, Country, EventName, and OfficialEventName
+    reference = [
+        [
+            metadata["Location"].casefold(),
+            metadata["Country"].casefold(),
+            remove_common_words(event_name),
+            remove_common_words(metadata["OfficialEventName"]),
+        ]
+        for event_name, metadata in schedule_metadata(year, event_names)
+    ]
+    index, exact, score = _fuzzy_match(remove_common_words(name), reference)
     matched_event_name = event_names[index]
 
+    if score < 70:
+        return None  # get_event_by_name() raises EventNotFoundError
+
     if not exact:
-        logger.warning(f"Fuzzy match: '{name}' → '{matched_event_name}'")
+        logger.warning(f"Correcting user input '{name}' to '{matched_event_name}'")
 
     return create_event(year, matched_event_name)
 ```
+
+`remove_common_words()` drops "formula 1", the year, "grand prix", and "gp" from a name. The score floor of 70 lives here, in event resolution. `fuzzy_matcher()` applies no floor and always returns the best index.
 
 ### Best Practices
 
@@ -719,40 +800,52 @@ reference = [
 In production systems, check the `exact` flag and handle fuzzy matches appropriately:
 
 ```python
+from tif1.fuzzy import fuzzy_matcher
+
+user_input = "Monaoc"
+reference = [["Monaco Grand Prix", "Monaco"], ["British Grand Prix", "Silverstone"]]
+names = [features[0] for features in reference]
+
 index, exact = fuzzy_matcher(user_input, reference)
 if not exact:
-    resolved = reference[index][0]
-    # Prompt user for confirmation
-    confirmed = input(f"Did you mean '{resolved}'? (y/n): ")
-    if confirmed.lower() != 'y':
-        # Handle rejection
-        pass
+    resolved = names[index]
+    # Ask the user to confirm before the resolved name is used
+    print(f"Did you mean '{resolved}'?")
 ```
 
 #### 3. Log Fuzzy Matches
 Track fuzzy matches for analytics and debugging:
 
 ```python
+import logging
+
+from tif1.fuzzy import fuzzy_matcher
+
+logger = logging.getLogger(__name__)
+
+query = "Silverstne"
+reference = [["Monaco Grand Prix", "Monaco"], ["British Grand Prix", "Silverstone"]]
+names = [features[0] for features in reference]
+
 index, exact = fuzzy_matcher(query, reference)
 if not exact:
-    logger.info(f"Fuzzy match: query='{query}', result='{reference[index][0]}'")
+    logger.info(f"Fuzzy match: query='{query}', result='{names[index]}'")
 ```
 
-#### 4. Preprocess Reference Data
-Normalize and cache reference data to avoid repeated processing:
+#### 4. Pass a Copy of Shared Reference Data
+`fuzzy_matcher()` normalizes and pads the reference lists in place. Pass a copy when the original strings are still needed:
 
 ```python
-# Bad: Normalize on every call
-for query in user_queries:
-    fuzzy_matcher(query, raw_reference)  # Normalizes reference each time
+import copy
 
-# Good: Normalize once
-normalized_reference = preprocess_reference(raw_reference)
-for query in user_queries:
-    fuzzy_matcher(query, normalized_reference)
+from tif1.fuzzy import fuzzy_matcher
+
+raw_reference = [["Monaco Grand Prix", "Monaco"], ["British GP"]]
+index, exact = fuzzy_matcher("Monaco", copy.deepcopy(raw_reference))
+print(raw_reference)  # [['Monaco Grand Prix', 'Monaco'], ['British GP']] (unchanged)
 ```
 
-Note: The current implementation normalizes in-place, so this optimization would require a modified version of the function.
+A pre-normalized reference does not save time: `fuzzy_matcher()` normalizes the reference again on every call.
 
 ---
 
@@ -786,24 +879,20 @@ The `casefold()` method is more aggressive than `lower()` and handles Unicode ed
 
 # Greek sigma - different behavior
 "ΣΊΣΥΦΟΣ".lower()    # "σίσυφος"
-"ΣΊΣΥΦΟΣ".casefold() # "σίσυφοσ" (final sigma handled correctly)
+"ΣΊΣΥΦΟΣ".casefold() # "σίσυφοσ" (final ς folds to σ)
 
-# Turkish dotted/dotless I - different behavior
-"İSTANBUL".lower()   # "i̇stanbul" (preserves dot)
-"İSTANBUL".casefold() # "istanbul" (removes dot)
+# Turkish dotted I - same behavior: both keep the combining dot
+"İSTANBUL".lower()   # "i̇stanbul"
+"İSTANBUL".casefold() # "i̇stanbul"
 ```
 
-For Formula 1 data, this matters for international circuits and locations:
-- **Nürburgring** (German)
-- **São Paulo** (Portuguese)
-- **Montréal** (French)
-- **İstanbul** (Turkish, if F1 returns there)
+For the accented names in F1 data (Nürburgring, São Paulo, Montréal), `casefold()` and `lower()` give the same result. Neither removes accents, so the fuzzy step treats "montreal" and "montréal" as different strings. The alias lookup folds accents before the fuzzy step, so "Montréal" still resolves to the Canadian Grand Prix.
 
 #### Why Remove Spaces?
 
 Space removal maximizes match success by ignoring formatting variations:
 
-```python
+```text
 # All of these normalize to the same string
 "Monaco Grand Prix"  → "monacograndprix"
 "MonacoGrandPrix"    → "monacograndprix"
@@ -820,25 +909,18 @@ All match successfully.
 
 #### Why Preserve Special Characters?
 
-Special characters (hyphens, apostrophes, accents) are preserved because they provide disambiguation:
+Normalization removes only spaces. Hyphens, apostrophes, and accents stay:
 
-```python
-# These should be different
+```text
 "Spa-Francorchamps"  → "spa-francorchamps"
 "Spa Francorchamps"  → "spafrancorchamps"
-
-# Hyphen distinguishes them
-"spa-francorchamps" != "spafrancorchamps"
 ```
 
-Real-world examples where this matters:
-- **Spa-Francorchamps** vs **Spa Francorchamps** (hyphen is part of official name)
-- **Yas Marina** vs **Yas-Marina** (some sources use hyphen)
-- **Circuit de Barcelona-Catalunya** (hyphen in official name)
+So "spafrancorchamps" is not a substring of "spa-francorchamps". The fuzzy score of the two forms is still high (96.97). The alias table maps both forms to the Belgian Grand Prix before the fuzzy step runs.
 
 #### Normalization Examples
 
-```python
+```text
 # Event names
 "Formula 1 Rolex Belgian Grand Prix 2024" → "formula1rolexbelgiangrandprix2024"
 "Monaco Grand Prix"                       → "monacograndprix"
@@ -866,15 +948,7 @@ After normalization, the algorithm tries to find exact substring matches. This i
 
 #### Algorithm
 
-```python
-full_partial_match_indices = []
-for i, feature_strings in enumerate(reference):
-    if any(query in val for val in feature_strings):
-        full_partial_match_indices.append(i)
-
-if len(full_partial_match_indices) == 1:
-    return full_partial_match_indices[0], True
-```
+The code is the Stage 2 block in "Matching Algorithm (Detailed)". It collects the indices of the elements with a substring hit. If there is exactly one, it returns `(index, True)`.
 
 #### Success Criteria
 
@@ -921,28 +995,29 @@ reference = [
 
 # Result: Two elements match (ambiguous)
 # Falls through to fuzzy matching
-# Returns: (0 or 1, False) depending on fuzzy scores
+# Returns: (0, False) - "monacograndprix" scores 50, "britishgrandprix" 47
 ```
 
 #### Example 3: No Substring Matches (Typo)
 
 ```python
-query = "monac"  # Missing 'o'
+query = "monaoc"  # Transposed letters
 reference = [
     ["monacograndprix", "monaco", "montecarlo"],
     ["britishgrandprix", "silverstone", "britain"]
 ]
 
 # Check each element:
-# Element 0: "monac" in "monacograndprix"? NO
-#            "monac" in "monaco"? NO (substring must be exact)
-#            "monac" in "montecarlo"? NO
+# Element 0: "monaoc" in "monacograndprix"? NO
+#            "monaoc" in "monaco"? NO (substring must be exact)
+#            "monaoc" in "montecarlo"? NO
 
-# Element 1: "monac" in any feature? NO
+# Element 1: "monaoc" in any feature? NO
 
 # Result: Zero elements match
 # Falls through to fuzzy matching
-# Returns: (0, False) - "monac" is closest to "monaco"
+# Returns: (0, False) - "monaoc" is closest to "monaco"
+# Note: "monac" (missing 'o') IS a substring of "monaco" and returns (0, True)
 ```
 
 #### Performance Analysis
@@ -953,14 +1028,12 @@ reference = [
 - k = average feature length
 
 **Typical Performance:**
-- 24 events × 4 features × 20 chars = 1,920 substring checks
-- Modern CPUs: ~0.1-0.3ms
-
-**Optimization:** The Python `in` operator uses the Boyer-Moore-Horspool algorithm in CPython, which makes substring checks fast.
+- 24 events × 4 features = 96 substring checks over about 1,920 characters
+- Measured: about 0.01-0.03ms
 
 ### Step 3: Fuzzy Ratio Matching
 
-When exact substring matching fails, the algorithm falls back to Levenshtein distance-based similarity scoring using RapidFuzz.
+When exact substring matching fails, the algorithm falls back to edit-distance similarity scoring with RapidFuzz.
 
 #### Levenshtein Distance Fundamentals
 
@@ -972,7 +1045,7 @@ The Levenshtein distance measures the minimum number of single-character edits n
 
 #### Examples
 
-```python
+```text
 # Distance = 1 (one deletion)
 "monaco" → "monac"
 # Delete 'o' at end
@@ -985,75 +1058,54 @@ The Levenshtein distance measures the minimum number of single-character edits n
 "monaco" → "monaca"
 # Substitute 'o' → 'a' at end
 
-# Distance = 2 (two operations)
+# Distance = 3 (three operations)
 "monaco" → "monza"
-# Substitute 'c' → 'z', substitute 'o' → 'a'
+# Substitute 'a' → 'z', substitute 'c' → 'a', delete the final 'o'
 
-# Distance = 8 (many operations)
+# Distance = 10 (many operations)
 "monaco" → "silverstone"
 # Completely different strings
 ```
 
 #### RapidFuzz Ratio Calculation
 
-RapidFuzz's `fuzz.ratio()` normalizes the Levenshtein distance to a 0-100 scale:
+RapidFuzz's `fuzz.ratio()` scales the Indel distance (a Levenshtein distance without substitutions) to a 0-100 scale:
 
 ```python
 from rapidfuzz import fuzz
 
-# Formula (simplified):
-# ratio = 100 * (1 - distance / max(len(s1), len(s2)))
+# Formula (normalized Indel similarity):
+# ratio = 100 * (1 - indel_distance / (len(s1) + len(s2)))
+# The Indel distance allows insertions and deletions only (a substitution costs 2)
 
 # Identical strings
 fuzz.ratio("monaco", "monaco")  # 100
 
 # One character difference
-fuzz.ratio("monaco", "monac")   # 91
-# distance=1, max_len=6, ratio=100*(1-1/6)=83.33... → 91 (weighted)
+fuzz.ratio("monaco", "monac")   # 90.9
+# indel_distance=1, total_len=11, ratio=100*(1-1/11)=90.9
 
-# Two character difference
-fuzz.ratio("monaco", "monza")   # 67
-# distance=2, max_len=6, ratio=100*(1-2/6)=66.67
+# Three edits
+fuzz.ratio("monaco", "monza")   # 72.7
+# indel_distance=3, total_len=11, ratio=100*(1-3/11)=72.7
 
 # Completely different
-fuzz.ratio("monaco", "silverstone")  # 18
-# distance=8, max_len=11, ratio=100*(1-8/11)=27.27... → 18 (weighted)
+fuzz.ratio("monaco", "silverstone")  # 23.5
+# indel_distance=13, total_len=17, ratio=100*(1-13/17)=23.5
 ```
 
-Note: The actual RapidFuzz algorithm uses weighted Levenshtein distance with optimizations, so ratios do not exactly match the simplified formula.
+Note: `fuzz.ratio()` returns a float. The Levenshtein distances above (1, 3, 10) differ from the Indel distances that the ratio uses (1, 3, 13).
 
 #### Algorithm Implementation
 
-```python
-import numpy as np
-from rapidfuzz import fuzz
-
-# Convert reference to numpy array for vectorized operations
-reference_arr = np.array(reference)
-ratios = np.zeros_like(reference_arr, dtype=int)
-
-# Determine which elements to score
-if full_partial_match_indices:
-    # If we had multiple substring matches, only score those
-    candidate_indices = full_partial_match_indices
-else:
-    # If we had zero substring matches, score all elements
-    candidate_indices = range(len(reference_arr))
-
-# Compute fuzzy ratio for each feature of each candidate
-for i in candidate_indices:
-    feature_strings = reference_arr[i]
-    ratios[i] = [fuzz.ratio(val, query) for val in feature_strings]
-
-# Find element with highest score
-max_index = np.argmax(ratios) // ratios.shape[1]
-return int(max_index), False
-```
+The code is the Stage 3 block in "Matching Algorithm (Detailed)". The element with the highest score wins. A tie between elements goes to Stage 4.
 
 #### Detailed Example
 
 ```python
-query = "monac"  # Typo
+from rapidfuzz import fuzz
+
+query = "monaoc"  # Typo (transposed letters)
 reference = [
     ["monacograndprix", "monaco", "montecarlo"],  # Element 0
     ["britishgrandprix", "silverstone", "britain"],  # Element 1
@@ -1061,26 +1113,27 @@ reference = [
 ]
 
 # No substring matches, so score all elements
+# (comments show the integer part of each float score)
 
 # Element 0 scores:
-fuzz.ratio("monac", "monacograndprix")  # 76
-fuzz.ratio("monac", "monaco")           # 91
-fuzz.ratio("monac", "montecarlo")       # 55
-# Max score for element 0: 91
+fuzz.ratio("monaoc", "monacograndprix")  # 47
+fuzz.ratio("monaoc", "monaco")           # 83
+fuzz.ratio("monaoc", "montecarlo")       # 62
+# Max score for element 0: 83
 
 # Element 1 scores:
-fuzz.ratio("monac", "britishgrandprix")  # 29
-fuzz.ratio("monac", "silverstone")       # 27
-fuzz.ratio("monac", "britain")           # 27
-# Max score for element 1: 29
+fuzz.ratio("monaoc", "britishgrandprix")  # 9
+fuzz.ratio("monaoc", "silverstone")       # 23
+fuzz.ratio("monaoc", "britain")           # 15
+# Max score for element 1: 23
 
 # Element 2 scores:
-fuzz.ratio("monac", "italiangrandprix")  # 31
-fuzz.ratio("monac", "monza")             # 73
-fuzz.ratio("monac", "italy")             # 27
-# Max score for element 2: 73
+fuzz.ratio("monaoc", "italiangrandprix")  # 18
+fuzz.ratio("monaoc", "monza")             # 72
+fuzz.ratio("monaoc", "italy")             # 18
+# Max score for element 2: 72
 
-# Overall max: 91 (element 0, feature "monaco")
+# Overall max: 83 (element 0, feature "monaco")
 # Returns: (0, False)
 ```
 
@@ -1112,7 +1165,7 @@ By scoring all features and taking the maximum, the algorithm finds the best mat
 
 ### Step 4: Disambiguation
 
-When multiple elements achieve the same maximum similarity score, the algorithm uses a disambiguation strategy. The strategy prioritizes unique features over common features.
+When multiple elements achieve the same maximum similarity score, the algorithm uses a disambiguation strategy. The strategy compares only the tied elements, on the features that they do not share.
 
 #### The Disambiguation Problem
 
@@ -1125,41 +1178,23 @@ reference = [
     ["britishgrandprix", "silverstone"]
 ]
 
-# Fuzzy scores:
-# Element 0: fuzz.ratio("grandprix", "monacograndprix") = 64
-#            fuzz.ratio("grandprix", "monaco") = 27
-#            Max: 64
+# Fuzzy scores (integer part):
+# Element 0: fuzz.ratio("grandprix", "monacograndprix") = 75
+#            fuzz.ratio("grandprix", "monaco") = 13
+#            Max: 75
 
-# Element 1: fuzz.ratio("grandprix", "britishgrandprix") = 60
-#            fuzz.ratio("grandprix", "silverstone") = 18
-#            Max: 60
+# Element 1: fuzz.ratio("grandprix", "britishgrandprix") = 72
+#            fuzz.ratio("grandprix", "silverstone") = 20
+#            Max: 72
 
-# Element 0 wins (64 > 60), but what if they were tied?
+# Element 0 wins (75 > 72), but what if they were tied?
 ```
 
 If both elements had the same max score, the algorithm needs a tie-breaker.
 
 #### Disambiguation Algorithm
 
-```python
-max_ratio = np.max(ratios)
-max_row_ratios = np.max(ratios, axis=1)
-
-# Check if multiple elements have the same max ratio
-if np.sum(max_row_ratios == max_ratio) > 1:
-    # Count how many times each feature appears across all elements
-    unique, counts = np.unique(reference_arr, return_counts=True)
-    count_dict = dict(zip(unique, counts))
-
-    # Zero out scores for features that appear in multiple elements
-    # AND have the max ratio
-    mask = (np.vectorize(count_dict.get)(reference_arr) > 1) & (ratios == max_ratio)
-    ratios[mask] = 0
-
-# Return element with highest remaining score
-max_index = np.argmax(ratios) // ratios.shape[1]
-return int(max_index), False
-```
+The code is the Stage 4 block in "Matching Algorithm (Detailed)". Only the elements that share the top score stay in the comparison. Each of them is scored on the features that no other tied element has. The highest of these scores decides. An element outside the tie never wins.
 
 #### Disambiguation Example
 
@@ -1179,28 +1214,27 @@ reference = [
 # Substring matching finds "grand" in both elements
 # Falls to fuzzy matching with candidate_indices = [0, 1]
 
-# Fuzzy scores:
+# Fuzzy scores (integer part):
 # Element 0:
-fuzz.ratio("grand", "monacograndprix")  # 35
-fuzz.ratio("grand", "monaco")           # 27
-# Max: 35
+fuzz.ratio("grand", "monacograndprix")  # 50
+fuzz.ratio("grand", "monaco")           # 18
+# Max: 50
 
 # Element 1:
-fuzz.ratio("grand", "britishgrandprix")  # 31
-fuzz.ratio("grand", "silverstone")       # 18
-# Max: 31
+fuzz.ratio("grand", "britishgrandprix")  # 47
+fuzz.ratio("grand", "silverstone")       # 25
+# Max: 47
 
-# Element 0 wins (35 > 31)
+# Element 0 wins (50 > 47)
 # Returns: (0, False)
 
-# But what if both had score 35?
+# But what if both had score 50?
 # Disambiguation would:
-# 1. Count feature occurrences:
+# 1. Count how many tied elements have each feature:
 #    "monacograndprix": 1, "monaco": 1
 #    "britishgrandprix": 1, "silverstone": 1
-# 2. No features appear multiple times
-# 3. No disambiguation needed
-# 4. Return first match (element 0) by argmax behavior
+# 2. No feature is shared, so each element keeps its best score (50 each)
+# 3. Still tied: return the first tied element (element 0)
 ```
 
 #### Real Disambiguation Scenario
@@ -1226,44 +1260,44 @@ reference = [
 # Fuzzy scores:
 # Element 0:
 fuzz.ratio("practice", "practice1")  # 94
-fuzz.ratio("practice", "fp1")        # 27
+fuzz.ratio("practice", "fp1")        # 18
 fuzz.ratio("practice", "practice")   # 100 ← Max
 # Max: 100
 
 # Element 1:
 fuzz.ratio("practice", "practice2")  # 94
-fuzz.ratio("practice", "fp2")        # 27
+fuzz.ratio("practice", "fp2")        # 18
 fuzz.ratio("practice", "practice")   # 100 ← Max
 # Max: 100
 
 # Element 2:
 fuzz.ratio("practice", "practice3")  # 94
-fuzz.ratio("practice", "fp3")        # 27
+fuzz.ratio("practice", "fp3")        # 18
 fuzz.ratio("practice", "practice")   # 100 ← Max
 # Max: 100
 
 # All three have max_ratio=100 (tie!)
 
 # Disambiguation:
-# 1. Count feature occurrences:
+# 1. Count how many tied elements have each feature:
 #    "practice1": 1, "fp1": 1, "practice": 3 ← Appears in all three!
 #    "practice2": 1, "fp2": 1, "practice": 3
 #    "practice3": 1, "fp3": 1, "practice": 3
 
-# 2. Zero out "practice" scores (count > 1 and ratio == 100):
-#    Element 0: [94, 27, 0]  Max: 94
-#    Element 1: [94, 27, 0]  Max: 94
-#    Element 2: [94, 27, 0]  Max: 94
+# 2. Score each tied element on its unshared features only:
+#    Element 0: "practice1" 94, "fp1" 18  Max: 94
+#    Element 1: "practice2" 94, "fp2" 18  Max: 94
+#    Element 2: "practice3" 94, "fp3" 18  Max: 94
 
 # 3. Still tied! Return first match (element 0)
 # Returns: (0, False)
 ```
 
-This disambiguation strategy ensures that common terms like "Grand Prix" or "Practice" do not dominate the matching. Unique features like "Monaco" or "FP1" can differentiate elements.
+This disambiguation strategy stops a feature that several tied elements share (here "practice") from deciding the match. The features that only one tied element has then decide.
 
-#### Edge Case: All Features Common
+#### Edge Case: All Top Features Common
 
-If all features appear in multiple elements, disambiguation has no effect:
+If every top-scoring feature is shared, disambiguation leaves all of them out. The next-best features then decide:
 
 ```python
 query = "gp"
@@ -1272,13 +1306,13 @@ reference = [
     ["british gp", "gp"]
 ]
 
-# All features with max ratio are common
-# Disambiguation zeros them all out
-# argmax returns first element (0) by default
+# After normalization: [["monacogp", "gp"], ["britishgp", "gp"]]
+# "gp" scores 100 in both elements (tie), and both tied elements have it, so it is left out
+# Remaining scores: "monacogp" 40, "britishgp" 36
 # Returns: (0, False)
 ```
 
-This is acceptable behavior—when the query is genuinely ambiguous, returning the first match is a reasonable default.
+If no tied element has an unshared feature with a score above 0, `argmax` returns the first tied element.
 
 ### Performance Optimization Techniques
 
@@ -1289,11 +1323,11 @@ The algorithm checks for exact substring matches before fuzzy matching, providin
 ```python
 # Fast path (exact substring)
 query = "monaco"
-# Execution: 0.2ms
+# Execution: about 0.01-0.02ms
 
 # Slow path (fuzzy matching)
-query = "monac"
-# Execution: 0.7ms
+query = "monaoc"
+# Execution: about 0.07-0.09ms
 ```
 
 #### 2. Candidate Filtering
@@ -1302,15 +1336,18 @@ When multiple substring matches are found, only those candidates are scored in f
 
 ```python
 # Without filtering: Score all 24 events
-# With filtering: Score only 2-3 events that matched substring
-# Speedup: 8-12x
+# With filtering: Score only the events that matched the substring
 ```
 
 #### 3. NumPy Vectorization
 
-Using NumPy arrays enables vectorized operations that are much faster than Python loops:
+Using NumPy arrays enables vectorized operations that are faster than Python loops:
 
 ```python
+import numpy as np
+
+ratios = np.zeros((24, 4), dtype=float)  # 24 events, 4 features
+
 # Python loop (slow)
 max_scores = []
 for row in ratios:
@@ -1318,17 +1355,17 @@ for row in ratios:
 
 # NumPy vectorization (fast)
 max_scores = np.max(ratios, axis=1)
-# Speedup: 10-50x for large arrays
+# Speedup: about 8x for a 24×4 array
 ```
 
 #### 4. RapidFuzz C++ Implementation
 
-RapidFuzz uses optimized C++ code with SIMD instructions, providing 10-100x speedup over pure Python Levenshtein implementations:
+RapidFuzz computes the scores in C++. It is much faster than a pure Python Levenshtein function:
 
 ```python
-# Pure Python Levenshtein: ~50-100ms for 24 events
-# RapidFuzz: ~0.5-0.8ms for 24 events
-# Speedup: 60-200x
+# Pure Python Levenshtein: about 0.007ms per call
+# RapidFuzz fuzz.ratio(): about 0.0001ms per call
+# Speedup: about 70x (see "Performance Comparison with Alternatives")
 ```
 
 ---
@@ -1339,7 +1376,7 @@ While `fuzzy_matcher` is the low-level primitive, most users interact with highe
 
 ### Event Name Resolution
 
-Event names are resolved through several high-level functions that all use fuzzy matching internally.
+Event names are resolved through several high-level functions. All of them use the same order: exact name, alias table, then fuzzy matching.
 
 #### `get_session()` - Primary Entry Point
 
@@ -1361,13 +1398,16 @@ session = tif1.get_session(2024, "belgum", "Race")  # Typo handled
 
 **How it works:**
 1. `get_session()` calls `get_event_by_name(year, event_name)`
-2. `get_event_by_name()` builds a reference list with multiple features per event:
+2. An exact `EventName` match (case-insensitive) returns at once
+3. The alias table resolves circuit, city, and country names ("Spa", "Monza", "Interlagos")
+4. Other names go to `fuzzy_matcher()` with these features per event:
    - Location (for example, "Spa-Francorchamps")
    - Country (for example, "Belgium")
-   - Event name (for example, "Belgian Grand Prix")
-   - Official name (for example, "Formula 1 Rolex Belgian Grand Prix 2024")
-3. `fuzzy_matcher()` finds the best match
-4. Returns a `Session` object for the matched event
+   - Event name without the common words (for example, "belgian")
+   - Official name without the common words (for example, "rolex belgian" from "FORMULA 1 ROLEX BELGIAN GRAND PRIX 2024")
+5. Returns a `Session` object for the matched event
+
+The common words are "formula 1", the year, "grand prix", and "gp". They are also removed from the query. `get_session()` does not load session data. `session.event_name` holds the resolved name.
 
 #### `get_event()` - Event Object Retrieval
 
@@ -1414,7 +1454,7 @@ event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=True)
 # Works - exact match (case-insensitive)
 
 event = get_event_by_name(2024, "Monaco", exact_match=True)
-# Raises ValueError - not an exact match to official name
+# Raises ValueError - "Monaco" is not an exact EventName
 ```
 
 #### `get_event_schedule()` - Season Schedule
@@ -1456,38 +1496,39 @@ session = tif1.get_session(2024, "Monaco", "fp1")
 session = tif1.get_session(2024, "Monaco", "Q")    # Qualifying
 session = tif1.get_session(2024, "Monaco", "R")    # Race
 
-# Partial names (case-insensitive)
+# Lowercase full names
 session = tif1.get_session(2024, "Monaco", "qualifying")
 session = tif1.get_session(2024, "Monaco", "race")
-session = tif1.get_session(2024, "Monaco", "sprint")
 
-# No spaces (works for some formats)
-session = tif1.get_session(2024, "Monaco", "practice1")
-session = tif1.get_session(2024, "Monaco", "sprintshootout")
+# Round number and session number (1-based position in the schedule)
+session = tif1.get_session(2024, 8, 5)  # Round 8 (Monaco), fifth session (Race)
+
+# Not accepted (ValueError): "practice1", "quali", "P1", "sprintshootout"
 ```
 
 #### Complete Session Name Mapping
 
-```python
-# Practice sessions - use FP abbreviations
-"Practice 1" ← ["FP1", "practice 1", "practice1", "PRACTICE 1"]
-"Practice 2" ← ["FP2", "practice 2", "practice2", "PRACTICE 2"]
-"Practice 3" ← ["FP3", "practice 3", "practice3", "PRACTICE 3"]
+```text
+# Abbreviations and full names are case-insensitive; no other forms.
+# get_session() also ignores leading, trailing, and repeated spaces.
+"Practice 1" ← ["FP1", "fp1", "practice 1", "PRACTICE 1"]
+"Practice 2" ← ["FP2", "fp2", "practice 2", "PRACTICE 2"]
+"Practice 3" ← ["FP3", "fp3", "practice 3", "PRACTICE 3"]
 
 # Qualifying
-"Qualifying" ← ["Q", "qualifying", "quali", "QUALIFYING"]
+"Qualifying" ← ["Q", "q", "qualifying", "QUALIFYING"]
 
-# Sprint (2021+)
-"Sprint" ← ["S", "sprint", "SPRINT"]
+# Sprint (2021 onward)
+"Sprint" ← ["S", "s", "sprint", "SPRINT"]
 
-# Sprint Shootout (2023+)
-"Sprint Shootout" ← ["SS", "sprint shootout", "sprintshootout", "SPRINT SHOOTOUT"]
+# Sprint Shootout (2023 only)
+"Sprint Shootout" ← ["SS", "ss", "sprint shootout", "SPRINT SHOOTOUT"]
 
-# Sprint Qualifying (2021-2022 only)
-"Sprint Qualifying" ← ["SQ", "sprint qualifying", "sprintqualifying", "SPRINT QUALIFYING"]
+# Sprint Qualifying (2024 onward)
+"Sprint Qualifying" ← ["SQ", "sq", "sprint qualifying", "SPRINT QUALIFYING"]
 
 # Race
-"Race" ← ["R", "race", "RACE"]
+"Race" ← ["R", "r", "race", "RACE"]
 ```
 
 #### Important Notes on Session Names
@@ -1497,34 +1538,38 @@ session = tif1.get_session(2024, "Monaco", "sprintshootout")
    # Correct
    session = tif1.get_session(2024, "Monaco", "FP1")
 
-   # Incorrect - will raise ValueError
-   session = tif1.get_session(2024, "Monaco", "P1")
+   # Incorrect - ValueError: Session 'P1' does not exist for 2024 Monaco Grand Prix.
+   # session = tif1.get_session(2024, "Monaco", "P1")
    ```
 
-2. **Sprint format changed in 2023:**
+2. **Sprint session names changed over the years:**
    ```python
-   # 2021-2022: Sprint Qualifying
-   session = tif1.get_session(2021, "British", "Sprint Qualifying")
-   session = tif1.get_session(2021, "British", "SQ")
+   # 2021-2022: the sprint session is "Sprint"
+   session = tif1.get_session(2021, "British", "Sprint")
+   session = tif1.get_session(2021, "British", "S")
 
-   # 2023+: Sprint Shootout
+   # 2023: Sprint Shootout sets the sprint grid
    session = tif1.get_session(2023, "Azerbaijan", "Sprint Shootout")
    session = tif1.get_session(2023, "Azerbaijan", "SS")
 
-   # Backward compatibility: "Sprint" works for both
-   session = tif1.get_session(2021, "British", "Sprint")  # → Sprint Qualifying
-   session = tif1.get_session(2023, "Azerbaijan", "Sprint")  # → Sprint
+   # 2024 onward: Sprint Qualifying sets the sprint grid
+   session = tif1.get_session(2024, "Austria", "Sprint Qualifying")
+   session = tif1.get_session(2024, "Austria", "SQ")
+
+   # A name that the event does not have raises ValueError, for example
+   # tif1.get_session(2021, "British", "Sprint Qualifying")
    ```
 
 3. **Session availability varies by event:**
    ```python
    # Not all events have all sessions
-   # Sprint weekends: FP1, Qualifying, Sprint Shootout, Sprint, Race
+   # Sprint weekends (2024 onward): FP1, Sprint Qualifying, Sprint, Qualifying, Race
+   # Sprint weekends (2023): FP1, Qualifying, Sprint Shootout, Sprint, Race
    # Regular weekends: FP1, FP2, FP3, Qualifying, Race
 
    # Check available sessions
    from tif1.events import get_sessions
-   sessions = get_sessions(2024, "Monaco")
+   sessions = get_sessions(2024, "Monaco")  # names resolve like get_event_by_name()
    print(sessions)
    # ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Race']
    ```
@@ -1538,28 +1583,28 @@ import tif1
 
 # Flexible, user-friendly syntax
 session = tif1.get_session(2024, "Spa", "Q")
-session.load()
+session.load(telemetry=False)
 
 # Equivalent to:
 session = tif1.get_session(2024, "Belgian Grand Prix", "Qualifying")
-session.load()
+session.load(telemetry=False)
 
 # Also equivalent to:
 session = tif1.get_session(2024, "Belgium", "qualifying")
-session.load()
+session.load(telemetry=False)
 
 # All three load the same data:
-# - Event: Belgian Grand Prix (fuzzy matched from "Spa"/"Belgium"/"Belgian Grand Prix")
+# - Event: Belgian Grand Prix ("Belgian Grand Prix" exact, "Spa"/"Belgium" from the alias table)
 # - Session: Qualifying (dictionary matched from "Q"/"qualifying"/"Qualifying")
 ```
 
 ### Event Name Variations by Circuit
 
-Here is a reference of accepted event name variations for popular circuits:
+Here is a reference of accepted event name variations for popular circuits. Each name resolves to the event in the 2024 schedule. Some full circuit titles are not in the alias table, for example "Circuit of the Americas" and "Yas Marina Circuit". The fuzzy step sends them to the wrong race. Use the short forms below:
 
 #### Monaco Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the Monaco Grand Prix:
 "Monaco", "monaco", "MONACO"
 "Monaco Grand Prix", "Monaco GP"
 "Monte Carlo", "monte carlo"
@@ -1572,7 +1617,7 @@ session = tif1.get_session(2024, "monte carlo", "Q")
 
 #### Belgian Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the Belgian Grand Prix:
 "Belgium", "belgian", "BELGIUM"
 "Belgian Grand Prix", "Belgian GP"
 "Spa", "spa", "SPA"
@@ -1586,7 +1631,7 @@ session = tif1.get_session(2024, "Belgium", "Q")
 
 #### British Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the British Grand Prix:
 "British", "britain", "BRITAIN"
 "British Grand Prix", "British GP"
 "Silverstone", "silverstone"
@@ -1599,11 +1644,10 @@ session = tif1.get_session(2024, "British", "Q")
 
 #### Italian Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the Italian Grand Prix:
 "Italy", "italian", "ITALY"
 "Italian Grand Prix", "Italian GP"
 "Monza", "monza", "MONZA"
-"Autodromo Nazionale di Monza"
 
 # Example usage:
 session = tif1.get_session(2024, "Monza", "Race")
@@ -1612,11 +1656,10 @@ session = tif1.get_session(2024, "Italy", "Q")
 
 #### Abu Dhabi Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the Abu Dhabi Grand Prix:
 "Abu Dhabi", "abu dhabi", "ABU DHABI"
 "Abu Dhabi Grand Prix", "Abu Dhabi GP"
 "Yas Marina", "yas marina"
-"Yas Marina Circuit"
 "United Arab Emirates", "UAE"
 
 # Example usage:
@@ -1626,7 +1669,7 @@ session = tif1.get_session(2024, "Yas Marina", "Q")
 
 #### Japanese Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the Japanese Grand Prix:
 "Japan", "japanese", "JAPAN"
 "Japanese Grand Prix", "Japanese GP"
 "Suzuka", "suzuka", "SUZUKA"
@@ -1639,20 +1682,21 @@ session = tif1.get_session(2024, "Japan", "Q")
 
 #### United States Grand Prix
 ```python
-# All of these work:
+# All of these resolve to the United States Grand Prix:
 "United States", "USA", "us"
 "United States Grand Prix", "US GP"
 "Austin", "austin", "AUSTIN"
-"Circuit of the Americas", "COTA"
+"COTA"
 
 # Example usage:
 session = tif1.get_session(2024, "Austin", "Race")
 session = tif1.get_session(2024, "COTA", "Q")
 ```
 
-#### Brazilian Grand Prix
+#### São Paulo Grand Prix (Brazil)
 ```python
-# All of these work:
+# All of these resolve to the São Paulo Grand Prix (2021 onward;
+# the 2018-2019 event name is "Brazilian Grand Prix"):
 "Brazil", "brazilian", "BRAZIL"
 "Brazilian Grand Prix", "Brazilian GP"
 "São Paulo", "Sao Paulo", "sao paulo"
@@ -1672,7 +1716,7 @@ import tif1
 
 # Quick exploration with minimal typing
 session = tif1.get_session(2024, "Monaco", "Q")
-session.load()
+session.load(telemetry=False)
 
 # Analyze data
 fastest_lap = session.laps.pick_fastest()
@@ -1690,12 +1734,12 @@ sessions = []
 
 for event in events:
     session = tif1.get_session(2024, event, "Race")
-    session.load()
+    session.load(telemetry=False)
     sessions.append(session)
 
 # Analyze all sessions
 for session in sessions:
-    print(f"{session.event}: {len(session.laps)} laps")
+    print(f"{session.event_name}: {len(session.laps)} laps")
 ```
 
 #### Pattern 3: User Input Handling
@@ -1708,7 +1752,7 @@ def load_user_session(year, event_name, session_name):
     """Load session with user-provided names and error handling."""
     try:
         session = tif1.get_session(year, event_name, session_name)
-        session.load()
+        session.load(telemetry=False)
         return session
     except (DataNotFoundError, ValueError) as e:
         print(f"Error: {e}")
@@ -1716,13 +1760,13 @@ def load_user_session(year, event_name, session_name):
         # Show available events
         from tif1.events import get_events
         events = get_events(year)
-        print(f"Available events: {list(events)[:5]}...")  # Show first 5
+        print(f"Available events: {events['EventName'].tolist()[:5]}...")  # Show first 5
 
         return None
 
 # Usage
-session = load_user_session(2024, "Monac", "Q")  # Typo in event name
-# Still works due to fuzzy matching
+session = load_user_session(2024, "Monaoc", "Q")  # Typo in event name
+# Still works: fuzzy matching corrects it to the Monaco Grand Prix
 ```
 
 #### Pattern 4: Validation Mode
@@ -1765,9 +1809,9 @@ def main():
 
     # Fuzzy matching makes CLI user-friendly
     session = tif1.get_session(year, event, session_name)
-    session.load()
+    session.load(telemetry=False)
 
-    print(f"Loaded: {session.event} - {session.session_name}")
+    print(f"Loaded: {session.event_name} - {session.session_name}")
     print(f"Laps: {len(session.laps)}")
 
 # Usage examples (all work):
@@ -1807,10 +1851,10 @@ event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=True)  # Works
 event = get_event_by_name(2024, "monaco grand prix", exact_match=True)  # Works (case-insensitive)
 event = get_event_by_name(2024, "MONACO GRAND PRIX", exact_match=True)  # Works (case-insensitive)
 
-# These raise ValueError in exact mode:
-event = get_event_by_name(2024, "Monaco", exact_match=True)  # Not exact official name
-event = get_event_by_name(2024, "monte carlo", exact_match=True)  # Not exact official name
-event = get_event_by_name(2024, "monac", exact_match=True)  # Typo
+# Each of these raises ValueError in exact mode:
+# get_event_by_name(2024, "Monaco", exact_match=True)  # Not an exact EventName
+# get_event_by_name(2024, "monte carlo", exact_match=True)  # Aliases are not used
+# get_event_by_name(2024, "monac", exact_match=True)  # Typo
 ```
 
 ### Exact Matching Algorithm
@@ -1899,8 +1943,8 @@ def load_event_with_confirmation(year: int, user_input: str):
             print(f"No event found for '{user_input}'")
             return None
 
-# Usage
-event = load_event_with_confirmation(2024, "Monac")
+# Usage (interactive: input() waits for an answer)
+# event = load_event_with_confirmation(2024, "Monac")
 # Output:
 # Did you mean 'Monaco Grand Prix'?
 # Continue? (y/n): y
@@ -1910,7 +1954,8 @@ event = load_event_with_confirmation(2024, "Monac")
 #### Example 3: API Endpoint Validation
 
 ```python
-from flask import Flask, jsonify, request
+# Flask is not a tif1 dependency: pip install flask
+from flask import Flask, jsonify
 from tif1.events import get_event_by_name
 
 app = Flask(__name__)
@@ -1933,7 +1978,7 @@ def get_event_api(year: int, event_name: str):
     except ValueError:
         # Provide helpful error message with available events
         from tif1.events import get_events
-        available = list(get_events(year))
+        available = get_events(year)["EventName"].tolist()
         return jsonify({
             'error': f"Event '{event_name}' not found",
             'message': 'Use exact event name (case-insensitive)',
@@ -1952,6 +1997,7 @@ def get_event_api(year: int, event_name: str):
 #### Example 4: Test Data Validation
 
 ```python
+# pytest is not a tif1 dependency: pip install pytest
 import pytest
 from tif1.events import get_event_by_name
 
@@ -2008,13 +2054,12 @@ def validate_config_file(config_path: str) -> list[str]:
 
     return errors
 
-# Example config.json:
-# {
-#   "events": [
-#     {"year": 2024, "event": "Monaco"},  # Error: not exact
-#     {"year": 2024, "event": "Monaco Grand Prix"}  # OK
-#   ]
-# }
+# Example config.json: "Monaco" is not exact, "Monaco Grand Prix" is
+with open('config.json', 'w') as f:
+    json.dump({"events": [
+        {"year": 2024, "event": "Monaco"},
+        {"year": 2024, "event": "Monaco Grand Prix"},
+    ]}, f)
 
 errors = validate_config_file('config.json')
 for error in errors:
@@ -2024,15 +2069,15 @@ for error in errors:
 
 ### Getting Official Event Names
 
-Exact matching requires the official event names. Use `get_events()` to retrieve them:
+Exact matching requires the official event names. Use `get_event_schedule()` to retrieve them:
 
 ```python
-from tif1.events import get_events
+from tif1.events import get_event_schedule
 
-# Get all official event names for a year
-events = get_events(2024)
+# Get all official event names for a year (iterating a DataFrame gives column names)
+events = get_event_schedule(2024, include_testing=False)
 print("Official event names for 2024:")
-for event in events:
+for event in events["EventName"]:
     print(f"  - {event}")
 
 # Output:
@@ -2083,37 +2128,47 @@ for event in events:
 #### 1. Use Fuzzy for User Input, Exact for Code
 
 ```python
+import tif1
+from tif1.events import get_event_by_name
+
 # User input - fuzzy matching
-user_event = input("Enter event name: ")
+user_event = "monte carlo"  # for example, the value of input("Enter event name: ")
 session = tif1.get_session(2024, user_event, "Race")  # Fuzzy
 
 # Hardcoded in code - exact matching
-from tif1.events import get_event_by_name
 event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=True)  # Exact
 ```
 
 #### 2. Validate Configuration Files
 
-```python
+```yaml
 # config.yaml
 events:
   - Monaco Grand Prix  # Exact name
   - Belgian Grand Prix  # Exact name
+```
 
-# Validation script
+```python
+from tif1.events import get_event_by_name
+
+# Validation script (config holds the parsed config.yaml)
+config = {"events": ["Monaco Grand Prix", "Belgian Grand Prix"]}
 for event_name in config['events']:
-    get_event_by_name(year, event_name, exact_match=True)  # Will fail if wrong
+    get_event_by_name(2024, event_name, exact_match=True)  # ValueError if a name is wrong
 ```
 
 #### 3. Provide Helpful Error Messages
 
 ```python
+from tif1.events import get_event_by_name
+
+user_input = "Monaco"
 try:
     event = get_event_by_name(2024, user_input, exact_match=True)
 except ValueError:
     # Show available events
     from tif1.events import get_events
-    available = list(get_events(2024))
+    available = get_events(2024)["EventName"].tolist()
     print(f"Event '{user_input}' not found.")
     print(f"Available events: {', '.join(available[:5])}...")
 ```
@@ -2154,21 +2209,19 @@ The fuzzy matching system is designed for high performance, with careful attenti
 
 **Typical execution:**
 - 24 events × 4 features × 20 chars = 1,920 character comparisons
-- Modern CPUs: ~0.1-0.3ms
-
-**Algorithm:** Python's `in` operator uses Boyer-Moore-Horspool for substring search, providing O(n) average case and O(nm) worst case.
+- Measured: about 0.01-0.03ms
 
 #### Fuzzy Ratio Matching (Slow Path)
 
-**Complexity:** O(n × m × k²)
-- Levenshtein distance calculation is O(k²) for strings of length k
-- Must compute for all features of all (or candidate) events
+**Complexity:** O(n × m) `fuzz.ratio()` calls
+- One call for each feature of each candidate event
+- Each call compares two short strings in C++
 
 **Typical execution:**
-- 24 events × 4 features × (20 chars)² = 38,400 operations
-- RapidFuzz C++ implementation: ~0.5-0.8ms
+- 24 events × 4 features = 96 calls
+- Measured: about 0.07-0.09ms in total
 
-**Optimization:** RapidFuzz uses SIMD instructions and optimized C++ code, providing 10-100x speedup over pure Python implementations.
+**Optimization:** RapidFuzz is about 70 times faster than the pure Python Levenshtein function in "Performance Comparison with Alternatives".
 
 #### Session Name Lookup
 
@@ -2176,16 +2229,13 @@ The fuzzy matching system is designed for high performance, with careful attenti
 - Dictionary hash table lookup
 - Constant time regardless of number of sessions
 
-**Typical execution:** &lt;0.05ms
+**Typical execution:** about 0.001ms
 
 ### Benchmark Results
 
 #### Test Environment
-- CPU: Intel Core i7-10700K @ 3.8GHz
-- RAM: 32GB DDR4
-- Python: 3.11.5
-- RapidFuzz: 3.6.1
-- OS: Ubuntu 22.04 LTS
+
+The numbers on this page come from one run on a Linux workstation with Python 3.14 and RapidFuzz 3.14. Timings change with the machine and its load, so treat them as orders of magnitude.
 
 #### Event Name Matching Benchmarks
 
@@ -2209,38 +2259,38 @@ def benchmark(query, iterations=1000):
 # Benchmark 1: Exact substring match (fast path)
 time_exact = benchmark("Location 5")
 print(f"Exact substring: {time_exact:.3f}ms")
-# Output: Exact substring: 0.245ms
+# Output: Exact substring: 0.032ms
 
 # Benchmark 2: Fuzzy match with typo (slow path)
 time_fuzzy = benchmark("Locaton 5")  # Typo: missing 'i'
 print(f"Fuzzy matching: {time_fuzzy:.3f}ms")
-# Output: Fuzzy matching: 0.687ms
+# Output: Fuzzy matching: 0.084ms
 
 # Benchmark 3: Ambiguous query (multiple substring matches)
 time_ambiguous = benchmark("Grand")
 print(f"Ambiguous query: {time_ambiguous:.3f}ms")
-# Output: Ambiguous query: 0.523ms
+# Output: Ambiguous query: 0.117ms
 
 # Benchmark 4: Very short query
 time_short = benchmark("E")
 print(f"Short query: {time_short:.3f}ms")
-# Output: Short query: 0.198ms
+# Output: Short query: 0.176ms
 
 # Benchmark 5: Very long query
 time_long = benchmark("Event 5 Grand Prix at Location 5")
 print(f"Long query: {time_long:.3f}ms")
-# Output: Long query: 0.712ms
+# Output: Long query: 0.069ms
 ```
 
 **Results Summary:**
 
-| Query Type | Avg Time (ms) | Std Dev (ms) | Path Taken |
-|------------|---------------|--------------|------------|
-| Exact substring | 0.245 | 0.012 | Fast path |
-| Fuzzy match (typo) | 0.687 | 0.031 | Slow path |
-| Ambiguous | 0.523 | 0.024 | Slow path (filtered) |
-| Short query (1 char) | 0.198 | 0.009 | Fast path |
-| Long query (30+ chars) | 0.712 | 0.035 | Slow path |
+| Query Type | Time (ms) | Path Taken |
+|------------|-----------|------------|
+| Exact substring | 0.032 | Fast path |
+| Fuzzy match (typo) | 0.084 | Slow path |
+| Ambiguous | 0.117 | Slow path ("grand" is in every element) |
+| Short query (1 char) | 0.176 | Slow path ("e" is in every element) |
+| Long query (30+ chars) | 0.069 | Slow path |
 
 #### Session Name Lookup Benchmarks
 
@@ -2268,15 +2318,15 @@ for query in queries:
     print(f"Session '{query}': {time_ms:.4f}ms")
 
 # Output:
-# Session 'FP1': 0.0234ms
-# Session 'Practice 1': 0.0198ms
-# Session 'qualifying': 0.0212ms
-# Session 'Q': 0.0189ms
-# Session 'race': 0.0201ms
-# Session 'R': 0.0187ms
+# Session 'FP1': 0.0005ms
+# Session 'Practice 1': 0.0005ms
+# Session 'qualifying': 0.0005ms
+# Session 'Q': 0.0006ms
+# Session 'race': 0.0005ms
+# Session 'R': 0.0006ms
 ```
 
-**Results:** Session name lookup is 10-30x faster than event name matching due to O(1) dictionary lookup.
+**Results:** Session name lookup is about 100 times faster than event name matching due to O(1) dictionary lookup.
 
 #### Real-World Integration Benchmarks
 
@@ -2297,7 +2347,7 @@ test_cases = [
     (2024, "Monaco Grand Prix", "Qualifying"),  # Exact names
     (2024, "Monaco", "Q"),                      # Fuzzy + abbreviation
     (2024, "monte carlo", "qualifying"),        # Fuzzy + lowercase
-    (2024, "monac", "quali"),                   # Typos
+    (2024, "monaoc", "Q"),                      # Typo in the event name
 ]
 
 for year, event, session in test_cases:
@@ -2305,79 +2355,71 @@ for year, event, session in test_cases:
     print(f"get_session({year}, '{event}', '{session}'): {time_ms:.2f}ms")
 
 # Output:
-# get_session(2024, 'Monaco Grand Prix', 'Qualifying'): 1.23ms
-# get_session(2024, 'Monaco', 'Q'): 1.45ms
-# get_session(2024, 'monte carlo', 'qualifying'): 1.67ms
-# get_session(2024, 'monac', 'quali'): 1.89ms
+# get_session(2024, 'Monaco Grand Prix', 'Qualifying'): 0.33ms
+# get_session(2024, 'Monaco', 'Q'): 0.26ms
+# get_session(2024, 'monte carlo', 'qualifying'): 0.25ms
+# get_session(2024, 'monaoc', 'Q'): 0.40ms
 ```
 
-**Analysis:** Total `get_session()` time includes:
-- Event schedule loading: ~0.5ms (cached after first call)
-- Fuzzy matching: ~0.3-0.8ms
-- Session name lookup: ~0.02ms
-- Object creation: ~0.4ms
+**Analysis:** `get_session()` does not load session data. Its time includes:
+- Event name resolution: exact name, alias, or fuzzy match on the cached schedule
+- Session name lookup: well under 0.01ms
+- `Session` object creation
 
 ### Caching Strategy
 
 #### Event Schedule Caching
 
-Event schedules are cached using `@lru_cache` to avoid repeated file I/O and JSON parsing:
+Event schedules are memoized per season to avoid repeated file I/O, JSON parsing, and network requests:
 
 ```python
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
-    """Get cached events as immutable tuple."""
-    return tuple(_build_events_for_year(year))
+    """Events as an immutable tuple, memoized per season."""
+    return _get_year_schedule(year).events
 ```
 
 **Benefits:**
-- First call: ~5-10ms (file I/O + JSON parsing)
-- Subsequent calls: ~0.001ms (cache hit)
-- Cache size: 16 years (sufficient for most use cases)
-
-**Memory usage:**
-- ~2KB per year (24 events × ~80 bytes per event name)
-- Total: ~32KB for 16 years
+- First call: about 3ms for a past season (reads and converts all vendored schedule files once); a live season adds one fetch per `schedule_ttl_hours` window
+- Subsequent calls: ~0.001ms (memo hit)
+- A live season's memo expires with the TTL, so a long-running process picks up calendar changes
 
 #### Session List Caching
 
 Session lists are also cached per (year, event) combination:
 
 ```python
-@lru_cache(maxsize=128)
 def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
-    """Get cached sessions as immutable tuple."""
-    return tuple(_build_sessions_for_event(year, event))
+    """Resolved session list, memoized per season and queried name."""
+    record = _get_year_schedule(year)
+    sessions = record.sessions.get(event)
+    if sessions is None:
+        sessions = tuple(_build_sessions_for_event(year, event))
+        record.sessions[event] = sessions
+    return sessions
 ```
 
 **Benefits:**
-- First call: ~0.5ms (schedule lookup)
-- Subsequent calls: ~0.001ms (cache hit)
-- Cache size: 128 (year, event) pairs
-
-**Memory usage:**
-- ~500 bytes per (year, event) pair
-- Total: ~64KB for 128 pairs
+- First call: about 0.01ms for an exact event name; other names are resolved like `get_event_by_name()` (about 0.5-1ms)
+- Subsequent calls: ~0.002ms (memo hit for the same queried name)
+- The memo lives on the season record, so a refreshed live schedule drops it with the old events
 
 #### Why Fuzzy Match Results Are NOT Cached
 
-Fuzzy matching results are intentionally not cached because:
+`fuzzy_matcher()` keeps no cache, and `get_event_by_name()` does not cache its result. The reasons:
 
-1. **Matching is already very fast** (~0.3-0.8ms)
-2. **Cache overhead would exceed matching time** (hash computation + lookup ~0.1-0.2ms)
-3. **Memory usage would be high** (unlimited query variations)
-4. **Cache hit rate would be low** (users rarely repeat exact queries)
+1. **Matching is already very fast** (about 0.01-0.1ms)
+2. **Memory usage would grow** (unlimited query variations)
+3. **Cache hit rate would be low** (users rarely repeat exact queries)
 
 **Benchmark comparison:**
 
 ```python
-# Without caching (current implementation)
-fuzzy_matcher("Monaco", reference)  # 0.3ms
+from tif1.fuzzy import fuzzy_matcher
 
-# With caching (hypothetical)
-# First call: 0.3ms (match) + 0.1ms (cache store) = 0.4ms
-# Cache hit: 0.1ms (hash) + 0.05ms (lookup) = 0.15ms
-# Speedup: 2x, but only for repeated queries (rare)
+reference = [["Monaco Grand Prix", "Monaco"], ["British Grand Prix", "Silverstone"]]
+
+# Without caching (current implementation)
+fuzzy_matcher("Monaco", reference)  # about 0.01-0.03ms
 ```
 
 ### Optimization Techniques
@@ -2386,73 +2428,48 @@ fuzzy_matcher("Monaco", reference)  # 0.3ms
 
 The algorithm checks for exact substring matches before fuzzy matching:
 
-```python
-# Fast path: O(n×m×k)
-if len(full_partial_match_indices) == 1:
-    return full_partial_match_indices[0], True  # Exit early
+A unique substring hit returns `(index, True)` before any fuzzy scoring (Stage 2). Only the other queries reach the `fuzz.ratio()` calls (Stage 3).
 
-# Slow path: O(n×m×k²)
-# Only reached if fast path fails
-```
-
-**Impact:** 80-90% of queries take the fast path, providing 2-3x average speedup.
+**Impact:** The fast path took about 0.014ms and the slow path about 0.07-0.09ms in the benchmarks above.
 
 #### 2. Candidate Filtering
 
-When multiple substring matches are found, only those candidates are scored:
+When multiple substring matches are found, only those candidates are scored (see the `candidate_indices` lines in Stage 3).
 
-```python
-if full_partial_match_indices:
-    candidate_indices = full_partial_match_indices  # Filter to 2-3 events
-else:
-    candidate_indices = range(len(reference_arr))  # Score all 24 events
-```
-
-**Impact:** Reduces fuzzy matching workload by 8-12x when applicable.
+**Impact:** The rows of the other events stay at 0 and are not scored.
 
 #### 3. NumPy Vectorization
 
-Using NumPy arrays enables vectorized operations:
+`np.max(ratios, axis=1)` replaces a Python loop over the rows (see "Performance Optimization Techniques" in "Detailed Algorithm Walkthrough").
 
-```python
-# Slow: Python loop
-max_scores = []
-for row in ratios:
-    max_scores.append(max(row))
-
-# Fast: NumPy vectorization
-max_scores = np.max(ratios, axis=1)
-```
-
-**Impact:** 10-50x speedup for array operations.
+**Impact:** About 8x faster than the loop for a 24×4 array.
 
 #### 4. RapidFuzz C++ Implementation
 
-RapidFuzz uses optimized C++ code with SIMD instructions:
+RapidFuzz computes `fuzz.ratio()` in C++:
 
 ```python
-# Pure Python Levenshtein: ~50-100ms for 24 events
-# RapidFuzz: ~0.5-0.8ms for 24 events
-# Speedup: 60-200x
+# Pure Python Levenshtein: about 0.007ms per call
+# RapidFuzz fuzz.ratio(): about 0.0001ms per call
+# Speedup: about 70x
 ```
-
-**SIMD optimization:** RapidFuzz uses AVX2/SSE4.2 instructions to process multiple characters in parallel.
 
 #### 5. String Normalization In-Place
 
-Normalization modifies the reference list in-place to avoid memory allocation:
+Normalization writes the normalized strings back into the lists of the caller:
 
 ```python
+reference = [["Monaco Grand Prix", "Monaco"], ["British Grand Prix", "Silverstone"]]
+
 # In-place modification (current)
 for i in range(len(reference)):
     for j in range(len(reference[i])):
         reference[i][j] = reference[i][j].casefold().replace(" ", "")
 
-# Alternative: Create new list (slower)
-normalized = [[s.casefold().replace(" ", "") for s in features] for features in reference]
+print(reference)  # [['monacograndprix', 'monaco'], ['britishgrandprix', 'silverstone']]
 ```
 
-**Impact:** Reduces memory allocation overhead by ~20%.
+**Impact:** The reference of the caller changes after the call. Pass a copy if the original strings are still needed.
 
 ### Scalability Analysis
 
@@ -2480,17 +2497,21 @@ for num_events in [10, 24, 50, 100]:
     print(f"{num_events} events: {time_ms:.3f}ms")
 
 # Output:
-# 10 events: 0.123ms
-# 24 events: 0.245ms (current F1 season size)
-# 50 events: 0.487ms
-# 100 events: 0.921ms
+# 10 events: 0.013ms
+# 24 events: 0.027ms (current F1 season size)
+# 50 events: 0.056ms
+# 100 events: 0.222ms ("Location 5" is also in "Location 50" to "Location 59": slow path)
 ```
 
-**Analysis:** Time scales linearly with number of events (O(n)), as expected. Even with 100 events (4x current F1 season), matching remains under 1ms.
+**Analysis:** Time scales linearly with number of events (O(n)) on the fast path. At 100 events the query matches 11 elements, so it takes the slow path. Even with 100 events (4x current F1 season), matching remains under 1ms.
 
 #### Scaling with Number of Features
 
 ```python
+import time
+
+from tif1.fuzzy import fuzzy_matcher
+
 def benchmark_features(num_features):
     reference = [
         [f"Feature {j} for Event {i}" for j in range(num_features)]
@@ -2509,43 +2530,33 @@ for num_features in [2, 4, 8, 16]:
     print(f"{num_features} features: {time_ms:.3f}ms")
 
 # Output:
-# 2 features: 0.156ms
-# 4 features: 0.245ms (current implementation)
-# 8 features: 0.423ms
-# 16 features: 0.789ms
+# 2 features: 0.048ms (no feature contains the query: slow path)
+# 4 features: 0.015ms (current implementation)
+# 8 features: 0.022ms
+# 16 features: 0.039ms
 ```
 
-**Analysis:** Time scales linearly with number of features (O(m)). Current implementation uses 4 features, providing good balance between match success rate and performance.
+**Analysis:** Time scales linearly with number of features (O(m)). `tif1` builds up to 4 features per event (location, country, event name, official name).
 
 ### Performance Best Practices
 
 #### 1. Reuse Reference Data
 
-If calling `fuzzy_matcher` multiple times with the same reference, normalize once:
+`fuzzy_matcher()` normalizes the whole reference on every call, also a reference that is already normalized. A pre-normalized reference therefore saves no time. For 24 events, the normalization is a small part of the 0.01-0.1ms per call.
+
+#### 2. Pass the Exact Name When Known
+
+An exact `EventName` resolves before any fuzzy matching, with or without `exact_match=True`:
 
 ```python
-# Bad: Normalize on every call
-for query in user_queries:
-    fuzzy_matcher(query, raw_reference)  # Normalizes reference each time
+from tif1.events import get_event_by_name
 
-# Good: Normalize once (requires modified function)
-normalized_reference = preprocess_reference(raw_reference)
-for query in user_queries:
-    fuzzy_matcher(query, normalized_reference)
-```
+# Same speed: an exact EventName skips the fuzzy step in both modes
+event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=False)  # ~0.08ms
+event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=True)   # ~0.08ms
 
-Note: Current implementation normalizes in-place, so this optimization requires a modified version.
-
-#### 2. Use Exact Match When Possible
-
-When the exact event name is known, use `exact_match=True` to skip fuzzy matching:
-
-```python
-# Slower: Fuzzy matching
-event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=False)  # ~1.5ms
-
-# Faster: Exact matching
-event = get_event_by_name(2024, "Monaco Grand Prix", exact_match=True)  # ~0.5ms
+# Slower: a typo goes through the fuzzy step
+event = get_event_by_name(2024, "Belgum")  # ~0.3ms
 ```
 
 #### 3. Cache Session Objects
@@ -2555,11 +2566,13 @@ If loading the same session multiple times, cache the Session object:
 ```python
 from functools import lru_cache
 
+import tif1
+
 @lru_cache(maxsize=32)
 def get_cached_session(year, event, session_name):
     return tif1.get_session(year, event, session_name)
 
-# First call: ~1.5ms
+# First call: ~0.3ms (name resolution and Session creation, no data yet)
 session = get_cached_session(2024, "Monaco", "Q")
 
 # Subsequent calls: ~0.001ms (cache hit)
@@ -2568,17 +2581,23 @@ session = get_cached_session(2024, "Monaco", "Q")
 
 #### 4. Batch Process Events
 
-When processing multiple events, load the schedule once:
+Module-level `get_event_by_name()` reads the cached raw schedule and does not build a DataFrame. Use it for lookups by name. `get_event_schedule()` builds the full schedule (a few milliseconds), so call it once when a loop needs the DataFrame:
 
 ```python
-# Bad: Load schedule for each event
+from tif1.events import get_event_by_name, get_event_schedule
+
+event_names = ["Monaco", "Spa", "Silverstone"]
+
+# Good: direct name lookups, about 0.1ms each
 for event_name in event_names:
     event = get_event_by_name(2024, event_name)
 
-# Good: Load schedule once, iterate
+# Also fine: build the schedule once, then use its methods
 schedule = get_event_schedule(2024)
 for event_name in event_names:
     event = schedule.get_event_by_name(event_name)
+
+# Bad: get_event_schedule() inside the loop builds the schedule every time
 ```
 
 ### Performance Comparison with Alternatives
@@ -2614,7 +2633,7 @@ for _ in range(1000):
     levenshtein_python(s1, s2)
 time_python = (time.perf_counter() - start) / 1000 * 1000
 print(f"Pure Python: {time_python:.3f}ms")
-# Output: Pure Python: 0.087ms per call
+# Output: Pure Python: 0.007ms per call
 
 # RapidFuzz
 from rapidfuzz import fuzz
@@ -2623,33 +2642,21 @@ for _ in range(1000):
     fuzz.ratio(s1, s2)
 time_rapidfuzz = (time.perf_counter() - start) / 1000 * 1000
 print(f"RapidFuzz: {time_rapidfuzz:.3f}ms")
-# Output: RapidFuzz: 0.001ms per call
+# Output: RapidFuzz: 0.000ms per call (about 0.0001ms)
 
 print(f"Speedup: {time_python / time_rapidfuzz:.1f}x")
-# Output: Speedup: 87.0x
-```
-
-#### vs. FuzzyWuzzy (Python-based)
-
-```python
-# FuzzyWuzzy (pure Python, predecessor to RapidFuzz)
-from fuzzywuzzy import fuzz as fuzz_old
-
-# Benchmark
-start = time.perf_counter()
-for _ in range(1000):
-    fuzz_old.ratio(s1, s2)
-time_fuzzywuzzy = (time.perf_counter() - start) / 1000 * 1000
-print(f"FuzzyWuzzy: {time_fuzzywuzzy:.3f}ms")
-# Output: FuzzyWuzzy: 0.092ms per call
-
-# RapidFuzz is 90x faster than FuzzyWuzzy
+# Output: Speedup: 71.9x
 ```
 
 #### vs. Regex Matching
 
 ```python
 import re
+import time
+
+# 24 events with 3 features each
+reference = [[f"Event {i} Grand Prix", f"Location {i}", f"Country {i}"] for i in range(24)]
+reference[5] = ["Monaco Grand Prix", "Monaco", "Monte Carlo"]
 
 # Regex-based matching
 def regex_match(query, reference):
@@ -2665,23 +2672,22 @@ for _ in range(1000):
     regex_match("monaco", reference)
 time_regex = (time.perf_counter() - start) / 1000 * 1000
 print(f"Regex: {time_regex:.3f}ms")
-# Output: Regex: 0.156ms
+# Output: Regex: 0.003ms
 
-# Fuzzy matching is 1.5x slower but handles typos
-# Regex cannot handle typos like "monac" → "monaco"
+# Regex cannot handle typos like "monaoc" → "monaco"
 ```
 
 ### Summary
 
 The `tif1` fuzzy matching system achieves excellent performance through:
 
-1. **Hybrid algorithm**: Fast exact matching (0.2-0.3ms) with fuzzy fallback (0.5-0.8ms)
-2. **Optimized libraries**: RapidFuzz provides 60-200x speedup over pure Python
-3. **Smart caching**: Event schedules cached, fuzzy results not cached (overhead > benefit)
+1. **Hybrid algorithm**: Fast exact matching (about 0.01-0.03ms) with fuzzy fallback (about 0.07-0.09ms)
+2. **Optimized libraries**: RapidFuzz is about 70x faster than a pure Python Levenshtein function
+3. **Caching**: Event schedules and session lists are memoized; fuzzy results are not cached
 4. **Algorithmic optimizations**: Early exit, candidate filtering, NumPy vectorization
 5. **Scalability**: Linear scaling with events/features, handles 100+ events under 1ms
 
-For typical F1 data access patterns (24 events, 4 features), fuzzy matching adds only 0.3-0.8ms overhead. This is negligible compared to network I/O (50-200ms) and data parsing (10-50ms).
+For typical F1 data access patterns (24 events, 4 features), fuzzy matching adds only about 0.1ms overhead. This is small next to a session load, which reads its data from the network or the cache.
 
 ---
 
@@ -2691,7 +2697,7 @@ This section provides a collection of common usage patterns, idioms, and best pr
 
 ### Event Name Variations by Circuit
 
-A complete reference guide for accepted event name variations across all Formula 1 circuits. These variations are tested and guaranteed to work with fuzzy matching.
+A reference of accepted event name variations across Formula 1 circuits. Each name below resolves to the right event in the 2024 schedule (tested). Names outside the alias table go through the fuzzy step. A name that is not a substring of exactly one event logs a `Correcting user input` warning.
 
 #### Monaco Grand Prix
 ```python
@@ -2718,7 +2724,7 @@ A complete reference guide for accepted event name variations across all Formula
 # Circuit-based
 "Spa", "spa", "SPA"
 "Spa-Francorchamps", "spa-francorchamps"
-"Spa Francorchamps" (without hyphen)
+"Spa Francorchamps"  # without hyphen
 "Circuit de Spa-Francorchamps"
 
 # Official names
@@ -2732,7 +2738,7 @@ A complete reference guide for accepted event name variations across all Formula
 # Country-based
 "British", "britain", "BRITAIN"
 "United Kingdom", "UK", "uk"
-"Great Britain", "GB"
+"Great Britain"
 
 # Circuit-based
 "Silverstone", "silverstone", "SILVERSTONE"
@@ -2752,8 +2758,6 @@ A complete reference guide for accepted event name variations across all Formula
 
 # Circuit-based
 "Monza", "monza", "MONZA"
-"Autodromo Nazionale di Monza"
-"Autodromo di Monza"
 
 # Official names
 "Italian Grand Prix", "Italian GP"
@@ -2769,7 +2773,6 @@ A complete reference guide for accepted event name variations across all Formula
 # Circuit-based
 "Suzuka", "suzuka", "SUZUKA"
 "Suzuka Circuit"
-"Suzuka International Racing Course"
 
 # Official names
 "Japanese Grand Prix", "Japanese GP"
@@ -2781,15 +2784,13 @@ A complete reference guide for accepted event name variations across all Formula
 ```python
 # Country-based
 "United States", "USA", "us", "US"
-"America", "american"
+"America"
 
 # Location-based
 "Austin", "austin", "AUSTIN"
-"Texas"
 
 # Circuit-based
 "COTA", "cota"
-"Circuit of the Americas"
 
 # Official names
 "United States Grand Prix", "US GP"
@@ -2808,7 +2809,6 @@ A complete reference guide for accepted event name variations across all Formula
 
 # Circuit-based
 "Yas Marina", "yas marina", "YAS MARINA"
-"Yas Marina Circuit"
 
 # Official names
 "Abu Dhabi Grand Prix", "Abu Dhabi GP"
@@ -2816,7 +2816,7 @@ A complete reference guide for accepted event name variations across all Formula
 # All resolve to: "Abu Dhabi Grand Prix"
 ```
 
-#### Brazilian Grand Prix (Interlagos)
+#### São Paulo Grand Prix (Interlagos)
 ```python
 # Country-based
 "Brazil", "brazilian", "BRAZIL"
@@ -2826,15 +2826,11 @@ A complete reference guide for accepted event name variations across all Formula
 "São Paulo", "Sao Paulo", "sao paulo"
 "Interlagos", "interlagos", "INTERLAGOS"
 
-# Circuit-based
-"Autódromo José Carlos Pace"
-"Autodromo de Interlagos"
-
 # Official names
 "Brazilian Grand Prix", "Brazilian GP"
-"São Paulo Grand Prix" (2021+)
+"São Paulo Grand Prix"  # 2021 onward
 
-# All resolve to: "Brazilian Grand Prix" or "São Paulo Grand Prix"
+# All resolve to: "São Paulo Grand Prix" (2021 onward) or "Brazilian Grand Prix" (2018-2019)
 ```
 
 #### Canadian Grand Prix (Montreal)
@@ -2844,13 +2840,7 @@ A complete reference guide for accepted event name variations across all Formula
 
 # Location-based
 "Montreal", "montreal", "MONTREAL"
-"Montréal" (with accent)
-"Quebec"
-
-# Circuit-based
-"Circuit Gilles Villeneuve"
-"Gilles Villeneuve"
-"Ile Notre-Dame"
+"Montréal"  # with accent
 
 # Official names
 "Canadian Grand Prix", "Canadian GP"
@@ -2889,11 +2879,6 @@ A complete reference guide for accepted event name variations across all Formula
 "Mexico City", "mexico city", "MEXICO CITY"
 "Ciudad de México"
 
-# Circuit-based
-"Autódromo Hermanos Rodríguez"
-"Hermanos Rodriguez"
-"Rodriguez"
-
 # Official names
 "Mexican Grand Prix", "Mexican GP"
 "Mexico City Grand Prix"
@@ -2926,7 +2911,6 @@ A complete reference guide for accepted event name variations across all Formula
 "Albert Park", "albert park"
 
 # Circuit-based
-"Albert Park Circuit"
 "Melbourne Grand Prix Circuit"
 
 # Official names
@@ -2943,16 +2927,16 @@ A complete reference guide for accepted event name variations across all Formula
 
 # Location-based
 "Spielberg", "spielberg"
-"Styria", "styrian" (2020-2021 second race)
+"Styria", "styrian"  # 2020-2021 second race
 
 # Circuit-based
 "Red Bull Ring", "red bull ring"
-"A1-Ring" (historical)
-"Österreichring" (historical)
+"A1-Ring"  # historical
+"Österreichring"  # historical
 
 # Official names
 "Austrian Grand Prix", "Austrian GP"
-"Styrian Grand Prix" (2020-2021)
+"Styrian Grand Prix"  # 2020-2021
 
 # All resolve to: "Austrian Grand Prix" or "Styrian Grand Prix"
 ```
@@ -2980,11 +2964,9 @@ A complete reference guide for accepted event name variations across all Formula
 ```python
 # Country-based
 "Hungary", "hungarian", "HUNGARY"
-"Magyarország"
 
 # Location-based
 "Budapest", "budapest", "BUDAPEST"
-"Mogyoród"
 
 # Circuit-based
 "Hungaroring", "hungaroring", "HUNGARORING"
@@ -3003,10 +2985,6 @@ A complete reference guide for accepted event name variations across all Formula
 # Location-based
 "Baku", "baku", "BAKU"
 
-# Circuit-based
-"Baku City Circuit"
-"Baku Street Circuit"
-
 # Official names
 "Azerbaijan Grand Prix", "Azerbaijan GP"
 
@@ -3023,22 +3001,16 @@ Complete reference for all supported session name formats:
 # Practice 1
 "Practice 1", "practice 1", "PRACTICE 1"
 "FP1", "fp1", "Fp1"
-"practice1" (no space)
-"Free Practice 1"
 
 # Practice 2
 "Practice 2", "practice 2", "PRACTICE 2"
 "FP2", "fp2", "Fp2"
-"practice2" (no space)
-"Free Practice 2"
 
 # Practice 3
 "Practice 3", "practice 3", "PRACTICE 3"
 "FP3", "fp3", "Fp3"
-"practice3" (no space)
-"Free Practice 3"
 
-# Important: Do NOT use P1, P2, P3 (not supported)
+# Not supported (ValueError): "P1", "practice1", "Free Practice 1"
 ```
 
 #### Qualifying
@@ -3046,26 +3018,24 @@ Complete reference for all supported session name formats:
 ```python
 "Qualifying", "qualifying", "QUALIFYING"
 "Q", "q"
-"Quali", "quali"
-"Qualification"
+
+# Not supported (ValueError): "Quali", "Qualification"
 ```
 
 #### Sprint Sessions
 
 ```python
-# Sprint (2021+)
+# Sprint (2021 onward)
 "Sprint", "sprint", "SPRINT"
 "S", "s"
 
-# Sprint Shootout (2023+)
+# Sprint Shootout (2023 only)
 "Sprint Shootout", "sprint shootout", "SPRINT SHOOTOUT"
 "SS", "ss"
-"sprintshootout" (no space)
 
-# Sprint Qualifying (2021-2022 only)
+# Sprint Qualifying (2024 onward)
 "Sprint Qualifying", "sprint qualifying", "SPRINT QUALIFYING"
 "SQ", "sq"
-"sprintqualifying" (no space)
 ```
 
 #### Race
@@ -3074,6 +3044,8 @@ Complete reference for all supported session name formats:
 "Race", "race", "RACE"
 "R", "r"
 ```
+
+An integer selects the session by its position in the schedule of the event: `tif1.get_session(2024, "Monaco", 1)` is Practice 1.
 
 ### Advanced Usage Patterns
 
@@ -3089,11 +3061,12 @@ def analyze_circuit_across_years(circuit_name: str, years: list[int]):
     for year in years:
         try:
             session = tif1.get_session(year, circuit_name, "Race")
-            session.load()
+            session.load(telemetry=False)
             results[year] = {
                 'laps': len(session.laps),
                 'fastest_lap': session.laps.pick_fastest()['LapTime'],
-                'winner': session.results.iloc[0]['Abbreviation']
+                # First row of results; post-race disqualifications can be missing
+                'p1': session.results.iloc[0]['Abbreviation']
             }
         except Exception as e:
             print(f"Error loading {year}: {e}")
@@ -3105,7 +3078,7 @@ def analyze_circuit_across_years(circuit_name: str, years: list[int]):
 results = analyze_circuit_across_years("Spa", [2020, 2021, 2022, 2023, 2024])
 for year, data in results.items():
     if data:
-        print(f"{year}: {data['winner']} - {data['fastest_lap']}")
+        print(f"{year}: {data['p1']} - {data['fastest_lap']}")
 ```
 
 #### Pattern 2: User-Friendly CLI
@@ -3121,7 +3094,7 @@ def interactive_session_loader():
     year = int(input("Enter year (e.g., 2024): "))
 
     # Show available events
-    events = list(get_events(year))
+    events = get_events(year)["EventName"].tolist()
     print(f"\nAvailable events: {', '.join(events[:5])}...")
 
     # Get event (fuzzy matching handles variations)
@@ -3130,10 +3103,10 @@ def interactive_session_loader():
     try:
         # Fuzzy match event
         session_obj = tif1.get_session(year, event_input, "Race")
-        print(f"✓ Matched to: {session_obj.event}")
+        print(f"✓ Matched to: {session_obj.event_name}")
 
         # Show available sessions
-        sessions = get_sessions(year, session_obj.event)
+        sessions = get_sessions(year, session_obj.event_name)
         print(f"\nAvailable sessions: {', '.join(sessions)}")
 
         # Get session
@@ -3143,7 +3116,7 @@ def interactive_session_loader():
         session = tif1.get_session(year, event_input, session_input)
         print(f"✓ Matched to: {session.session_name}")
 
-        session.load()
+        session.load(telemetry=False)
         print(f"\n✓ Loaded {len(session.laps)} laps")
 
         return session
@@ -3179,9 +3152,9 @@ def batch_load_sessions(year: int, event_session_pairs: list[tuple[str, str]]):
     for event_name, session_name in event_session_pairs:
         try:
             session = tif1.get_session(year, event_name, session_name)
-            session.load()
+            session.load(telemetry=False)
             results[(event_name, session_name)] = session
-            print(f"✓ Loaded: {session.event} - {session.session_name}")
+            print(f"✓ Loaded: {session.event_name} - {session.session_name}")
         except (DataNotFoundError, ValueError) as e:
             results[(event_name, session_name)] = e
             print(f"✗ Failed: {event_name} - {session_name}: {e}")
@@ -3194,7 +3167,7 @@ pairs = [
     ("Spa", "Race"),
     ("Silverstone", "FP1"),
     ("monza", "qualifying"),  # Lowercase
-    ("InvalidEvent", "Race"),  # Will fail
+    ("Monaco", "Sprint"),  # Fails: no sprint at Monaco in 2024 (ValueError)
 ]
 
 results = batch_load_sessions(2024, pairs)
@@ -3222,23 +3195,22 @@ def load_from_config(config_path: str):
         session_name = item['session']  # Can use abbreviations
 
         session = tif1.get_session(year, event, session_name)
-        session.load()
+        session.load(telemetry=False)
         sessions.append(session)
 
-        print(f"Loaded: {session.event} - {session.session_name}")
+        print(f"Loaded: {session.event_name} - {session.session_name}")
 
     return sessions
 
-# config.json (uses fuzzy names for convenience):
-# {
-#   "sessions": [
-#     {"year": 2024, "event": "Monaco", "session": "Q"},
-#     {"year": 2024, "event": "Spa", "session": "Race"},
-#     {"year": 2024, "event": "Silverstone", "session": "FP1"}
-#   ]
-# }
+# sessions_config.json (uses fuzzy names for convenience)
+with open('sessions_config.json', 'w') as f:
+    json.dump({"sessions": [
+        {"year": 2024, "event": "Monaco", "session": "Q"},
+        {"year": 2024, "event": "Spa", "session": "Race"},
+        {"year": 2024, "event": "Silverstone", "session": "FP1"},
+    ]}, f)
 
-sessions = load_from_config('config.json')
+sessions = load_from_config('sessions_config.json')
 ```
 
 #### Pattern 5: Jupyter Notebook Exploration
@@ -3249,7 +3221,7 @@ import pandas as pd
 
 # Quick exploration with minimal typing
 session = tif1.get_session(2024, "Monaco", "Q")
-session.load()
+session.load(telemetry=False)
 
 # Analyze fastest laps
 fastest = session.laps.pick_fastest()
@@ -3261,10 +3233,10 @@ fastest_laps = []
 
 for event in events:
     s = tif1.get_session(2024, event, "Q")
-    s.load()
+    s.load(telemetry=False)
     fastest = s.laps.pick_fastest()
     fastest_laps.append({
-        'Event': s.event,
+        'Event': s.event_name,
         'Driver': fastest['Driver'],
         'LapTime': fastest['LapTime']
     })
@@ -3276,9 +3248,9 @@ print(df)
 #### Pattern 6: API Wrapper with Validation
 
 ```python
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify  # pip install flask
 import tif1
-from tif1.events import get_event_by_name, get_events
+from tif1.events import get_events
 
 app = Flask(__name__)
 
@@ -3291,21 +3263,21 @@ def get_session_api(year: int, event: str, session: str):
     try:
         # Use fuzzy matching for better UX
         session_obj = tif1.get_session(year, event, session)
-        session_obj.load()
+        session_obj.load(telemetry=False)
 
         return jsonify({
             'success': True,
-            'resolved_event': session_obj.event,
+            'resolved_event': session_obj.event_name,
             'resolved_session': session_obj.session_name,
             'input_event': event,
             'input_session': session,
-            'fuzzy_matched': (event.lower() != session_obj.event.lower()),
+            'fuzzy_matched': (event.lower() != session_obj.event_name.lower()),
             'laps': len(session_obj.laps),
             'drivers': list(session_obj.laps['Driver'].unique())
         })
     except Exception as e:
         # Provide helpful error with available options
-        available_events = list(get_events(year))
+        available_events = get_events(year)["EventName"].tolist()
         return jsonify({
             'success': False,
             'error': str(e),
@@ -3335,7 +3307,7 @@ import tif1
 def test_fuzzy_event_matching(event_name, expected_official):
     """Test that fuzzy matching resolves to correct official names."""
     session = tif1.get_session(2024, event_name, "Race")
-    assert session.event == expected_official
+    assert session.event_name == expected_official
 
 @pytest.mark.parametrize("session_name,expected_official", [
     ("Q", "Qualifying"),
@@ -3361,27 +3333,41 @@ Understanding how to handle errors and debug fuzzy matching issues is important 
 
 #### 1. Event Not Found
 
+A typo resolves to the closest event, with a warning in the log. A name that resembles no event (best fuzzy score below 70) raises `EventNotFoundError`, a `ValueError`. An alias of an event that is not on that calendar raises `EventNotInSeasonError`, a subclass of `EventNotFoundError`:
+
 ```python
 import tif1
-from tif1.exceptions import DataNotFoundError
 
+# A typo resolves to the closest event: compare the resolved name with the input
+session = tif1.get_session(2024, "Belgum", "Race")
+print(f"Resolved to: {session.event_name}")  # Belgian Grand Prix, with a warning in the log
+
+# A name that resembles no event raises
 try:
     session = tif1.get_session(2024, "InvalidEventName", "Race")
-except (DataNotFoundError, ValueError) as e:
+except tif1.EventNotFoundError as e:
     print(f"Error: {e}")
+    # Error: No event matching 'InvalidEventName' in 2024
+
+# An alias of an event that was not held that year raises
+try:
+    session = tif1.get_session(2021, "Suzuka", "Race")
+except tif1.EventNotInSeasonError as e:
+    print(f"Error: {e}")
+    # Error: 'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar
 
     # Show available events for the year
-    from tif1.events import get_events
-    events = get_events(2024)
-    print(f"\nAvailable events for 2024:")
-    for event in events:
+    events = tif1.get_event_schedule(2021, include_testing=False)
+    print(f"\nAvailable events for 2021:")
+    for event in events["EventName"]:
         print(f"  - {event}")
 ```
 
 **Common causes:**
-- Typo too severe for fuzzy matching to handle
-- Event does not exist in that year
-- Year is outside supported range (2018-2026+)
+- The name resembles no event of that year (`EventNotFoundError`)
+- The alias names an event that is not on the calendar of that year (`EventNotInSeasonError`)
+- A typo close to another event name, so fuzzy matching picks a different event (check `session.event_name`)
+- Year is outside the schedule data (2018-2026 ship with `tif1`), and the name is an alias
 
 #### 2. Session Not Available
 
@@ -3389,25 +3375,27 @@ except (DataNotFoundError, ValueError) as e:
 import tif1
 
 try:
-    # Try to load Practice 3 from a sprint weekend (doesn't exist)
-    session = tif1.get_session(2024, "Azerbaijan", "Practice 3")
+    # Austria 2024 was a sprint weekend: it had no Practice 3
+    session = tif1.get_session(2024, "Austria", "Practice 3")
 except ValueError as e:
     print(f"Error: {e}")
 
     # Show available sessions for this event
     from tif1.events import get_sessions
-    sessions = get_sessions(2024, "Azerbaijan")
+    sessions = get_sessions(2024, "Austria")
     print(f"\nAvailable sessions:")
     for session_name in sessions:
         print(f"  - {session_name}")
 
 # Output:
-# Error: Session type 'Practice 3' does not exist for this event
+# Error: Session 'Practice 3' does not exist for 2024 Austrian Grand Prix.
+# Available sessions: Practice 1, Sprint Qualifying, Sprint, Qualifying, Race
+#
 # Available sessions:
 #   - Practice 1
-#   - Qualifying
-#   - Sprint Shootout
+#   - Sprint Qualifying
 #   - Sprint
+#   - Qualifying
 #   - Race
 ```
 
@@ -3431,7 +3419,7 @@ except ValueError as e:
     print("  - Q (Qualifying)")
     print("  - S (Sprint)")
     print("  - SS (Sprint Shootout)")
-    print("  - SQ (Sprint Qualifying, 2021-2022)")
+    print("  - SQ (Sprint Qualifying, 2024 onward)")
     print("  - R (Race)")
 ```
 
@@ -3452,11 +3440,11 @@ import logging
 logging.basicConfig(level=logging.WARNING)
 
 # This will log a warning if fuzzy matching was used
-session = tif1.get_session(2024, "Monac", "Race")  # Typo
-# Output: WARNING:tif1.events:Correcting user input 'monac' to 'Monaco Grand Prix'
+session = tif1.get_session(2024, "Belgum", "Race")  # Typo
+# Output: WARNING:tif1.events:Correcting user input 'Belgum' to 'Belgian Grand Prix'
 
-print(f"Resolved to: {session.event}")
-# Output: Resolved to: Monaco Grand Prix
+print(f"Resolved to: {session.event_name}")
+# Output: Resolved to: Belgian Grand Prix
 ```
 
 #### Manual Fuzzy Match Testing
@@ -3471,20 +3459,24 @@ reference = [
     ["British Grand Prix", "Britain", "Silverstone"]
 ]
 
+# fuzzy_matcher() normalizes `reference` in place: keep the display names
+names = [features[0] for features in reference]
+
 # Test different queries
-test_queries = ["Monac", "Spa", "Silverston", "Belgium"]
+test_queries = ["Monaoc", "Spa", "Silverston", "Belgium"]
 
 for query in test_queries:
     index, exact = fuzzy_matcher(query, reference)
-    matched_event = reference[index][0]
+    matched_event = names[index]
     match_type = "exact" if exact else "fuzzy"
     print(f"'{query}' → '{matched_event}' ({match_type})")
 
 # Output:
-# 'Monac' → 'Monaco Grand Prix' (fuzzy)
+# 'Monaoc' → 'Monaco Grand Prix' (fuzzy)
 # 'Spa' → 'Belgian Grand Prix' (exact)
-# 'Silverston' → 'British Grand Prix' (fuzzy)
+# 'Silverston' → 'British Grand Prix' (exact)
 # 'Belgium' → 'Belgian Grand Prix' (exact)
+# "Silverston" is a substring of "silverstone", so it counts as exact
 ```
 
 #### Validating Event Names
@@ -3513,8 +3505,8 @@ def validate_and_report(year: int, user_input: str):
 test_inputs = [
     "Monaco Grand Prix",  # Exact
     "Monaco",             # Fuzzy
-    "Monac",              # Fuzzy (typo)
-    "InvalidEvent"        # No match
+    "Monac",              # Fuzzy (partial name)
+    "InvalidEvent"        # No match: EventNotFoundError (a ValueError)
 ]
 
 for user_input in test_inputs:
@@ -3534,29 +3526,22 @@ def load_session_with_help(year: int, event: str, session: str):
     """Load session with helpful error messages."""
     try:
         s = tif1.get_session(year, event, session)
-        s.load()
+        s.load(telemetry=False)
         return s
+    except tif1.EventNotFoundError as e:
+        # No event matches the name, or the alias names an event
+        # that is not on this calendar (EventNotInSeasonError)
+        print(f"{e}\n\nAvailable events:")
+        for evt in get_events(year)["EventName"]:
+            print(f"  - {evt}")
     except ValueError as e:
-        if "event" in str(e).lower():
-            # Event not found
-            events = list(get_events(year))
-            print(f"Event '{event}' not found in {year}")
-            print(f"\nAvailable events:")
-            for evt in events:
-                print(f"  - {evt}")
-        elif "session" in str(e).lower():
-            # Session not found
-            try:
-                sessions = get_sessions(year, event)
-                print(f"Session '{session}' not available")
-                print(f"\nAvailable sessions for {event}:")
-                for sess in sessions:
-                    print(f"  - {sess}")
-            except:
-                print(f"Could not determine available sessions")
-        else:
-            print(f"Error: {e}")
-        return None
+        # The event has no session with that name (the message lists the sessions)
+        event_name = tif1.get_event_by_name(year, event)["EventName"]
+        print(f"Session '{session}' not available: {e}")
+        print(f"\nAvailable sessions for {event_name}:")
+        for sess in get_sessions(year, event_name):
+            print(f"  - {sess}")
+    return None
 ```
 
 #### 2. Implement Retry Logic
@@ -3569,7 +3554,7 @@ def load_session_with_retry(year: int, event: str, session: str, max_attempts: i
     for attempt in range(max_attempts):
         try:
             s = tif1.get_session(year, event, session)
-            s.load()
+            s.load(telemetry=False)
             return s
         except ValueError as e:
             print(f"Attempt {attempt + 1} failed: {e}")
@@ -3617,7 +3602,7 @@ def load_session_with_logging(year: int, event: str, session: str):
     if session != s.session_name:
         logging.info(f"Session abbreviation: '{session}' → '{s.session_name}'")
 
-    s.load()
+    s.load(telemetry=False)
     return s
 ```
 
@@ -3635,9 +3620,9 @@ def load_sessions_with_fallback(year: int, events: list[str], session: str):
     for event in events:
         try:
             s = tif1.get_session(year, event, session)
-            s.load()
+            s.load(telemetry=False)
             loaded_sessions.append(s)
-            print(f"✓ Loaded: {s.event}")
+            print(f"✓ Loaded: {s.event_name}")
         except (DataNotFoundError, ValueError) as e:
             failed_events.append((event, str(e)))
             print(f"✗ Failed: {event}")
@@ -3649,7 +3634,7 @@ def load_sessions_with_fallback(year: int, events: list[str], session: str):
 
     return loaded_sessions, failed_events
 
-# Usage
+# Usage ("InvalidEvent" fails with EventNotFoundError, a ValueError)
 events = ["Monaco", "Spa", "InvalidEvent", "Silverstone"]
 sessions, failures = load_sessions_with_fallback(2024, events, "Race")
 print(f"\nSuccessfully loaded {len(sessions)} sessions")
@@ -3667,15 +3652,14 @@ This section provides deep technical insights into the fuzzy matching implementa
 
 #### Why RapidFuzz?
 
-1. **Performance**: 10-100x faster than pure Python implementations
-2. **Accuracy**: Industry-standard Levenshtein distance algorithm
+1. **Performance**: about 70x faster than the pure Python Levenshtein function on this page
+2. **Standard metrics**: Levenshtein and Indel distances (`fuzz.ratio()` uses the Indel distance)
 3. **Reliability**: Well-tested, widely used library
 4. **Compatibility**: Pure Python fallback available
-5. **Active maintenance**: Regular updates and bug fixes
 
 #### Levenshtein Distance Algorithm
 
-RapidFuzz implements the Wagner-Fischer algorithm for computing Levenshtein distance:
+The classic way to compute the Levenshtein distance is the Wagner-Fischer dynamic program below. RapidFuzz uses faster algorithms in C++ that give the same results:
 
 ```python
 def levenshtein_distance(s1: str, s2: str) -> int:
@@ -3717,45 +3701,38 @@ distance = levenshtein_distance("monaco", "monac")
 
 #### RapidFuzz Optimizations
 
-RapidFuzz implements several optimizations:
-
-1. **SIMD Instructions**: Uses AVX2/SSE4.2 for parallel character processing
-2. **Early Exit**: Stops computation if distance exceeds threshold
-3. **Memory Optimization**: Uses O(min(m,n)) space instead of O(m×n)
-4. **Cache-Friendly**: Optimizes memory access patterns
-5. **C++ Implementation**: Compiled code is much faster than Python
+RapidFuzz runs compiled C++ code, which is much faster than Python. `fuzz.ratio()` also accepts a `score_cutoff` that stops the computation early. `tif1` does not pass one, so every score is computed in full.
 
 ### Caching Strategy Details
 
-#### LRU Cache Implementation
+#### Schedule Memo Implementation
 
-Python's `@lru_cache` decorator uses a hash table with doubly-linked list for O(1) access and eviction:
+The season memo is a plain dictionary keyed by year. A lock guards the writes. `_load_schedule_payload()` reads the vendored schedule files once and keeps them with `@lru_cache(maxsize=1)`:
 
 ```python
-from functools import lru_cache
-
-@lru_cache(maxsize=16)
 def _get_events_cached(year: int) -> tuple[str, ...]:
     """
-    Cache structure:
-    - Hash table: {year: (events_tuple, access_order)}
-    - Doubly-linked list: maintains access order for LRU eviction
-    - Max size: 16 entries
-    - Eviction: Least recently used when cache is full
+    Memo structure:
+    - Hash table: {year: _YearSchedule(payload, events, expires_at, sessions)}
+    - expires_at: math.inf for a vendored past season; fetch time plus
+      schedule_ttl_hours for a live season
+    - No eviction: a handful of seasons per process
     """
-    return tuple(_build_events_for_year(year))
+    return _get_year_schedule(year).events
 ```
 
 **Cache hit rate analysis:**
 
 ```python
+from tif1.events import _get_events_cached
+
 # Typical usage pattern
 for year in [2024, 2023, 2024, 2024, 2023]:
     events = _get_events_cached(year)
 
-# Cache behavior:
-# Call 1 (2024): MISS - load from disk
-# Call 2 (2023): MISS - load from disk
+# Cache behavior (fresh process):
+# Call 1 (2024): MISS - read the vendored schedule files, build the 2024 record
+# Call 2 (2023): MISS - build the 2023 record (the files are already in memory)
 # Call 3 (2024): HIT - return cached
 # Call 4 (2024): HIT - return cached
 # Call 5 (2023): HIT - return cached
@@ -3763,13 +3740,15 @@ for year in [2024, 2023, 2024, 2024, 2023]:
 # Hit rate: 60% (3/5)
 ```
 
-For typical applications analyzing 1-3 years, cache hit rate is 80-95%.
-
 #### Why Not Cache Fuzzy Match Results?
 
 Caching fuzzy match results would require:
 
 ```python
+from functools import lru_cache
+
+from tif1.fuzzy import fuzzy_matcher
+
 @lru_cache(maxsize=1000)
 def fuzzy_matcher_cached(query: str, reference_tuple: tuple) -> tuple[int, bool]:
     # Convert tuple back to list
@@ -3779,22 +3758,18 @@ def fuzzy_matcher_cached(query: str, reference_tuple: tuple) -> tuple[int, bool]
 
 **Problems:**
 
-1. **Reference must be hashable**: Requires converting list to tuple (overhead)
-2. **Cache key computation**: Hashing large reference tuple is expensive (~0.1-0.2ms)
-3. **Low hit rate**: Users rarely repeat exact queries
-4. **Memory usage**: Unlimited query variations could fill memory
-5. **Marginal benefit**: Matching is already fast (0.3-0.8ms)
+1. **Reference must be hashable**: Requires converting list to tuple on every call
+2. **Low hit rate**: Users rarely repeat exact queries
+3. **Memory usage**: Unlimited query variations could fill memory
+4. **Marginal benefit**: Matching is already fast (about 0.01-0.1ms)
 
 **Benchmark:**
 
 ```python
-# Without caching (current)
-fuzzy_matcher("Monaco", reference)  # 0.3ms
+reference = [["Monaco Grand Prix", "Monaco"], ["British Grand Prix", "Silverstone"]]
 
-# With caching (hypothetical)
-# First call: 0.3ms (match) + 0.15ms (hash + store) = 0.45ms
-# Cache hit: 0.1ms (hash query) + 0.05ms (lookup) = 0.15ms
-# Speedup: 2x, but only for repeated queries (rare in practice)
+# Without caching (current)
+fuzzy_matcher("Monaco", reference)  # about 0.01-0.03ms
 ```
 
 ### NumPy Integration
@@ -3804,22 +3779,23 @@ The fuzzy matcher uses NumPy for vectorized operations:
 ```python
 import numpy as np
 
-# Convert reference to NumPy array
-reference_arr = np.array(reference)  # Shape: (n_events, n_features)
-ratios = np.zeros_like(reference_arr, dtype=int)
+# Float score array: one row per event, one column per feature
+ratios = np.zeros((len(reference), 2), dtype=float)  # Shape: (n_events, n_features)
 
 # Vectorized operations
-max_row_ratios = np.max(ratios, axis=1)  # Max score per event
-max_ratio = np.max(ratios)  # Global max score
+max_row_ratios = ratios.max(axis=1)  # Max score per event
+max_ratio = float(ratios.max())  # Global max score
 
-# Boolean indexing
-mask = (max_row_ratios == max_ratio)  # Events with max score
-tied_events = np.sum(mask)  # Count of tied events
+# Indices of the events that hold the max score
+tied = np.flatnonzero(max_row_ratios == max_ratio)
+tied_events = len(tied)  # Count of tied events
 ```
 
 **Performance comparison:**
 
 ```python
+ratios = np.zeros((24, 4), dtype=float)  # 24 events, 4 features
+
 # Python loop (slow)
 max_scores = []
 for row in ratios:
@@ -3828,8 +3804,8 @@ for row in ratios:
 
 # NumPy vectorization (fast)
 max_scores = np.max(ratios, axis=1)
-# Time: ~0.001ms for 24 events
-# Speedup: 50x
+# Time: ~0.006ms for 24 events
+# Speedup: about 8x
 ```
 
 ### Thread Safety
@@ -3838,13 +3814,14 @@ The fuzzy matching system is thread-safe with caveats:
 
 #### Thread-Safe Components
 
-1. **`@lru_cache` decorated functions**: Thread-safe (uses locks internally)
+1. **Schedule memo**: A lock (`_year_schedules_lock`) guards the writes; reads are plain dictionary lookups
 2. **RapidFuzz functions**: Thread-safe (no shared state)
 3. **NumPy operations**: Thread-safe (operates on local arrays)
+4. **`get_event_by_name()` and `get_session()`**: Each call builds a new reference list, so threads do not share one
 
 #### Non-Thread-Safe Components
 
-1. **In-place normalization**: Modifies reference list in-place
+1. **In-place normalization**: Modifies reference list in-place. This matters only when threads pass the same list to `fuzzy_matcher()`
 
 ```python
 # This modifies the reference list
@@ -3857,77 +3834,49 @@ for i in range(len(reference)):
 
 ```python
 import copy
-from threading import Lock
 
-_fuzzy_lock = Lock()
+from tif1.fuzzy import fuzzy_matcher
 
 def fuzzy_matcher_threadsafe(query: str, reference: list[list[str]]) -> tuple[int, bool]:
     """Thread-safe version that copies reference."""
-    with _fuzzy_lock:
-        reference_copy = copy.deepcopy(reference)
-        return fuzzy_matcher(query, reference_copy)
+    reference_copy = copy.deepcopy(reference)
+    return fuzzy_matcher(query, reference_copy)
 ```
 
 ### Extension Points
 
-The fuzzy matching system can be extended for custom use cases:
+`fuzzy_matcher()` has no parameters for a different scorer or a different normalization. These are the options for custom use cases:
 
 #### Custom Similarity Metrics
 
+`fuzzy_matcher()` always uses `fuzz.ratio()`. For another scorer, call RapidFuzz directly:
+
 ```python
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
-def fuzzy_matcher_custom(
-    query: str,
-    reference: list[list[str]],
-    similarity_func=fuzz.ratio  # Allow custom similarity function
-) -> tuple[int, bool]:
-    """Fuzzy matcher with custom similarity function."""
-    # ... normalization code ...
-
-    # Use custom similarity function
-    for i in candidate_indices:
-        feature_strings = reference_arr[i]
-        ratios[i] = [similarity_func(val, query) for val in feature_strings]
-
-    # ... rest of algorithm ...
-
-# Usage with different similarity metrics
-from rapidfuzz import fuzz
+choices = ["belgian grand prix", "italian grand prix"]
 
 # Token sort ratio (ignores word order)
-index, exact = fuzzy_matcher_custom(query, reference, fuzz.token_sort_ratio)
-
-# Partial ratio (substring matching)
-index, exact = fuzzy_matcher_custom(query, reference, fuzz.partial_ratio)
-
-# Weighted ratio (combination of multiple metrics)
-index, exact = fuzzy_matcher_custom(query, reference, fuzz.WRatio)
+match, score, index = process.extractOne("grand prix belgian", choices, scorer=fuzz.token_sort_ratio)
+print(match, score, index)  # belgian grand prix 100.0 0
 ```
 
 #### Custom Normalization
 
+`fuzzy_matcher()` normalizes with `casefold()` and space removal. Normalize the query and the reference before the call to apply stricter rules:
+
 ```python
-def fuzzy_matcher_custom_norm(
-    query: str,
-    reference: list[list[str]],
-    normalize_func=lambda s: s.casefold().replace(" ", "")
-) -> tuple[int, bool]:
-    """Fuzzy matcher with custom normalization."""
-    # Apply custom normalization
-    query = normalize_func(query)
-    for i in range(len(reference)):
-        for j in range(len(reference[i])):
-            reference[i][j] = normalize_func(reference[i][j])
+from tif1.fuzzy import fuzzy_matcher
 
-    # ... rest of algorithm ...
-
-# Usage with custom normalization
 def aggressive_normalize(s: str) -> str:
     """Remove all non-alphanumeric characters."""
     return ''.join(c for c in s.casefold() if c.isalnum())
 
-index, exact = fuzzy_matcher_custom_norm(query, reference, aggressive_normalize)
+reference = [["Spa-Francorchamps", "Belgium"], ["Monza", "Italy"]]
+normalized = [[aggressive_normalize(s) for s in features] for features in reference]
+
+index, exact = fuzzy_matcher(aggressive_normalize("Spa Francorchamps"), normalized)
+print(index, exact)  # 0 True: without the hyphen, the query is a substring
 ```
 
 ---
@@ -3938,18 +3887,18 @@ The `tif1` fuzzy matching system is a high-performance solution for resolving Fo
 
 ### Core Concepts
 
-1. **Hybrid Algorithm**: Combines fast exact substring matching (0.2-0.3ms) with fuzzy Levenshtein distance matching (0.5-0.8ms)
-2. **Multi-Feature Matching**: Each event described by multiple features (location, country, official name, circuit) for maximum flexibility
-3. **Dictionary-Based Sessions**: Session names use O(1) dictionary lookup (&lt;0.05ms) rather than fuzzy matching
+1. **Hybrid Algorithm**: Combines fast exact substring matching (about 0.01-0.03ms) with fuzzy ratio matching (about 0.07-0.09ms)
+2. **Multi-Feature Matching**: Each event described by multiple features (location, country, event name, official name) for maximum flexibility
+3. **Dictionary-Based Sessions**: Session names use O(1) dictionary lookup (&lt;0.01ms) rather than fuzzy matching
 4. **Transparent Results**: Returns both match result and exact/fuzzy flag for validation and logging
 
 ### Performance Characteristics
 
-- **Event matching**: 0.3-0.8ms typical, &lt;1ms worst case
-- **Session matching**: &lt;0.05ms (dictionary lookup)
+- **Event matching**: 0.1-0.3ms per name lookup, well under 1ms
+- **Session matching**: about 0.001ms (dictionary lookup)
 - **Scalability**: Linear O(n) with number of events, handles 100+ events under 1ms
-- **Caching**: Event schedules cached, fuzzy results not cached (overhead > benefit)
-- **Optimization**: RapidFuzz provides 60-200x speedup over pure Python
+- **Caching**: Event schedules and session lists memoized, fuzzy results not cached
+- **Optimization**: RapidFuzz is about 70x faster than a pure Python Levenshtein function
 
 ### Usage Guidelines
 
@@ -3964,7 +3913,7 @@ The `tif1` fuzzy matching system is a high-performance solution for resolving Fo
 - **Interactive use**: Fuzzy matching (Monaco, Spa, Q, FP1)
 - **Production code**: Exact matching with validation
 - **Configuration files**: Use exact official names
-- **API endpoints**: Fuzzy matching with resolved name in response
+- **API endpoints**: Exact matching, or fuzzy matching with the resolved name in the response
 - **Testing**: Exact matching to catch errors early
 
 ### Common Pitfalls
@@ -3972,8 +3921,8 @@ The `tif1` fuzzy matching system is a high-performance solution for resolving Fo
 1. **Using P1/P2/P3 instead of FP1/FP2/FP3**: Not supported, use FP abbreviations
 2. **Assuming all events have all sessions**: Sprint weekends have different formats
 3. **Not handling fuzzy match warnings**: Check logs for unexpected matches
-4. **Caching fuzzy results**: Overhead exceeds benefit, do not do it
-5. **Thread safety**: In-place normalization is not thread-safe without locks
+4. **Caching fuzzy results**: Matching takes well under 1ms, so a cache gains little
+5. **Thread safety**: Do not share one reference list between threads: `fuzzy_matcher()` changes it in place
 
 ### When to Use What
 
@@ -3981,14 +3930,14 @@ The `tif1` fuzzy matching system is a high-performance solution for resolving Fo
 |----------|-------------|-------------|-----------|
 | Jupyter notebook | ✅ | ❌ | User convenience |
 | CLI tool | ✅ | ❌ | Typing speed |
-| Web API | ✅ | ❌ | Better UX |
+| Web API | ❌ | ✅ | Explicit contracts |
 | Config files | ❌ | ✅ | Clarity |
 | Unit tests | ❌ | ✅ | Catch errors |
 | Production pipeline | ❌ | ✅ | Predictability |
 
 ### Further Reading
 
-- [RapidFuzz Documentation](https://maxbachmann.github.io/RapidFuzz/)
+- [RapidFuzz Documentation](https://rapidfuzz.github.io/RapidFuzz/)
 - [Levenshtein Distance on Wikipedia](https://en.wikipedia.org/wiki/Levenshtein_distance)
 - [tif1 Events API Documentation](/api-reference/events)
 - [tif1 Session Loading Guide](/concepts/sessions)

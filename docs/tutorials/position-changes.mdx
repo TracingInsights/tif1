@@ -72,7 +72,7 @@ plt.show()
 
 Use this visualization to identify:
 
-- **Starting grid**: Where each driver began the race
+- **Opening lap**: Where each driver ran at the end of lap 1 (the first point of each line)
 - **Overtakes**: Sharp position changes indicate on-track passes
 - **Pit stop windows**: Drivers drop positions during pit stops, then recover
 - **Race incidents**: Sudden position losses may indicate crashes or mechanical issues
@@ -95,7 +95,7 @@ fig, ax = tif1.plot_position_changes(2023, 1, "R", drivers=["VER", "LEC", "NOR"]
 plt.show()
 ```
 
-Axis limits are derived from the data automatically, so the chart works for any grid size without hardcoded y-limits.
+Axis limits are derived from the data automatically, so the chart works for any grid size without hardcoded y-limits. The native chart also applies the shared lap filters. Deleted laps and pit in/out laps are left out of each driver's line.
 
 ## Complete Example
 

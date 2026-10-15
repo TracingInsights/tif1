@@ -11,6 +11,10 @@ keywords:
 
 Practical solutions for common F1 data analysis scenarios.
 
+<Note>
+  `get_session` accepts a full event name, such as `"British Grand Prix"`, or a circuit name, such as `"Silverstone"`. The season tracker below needs full names.
+</Note>
+
 ## Race strategy analysis
 
 Analyze tire strategy and pit stop timing.
@@ -28,7 +32,7 @@ def analyze_race_strategy(year: int, event: str):
     strategy = laps.groupby(["Driver", "Stint"]).agg({
         "LapNumber": ["min", "max", "count"],
         "Compound": "first",
-        "LapTime": "mean"
+        "LapTimeSeconds": "mean"
     }).reset_index()
 
     strategy.columns = ["Driver", "Stint", "StartLap", "EndLap",
@@ -37,21 +41,21 @@ def analyze_race_strategy(year: int, event: str):
     return strategy
 
 # Analyze Monaco 2025
-strategy = analyze_race_strategy(2025, "Monaco")
+strategy = analyze_race_strategy(2025, "Monaco Grand Prix")
 print(strategy)
 
-# Find optimal strategy
+# Average stint pace per compound
 best_strategy = strategy.groupby("Compound")["AvgLapTime"].mean()
 print(f"\nAverage pace by compound:\n{best_strategy}")
 ```
 
 ## Qualifying Performance
 
-Compare qualifying performance across sessions.
+Compare each driver's best qualifying lap, lap count, and compounds.
 
 ```python
 def analyze_qualifying(year: int, event: str):
-    """Analyze qualifying progression through Q1, Q2, Q3."""
+    """Summarize each driver's qualifying session."""
     quali = tif1.get_session(year, event, "Qualifying")
     laps = quali.laps
 
@@ -63,7 +67,7 @@ def analyze_qualifying(year: int, event: str):
         # Get best lap time
         best_lap = driver_laps["LapTime"].min()
 
-        # Count laps per session
+        # Count the laps of the driver
         lap_count = len(driver_laps)
 
         # Get compound used
@@ -81,7 +85,7 @@ def analyze_qualifying(year: int, event: str):
     return sorted_results
 
 # Analyze qualifying
-quali_results = analyze_qualifying(2025, "Silverstone")
+quali_results = analyze_qualifying(2025, "British Grand Prix")
 
 print("Qualifying Results:")
 for i, (driver, data) in enumerate(quali_results, 1):
@@ -139,7 +143,7 @@ def compare_telemetry(session, driver1: str, driver2: str):
     plt.show()
 
 # Compare VER vs LEC
-session = tif1.get_session(2025, "Monaco", "Qualifying")
+session = tif1.get_session(2025, "Monaco Grand Prix", "Qualifying")
 compare_telemetry(session, "VER", "LEC")
 ```
 
@@ -155,11 +159,12 @@ def model_tire_degradation(session, compound: str = "SOFT"):
     """Model tire degradation for a specific compound."""
     laps = session.laps
 
-    # Filter to compound and clean data
+    # Filter to compound and clean data (laps without a time break the regression)
     compound_laps = laps[
         (laps["Compound"] == compound) &
         (~laps["Deleted"]) &
-        (laps["PitInTime"].isna())
+        (laps["PitInTime"].isna()) &
+        (laps["LapTime"].notna())
     ]
 
     results = {}
@@ -186,7 +191,7 @@ def model_tire_degradation(session, compound: str = "SOFT"):
     return results
 
 # Model degradation
-session = tif1.get_session(2025, "Barcelona", "Race")
+session = tif1.get_session(2025, "Spanish Grand Prix", "Race")
 degradation = model_tire_degradation(session, "SOFT")
 
 print("Tire Degradation Analysis (SOFT compound):")
@@ -230,7 +235,7 @@ def analyze_weather_impact(session):
     return correlations
 
 # Analyze weather impact
-session = tif1.get_session(2025, "Singapore", "Race")
+session = tif1.get_session(2025, "Singapore Grand Prix", "Race")
 weather_impact = analyze_weather_impact(session)
 
 print("Weather Impact on Lap Times:")
@@ -244,8 +249,9 @@ Track championship standings throughout a season.
 
 ```python
 def calculate_championship_standings(year: int, up_to_event: str = None):
-    """Calculate championship standings."""
-    events = tif1.get_events(year)
+    """Sum Grand Prix points per driver (sprint races are not counted)."""
+    # get_event_schedule() returns a DataFrame; take the EventName column as a list
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"].tolist()
 
     if up_to_event:
         events = events[:events.index(up_to_event) + 1]
@@ -260,16 +266,13 @@ def calculate_championship_standings(year: int, up_to_event: str = None):
     for event in events:
         try:
             session = tif1.get_session(year, event, "Race")
-            laps = session.laps
 
-            # Get final positions
-            final_lap = laps["LapNumber"].max()
-            final_positions = laps[laps["LapNumber"] == final_lap]
-            final_positions = final_positions.sort_values("Position")
+            # results is in classification order and includes lapped drivers
+            results = session.results
 
             # Award points
-            for _, row in final_positions.iterrows():
-                driver = row["Driver"]
+            for _, row in results.iterrows():
+                driver = row["Abbreviation"]
                 position = row["Position"]
 
                 if position in points_system:
@@ -286,7 +289,7 @@ def calculate_championship_standings(year: int, up_to_event: str = None):
     return standings
 
 # Calculate standings
-standings = calculate_championship_standings(2025, up_to_event="Monaco")
+standings = calculate_championship_standings(2025, up_to_event="Monaco Grand Prix")
 
 print("Championship Standings:")
 for i, (driver, points) in enumerate(standings, 1):
@@ -295,7 +298,7 @@ for i, (driver, points) in enumerate(standings, 1):
 
 ## Overtaking Analysis
 
-Analyze overtaking opportunities and execution.
+Count the positions each driver gains from one lap to the next.
 
 ```python
 def analyze_overtakes(session):
@@ -318,7 +321,7 @@ def analyze_overtakes(session):
             suffixes=("_prev", "_curr")
         )
 
-        # Find position changes
+        # Find position changes (pit stops and retirements of others count too)
         comparison["change"] = comparison["Position_prev"] - comparison["Position_curr"]
 
         # Overtakes are positive changes
@@ -334,7 +337,7 @@ def analyze_overtakes(session):
     return pd.DataFrame(overtakes)
 
 # Analyze overtakes
-session = tif1.get_session(2025, "Monza", "Race")
+session = tif1.get_session(2025, "Italian Grand Prix", "Race")
 overtakes = analyze_overtakes(session)
 
 print(f"Total overtakes: {len(overtakes)}")
@@ -383,7 +386,7 @@ def analyze_consistency(session, min_laps: int = 10):
     return sorted_consistency
 
 # Analyze consistency
-session = tif1.get_session(2025, "Spa", "Race")
+session = tif1.get_session(2025, "Belgian Grand Prix", "Race")
 consistency = analyze_consistency(session)
 
 print("Driver Consistency (lower CV = more consistent):")
@@ -398,6 +401,8 @@ for driver, metrics in consistency:
 Estimate fuel effect on lap times.
 
 ```python
+from scipy import stats
+
 def estimate_fuel_effect(session):
     """Estimate fuel effect on lap times."""
     laps = session.laps
@@ -441,7 +446,7 @@ def estimate_fuel_effect(session):
     return results
 
 # Estimate fuel effect
-session = tif1.get_session(2025, "Bahrain", "Race")
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 fuel_effect = estimate_fuel_effect(session)
 
 print("Fuel + Tire Effect Analysis:")

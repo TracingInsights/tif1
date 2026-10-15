@@ -48,7 +48,6 @@ from tif1.core_utils.backend_conversion import (
     pandas_to_polars,
     polars_to_pandas,
     convert_backend,
-    POLARS_AVAILABLE  # Boolean flag for polars availability
 )
 
 from tif1.core_utils.json_utils import (
@@ -72,7 +71,7 @@ from tif1.core_utils.helpers import (
     _create_telemetry_df,
     _reorder_laps_columns,
     _normalize_row_iteration,
-    _ensure_polars_available
+    _ensure_polars_available  # Returns True when polars can be imported
 )
 
 from tif1.core_utils.constants import (
@@ -92,15 +91,13 @@ from tif1.core_utils.resource_manager import ResourceManager
 
 ### Performance Philosophy
 
-The core_utils module is designed with performance as the primary concern. Every function is optimized for:
+The core_utils module is designed with performance as the primary concern:
 
-- **Minimal memory allocations**: Reuse buffers, avoid unnecessary copies
-- **Cache-friendly access patterns**: Sequential reads, predictable branches
-- **SIMD-friendly operations**: Use NumPy/Arrow vectorization
-- **Lazy computation**: Defer work until absolutely necessary
-- **Zero-copy semantics**: Share memory between backends via Arrow
-
-**Real-world impact**: These optimizations enable `tif1` to load and process a full race weekend with telemetry for all 20 drivers. A full weekend covers 3 practice sessions, qualifying, and the race. The load completes in under 5 seconds on modern hardware.
+- **Lazy imports**: polars loads only on first use (`_ensure_polars_available()`)
+- **Arrow interchange**: Numeric columns move between pandas and polars without a copy
+- **orjson**: JSON parsing and serialization in Rust
+- **Memoization**: `_encode_url_component` keeps an LRU cache of encoded names
+- **Categorical dtypes**: Low-cardinality lap columns use less memory
 
 ---
 
@@ -114,7 +111,9 @@ The conversion system uses:
 - **Apache Arrow** as the zero-copy interchange format
 - **PyArrow extension arrays** for pandas to maintain Arrow memory layout
 - **Lazy polars imports** to avoid dependency requirements when not needed
-- **Automatic fallback** to standard conversion if zero-copy fails
+- **No fallback**: A failed conversion raises `ValueError`
+
+`tif1` itself does not call these functions. They are helpers for analysis code that mixes the two backends.
 
 ### `pandas_to_polars`
 
@@ -140,9 +139,9 @@ Convert a pandas DataFrame to polars using zero-copy Arrow conversion. This func
 - `ValueError`: If the conversion fails due to incompatible data types or corrupted data
 
 **Performance Characteristics:**
-- **Time complexity**: O(1) for zero-copy conversion (when rechunk=False), O(n) when rechunking
-- **Memory overhead**: Minimal (shares memory with source DataFrame via Arrow)
-- **Typical performance**: ~50ms for 1M rows with zero-copy
+- **Numeric columns**: Converted without a copy (shares memory with the source DataFrame via Arrow)
+- **String and categorical columns**: Copied, O(n)
+- **Typical performance** (one machine, 1M rows): under 1 ms for numeric columns. About 12 ms with a string and a categorical column
 
 **Example - Basic Conversion:**
 ```python
@@ -164,15 +163,26 @@ print(type(df_polars))  # <class 'polars.dataframe.frame.DataFrame'>
 
 **Example - With Rechunking:**
 ```python
+import pandas as pd
+import polars as pl
+from tif1.core_utils.backend_conversion import pandas_to_polars
+
+df_pandas = pd.DataFrame({
+    "driver": ["VER", "HAM", "LEC"],
+    "lap_time": [90.123, 90.456, 90.789],
+})
+
 # Convert with rechunking for optimal polars performance
 df_polars = pandas_to_polars(df_pandas, rechunk=True)
 
-# Now polars operations will be faster due to contiguous memory
+# Later polars operations run on contiguous memory
 fast_laps = df_polars.filter(pl.col("lap_time") < 90.5)
+print(fast_laps["driver"].to_list())  # ['VER', 'HAM']
 ```
 
 **Example - Handling Large DataFrames:**
 ```python
+import numpy as np
 import pandas as pd
 from tif1.core_utils.backend_conversion import pandas_to_polars
 
@@ -187,7 +197,7 @@ df_large = pd.DataFrame({
 import time
 start = time.time()
 df_polars = pandas_to_polars(df_large)
-print(f"Converted 10M rows in {time.time() - start:.3f}s")  # ~0.1s
+print(f"Converted 10M rows in {time.time() - start:.3f}s")  # well under 1s on most machines
 ```
 
 <Tip>
@@ -206,7 +216,7 @@ def polars_to_pandas(
 ) -> pd.DataFrame
 ```
 
-Convert a polars DataFrame to pandas using zero-copy Arrow conversion. This function uses `df.to_pandas()` with PyArrow extension arrays to maintain Arrow memory layout in pandas, enabling zero-copy semantics.
+Convert a polars DataFrame to pandas using zero-copy Arrow conversion. This function uses `df.to_pandas()` with PyArrow extension arrays to maintain Arrow memory layout in pandas, enabling zero-copy semantics. `pyarrow` is a runtime dependency of `tif1`, so this conversion needs no extra install.
 
 **Parameters:**
 - `df` (`pl.DataFrame`): polars DataFrame to convert. Supports all polars data types including nested types (List, Struct), categoricals, and temporal types.
@@ -220,9 +230,9 @@ Convert a polars DataFrame to pandas using zero-copy Arrow conversion. This func
 - `ValueError`: If the conversion fails due to incompatible data types
 
 **Performance Characteristics:**
-- **Time complexity**: O(1) for zero-copy (when use_pyarrow=True), O(n) for native pandas dtypes
-- **Memory overhead**: Minimal with PyArrow arrays, 2x memory usage with native dtypes
-- **Typical performance**: ~100ms for 1M rows with PyArrow
+- **With PyArrow arrays** (`use_pyarrow=True`): Numeric columns are not copied
+- **Native pandas dtypes** (`use_pyarrow=False`): Every column is converted, O(n)
+- **Typical performance** (one machine, 1M rows with a string column): about 7 ms with PyArrow arrays. About 10 ms with native dtypes
 
 **Example - Basic Conversion:**
 ```python
@@ -239,19 +249,28 @@ df_polars = pl.DataFrame({
 # Zero-copy conversion to pandas with PyArrow arrays
 df_pandas = polars_to_pandas(df_polars)
 print(df_pandas.dtypes)
-# driver       string[pyarrow]
-# lap_time     double[pyarrow]
-# position     int64[pyarrow]
+# driver      large_string[pyarrow]
+# lap_time          double[pyarrow]
+# position           int64[pyarrow]
 ```
 
 **Example - Native Pandas Dtypes:**
 ```python
+import polars as pl
+from tif1.core_utils.backend_conversion import polars_to_pandas
+
+df_polars = pl.DataFrame({
+    "driver": ["VER", "HAM", "LEC"],
+    "lap_time": [90.123, 90.456, 90.789],
+    "position": [1, 2, 3]
+})
+
 # Convert to native pandas dtypes (slower, more memory)
 df_pandas_native = polars_to_pandas(df_polars, use_pyarrow=False)
 print(df_pandas_native.dtypes)
-# driver       object
-# lap_time     float64
-# position     int64
+# driver          str
+# lap_time    float64
+# position      int64
 ```
 
 **Example - Handling Nested Types:**
@@ -266,7 +285,7 @@ df_nested = pl.DataFrame({
     "metadata": [{"team": "Red Bull", "car": 1}, {"team": "Mercedes", "car": 44}]
 })
 
-# PyArrow handles nested types seamlessly
+# PyArrow converts nested types
 df_pandas = polars_to_pandas(df_nested)
 print(df_pandas["sector_times"].iloc[0])  # [28.1, 35.2, 26.8]
 ```
@@ -318,7 +337,7 @@ print(type(df_polars))  # <class 'polars.dataframe.frame.DataFrame'>
 
 # Convert back to pandas
 df_pandas = convert_backend(df_polars, "pandas")
-print(type(df_pandas))  # <class 'pandas.core.frame.DataFrame'>
+print(type(df_pandas))  # <class 'pandas.DataFrame'>
 
 # No-op: already pandas
 df_same = convert_backend(df_pandas, "pandas")
@@ -331,7 +350,7 @@ import tif1
 from tif1.core_utils.backend_conversion import convert_backend
 
 # Load session with pandas backend
-session = tif1.get_session(2024, "Monaco", "Race", backend="pandas")
+session = tif1.get_session(2024, "Monaco", "Race", lib="pandas")
 laps_pandas = session.laps
 
 # Convert to polars for faster filtering
@@ -348,7 +367,10 @@ fast_laps_pandas = convert_backend(fast_laps, "pandas")
 
 **Example - Error Handling:**
 ```python
+import pandas as pd
 from tif1.core_utils.backend_conversion import convert_backend
+
+df = pd.DataFrame({"driver": ["VER", "HAM"], "position": [1, 2]})
 
 try:
     df_converted = convert_backend(df, "spark")  # Invalid backend
@@ -356,9 +378,9 @@ except ValueError as e:
     print(e)  # "Invalid target_backend: spark. Must be 'pandas' or 'polars'"
 
 try:
-    df_polars = convert_backend(df, "polars")  # polars not installed
+    df_polars = convert_backend(df, "polars")
 except ImportError as e:
-    print(e)  # "polars is not installed"
+    print(e)  # "polars is not installed" (only when polars is missing)
 ```
 
 <Tip>
@@ -376,15 +398,15 @@ The JSON utilities module provides high-performance JSON parsing and serializati
 orjson provides significant advantages over Python's standard library `json` module:
 
 - **2-3x faster parsing**: Rust-based implementation with SIMD optimizations
-- **Lower memory usage**: Efficient memory allocation and reuse
+- **Faster serialization**: About 9x faster than stdlib `json.dumps` on an 8 MB payload of numbers (one machine)
 - **Native bytes support**: Parse directly from HTTP response bodies without decoding
-- **NumPy integration**: Automatic handling of NumPy types during serialization
+- **NumPy support**: orjson serializes NumPy arrays only with its `OPT_SERIALIZE_NUMPY` option, and `json_dumps` does not set it
 - **Strict correctness**: Validates JSON spec compliance
 
-**Benchmark comparison** (parsing 10MB JSON payload):
+**Benchmark comparison** (parsing the 11 MB payload of the performance example below, one machine):
 ```text
-stdlib json.loads():  450ms
-orjson.loads():       180ms  (2.5x faster)
+stdlib json.loads():  82ms
+orjson.loads():       36ms  (2.3x faster)
 ```
 
 ### Architecture
@@ -422,16 +444,14 @@ Deserialize JSON payload to Python object using accelerated orjson codec with au
   - `str`, `int`, `float`, `bool`, `None`: JSON primitives
 
 **Raises:**
-- `json.JSONDecodeError`: If the payload is not valid JSON (from fallback parser)
-- `ValueError`: If the payload is malformed (from orjson)
+- `json.JSONDecodeError` (a `ValueError` subclass): If the payload is not valid JSON. orjson fails first, then the stdlib fallback raises this error.
 
 **Performance Characteristics:**
 - **Time complexity**: O(n) where n is the payload size
-- **Memory overhead**: Minimal (orjson uses efficient allocation)
-- **Typical performance**:
-  - Small payloads (&lt;1KB): ~10μs
-  - Medium payloads (100KB): ~2ms
-  - Large payloads (10MB): ~180ms
+- **Typical performance** (one machine):
+  - Small payloads (&lt;1KB): about 1μs
+  - Medium payloads (100KB): about 0.2ms
+  - Large payloads (10MB): about 30ms
 
 **Example - Basic Usage:**
 ```python
@@ -454,14 +474,23 @@ print(lap_data["time"])  # 90.123
 import niquests
 from tif1.core_utils.json_utils import json_loads
 
-# Fetch lap data from CDN
-response = niquests.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
+# Fetch Verstappen's lap times for the 2025 Bahrain Grand Prix race from the CDN
+url = (
+    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+    "Bahrain%20Grand%20Prix/Race/VER/laptimes.json"
+)
+response = niquests.get(url, timeout=15)
+response.raise_for_status()
+
 # Parse directly from response bytes (no decode step)
 lap_data = json_loads(response.content)
 
-# Process lap data
-for lap in lap_data["laps"]:
-    print(f"Lap {lap['lap']}: {lap['time']}s")
+# The payload is column-oriented: one list per field
+for lap, time in list(zip(lap_data["lap"], lap_data["time"]))[:3]:
+    print(f"Lap {lap}: {time}s")
+# Lap 1: 103.877s
+# Lap 2: 98.403s
+# Lap 3: 98.475s
 ```
 
 **Example - Handling Complex Nested Data:**
@@ -502,8 +531,8 @@ import json
 import time
 from tif1.core_utils.json_utils import json_loads
 
-# Large JSON payload (10MB)
-large_json = json.dumps({"data": list(range(1_000_000))})
+# Large JSON payload of float lap times (about 11MB)
+large_json = json.dumps({"time": [90.0 + i * 1e-6 for i in range(1_000_000)]})
 
 # Benchmark stdlib json
 start = time.perf_counter()
@@ -518,10 +547,10 @@ orjson_time = time.perf_counter() - start
 print(f"stdlib json: {stdlib_time:.3f}s")
 print(f"orjson:      {orjson_time:.3f}s")
 print(f"Speedup:     {stdlib_time / orjson_time:.2f}x")
-# Output:
-# stdlib json: 0.450s
-# orjson:      0.180s
-# Speedup:     2.50x
+# Output (timings vary by machine):
+# stdlib json: 0.082s
+# orjson:      0.036s
+# Speedup:     2.31x
 ```
 
 <Tip>
@@ -544,22 +573,21 @@ Serialize Python object to JSON string using accelerated orjson codec with autom
   - `str`, `int`, `float`, `bool`, `None`: Primitives
   - `datetime`, `date`, `time`: Temporal types (ISO 8601 format)
   - `UUID`: Converted to string
-  - `numpy` types: Automatically converted to Python equivalents
-  - `dataclasses`, `pydantic models`: Serialized to dict
+  - `numpy.float64` scalars: orjson rejects them, so the stdlib fallback serializes them. A payload that also holds a `datetime` or `date` then raises `TypeError`. Convert NumPy values with `float()`, `int()` or `.tolist()` first.
+  - `dataclasses`: Serialized to dict. Call `model_dump()` on pydantic models first.
 
 **Returns:**
 - `str`: JSON string representation of the data
 
 **Raises:**
-- `TypeError`: If the data contains non-serializable types (for example, custom classes without `__dict__`)
+- `TypeError`: If the data contains non-serializable types (for example, NumPy arrays, NumPy integers or pydantic models)
 
 **Performance Characteristics:**
 - **Time complexity**: O(n) where n is the data size
-- **Memory overhead**: Minimal (efficient string building)
-- **Typical performance**:
-  - Small objects (&lt;1KB): ~5μs
-  - Medium objects (100KB): ~1ms
-  - Large objects (10MB): ~100ms
+- **Typical performance** (one machine):
+  - Small objects (&lt;1KB): about 1μs
+  - Medium objects (100KB): about 0.1ms
+  - Large objects (10MB): about 15ms
 
 **Example - Basic Usage:**
 ```python
@@ -577,21 +605,22 @@ print(json_str)
 # {"driver":"VER","team":"Red Bull Racing","position":1,"lap_time":90.123}
 ```
 
-**Example - Serializing NumPy Types:**
+**Example - Serializing NumPy Values:**
 ```python
 import numpy as np
 from tif1.core_utils.json_utils import json_dumps
 
-# NumPy arrays and types are automatically handled
+# json_dumps does not enable orjson's NumPy option: convert NumPy values first
+speeds = np.array([250, 280, 310])
 data = {
-    "speeds": np.array([250, 280, 310]),
-    "avg_speed": np.float64(280.5),
-    "lap_count": np.int32(58)
+    "speeds": speeds.tolist(),            # ndarray -> list of int
+    "avg_speed": float(speeds.mean()),    # np.float64 -> float
+    "lap_count": int(np.int32(58)),       # np.int32 -> int
 }
 
 json_str = json_dumps(data)
 print(json_str)
-# {"speeds":[250,280,310],"avg_speed":280.5,"lap_count":58}
+# {"speeds":[250,280,310],"avg_speed":280.0,"lap_count":58}
 ```
 
 **Example - Serializing Datetime Objects:**
@@ -633,7 +662,7 @@ print("Round-trip successful!")
 ```
 
 <Note>
-  `json_dumps` uses orjson for 2-3x faster serialization than stdlib json. It automatically handles NumPy types, datetime objects, and other common Python types without requiring custom encoders.
+  `json_dumps` uses orjson, which serialized about 9x faster than stdlib json in the measurement above. It handles datetime objects, UUIDs and dataclasses without custom encoders. Convert NumPy values to Python types first.
 </Note>
 
 ---
@@ -655,27 +684,32 @@ Decode an HTTP response body to Python object, preferring raw-byte parsing when 
 - `Any`: Parsed Python object from the response JSON body
 
 **Raises:**
-- `json.JSONDecodeError`: If the response body is not valid JSON
+- `json.JSONDecodeError` (or a subclass from the HTTP library): If the response body is not valid JSON. A bytes parse that fails falls back to `.json()`, which raises the error
 - `AttributeError`: If the response object has neither `.content` nor `.json()`
 
 **Performance Characteristics:**
-- **Optimized path**: Parse from `.content` bytes using orjson (~180ms for 10MB)
-- **Fallback path**: Use `.json()` method (~450ms for 10MB)
-- **Speedup**: 2-3x faster than calling `.json()` directly
+- **Optimized path**: Parse the `.content` bytes with orjson, with no decode to text
+- **Fallback path**: Use the `.json()` method
+- **Speedup**: Small with niquests, about 1.05-1.1x on 18 KB and 154 KB CDN files (one machine). niquests also parses with orjson when it is installed, after it decodes the body to text
 
 **Example - Parsing niquests Response:**
 ```python
 import niquests
 from tif1.core_utils.json_utils import parse_response_json
 
-# Fetch data from CDN
-response = niquests.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
+# Fetch Verstappen's 2025 Bahrain Grand Prix race lap times from the CDN
+url = (
+    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+    "Bahrain%20Grand%20Prix/Race/VER/laptimes.json"
+)
+response = niquests.get(url, timeout=15)
+response.raise_for_status()
 
 # Parse JSON efficiently (uses response.content bytes)
 data = parse_response_json(response)
 
 # Process data
-print(f"Loaded {len(data['laps'])} laps")
+print(f"Loaded {len(data['lap'])} laps")  # Loaded 57 laps
 ```
 
 **Example - Comparing Performance:**
@@ -684,8 +718,12 @@ import niquests
 import time
 from tif1.core_utils.json_utils import parse_response_json
 
-url = "https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/..."
-response = niquests.get(url)
+url = (
+    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+    "Bahrain%20Grand%20Prix/Race/VER/laptimes.json"
+)
+response = niquests.get(url, timeout=15)
+response.raise_for_status()
 
 # Method 1: Standard .json() method
 start = time.perf_counter()
@@ -697,36 +735,44 @@ start = time.perf_counter()
 data2 = parse_response_json(response)
 method2_time = time.perf_counter() - start
 
-print(f"response.json():        {method1_time:.3f}s")
-print(f"parse_response_json():  {method2_time:.3f}s")
+print(f"response.json():        {method1_time * 1000:.3f}ms")
+print(f"parse_response_json():  {method2_time * 1000:.3f}ms")
 print(f"Speedup:                {method1_time / method2_time:.2f}x")
-# Output:
-# response.json():        0.045s
-# parse_response_json():  0.018s
-# Speedup:                2.50x
+# Output (timings vary; with niquests the two are close):
+# response.json():        4.561ms
+# parse_response_json():  4.603ms
+# Speedup:                0.99x
 ```
 
 **Example - Integration with tif1 HTTP Session:**
 ```python
-from tif1.http_session import HTTPSession
+from tif1.http_session import get_session
 from tif1.core_utils.json_utils import parse_response_json
 
-# Create HTTP session
-session = HTTPSession()
+# Shared, pooled niquests session used by tif1
+http = get_session()
 
-# Fetch lap data
-response = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/...")
+# Fetch the driver list for the 2025 Bahrain Grand Prix race
+response = http.get(
+    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+    "Bahrain%20Grand%20Prix/Race/drivers.json",
+    timeout=15,
+)
+response.raise_for_status()
 
 # Parse efficiently
-lap_data = parse_response_json(response)
+payload = parse_response_json(response)
 
-# Process laps
-for lap in lap_data["laps"]:
-    print(f"Driver {lap['driver']}: Lap {lap['lap']} - {lap['time']}s")
+# Process drivers
+for entry in payload["drivers"][:3]:
+    print(f"{entry['driver']} ({entry['dn']}): {entry['team']}")
+# PIA (81): McLaren
+# RUS (63): Mercedes
+# NOR (4): McLaren
 ```
 
 <Tip>
-  Always use `parse_response_json()` instead of `response.json()` when working with HTTP responses in performance-critical code. The 2-3x speedup adds up quickly when fetching data for multiple sessions or drivers.
+  `parse_response_json()` skips the decode of the body to text. The gain is largest with HTTP libraries whose `.json()` uses stdlib json or simplejson, such as `requests`.
 </Tip>
 
 ---
@@ -740,10 +786,10 @@ for lap in lap_data["laps"]:
 5. **Handle errors gracefully**: Catch `json.JSONDecodeError` for malformed JSON
 
 **Common Pitfalls:**
-- ❌ `json.loads(response.text)` - Slow (decode + parse)
-- ❌ `response.json()` - Slower (uses stdlib json)
+- ❌ `json.loads(response.text)` - Slow (decode + stdlib parse)
+- ⚠️ `response.json()` - Decodes to text first. niquests then parses with orjson; `requests` uses stdlib json or simplejson
 - ✅ `json_loads(response.content)` - Fast (direct bytes parse)
-- ✅ `parse_response_json(response)` - Fastest (optimized path)
+- ✅ `parse_response_json(response)` - Fast (direct bytes parse, `.json()` fallback)
 
 ---
 
@@ -777,8 +823,8 @@ Validate that a year is within the supported range for F1 data. This function is
 
 **Parameters:**
 - `year` (`int`): Year to validate. Must be an integer representing a calendar year.
-- `min_year` (`int`): Minimum supported year (inclusive). Typically 2018 for `tif1`.
-- `max_year` (`int`): Maximum supported year (inclusive). Typically the current year + 1 for future scheduled races.
+- `min_year` (`int`): Minimum supported year (inclusive). `tif1` passes `MIN_YEAR` (2018).
+- `max_year` (`int`): Maximum supported year (inclusive). `tif1` passes `MAX_YEAR` (2100).
 
 **Raises:**
 - `ValueError`: If year is outside the range `[min_year, max_year]`. Error message includes the valid range and the invalid value provided.
@@ -823,7 +869,7 @@ def load_session(year: int, gp: str, session_type: str):
 ```
 
 <Note>
-  The data loading pipeline performs this validation early, before any network requests are made. Early validation fails fast and provides clear feedback.
+  The `Session` constructor calls this validation before any network request. Early validation fails fast and provides clear feedback.
 </Note>
 
 ---
@@ -834,7 +880,7 @@ def load_session(year: int, gp: str, session_type: str):
 def _validate_drivers_list(drivers: list[str] | None) -> None
 ```
 
-Validate that a drivers list parameter is well-formed and contains valid driver codes. This function ensures that driver filtering operations receive properly formatted input.
+Validate that a drivers list parameter is a non-empty list of non-empty strings. It does not check that the codes exist in a session. This function ensures that driver filtering operations receive properly formatted input.
 
 **Parameters:**
 - `drivers` (`list[str] | None`): List of driver codes to validate. Each code should be a non-empty string (typically 3-letter abbreviations like "VER", "HAM", "LEC"). Can be `None` to indicate no filtering.
@@ -847,7 +893,7 @@ Validate that a drivers list parameter is well-formed and contains valid driver 
 1. Must be a list type (not tuple, set, or other iterable)
 2. Cannot be an empty list (use `None` instead to indicate "all drivers")
 3. All elements must be strings
-4. All strings must be non-empty (no empty strings or whitespace-only strings)
+4. All strings must be non-empty (a whitespace-only string such as `" "` passes)
 
 **Performance:**
 - **Time complexity**: O(n) where n is the number of drivers
@@ -1124,9 +1170,9 @@ URL-encode a string component for safe use in CDN URLs. This function properly e
 
 **Performance:**
 - **Time complexity**: O(n) for first call, O(1) for cached calls
-- **Typical execution**:
-  - First call: ~10μs
-  - Cached call: &lt;1μs (cache lookup)
+- **Typical execution** (one machine):
+  - Uncached call: about 1μs (the first call of a process takes about 30μs)
+  - Cached call: &lt;0.1μs (cache lookup)
 
 **Example - Basic URL Encoding:**
 ```python
@@ -1160,9 +1206,9 @@ def build_cdn_url(year: int, gp: str, session_type: str, data_type: str) -> str:
     return f"{base_url}/{gp_encoded}/{session_encoded}/{data_type}.json"
 
 # Example usage
-url = build_cdn_url(2024, "Belgian Grand Prix", "Race", "laps")
+url = build_cdn_url(2024, "Belgian Grand Prix", "Race", "drivers")
 print(url)
-# https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Belgian%20Grand%20Prix/Race/laps.json
+# https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Belgian%20Grand%20Prix/Race/drivers.json
 ```
 
 **Example - Cache Performance:**
@@ -1180,9 +1226,9 @@ start = time.perf_counter()
 result2 = _encode_url_component("Belgian Grand Prix")
 cached_call_time = time.perf_counter() - start
 
-print(f"First call:  {first_call_time * 1e6:.1f}μs")  # ~10μs
-print(f"Cached call: {cached_call_time * 1e6:.1f}μs")  # &lt;1μs
-print(f"Speedup:     {first_call_time / cached_call_time:.0f}x")  # ~10-20x
+print(f"First call:  {first_call_time * 1e6:.1f}μs")  # ~30μs in a new process
+print(f"Cached call: {cached_call_time * 1e6:.1f}μs")  # ~0.5μs (timer overhead included)
+print(f"Speedup:     {first_call_time / cached_call_time:.0f}x")  # ~60x (varies by machine)
 ```
 
 **Example - Handling International Characters:**
@@ -1209,7 +1255,7 @@ for gp in gp_names:
 ```
 
 <Tip>
-  The LRU cache makes repeated URL encoding operations essentially free. Since GP names and session types are reused frequently, the cache hit rate is typically >95% in real-world usage.
+  The LRU cache makes repeated URL encoding operations essentially free. GP names and session types repeat often, so most calls are cache hits.
 </Tip>
 
 ---
@@ -1268,22 +1314,33 @@ print(_is_empty_df(df_pl, "polars"))  # False
 
 **Example - Integration with Data Loading:**
 ```python
-from tif1.core_utils.helpers import _is_empty_df, _create_empty_df
+import logging
+
+import tif1
+from tif1.core_utils.helpers import _create_empty_df, _is_empty_df
+from tif1.exceptions import DataNotFoundError
+
+logger = logging.getLogger(__name__)
 
 def load_laps_with_fallback(year: int, gp: str, session: str, lib: str):
     """Load laps with empty DataFrame fallback."""
     try:
-        laps = fetch_laps_from_cdn(year, gp, session, lib)
-
-        # Check if we got data
-        if _is_empty_df(laps, lib):
-            logger.warning(f"No lap data found for {year} {gp} {session}")
-            return _create_empty_df(lib)
-
-        return laps
-    except Exception as e:
+        sess = tif1.get_session(year, gp, session, lib=lib)
+        sess.load(laps=True, telemetry=False, weather=False, messages=False)
+        laps = sess.laps
+    except DataNotFoundError as e:
         logger.error(f"Failed to load laps: {e}")
         return _create_empty_df(lib)
+
+    # Check if the session returned any laps
+    if _is_empty_df(laps, lib):
+        logger.warning(f"No lap data found for {year} {gp} {session}")
+        return _create_empty_df(lib)
+
+    return laps
+
+laps = load_laps_with_fallback(2025, "Bahrain Grand Prix", "Race", "pandas")
+print(len(laps))  # 1128
 ```
 
 **Example - Conditional Processing:**
@@ -1326,7 +1383,7 @@ Create an empty DataFrame for the specified backend. This function provides a co
 
 **Performance:**
 - **Time complexity**: O(1) - creates empty structure
-- **Typical execution**: &lt;10μs
+- **Typical execution** (one machine): about 20μs for pandas, about 1μs for polars
 
 **Example - Basic Usage:**
 ```python
@@ -1334,7 +1391,7 @@ from tif1.core_utils.helpers import _create_empty_df
 
 # Create empty pandas DataFrame
 df_pd = _create_empty_df("pandas")
-print(type(df_pd))  # <class 'pandas.core.frame.DataFrame'>
+print(type(df_pd))  # <class 'pandas.DataFrame'>
 print(len(df_pd))   # 0
 
 # Create empty polars DataFrame
@@ -1345,7 +1402,11 @@ print(len(df_pl))   # 0
 
 **Example - Fallback Pattern:**
 ```python
+import logging
+
 from tif1.core_utils.helpers import _create_empty_df, _is_empty_df
+
+logger = logging.getLogger(__name__)
 
 def get_driver_laps(session, driver: str, lib: str):
     """Get laps for a driver with empty DataFrame fallback."""
@@ -1407,7 +1468,7 @@ class SessionData:
 def _filter_valid_laptimes(laps, lib: str)
 ```
 
-Filter laps DataFrame to include only rows with valid lap times, and add a numeric `LapTimeSeconds` column for analysis. This function is critical for data quality. It removes invalid laps (pit laps, out laps, deleted laps) and provides a consistent numeric representation of lap times.
+Filter laps DataFrame to include only rows with valid lap times, and add a numeric `LapTimeSeconds` column for analysis. It removes rows whose `LapTime` is missing (null or NaN). It does not detect pit laps, out laps or deleted laps that have a lap time.
 
 **Parameters:**
 - `laps`: Laps DataFrame (pandas or polars). Must contain a `LapTime` column.
@@ -1423,12 +1484,12 @@ Filter laps DataFrame to include only rows with valid lap times, and add a numer
 **Behavior:**
 - **Pandas**: Converts `LapTime` to `timedelta64[ns]` and creates `LapTimeSeconds` as float
 - **Polars**: Casts `LapTime` to Float64 (non-strict) and aliases as `LapTimeSeconds`
-- **Optimization**: Minimizes copies by filtering before copying (pandas) or using lazy operations (polars)
+- **Optimization**: Minimizes copies by filtering before copying (pandas) or with one `with_columns` and one `filter` call (polars)
 
 **Performance:**
 - **Time complexity**: O(n) where n is the number of laps
 - **Memory overhead**: Minimal (single column addition)
-- **Typical execution**: ~5ms for 1000 laps
+- **Typical execution** (one machine): under 1ms for 1000 laps
 
 **Example - Basic Usage:**
 ```python
@@ -1466,15 +1527,13 @@ laps = pl.DataFrame({
 valid_laps = _filter_valid_laptimes(laps, "polars")
 
 print(valid_laps["LapTimeSeconds"])
-# ┌─────────────────┐
-# │ LapTimeSeconds  │
-# │ ---             │
-# │ f64             │
-# ╞═════════════════╡
-# │ 95.5            │
-# │ 90.2            │
-# │ 89.8            │
-# └─────────────────┘
+# shape: (3,)
+# Series: 'LapTimeSeconds' [f64]
+# [
+# 	95.5
+# 	90.2
+# 	89.8
+# ]
 ```
 
 **Example - Handling Mixed Valid/Invalid Data:**
@@ -1535,13 +1594,13 @@ elapsed = time.perf_counter() - start
 
 print(f"Filtered {len(laps)} laps in {elapsed*1000:.1f}ms")
 print(f"Valid laps: {len(valid_laps)} ({len(valid_laps)/len(laps)*100:.1f}%)")
-# Output:
-# Filtered 20000 laps in 45.2ms
+# Output (timings vary by machine):
+# Filtered 20000 laps in 2.6ms
 # Valid laps: 18000 (90.0%)
 ```
 
 <Note>
-  This function is called automatically during session loading. The `LapTimeSeconds` column is essential for numerical analysis, sorting, and filtering operations that require numeric comparison.
+  Session loading adds `LapTimeSeconds` itself. This function runs in the fastest-lap lookups: `Laps.pick_fastest()`, `Driver.get_fastest_lap()` and `Session.get_fastest_laps()`.
 </Note>
 
 ---
@@ -1718,8 +1777,8 @@ Apply categorical dtype to specified columns for memory optimization and faster 
 
 **Performance:**
 - **Time complexity**: O(n × m) where n is rows and m is number of categorical columns
-- **Memory savings**: Typically 70-80% for Driver, Team, Compound columns
-- **Typical execution**: ~10ms for 1000 laps with 4 categorical columns
+- **Memory savings**: About 90% for the Driver, Team, Compound and TrackStatus columns of a race laps frame
+- **Typical execution** (one machine): about 1ms for 1000 laps with 4 categorical columns
 
 **Example - Basic Usage:**
 ```python
@@ -1735,14 +1794,14 @@ laps = pd.DataFrame({
 })
 
 print(f"Memory before: {laps.memory_usage(deep=True).sum() / 1024:.1f} KB")
-# Memory before: 25.3 KB
+# Memory before: 5.1 KB
 
 # Apply categorical dtype
 categorical_cols = ["Driver", "Team", "Compound"]
 laps_cat = _apply_categorical(laps, categorical_cols, "pandas")
 
 print(f"Memory after: {laps_cat.memory_usage(deep=True).sum() / 1024:.1f} KB")
-# Memory after: 8.7 KB (65% reduction)
+# Memory after: 1.3 KB (about 75% reduction)
 
 print(laps_cat["Driver"].dtype)  # category
 print(laps_cat["Team"].dtype)    # category
@@ -1753,20 +1812,25 @@ print(laps_cat["Team"].dtype)    # category
 from tif1.core_utils.helpers import _apply_categorical
 import pandas as pd
 
-# Realistic race data (20 drivers, 58 laps each)
-drivers = ["VER", "PER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA",
-           "ALO", "STR", "OCO", "GAS", "ALB", "SAR", "TSU", "RIC",
-           "BOT", "ZHO", "MAG", "HUL"]
-
-laps = pd.DataFrame({
-    "Driver": drivers * 58,
-    "Team": ["Red Bull Racing"] * 116 + ["Mercedes"] * 116 +
-            ["Ferrari"] * 116 + ["McLaren"] * 116 +
-            ["Aston Martin"] * 116 + ["Alpine"] * 116 +
-            ["Williams"] * 116 + ["Sauber"] * 116 + ["Haas"] * 116,
-    "Compound": (["SOFT"] * 20 + ["MEDIUM"] * 30 + ["HARD"] * 8) * 20,
-    "LapNumber": list(range(1, 59)) * 20,
-})
+# Realistic race data (10 teams, 20 drivers, 58 laps each)
+teams = {
+    "Red Bull Racing": ["VER", "PER"], "Mercedes": ["HAM", "RUS"],
+    "Ferrari": ["LEC", "SAI"], "McLaren": ["NOR", "PIA"],
+    "Aston Martin": ["ALO", "STR"], "Alpine": ["OCO", "GAS"],
+    "Williams": ["ALB", "SAR"], "RB": ["TSU", "RIC"],
+    "Kick Sauber": ["BOT", "ZHO"], "Haas F1 Team": ["MAG", "HUL"],
+}
+laps = pd.DataFrame([
+    {
+        "Driver": driver,
+        "Team": team,
+        "Compound": "SOFT" if lap <= 20 else "MEDIUM" if lap <= 50 else "HARD",
+        "LapNumber": lap,
+    }
+    for team, drivers in teams.items()
+    for driver in drivers
+    for lap in range(1, 59)
+])
 
 # Measure memory usage
 mem_before = laps.memory_usage(deep=True).sum()
@@ -1781,9 +1845,9 @@ print(f"Memory before: {mem_before / 1024:.1f} KB")
 print(f"Memory after:  {mem_after / 1024:.1f} KB")
 print(f"Savings:       {savings:.1f}%")
 # Output:
-# Memory before: 156.3 KB
-# Memory after:  42.1 KB
-# Savings:       73.1%
+# Memory before: 55.4 KB
+# Memory after:  13.0 KB
+# Savings:       76.5%
 ```
 
 **Example - Polars Backend:**
@@ -1802,7 +1866,7 @@ laps = pl.DataFrame({
 laps_cat = _apply_categorical(laps, ["Driver", "Team"], "polars")
 
 print(laps_cat.schema)
-# {'Driver': Categorical, 'Team': Categorical, 'LapNumber': Int64}
+# Schema({'Driver': Categorical, 'Team': Categorical, 'LapNumber': Int64})
 ```
 
 **Example - Performance Impact:**
@@ -1834,92 +1898,15 @@ time_with = time.perf_counter() - start
 print(f"Without categorical: {time_without*1000:.1f}ms")
 print(f"With categorical:    {time_with*1000:.1f}ms")
 print(f"Speedup:             {time_without/time_with:.2f}x")
-# Output:
-# Without categorical: 12.3ms
-# With categorical:    4.1ms
-# Speedup:             3.00x
+# Output (timings vary by machine):
+# Without categorical: 0.9ms
+# With categorical:    0.6ms
+# Speedup:             1.48x
 ```
 
 <Note>
-  The library automatically applies categorical dtype to `Driver`, `Team`, `Compound`, and `TrackStatus` columns during session loading. This optimization is transparent to users but provides significant memory and performance benefits.
+  On the pandas backend, session loading applies the categorical dtype to the `Driver`, `Team`, `Compound` and `TrackStatus` columns. On the polars backend, these columns stay `String` unless the `polars_lap_categorical` option is `True`.
 </Note>
-
----
-
-## Constants
-
-Column name mappings and constants used throughout the library.
-
-### Column rename maps
-
-The constants module defines mappings for renaming columns from CDN format to user-facing format:
-
-```python
-# Lap data column renames
-LAP_RENAME_MAP = {
-    "time": "LapTime",
-    "lap": "LapNumber",
-    "s1": "Sector1Time",
-    "s2": "Sector2Time",
-    "s3": "Sector3Time",
-    "compound": "Compound",
-    "stint": "Stint",
-    "life": "TyreLife",
-    # ... more mappings
-}
-
-# Telemetry column renames
-TELEMETRY_RENAME_MAP = {
-    "time": "Time",
-    "speed": "Speed",
-    "rpm": "RPM",
-    "gear": "nGear",
-    "throttle": "Throttle",
-    "brake": "Brake",
-    "drs": "DRS",
-    # ... more mappings
-}
-```
-
-### Standard column order
-
-```python
-# FastF1-compatible column order for Laps DataFrame
-FASTF1_LAPS_COLUMN_ORDER = [
-    "index",
-    "Time",
-    "Driver",
-    "DriverNumber",
-    "LapTime",
-    "LapNumber",
-    "Stint",
-    "PitOutTime",
-    "PitInTime",
-    "Sector1Time",
-    "Sector2Time",
-    "Sector3Time",
-    "Sector1SessionTime",
-    "Sector2SessionTime",
-    "Sector3SessionTime",
-    "SpeedI1",
-    "SpeedI2",
-    "SpeedFL",
-    "SpeedST",
-    "IsPersonalBest",
-    "Compound",
-    "TyreLife",
-    "FreshTyre",
-    "Team",
-    "LapStartTime",
-    "LapStartDate",
-    "TrackStatus",
-    "Position",
-    # ... more columns
-]
-
-# Categorical columns for optimization
-CATEGORICAL_COLS = ["Driver", "Team", "Compound", "TrackStatus"]
-```
 
 ---
 
@@ -1934,7 +1921,7 @@ MIN_YEAR = 2018  # First year with TracingInsights data
 MAX_YEAR = 2100  # Maximum supported year (future-proofing)
 ```
 
-These constants define the valid range for F1 season data. The library supports data from 2018 onwards (when the TracingInsights data collection began) through 2100 (allowing for future scheduled races).
+These constants define the valid range for F1 season data. The library supports data from 2018 onwards (the earliest TracingInsights data repository) through 2100 (allowing for future scheduled races).
 
 **Example Usage:**
 ```python
@@ -1958,13 +1945,13 @@ if MIN_YEAR <= year <= MAX_YEAR:
 MAX_CACHE_SIZE = 100  # Maximum number of cached items
 ```
 
-Defines the maximum number of items to store in the LRU cache for various operations. This prevents unbounded memory growth while maintaining good cache hit rates for typical usage patterns.
+Defines the default size of `LRUCache` and the size of the two process-global lap caches (pandas and polars). Each lap cache keeps at most 100 lap DataFrames, which bounds memory growth.
 
 ---
 
 ### Column Rename Maps
 
-The library defines complete column rename mappings to transform CDN data format to user-facing FastF1-compatible format. These mappings handle both verbose and abbreviated column names from different CDN data versions.
+The library defines complete column rename mappings to transform CDN data format to user-facing FastF1-compatible format. These mappings handle both the long key names of validated payloads and the short keys of raw CDN payloads.
 
 #### Lap Data Rename Map
 
@@ -2191,11 +2178,11 @@ CATEGORICAL_COLS = ["Driver", "Team", "Compound", "TrackStatus"]
 
 List of columns that should be converted to categorical dtype for memory optimization. These columns have low cardinality (few unique values) and benefit from categorical encoding.
 
-**Memory Savings:**
-- Driver: ~70% reduction (20 unique values in ~1000 laps)
-- Team: ~75% reduction (10 unique values)
-- Compound: ~80% reduction (3-5 unique values)
-- TrackStatus: ~85% reduction (2-4 unique values)
+**Memory Savings** (2024 Monaco Grand Prix race, 1237 laps, categorical against `str`):
+- Driver: 89% reduction (20 unique values)
+- Team: 93% reduction (10 unique values)
+- Compound: 92% reduction (3 unique values)
+- TrackStatus: 88% reduction (6 unique values)
 
 ---
 
@@ -2214,12 +2201,17 @@ These constants provide a single source of truth for column names, preventing ty
 
 **Example Usage:**
 ```python
+import tif1
 from tif1.core_utils.constants import COL_DRIVER, COL_LAP_TIME_SECONDS
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+session.load(laps=True, telemetry=False, weather=False, messages=False)
+laps = session.laps
 
 # Use constants instead of string literals
 fastest_lap = laps.loc[laps[COL_LAP_TIME_SECONDS].idxmin()]
 driver = fastest_lap[COL_DRIVER]
-print(f"Fastest lap by {driver}")
+print(f"Fastest lap by {driver}")  # Fastest lap by PIA
 ```
 
 ---
@@ -2296,14 +2288,26 @@ This list defines the standard column order for laps DataFrames, ensuring FastF1
 
 **Example Usage:**
 ```python
-from tif1.core_utils.helpers import _reorder_laps_columns
+import pandas as pd
+from tif1.core_utils.constants import LAP_RENAME_MAP
+from tif1.core_utils.helpers import _rename_columns, _reorder_laps_columns
 
-# Reorder DataFrame to match FastF1 column order
+# Raw CDN lap rows, renamed to FastF1 names but not yet ordered
+raw = pd.DataFrame({
+    "team": ["Red Bull Racing", "Red Bull Racing"],
+    "lap": [1, 2],
+    "drv": ["VER", "VER"],
+    "time": [103.877, 98.403],
+    "dNum": ["1", "1"],
+    "sesT": [3439.011, 3537.414],
+})
+laps = _rename_columns(raw, LAP_RENAME_MAP, "pandas")
+
+# Reorder DataFrame to match FastF1 column order (adds an "index" column)
 laps_ordered = _reorder_laps_columns(laps, "pandas")
 
-# Now columns are in the standard order
-print(laps_ordered.columns[:10].tolist())
-# ['index', 'Time', 'Driver', 'DriverNumber', 'LapTime', ...]
+print(laps_ordered.columns.tolist())
+# ['index', 'Time', 'Driver', 'DriverNumber', 'LapTime', 'LapNumber', 'Team']
 ```
 
 ---
@@ -2343,7 +2347,7 @@ class ResourceManager:
         """Cleanup all registered resources in reverse order."""
         ...
 
-    def __enter__(self) -> ResourceManager:
+    def __enter__(self) -> Self:
         """Enter context manager."""
         ...
 
@@ -2370,27 +2374,31 @@ Register a resource for cleanup tracking. Resources are cleaned up in reverse or
 
 **Example:**
 ```python
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
+from tif1.core_utils.resource_manager import ResourceManager
+
 class DatabaseManager(ResourceManager):
-    def __init__(self, db_url: str):
+    def __init__(self, db_path: str):
         super().__init__()
         try:
-            # Create connection
-            conn = create_connection(db_url)
-            self._register_resource("database_connection", conn)
+            # Open a connection (cleaned up with .close())
+            self.conn = sqlite3.connect(db_path)
+            self._register_resource("database_connection", self.conn)
 
-            # Create connection pool
-            pool = create_pool(conn)
-            self._register_resource("connection_pool", pool)
-
-            # Create cache
-            cache = create_cache()
-            self._register_resource("cache", cache)
+            # Start a worker pool (cleaned up with .shutdown(wait=True))
+            self.pool = ThreadPoolExecutor(max_workers=2)
+            self._register_resource("thread_pool", self.pool)
 
             self._initialized = True
         except Exception:
             # Cleanup any resources created before the error
             self._cleanup_resources()
             raise
+
+with DatabaseManager(":memory:") as db:
+    print(db.conn.execute("SELECT 1").fetchone())  # (1,)
 ```
 
 ---
@@ -2413,15 +2421,13 @@ Cleanup all registered resources in reverse order (LIFO). This method tries to c
 
 **Example:**
 ```python
-# Resources registered in this order:
+# Resources registered in this order (DatabaseManager above):
 # 1. database_connection
-# 2. connection_pool
-# 3. cache
+# 2. thread_pool
 
 # Cleanup happens in reverse order:
-# 1. cache.close()
-# 2. connection_pool.close()
-# 3. database_connection.close()
+# 1. thread_pool.shutdown(wait=True)  (no close() method)
+# 2. database_connection.close()
 ```
 
 ---
@@ -2431,38 +2437,39 @@ Cleanup all registered resources in reverse order (LIFO). This method tries to c
 #### Basic Context Manager Usage
 
 ```python
+import sqlite3
+
+import niquests
 from tif1.core_utils.resource_manager import ResourceManager
 
 class SessionManager(ResourceManager):
     def __init__(self, session_id: str):
         super().__init__()
+        self.session_id = session_id
         try:
             # Create HTTP session
-            self.http_session = create_http_session()
+            self.http_session = niquests.Session()
             self._register_resource("http_session", self.http_session)
 
-            # Create cache connection
-            self.cache = create_cache()
-            self._register_resource("cache", self.cache)
+            # Create a local store for payloads
+            self.store = sqlite3.connect(":memory:")
+            self._register_resource("store", self.store)
 
             self._initialized = True
         except Exception:
             self._cleanup_resources()
             raise
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._cleanup_resources()
-        return False
-
-# Use with context manager
+# ResourceManager provides __enter__ and __exit__ (cleanup on exit)
 with SessionManager("session_123") as manager:
-    # Resources are automatically cleaned up on exit
-    data = manager.http_session.get("https://example.com")
-    manager.cache.set("key", data)
-# Cleanup happens here automatically
+    response = manager.http_session.get(
+        "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+        "Bahrain%20Grand%20Prix/Race/drivers.json",
+        timeout=15,
+    )
+    manager.store.execute("CREATE TABLE payloads (key TEXT, body BLOB)")
+    manager.store.execute("INSERT INTO payloads VALUES (?, ?)", ("drivers", response.content))
+# Cleanup happens here automatically: store first, then http_session
 ```
 
 ---
@@ -2470,40 +2477,37 @@ with SessionManager("session_123") as manager:
 #### Error Handling During Initialization
 
 ```python
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
 from tif1.core_utils.resource_manager import ResourceManager
 
 class ComplexManager(ResourceManager):
-    def __init__(self):
+    def __init__(self, max_workers: int):
         super().__init__()
         try:
-            # Step 1: Create database connection
-            self.db = create_database()
+            # Step 1: Open a database connection
+            self.db = sqlite3.connect(":memory:")
             self._register_resource("database", self.db)
 
-            # Step 2: Create thread pool (might fail)
-            self.pool = create_thread_pool()
+            # Step 2: Create thread pool (fails when max_workers <= 0)
+            self.pool = ThreadPoolExecutor(max_workers=max_workers)
             self._register_resource("thread_pool", self.pool)
 
-            # Step 3: Create cache (might fail)
-            self.cache = create_cache()
-            self._register_resource("cache", self.cache)
-
             self._initialized = True
-        except Exception as e:
-            # If any step fails, cleanup resources created so far
-            # e.g., if cache creation fails, pool and db are still cleaned up
+        except Exception:
+            # If any step fails, clean up the resources created so far
             self._cleanup_resources()
             raise
 
 # If initialization fails at step 2:
 # - database is cleaned up
 # - thread_pool is NOT registered (creation failed)
-# - cache is NOT registered (never reached)
 try:
-    manager = ComplexManager()
-except Exception as e:
+    manager = ComplexManager(max_workers=0)
+except ValueError as e:
     print(f"Initialization failed: {e}")
-    # Database was cleaned up automatically
+    # Initialization failed: max_workers must be greater than 0
 ```
 
 ---
@@ -2511,12 +2515,13 @@ except Exception as e:
 #### Manual Cleanup
 
 ```python
+import niquests
 from tif1.core_utils.resource_manager import ResourceManager
 
 class ManualManager(ResourceManager):
     def __init__(self):
         super().__init__()
-        self.session = create_session()
+        self.session = niquests.Session()
         self._register_resource("session", self.session)
 
     def close(self):
@@ -2527,7 +2532,12 @@ class ManualManager(ResourceManager):
 manager = ManualManager()
 try:
     # Do work
-    data = manager.session.get("https://example.com")
+    response = manager.session.get(
+        "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/"
+        "Bahrain%20Grand%20Prix/Race/drivers.json",
+        timeout=15,
+    )
+    print(response.status_code)  # 200
 finally:
     # Explicit cleanup
     manager.close()
@@ -2537,7 +2547,7 @@ finally:
 
 ### Logging
 
-The ResourceManager provides detailed logging for debugging:
+The ResourceManager provides detailed logging for debugging. This example uses the `SessionManager` class from the context manager example above:
 
 ```python
 import logging
@@ -2548,8 +2558,8 @@ with SessionManager("test") as manager:
 
 # Log output:
 # DEBUG:tif1.core_utils.resource_manager:Registered resource: http_session
-# DEBUG:tif1.core_utils.resource_manager:Registered resource: cache
-# DEBUG:tif1.core_utils.resource_manager:Closing resource: cache
+# DEBUG:tif1.core_utils.resource_manager:Registered resource: store
+# DEBUG:tif1.core_utils.resource_manager:Closing resource: store
 # DEBUG:tif1.core_utils.resource_manager:Closing resource: http_session
 # DEBUG:tif1.core_utils.resource_manager:All resources cleaned up successfully
 ```
@@ -2561,6 +2571,16 @@ with SessionManager("test") as manager:
 If cleanup fails for one resource, other resources are still cleaned up:
 
 ```python
+import logging
+
+from tif1.core_utils.resource_manager import ResourceManager
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+
+class GoodResource:
+    def close(self):
+        pass
+
 class FailingResource:
     def close(self):
         raise RuntimeError("Cleanup failed!")
@@ -2575,15 +2595,16 @@ class ResilientManager(ResourceManager):
 with ResilientManager() as manager:
     pass
 
-# Log output:
-# DEBUG: Closing resource: another_good_resource  ✓
+# Log output (after the three "Registered resource" lines):
+# DEBUG: Closing resource: another_good_resource
+# DEBUG: Closing resource: failing_resource
 # WARNING: Error cleaning up resource failing_resource: Cleanup failed!
-# DEBUG: Closing resource: good_resource  ✓
+# DEBUG: Closing resource: good_resource
 # WARNING: Cleanup completed with errors: failing_resource: Cleanup failed!
 ```
 
 <Note>
-  ResourceManager is used internally by the library for managing HTTP sessions, cache connections, and other resources. Most users do not need to interact with it directly. It is available for advanced use cases requiring custom resource management.
+  tif1 does not use `ResourceManager` internally. Its HTTP session and cache manage their own cleanup. The class is available as a base class for custom resource management.
 </Note>
 
 ---
@@ -2594,9 +2615,8 @@ with ResilientManager() as manager:
 
 The library uses orjson for JSON parsing, which provides:
 - 2-3x faster parsing than stdlib json
-- Lower memory usage
 - Native support for bytes input
-- Automatic handling of numpy types
+- NumPy values need conversion to Python types before `json_dumps`
 
 ### Lib Conversion
 
@@ -2605,13 +2625,13 @@ When converting between backends:
 - polars → pandas: Uses PyArrow by default for efficiency
 - Rechunking: Optional for polars to optimize memory layout
 
-**Benchmark results:**
+**Benchmark results** (one machine, 1M rows with a string and a categorical column):
 ```python
 # pandas → polars conversion
-# 1M rows: ~50ms (zero-copy via PyArrow)
+# 1M rows: ~12ms (numeric columns alone: under 1ms)
 
 # polars → pandas conversion
-# 1M rows: ~100ms (with PyArrow)
+# 1M rows: ~7ms (with PyArrow)
 ```
 
 ---
@@ -2624,8 +2644,8 @@ When converting between backends:
 from tif1.core_utils.backend_conversion import convert_backend
 import tif1
 
-# Load 2021 Belgian Grand Prix Race with pandas
-session = tif1.get_session(2021, "Belgian Grand Prix", "Race", lib="pandas")
+# Load the 2025 Bahrain Grand Prix race with pandas
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race", lib="pandas")
 laps_pandas = session.laps
 
 # Convert to polars for analysis
@@ -2633,7 +2653,7 @@ laps_polars = convert_backend(laps_pandas, "polars")
 
 # Perform polars operations
 import polars as pl
-fast_laps = laps_polars.filter(pl.col("LapTimeSeconds") < 120.0)
+fast_laps = laps_polars.filter(pl.col("LapTimeSeconds") < 100.0)
 
 # Convert back to pandas if needed
 fast_laps_pandas = convert_backend(fast_laps, "pandas")
@@ -2662,7 +2682,7 @@ modified_json = json_dumps(data)
 1. **Use orjson for JSON**: Always use `json_loads`/`json_dumps` for performance
 2. **Prefer PyArrow conversion**: Keep `use_pyarrow=True` for lib conversion
 3. **Validate early**: Use validation helpers to catch errors early
-4. **Let the library handle resources**: ResourceManager is automatic
+4. **Register resources early**: In a `ResourceManager` subclass, register each resource as soon as it exists
 5. **Use constants for column names**: Reference standard column names from constants
 
 ---

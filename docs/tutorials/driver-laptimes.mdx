@@ -57,16 +57,17 @@ driver_laps = driver_laps.reset_index(drop=True)
 
 ## Create the Scatter Plot
 
-Make a scatter plot using lap number as the x-axis and lap time as the y-axis. Marker colors correspond to the tire compounds used.
+Make a scatter plot using lap number as the x-axis and lap time as the y-axis. Marker colors correspond to the tire compounds used. Use the float `LapTimeSeconds` column, so that the y-axis shows seconds.
 
 ```python
 fig, ax = plt.subplots(figsize=(10, 8))
 
 # Create scatter plot with compound-based coloring
+# LapTimeSeconds is a float column, so the y-axis shows seconds
 sns.scatterplot(
     data=driver_laps,
     x="LapNumber",
-    y="LapTime",
+    y="LapTimeSeconds",
     ax=ax,
     hue="Compound",
     palette=tif1.plotting.get_compound_mapping(session=race),
@@ -83,7 +84,7 @@ Improve the appearance and readability of the plot.
 ```python
 # Set axis labels
 ax.set_xlabel("Lap Number", fontsize=12)
-ax.set_ylabel("Lap Time", fontsize=12)
+ax.set_ylabel("Lap Time (s)", fontsize=12)
 
 # The y-axis increases from bottom to top by default
 # Since we are plotting time, it makes sense to invert the axis
@@ -105,7 +106,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `drivers` selects the drivers to plot: a single driver for the view above, or several. `laptime_cutoff` removes slow laps. `include_deleted` keeps deleted laps when `True`:
+The native function exposes the same filters as parameters. `drivers` selects the drivers to plot: a single driver for the view above, or several. `laptime_cutoff` (default `1.07`) removes laps slower than that multiple of each driver's fastest lap. The function also removes pit in-laps and out-laps. `include_deleted` keeps deleted laps when `True`:
 
 ```python
 import tif1
@@ -184,7 +185,7 @@ custom_palette = {
 sns.scatterplot(
     data=driver_laps,
     x="LapNumber",
-    y="LapTime",
+    y="LapTimeSeconds",
     hue="Compound",
     palette=custom_palette,
     s=100,  # Larger markers

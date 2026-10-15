@@ -11,17 +11,17 @@ keywords:
   - "F1 library comparison"
 ---
 
-`tif1` is a drop-in replacement for `fastf1` in most common use cases. This guide shows the similarities and the key differences.
+`tif1` keeps the fastf1 API shape for sessions, laps, and telemetry. This guide shows the similarities and the key differences.
 
 ## Comparison at a Glance
 
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
-| **Data Source** | Ergast + F1 Live Timing | TracingInsights (CDN) |
-| **Loading Speed** | Baseline | **Parallel async loading** (3x+ vs sequential, benchmark-validated) |
+| **Data Source** | F1 live-timing API + jolpica-f1 (Ergast-compatible) API | TracingInsights static files (CDN) |
+| **Loading** | Session-wide `session.load()` | **Lazy, per file**; multi-file loads run in parallel |
 | **Lib** | Pandas only | **Pandas + Polars** |
-| **Caching** | File-based Pickle | **SQLite + Memory LRU** |
-| **HTTP Version** | HTTP/1.1 | **HTTP/2** |
+| **Caching** | SQLite HTTP cache + pickle files of parsed data | **SQLite + Memory LRU** |
+| **HTTP Version** | HTTP/1.1 (`requests`) | **HTTP/2** (`niquests`) |
 
 ---
 
@@ -31,11 +31,14 @@ keywords:
   <Step title="Update Imports">
     Change `import fastf1` to `import tif1`.
     ```python
-    import tif1 as ff1 # Alias to keep existing code working
+    import tif1
+
+    # Or keep code written for `import fastf1 as ff1` unchanged:
+    import tif1 as ff1
     ```
   </Step>
   <Step title="Update get_session Calls">
-    Use full GP names and remove any `session.load()` calls. `tif1` loads data lazily.
+    Full GP names are the clearest. Circuit, city, and country names such as `"Monaco"` or `"Spa"` also resolve to the event of that season. Session names are case-insensitive, so `"Race"`, `"race"`, and `"R"` all work. `session.load()` is optional because `tif1` loads data lazily.
     <CodeGroup>
     ```python tif1 (Lazy)
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
@@ -49,12 +52,12 @@ keywords:
     </CodeGroup>
   </Step>
   <Step title="Check Filters">
-    Replace `pick_` methods with standard DataFrame filtering or the new `Session` methods.
+    `tif1.Laps` has every `pick_` method of `fastf1.core.Laps`, with the same names. `pick_driver` accepts a 3-letter code or a driver number. `Session` adds direct accessors.
 
     | fastf1 | tif1 |
     | :--- | :--- |
-    | `laps.pick_fastest()` | `session.get_fastest_laps(by_driver=False)` |
-    | `laps.pick_driver('VER')` | `session.get_driver('VER').laps` |
+    | `laps.pick_fastest()` | `laps.pick_fastest()` or `session.get_fastest_laps(by_driver=False)` |
+    | `laps.pick_drivers('VER')` | `laps.pick_drivers('VER')`, `laps.pick_driver(1)`, or `session.get_driver('VER').laps` |
   </Step>
 </Steps>
 
@@ -63,52 +66,88 @@ keywords:
 ## Key API Differences
 
 ### 1. Lazy Loading
-tif1 uses lazy loading by default. No need to call `session.load()`.
+tif1 uses lazy loading by default. A `session.load()` call is not necessary.
 
-```python
-# fastf1
+<CodeGroup>
+```python fastf1
+import fastf1
+
 session = fastf1.get_session(2025, "Monaco", "R")
 session.load()
 laps = session.laps
+```
+```python tif1
+import tif1
 
-# tif1
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Automatically fetches on first access
 ```
+</CodeGroup>
 
-### 2. Property Access
-In `fastf1`, telemetry is often a method. In `tif1`, it is a property for a more modern feel.
+### 2. Telemetry Access
+Both libraries have the `lap.telemetry` property and the `lap.get_telemetry()` method. Telemetry code needs no change. The fastf1 method accepts a `frequency` keyword argument. The tif1 method takes no arguments.
 
-```python
-# fastf1
-telemetry = lap.get_telemetry()
-
-# tif1
+```python tif1
+lap = session.laps.pick_fastest()
 telemetry = lap.telemetry
+telemetry = lap.get_telemetry()
 ```
 
 ### 3. Driver Information
-tif1 provides a convenient `drivers_df` DataFrame with comprehensive driver information.
+`session.drivers` holds driver numbers as strings in classification order, as in fastf1. `session.drivers_df` adds the codes, teams, and colors in one DataFrame.
 
 ```python
-# tif1
+import tif1
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+print(session.drivers[:3])  # ['4', '16', '81']: NOR, LEC, PIA
+
 drivers_df = session.drivers_df
 print(drivers_df[["Driver", "Team", "DriverNumber", "TeamColor"]])
 ```
 
 ### 4. Enriched Data
-tif1 automatically enriches data:
+tif1 adds columns that fastf1 does not have:
 
-- Weather data is included in every lap
-- Telemetry includes DriverAhead and DistanceToDriverAhead
-- LapTimeSeconds is provided as a numeric helper alongside LapTime
+- Every lap row carries the weather columns (`AirTemp`, `TrackTemp`, `Rainfall`, and others)
+- `LapTimeSeconds` holds the lap time as float seconds next to `LapTime`
+- `ms1`, `ms2`, and `ms3` hold mini-sector color codes for each lap
+- Telemetry includes `AccelerationX`, `AccelerationY`, and `AccelerationZ`
 
-### 5. Async Optimization
-For maximum performance, adopt the async pattern:
+### 5. Telemetry Differences
+Some telemetry columns differ from fastf1:
+
+- `DRS` is a 0/1 flag. fastf1 keeps the raw values, where 10, 12, and 14 mean open.
+- `Time` starts at zero on every lap, as in fastf1 lap telemetry. There is no `SessionTime` or `Date` column.
+- `DriverAhead` holds driver numbers. `DistanceToDriverAhead` is in meters and is NaN when nobody is ahead.
+
+`tif1.utils.delta_time(ref_lap, comp_lap)` uses the fastf1 algorithm. It returns `(delta, ref_tel, comp_tel)`. A positive delta means the comparison lap is slower at that point. The delta is an estimate from the distance samples, so it can differ from the real lap time gap.
 
 ```python
-# Massive speed gain for initial load
-laps = await session.laps_async()
+import tif1
+from tif1.utils import delta_time
+
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+ref = session.laps.pick_driver("VER").pick_fastest()
+comp = session.laps.pick_driver("LEC").pick_fastest()
+
+delta, ref_tel, comp_tel = delta_time(ref, comp)
+print(f"Estimated delta at the line: {delta.iloc[-1]:+.3f}s (positive = LEC slower)")
+print(f"Real lap time gap: {comp['LapTimeSeconds'] - ref['LapTimeSeconds']:+.3f}s")
+```
+
+### 6. Async Code
+`session.laps` already fetches the lap data in parallel. In code that already runs an event loop, await `laps_async()`:
+
+```python
+import asyncio
+import tif1
+
+async def main():
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    return await session.laps_async()  # Parallel fetch for the initial load
+
+laps = asyncio.run(main())
 ```
 
 ---
@@ -120,13 +159,13 @@ laps = await session.laps_async()
     `tif1` focuses on historical data (2018-current). It does not support Live Timing.
   </Card>
   <Card title="Track Maps" icon="map">
-    Track map generation is not supported. It is planned for a future release.
+    `session.get_circuit_info()` returns the corners and the rotation. Marshal lights and marshal sectors are empty. Six track-map charts, such as `plot_track_speed_map` and `plot_gear_shifts`, draw the layout.
   </Card>
   <Card title="Weather Data" icon="cloud">
-    tif1 provides raw 1-minute weather samples. `fastf1` style interpolation is not yet implemented.
+    `session.weather` holds the raw samples. Every lap row also carries the weather columns (`AirTemp`, `TrackTemp`, `Rainfall`, ...).
   </Card>
   <Card title="Categorical Optimization" icon="database">
-    `tif1` optimizes memory by default using categoricals, which may behave slightly differently in some Pandas operations.
+    On the pandas backend, `Driver`, `Team`, `Compound`, and `TrackStatus` are categorical columns. Some pandas operations treat categoricals differently from strings.
   </Card>
 </CardGroup>
 

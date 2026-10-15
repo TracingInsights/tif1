@@ -61,15 +61,12 @@ def smooth_derivative(t_in, v_in):
     t = t_in.copy()
     v = v_in.copy()
 
-    # Transform time to seconds
-    try:
-        for i in range(0, t.size):
-            t.iloc[i] = t.iloc[i].total_seconds()
-    except Exception:
-        pass
+    # Transform time to seconds (Time is a timedelta column on pandas)
+    if hasattr(t, "dt"):
+        t = t.dt.total_seconds()
 
-    t = np.array(t)
-    v = np.array(v)
+    t = np.asarray(t, dtype=float)
+    v = np.asarray(v, dtype=float)
 
     dvdt = np.zeros(t.size)
 
@@ -161,7 +158,7 @@ def compute_accelerations(telemetry):
 Plot acceleration data with performance envelope using convex hull.
 
 <Note>
-The performance envelope is computed using `scipy.spatial.ConvexHull`, which finds the smallest convex polygon that contains all acceleration points. This accurately represents the car's performance limits across all directions of acceleration.
+The performance envelope is computed using `scipy.spatial.ConvexHull`, which finds the smallest convex polygon that contains all acceleration points. This polygon approximates the car's performance limits in all directions of acceleration.
 </Note>
 
 ```python
@@ -241,7 +238,7 @@ plt.show()
 
 ## Parameters
 
-The native chart accepts the shared filters. Pick the drivers with the `drivers` list; the default is the top-3 finishers:
+The native chart accepts a `drivers` list. The default is the top-3 drivers of the session classification:
 
 ```python
 import tif1
@@ -272,7 +269,7 @@ plt.show()
 # tif1.plot_gg_diagram(2024, "Monaco", "Q", save_path="gg_diagram.png")
 ```
 
-The `smooth_derivative` and `compute_accelerations` helpers above live in the library under `tif1.charts._acceleration`. The [telemetry comparison](/tutorials/telemetry-comparison) chart shares these helpers.
+The library versions of the `smooth_derivative` and `compute_accelerations` helpers live in `tif1.charts._acceleration`. The [telemetry comparison](/tutorials/telemetry-comparison) chart shares these helpers.
 
 ## Reading the Diagram
 
@@ -295,9 +292,9 @@ Look for:
 
 ## Track Characteristics
 
-Different tracks produce different shapes:
-- **Monaco:** Smaller envelope, lower speeds, less extreme forces
-- **Monza:** Larger longitudinal values (high-speed braking)
-- **Silverstone:** Large lateral values (high-speed corners)
+Different tracks produce different shapes. On the 2024 qualifying laps of VER, LEC, and NOR:
+- **Monza:** The largest braking values (about -5 g), from braking at high speed
+- **Silverstone:** The highest sustained lateral values (95th percentile about 5 g), from high-speed corners
+- **Monaco:** An envelope of similar size, although the average speed is about 90 km/h lower than at Monza
 
 Use the G-G diagram to understand car performance limits and how drivers extract maximum grip from the car.

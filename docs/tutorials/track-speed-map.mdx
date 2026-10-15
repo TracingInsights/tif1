@@ -79,7 +79,7 @@ plt.show()
 
 ## Adding Corner Markers
 
-Enhance the visualization with corner numbers from the circuit info.
+Enhance the visualization with corner numbers from the circuit info. Put this code before the `plt.show()` call of the previous block. The markers then appear on the same figure.
 
 ```python
 # Get circuit information
@@ -95,7 +95,7 @@ for _, corner in circuit_info.corners.iterrows():
 
 ## Parameters
 
-The native chart accepts the shared filters and a few chart-specific options. The `cmap` parameter changes the color scale, and `save_path` writes the figure directly:
+The native chart always draws the fastest lap of the session, so it has no driver or lap filters. The `cmap` parameter changes the color scale, and `save_path` writes the figure directly:
 
 ```python
 import tif1
@@ -130,8 +130,8 @@ plt.show()
 
 ## Interpreting the Visualization
 
-- **Hot colors (red/yellow):** High-speed sections like straights
-- **Cool colors (blue/purple):** Low-speed corners and braking zones
+- **Yellow and orange:** High-speed sections like straights
+- **Purple and dark blue:** Low-speed corners and braking zones
 - **Gradients:** Show acceleration and deceleration patterns
 
 ## Next Steps

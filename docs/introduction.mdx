@@ -1,7 +1,7 @@
 ---
 title: "Introduction"
 icon: "flag-checkered"
-description: "tif1 is a fast alternative to fastf1 with the same API bindings"
+description: "tif1 is an alternative to fastf1 with a compatible API and lazy, parallel data loading"
 keywords:
   - "tif1"
   - "Formula 1 data"
@@ -17,21 +17,21 @@ keywords:
 
 # Welcome to tif1
 
-`tif1` is a high-performance Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current).
+`tif1` is a Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current).
 
-`tif1` is a faster alternative to `fastf1` with the same API bindings. The speed increase comes from asynchronous data loading, HTTP/2 multiplexing, and optimized data backends.
+`tif1` is an alternative to `fastf1` with a compatible API. It loads data lazily, fetches multi-file loads in parallel over HTTP/2, and supports pandas and polars backends.
 
 ## Why tif1?
 
 <CardGroup cols={2}>
-  <Card title="Fast" icon="bolt">
-    Parallel loading is more than 3x faster than sequential fetching (benchmark-validated). It uses HTTP/2 multiplexing.
+  <Card title="Parallel Loading" icon="bolt">
+    Multi-file loads run as parallel requests over HTTP/2. The benchmark suite checks that a parallel batch finishes more than 3x faster than the same requests in sequence.
   </Card>
   <Card title="API Compatible" icon="code">
-    The bindings match `fastf1`. Migration needs few code changes.
+    The API follows `fastf1` conventions. Most scripts migrate with few code changes.
   </Card>
   <Card title="Flexible Backends" icon="database">
-    Choose **Pandas** for compatibility, or **Polars** for about 2x faster processing.
+    Choose **Pandas** for compatibility, or **Polars** to get `polars.DataFrame` laps and telemetry.
   </Card>
   <Card title="Multi-tier Caching" icon="shield-check">
     Two cache tiers: an in-memory LRU cache and a SQLite cache for persistent storage.
@@ -42,11 +42,11 @@ keywords:
 
 `fastf1` is an established library at the center of the F1 data community. `tif1` started as a personal project with a different approach in a few areas:
 
-1. **Fetch only the necessary data.** Do not use `session.load()` and do not download a full weekend. Pull one lap of telemetry for one driver in seconds. This costs less time, disk, and bandwidth.
-2. **No API rate limits.** The upstream API behind fastf1 (jolpica-f1) caps unauthenticated use at **500 requests/hour** (4 req/s burst). The `tif1` CDN serves static files with no quotas, no keys, and no throttling.
+1. **Fetch only the necessary data.** `session.load()` is not necessary. One lap of telemetry for one driver needs three small files. They hold the driver list, the lap table, and the telemetry of that lap.
+2. **No API rate limits.** fastf1 raises `RateLimitExceededError` after **500 uncached requests in one hour**. The jolpica-f1 API behind it documents the same limit for unauthenticated use. `tif1` reads static CDN files and keeps no request quota.
 3. **Charts included.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
-4. **Works from any IP address.** The `tif1` CDN works from home, cloud, CI, and notebook environments. It needs no VPN and no residential IP address.
-5. **More data.** Mini-sector data, per-lap weather, and derived telemetry channels beyond the current `fastf1` scope.
+4. **Public CDN access.** `tif1` needs no API key, cookie, or account. Any network that can reach jsDelivr, Hugging Face, or StaticDelivr can load the data.
+5. **More data.** Mini-sector color codes, weather columns on every lap row, and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
 
 <Card title="Full comparison" icon="scale" href="/why-tif1">
   Read the "Why tif1 instead of fastf1?" page. It includes the verified 500 requests/hour rate-limit sources.
@@ -54,30 +54,24 @@ keywords:
 
 ## Key Features
 
-- **Fast**: Multi-CDN access (jsDelivr, Hugging Face buckets, and StaticDelivr) with automatic fallback and SQLite caching
-- **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and more
+- **Multi-CDN**: jsDelivr, Hugging Face buckets, and StaticDelivr with automatic fallback and SQLite caching
+- **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and race control messages
 - **Historical**: Data from 2018-current
 - **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
-- **Async**: Parallel data fetching for better performance
+- **Async**: Parallel data fetching for multi-file loads
 - **HTTP/2**: Uses niquests for multiplexed, connection-efficient network requests
 - **Flexible**: Supports both pandas and polars backends
-- **Type-Safe**: Comprehensive type hints for IDE support
-- **Jupyter-Ready**: Rich HTML display in notebooks
+- **Type-Safe**: Type hints on the public API for IDE support
+- **Jupyter-Ready**: `tif1.jupyter` adds HTML display for sessions, drivers, and laps in notebooks
 - **Native Charts**: 22 one-call chart functions in `tif1.charts` for track maps, telemetry comparisons, and performance analysis
 
-## Performance Comparison
+## Performance
 
-| Operation | fastf1 | tif1 (Async) | Speedup |
-| :--- | :--- | :--- | :--- |
-| Load 20 Drivers Laps | ~12.0s | ~2.5s | **4.8x** (author-measured; not reproduced by the benchmark suite) |
-| Load 20 Drivers Telemetry | ~11.2s | ~0.4s | **28x** (author-measured; not reproduced by the benchmark suite) |
-| Hot Cache Load | ~1.0s | ~0.05s | **20x** (author-measured; not reproduced by the benchmark suite) |
-
-Benchmark-suite-validated results (2026-09-02, `uv run pytest tests/benchmarks/ -m benchmark`): parallel fetch is more than 3x faster than sequential fetch. The cache-hit read path is about 20x faster than the legacy path (109 ms to 5.3 ms median). The fastest-laps cold path is about 2.4x faster than the legacy path. Numbers vary by machine and network. Run the benchmark suite to reproduce them.
+`tif1` does not publish a timed comparison with `fastf1`. The benchmark suite in the repository measures `tif1` itself. One test sends 10 simulated requests of 0.1 s each. The parallel batch must finish more than 3x faster than the same requests in sequence. Results vary by machine and network. Run `uv run pytest tests/benchmarks/ -m benchmark` in a clone of the repository to measure them.
 
 ## Core Architecture
 
-`tif1` uses a modern networking stack with multi-CDN support and a multi-tier cache. This design decreases the time spent waiting for data.
+`tif1` uses an HTTP/2 networking stack with multi-CDN support and a multi-tier cache. This design decreases the time spent waiting for data.
 
 ```mermaid
 graph TD
@@ -97,9 +91,9 @@ graph TD
 
 ## Data Available
 
-- Lap times and sectors (S1, S2, S3) with LapTime as Timedelta and LapTimeSeconds as numeric helper
+- Lap times and sectors (S1, S2, S3). `LapTime` is a Timedelta on pandas and float seconds on polars. `LapTimeSeconds` is float seconds on both.
 - Tire compounds and stint information
-- Telemetry: speed, throttle, brake, RPM, gear, DRS
+- Telemetry: speed, throttle, brake, RPM, gear, and DRS as a 0/1 flag
 - Position data (X, Y, Z coordinates)
 - Acceleration data (X, Y, Z axes)
 - Weather data automatically included in laps
@@ -116,7 +110,7 @@ graph TD
     Install tif1 and verify the installation.
   </Card>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Load a first session in less than 30 seconds.
+    Load a first session and read laps and telemetry.
   </Card>
   <Card title="Examples" icon="code" href="/examples">
     Common patterns and code examples.

@@ -77,25 +77,30 @@ tif1 events 2024
 tif1 events 2018
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 events 2025`):**
 ```text
-┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ # ┃ Event                         ┃
-┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ 1 │ Bahrain Grand Prix           │
-│ 2 │ Saudi Arabian Grand Prix     │
-│ 3 │ Australian Grand Prix        │
-│ 4 │ Japanese Grand Prix          │
+          F1 Events 2025
+┏━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ #  ┃ Event                     ┃
+┡━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1  │ Australian Grand Prix     │
+│ 2  │ Chinese Grand Prix        │
+│ 3  │ Japanese Grand Prix       │
+│ 4  │ Bahrain Grand Prix        │
 ...
-└───┴───────────────────────────────┘
+│ 24 │ Abu Dhabi Grand Prix      │
+│ 25 │ Pre-Season Testing        │
+└────┴───────────────────────────┘
 
-Total: 24 events
+Total: 25 events
 ```
+
+The list includes testing events, such as `Pre-Season Testing`. The total can be higher than the number of Grand Prix weekends.
 
 **Use Cases:**
 - Discover available events for a season
 - Find the exact event name for use in other commands
-- Verify data availability for a specific year
+- Check the schedule of a specific year
 
 ---
 
@@ -129,18 +134,21 @@ tif1 sessions 2024 Monaco
 tif1 sessions 2024 "São Paulo Grand Prix"
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 sessions 2024 Monaco`):**
 ```text
-┏━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃ # ┃ Session            ┃
-┡━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ 1 │ Practice 1         │
-│ 2 │ Practice 2         │
-│ 3 │ Practice 3         │
-│ 4 │ Qualifying         │
-│ 5 │ Race               │
-└───┴────────────────────┘
+   Monaco 2024
+┏━━━┳━━━━━━━━━━━━┓
+┃ # ┃ Session    ┃
+┡━━━╇━━━━━━━━━━━━┩
+│ 1 │ Practice 1 │
+│ 2 │ Practice 2 │
+│ 3 │ Practice 3 │
+│ 4 │ Qualifying │
+│ 5 │ Race       │
+└───┴────────────┘
 ```
+
+The table title repeats the event name as typed, not the resolved name.
 
 **Use Cases:**
 - Determine available sessions for an event
@@ -151,7 +159,7 @@ tif1 sessions 2024 "São Paulo Grand Prix"
 
 ### `drivers` - List Drivers in a Session
 
-Display all drivers who participated in a specific session, along with their team information.
+Display all drivers of a specific session, with their teams and car numbers. The rows are in classification order.
 
 **Syntax:**
 ```bash
@@ -164,7 +172,7 @@ tif1 drivers <year> <event> <session>
 - `session` (required): Session name (use quotes for multi-word names)
 
 **Output:**
-- Formatted table with driver codes and team names
+- Formatted table with driver codes, team names, and car numbers
 - Total driver count
 - Progress indicator during data loading
 
@@ -181,21 +189,21 @@ tif1 drivers 2024 Monaco Qualifying
 tif1 drivers 2024 "British Grand Prix" Race
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 drivers 2024 Monaco Qualifying`):**
 ```text
-Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Driver ┃ Team                   ┃
-┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ VER    │ Red Bull Racing        │
-│ PER    │ Red Bull Racing        │
-│ HAM    │ Mercedes               │
-│ RUS    │ Mercedes               │
-│ LEC    │ Ferrari                │
-│ SAI    │ Ferrari                │
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+     Monaco 2024 - Qualifying
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━┓
+┃ Driver ┃ Team            ┃ No. ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━┩
+│ LEC    │ Ferrari         │ 16  │
+│ PIA    │ McLaren         │ 81  │
+│ SAI    │ Ferrari         │ 55  │
+│ NOR    │ McLaren         │ 4   │
+│ RUS    │ Mercedes        │ 63  │
+│ VER    │ Red Bull Racing │ 1   │
 ...
-└────────┴────────────────────────┘
+└────────┴─────────────────┴─────┘
 
 Total: 20 drivers
 ```
@@ -223,7 +231,7 @@ tif1 fastest <year> <event> <session> [OPTIONS]
 - `session` (required): Session name (use quotes for multi-word names)
 
 **Options:**
-- `--driver <code>` or `-d <code>`: Filter to a specific driver (3-letter code)
+- `--driver <code>` or `-d <code>`: Filter to a specific driver (3-letter code, case-sensitive)
 
 **Output:**
 - **All drivers mode**: Sorted table of fastest laps with position, driver, team, and time
@@ -249,27 +257,28 @@ tif1 fastest 2024 "British Grand Prix" "Practice 1"
 tif1 fastest 2024 "Italian Grand Prix" Race
 ```
 
-**Sample Output (All Drivers):**
+**Sample Output (All Drivers, `tif1 fastest 2025 Bahrain Race`):**
 ```text
-Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ Pos ┃ Driver ┃ Team                   ┃ Time      ┃
-┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ 1   │ VER    │ Red Bull Racing        │ 82.456s   │
-│ 2   │ LEC    │ Ferrari                │ 82.789s   │
-│ 3   │ HAM    │ Mercedes               │ 82.901s   │
-│ 4   │ SAI    │ Ferrari                │ 83.012s   │
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+     Fastest Laps - Bahrain 2025 - Race
+┏━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Pos ┃ Driver ┃ Team            ┃ Time    ┃
+┡━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ 1   │ PIA    │ McLaren         │ 95.140s │
+│ 2   │ RUS    │ Mercedes        │ 95.518s │
+│ 3   │ NOR    │ McLaren         │ 95.728s │
+│ 4   │ LEC    │ Ferrari         │ 96.132s │
 ...
-└─────┴────────┴────────────────────────┴───────────┘
+└─────┴────────┴─────────────────┴─────────┘
 ```
 
-**Sample Output (Single Driver):**
+**Sample Output (Single Driver, `-d VER`):**
 ```text
-Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-VER fastest lap: 82.456s
+Loading session... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+VER fastest lap: 96.167s
 ```
+
+A lap counts when its `LapTime` is set and the lap is not deleted. A driver without such a lap is not in the table. With `--driver`, such a driver gets `No valid laps for <code>`. An unknown code exits with `DriverNotFoundError`.
 
 **Use Cases:**
 - Compare driver performance in a session
@@ -335,7 +344,7 @@ The cache stores:
 
 ### `cache-clear` - Clear Cache
 
-Remove all cached data to free up disk space or force fresh data downloads.
+Remove all cached data to force fresh data downloads.
 
 **Syntax:**
 ```bash
@@ -379,12 +388,13 @@ Cache clear cancelled
 ```
 
 **Use Cases:**
-- Free up disk space
 - Force fresh data downloads after data corrections
 - Troubleshoot cache corruption issues
 - Reset cache during development/testing
 
 **Warning:** Clearing the cache removes all local data. The next access downloads all data again. The download time depends on the network speed and the amount of data requested.
+
+The command deletes the rows of every cache table. The `cache.sqlite` file keeps its size, and SQLite reuses the free pages for new data. To get the disk space back, delete the cache directory.
 
 ---
 
@@ -412,12 +422,11 @@ tif1 version
 
 **Sample Output:**
 ```text
-tif1 version 0.1.0
+tif1 version 0.9.0
 ```
 
 **Use Cases:**
 - Verify installed version
-- Check for updates
 - Report version in bug reports
 - Confirm successful installation
 
@@ -438,12 +447,11 @@ tif1 debug <year> <event> <session>
 - `session` (required): Session name (use quotes for multi-word names)
 
 **Output:**
-- Detailed debug logs showing:
-  - HTTP requests and responses
-  - Cache hits and misses
-  - Data parsing steps
-  - Performance metrics
-- Session summary (driver count, lap count)
+- Debug logs on stderr, showing:
+  - CDN request URLs
+  - Cache hits and cache writes
+  - Lap loading steps
+- Session summary on stdout (driver count, lap count)
 - Progress indicator during loading
 
 **Examples:**
@@ -459,34 +467,35 @@ tif1 debug 2024 Monaco Qualifying
 tif1 debug 2024 "British Grand Prix" Race
 ```
 
-**Sample Output:**
+**Sample Output (`tif1 debug 2025 Bahrain Race` with an empty cache, shortened):**
 ```text
-2025-04-18 10:30:15 - tif1.cache - DEBUG - Cache miss: 2025/Abu Dhabi Grand Prix/Practice 1/laps
-2025-04-18 10:30:15 - tif1.http_session - DEBUG - GET https://cdn.jsdelivr.net/gh/TracingInsights/2025/...
-2025-04-18 10:30:16 - tif1.core - DEBUG - Parsing lap data: 342 laps
-2025-04-18 10:30:16 - tif1.cache - DEBUG - Cached: 2025/Abu Dhabi Grand Prix/Practice 1/laps
-Loading session with debug logging... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
+2026-10-14 18:37:38 - tif1.core - DEBUG - Session initialized: year=2025, gp=Bahrain Grand Prix, session=Race, lib=pandas
+Loading session with debug logging... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
 Session loaded successfully!
+2026-10-14 18:37:38 - tif1.cdn - DEBUG - Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json
+2026-10-14 18:37:38 - tif1.cache - DEBUG - Cached: 2025/Bahrain%20Grand%20Prix/Race/drivers.json
 Drivers: 20
-Laps: 342
+2026-10-14 18:37:38 - tif1.core - INFO - Loading laps async (pandas): 2025_Bahrain%20Grand%20Prix_Race_laps
+2026-10-14 18:37:38 - tif1.cdn - DEBUG - Trying CDN: jsDelivr - https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/session_laptimes.json
+2026-10-14 18:37:39 - tif1.cache - DEBUG - Cached: 2025/Bahrain%20Grand%20Prix/Race/session_laptimes.json
+2026-10-14 18:37:39 - tif1.async_fetch - DEBUG - Fetched: 2025/Bahrain%20Grand%20Prix/Race/session_laptimes.json from jsDelivr
+Laps: 1128
 ```
+
+The session loads lazily, so `Session loaded successfully!` appears first. The data fetches start when the command reads the drivers and the laps.
 
 **Use Cases:**
 - Troubleshoot data loading issues
 - Understand cache behavior
-- Measure performance and identify bottlenecks
 - Debug network connectivity problems
 - Report detailed information in bug reports
 - Verify data sources and CDN behavior
 
 **Debug Information Includes:**
-- Cache operations (hits, misses, writes)
-- HTTP requests (URLs, response times, status codes)
-- JSON parsing performance
-- DataFrame construction steps
-- Data validation results
-- Retry and circuit breaker activity
+- Cache operations (SQLite hits, frame-tier hits, writes)
+- CDN requests (source name and URL)
+- Retry, CDN fallback, and circuit breaker messages
+- HTTP connection pool statistics
 
 ---
 
@@ -511,15 +520,11 @@ export TIF1_TIMEOUT=30
 # Maximum retry attempts
 export TIF1_MAX_RETRIES=3
 
-# Offline mode (use cache only)
-export TIF1_OFFLINE_MODE=false
-
 # Backend library (pandas or polars)
 export TIF1_LIB=pandas
-
-# Log level
-export TIF1_LOG_LEVEL=WARNING
 ```
+
+No environment variable sets the log level. Use the `debug` command for debug logs.
 
 ### Configuration File
 
@@ -547,9 +552,12 @@ The CLI is designed for use in shell scripts and automation workflows:
 
 ```bash
 #!/bin/bash
-# Script to check fastest laps for all 2025 qualifying sessions
+# Script to check fastest laps for all 2025 qualifying sessions.
+# The events table is for people to read; get plain event names from Python
+# (one per line, testing excluded) so multi-word names stay intact.
 
-for event in $(tif1 events 2025 | grep -oP '\d+\s+\K.*'); do
+python -c 'import tif1; print("\n".join(tif1.get_event_schedule(2025, include_testing=False)["EventName"]))' |
+while IFS= read -r event; do
   echo "Processing: $event"
   tif1 fastest 2025 "$event" Qualifying
 done
@@ -572,13 +580,11 @@ time tif1 drivers 2025 "Abu Dhabi Grand Prix" Race
 Combine CLI commands with other tools:
 
 ```bash
-# Export fastest laps to CSV (requires jq and custom processing)
+# Save the fastest-lap table to a text file
 tif1 fastest 2025 Monaco Qualifying > fastest_laps.txt
 
-# Check cache size before and after clearing
-tif1 cache-info
-tif1 cache-clear -y
-tif1 cache-info
+# Count the drivers with a timed lap
+tif1 fastest 2025 Monaco Qualifying | grep -c "s │"
 ```
 
 ---
@@ -614,14 +620,11 @@ tif1 fastest 2025 Monaco Qualifying -d VER
 ### Cache Management
 
 ```bash
-# Check cache size
+# Check cache location and size
 tif1 cache-info
 
-# Clear cache if too large
+# Clear cached data to force fresh downloads
 tif1 cache-clear -y
-
-# Verify cache cleared
-tif1 cache-info
 ```
 
 ### Troubleshooting
@@ -645,7 +648,7 @@ tif1 cache-info
 
 - Use quotes for multi-word names: `"Abu Dhabi Grand Prix"`
 - Single-word event names do not need quotes: `Monaco`
-- Session names are case-sensitive: `Qualifying` not `qualifying`
+- Session names are case-insensitive: `Qualifying`, `qualifying`, and `Q` all work
 - Use `tif1 events` and `tif1 sessions` to find exact names
 
 ### Performance Optimization
@@ -653,7 +656,7 @@ tif1 cache-info
 - The first data access is slower (cold cache)
 - Subsequent accesses are much faster (warm cache)
 - Use `cache-clear` sparingly to maintain performance
-- Enable debug mode to identify performance bottlenecks
+- Use the `debug` command to see which CDN or cache tier serves each file
 
 ### Error Handling
 
@@ -683,7 +686,7 @@ If the `tif1` command is not found after installation:
 # Verify installation
 pip show tif1
 
-# Check if pip bin directory is in PATH
+# Show the site-packages directory of the installation
 pip show tif1 | grep Location
 
 # Reinstall if necessary
@@ -748,7 +751,7 @@ tif1 sessions 2025 "Monaco Grand Prix"
 
 For issues, questions, or feature requests:
 - GitHub Issues: [TracingInsights/tif1](https://github.com/TracingInsights/tif1/issues)
-- Documentation: [tif1.dev](https://tif1.dev)
+- Documentation: [tif1.tracinginsights.com](https://tif1.tracinginsights.com)
 
 ---
 

@@ -14,7 +14,7 @@ This guide explains how to set up a development environment and how to submit ch
 ## Development Setup
 
 ### Prerequisites
-- **Python 3.11+**
+- **Python 3.11+** (CI tests 3.11 through 3.15)
 - **[uv](https://github.com/astral-sh/uv)** (Recommended for dependency management)
 
 ### Installation
@@ -32,7 +32,7 @@ This guide explains how to set up a development environment and how to submit ch
     ```
   </Step>
   <Step title="Install git hooks with prek">
-    Enable automated linting and formatting before every commit.
+    Enable the lint and format checks before every commit and push.
     ```bash
     uv run prek install
     ```
@@ -52,7 +52,7 @@ uv run pytest tests/ -v
 ```
 
 ```bash Unit Only
-uv run pytest tests/ -v -m "not integration"
+uv run pytest tests/unit/ -v
 ```
 
 ```bash Integration
@@ -60,12 +60,14 @@ uv run pytest -o addopts='' tests/ -v -n 0 -m integration
 ```
 
 ```bash Benchmarks
-uv run pytest -o addopts='' tests/test_benchmarks.py -v -m benchmark --benchmark-only --no-cov -n 0
+uv run pytest -o addopts='' tests/benchmarks/ -v -m benchmark --benchmark-only --no-cov -n 0
 ```
 </CodeGroup>
 
+An autouse fixture blocks real network sockets. A test that must reach the network needs the `integration`, `compliance_online`, or `benchmark` marker. Tests under `tests/integration/` are exempt.
+
 ### Code Coverage
-Run the tests with coverage reporting:
+Run the tests with coverage reporting. CI fails when the total coverage is below 80%.
 ```bash
 uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html
 ```
@@ -81,11 +83,11 @@ Make sure that the code passes all quality checks before a pull request is submi
   uv run ruff check src/ tests/
   uv run ruff format src/ tests/
   ```
-- **Type Checking:** The project uses `pyright` (via `ty`).
+- **Type Checking:** The project uses `ty`.
   ```bash
   uv run ty check src/tif1
   ```
-- **prek:** Run all checks at once.
+- **prek:** Run the git hook checks (ruff, ruff format, and file checks) on all files. CI runs the same command.
   ```bash
   uv run prek run --all-files
   ```
@@ -98,12 +100,13 @@ The documentation is built with **Mintlify**.
 
 ### Local Development
 To preview the documentation locally:
-1. Install the Mintlify CLI: `npm i -g mintlify`
-2. Run the dev server in the `docs` directory: `mintlify dev`
+1. Install the Mintlify CLI: `npm i -g mint`
+2. Run the dev server in the `docs` directory: `mint dev`
 
 ### Guidelines
 - Use **Google-style** docstrings for all public functions.
-- Update `mint.json` when a new page is added.
+- Update `docs/docs.json` when a new page is added.
+- Follow the house style in `docs/style-ste100.md`. Check a page with `python3 tools/ste_check.py docs/<page>.mdx`.
 - Use Mintlify components (`<Steps>`, `<Card>`, `<CodeGroup>`) to structure the pages.
 
 ---

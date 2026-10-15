@@ -9,7 +9,7 @@ keywords:
   - "troubleshooting"
 ---
 
-tif1 uses a structured exception hierarchy for graceful error handling. All exceptions inherit from `TIF1Error`, so a single clause catches every library-specific error.
+tif1 uses a structured exception hierarchy for graceful error handling. The tif1 exceptions inherit from `TIF1Error`, so one `except TIF1Error` clause catches them. `EventNotFoundError` and its subclass `EventNotInSeasonError` are not part of this tree. They are `ValueError` subclasses, raised when an event name does not resolve to an event of the season.
 
 ## Exception Hierarchy
 
@@ -25,6 +25,11 @@ graph TD
 
     DataNotFoundError --> DriverNotFoundError
     DataNotFoundError --> LapNotFoundError
+    NetworkError --> CircuitBreakerOpenError
+
+    ValueError[ValueError<br/>Python built-in]
+    ValueError --> EventNotFoundError
+    EventNotFoundError --> EventNotInSeasonError
 
     style TIF1Error fill:#339af0
     style DataNotFoundError fill:#ff6b6b
@@ -43,23 +48,30 @@ Raised when requested data does not exist in the archive.
 import tif1
 from tif1 import DataNotFoundError
 
+session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
+    # Lap 999 does not exist, so get_lap raises LapNotFoundError
+    lap = session.get_driver("VER").get_lap(999)
 except DataNotFoundError as e:
     print(f"Data not found: {e}")
-    print(f"Context: {e.context}")  # Additional error details
+    print(f"Context: {e.context}")  # {'lap_number': 999, 'driver': 'VER', 'year': 2025, ...}
 ```
 
 **Common causes:**
-- Misspelled event name
+- A lap number or driver code that is not in the session
 - The session has not started yet
 - Data not yet available in archive
 
+<Note>
+  An unknown event name does not raise `DataNotFoundError`. It raises `EventNotFoundError`, a `ValueError` (see [EventNotFoundError](#eventnotfounderror)). An unknown session name raises `ValueError`.
+</Note>
+
 **Solution:**
 ```python
-# Check available events first
+# Check available events first (get_events returns a DataFrame)
 events = tif1.get_events(2025)
-if "Monaco Grand Prix" in events:
+if "Monaco Grand Prix" in events["EventName"].values:
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 ```
 
@@ -85,9 +97,43 @@ if "VER" in available_drivers:
     driver = session.get_driver("VER")
 ```
 
+### EventNotFoundError
+
+Raised by `get_session` and `get_event_by_name` when an event name matches no event of the season. `EventNotFoundError` is a `ValueError`, not a `TIF1Error`, so `except TIF1Error` does not catch it.
+
+tif1 resolves an event name in three steps: the exact name, then a table of circuit, city, and country aliases, then fuzzy matching. A typo such as `"Monacco"` resolves to the Monaco Grand Prix and logs a `Correcting user input` warning. A fuzzy match needs a score of at least 70 out of 100. A name below that score, such as `"Moon GP"`, raises `EventNotFoundError`.
+
+An alias for an event that is not on that season's calendar raises `EventNotInSeasonError`, a subclass of `EventNotFoundError`. An example is `"Suzuka"` in 2021.
+
+```python
+from tif1 import EventNotFoundError, EventNotInSeasonError
+
+try:
+    session = tif1.get_session(2025, "Moon GP", "Race")
+except EventNotFoundError as e:
+    print(e)  # No event matching 'Moon GP' in 2025
+
+try:
+    session = tif1.get_session(2021, "Suzuka", "Race")
+except EventNotInSeasonError as e:  # also caught by except EventNotFoundError
+    print(e)  # 'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar
+```
+
+To catch every tif1 error, including an unknown event name, catch both base classes:
+
+```python
+try:
+    session = tif1.get_session(2025, "Moon GP", "Race")
+    laps = session.laps
+except (tif1.TIF1Error, tif1.EventNotFoundError) as e:
+    print(f"Could not load session: {e}")
+```
+
 ### NetworkError
 
-Raised when all CDN sources fail or timeout.
+Raised when all CDN sources fail or time out. While the circuit breaker is open, loads also fail with `NetworkError`. `CircuitBreakerOpenError`, the breaker's own refusal, is a `NetworkError` subclass.
+
+By default, the circuit breaker opens after 5 network failures in a row (`circuit_breaker_threshold`). It then refuses requests for 60 seconds (`circuit_breaker_timeout`). After that time, requests go through again, and the first success closes the breaker. A missing file (404), a refused file (403), or an `InvalidDataError` does not count as a failure.
 
 ```python
 from tif1 import NetworkError
@@ -107,11 +153,12 @@ except NetworkError as e:
 - Check internet connection
 - Verify the CDN sources (jsDelivr, Hugging Face, StaticDelivr) are accessible
 - Reset circuit breaker if needed
+- Re-enable CDN sources with `tif1.get_cdn_manager().reset()`. A source that fails 3 times in a row stays off until this reset.
 - Enable debug logging to see which CDN failed
 
 ### InvalidDataError
 
-Raised when fetched data is corrupted or malformed.
+Raised when a fetched payload is not a JSON object, or fails the optional payload validation. The `validate_data`, `validate_lap_times`, and `validate_telemetry` options are off by default. tif1 does not retry an invalid payload.
 
 ```python
 from tif1 import InvalidDataError
@@ -120,24 +167,18 @@ try:
     laps = session.laps
 except InvalidDataError as e:
     print(f"Invalid data: {e}")
-    # Clear cache and retry
+    # Drop cached payloads before a retry
     tif1.get_cache().clear()
 ```
 
 ### CacheError
 
-Raised when cache operations fail.
+tif1 exports `CacheError` but does not raise it. When SQLite cannot open or write the cache database, tif1 logs a warning. It then continues without the SQLite cache, so loads are slower but do not fail.
 
-```python
-from tif1 import CacheError
+### SessionNotLoadedError
 
-try:
-    cache = tif1.get_cache()
-    cache.clear()
-except CacheError as e:
-    print(f"Cache error: {e}")
-    # Check permissions
-```
+tif1 exports `SessionNotLoadedError` but does not raise it. Session data properties such as `session.laps` load their data on first access. Like every `TIF1Error`, it accepts keyword arguments as error context.
+
 ## Error handling patterns
 
 ### Graceful Degradation
@@ -146,9 +187,11 @@ Handle errors without stopping the analysis.
 
 ```python
 def safe_load_session(year, gp, session_type):
-    """Load session with fallback to None."""
+    """Load session laps with fallback to None."""
     try:
-        return tif1.get_session(year, gp, session_type)
+        session = tif1.get_session(year, gp, session_type)
+        session.laps  # Trigger the fetch so errors surface here
+        return session
     except DataNotFoundError:
         print(f"No data for {year} {gp} {session_type}")
         return None
@@ -164,7 +207,9 @@ if session:
 
 ### Retry Logic
 
-Implement custom retry for transient failures.
+tif1 already sends each request up to `max_retries` times (default 3), with exponential backoff between tries. A value of `0` makes one attempt, the same as `1`. The first load of a session that is not in the cache makes one attempt per CDN source (`ultra_cold_skip_retries`). tif1 does not retry a 403, a 404, or an `InvalidDataError`, because a new attempt gets the same answer.
+
+Add an application-level retry for network failures that last longer than the built-in retries.
 
 ```python
 import time
@@ -174,10 +219,14 @@ def load_with_retry(year, gp, session_type, max_retries=3):
     """Load session with exponential backoff."""
     for attempt in range(max_retries):
         try:
-            return tif1.get_session(year, gp, session_type)
-        except NetworkError as e:
+            session = tif1.get_session(year, gp, session_type)
+            session.laps  # get_session is lazy: the fetch (and its errors) happen here
+            return session
+        except NetworkError:
             if attempt == max_retries - 1:
                 raise
+            # Re-enable CDN sources that the failed attempts switched off
+            tif1.get_cdn_manager().reset()
             wait_time = 2 ** attempt
             print(f"Retry {attempt + 1}/{max_retries} in {wait_time}s...")
             time.sleep(wait_time)
@@ -188,9 +237,12 @@ def load_with_retry(year, gp, session_type, max_retries=3):
 Handle errors when processing multiple sessions.
 
 ```python
-def process_season(year):
+def process_season(year, max_events=None):
     """Process all races with error handling."""
-    events = tif1.get_events(year)
+    # get_event_schedule() returns a DataFrame; iterate the EventName column
+    events = tif1.get_event_schedule(year, include_testing=False)["EventName"]
+    if max_events:
+        events = events[:max_events]
     results = []
     errors = []
 
@@ -213,8 +265,8 @@ def process_season(year):
 
     return results, errors
 
-# Use it
-results, errors = process_season(2024)
+# Use it (the first three rounds)
+results, errors = process_season(2024, max_events=3)
 print(f"Processed {len(results)} events, {len(errors)} errors")
 ```
 
@@ -237,6 +289,7 @@ class SessionContext:
             self.session = tif1.get_session(
                 self.year, self.gp, self.session_type
             )
+            self.session.laps  # Fetch now so load errors surface here
             return self.session
         except Exception as e:
             print(f"Failed to load session: {e}")
@@ -273,15 +326,15 @@ session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 
 ### Inspect error context
 
-All tif1 exceptions include context information.
+Every `TIF1Error` carries a `context` dict with the keyword arguments it was raised with.
 
 ```python
 try:
-    session = tif1.get_session(2025, "Invalid GP", "Race")
+    lap = session.get_driver("VER").get_lap(999)
 except tif1.DataNotFoundError as e:
     print(f"Error: {e}")
     print(f"Context: {e.context}")
-    # Context might include: year, gp, session, attempted_urls, etc.
+    # Context includes: lap_number, driver, year, event, session
 ```
 
 ### Check circuit breaker
@@ -306,22 +359,23 @@ if cb.state == "open":
     Check data availability before processing.
     ```python
     events = tif1.get_events(2025)
-    if "Monaco Grand Prix" in events:
+    if "Monaco Grand Prix" in events["EventName"].values:
         session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     ```
-</Step>
+  </Step>
   <Step title="Use Specific Exceptions">
     Catch specific exceptions rather than broad `Exception`.
     ```python
     try:
-        session = tif1.get_session(2025, "Monaco", "Race")
+        session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+        laps = session.laps
     except tif1.DataNotFoundError:
         # Handle missing data
         pass
     except tif1.NetworkError:
         # Handle network issues
         pass
-```
+    ```
   </Step>
   <Step title="Log Errors">
     Always log errors for debugging.
@@ -330,18 +384,20 @@ if cb.state == "open":
     logger = logging.getLogger(__name__)
 
     try:
-        session = tif1.get_session(2025, "Monaco", "Race")
+        session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+        laps = session.laps
     except Exception as e:
         logger.error(f"Failed to load session: {e}", exc_info=True)
-```
+    ```
   </Step>
   <Step title="Fail Fast">
     Do not continue processing when critical data is missing.
     ```python
-    session = tif1.get_session(2025, "Monaco", "Race")
-    if session is None:
-        raise ValueError("Cannot proceed without session data")
-```
+    session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
+    laps = session.laps
+    if laps.empty:
+        raise ValueError("Cannot proceed without lap data")
+    ```
   </Step>
 </Steps>
 
@@ -393,6 +449,7 @@ class TIF1Monitor:
         start = time.time()
         try:
             session = tif1.get_session(year, gp, session_type)
+            session.laps  # get_session is lazy: time the laps fetch too
             duration = time.time() - start
             self.timings.append(duration)
             return session
@@ -412,7 +469,7 @@ class TIF1Monitor:
 
 ## Summary
 
-Proper error handling makes tif1 applications robust and maintainable. Always use specific exceptions, validate input, and add retry logic for production use.
+Proper error handling keeps tif1 applications stable and maintainable. Always use specific exceptions, validate input, and add retry logic for production use.
 
 ---
 

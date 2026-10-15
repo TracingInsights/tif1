@@ -30,21 +30,21 @@ keywords:
 
 ## Overview
 
-The HTTP and networking layer is the foundation of `tif1`'s data fetching infrastructure. It is engineered for performance, reliability, and resilience. It loads Formula 1 telemetry and session data from remote CDN sources. The networking stack is the result of years of optimization work for F1 data loading. Cold starts can require fetching 100+ telemetry files in parallel while maintaining sub-second response times.
+The HTTP and networking layer is the foundation of `tif1`'s data fetching infrastructure. It is engineered for performance, reliability, and resilience. It loads Formula 1 telemetry and session data from remote CDN sources. Cold starts can require fetching 100+ telemetry files in parallel.
 
-The networking layer is optimized for the patterns of F1 data access. These patterns include high-concurrency parallel fetching, connection reuse, retry strategies, and graceful degradation under failure conditions. A full session (20 drivers × 50+ laps) yields 1000+ telemetry files. The system loads such a session in 2-5 seconds on a typical broadband connection.
+The networking layer is optimized for the patterns of F1 data access. These patterns include high-concurrency parallel fetching, connection reuse, retry strategies, and graceful degradation under failure conditions. A full session (20 drivers × 50+ laps) yields 1000+ telemetry files.
 
 ### Architecture Philosophy
 
 The networking layer is built on four core principles that guide every design decision:
 
-1. **Performance First**: Every design decision prioritizes speed and throughput. Connection pooling eliminates TCP handshake overhead (saving 30-50ms per request). HTTP/2 multiplexing allows multiple requests over a single connection. Keep-alive optimization maintains persistent connections for up to 1000 requests. Zero-copy JSON parsing with `orjson` provides 2-5x faster parsing than the standard library. These optimizations compound to deliver sub-second response times even when fetching 100+ files in parallel.
+1. **Performance First**: Every design decision prioritizes speed and throughput. Connection pooling removes the TCP and TLS handshakes from reused connections. HTTP/2 multiplexing allows multiple requests over a single connection. JSON parsing uses `orjson`, which is faster than the standard library parser.
 
 2. **Resilience by Design**: Network failures are expected, not exceptional. The circuit breaker pattern prevents cascading failures by blocking requests during sustained outages. Exponential backoff with jitter reduces load on failing services while allowing recovery. Multi-CDN fallback ensures graceful degradation when primary sources fail. The system can tolerate complete CDN failures. It recovers automatically when services come back online.
 
-3. **Resource Efficiency**: Thread pools with dynamic sizing minimize resource consumption. Connection reuse reaches 90%+ reuse rates. Caching also lowers resource use. The system can handle 128+ concurrent requests during telemetry prefetch without overwhelming the connection pool. File descriptors are not exhausted.
+3. **Resource Efficiency**: The thread pool is sized from the concurrency settings, open connections are reused, and the cache avoids repeat downloads. The connection pool (at least 256 connections) is larger than the default concurrency caps.
 
-4. **Observability**: Real-time metrics for connection reuse, circuit breaker state, CDN health, and request throughput enable monitoring, debugging, and optimization. Automatic periodic logging provides visibility into system behavior without manual instrumentation.
+4. **Observability**: Metrics for connection reuse, circuit breaker state, and CDN health support monitoring and debugging. Periodic logging of the connection counters needs no manual instrumentation.
 
 ### Key Components
 
@@ -55,11 +55,11 @@ The networking stack provides a complete set of features:
 The session layer uses `niquests` (a modern fork of `requests` with HTTP/2 and HTTP/3 support) with aggressive connection pooling and reuse strategies:
 
 - **Dynamic Connection Pooling**: Pool size automatically scales based on configured concurrency. The minimum is 256 connections, up to 512+ for burst handling
-- **Connection Keep-Alive**: Persistent connections with configurable timeout (default: 120s) and max requests per connection (default: 1000)
-- **HTTP/2 and HTTP/3 Support**: Modern protocol support with multiplexing for reduced latency and improved throughput
-- **DNS-over-HTTPS (DoH) Fallback**: Automatic fallback to Cloudflare and Google DoH resolvers for improved reliability and privacy
-- **Thread-Safe Design**: All session operations are protected by locks for safe concurrent access
-- **Connection Reuse Metrics**: Real-time tracking of connection pool efficiency with reuse rate monitoring
+- **Keep-Alive Headers**: Every request sends `Keep-Alive` values from `keepalive_timeout` (default: 120s) and `keepalive_max_requests` (default: 10000)
+- **HTTP/2 and HTTP/3 Support**: HTTP/2 with multiplexing by default; HTTP/3 only when `http_disable_http3` is `False`
+- **DNS-over-HTTPS (DoH) Resolvers**: The `http_resolvers` list can name Cloudflare and Google DoH resolvers. tif1 moves to the next entry only when building the session with an entry fails
+- **Thread-Safe Creation**: Session creation and closing run under a lock
+- **Connection Reuse Metrics**: Request counters with a reuse rate
 
 #### 2. Async Parallel Fetching
 
@@ -67,22 +67,21 @@ Built on Python's `asyncio` with thread pool executors for maximum concurrency:
 
 - **Concurrent Request Handling**: Fetch 20-128+ files simultaneously (configurable based on workload)
 - **Thread Pool Optimization**: Shared executor with worker count matching concurrency requirements
-- **Process Pool JSON Parsing**: Optional multi-process JSON parsing for large payloads (configurable, disabled by default for telemetry)
+- **Process Pool JSON Parsing**: Optional multi-process JSON parsing for non-telemetry payloads (off by default; `json_parse_workers`)
 - **Semaphore-Based Rate Limiting**: Automatic concurrency control to prevent CDN throttling
 - **Graceful Error Handling**: Failed requests return `None` instead of crashing, enabling partial data loading
-- **Memory-Efficient Batching**: Support for processing large request lists in manageable chunks
 
 #### 3. Retry Logic
 
 The retry mechanism uses exponential backoff, jitter, and multi-CDN fallback:
 
-- **Configurable Retry Count**: Default 3 retries, supports zero-retry mode for ultra-fast cold starts
+- **Configurable Retry Count**: Default 3 tries per request, the first one included. Zero-retry mode (one try) gives the fastest cold starts
 - **Exponential Backoff**: Delay increases exponentially (2^attempt seconds) with configurable factor
-- **Jitter Support**: Random jitter (0-1s) prevents thundering herd problems
+- **Jitter Support**: On the async path, random jitter of up to `retry_jitter_max` seconds prevents thundering herd problems (the default `0.0` adds no jitter). The sync retry path scales each delay by a random factor from 0.5 to 1.5 when `retry_jitter` is on
 - **Max Delay Cap**: Configurable maximum delay (default: 60s) prevents excessive wait times
 - **CDN Fallback**: Automatically tries all configured CDN sources before failing
 - **Smart Error Classification**: Distinguishes between retryable errors (5xx, timeouts) and fatal errors (404, validation failures)
-- **Pool Exhaustion Handling**: Automatic backoff when connection pool is exhausted (0.5-5s with jitter)
+- **Pool Exhaustion Handling**: Automatic backoff when connection pool is exhausted (0.01-0.5s with jitter by default)
 
 #### 4. Circuit Breaker Pattern
 
@@ -90,10 +89,10 @@ Prevents cascading failures and protects against sustained network issues:
 
 - **Failure Threshold**: Opens after 5 consecutive failures (configurable)
 - **Timeout Period**: Blocks requests for 60 seconds when open (configurable)
-- **Half-Open State**: Automatically tests recovery with single request
+- **Half-Open State**: After the timeout, requests go through again; a success closes the breaker and a failure opens it again
 - **Thread-Safe State Transitions**: Atomic state changes using reentrant locks
 - **Monotonic Time Tracking**: Uses `time.monotonic()` for accurate timeout tracking
-- **Per-Request Protection**: All HTTP requests automatically protected by circuit breaker
+- **Protected Paths**: Async fetches and the sync retry path check the breaker. The sync zero-retry path and `PayloadLoader.get_url()` do not
 
 #### 5. Multi-CDN Fallback System
 
@@ -102,11 +101,11 @@ Reliable CDN management with automatic failover, health tracking, and optional m
 - **Multiple CDN Support**: Configure multiple CDN sources with priority ordering via `cdns` config array
 - **Automatic Failover**: Switches to backup CDNs on failure without user intervention
 - **Health Tracking**: Tracks failure counts per CDN, automatically disables after 3 consecutive failures
-- **StaticDelivr Primary**: Primary CDN with jsDelivr as fallback and Hugging Face buckets as a last-resort backup
+- **jsDelivr Primary**: jsDelivr is the primary CDN. Hugging Face buckets are the fallback, and StaticDelivr is the last-resort backup
 - **URL Formatting**: Automatic URL construction for TracingInsights data repositories (StaticDelivr: `{cdn_base}/{year}/main/{gp}/{session}/{path}`, jsDelivr: `{cdn_base}/{year}@main/{gp}/{session}/{path}`, Hugging Face: `{cdn_base}/{year}/resolve/{gp}/{session}/{path}`)
 - **Dynamic Enable/Disable**: CDNs can be dynamically disabled based on error patterns (for example, HTTP/2 multiplexing incompatibility after redirects)
-- **Minification Support**: Optional automatic minification for jsDelivr CDN (transforms `file.json` → `file.min.json`)
-- **Failure Recovery**: Automatic reset of failure counts on successful requests, allowing previously failed CDNs to recover
+- **Minification for custom mirrors**: `cdn_use_minification` requests `file.min.json` from custom mirrors that serve minified copies. The default CDNs ignore it, because none of them serves `.min.json` files
+- **Failure Recovery**: A successful request resets the failure count of that CDN. A CDN with 3 failures is no longer tried, so only `reset()` or `reload()` brings it back
 - **Priority Ordering**: CDNs are tried in priority order (lower priority number = higher precedence)
 
 **CDN Configuration:**
@@ -138,11 +137,11 @@ Configure multiple CDNs for redundancy:
 
 **Minification Benefits:**
 
-When `cdn_use_minification` is enabled with jsDelivr, JSON files are automatically requested in minified form:
-- Original: `https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain/Race/laps_VER.json`
-- Minified: `https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain/Race/laps_VER.min.json`
+`cdn_use_minification` only affects custom mirrors listed in `cdns`. For such a mirror, JSON files are requested in minified form:
+- Original: `https://mirror.example.com/tif1/2024@main/Bahrain%20Grand%20Prix/Race/VER/laptimes.json`
+- Minified: `https://mirror.example.com/tif1/2024@main/Bahrain%20Grand%20Prix/Race/VER/laptimes.min.json`
 
-This can reduce file sizes by 20-40%, which improves load times on slow connections. Minification adds a small processing overhead on the CDN side. It is disabled by default. Fast connections perform better without this overhead.
+jsDelivr minifies only JavaScript and CSS, and Hugging Face and StaticDelivr mirror the repository as it is. A `.min.json` request answers 404 on all three, so tif1 never sends one there. The option is off by default.
 
 **CDN Health Management:**
 
@@ -165,7 +164,7 @@ cdn_manager.reset()
 **Unsupported CDNs:**
 
 The following CDN sources are explicitly blocked due to rate limiting or compatibility issues:
-- `raw.githubusercontent.com` - GitHub's raw content CDN has aggressive rate limiting (60 requests/hour for unauthenticated users)
+- `raw.githubusercontent.com` - GitHub's raw content CDN has aggressive rate limiting (60 requests/hour for unauthenticated users). The one request tif1 makes there on purpose is the live season's `schedule_{year}.json` in `tif1.events`, outside the CDN chain and cached for `schedule_ttl_hours`
 
 Always use a proper CDN like jsDelivr that is designed for high-volume content delivery.
 
@@ -173,10 +172,10 @@ Always use a proper CDN like jsDelivr that is designed for high-volume content d
 
 Prevents CDN throttling and manages resource consumption:
 
-- **Configurable Concurrency**: Default 22 concurrent requests, up to 128+ for telemetry prefetch
+- **Configurable Concurrency**: Default 22 concurrent requests, and 32 for telemetry prefetch (configurable to 128+)
 - **Semaphore-Based Control**: Async semaphores limit concurrent operations
 - **Per-Operation Limits**: Different limits for different workloads (lap data vs telemetry)
-- **Backoff on Exhaustion**: Automatic backoff when limits are reached
+- **Backoff on Exhaustion**: Automatic short backoff when the connection pool reports exhaustion
 
 #### 7. Performance Monitoring
 
@@ -195,26 +194,26 @@ The networking layer is specifically optimized for F1 data loading scenarios:
 
 When loading a session for the first time, `tif1` may need to fetch 100+ telemetry files in parallel:
 
-- **High Concurrency**: 128+ concurrent requests during telemetry prefetch
-- **Connection Reuse**: Persistent connections eliminate TCP handshake overhead (30-50% faster)
+- **High Concurrency**: 32 concurrent requests during telemetry prefetch by default (configurable to 128+)
+- **Connection Reuse**: Persistent connections skip the TCP and TLS handshakes
 - **HTTP/2 Multiplexing**: Multiple requests over single connection reduce latency
-- **Zero-Retry Mode**: Ultra-fast mode tries each CDN once without delays (configurable via `max_retries=0`)
-- **Process Pool Parsing**: Optional multi-process JSON parsing for large payloads. It is disabled by default for telemetry because of IPC overhead
+- **Zero-Retry Mode**: Tries each CDN once without delays. `ultra_cold_skip_retries` (default: `True`) turns it on for the cold-start path
+- **Process Pool Parsing**: Optional multi-process JSON parsing for non-telemetry payloads. Telemetry always parses in threads because of IPC overhead
 
 #### Large JSON Payloads (Lap Data, Telemetry Arrays)
 
 Lap and telemetry data can contain thousands of data points:
 
-- **Streaming JSON Parsing**: Uses `orjson` for fast, memory-efficient parsing
-- **Zero-Copy Operations**: Direct byte buffer parsing where possible
-- **Validation Pipeline**: Optional Pydantic validation (disabled by default for performance)
+- **Fast JSON Parsing**: Uses `orjson` on the raw response bytes
+- **Raw Cache Writes**: An unchanged payload is stored as the original bytes, without a new serialization
+- **Validation Pipeline**: Optional payload validation (disabled by default for performance)
 - **Cache Integration**: Parsed data automatically cached to avoid re-fetching
 
 #### Network Failure Scenarios
 
 Graceful degradation when CDN sources fail or network is unstable:
 
-- **Multi-CDN Fallback**: Automatically tries backup CDNs (jsDelivr → custom CDNs)
+- **Multi-CDN Fallback**: Automatically tries backup CDNs (jsDelivr → Hugging Face buckets → StaticDelivr)
 - **Circuit Breaker Protection**: Prevents cascading failures by blocking requests during sustained outages
 - **Exponential Backoff**: Reduces load on failing services while allowing recovery
 - **Partial Data Loading**: Failed requests return `None`, allowing successful data to be used
@@ -226,15 +225,15 @@ Optimizations for limited bandwidth or CPU:
 - **Configurable Concurrency**: Reduce concurrent requests (5-10) for slow connections
 - **Connection Pool Sizing**: Adjust pool size based on available resources
 - **Timeout Configuration**: Increase timeouts (60s+) for slow networks
-- **Minification Support**: Enable CDN minification for 20-40% bandwidth savings
+- **Minification for custom mirrors**: `cdn_use_minification` applies only to mirrors that serve `.min.json` copies
 
 ### Thread Safety and Resource Management
 
 All networking components are designed for safe concurrent use:
 
-- **Thread-Safe Sessions**: HTTP session protected by locks for concurrent access
+- **Thread-Safe Sessions**: HTTP session creation and closing run under a lock
 - **Reentrant Locks**: Circuit breaker uses reentrant locks for nested call support
-- **Atomic State Transitions**: All state changes use compare-and-swap patterns
+- **Atomic State Transitions**: Circuit breaker state changes run under its lock. CDN failure counters use no lock (see the [CDN API](/api-reference/cdn))
 - **Automatic Cleanup**: Resources automatically released via `atexit` handlers
 - **Graceful Shutdown**: Executors and sessions properly closed on program exit
 
@@ -249,6 +248,8 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 2. Current working directory (if `TIF1_TRUST_CWD_CONFIG=true`)
 3. Home directory (`~/.tif1rc`) (default location)
 
+tif1 reads the first of these files that exists. Environment variables override the file values.
+
 **Complete Networking Configuration:**
 
 ```json
@@ -257,26 +258,30 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
   "max_retries": 3,
   "retry_backoff_factor": 2.0,
   "retry_jitter": true,
-  "retry_jitter_max": 1.0,
+  "retry_jitter_max": 0.0,
   "max_retry_delay": 60.0,
   "circuit_breaker_threshold": 5,
   "circuit_breaker_timeout": 60,
   "max_workers": 20,
   "max_concurrent_requests": 22,
   "pool_connections": 256,
-  "pool_maxsize": 512,
+  "pool_maxsize": 1024,
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "http_multiplexed": true,
-  "http_disable_http3": false,
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"],
-  "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights"],
+  "http_disable_http3": true,
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
+  "cdns": [
+    "https://cdn.jsdelivr.net/gh/TracingInsights",
+    "https://huggingface.co/buckets/tracinginsights",
+    "https://cdn.staticdelivr.com/gh/TracingInsights"
+  ],
   "cdn_use_minification": false,
-  "pool_exhaustion_backoff_base": 0.5,
-  "pool_exhaustion_backoff_max": 5.0,
-  "pool_exhaustion_backoff_jitter": 0.5,
+  "pool_exhaustion_backoff_base": 0.01,
+  "pool_exhaustion_backoff_max": 0.5,
+  "pool_exhaustion_backoff_jitter": 0.01,
   "json_parse_workers": 0,
-  "telemetry_prefetch_max_concurrent_requests": 128,
+  "telemetry_prefetch_max_concurrent_requests": 32,
   "connection_stats_log_interval": 60.0
 }
 ```
@@ -285,13 +290,13 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 
 **Basic HTTP Settings:**
 - `timeout` (int, default: 30): Request timeout in seconds. Increase for slow connections or large files.
-- `max_retries` (int, default: 3): Maximum retries per CDN. Set to 0 for zero-retry mode (ultra-fast cold start).
+- `max_retries` (int, default: 3): Total tries for each request, including the first. Each try walks every CDN. Set to 1 (or 0) for zero-retry mode (one try).
 - `max_workers` (int, default: 20): Thread pool size for async operations. The executor is sized as the max of `max_workers` and the concurrency caps (`max_concurrent_requests`, telemetry prefetch).
 
 **Retry Strategy:**
 - `retry_backoff_factor` (float, default: 2.0): Exponential backoff multiplier. Delay = factor^attempt seconds.
 - `retry_jitter` (bool, default: true): Add random jitter to backoff delays to prevent thundering herd.
-- `retry_jitter_max` (float, default: 1.0): Maximum jitter in seconds (random value between 0 and this).
+- `retry_jitter_max` (float, default: 0.0): Maximum jitter in seconds on the async path (random value between 0 and this). The default adds no jitter there.
 - `max_retry_delay` (float, default: 60.0): Maximum backoff delay in seconds (caps exponential growth).
 
 **Circuit Breaker:**
@@ -299,28 +304,28 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 - `circuit_breaker_timeout` (int, default: 60): Seconds to wait before testing recovery (half-open state).
 
 **Connection Pooling:**
-- `pool_connections` (int, default: 256): Number of connection pools to maintain. Auto-calculated if not set.
-- `pool_maxsize` (int, default: 512): Maximum connections per pool. Should be 2-4x `pool_connections`.
-- `keepalive_timeout` (int, default: 120): Keep-alive timeout in seconds for persistent connections.
-- `keepalive_max_requests` (int, default: 10000): Maximum requests per connection before recycling.
+- `pool_connections` (int, default: not set): Number of connection pools to maintain. If not set, tif1 uses the largest concurrency setting, with a minimum of 256.
+- `pool_maxsize` (int, default: not set): Maximum connections per pool. If not set, tif1 uses 4x `pool_connections` (1024 with the defaults). The minimum is 512.
+- `keepalive_timeout` (int, default: 120): Timeout in seconds sent in the `Keep-Alive` request header.
+- `keepalive_max_requests` (int, default: 10000): Request limit sent in the `Keep-Alive` request header.
 
 **Concurrency Control:**
 - `max_concurrent_requests` (int, default: 22): Maximum concurrent HTTP requests for general operations.
-- `telemetry_prefetch_max_concurrent_requests` (int, default: 128): Maximum concurrent requests for telemetry prefetch.
+- `telemetry_prefetch_max_concurrent_requests` (int, default: 32): Maximum concurrent requests for telemetry prefetch.
 
 **Protocol Configuration:**
 - `http_multiplexed` (bool, default: true): Enable HTTP/2 multiplexing for reduced latency.
-- `http_disable_http3` (bool, default: false): Disable HTTP/3 if experiencing compatibility issues.
-- `http_resolvers` (array, default: ["standard", "doh://cloudflare", "doh://google"]): DNS resolver priority order.
+- `http_disable_http3` (bool, default: true): HTTP/2 over TCP is the default. Set it to `false` to negotiate HTTP/3.
+- `http_resolvers` (array, default: ["standard", "doh+cloudflare://", "doh+google://"]): Resolvers to try in order when tif1 builds the session.
 
 **CDN Configuration:**
-- `cdns` (array, default: ["https://cdn.jsdelivr.net/gh/TracingInsights"]): CDN sources in priority order.
-- `cdn_use_minification` (bool, default: false): Enable automatic minification for jsDelivr (20-40% size reduction).
+- `cdns` (array, default: jsDelivr, Hugging Face buckets, StaticDelivr): CDN sources in priority order.
+- `cdn_use_minification` (bool, default: false): Request `.min.json` files from custom mirrors. The default CDNs ignore it.
 
 **Pool Exhaustion Handling:**
-- `pool_exhaustion_backoff_base` (float, default: 0.5): Base backoff delay when pool is exhausted.
-- `pool_exhaustion_backoff_max` (float, default: 5.0): Maximum backoff delay for pool exhaustion.
-- `pool_exhaustion_backoff_jitter` (float, default: 0.5): Random jitter for pool exhaustion backoff.
+- `pool_exhaustion_backoff_base` (float, default: 0.01): Base backoff delay in seconds when pool is exhausted.
+- `pool_exhaustion_backoff_max` (float, default: 0.5): Maximum backoff delay in seconds for pool exhaustion.
+- `pool_exhaustion_backoff_jitter` (float, default: 0.01): Maximum random jitter in seconds for pool exhaustion backoff.
 
 **Advanced Performance:**
 - `json_parse_workers` (int, default: 0): Number of worker processes for JSON parsing. 0 = disabled (recommended for telemetry).
@@ -328,7 +333,7 @@ The `.tif1rc` file is a JSON configuration file that can be placed in:
 
 **Environment Variable Equivalents:**
 
-All configuration options can be set via environment variables with the `TIF1_` prefix:
+Most configuration options can be set via environment variables with the `TIF1_` prefix:
 
 ```bash
 # Basic HTTP settings
@@ -339,7 +344,7 @@ export TIF1_MAX_WORKERS=20
 # Retry strategy
 export TIF1_RETRY_BACKOFF_FACTOR=2.0
 export TIF1_RETRY_JITTER=true
-export TIF1_RETRY_JITTER_MAX=1.0
+export TIF1_RETRY_JITTER_MAX=0.0
 export TIF1_MAX_RETRY_DELAY=60.0
 
 # Circuit breaker
@@ -348,27 +353,27 @@ export TIF1_CIRCUIT_BREAKER_TIMEOUT=60
 
 # Connection pooling
 export TIF1_POOL_CONNECTIONS=256
-export TIF1_POOL_MAXSIZE=512
+export TIF1_POOL_MAXSIZE=1024
 export TIF1_KEEPALIVE_TIMEOUT=120
 export TIF1_KEEPALIVE_MAX_REQUESTS=10000
 
 # Concurrency
 export TIF1_MAX_CONCURRENT_REQUESTS=22
-export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=128
+export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=32
 
 # Protocol
 export TIF1_HTTP_MULTIPLEXED=true
-export TIF1_HTTP_DISABLE_HTTP3=false
-export TIF1_HTTP_RESOLVERS="standard,doh://cloudflare,doh://google"
+export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_HTTP_RESOLVERS="standard,doh+cloudflare://,doh+google://"
 
 # CDN
-export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights"
-export TIF1_CDN_USE_MINIFICATION=false
+export TIF1_CDNS="https://cdn.jsdelivr.net/gh/TracingInsights,https://huggingface.co/buckets/tracinginsights,https://cdn.staticdelivr.com/gh/TracingInsights"
+# cdn_use_minification has no environment variable; set it in .tif1rc or with config.set()
 
 # Pool exhaustion
-export TIF1_POOL_EXHAUSTION_BACKOFF_BASE=0.5
-export TIF1_POOL_EXHAUSTION_BACKOFF_MAX=5.0
-export TIF1_POOL_EXHAUSTION_BACKOFF_JITTER=0.5
+export TIF1_POOL_EXHAUSTION_BACKOFF_BASE=0.01
+export TIF1_POOL_EXHAUSTION_BACKOFF_MAX=0.5
+export TIF1_POOL_EXHAUSTION_BACKOFF_JITTER=0.01
 
 # Advanced
 export TIF1_JSON_PARSE_WORKERS=0
@@ -380,7 +385,7 @@ export TIF1_CONNECTION_STATS_LOG_INTERVAL=60.0
 **Ultra-Fast Cold Start (Zero-Retry Mode):**
 ```json
 {
-  "max_retries": 0,
+  "max_retries": 1,
   "max_concurrent_requests": 128,
   "telemetry_prefetch_max_concurrent_requests": 256,
   "pool_connections": 512,
@@ -406,7 +411,7 @@ export TIF1_CONNECTION_STATS_LOG_INTERVAL=60.0
   "max_concurrent_requests": 5,
   "telemetry_prefetch_max_concurrent_requests": 10,
   "pool_connections": 50,
-  "pool_maxsize": 100,
+  "pool_maxsize": 512,
   "json_parse_workers": 0
 }
 ```
@@ -430,14 +435,14 @@ See [Configuration](/api-reference/config) for complete details on all configura
 
 ## HTTP Session Management
 
-The HTTP session layer provides a shared, thread-safe `niquests.Session` instance with optimized configuration for F1 data fetching. The session is lazily initialized on first use and automatically cleaned up on program exit.
+The HTTP session layer provides a shared `niquests.Session` instance with optimized configuration for F1 data fetching. The session is lazily initialized on first use and automatically cleaned up on program exit.
 
 ### `get_session`
 
-Get or create the global HTTP session instance with connection pooling and DoH fallback.
+Get or create the global HTTP session instance with connection pooling and a configurable resolver list.
 
 ```python
-def get_session() -> Any  # Returns niquests.Session
+def get_session() -> niquests.Session
 ```
 
 This function implements a thread-safe singleton pattern, ensuring only one session instance exists across the entire application. The session is configured with:
@@ -448,26 +453,17 @@ This function implements a thread-safe singleton pattern, ensuring only one sess
 - Maximum pool size of 512+ for burst handling
 - Non-blocking pool behavior (pool_block=False) to prevent deadlocks
 
-**Keep-Alive Configuration:**
-- Persistent connections with 120-second timeout (configurable via `keepalive_timeout`)
-- Maximum 10000 requests per connection (configurable via `keepalive_max_requests`)
-- Automatic connection recycling when limits are reached
+**Keep-Alive Headers:**
+- `Connection: keep-alive` and `Keep-Alive: timeout=120, max=10000` on every request
+- Configurable via `keepalive_timeout` and `keepalive_max_requests`
+- The server decides how long it keeps a connection open
 
 **DNS Resolution:**
-- Primary: Standard system DNS resolver (uses OS-configured DNS servers)
-- Fallback 1: Cloudflare DNS-over-HTTPS (`doh://cloudflare` - 1.1.1.1)
-- Fallback 2: Google DNS-over-HTTPS (`doh://google` - 8.8.8.8)
+- Default list: system DNS (`standard`), then Cloudflare DoH (`doh+cloudflare://`), then Google DoH (`doh+google://`)
 - Configurable via `http_resolvers` config option (array of resolver strings)
-- Automatic fallback if primary resolver fails during session initialization
-- DoH provides improved privacy and reliability compared to traditional DNS
-
-**DNS-over-HTTPS (DoH) Benefits:**
-
-DoH encrypts DNS queries, providing several advantages:
-- **Privacy**: DNS queries are encrypted and cannot be intercepted or logged by ISPs
-- **Reliability**: Cloudflare and Google DNS have 99.99%+ uptime
-- **Performance**: Global anycast networks provide low-latency resolution
-- **Security**: DNSSEC validation prevents DNS spoofing attacks
+- tif1 builds the session with the first entry. It moves to the next entry only when building the session with an entry raises an error
+- A failed DNS lookup during a request does not switch the resolver. With the default list, tif1 uses system DNS
+- tif1 hands the chosen resolver to the `HTTPAdapter` that it mounts on `https://`, so HTTPS requests use it
 
 **Configuring DNS Resolvers:**
 
@@ -475,34 +471,31 @@ Customize the DNS resolver order in the `.tif1rc` file:
 
 ```json
 {
-  "http_resolvers": ["standard", "doh://cloudflare", "doh://google"]
+  "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
 }
 ```
 
 Or via environment variable:
 
 ```bash
-export TIF1_HTTP_RESOLVERS="standard,doh://cloudflare,doh://google"
+export TIF1_HTTP_RESOLVERS="standard,doh+cloudflare://,doh+google://"
 ```
 
 Valid resolver values:
 - `"standard"`, `"default"`, `"none"`, or `""` - Use system DNS
-- `"doh://cloudflare"` - Cloudflare DNS-over-HTTPS (1.1.1.1)
-- `"doh://google"` - Google DNS-over-HTTPS (8.8.8.8)
+- `"doh+cloudflare://"` - Cloudflare DNS-over-HTTPS (1.1.1.1)
+- `"doh+google://"` - Google DNS-over-HTTPS (8.8.8.8)
 
-The session will try each resolver in order until one succeeds. If all resolvers fail, a `NetworkError` is raised.
+tif1 tries each resolver in order until a session builds. If building fails with every resolver, a `NetworkError` is raised. The older spelling `doh://cloudflare` is translated to `doh+cloudflare://`.
 
 **Protocol Support:**
 - **HTTP/2 with multiplexing** (configurable via `http_multiplexed`, default: `true`)
   - Multiple requests over a single TCP connection
   - Reduces latency by eliminating TCP handshake overhead
   - Header compression reduces bandwidth usage
-  - Server push support (though not used by current CDNs)
   - Automatic protocol negotiation via ALPN
-- **HTTP/3 support** (can be disabled via `http_disable_http3`, default: `false`)
-  - QUIC-based protocol for improved performance over lossy networks
-  - Faster connection establishment (0-RTT)
-  - Better handling of packet loss
+- **HTTP/3 support** (off by default; set `http_disable_http3` to `false` to negotiate it)
+  - QUIC-based protocol (UDP)
   - Automatic fallback to HTTP/2 if HTTP/3 is unavailable
 - **Automatic protocol negotiation**
   - Client and server negotiate the best available protocol
@@ -511,16 +504,14 @@ The session will try each resolver in order until one succeeds. If all resolvers
 **HTTP/2 Multiplexing Benefits:**
 
 HTTP/2 multiplexing improves F1 data loading in several ways:
-- **Single Connection**: All requests to a CDN use one TCP connection instead of 20+
-- **No Head-of-Line Blocking**: Slow requests do not block fast ones
-- **Reduced Latency**: Eliminates TCP handshake overhead (30-50ms per request)
+- **Fewer Connections**: Many requests to a CDN share one TCP connection
+- **No Head-of-Line Blocking at the HTTP level**: Slow responses do not block fast ones
+- **Reduced Latency**: Fewer TCP and TLS handshakes
 - **Lower Resource Usage**: Fewer file descriptors and socket buffers
-
-For telemetry prefetch (100+ files), HTTP/2 multiplexing can reduce total load time by 40-60% compared to HTTP/1.1.
 
 **Multiplexing Compatibility:**
 
-Some CDNs have issues with HTTP/2 multiplexing after redirects. An error like `"non-multiplexed response after a redirect"` disables the CDN automatically. Multiplexing can also be disabled manually:
+Some CDNs have issues with HTTP/2 multiplexing after redirects. On the async fetch path, an error like `"non-multiplexed response after a redirect"` disables the CDN automatically. Multiplexing can also be disabled manually:
 
 ```json
 {
@@ -536,35 +527,35 @@ export TIF1_HTTP_MULTIPLEXED=false
 
 **HTTP/3 Considerations:**
 
-HTTP/3 provides benefits for high-latency or lossy networks, but may have compatibility issues with some CDNs or corporate firewalls. To solve connection issues, try disabling HTTP/3:
+HTTP/3 (QUIC) is off by default. In interleaved live A/Bs of the bulk telemetry fetch, HTTP/2 over TCP was at parity or faster, and every stalled fetch observed ran over HTTP/3. To negotiate HTTP/3 again:
 
 ```json
 {
-  "http_disable_http3": true
+  "http_disable_http3": false
 }
 ```
 
 Or via environment variable:
 
 ```bash
-export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_HTTP_DISABLE_HTTP3=false
 ```
 
 **Performance Optimizations:**
-- `trust_env=False` to skip costly environment variable resolution on every request
-- Custom User-Agent header for CDN optimization
+- `trust_env=False` to skip environment lookups on every request. The session therefore ignores proxy variables (such as `HTTPS_PROXY`) and `.netrc` files
+- `Connection: keep-alive` and `Keep-Alive` headers on every request
 - Connection reuse tracking for monitoring
 
 **Returns:**
-- Shared `niquests.Session` instance (thread-safe, lazily initialized)
+- Shared `niquests.Session` instance (lazily initialized)
 
 **Raises:**
 - `NetworkError`: If session creation fails with all configured DNS resolvers
 
 **Thread Safety:**
 - Uses double-checked locking pattern for safe concurrent initialization
-- All session operations are thread-safe
 - Multiple threads can safely call `get_session()` simultaneously
+- tif1 sends requests on the shared session from its worker threads
 
 **Example:**
 ```python
@@ -574,8 +565,8 @@ from tif1.http_session import get_session
 session = get_session()
 
 # Make requests (connection automatically reused)
-response1 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain/Race/drivers.json")
-response2 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain/Race/laps_VER.json")
+response1 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain%20Grand%20Prix/Race/drivers.json")
+response2 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain%20Grand%20Prix/Race/VER/laptimes.json")
 
 # Connections are automatically reused between requests
 data1 = response1.json()
@@ -583,7 +574,7 @@ data2 = response2.json()
 ```
 
 <Note>
-  The HTTP session is automatically managed and thread-safe. Direct interaction is rarely needed. The async fetch layer handles all session management internally.
+  The HTTP session is automatically managed. Direct interaction is rarely needed. The async fetch layer handles all session management internally.
 </Note>
 
 <Warning>
@@ -640,15 +631,15 @@ Get current connection pool statistics for monitoring, debugging, and optimizati
 def get_connection_stats() -> dict[str, Any]
 ```
 
-This function provides real-time metrics about connection pool usage. The metrics show how effectively connections are reused. High reuse rates (>80%) indicate efficient operation, while low rates may suggest configuration issues.
+This function provides metrics about connection pool usage. The metrics show how effectively connections are reused. A low rate after many requests can point to a pool or concurrency problem.
 
 **Returns:**
 
 Dictionary with the following metrics:
 
-- `total_requests` (int): Total number of HTTP requests made since session creation
-- `connections_reused` (int): Number of requests that reused existing connections from the pool
-- `connections_created` (int): Number of connection pools created (typically 1 for the shared session)
+- `total_requests` (int): Number of payload requests that tif1 sent through the shared session since process start (or the last reset)
+- `connections_reused` (int): Number of those requests that used an open pooled connection
+- `connections_created` (int): Number of shared sessions created (typically 1)
 - `reuse_rate` (float): Percentage of requests that reused connections (0-100)
 
 **Reuse Rate Interpretation:**
@@ -657,13 +648,17 @@ Dictionary with the following metrics:
 - **50-70%**: Fair - some optimization possible
 - **&lt;50%**: Poor - check pool configuration or request patterns
 
+<Note>
+  tif1 counts a request as reused when niquests reports no connection or TLS handshake time for it (`response.conn_info`). `connections_created` counts session creations, not TCP connections. Requests sent directly with `get_session().get()` are not counted.
+</Note>
+
 **Example:**
 ```python
 from tif1.http_session import get_connection_stats
 
 # Fetch some data first
 import tif1
-session = tif1.get_session(2024, "Bahrain", "Race")
+session = tif1.get_session(2024, "Bahrain Grand Prix", "Race")
 session.load()
 
 # Check connection pool efficiency
@@ -672,10 +667,7 @@ print(f"Total requests: {stats['total_requests']}")
 print(f"Connections reused: {stats['connections_reused']}")
 print(f"Reuse rate: {stats['reuse_rate']:.1f}%")
 
-# Example output:
-# Total requests: 156
-# Connections reused: 148
-# Reuse rate: 94.9%
+# The request counters stay at 0 when the session loads from the cache
 ```
 
 **Monitoring in Production:**
@@ -701,7 +693,7 @@ def log_connection_efficiency():
 ```
 
 <Note>
-  Connection statistics are automatically logged every 60 seconds (configurable via `connection_stats_log_interval`). Use this function for on-demand monitoring or custom logging.
+  tif1 logs the statistics at INFO level when it counts a request and at least `connection_stats_log_interval` seconds (default: 60) have passed since the last log. Use this function for on-demand monitoring or custom logging.
 </Note>
 
 ---
@@ -777,36 +769,36 @@ async def fetch_json_async(
 ) -> dict[str, Any]
 ```
 
-This is the core async fetching function that powers all data loading in `tif1`. It implements a multi-stage pipeline optimized for performance and reliability.
+This is the core async fetching function behind the parallel data loading in `tif1`. Single session tables also load through the sync `PayloadLoader` path. It implements a multi-stage pipeline optimized for performance and reliability.
 
 **Pipeline Stages:**
 
-1. **Cache Lookup**: Checks in-memory cache first (&lt;1ms), then SQLite cache (~5-10ms)
+1. **Cache Lookup**: Checks the in-memory cache first, then the SQLite cache. A recent "missing on every CDN" verdict raises `DataNotFoundError` here
 2. **Network Fetch**: Tries primary CDN (jsDelivr), falls back to Hugging Face buckets, then StaticDelivr on failure
-3. **JSON Parsing**: Uses `orjson` for fast parsing (2-5x faster than stdlib), optional process pool for large payloads
-4. **Validation**: Optional Pydantic validation (non-strict mode allows partial data)
-5. **Cache Write**: Persists to SQLite and updates in-memory cache for fast subsequent access
+3. **JSON Parsing**: Uses `orjson` for fast parsing, optional process pool for non-telemetry payloads
+4. **Validation**: Optional payload validation (non-strict mode allows partial data), off unless a `validate_*` config flag is on
+5. **Cache Write**: Persists the payload to the SQLite cache for fast subsequent access
 
-**Zero-Retry Mode**: When `max_retries=0`, the function tries each CDN once without delays, achieving 50-70% faster cold starts. This mode is ideal for ultra-fast startup when occasional transient failures are acceptable.
+**Zero-Retry Mode**: When `max_retries` is 1 (or 0), the function tries each CDN once without delays. This mode suits fast startup when occasional transient failures are acceptable.
 
-**Pool Exhaustion Handling**: When the connection pool is exhausted, automatic backoff is applied (0.5-5s with jitter) before retrying. This prevents cascading failures.
+**Pool Exhaustion Handling**: On pool exhaustion, tif1 waits a short backoff (0.01-0.5s with jitter by default). The fetch then moves on to the next CDN. This prevents cascading failures.
 
 **Parameters:**
 
 - `year` (int): Season year (for example, 2024)
 - `gp` (str): Grand Prix name (for example, "Bahrain Grand Prix")
-- `session` (str): Session name (for example, "Race", "Qualifying", "FP1", "FP2", "FP3", "Sprint")
+- `session` (str): Exact session name (for example, "Race", "Qualifying", "Practice 1", "Sprint")
 - `path` (str): Path to JSON file relative to session directory
   - Driver list: `"drivers.json"`
-  - Lap data: `"laps_VER.json"`, `"laps_HAM.json"`, etc.
-  - Telemetry: `"telemetry_VER_1.json"` (driver_lapnumber format)
+  - Lap data: `"session_laptimes.json"` (all drivers), `"VER/laptimes.json"`, `"HAM/laptimes.json"`, etc.
+  - Telemetry: `"VER/1_tel.json"` (`{driver}/{lap}_tel.json` format)
   - Weather: `"weather.json"`
   - Race control: `"rcm.json"`
-  - `max_retries` (int | None): Maximum retries per CDN
+- `max_retries` (int | None): Total tries for each request, including the first
   - Default: Uses `max_retries` config value (typically 3)
-  - Set to 0 for zero-retry mode (ultra-fast cold start, tries each CDN once)
+  - Set to 1 for zero-retry mode (ultra-fast cold start, tries each CDN once); 0 behaves the same here
   - Set to 5+ for unreliable networks
-  - Each retry includes exponential backoff with jitter
+  - The wait between tries uses exponential backoff, plus optional jitter
 - `timeout` (int | None): Request timeout in seconds
   - Default: Uses `timeout` config value (typically 30)
   - Increase to 60+ for slow connections or large files
@@ -821,22 +813,24 @@ This is the core async fetching function that powers all data loading in `tif1`.
   - Default: True
   - Set to False for ephemeral data (testing, one-time queries)
   - Automatically False in CI mode (`ci_mode=True`)
-  - Writes to both SQLite (persistent) and memory (fast subsequent access)
-- `validate_payload` (bool): If True, run Pydantic validation before returning data
+  - Writes to the SQLite cache (persistent across processes)
+- `validate_payload` (bool): If True, run payload validation before returning data
   - Default: True
-  - Set to False for 10-15% performance improvement
+  - Validation runs only when the `validate_data`, `validate_lap_times`, or `validate_telemetry` config flag for that payload is `True`; all three default to `False`
   - Validation is non-strict (allows missing optional fields)
-  - Validates drivers, race control, weather, lap times, and telemetry based on file path
+  - Validates race control, weather, lap times, and telemetry based on file path (`drivers.json` is not validated)
   - Sanitizes telemetry payloads (removes validator-only defaults that break DataFrame construction)
 
 **Returns:**
 - Parsed JSON data as dictionary (never None, raises on error)
 - Dictionary structure depends on file type:
-  - `drivers.json`: `{"DriverNumber": [...], "BroadcastName": [...], "TeamName": [...], ...}`
-  - `laps_*.json`: `{"LapNumber": [...], "LapTime": [...], "Sector1Time": [...], ...}`
-  - `telemetry_*_*.json`: `{"Distance": [...], "Speed": [...], "RPM": [...], ...}`
-  - `weather.json`: `{"Time": [...], "AirTemp": [...], "TrackTemp": [...], ...}`
-  - `rcm.json`: `{"Time": [...], "Category": [...], "Message": [...], ...}`
+  - `drivers.json`: `{"drivers": [{"driver": "VER", "dn": "1", "fn": "Max", "ln": "Verstappen", "team": "Red Bull Racing", ...}, ...]}`
+  - `*/laptimes.json`, `session_laptimes.json`: `{"lap": [...], "time": [...], "s1": [...], "compound": [...], ...}`
+  - `*_tel.json`: `{"tel": {"time": [...], "speed": [...], "rpm": [...], "distance": [...], ...}}`
+  - `weather.json`: `{"wT": [...], "wAT": [...], "wTT": [...], ...}`
+  - `rcm.json`: `{"time": [...], "cat": [...], "msg": [...], "flag": [...], ...}`
+
+  Payload keys are short CDN names. `Session` renames them to the DataFrame columns (`LapNumber`, `AirTemp`, ...).
 
 **Raises:**
 
@@ -844,22 +838,15 @@ This is the core async fetching function that powers all data loading in `tif1`.
   - Includes URL and status code (if available) for debugging
   - Raised when all CDNs fail or circuit breaker is open
   - Check circuit breaker state and CDN health if this occurs frequently
-- `DataNotFoundError`: If data does not exist (404 from all CDNs)
+- `DataNotFoundError`: If data does not exist (every CDN refused it with a 4xx status other than 408 or 429, such as 404)
   - Includes year, event, and session for context
   - Not retried (404 is a fatal error indicating missing data)
   - Common for sessions that have not been run yet or invalid driver codes
+  - With `use_cache=True`, tif1 remembers the verdict for `missing_payloads_ttl_days` (default: 7) and raises again without a network request
 - `InvalidDataError`: If JSON parsing or validation fails
-  - Includes reason and file path for debugging
+  - Includes a reason for debugging
   - Not retried (data corruption is a fatal error)
   - May indicate CDN issues or incompatible data format
-
-**Performance Characteristics:**
-
-- **Cache Hit (Memory)**: &lt;1ms - fastest path, data already in memory
-- **Cache Hit (SQLite)**: ~5-10ms - fast path, data on disk
-- **Cache Miss (Single File)**: 100-300ms - network latency + parsing
-- **Cache Miss (100+ Files Parallel)**: 2-5 seconds - with connection reuse and HTTP/2 multiplexing
-- **Zero-Retry Mode**: 50-70% faster cold starts - tries each CDN once with no delays
 
 **Example - Basic Usage:**
 ```python
@@ -872,9 +859,10 @@ async def load_drivers():
         2024, "Bahrain Grand Prix", "Race", "drivers.json"
     )
 
-    print(f"Loaded {len(data['DriverNumber'])} drivers")
-    for i, driver in enumerate(data['BroadcastName']):
-        print(f"  {data['DriverNumber'][i]}: {driver} ({data['TeamName'][i]})")
+    drivers = data["drivers"]
+    print(f"Loaded {len(drivers)} drivers")
+    for driver in drivers:
+        print(f"  {driver['dn']}: {driver['fn']} {driver['ln']} ({driver['team']})")
 
 asyncio.run(load_drivers())
 ```
@@ -887,10 +875,10 @@ from tif1.async_fetch import fetch_json_async
 async def load_with_long_timeout():
     """Load data with extended timeout for slow connections."""
     data = await fetch_json_async(
-        2024, "Bahrain Grand Prix", "Race", "laps_VER.json",
+        2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json",
         timeout=60  # 60 second timeout instead of default 30
     )
-    print(f"Loaded {len(data['LapNumber'])} laps")
+    print(f"Loaded {len(data['lap'])} laps")
     return data
 
 asyncio.run(load_with_long_timeout())
@@ -905,7 +893,7 @@ async def ultra_fast_load():
     """Load data with zero retries for fastest possible cold start."""
     data = await fetch_json_async(
         2024, "Bahrain Grand Prix", "Race", "drivers.json",
-        max_retries=0  # Try each CDN once, no delays
+        max_retries=1  # Try each CDN once, no delays
     )
     return data
 
@@ -935,10 +923,10 @@ import asyncio
 from tif1.async_fetch import fetch_json_async
 
 async def fast_load_no_validation():
-    """Load data without validation for 10-15% performance improvement."""
+    """Load data and skip validation even when a validate_* flag is on."""
     data = await fetch_json_async(
-        2024, "Bahrain Grand Prix", "Race", "laps_VER.json",
-        validate_payload=False  # Skip Pydantic validation
+        2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json",
+        validate_payload=False  # Skip payload validation
     )
     return data
 
@@ -955,24 +943,25 @@ async def robust_fetch():
     """Fetch with comprehensive error handling."""
     try:
         data = await fetch_json_async(
-            2024, "Bahrain Grand Prix", "Race", "laps_VER.json"
+            2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json"
         )
-        print(f"Success: {len(data['LapNumber'])} laps")
+        print(f"Success: {len(data['lap'])} laps")
         return data
 
     except DataNotFoundError as e:
-        print(f"Data not found: {e.year} {e.event} {e.session}")
+        # Exception details live in e.context
+        print(f"Data not found: {e.context['year']} {e.context['event']} {e.context['session']}")
         print("This session may not have been run yet or driver code is invalid")
         return None
 
     except NetworkError as e:
-        print(f"Network error: {e.url}")
-        print(f"Status code: {e.status_code}")
+        print(f"Network error: {e.context.get('url')}")
+        print(f"Status code: {e.context.get('status_code')}")
         print("Check your internet connection, CDN health, or try again later")
         return None
 
     except InvalidDataError as e:
-        print(f"Invalid data: {e.reason}")
+        print(f"Invalid data: {e.context.get('reason')}")
         print("Data may be corrupted, try clearing cache or check CDN status")
         return None
 
@@ -980,11 +969,11 @@ asyncio.run(robust_fetch())
 ```
 
 <Note>
-  This function is the foundation of all data loading in `tif1`. The high-level `Session.load()` API uses this internally for all network operations. Direct calls are rarely needed, except when building custom data loading logic.
+  This function is the foundation of the async data loading in `tif1`. The high-level `Session` API uses it for its async and parallel fetches. Direct calls are rarely needed, except when building custom data loading logic.
 </Note>
 
 <Warning>
-  Setting `max_retries=0` enables zero-retry mode for ultra-fast cold starts, but increases the chance of transient failures. Use this mode only when speed is critical and occasional failures are handled gracefully.
+  Setting `max_retries=1` enables zero-retry mode for ultra-fast cold starts, but increases the chance of transient failures. Use this mode only when speed is critical and occasional failures are handled gracefully.
 </Warning>
 
 ---
@@ -1002,7 +991,8 @@ async def fetch_multiple_async(
     validate_payload: bool = True,
     max_retries: int | None = None,
     timeout: int | None = None,
-    max_concurrent_requests: int | None = None
+    max_concurrent_requests: int | None = None,
+    defer_telemetry_writes: bool = False
 ) -> list[dict[str, Any] | None]
 ```
 
@@ -1015,12 +1005,10 @@ The function uses two strategies based on request count and concurrency limit:
 1. **Small Batches** (requests ≤ max_concurrent_requests):
    - Uses `asyncio.gather()` for maximum parallelism
    - All requests execute simultaneously without queuing
-   - Optimal for &lt;20 files (driver lap data)
 
 2. **Large Batches** (requests > max_concurrent_requests):
    - Uses semaphore-based rate limiting to prevent CDN throttling
-   - Limits concurrent requests, queues excess until slots become available
-   - Optimal for 100+ files (telemetry prefetch scenarios)
+   - Limits concurrent requests (cache reads included), queues excess until slots become available
 
 **Error Handling Philosophy:**
 
@@ -1037,22 +1025,21 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
 
 - `requests` (list[tuple[int, str, str, str]]): List of (year, gp, session, path) tuples
   - Each tuple represents one file to fetch
-  - Example: `[(2024, "Bahrain", "Race", "laps_VER.json"), (2024, "Bahrain", "Race", "laps_HAM.json")]`
+  - Example: `[(2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json"), (2024, "Bahrain Grand Prix", "Race", "HAM/laptimes.json")]`
   - Can contain 100+ tuples for telemetry prefetch (all drivers × all laps)
   - Order is preserved in results (result[i] corresponds to requests[i])
 - `use_cache` (bool): If True, read from cache before network fetch
   - Default: True
   - Applies to all requests in the batch
-  - Cache hits are nearly instant (&lt;1ms memory, ~10ms SQLite)
 - `write_cache` (bool): If True, persist successful network responses to cache
   - Default: True
   - Applies to all requests in the batch
-  - Failed requests are not cached
+  - Failed requests are not cached (an all-CDN 4xx verdict is remembered, see `fetch_json_async`)
 - `validate_payload` (bool): If True, run payload validation before returning data
   - Default: True
   - Applies to all requests in the batch
-  - Disable for 10-15% performance improvement on large batches
-  - `max_retries` (int | None): Maximum retries per request
+  - Validation runs only when the `validate_*` config flag for that payload is `True`
+- `max_retries` (int | None): Total tries for each request, including the first
   - Default: Uses `max_retries` config value (typically 3)
   - Applies independently to each request
   - Failed requests after all retries return `None`
@@ -1065,6 +1052,9 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
   - Increase to 50-128 for fast connections and telemetry prefetch
   - Decrease to 5-10 for slow connections or rate-limited CDNs
   - Higher values = faster but more resource intensive
+- `defer_telemetry_writes` (bool): If True, collect telemetry payloads and write them to the cache in one serial flush after the batch
+  - Default: False
+  - The cache writes then do not occupy concurrency slots
 
 **Returns:**
 
@@ -1074,14 +1064,6 @@ Unlike `fetch_json_async` which raises exceptions, this function implements grac
   - `None`: Request failed (logged but not raised)
 - Order matches input `requests` list (result[i] corresponds to requests[i])
 - Filter out `None` values to get only successful results
-
-**Performance Characteristics:**
-
-- **20 files, 20 concurrency**: ~1-2 seconds (network latency dominant)
-- **100 files, 20 concurrency**: ~5-8 seconds (queuing + network)
-- **100 files, 128 concurrency**: ~2-4 seconds (maximum parallelism, optimal for telemetry)
-- **Cache hits**: &lt;100ms for entire batch (memory/SQLite)
-- **Connection reuse**: 90%+ reuse rate with proper pool configuration
 
 **Example - Load Multiple Drivers:**
 ```python
@@ -1094,7 +1076,7 @@ async def load_multiple_drivers():
 
     # Build requests for all drivers
     requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in drivers
     ]
 
@@ -1104,7 +1086,7 @@ async def load_multiple_drivers():
     # Process results (None for failed requests)
     for driver, data in zip(drivers, results):
         if data:
-            lap_count = len(data['LapNumber'])
+            lap_count = len(data['lap'])
             print(f"{driver}: {lap_count} laps")
         else:
             print(f"{driver}: Failed to load")
@@ -1124,7 +1106,7 @@ async def prefetch_all_telemetry():
 
     # Build requests for all driver/lap combinations (285 files)
     requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/{lap}_tel.json")
         for driver in drivers
         for lap in laps
     ]
@@ -1153,7 +1135,7 @@ from tif1.async_fetch import fetch_multiple_async
 async def load_with_low_concurrency():
     """Load files with reduced concurrency for slow connections."""
     requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
 
@@ -1175,10 +1157,11 @@ from tif1.async_fetch import fetch_multiple_async
 
 async def batch_process_large_dataset():
     """Process large dataset in manageable batches to control memory usage."""
-    # Generate 500 requests (all telemetry for one driver)
+    # Generate 285 requests (all 57 telemetry laps of five drivers)
     all_requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"telemetry_VER_{lap}.json")
-        for lap in range(1, 501)
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/{lap}_tel.json")
+        for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
+        for lap in range(1, 58)
     ]
 
     batch_size = 50
@@ -1221,7 +1204,7 @@ async def load_and_filter():
     drivers = ["VER", "HAM", "LEC", "SAI", "NOR", "INVALID"]
 
     requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"laps_{driver}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in drivers
     ]
 
@@ -1237,7 +1220,7 @@ async def load_and_filter():
     print(f"Loaded {len(successful)}/{len(drivers)} drivers")
 
     for driver, data in successful:
-        print(f"{driver}: {len(data['LapNumber'])} laps")
+        print(f"{driver}: {len(data['lap'])} laps")
 
     return successful
 
@@ -1255,20 +1238,20 @@ async def load_with_progress():
     laps = range(1, 58)
 
     requests = [
-        (2024, "Bahrain Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/{lap}_tel.json")
         for driver in drivers
         for lap in laps
     ]
 
     print(f"Starting fetch of {len(requests)} files...")
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
 
     results = await fetch_multiple_async(
         requests,
         max_concurrent_requests=128
     )
 
-    elapsed = asyncio.get_event_loop().time() - start_time
+    elapsed = asyncio.get_running_loop().time() - start_time
     success_count = sum(1 for r in results if r is not None)
 
     print(f"Completed in {elapsed:.2f}s")
@@ -1281,14 +1264,16 @@ asyncio.run(load_with_progress())
 ```
 
 <Note>
-  This function is used internally by `Session.load()` for parallel driver lap data loading and telemetry prefetch. It is the key to `tif1`'s fast cold start performance, enabling 2-5 second session loads even with 100+ telemetry files.
+  This function is used internally by `Session.load()` for parallel driver lap data loading and telemetry prefetch. It is the key to `tif1`'s fast cold start performance.
 </Note>
 
 <Warning>
   High concurrency (128+) can overwhelm slow networks or trigger CDN rate limiting. Start with default settings (22) and increase gradually while monitoring connection stats and success rates.
 </Warning>
+
+**Quick reference:**
 - `validate_payload`: If True, run payload validation before returning data
-- `max_retries`: Maximum retries per request
+- `max_retries`: Total tries for each request, including the first
 - `timeout`: Request timeout in seconds
 - `max_concurrent_requests`: Maximum concurrent requests (defaults to config value, typically 22)
 
@@ -1302,16 +1287,16 @@ from tif1.async_fetch import fetch_multiple_async
 
 async def load_multiple_drivers():
     requests = [
-        (2021, "Belgian Grand Prix", "Race", "laps_VER.json"),
-        (2021, "Belgian Grand Prix", "Race", "laps_HAM.json"),
-        (2021, "Belgian Grand Prix", "Race", "laps_LEC.json"),
+        (2021, "Belgian Grand Prix", "Race", "VER/laptimes.json"),
+        (2021, "Belgian Grand Prix", "Race", "HAM/laptimes.json"),
+        (2021, "Belgian Grand Prix", "Race", "LEC/laptimes.json"),
     ]
 
     results = await fetch_multiple_async(requests)
 
     for i, data in enumerate(results):
         if data:
-            print(f"Driver {i+1}: {len(data['LapNumber'])} laps")
+            print(f"Driver {i+1}: {len(data['lap'])} laps")
 
 asyncio.run(load_multiple_drivers())
 ```
@@ -1351,7 +1336,7 @@ async def fetch_with_custom_limit():
         fetch_json_async, 2021, "Belgian Grand Prix", "Race", "drivers.json",
         semaphore=semaphore
     )
-    print(f"Fetched {len(result)} drivers")
+    print(f"Fetched {len(result['drivers'])} drivers")
 
 asyncio.run(fetch_with_custom_limit())
 ```
@@ -1360,7 +1345,7 @@ asyncio.run(fetch_with_custom_limit())
 
 ### `close_session`
 
-Close the async HTTP session and release resources.
+Close the shared HTTP session that the async fetch layer holds, and drop that reference. It does nothing when no async fetch has run yet; `tif1.http_session.close_session()` closes the shared session in that case.
 
 ```python
 def close_session() -> None
@@ -1400,7 +1385,7 @@ The async fetch module includes automatic rate limiting to prevent CDN throttlin
 
 - Maximum 22 concurrent requests by default (configurable via `max_concurrent_requests` config)
 - Configurable via `max_concurrent_requests` parameter in `fetch_multiple_async`
-- Automatic backoff on rate limit errors and pool exhaustion
+- Automatic short backoff on connection pool exhaustion (a 429 response gets no special handling)
 - Semaphore-based concurrency control
 
 **Example with custom concurrency:**
@@ -1422,18 +1407,16 @@ async def load_all_telemetry():
 
 The HTTP session uses aggressive connection pooling for maximum performance:
 
-- Dynamic pool sizing based on concurrency (minimum 256 connections, 512 max pool size)
+- Dynamic pool sizing based on concurrency (at least 256 connections and a pool size of at least 512)
 - Reuses TCP connections across requests
-- Keep-alive connections with configurable timeout (default: 120s, 1000 max requests)
+- `Keep-Alive` request headers with configurable values (default: 120s, 10000 max requests)
 - Automatic connection cleanup
-- Thread-safe for concurrent use
 - Connection reuse metrics tracking
 
 **Benefits:**
-- 30-50% faster for multiple requests
+- No TCP and TLS handshakes on reused connections
 - Lower CPU usage
 - Reduced network overhead
-- Optimized for high-concurrency telemetry fetching (128+ concurrent requests)
 
 **Configuration:**
 ```python
@@ -1449,30 +1432,29 @@ config.set("keepalive_timeout", 120) # Keep-alive timeout in seconds
 
 ## Retry Logic
 
-All HTTP requests include automatic retry with exponential backoff and CDN fallback:
+Payload requests include automatic retry with exponential backoff and CDN fallback:
 
-- Default: 3 retries (configurable via `max_retries` config)
-- Backoff: 2^attempt seconds with jitter (configurable)
+- Default: 3 tries, the first one included (configurable via `max_retries` config)
+- Backoff: 2^attempt seconds, plus optional jitter (configurable)
 - Max delay: 60 seconds (configurable via `max_retry_delay`)
 - Retries on: Connection errors, timeouts, 5xx errors, pool exhaustion
 - No retry on: 404 (data not found), 4xx client errors
 - CDN fallback: Tries all configured CDN sources before failing
-- Zero-retry mode: Ultra-fast cold start optimization (tries all CDNs once, no delays)
+- Zero-retry mode (`max_retries=1`): Ultra-fast cold start optimization (tries all CDNs once, no delays)
 
 **Example retry behavior:**
 ```text
-Attempt 1: Immediate (CDN 1)
-Attempt 1 failed: Try CDN 2, CDN 3...
-Attempt 2: Wait ~2 seconds, retry all CDNs
-Attempt 3: Wait ~4 seconds, retry all CDNs
-Attempt 4: Fail with NetworkError
+Attempt 1: Immediate (CDN 1, then CDN 2, CDN 3)
+Attempt 2: Wait ~1 second, retry all CDNs
+Attempt 3: Wait ~2 seconds, retry all CDNs
+All 3 attempts failed: raise NetworkError
 ```
 
 **Pool exhaustion handling:**
 When connection pool is exhausted, automatic backoff is applied:
-- Base backoff: 0.5 seconds (configurable via `pool_exhaustion_backoff_base`)
-- Max backoff: 5 seconds (configurable via `pool_exhaustion_backoff_max`)
-- Jitter: 0.5 seconds (configurable via `pool_exhaustion_backoff_jitter`)
+- Base backoff: 0.01 seconds, doubled on each try (configurable via `pool_exhaustion_backoff_base`)
+- Max backoff: 0.5 seconds (configurable via `pool_exhaustion_backoff_max`)
+- Jitter: up to 0.01 seconds (configurable via `pool_exhaustion_backoff_jitter`)
 
 ---
 
@@ -1482,7 +1464,7 @@ HTTP requests are protected by a circuit breaker to prevent cascading failures:
 
 - Opens after 5 consecutive failures (configurable via `circuit_breaker_threshold`)
 - Blocks requests for 60 seconds when open (configurable via `circuit_breaker_timeout`)
-- Automatically tests recovery in half-open state
+- After the timeout, lets requests through again (half-open state)
 - Closes on successful request
 - Thread-safe with atomic state transitions
 - Uses monotonic time for accurate timeout tracking
@@ -1490,7 +1472,7 @@ HTTP requests are protected by a circuit breaker to prevent cascading failures:
 **States:**
 - `closed`: Normal operation, requests allowed
 - `open`: Too many failures, requests blocked
-- `half-open`: Testing recovery, single request allowed
+- `half-open`: Testing recovery; requests are allowed, and the next result closes or reopens the breaker
 
 See [Retry & Reliability](/api-reference/retry) for details.
 
@@ -1510,7 +1492,7 @@ async def load_session_parallel():
 
     # Build requests for all drivers
     requests = [
-        (2021, "Belgian Grand Prix", "Race", f"laps_{driver}.json")
+        (2021, "Belgian Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in drivers
     ]
 
@@ -1519,7 +1501,7 @@ async def load_session_parallel():
 
     for driver, data in zip(drivers, results):
         if data:
-            print(f"{driver}: {len(data['LapNumber'])} laps")
+            print(f"{driver}: {len(data['lap'])} laps")
 
 asyncio.run(load_session_parallel())
 ```
@@ -1536,14 +1518,14 @@ async def fetch_with_custom_timeout():
     try:
         # Use 60 second timeout for slow connections
         data = await fetch_json_async(
-            2021, "Belgian Grand Prix", "Race", "laps_VER.json",
+            2021, "Belgian Grand Prix", "Race", "VER/laptimes.json",
             timeout=60
         )
-        print(f"Success: {len(data['LapNumber'])} laps")
+        print(f"Success: {len(data['lap'])} laps")
     except DataNotFoundError as e:
-        print(f"Data not found: {e.event} {e.session}")
+        print(f"Data not found: {e.context['event']} {e.context['session']}")
     except NetworkError as e:
-        print(f"Network error: {e.url}")
+        print(f"Network error: {e.context.get('url')}")
 
 asyncio.run(fetch_with_custom_timeout())
 ```
@@ -1561,7 +1543,7 @@ async def batch_fetch_telemetry():
 
     # Build requests for all combinations
     requests = [
-        (2021, "Belgian Grand Prix", "Race", f"telemetry_{driver}_{lap}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/{lap}_tel.json")
         for driver in drivers
         for lap in laps
     ]
@@ -1596,7 +1578,7 @@ async def main():
     data = await fetch_json_async(
         2021, "Belgian Grand Prix", "Race", "drivers.json"
     )
-    print(f"Loaded {len(data)} drivers")
+    print(f"Loaded {len(data['drivers'])} drivers")
 
 asyncio.run(main())
 # cleanup_resources() called automatically on exit
@@ -1612,12 +1594,12 @@ from tif1.async_fetch import fetch_json_async
 async def ultra_fast_fetch():
     """Disable retries for fastest possible cold start."""
     config = get_config()
-    config.set("max_retries", 0)  # Try each CDN once, no delays
+    config.set("max_retries", 1)  # One try per request: each CDN once, no delays
 
     data = await fetch_json_async(
         2021, "Belgian Grand Prix", "Race", "drivers.json"
     )
-    print(f"Loaded {len(data)} drivers")
+    print(f"Loaded {len(data['drivers'])} drivers")
 
 asyncio.run(ultra_fast_fetch())
 ```
@@ -1626,25 +1608,29 @@ asyncio.run(ultra_fast_fetch())
 
 ## Performance Tips
 
-1. **Use async methods for multiple requests**: 5-10x faster than sequential fetching.
+1. **Use async methods for multiple requests**: They fetch files in parallel instead of one after another.
 
 2. **Tune max_concurrent_requests to match the network**: Higher values (50-128) for fast connections, lower (5-10) for slow.
 
-3. **Disable validation in production**: Saves 10-15% processing time.
+3. **Keep validation off in production**: The `validate_*` config flags default to `False`. `validate_payload=False` skips validation even when a flag is on.
 
 ```python
-data = await fetch_json_async(
+import asyncio
+
+from tif1.async_fetch import fetch_json_async
+
+data = asyncio.run(fetch_json_async(
     2021, "Belgian Grand Prix", "Race", "drivers.json",
     validate_payload=False
-)
+))
 ```
 
-4. **Use zero-retry mode for cold starts**: Fastest possible startup, tries all CDNs once.
+4. **Use zero-retry mode for cold starts**: Fastest possible startup, tries all CDNs once. A value of 0 also makes one try.
 
 ```python
 from tif1 import get_config
 config = get_config()
-config.set("max_retries", 0)
+config.set("max_retries", 1)
 ```
 
 5. **Monitor connection pool stats**: Track reuse rate for optimization.
@@ -1672,7 +1658,7 @@ from tif1.async_fetch import cleanup_resources
 cleanup_resources()
 ```
 
-8. **Use process pool for JSON parsing**: For large payloads, enable multi-process parsing.
+8. **Use process pool for JSON parsing**: For large non-telemetry payloads, enable multi-process parsing. Put the script entry point under `if __name__ == "__main__":`, because the worker processes can re-import the main module.
 
 ```python
 from tif1 import get_config
@@ -1691,7 +1677,7 @@ The connection pool is central to `tif1`'s networking performance. Tune it to ma
 **How Connection Pooling Works:**
 
 For each HTTP request, the session checks if an existing connection to that host is available in the pool:
-1. **Pool Hit**: Reuse existing connection (saves 30-50ms TCP handshake + TLS negotiation)
+1. **Pool Hit**: Reuse existing connection (no TCP handshake and no TLS negotiation)
 2. **Pool Miss**: Create new connection (full TCP + TLS overhead)
 
 With HTTP/2 multiplexing enabled, multiple requests can share a single connection. This improves pool efficiency.
@@ -1701,15 +1687,19 @@ With HTTP/2 multiplexing enabled, multiple requests can share a single connectio
 The pool size should match the concurrency requirements:
 
 ```python
-# Calculate optimal pool size
-max_concurrent = max(
-    config.get("max_concurrent_requests", 20),
-    config.get("telemetry_prefetch_max_concurrent_requests", 128)
-)
+from tif1 import get_config
 
-# Recommended sizing
+config = get_config()
+
+# The sizing tif1 applies when pool_connections and pool_maxsize are not set
+max_concurrent = max(
+    config.get("max_workers"),
+    config.get("max_concurrent_requests"),
+    config.get("telemetry_prefetch_max_concurrent_requests"),
+)
 pool_connections = max(256, max_concurrent)  # At least 256, or match concurrency
-pool_maxsize = pool_connections * 4  # 4x for burst handling
+pool_maxsize = max(512, pool_connections * 4)  # 4x for burst handling
+print(pool_connections, pool_maxsize)
 ```
 
 **Monitoring Pool Health:**
@@ -1737,8 +1727,8 @@ def monitor_pool_health(duration_seconds=60):
 
         time.sleep(10)
 
-# Run monitoring
-monitor_pool_health(60)
+# Sample the counters for twenty seconds
+monitor_pool_health(20)
 ```
 
 **Pool Exhaustion Detection:**
@@ -1746,7 +1736,8 @@ monitor_pool_health(60)
 Pool exhaustion occurs when all connections are in use and new requests must wait. This manifests as:
 - Increased latency (requests queued waiting for connections)
 - "Pool timeout" or "Max retries" errors
-- Automatic backoff delays (0.5-5s with jitter)
+- Automatic backoff delays (0.01-0.5s with jitter by default)
+- A `Connection pool exhaustion detected` warning in the log
 
 **Fixing Pool Exhaustion:**
 
@@ -1775,18 +1766,24 @@ JSON parsing is a significant bottleneck for large payloads (lap data, telemetry
 
 **Default Strategy (orjson in thread pool):**
 
-By default, JSON parsing happens in the thread pool using `orjson`, which is 2-5x faster than the standard library:
+By default, JSON parsing happens in the thread pool using `orjson`, which is faster than the standard library parser:
 
 ```python
 import orjson
+from tif1.http_session import get_session
+
+response = get_session().get(
+    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+)
 
 # Fast parsing with orjson
 data = orjson.loads(response.content)
+print(len(data["drivers"]))
 ```
 
 **Process Pool Parsing (Advanced):**
 
-For very large payloads (>1MB), enable multi-process JSON parsing:
+For large non-telemetry payloads, enable multi-process JSON parsing. Put the script entry point under `if __name__ == "__main__":` (see the benchmark below):
 
 ```python
 from tif1 import get_config
@@ -1796,9 +1793,9 @@ config.set("json_parse_workers", 4)  # Use 4 worker processes
 ```
 
 **When to Use Process Pool:**
-- ✅ Large lap data files (>1MB)
+- ✅ Large lap data files
 - ✅ CPU-bound workloads with few large files
-- ❌ Telemetry prefetch (100+ small files) - IPC overhead dominates
+- ❌ Telemetry payloads: tif1 always parses them in threads, because IPC overhead dominates
 - ❌ Resource-constrained environments
 
 **Benchmarking JSON Parsing:**
@@ -1816,32 +1813,29 @@ async def benchmark_json_parsing():
     # Test 1: Thread pool (default)
     config.set("json_parse_workers", 0)
     start = time.time()
-    data1 = await fetch_json_async(2024, "Bahrain", "Race", "laps_VER.json")
+    data1 = await fetch_json_async(2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json")
     thread_time = time.time() - start
 
     # Test 2: Process pool
     config.set("json_parse_workers", 4)
     start = time.time()
-    data2 = await fetch_json_async(2024, "Bahrain", "Race", "laps_VER.json", use_cache=False)
+    data2 = await fetch_json_async(2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json", use_cache=False)
     process_time = time.time() - start
 
     print(f"Thread pool: {thread_time:.3f}s")
     print(f"Process pool: {process_time:.3f}s")
     print(f"Speedup: {thread_time/process_time:.2f}x")
 
-asyncio.run(benchmark_json_parsing())
+# Worker processes re-import the main module, so guard the entry point
+if __name__ == "__main__":
+    asyncio.run(benchmark_json_parsing())
 ```
 
 ---
 
 ### Zero-Retry Mode (Ultra-Fast Cold Start)
 
-Zero-retry mode is an advanced optimization that trades reliability for speed. Instead of retrying failed requests with exponential backoff, it tries each CDN once and moves on.
-
-**Performance Impact:**
-
-- **Normal mode** (3 retries): 100 files in ~5-8 seconds
-- **Zero-retry mode**: 100 files in ~2-3 seconds (50-70% faster)
+Zero-retry mode is an advanced optimization that trades reliability for speed. Instead of retrying failed requests with exponential backoff, it tries each CDN once and moves on. The time saved is the backoff delay of each retry, which only failed requests pay.
 
 **Enabling Zero-Retry Mode:**
 
@@ -1849,24 +1843,25 @@ Zero-retry mode is an advanced optimization that trades reliability for speed. I
 from tif1 import get_config
 
 config = get_config()
-config.set("max_retries", 0)
+config.set("max_retries", 1)  # one try per request (0 also makes one try)
 ```
 
 Or via environment variable:
 
 ```bash
-export TIF1_MAX_RETRIES=0
+export TIF1_MAX_RETRIES=1
 ```
 
 **How It Works:**
 
 ```python
 # Normal mode (max_retries=3):
-# Try CDN 1 → fail → wait 1s → retry CDN 1 → fail → wait 2s → retry CDN 1 → fail
-# Try CDN 2 → fail → wait 1s → retry CDN 2 → fail → wait 2s → retry CDN 2 → fail
-# Total: ~15 seconds of delays
+# Try 1: CDN 1 → fail → CDN 2 → fail → CDN 3 → fail → wait ~1s
+# Try 2: CDN 1 → fail → CDN 2 → fail → CDN 3 → fail → wait ~2s
+# Try 3: CDN 1 → fail → CDN 2 → fail → CDN 3 → fail → raise NetworkError
+# Total: ~3 seconds of delays (plus jitter, if retry_jitter_max is above 0)
 
-# Zero-retry mode (max_retries=0):
+# Zero-retry mode (max_retries=1):
 # Try CDN 1 → fail → immediately try CDN 2 → fail → immediately try CDN 3
 # Total: ~0 seconds of delays
 ```
@@ -1884,20 +1879,16 @@ export TIF1_MAX_RETRIES=0
 ```python
 import asyncio
 from tif1.async_fetch import fetch_multiple_async
-from tif1 import get_config
 
 async def robust_zero_retry_fetch():
     """Fetch with zero-retry mode and handle failures gracefully."""
-    config = get_config()
-    config.set("max_retries", 0)
-
     requests = [
-        (2024, "Bahrain", "Race", f"laps_{driver}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
 
-    # First attempt with zero retries
-    results = await fetch_multiple_async(requests)
+    # First attempt with one try per request
+    results = await fetch_multiple_async(requests, max_retries=1)
 
     # Identify failures
     failed_indices = [i for i, r in enumerate(results) if r is None]
@@ -1905,10 +1896,9 @@ async def robust_zero_retry_fetch():
     if failed_indices:
         print(f"First attempt: {len(results) - len(failed_indices)}/{len(results)} succeeded")
 
-        # Retry failures with normal retry logic
-        config.set("max_retries", 3)
+        # Retry failures with up to 3 tries each
         failed_requests = [requests[i] for i in failed_indices]
-        retry_results = await fetch_multiple_async(failed_requests)
+        retry_results = await fetch_multiple_async(failed_requests, max_retries=3)
 
         # Merge results
         for i, result in zip(failed_indices, retry_results):
@@ -1925,7 +1915,7 @@ asyncio.run(robust_zero_retry_fetch())
 
 ### HTTP/2 Multiplexing Deep Dive
 
-HTTP/2 multiplexing is one of the most impactful optimizations in `tif1`. Learn how it works to gain the full benefit.
+HTTP/2 multiplexing lets `tif1` send many requests over few connections. Learn how it works to gain the full benefit.
 
 **What is Multiplexing?**
 
@@ -1947,7 +1937,7 @@ Connection 1: [Req 1][Req 2][Req 3][Req 4][Req 5][Req 6]
 
 **Benefits:**
 
-1. **Reduced Latency**: No TCP handshake overhead (saves 30-50ms per request)
+1. **Reduced Latency**: No new TCP and TLS handshakes for requests on an open connection
 2. **Lower Resource Usage**: Fewer file descriptors, socket buffers, and kernel resources
 3. **Better Throughput**: No head-of-line blocking (slow requests do not block fast ones)
 4. **Header Compression**: HPACK compression reduces bandwidth usage
@@ -1961,25 +1951,25 @@ from tif1.async_fetch import fetch_multiple_async
 
 async def measure_multiplexing():
     """Measure HTTP/2 multiplexing efficiency."""
-    # Fetch 100 files
+    # Fetch 57 telemetry files from the network (skip the cache)
     requests = [
-        (2024, "Bahrain", "Race", f"telemetry_VER_{lap}.json")
-        for lap in range(1, 101)
+        (2024, "Bahrain Grand Prix", "Race", f"VER/{lap}_tel.json")
+        for lap in range(1, 58)
     ]
 
-    await fetch_multiple_async(requests, max_concurrent_requests=50)
+    await fetch_multiple_async(
+        requests, max_concurrent_requests=50, use_cache=False, write_cache=False
+    )
 
     # Check connection stats
     stats = get_connection_stats()
 
     print(f"Total requests: {stats['total_requests']}")
-    print(f"Connections created: {stats['connections_created']}")
-    print(f"Requests per connection: {stats['total_requests'] / stats['connections_created']:.1f}")
+    print(f"Sessions created: {stats['connections_created']}")
+    print(f"Requests per session: {stats['total_requests'] / max(1, stats['connections_created']):.1f}")
 
-    # With HTTP/2 multiplexing, you should see:
-    # - 1-2 connections created (one per CDN host)
-    # - 50-100 requests per connection
-    # - 95%+ reuse rate
+    # connections_created counts shared HTTP sessions (usually 1), not TCP
+    # connections: all requests go through one pooled, multiplexed session
 
 asyncio.run(measure_multiplexing())
 ```
@@ -1988,7 +1978,7 @@ asyncio.run(measure_multiplexing())
 
 Some CDNs have issues with HTTP/2 multiplexing after redirects. Such errors look like this:
 
-```python
+```text
 MultiplexingError: non-multiplexed response after a redirect
 ```
 
@@ -2009,7 +1999,7 @@ The circuit breaker prevents cascading failures by blocking requests during sust
 
 **State Machine:**
 
-```python
+```text
 CLOSED (normal operation)
   ↓ (5 consecutive failures)
 OPEN (blocking requests)
@@ -2022,6 +2012,7 @@ CLOSED            OPEN
 **Monitoring Circuit Breaker:**
 
 ```python
+from datetime import datetime
 from tif1.retry import get_circuit_breaker
 import time
 
@@ -2038,13 +2029,13 @@ def monitor_circuit_breaker(duration_seconds=60):
         if cb.state == "open":
             print("  ⚠️  Circuit breaker is OPEN - requests are blocked!")
             if cb.last_failure_time:
-                elapsed = (time.time() - cb._last_failure_monotonic)
+                elapsed = (datetime.now() - cb.last_failure_time).total_seconds()
                 remaining = cb.timeout - elapsed
                 print(f"  Time until half-open: {remaining:.1f}s")
 
         time.sleep(5)
 
-monitor_circuit_breaker(60)
+monitor_circuit_breaker(10)
 ```
 
 **Manual Circuit Breaker Control:**
@@ -2071,6 +2062,7 @@ if cb.state == "open":
 
 ```python
 from tif1 import get_config
+from tif1.retry import get_circuit_breaker, reset_circuit_breaker
 
 config = get_config()
 
@@ -2079,9 +2071,18 @@ config.set("circuit_breaker_threshold", 10)  # 10 failures before opening
 config.set("circuit_breaker_timeout", 120)   # 2 minutes recovery time
 
 # Less tolerant (faster to open, shorter recovery)
-config.set("circuit_breaker_threshold", 3)   # 3 failures before opening
-config.set("circuit_breaker_timeout", 30)    # 30 seconds recovery time
+# config.set("circuit_breaker_threshold", 3)  # 3 failures before opening
+# config.set("circuit_breaker_timeout", 30)   # 30 seconds recovery time
+
+# The breaker reads these settings when it is created: rebuild it to apply them
+reset_circuit_breaker()
+cb = get_circuit_breaker()
+print(cb.threshold, cb.timeout)
 ```
+
+<Note>
+  `tif1` creates the circuit breaker on import. A `config.set` on a `circuit_breaker_*` key has no effect until `reset_circuit_breaker()` builds a new breaker. Call `get_circuit_breaker()` again after a reset, because the old object is no longer in use.
+</Note>
 
 ---
 
@@ -2098,11 +2099,11 @@ from tif1.http_session import get_connection_stats
 from tif1.retry import get_circuit_breaker
 from tif1.cdn import get_cdn_manager
 
-async def performance_dashboard():
-    """Real-time performance monitoring dashboard."""
+async def performance_dashboard(duration_seconds=10):
+    """Print the networking metrics once per second for ``duration_seconds``."""
     start_time = time.time()
 
-    while True:
+    while time.time() - start_time < duration_seconds:
         elapsed = time.time() - start_time
 
         # Connection stats
@@ -2140,8 +2141,8 @@ async def performance_dashboard():
 
         await asyncio.sleep(1)
 
-# Run dashboard
-asyncio.run(performance_dashboard())
+# Run the dashboard for ten seconds
+asyncio.run(performance_dashboard(10))
 ```
 
 **Profiling Network Operations:**
@@ -2154,7 +2155,7 @@ from tif1.async_fetch import fetch_multiple_async
 async def profile_fetch_operation():
     """Profile a fetch operation to identify bottlenecks."""
     requests = [
-        (2024, "Bahrain", "Race", f"laps_{driver}.json")
+        (2024, "Bahrain Grand Prix", "Race", f"{driver}/laptimes.json")
         for driver in ["VER", "HAM", "LEC", "SAI", "NOR"]
     ]
 
@@ -2206,7 +2207,7 @@ import logging
 from tif1 import get_config
 from tif1.http_session import get_connection_stats
 
-# Enable debug logging to see request timing
+# Enable debug logging to see each CDN request
 logging.basicConfig(level=logging.DEBUG)
 
 # Check timeout setting
@@ -2230,17 +2231,15 @@ config = get_config()
 # Solution 1: Increase timeout for slow connections
 config.set("timeout", 60)
 
-# Solution 2: Reduce retries for faster failure
+# Solution 2: One try per request (zero-retry mode) for faster failure
 config.set("max_retries", 1)
 
-# Solution 3: Enable zero-retry mode for ultra-fast cold start
-config.set("max_retries", 0)
-
-# Solution 4: Increase concurrency for parallel operations
+# Solution 3: Increase concurrency for parallel operations
 config.set("max_concurrent_requests", 50)
 config.set("telemetry_prefetch_max_concurrent_requests", 128)
 
-# Solution 5: Check if HTTP/2 multiplexing is enabled
+# Solution 4: Check if HTTP/2 multiplexing is enabled
+# (a change applies to the next session that tif1 builds)
 if not config.get("http_multiplexed"):
     print("HTTP/2 multiplexing is disabled - consider enabling for better performance")
     config.set("http_multiplexed", True)
@@ -2282,8 +2281,8 @@ print(f"DNS resolvers: {config.get('http_resolvers')}")
 **Solutions:**
 
 ```python
-from tif1.retry import reset_circuit_breaker
-from tif1.cdn import get_cdn_manager
+from tif1.retry import get_circuit_breaker, reset_circuit_breaker
+from tif1.cdn import CDNSource, get_cdn_manager
 from tif1 import get_config
 
 # Solution 1: Reset circuit breaker if it's open
@@ -2300,18 +2299,18 @@ cdn_manager = get_cdn_manager()
 cdn_manager.reset()
 print("CDN failure counts reset")
 
-# Solution 3: Add backup CDN sources
+# Solution 3: Add a backup CDN source to the running CDN manager
+# (or set the "cdns" config key and call cdn_manager.reload())
+cdn_manager.add_source(
+    CDNSource(name="Backup", base_url="https://backup-cdn.example.com/TracingInsights", priority=10)
+)
+
+# Solution 4: Try different DNS resolvers (applies to the next HTTP session)
 config = get_config()
-config.set("cdns", [
-    "https://cdn.jsdelivr.net/gh/TracingInsights",
-    "https://backup-cdn.example.com/TracingInsights"
-])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://", "standard"])
 
-# Solution 4: Try different DNS resolvers
-config.set("http_resolvers", ["doh://cloudflare", "doh://google", "standard"])
-
-# Solution 5: Disable HTTP/3 if experiencing protocol issues
-config.set("http_disable_http3", True)
+# Solution 5: HTTP/3 is off by default; re-enable it only to test QUIC paths
+config.set("http_disable_http3", False)
 ```
 
 ---
@@ -2352,19 +2351,20 @@ config.set("max_concurrent_requests", 5)
 config.set("telemetry_prefetch_max_concurrent_requests", 10)
 
 # Solution 2: Add delays between batches
-async def fetch_with_delays():
-    requests = [...]  # Your requests
+async def fetch_with_delays(requests):
+    """Fetch (year, gp, session, path) tuples in batches of 10."""
     batch_size = 10
+    all_results = []
 
     for i in range(0, len(requests), batch_size):
         batch = requests[i:i+batch_size]
-        results = await fetch_multiple_async(batch, max_concurrent_requests=5)
+        all_results.extend(await fetch_multiple_async(batch, max_concurrent_requests=5))
 
         # Add delay between batches
         if i + batch_size < len(requests):
             await asyncio.sleep(2)  # 2 second delay
 
-    return results
+    return all_results
 
 # Solution 3: Increase retry backoff to give CDN time to recover
 config.set("retry_backoff_factor", 3.0)
@@ -2383,13 +2383,11 @@ config.set("max_retry_delay", 120.0)
 **Diagnosis:**
 
 ```python
-import psutil
-import os
+import resource
 
-# Check current memory usage
-process = psutil.Process(os.getpid())
-memory_mb = process.memory_info().rss / 1024 / 1024
-print(f"Current memory usage: {memory_mb:.1f} MB")
+# Peak resident memory of this process so far (kilobytes on Linux)
+peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(f"Peak memory usage: {peak_kb / 1024:.1f} MB")
 
 from tif1 import get_config
 config = get_config()
@@ -2450,8 +2448,8 @@ config.set("memory_telemetry_cache_max_items", 512)
 
 **Symptoms:**
 - "Pool timeout" or "Max retries" errors
-- Automatic backoff delays (0.5-5s)
-- Low connection reuse rate (&lt;70%)
+- Automatic backoff delays (0.01-0.5s by default)
+- A `Connection pool exhaustion detected` warning in the log
 
 **Diagnosis:**
 
@@ -2473,8 +2471,8 @@ print(f"Pools created: {stats['connections_created']}")
 
 # Calculate if pool is undersized
 max_concurrent = max(
-    config.get("max_concurrent_requests", 20),
-    config.get("telemetry_prefetch_max_concurrent_requests", 128)
+    config.get("max_concurrent_requests"),
+    config.get("telemetry_prefetch_max_concurrent_requests")
 )
 print(f"Max concurrent: {max_concurrent}")
 print(f"Pool connections: {config.get('pool_connections', 256)}")
@@ -2492,8 +2490,8 @@ config = get_config()
 
 # Solution 1: Increase pool size to match concurrency
 max_concurrent = max(
-    config.get("max_concurrent_requests", 20),
-    config.get("telemetry_prefetch_max_concurrent_requests", 128)
+    config.get("max_concurrent_requests"),
+    config.get("telemetry_prefetch_max_concurrent_requests")
 )
 config.set("pool_connections", max(512, max_concurrent))
 config.set("pool_maxsize", max(2048, max_concurrent * 4))
@@ -2538,18 +2536,23 @@ except socket.gaierror as e:
 **Solutions:**
 
 ```python
-from tif1 import get_config
+from tif1 import async_fetch, get_config, http_session
 
 config = get_config()
 
 # Solution 1: Prioritize DNS-over-HTTPS resolvers
-config.set("http_resolvers", ["doh://cloudflare", "doh://google", "standard"])
+config.set("http_resolvers", ["doh+cloudflare://", "doh+google://", "standard"])
 
 # Solution 2: Use only DoH resolvers (bypass system DNS)
-config.set("http_resolvers", ["doh://cloudflare", "doh://google"])
+# config.set("http_resolvers", ["doh+cloudflare://", "doh+google://"])
 
 # Solution 3: Use only standard DNS (if DoH is blocked by firewall)
-config.set("http_resolvers", ["standard"])
+# config.set("http_resolvers", ["standard"])
+
+# Resolvers apply when the shared HTTP session is created: close it to rebuild.
+# async_fetch.close_session() also drops the reference the async layer keeps.
+async_fetch.close_session()
+http_session.close_session()
 ```
 
 ---
@@ -2579,20 +2582,24 @@ for source in sources:
 **Solutions:**
 
 ```python
-from tif1 import get_config
+from tif1 import async_fetch, get_config, http_session
 from tif1.cdn import get_cdn_manager
 
 config = get_config()
 
-# Solution 1: Disable HTTP/2 multiplexing
+# Solution 1: Disable HTTP/2 multiplexing, then close the shared session
+# so that the next request builds a session with the new setting
 config.set("http_multiplexed", False)
+async_fetch.close_session()
+http_session.close_session()
 
 # Solution 2: Reset CDN health and try again
 cdn_manager = get_cdn_manager()
 cdn_manager.reset()
 
-# Solution 3: Use different CDN sources
-config.set("cdns", ["https://alternative-cdn.example.com/TracingInsights"])
+# Solution 3: Use different CDN sources: set "cdns", then rebuild the source list
+# config.set("cdns", ["https://cdn.jsdelivr.net/gh/TracingInsights"])
+# cdn_manager.reload()
 ```
 
 ---
@@ -2632,7 +2639,7 @@ config.set("validate_telemetry", False)
 # Solution 2: Fetch without validation for specific requests
 async def fetch_without_validation():
     data = await fetch_json_async(
-        2024, "Bahrain", "Race", "laps_VER.json",
+        2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json",
         validate_payload=False
     )
     return data
@@ -2676,7 +2683,7 @@ async def debug_fetch():
     """Fetch with detailed error information."""
     try:
         data = await fetch_json_async(
-            2024, "Bahrain", "Race", "laps_VER.json"
+            2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json"
         )
         print(f"Success: {len(data)} keys")
     except Exception as e:
@@ -2704,9 +2711,9 @@ from tif1.exceptions import NetworkError, DataNotFoundError, InvalidDataError
 async def test_connectivity():
     """Test network connectivity and CDN health."""
     test_cases = [
-        (2024, "Bahrain", "Race", "drivers.json", "Driver list"),
-        (2024, "Bahrain", "Race", "laps_VER.json", "Verstappen laps"),
-        (2024, "Bahrain", "Race", "telemetry_VER_1.json", "Verstappen lap 1 telemetry"),
+        (2024, "Bahrain Grand Prix", "Race", "drivers.json", "Driver list"),
+        (2024, "Bahrain Grand Prix", "Race", "VER/laptimes.json", "Verstappen laps"),
+        (2024, "Bahrain Grand Prix", "Race", "VER/1_tel.json", "Verstappen lap 1 telemetry"),
     ]
 
     for year, gp, session, path, description in test_cases:

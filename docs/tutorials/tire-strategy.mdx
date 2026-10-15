@@ -15,17 +15,16 @@ F1 is often won and lost on tire strategy. How each compound performs and when i
 
 ## Getting Stint Data
 
-`tif1` provides the `Stint` and `Compound` for every lap. Use this data to map out the entire race strategy.
+`tif1` provides the `Stint` and `Compound` for every lap. Use this data to map out the entire race strategy. This example uses the 2024 Abu Dhabi Grand Prix, the race in the chart above.
 
 ```python
 import tif1
-import pandas as pd
 
-session = tif1.get_session(2025, "British Grand Prix", "Race")
+session = tif1.get_session(2024, "Abu Dhabi Grand Prix", "Race")
 laps = session.laps
 
 # Group by driver and stint to see strategy
-strategy = laps.groupby(["Driver", "Stint", "Compound"]).agg({
+strategy = laps.groupby(["Driver", "Stint", "Compound"], observed=True).agg({
     "LapNumber": ["min", "max", "count"]
 }).reset_index()
 
@@ -34,14 +33,13 @@ print(strategy.head())
 
 ## Visualizing the Strategy
 
-A "Gantt-style" chart shows when each driver swapped tires.
+A "Gantt-style" chart shows when each driver swapped tires. `session.results` lists the drivers in finishing order, so its first ten rows are the top 10.
 
 ```python
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(12, 8))
-# session.drivers returns driver numbers; translate them to abbreviations
-drivers = [session.get_driver(i)["Abbreviation"] for i in session.drivers[:10]]  # Top 10 drivers
+drivers = session.results["Abbreviation"].head(10).tolist()  # Top 10 finishers
 
 for i, driver in enumerate(drivers):
     driver_laps = laps[laps["Driver"] == driver]
@@ -71,8 +69,10 @@ plt.show()
 Tire degradation is the increase in lap time when the tires wear out. Calculate it from the slope of lap times during a long stint.
 
 ```python
-# Filter for a long stint (e.g., VER Stint 2)
-ver_stint_2 = laps[(laps["Driver"] == "VER") & (laps["Stint"] == 2)]
+# Filter for a long stint (VER Stint 2) and drop the slow pit out-lap
+ver_stint_2 = laps[
+    (laps["Driver"] == "VER") & (laps["Stint"] == 2) & laps["PitOutTime"].isna()
+]
 
 # Simple linear regression to find degradation rate
 # scipy needs numeric values, so convert the timedelta lap times to seconds
@@ -85,6 +85,8 @@ slope, intercept, r_value, p_value, std_err = stats.linregress(
 
 print(f"Degradation Rate: {slope:.4f} seconds per lap")
 ```
+
+VER ran his second stint on the hard tire. Without the out-lap, the slope is about -0.017 seconds per lap.
 
 ### What the Slope Shows
 - **Slope > 0:** The driver loses time when the tire wears (typical).
@@ -102,6 +104,8 @@ compound_performance = clean_laps.groupby("Compound")["LapTime"].mean()
 
 print(compound_performance)
 ```
+
+In this race, only MAG used the soft compound, so the soft average comes from one driver.
 
 ## Summary
 

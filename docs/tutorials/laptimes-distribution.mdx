@@ -1,6 +1,6 @@
 ---
 title: "Lap Times Distribution Visualization"
-icon: "chart-violin"
+icon: "chart-area"
 description: "Visualize lap time distributions across multiple drivers using violin and swarm plots"
 keywords:
   - "lap times"
@@ -37,15 +37,14 @@ laps = race.laps
 
 ## Filter Point Finishers
 
-Get laps for the top 10 finishers (point-scoring positions) and filter out slow laps that would distort the visualization.
+Get laps for the top 10 finishers (point-scoring positions) and filter out slow laps that would distort the visualization. `race.drivers` lists car numbers in finishing order, and `race.results` holds the same order with the driver codes.
 
 ```python
 # Get all the laps for the point finishers only
-# race.drivers returns driver numbers, so translate them to abbreviations first
-point_finishers = [race.get_driver(i)["Abbreviation"] for i in race.drivers[:10]]
+point_finishers = race.results["Abbreviation"].head(10).tolist()
 print(f"Point finishers: {point_finishers}")
 
-# Pick quick laps only (filter out slow laps)
+# Keep the laps of the point finishers
 driver_laps = laps.pick_drivers(point_finishers).copy()
 
 # Filter out slow laps - remove deleted laps and pit laps
@@ -65,7 +64,7 @@ driver_laps = driver_laps.reset_index(drop=True)
 To plot drivers by finishing order, extract their abbreviations in the correct sequence.
 
 ```python
-# point_finishers already holds the abbreviations in finishing order
+# race.results is in finishing order, so point_finishers already is too
 finishing_order = point_finishers
 print(f"Finishing order: {finishing_order}")
 ```
@@ -78,8 +77,8 @@ Combine violin plots (showing distributions) with swarm plots (showing individua
 # Create the figure
 fig, ax = plt.subplots(figsize=(10, 5))
 
-# Seaborn doesn't have proper timedelta support,
-# so we convert timedelta to float (in seconds)
+# Seaborn has no full timedelta support,
+# so convert the timedelta values to float seconds
 driver_laps["LapTime(s)"] = driver_laps["LapTime"].dt.total_seconds()
 
 # First create the violin plots to show the distributions
@@ -128,7 +127,7 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default, matching the point finishers above). `laptime_cutoff` controls the per-driver outlier removal:
+The native function exposes the same filters as parameters. `n_drivers` selects how many finishers to include (10 by default). `laptime_cutoff` controls the per-driver outlier removal:
 
 ```python
 import tif1
@@ -177,7 +176,7 @@ This dual-layer plot shows two kinds of information:
 ### Swarm Plot Layer
 - Each dot represents an individual lap
 - Color indicates tire compound used
-- Horizontal spread shows the distribution of lap times
+- Horizontal spread shows how many laps have a similar time
 - Vertical position shows the actual lap time
 
 ## Insights from the Visualization
@@ -219,7 +218,7 @@ sns.swarmplot(
     palette=tif1.plotting.get_compound_mapping(session=race),
     size=6,  # Larger markers
     alpha=0.8,  # Add transparency
-    edgecolor='gray',  # Add marker outline
+    edgecolor="#808080",  # Add marker outline
     linewidth=0.5
 )
 ```
@@ -227,10 +226,11 @@ sns.swarmplot(
 ### Filter by Specific Compounds
 
 ```python
-# Show only soft tire laps
-soft_laps = driver_laps[driver_laps["Compound"] == "SOFT"]
+# Show only hard tire laps (all ten point finishers used the HARD compound)
+hard_laps = driver_laps[driver_laps["Compound"] == "HARD"]
 
-sns.violinplot(data=soft_laps,
+fig, ax = plt.subplots(figsize=(10, 5))
+sns.violinplot(data=hard_laps,
                x="Driver",
                y="LapTime(s)",
                hue="Driver",

@@ -76,7 +76,7 @@ Some team entries per season (from the actual data):
 | 2023 | `ferrari` | `#f91536` | `#da291c` |
 | 2025 | `ferrari` | `#e80020` | `#e80020` |
 
-Each season lists the teams that competed in it. For example, 2023 contains ten team keys, from `alfa romeo` to `williams`; 2025 replaces them with the current grid, including `kick sauber` and `racing bulls`.
+Each season lists the teams that competed in it. For example, 2023 contains ten team keys, from `alfa romeo` to `williams`; 2025 lists the 2025 grid, including `kick sauber` and `racing bulls`.
 
 ## DEFAULT_COMPOUND_COLORS
 
@@ -94,7 +94,7 @@ Each season lists the teams that competed in it. For example, 2023 contains ten 
 
 ## TEAM_COLORS
 
-`TEAM_COLORS` maps a season year to a mapping of timing-data team names to the TracingInsights v2 chart palette. This bright palette is separate from the `official` and `fastf1` colormaps in `YEAR_CONSTANTS`. The charts module uses it for bar colors.
+`TEAM_COLORS` maps a season year to a mapping of timing-data team names to the TracingInsights v2 chart palette. This bright palette is separate from the `official` and `fastf1` colormaps in `YEAR_CONSTANTS`. The `plot_race_launch_ratings` chart uses it for bar colors.
 
 Example entries for 2025:
 
@@ -110,7 +110,7 @@ The 2026 mapping adds the new teams `Audi` (`#9a9a9a`) and `Cadillac` (`#C5A253`
 
 ## TEAM_CODES
 
-`TEAM_CODES` maps a season year to a mapping of timing-data team names to short car image codes. The bundled car artwork in `tif1.assets` uses these codes. Names with engine suffixes map to the same code. Each team name variant in lap data resolves to the correct artwork.
+`TEAM_CODES` maps a season year to a mapping of timing-data team names to short car image codes. The bundled car artwork in `tif1.assets` uses these codes. Names with engine suffixes map to the same code, so the name variants in lap data resolve to the same artwork.
 
 Example entries for 2024:
 
@@ -127,7 +127,7 @@ Example entries for 2024:
 `tif1.plotting` imports all four mappings and resolves them per session and year:
 
 - `get_compound_color(compound, session=None)` and `get_compound_mapping(session=None)` read the compound colors for the session year. An unknown year falls back to `DEFAULT_COMPOUND_COLORS`. An unknown compound resolves to the `UNKNOWN` color.
-- `get_team_color(identifier, session, *, colormap="default", exact_match=False)` and `get_driver_color(...)` resolve team profiles built from `YEAR_CONSTANTS` for the session year. They require a session.
+- `get_team_color(identifier, session, *, colormap="default", exact_match=False)` and `get_driver_color(...)` resolve team profiles built from `YEAR_CONSTANTS` for the session year. They require a session. A team that is missing from the season data gets `#ffffff`.
 - `team_code_mapping(year)` returns a copy of `TEAM_CODES[year]`.
 - `team_color_mapping(year)` returns a copy of `TEAM_COLORS[year]`. The copy has a color for every team name with a car code in `TEAM_CODES`.
 - `get_team_code(identifier, session=None, *, year=None, exact_match=False)` resolves a team name to its car image code. It uses the session year when a session is given, and the explicit `year` otherwise.
@@ -137,7 +137,7 @@ Example entries for 2024:
 Two mechanisms change the effective values:
 
 1. **Session-scoped overrides.** `tif1.plotting.override_team_constants(identifier, session, *, short_name=None, official_color=None, fastf1_color=None)` overrides one team for one session. It requires a session and matches the team exactly. The override applies to `get_team_color`, `get_driver_color`, and short-name lookups for that session only.
-2. **Direct dict mutation.** The mappings are module-level dicts, and the plotting helpers copy them at call time. An in-place change, for example `TEAM_COLORS[2026]["Audi"] = "#ff0000"`, takes effect on the next `team_color_mapping(2026)` call.
+2. **Direct dict mutation.** The mappings are module-level dicts, and the plotting helpers copy them at call time. An in-place change, for example `TEAM_COLORS[2026]["Audi"] = "#ff0000"`, takes effect on the next `team_color_mapping(2026)` call. Team and driver color lookups cache the team profiles per session. A change to the `YEAR_CONSTANTS` teams does not reach a session that a lookup already used.
 
 ## Example
 

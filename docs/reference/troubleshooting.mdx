@@ -11,17 +11,30 @@ keywords:
 
 ## Installation Issues
 
+### Missing Dependency After a Manual Uninstall
 
-
-### DuckDB Import Error
-
-**Error:** `ModuleNotFoundError: No module named 'duckdb'`
+**Error:** `ModuleNotFoundError: No module named 'polars'` (or `pyarrow` or `timple`; or `zstandard` on Python 3.11 to 3.13)
 
 **Solution:**
-DuckDB is an optional dependency for advanced analytics. Install it separately:
+`tif1` declares these as dependencies, so a clean install never hits this error. On Python 3.14 and later `zstandard` is not installed because the standard library provides zstd. Reinstall `tif1` to restore the others:
 ```bash
-pip install duckdb
+pip install --force-reinstall tif1
 ```
+
+Third-party tools shown in some examples, such as DuckDB or plotly, are not `tif1` dependencies. Install them separately when an example needs them.
+
+### Polars Version Conflict
+
+**Error:** `pip` reports a conflict such as `tif1 requires polars<3,>=2.0.0`, or user code raises `polars.exceptions.AttributeRemovedError` after an upgrade.
+
+**Solution:**
+`tif1` requires polars 2.x. Upgrade polars, then check the version:
+```bash
+pip install -U "polars>=2.0.0,<3"
+python -c "import polars as pl; print(pl.__version__)"
+```
+
+`AttributeRemovedError` and `ArgumentRemovedError` come from APIs that polars deprecated in 1.x and removed in 2.0. The error message names the replacement. See [Polars 2 notes](/concepts/backends#polars-2-notes) for the changes that affect code written on `tif1` frames.
 
 ---
 
@@ -29,37 +42,63 @@ pip install duckdb
 
 ### DataNotFoundError
 
-**Error:** `DataNotFoundError: Data not found for 2025/Abu Dhabi Grand Prix/Practice 1`
+**Error:** `DataNotFoundError: Data not found: year=2025, event='Abu Dhabi Grand Prix', session='Practice 1'`
 
 **Causes:**
-- Event name misspelled (use `get_events` to check).
-- Session name misspelled (use `get_sessions` to check).
 - Data not yet available in the archive.
+- The session did not take place.
+- A driver code or lap number that does not exist (`DriverNotFoundError`, `LapNotFoundError`).
+
+An event name that matches no event of that season raises a different error. `get_session` raises `EventNotFoundError`, a `ValueError` subclass, with the message `No event matching '<name>' in <year>`. An event that is not on the calendar of that season, for example `"Suzuka"` in 2021, raises `EventNotInSeasonError`, a subclass of `EventNotFoundError`.
+
+`tif1` resolves circuit, city, and country names such as `"Spa"` to the correct event. A misspelled event name such as `"Monacco"` does not raise: `tif1` corrects it to the closest event name and logs a warning. A name that resembles no event, such as `"Paris"`, raises `EventNotFoundError`. A session name that does not exist raises `ValueError` and lists the available names.
 
 **Solutions:**
 ```python
+import tif1
+
 # Check available events for the year
 events = tif1.get_events(2025)
 
 # Check available sessions for that event
 sessions = tif1.get_sessions(2025, "British Grand Prix")
+
+# Check which event a name resolved to
+session = tif1.get_session(2025, "Silverstone", "Race")
+print(session.event["EventName"])  # British Grand Prix
 ```
 
 ### NetworkError
 
-**Error:** `NetworkError: Failed to fetch data from CDN`
+**Error:** `NetworkError: Network request failed: url='...'`
 
 **Solutions:**
 1. **Enable Debug Logging:** See which CDN is failing.
    ```python
    import tif1, logging
    tif1.setup_logging(logging.DEBUG)
-```
+   ```
 2. **Reset Circuit Breaker:** After several failures, the circuit breaker can be open.
    ```python
    tif1.reset_circuit_breaker()
-```
+   ```
 3. **Check CDN Status:** The primary CDN is jsDelivr, with Hugging Face buckets and StaticDelivr as fallbacks. Make sure that the network does not block them.
+
+### Empty Weather or Race Control Table
+
+**Symptom:** `session.weather` or `session.race_control_messages` returns an empty DataFrame. The log shows `Failed to load weather for ...` or `Failed to load race control messages for ...`.
+
+**Cause:** These tables are optional. A download failure (`NetworkError`), a validation failure, or a failed dtype conversion makes `tif1` log a warning. It returns an empty DataFrame instead of raising. Laps and telemetry are not affected.
+
+**Solutions:**
+1. **Enable Logging:** Read the reason in the warning.
+   ```python
+   import tif1, logging
+   tif1.setup_logging(logging.WARNING)
+   ```
+2. **Report It:** Open a GitHub issue with the warning text. It gives the reason for the failure.
+
+A session that has no weather file at all logs `No weather in session` at `INFO` level and also returns an empty DataFrame. See [Empty weather or race control tables](/concepts/backends#empty-weather-or-race-control-tables).
 
 ---
 
@@ -70,8 +109,8 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 **Problem:** The first load of a session takes several seconds.
 
 **Solutions:**
-1. **Async Loading:** Use `await session.laps_async()` to fetch all drivers in parallel.
-2. **Ultra Cold Start:** For real-time apps, enable Ultra Cold Start in the `.tif1rc` file to skip validation and background-fill the cache.
+1. **Keep the Cache:** Leave caching enabled. The second load of a session reads the local cache.
+2. **Ultra Cold Start:** The ultra cold start path is on by default (`ultra_cold_start`). It skips cache reads and validation for a session that is not cached yet. Set `ultra_cold_background_cache_fill` to `true` in `.tif1rc` to write the cache in a background thread.
 
 ### High Memory Usage
 
@@ -79,7 +118,7 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 
 **Solutions:**
 1. **Use Polars:** It is significantly more memory-efficient than pandas.
-2. **Categorical Types:** `tif1` automatically uses categoricals for columns like `Driver` and `Team`. Make sure that the code does not cast these columns back to strings.
+2. **Categorical Types:** On pandas, `tif1` stores `Driver`, `Team`, `Compound`, and `TrackStatus` as `category`. Make sure that the code does not cast these columns back to strings.
 
 ---
 
@@ -87,13 +126,14 @@ sessions = tif1.get_sessions(2025, "British Grand Prix")
 
 ### Cache Permissions
 
-**Error:** `OperationalError: attempt to write a readonly database`
+**Symptom:** The cache does not fill, so every run downloads the data again. When `tif1` cannot open the database, the log shows `SQLite cache unavailable: ...`.
 
 **Solution:**
-Ensure `tif1` can write to its cache directory. The default is Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, or Linux/other POSIX `~/.cache/tif1` (falling back to `~/.tif1`). On shared systems, the directory should ideally have `0o700` permissions.
+Ensure `tif1` can write to its cache directory and to `cache.sqlite` in it. The default is Windows `%LOCALAPPDATA%/Temp/tif1`, macOS `~/Library/Caches/tif1`, or Linux/other POSIX `~/.cache/tif1` (falling back to `~/.tif1`). `tif1` sets `0o700` permissions on the directory when it opens the cache.
 
 ```bash
-chmod 700 ~/.cache/tif1
+ls -l ~/.cache/tif1
+chmod 600 ~/.cache/tif1/cache.sqlite
 ```
 
 ### Corrupted Cache
@@ -115,13 +155,28 @@ tif1.get_cache().clear()
 **Error:** `KeyError: 'time'` or `KeyError: 'speed'`
 
 **Solution:**
-`tif1` uses **PascalCase** for all column names. Use `LapTime` instead of `time`, and `Speed` instead of `speed`.
+`tif1` uses the fastf1 column names, which are mostly **PascalCase**. Use `LapTime` instead of `time`, and `Speed` instead of `speed`. The laps table has no `Speed` column: its speed-trap columns are `SpeedI1`, `SpeedI2`, `SpeedFL`, and `SpeedST`.
 
 | Wrong | Right |
 | :--- | :--- |
 | `laps["time"]` | `laps["LapTime"]` |
 | `telemetry["rpm"]` | `telemetry["RPM"]` |
-| `lap.get_telemetry()` | `lap.telemetry` |
+| `laps["Speed"]` | `laps["SpeedST"]` |
+| `telemetry["SessionTime"]` | `telemetry["Time"]` (lap-relative) |
+
+### TypeError When Comparing LapTime
+
+**Error:** `TypeError` from `laps[laps["LapTime"] < 90]` on pandas. On polars, the same expression raises `ValueError`, because polars reads a boolean mask inside `laps[...]` as a column selector.
+
+**Solution:**
+`LapTime` is `timedelta64[ns]` on pandas and `Float64` seconds on polars. Compare `LapTimeSeconds`, which is a float on both backends, or compare `LapTime` with a `Timedelta`:
+
+| Backend | Works |
+| :--- | :--- |
+| pandas | `laps[laps["LapTimeSeconds"] < 90]` or `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` |
+| polars | `laps.filter(pl.col("LapTimeSeconds") < 90)` |
+
+On polars, select rows with `filter`. See [Column types by backend](/concepts/backends#column-types-by-backend).
 
 ---
 

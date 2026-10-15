@@ -23,7 +23,7 @@ The qualifying results chart is a horizontal bar chart that shows:
 
 ## Loading the Data
 
-First, load the qualifying session and get all drivers' fastest laps.
+First, load the qualifying session and get all drivers' fastest laps. This code ranks the laps with `idxmin`, so it removes deleted laps first. In this session, TSU had a deleted lap that would otherwise move him from 15th to 11th. `Laps.pick_fastest()` and `session.get_fastest_laps()` skip deleted laps on their own.
 
 ```python
 import tif1
@@ -36,6 +36,9 @@ tif1.plotting.setup_mpl(mpl_timedelta_support=True, color_scheme='fastf1')
 # Load qualifying session
 session = tif1.get_session(2023, 'Spanish Grand Prix', 'Q')
 laps = session.laps
+
+# Drop deleted laps: they do not count toward the grid
+laps = laps[~laps['Deleted']]
 
 # Get all unique drivers
 drivers = pd.unique(laps['Driver'])
@@ -62,18 +65,18 @@ fastest_laps = pd.DataFrame(list_fastest_laps) \
 
 ## Calculating Gap to Pole
 
-The chart shows time differences from pole position, not absolute lap times.
+The chart shows time differences from pole position, not absolute lap times. Store the gap as float seconds, so that the bar axis shows seconds.
 
 ```python
-# Calculate time delta from pole
+# Calculate time delta from pole (as float seconds for matplotlib)
 pole_lap_time = fastest_laps['LapTime'].iloc[0]
-fastest_laps['LapTimeDelta'] = fastest_laps['LapTime'] - pole_lap_time
+fastest_laps['LapTimeDelta'] = (fastest_laps['LapTime'] - pole_lap_time).dt.total_seconds()
 
 # Preview the results
 print(fastest_laps[['Driver', 'LapTime', 'LapTimeDelta']].head(10))
 ```
 
-This shows the distance from each driver to pole position.
+This shows the gap from each driver to pole position, in seconds.
 
 ## Getting Team Colors
 
@@ -127,12 +130,12 @@ plt.show()
 
 ## Parameters
 
-The native function exposes the shared filters. `n_drivers` keeps only the top-N finishers. `include_deleted` controls whether deleted laps count toward a driver's best. The default `False` exists because a deleted lap can never win pole:
+The native function exposes the shared filters. `n_drivers` keeps only the top-N finishers. `include_deleted` controls whether deleted laps count toward a driver's best. The default is `False`, because a deleted lap does not count for the grid:
 
 ```python
 import tif1
 
-# Top 10 only, deleted laps excluded (defaults)
+# Top 10 only; deleted laps are excluded by default
 fig, ax = tif1.plot_qualifying_grid(2023, 'Spanish Grand Prix', 'Q', n_drivers=10)
 plt.show()
 
@@ -161,19 +164,18 @@ The pole lap time and driver are shown in the title automatically.
 
 ## Customization Options
 
-To show only the top 10, use `n_drivers=10` (shown in the Parameters section). For value labels or highlighted drivers, style the returned `ax` after the call:
+To show only the top 10, use `n_drivers=10` (shown in the Parameters section). To highlight a driver, style the returned `ax` after the call. The bars are drawn from timedelta values, so read the gaps from `fastest_laps['LapTimeDelta']` above rather than from the bar widths:
 
 ```python
 import tif1
 
 fig, ax = tif1.plot_qualifying_grid(2023, 'Spanish Grand Prix', 'Q')
 
-# Add value labels on bars
+# Outline one driver's bar; patches and y tick labels share the same order
 for patch, label in zip(ax.patches, ax.get_yticklabels()):
-    width = patch.get_width()
-    if width > 0:
-        ax.text(width, patch.get_y() + patch.get_height() / 2,
-                f"+{width:.3f}s", va='center', ha='left', fontsize=9)
+    if label.get_text() == "HAM":
+        patch.set_edgecolor("yellow")
+        patch.set_linewidth(2)
 plt.show()
 ```
 

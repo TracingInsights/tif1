@@ -1,7 +1,7 @@
 ---
 title: "Quickstart"
 icon: "rocket"
-description: "Analyze F1 data in less than 30 seconds"
+description: "Load a session, read laps and telemetry, and draw a chart with tif1"
 keywords:
   - "tif1 quickstart"
   - "F1 data quick start"
@@ -17,13 +17,13 @@ A session is the entry point for all data in `tif1`. Specify the year, the Grand
 ```python
 import tif1
 
-# Get the 2025 abu dhabi grand prix race session
+# Get the 2025 Abu Dhabi Grand Prix race session
 session = tif1.get_session(2025, "Abu Dhabi Grand Prix", "Race")
 ```
 
 ## 2. Access Lap Data
 
-The first access to `.laps` starts a parallel fetch. Subsequent calls read from the cache.
+The first access to `.laps` downloads the lap data of all drivers. Later accesses return the same DataFrame from memory.
 
 ```python
 # Load all laps
@@ -37,9 +37,11 @@ fastest_5 = laps.nsmallest(5, "LapTime")
 print(fastest_5[["Driver", "LapTime", "Compound"]])
 ```
 
+`LapTime` is a pandas `Timedelta`. `LapTimeSeconds` holds the same value as a float in seconds.
+
 ## 3. Analyze a Specific Driver
 
-Examine the data for one driver with the 3-letter driver code.
+Examine the data for one driver with the 3-letter driver code. `session.drivers` lists driver numbers; `session.drivers_df["Driver"]` lists the codes.
 
 ```python
 # Get driver data for Max Verstappen
@@ -52,7 +54,7 @@ print(f"Max's fastest lap: {fastest_lap['LapTime'].iloc[0].total_seconds():.3f}s
 
 ## 4. Examine Telemetry
 
-Telemetry gives high-frequency data (Speed, RPM, Throttle, etc.) for every moment of a lap.
+Telemetry holds samples of Speed, RPM, Throttle, and other channels along one lap.
 
 ```python
 # Get telemetry for lap 19
@@ -69,7 +71,7 @@ print(f"Top Speed on Lap 19: {top_speed} km/h")
 Use the helper functions to list the available events and sessions.
 
 ```python
-# List all GPs in 2025
+# List the 2025 events (a DataFrame, one row per event)
 events = tif1.get_events(2025)
 
 # List all sessions for a GP
@@ -95,9 +97,9 @@ tif1.plot_track_speed_map(2025, "Monaco Grand Prix", "Qualifying", save_path="sp
 
 See the [Charts API](/api-reference/charts) for all chart functions and their shared filters.
 
-## Speed Up the First Load
+## Load Laps in Async Code
 
-For a first load, use `laps_async()` to fetch the data for all drivers in parallel:
+`session.laps` already runs the parallel fetch. In code that already runs an event loop, such as an async web app, await `laps_async()` instead. It returns the same `Laps` object as `session.laps` (a polars DataFrame with `lib="polars"`).
 
 ```python
 import asyncio

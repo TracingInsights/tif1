@@ -17,7 +17,7 @@ The `tif1.session` module is the canonical import surface for the session API. I
 
 ## Overview
 
-```python
+```python src/tif1/session.py
 from .core import Session, get_session
 
 __all__ = ["Session", "get_session"]
@@ -50,14 +50,14 @@ Or use the factory function, which also validates that the session exists in the
 from tif1.session import get_session
 
 session = get_session(2025, "Abu Dhabi Grand Prix", "Race")
-session.load(laps=True, telemetry=True, messages=True, weather=True)
+session.load(laps=True, telemetry=False, messages=True, weather=True)
 ```
 
-The `session.load()` call requires network access on a cold cache.
+The `session.load()` call requires network access on a cold cache. `telemetry=True` also fetches the telemetry of every lap, which is slow. With `telemetry=False`, each lap fetches its telemetry on first access.
 
 ## Full Reference
 
-`Session` and `get_session` are documented on the Core API page. That page covers the constructor parameters (`year`, `gp`, `session`, `enable_cache`, `lib`) and the `load()` data toggles. It also covers lazy attributes such as `laps`, `telemetry`, `weather`, and `results`, and the supported year range.
+`Session` and `get_session` are documented on the Core API page. That page covers the constructor parameters (`year`, `gp`, `session`, `enable_cache`, `lib`) and the `load()` data toggles. It also covers lazy attributes such as `laps`, `weather`, `race_control_messages`, and `results`, and the supported year range.
 
 ## Related APIs
 
