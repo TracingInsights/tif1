@@ -7,6 +7,61 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Pergamon wave 2 (2026-10-15)
+
+Twenty more warm-path hypotheses, each run in its own worktree against the
+wave-1 tree (`.agents/perf-pergamon/q/RESULTS.md`, one report per
+hypothesis); fifteen shipped, five rejected by measurement. Analysis-notebook
+benchmark on a warm 2026 Monaco race (fresh process, 8 interleaved rounds):
+whole process 988 → 705 ms against wave 1 and 1350 → 705 ms against the
+Thebes base, faster 8/8. Warm telemetry phase 98.7 → 74.6 ms (pandas, 10/10)
+and 90.6 → 58.8 ms (polars, 8/8) against wave 1.
+
+- **Lazy lap frames in `load()` (Q1).** `load()` decodes every driver row but
+  builds a lap's frame when it is first touched (58 → 39 ms);
+  `fetch_all_laps_telemetry()` still returns built frames.
+- **Interactive preload (Q2).** In IPython, Jupyter or a REPL, `import tif1`
+  starts a daemon thread that imports numpy, pandas and pyarrow (never a
+  `tif1` submodule), so `get_session` in the next cell takes 0.02-0.03 s
+  instead of 0.22-0.30 s. Scripts are unchanged. `TIF1_PRELOAD_IMPORTS=0/1`
+  overrides the detection.
+- **No subclass re-wrapping (Q4, Q8).** `Laps`, `Lap` and `Telemetry` results
+  wrap the operation's fresh manager instead of calling `__init__` (a shallow
+  copy each time): every `pick_*` 15-28 % faster; `Telemetry` methods 24-89 %
+  faster (`fill_missing`, `resample_channels`, `merge_channels`, distance and
+  slicing helpers).
+- **Row access (Q7).** `iterlaps()` and `laps.iloc[i]` 2-3x faster; an
+  `iterlaps()` loop calling `lap.telemetry` 4.7x faster.
+- **Frame tiers (Q6, Q11, Q13, Q18).** Streamed SQLite cursors into a shared
+  decompression pool; one lz4 task per large driver row; single-threaded IPC
+  reads and `string_view` storage for polars rows (old rows still read);
+  a per-group plan for lap frames; the writer encodes into one buffer and
+  compresses in a thread pool (1452-frame write 157 → 83 ms).
+- **Payload-tier warm load (Q15).** When the frame tiers are empty, zstd and
+  the native decoder run in worker threads and the load skips asyncio:
+  1.07 → 0.65 s with `tif1-native`.
+- **Fastest-lap and `Driver` paths (Q10, Q19).** Cache hits no longer go
+  through `asyncio.run`; the fastest lap comes from the laps frame tier;
+  `Driver.laps` is built directly from the payload (41 → 7.5 ms).
+- **Charts and CLI (Q14, Q20).** seaborn/scipy and pyarrow are imported only
+  where used, and `tif1.cache`/`tif1.events` no longer import pandas: first
+  chart to PNG 1.84 → 1.05 s; `cache-info`, `events`, `sessions` and
+  `cache-clear` 3.5x faster. `Event`/`EventSchedule` live in
+  `tif1.event_frames` (still importable from `tif1.events`).
+- **Memory (Q9).** The process-wide laps cache stores a session-free copy, so
+  deleted sessions and their telemetry can be collected (11 sessions: full GC
+  0.10 → 0.017 s, RSS 1.4 → 0.4 GB after collection).
+- **Fixed:** inside Jupyter, `load()` / `fetch_all_laps_telemetry()` raised
+  `asyncio.run() cannot be called from a running event loop` when some
+  telemetry was not in the frame tier (Q16). The synchronous payload path now
+  reads and records missing-everywhere verdicts, so a missing lap no longer
+  costs a CDN walk (up to a 30 s timeout) in every process (Q16, Q17). Frame
+  rows read from worker threads no longer share one zstd decompressor (Q15).
+- Rejected by measurement: tif1's own import trim (Q3, 2.7 ms), tiers for
+  weather/race control (Q5, 3.8 ms under noise), stronger lz4 levels (Q12,
+  ~2 ms read gain for 10x write cost), and a Rust lap-frame builder (inside
+  Q18, 1 ms per session).
+
 ### Performance — Pergamon series (2026-10-15)
 
 Ten hypotheses on the warm path (sessions already in the persistent cache),

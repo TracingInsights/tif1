@@ -14,20 +14,18 @@ runner = CliRunner()
 class TestCLI:
     """Test CLI commands."""
 
-    @patch("tif1.get_events")
-    def test_events_command(self, mock_get_events):
+    @patch("tif1.events._build_events_for_year")
+    def test_events_command(self, mock_event_names):
         """Test events command."""
-        mock_get_events.return_value = pd.DataFrame(
-            {"EventName": ["Australian Grand Prix", "Chinese Grand Prix"]}
-        )
+        mock_event_names.return_value = ["Australian Grand Prix", "Chinese Grand Prix"]
         result = runner.invoke(app, ["events", "2025"])
         assert result.exit_code == 0
         assert "Australian Grand Prix" in result.stdout
 
-    @patch("tif1.get_events")
-    def test_events_command_year_without_schedule(self, mock_get_events):
+    @patch("tif1.events._build_events_for_year")
+    def test_events_command_year_without_schedule(self, mock_event_names):
         """A year with no schedule (e.g. 2017) is reported, not a KeyError traceback."""
-        mock_get_events.return_value = pd.DataFrame()
+        mock_event_names.return_value = []
         result = runner.invoke(app, ["events", "2017"])
         assert result.exit_code == 1
         assert "No events found for 2017" in result.stdout

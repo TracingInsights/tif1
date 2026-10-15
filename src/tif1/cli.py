@@ -40,10 +40,14 @@ def events(
     """List all events for a year."""
     from rich.table import Table
 
-    events_schedule = tif1.get_events(year)
-    # A year without a schedule (before 2018, or not published yet) comes back
-    # as an empty frame with no columns.
-    if "EventName" not in events_schedule.columns or events_schedule.empty:
+    from tif1.events import _build_events_for_year
+
+    # The season's event names, in schedule order: the same column
+    # ``tif1.get_events`` exposes, without building the pandas schedule (the
+    # pandas import alone is ~340 ms of a ~0.6 s command). A year without a
+    # schedule (before 2018, or not published yet) has no events.
+    event_names = _build_events_for_year(year)
+    if not event_names:
         _rprint(f"[red]No events found for {year}[/red]")
         raise typer.Exit(code=1)
 
@@ -51,11 +55,11 @@ def events(
     table.add_column("#", style="cyan")
     table.add_column("Event", style="green")
 
-    for idx, event_name in enumerate(events_schedule["EventName"].tolist(), 1):
+    for idx, event_name in enumerate(event_names, 1):
         table.add_row(str(idx), event_name)
 
     _console().print(table)
-    _console().print(f"\n[bold]Total:[/bold] {len(events_schedule)} events")
+    _console().print(f"\n[bold]Total:[/bold] {len(event_names)} events")
 
 
 @app.command()
@@ -116,6 +120,21 @@ def _seconds(value: Any) -> float:
     return float(value)
 
 
+def _adopt_warm_laps(sess: Any) -> None:
+    """Bind the session's laps from the laps frame tier when it holds them.
+
+    With laps unloaded, ``get_fastest_laps`` and ``Driver.get_fastest_lap``
+    rebuild lap rows from the raw laptime payloads (~80 ms warm, mostly dtype
+    processing); a frame-tier hit costs ~2 ms and both then select from the
+    in-memory table, printing the same laps. A miss (cold cache) changes
+    nothing: no fetch is started here.
+    """
+    if sess._laps is None:
+        laps = sess._laps_from_frame_tier()
+        if laps is not None:
+            sess._laps = laps
+
+
 @app.command()
 def fastest(
     year: int = typer.Argument(..., help="Year (2018-current)"),
@@ -130,6 +149,7 @@ def fastest(
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
         sess = tif1.get_session(year, event, session)
+        _adopt_warm_laps(sess)
         progress.update(task, advance=1)
 
     if driver:

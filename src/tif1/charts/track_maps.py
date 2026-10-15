@@ -54,7 +54,7 @@ def _draw_segment_map(
     y = telemetry["Y"]
 
     _, segments = _common.track_segments(x, y)
-    lc = LineCollection(segments, cmap=cmap, norm=norm, linewidth=4)
+    lc = LineCollection(segments, cmap=_common.ensure_colormap(cmap), norm=norm, linewidth=4)
     lc.set_array(values)
 
     fig, ax = plt.subplots(figsize=figsize)
@@ -73,7 +73,7 @@ def _draw_segment_map(
 
 def _team_color_for_driver(sess, driver: str) -> str:
     """Resolve a driver's team color for the legend (fallback white)."""
-    team = sess.laps[sess.laps["Driver"] == driver]["Team"].dropna()
+    team = sess.laps["Team"][sess.laps["Driver"] == driver].dropna()
     if team.empty:
         return "#ffffff"
     from tif1.plotting import get_team_color
@@ -404,7 +404,7 @@ def plot_gear_shifts(
     gear = tel["nGear"].to_numpy().astype(float)
 
     max_gear = int(np.nanmax(gear))
-    cmap_obj = colormaps[cmap]
+    cmap_obj = colormaps[_common.ensure_colormap(cmap)]
     lc = LineCollection(segments, norm=plt.Normalize(1, cmap_obj.N + 1), cmap=cmap_obj)
     lc.set_array(gear)
     lc.set_linewidth(4)

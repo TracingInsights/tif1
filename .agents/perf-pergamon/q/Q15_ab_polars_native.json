@@ -1,0 +1,116 @@
+{
+ "lib": "polars",
+ "no_native": false,
+ "pairs": [
+  {
+   "control": {
+    "get_session_s": 0.1028,
+    "laps_s": 0.0021,
+    "telemetry_s": 2.299,
+    "total_s": 2.4039,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   },
+   "candidate": {
+    "get_session_s": 0.1013,
+    "laps_s": 0.002,
+    "telemetry_s": 1.8822,
+    "total_s": 1.9856,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   }
+  },
+  {
+   "candidate": {
+    "get_session_s": 0.1018,
+    "laps_s": 0.0021,
+    "telemetry_s": 1.978,
+    "total_s": 2.0819,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   },
+   "control": {
+    "get_session_s": 0.1015,
+    "laps_s": 0.0021,
+    "telemetry_s": 2.2409,
+    "total_s": 2.3445,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   }
+  },
+  {
+   "control": {
+    "get_session_s": 0.1019,
+    "laps_s": 0.0022,
+    "telemetry_s": 2.2378,
+    "total_s": 2.3419,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   },
+   "candidate": {
+    "get_session_s": 0.1027,
+    "laps_s": 0.0023,
+    "telemetry_s": 1.8518,
+    "total_s": 1.9567,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   }
+  },
+  {
+   "candidate": {
+    "get_session_s": 0.1015,
+    "laps_s": 0.002,
+    "telemetry_s": 1.6761,
+    "total_s": 1.7797,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   },
+   "control": {
+    "get_session_s": 0.104,
+    "laps_s": 0.0023,
+    "telemetry_s": 2.1718,
+    "total_s": 2.2781,
+    "laps_rows": 1455,
+    "telemetry_frames": 1452,
+    "native": true
+   }
+  }
+ ],
+ "summary": {
+  "get_session_s": {
+   "control_median": 0.1023,
+   "control_min": 0.1015,
+   "candidate_median": 0.1017,
+   "candidate_min": 0.1013,
+   "candidate_faster_pairs": "2/4"
+  },
+  "laps_s": {
+   "control_median": 0.0022,
+   "control_min": 0.0021,
+   "candidate_median": 0.002,
+   "candidate_min": 0.002,
+   "candidate_faster_pairs": "2/4"
+  },
+  "telemetry_s": {
+   "control_median": 2.2393,
+   "control_min": 2.1718,
+   "candidate_median": 1.867,
+   "candidate_min": 1.6761,
+   "candidate_faster_pairs": "4/4"
+  },
+  "total_s": {
+   "control_median": 2.3432,
+   "control_min": 2.2781,
+   "candidate_median": 1.9712,
+   "candidate_min": 1.7797,
+   "candidate_faster_pairs": "4/4"
+  }
+ }
+}

@@ -882,6 +882,15 @@ def _normalize_row_iteration(df, lib: str):
     return (row for _, row in df.iterrows())
 
 
+def _fastf1_laps_column_order(current_cols: list) -> list:
+    """FastF1 laps columns present in ``current_cols`` first (FastF1 order), then the extras."""
+    present = set(current_cols)
+    ordered_cols = [col for col in FASTF1_LAPS_COLUMN_ORDER if col in present]
+    seen = set(ordered_cols)
+    ordered_cols.extend(col for col in current_cols if col not in seen)
+    return ordered_cols
+
+
 def _reorder_laps_columns(df, lib: str):
     """Reorder DataFrame columns to match FastF1 column order.
 
@@ -900,20 +909,7 @@ def _reorder_laps_columns(df, lib: str):
         if "index" not in df.columns:
             df.insert(0, "index", range(len(df)))
 
-    current_cols = list(df.columns)
-
-    # Build ordered column list: fastf1 columns first (if present), then extras
-    ordered_cols = []
-    seen = set()
-
-    # Add columns in FastF1 order if they exist
-    for col in FASTF1_LAPS_COLUMN_ORDER:
-        if col in current_cols:
-            ordered_cols.append(col)
-            seen.add(col)
-
-    # Add any remaining columns not in the FastF1 order
-    ordered_cols.extend(col for col in current_cols if col not in seen)
+    ordered_cols = _fastf1_laps_column_order(list(df.columns))
 
     # Reorder the DataFrame
     if lib == "polars" and _ensure_polars_available() and isinstance(df, pl.DataFrame):

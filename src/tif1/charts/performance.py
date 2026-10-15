@@ -42,7 +42,7 @@ def _per_driver_fastest_telemetry(sess, driver: str) -> Any:
 
 def _team_color_for_driver(sess, driver: str) -> str:
     """Resolve a driver's team color (fallback white)."""
-    team = sess.laps[sess.laps["Driver"] == driver]["Team"].dropna()
+    team = sess.laps["Team"][sess.laps["Driver"] == driver].dropna()
     if team.empty:
         return "#ffffff"
     from tif1.plotting import get_team_color
@@ -52,7 +52,7 @@ def _team_color_for_driver(sess, driver: str) -> str:
 
 def _driver_team(sess, driver: str) -> str:
     """Return a driver's team name (fallback unknown)."""
-    team = sess.laps[sess.laps["Driver"] == driver]["Team"].dropna()
+    team = sess.laps["Team"][sess.laps["Driver"] == driver].dropna()
     return team.iloc[0] if not team.empty else "Unknown"
 
 

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Literal
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 from matplotlib.patches import Patch
 
 from . import _common
@@ -42,7 +41,7 @@ _COMPOUND_ORDER = ["SOFT", "MEDIUM", "HARD"]
 
 def _team_color_for_driver(sess, driver: str) -> str:
     """Resolve a driver's team color (fallback white)."""
-    team = sess.laps[sess.laps["Driver"] == driver]["Team"].dropna()
+    team = sess.laps["Team"][sess.laps["Driver"] == driver].dropna()
     if team.empty:
         return "#ffffff"
     from tif1.plotting import get_team_color
@@ -91,6 +90,9 @@ def plot_driver_laptimes(
     Returns:
         The ``(fig, ax)`` pair.
     """
+    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
+    import seaborn as sns
+
     _common.setup_theme(color_scheme)
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     drivers = _common.resolve_drivers(sess, drivers, 3)
@@ -188,6 +190,9 @@ def plot_laptimes_distribution(
     Returns:
         The ``(fig, ax)`` pair.
     """
+    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
+    import seaborn as sns
+
     _common.setup_theme(color_scheme)
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     finish_order = _common.finishing_order(sess, n_drivers)
@@ -292,6 +297,9 @@ def plot_laptime_heatmap(
     Returns:
         The ``(fig, ax)`` pair.
     """
+    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
+    import seaborn as sns
+
     _common.setup_theme(color_scheme)
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
 
@@ -662,8 +670,11 @@ def plot_position_changes(
     )
 
     fig, ax = plt.subplots(figsize=figsize if figsize is not None else _POSITION_FIGSIZE)
+    # Only three columns are drawn: filtering a narrow frame per driver costs
+    # ~0.1 ms instead of ~1.5 ms for the full lap table (17 blocks).
+    position_laps = laps[["Driver", "LapNumber", "Position"]]
     for drv in laps["Driver"].unique():
-        drv_laps = laps[laps["Driver"] == drv].sort_values("LapNumber")
+        drv_laps = position_laps[position_laps["Driver"] == drv].sort_values("LapNumber")
         color = _driver_color(sess, drv)
         ax.plot(drv_laps["LapNumber"], drv_laps["Position"], label=drv, color=color)
 

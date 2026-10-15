@@ -11,6 +11,7 @@ This module must never import :mod:`tif1.core` at runtime — ``core`` re-export
 these models, so importing it here would create an import cycle.
 """
 
+import importlib
 import logging
 import math
 import re
@@ -23,6 +24,7 @@ import pandas as pd
 
 from .cache import get_cache
 from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER
+from .core_utils.driver_laps import build_driver_laps_frame
 from .core_utils.helpers import (
     DataFrame,
     _coerce_lap_number,
@@ -288,6 +290,87 @@ class LazyTelemetryDict(dict):
         return super().__getitem__(key)
 
 
+# -- per-row Lap construction (Pergamon Q7) -----------------------------------
+#
+# ``Lap(values, index=..., name=...)`` runs the generic Series constructor
+# (~8 us) and ``Laps.iloc[i]`` resolves the interleaved dtype of every block
+# through ``find_common_type`` on each call (~33 us for the 17-block laps
+# frame) before wrapping the row twice (``Series._from_mgr`` then
+# ``Lap(series)``). Both paths below run the same pandas steps (the
+# constructor's ``sanitize_array`` + ``SingleBlockManager.from_array``, and
+# ``fast_xs``'s per-block ``iget`` loop) without the generic overhead. The
+# private API is probed once at import; if it drifted the public paths are
+# used unchanged.
+try:  # pragma: no cover - import-time probe of pandas internals
+    # Modules typed Any: the pandas stubs do not describe these internals.
+    _construction: Any = importlib.import_module("pandas.core.construction")
+    _sanitize_array: Any = _construction.sanitize_array
+    _internals: Any = importlib.import_module("pandas.core.internals")
+    _SingleBlockManager: Any = _internals.SingleBlockManager
+    _blocks: Any = importlib.import_module("pandas.core.internals.blocks")
+    _new_block: Any = _blocks.new_block
+    _ExtensionBlock: Any = _blocks.ExtensionBlock
+    _libs_lib: Any = importlib.import_module("pandas._libs.lib")
+    _maybe_convert_objects: Any = _libs_lib.maybe_convert_objects
+    _interleaved_dtype: Any = importlib.import_module(
+        "pandas.core.internals.managers"
+    ).interleaved_dtype
+    _BlockPlacement: Any = importlib.import_module("pandas._libs.internals").BlockPlacement
+    _FAST_LAP_ROWS = callable(getattr(pd.Series, "_from_mgr", None))
+    _DTYPE_IF_ALL_NAT = np.dtype("M8[s]")
+except (ImportError, AttributeError):  # pragma: no cover - pandas internals changed
+    _FAST_LAP_ROWS = False
+
+# interleaved dtype per tuple of block dtype objects, keyed by their ids. The
+# entry keeps the dtype objects alive, so an id in a live key cannot be
+# reused by another object: a key hit is the same dtypes, and
+# ``interleaved_dtype`` is a pure function of them.
+_ROW_DTYPE_CACHE: dict[tuple[int, ...], tuple[tuple[Any, ...], Any]] = {}
+_ROW_DTYPE_CACHE_MAX = 256
+
+
+def _row_interleaved_dtype(dtypes: tuple[Any, ...]) -> Any:
+    key = tuple(map(id, dtypes))
+    entry = _ROW_DTYPE_CACHE.get(key)
+    if entry is None:
+        if len(_ROW_DTYPE_CACHE) >= _ROW_DTYPE_CACHE_MAX:
+            _ROW_DTYPE_CACHE.clear()
+        entry = (dtypes, _interleaved_dtype(list(dtypes)))
+        _ROW_DTYPE_CACHE[key] = entry
+    return entry[1]
+
+
+def _lap_from_row(values: np.ndarray, index: pd.Index, name: Any, session: Any) -> "Lap":
+    """``Lap(values, index=index, name=name)`` with ``session`` set, for a fresh array.
+
+    ``values`` must be a 1-D object array nobody else holds (the constructor
+    would copy it first). The steps are the Series constructor's own:
+    ``sanitize_array`` (object-dtype inference included) then
+    ``SingleBlockManager.from_array``.
+    """
+    if not _FAST_LAP_ROWS:
+        lap = Lap(values, index=index, name=name)
+        lap.session = session
+        return lap
+    # ``sanitize_array`` on a 1-D object ndarray of the index's length is this
+    # inference call plus no-op ndim/str checks; any conversion (a row whose
+    # values are all timedeltas, all strings, ...) takes the full function.
+    array = _maybe_convert_objects(
+        values,
+        convert_numeric=False,
+        convert_non_numeric=True,
+        convert_to_nullable_dtype=False,
+        dtype_if_all_nat=_DTYPE_IF_ALL_NAT,
+    )
+    if array is not values:
+        array = _sanitize_array(values, index, None, False)
+    mgr = _SingleBlockManager.from_array(array, index)
+    lap = cast(Any, Lap)._from_mgr(mgr, axes=mgr.axes)
+    object.__setattr__(lap, "_name", name)
+    object.__setattr__(lap, "session", session)
+    return lap
+
+
 class _IterLapResult(tuple):
     """Tuple-like result item for ``Laps.iterlaps`` with row-style string access."""
 
@@ -330,6 +413,62 @@ class Laps(pd.DataFrame):
     @property
     def _constructor_sliced(self):
         return Lap
+
+    # Pergamon Q4: pandas hands these hooks a manager freshly built by the
+    # operation (take, column get, xs, ...) and wraps it with ``_from_mgr``
+    # for a plain DataFrame. The default subclass path instead calls
+    # ``Laps(df)`` / ``Lap(ser)``, whose ``__init__`` shallow-copies that
+    # manager (~65 us per row selection on a race laps frame, a quarter of
+    # every ``pick_*``). Wrapping it directly gives the plain-DataFrame
+    # semantics; ``session`` is reset as ``__init__`` would and
+    # ``__finalize__`` propagates it from the source as before.
+    def _constructor_from_mgr(self, mgr, axes):
+        obj = cast(Any, Laps)._from_mgr(mgr, axes=axes)
+        object.__setattr__(obj, "session", None)
+        return obj
+
+    def _constructor_sliced_from_mgr(self, mgr, axes):
+        ser = cast(Any, Lap)._from_mgr(mgr, axes=axes)
+        ser._name = None  # caller sets the real name (pandas contract)
+        object.__setattr__(ser, "session", None)
+        return ser
+
+    def _ixs(self, i: int, axis: int = 0) -> Any:
+        """Row ``i`` as a ``Lap`` (``iloc[int]``), same result as pandas' ``_ixs``.
+
+        Pergamon Q7: for a multi-block frame whose rows interleave to object
+        dtype (every laps frame) this is ``BlockManager.fast_xs`` with the
+        interleaved dtype memoized per block-dtype tuple and the row wrapped
+        once (pandas wraps it in a Series, then in a ``Lap``). Every other
+        case goes to pandas.
+        """
+        if axis != 0 or not _FAST_LAP_ROWS:
+            return cast(Any, super())._ixs(i, axis)
+        mgr = self._mgr
+        blocks = mgr.blocks
+        if len(blocks) < 2:
+            return cast(Any, super())._ixs(i, axis)
+        dtype = _row_interleaved_dtype(tuple(blk.dtype for blk in blocks))
+        if not (isinstance(dtype, np.dtype) and dtype.kind == "O"):
+            return cast(Any, super())._ixs(i, axis)
+        columns = mgr.axes[0]
+        result = np.empty(len(columns), dtype=object)
+        for blk in blocks:
+            # ``Block.iget((j, i))`` inlined: ``values[j, i]`` for 2-D blocks,
+            # ``values[i]`` for an ExtensionBlock (one column, 1-D values).
+            values = blk.values
+            if isinstance(blk, _ExtensionBlock):
+                for rl in blk.mgr_locs:
+                    result[rl] = values[i]
+            else:
+                for j, rl in enumerate(blk.mgr_locs):
+                    result[rl] = values[j, i]
+        block = _new_block(result, placement=_BlockPlacement(slice(0, len(result))), ndim=1)
+        row_mgr = _SingleBlockManager(block, columns.view())
+        lap = cast(Any, Lap)._from_mgr(row_mgr, axes=row_mgr.axes)
+        object.__setattr__(lap, "_name", self.index[i])
+        object.__setattr__(lap, "session", None)
+        return lap.__finalize__(self)
 
     def pick_driver(self, identifier):
         return self.pick_drivers([identifier])
@@ -743,20 +882,35 @@ class Laps(pd.DataFrame):
         )
         row_values = self.to_numpy(dtype=object)
         row_index = self.index
+        session = self.session
+        # Pergamon Q7: rows share a handful of null patterns (14 over the
+        # 1455 laps of a race), so the kept positions and the column Index of
+        # each pattern are built once (an Index is immutable; per-row
+        # ``columns[keep]`` cost ~8 us), and each Lap is built through the
+        # constructor's own steps (``_lap_from_row``).
+        skip_rows = null_mask[:, required_positions].any(axis=1)
+        patterns: dict[bytes, tuple[np.ndarray | None, pd.Index]] = {}
         for position in range(len(self)):
-            null_row = null_mask[position]
-            if null_row[required_positions].any():
+            if skip_rows[position]:
                 continue
-            if null_row.any():
-                keep = ~null_row
-                non_null_lap = Lap(
-                    row_values[position][keep], index=columns[keep], name=row_index[position]
-                )
-            else:
-                non_null_lap = Lap(row_values[position], index=columns, name=row_index[position])
-            non_null_lap.session = self.session
-
-            yield _IterLapResult(row_index[position], non_null_lap)
+            null_row = null_mask[position]
+            key = null_row.tobytes()
+            pattern = patterns.get(key)
+            if pattern is None:
+                if null_row.any():
+                    keep = ~null_row
+                    pattern = (np.flatnonzero(keep), columns[keep])
+                else:
+                    pattern = (None, columns)
+                patterns[key] = pattern
+            keep_positions, lap_columns = pattern
+            values = (
+                row_values[position].copy()
+                if keep_positions is None
+                else row_values[position, keep_positions]
+            )
+            name = row_index[position]
+            yield _IterLapResult(name, _lap_from_row(values, lap_columns, name, session))
 
     def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
         """Reset index and drop the ``level_0`` column if one was created.
@@ -794,6 +948,15 @@ class Lap(pd.Series):
     @property
     def _constructor(self):
         return Lap
+
+    # Pergamon Q4: same direct wrap as ``Laps._constructor_from_mgr`` (column
+    # Series of a Laps are Laps: every ``notna``/``isin``/comparison on them
+    # otherwise re-runs ``__init__`` and its shallow manager copy).
+    def _constructor_from_mgr(self, mgr, axes):
+        ser = cast(Any, Lap)._from_mgr(mgr, axes=axes)
+        ser._name = None  # caller sets the real name (pandas contract)
+        object.__setattr__(ser, "session", None)
+        return ser
 
     @property
     def driver(self):
@@ -912,7 +1075,41 @@ class Telemetry(pd.DataFrame):
     def _constructor(self):
         return Telemetry
 
+    def _constructor_from_mgr(self, mgr, axes):
+        # pandas builds every op result as ``DataFrame._from_mgr`` and then
+        # calls ``Telemetry(df)``, whose ``__init__`` shallow-copies the
+        # manager again (~40-60 us under copy-on-write). The manager is fresh,
+        # so adopt it directly; metadata starts as None exactly as
+        # ``__init__`` leaves it, and pandas' ``__finalize__`` fills it in.
+        if type(self) is not Telemetry:
+            return cast(Any, super())._constructor_from_mgr(mgr, axes)
+        frame = cast(Any, Telemetry)._from_mgr(mgr, axes=axes)
+        object.__setattr__(frame, "session", None)
+        object.__setattr__(frame, "driver", None)
+        return frame
+
+    def _constructor_sliced_from_mgr(self, mgr, axes):
+        # Same for column access: ``Series(ser)`` would shallow-copy a fresh
+        # single-block manager just to rewrap it as the same class.
+        if self._constructor_sliced is not pd.Series:
+            return cast(Any, super())._constructor_sliced_from_mgr(mgr, axes)
+        ser = pd.Series._from_mgr(mgr, axes)
+        ser._name = None  # caller sets the real name
+        return ser
+
     def _wrap(self, frame: pd.DataFrame):
+        if type(frame) is Telemetry and frame is not self:
+            # ``frame`` is a fresh result owned by the caller: re-tag it in
+            # place instead of ``Telemetry(frame)`` (a shallow manager copy).
+            # Mirror what that construction resets: attrs and flags.
+            fresh = cast(Any, frame)
+            if fresh._attrs:
+                fresh._attrs = {}
+            if not fresh.flags.allows_duplicate_labels:
+                fresh.flags.allows_duplicate_labels = True
+            object.__setattr__(fresh, "session", self.session)
+            object.__setattr__(fresh, "driver", self.driver)
+            return fresh
         wrapped = Telemetry(frame)
         wrapped.session = self.session
         wrapped.driver = self.driver
@@ -985,16 +1182,75 @@ class Telemetry(pd.DataFrame):
         positions = np.flatnonzero(time_col.to_numpy().view("i8") > 0)
         return int(self.index[positions[0]]) if len(positions) else 0
 
+    def _owned_copy(self):
+        """Copy to modify and return, structured exactly like ``self.copy()``.
+
+        Under copy-on-write a shallow copy is as safe to modify as a deep one;
+        a deep copy only differs by consolidating the blocks, so it is kept
+        for unconsolidated frames (same block layout as before).
+        """
+        return self.copy(deep=not self._mgr.is_consolidated())
+
     def fill_missing(self):
-        filled = self.copy()
-        for col in filled.columns:
-            if pd.api.types.is_numeric_dtype(filled[col]):
-                filled[col] = filled[col].interpolate(limit_direction="both")
+        if not self.columns.is_unique:
+            filled = self.copy()
+            for col in filled.columns:
+                if pd.api.types.is_numeric_dtype(filled[col]):
+                    filled[col] = filled[col].interpolate(limit_direction="both")
+            return self._wrap(filled)
+        filled = self._owned_copy()
+        float64 = np.dtype(np.float64)
+        for i, (col, dtype) in enumerate(zip(self.columns, self.dtypes, strict=True)):
+            if not pd.api.types.is_numeric_dtype(dtype):
+                continue
+            values = cast(Any, self)._ixs(i, axis=1)
+            # A float64 column without NaN interpolates to itself: skip the
+            # interpolation but keep the per-column assignment, so the block
+            # layout of the result stays the same.
+            if dtype != float64 or np.isnan(values.to_numpy()).any():
+                values = values.interpolate(limit_direction="both")
+            filled[col] = values
         return self._wrap(filled)
+
+    def _differential_distance_fast(self) -> np.ndarray | None:
+        """``speed_ms * dt`` as numpy for float64 ``Speed`` + numpy timedelta ``Time``.
+
+        Same arithmetic as the pandas chain in
+        :meth:`calculate_differential_distance` (``asi8 / pps`` seconds,
+        NaN/NaT -> 0, ``diff`` clipped at 0), without its ~10 intermediate
+        Series. Returns None when the dtypes need the general path.
+        """
+        if not self.columns.is_unique:
+            return None
+        speed = self["Speed"]._values
+        time = self["Time"]._values
+        if not isinstance(speed, np.ndarray) or speed.dtype != np.float64:
+            return None
+        time_dtype = time.dtype
+        if not isinstance(time_dtype, np.dtype) or time_dtype.kind != "m":
+            return None
+        unit, count = np.datetime_data(time_dtype)
+        pps = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}.get(unit)
+        if pps is None or count != 1:
+            return None
+        speed_ms = np.where(np.isnan(speed), 0.0, speed) / 3.6
+        time_raw = np.asarray(time)
+        seconds = time_raw.view("i8") / pps
+        seconds[np.isnat(time_raw)] = 0.0
+        dt = np.empty_like(seconds)
+        if len(dt):
+            dt[0] = 0.0
+            np.subtract(seconds[1:], seconds[:-1], out=dt[1:])
+        dt = np.where(dt >= 0.0, dt, 0.0)
+        return speed_ms * dt
 
     def integrate_distance(self):
         if self.empty or "Speed" not in self.columns:
             return pd.Series(dtype=float)
+        if "Time" in self.columns:
+            step = self._differential_distance_fast()
+            if step is not None and not np.isnan(step).any():
+                return pd.Series(np.cumsum(step), index=self.index, copy=False)
         speed_ms = pd.to_numeric(self["Speed"], errors="coerce").fillna(0.0) / 3.6
         if "Time" in self.columns:
             t = pd.to_timedelta(self["Time"], errors="coerce").dt.total_seconds().fillna(0.0)
@@ -1006,6 +1262,10 @@ class Telemetry(pd.DataFrame):
     def calculate_differential_distance(self):
         if self.empty or "Speed" not in self.columns:
             return pd.Series(dtype=float)
+        if "Time" in self.columns:
+            step = self._differential_distance_fast()
+            if step is not None:
+                return pd.Series(step, index=self.index, copy=False)
         speed_ms = pd.to_numeric(self["Speed"], errors="coerce").fillna(0.0) / 3.6
         if "Time" in self.columns:
             t = pd.to_timedelta(self["Time"], errors="coerce").dt.total_seconds().fillna(0.0)
@@ -1014,7 +1274,7 @@ class Telemetry(pd.DataFrame):
         return pd.Series(0.0, index=self.index)
 
     def add_differential_distance(self):
-        tel = self.copy()
+        tel = self._owned_copy()
         tel["DifferentialDistance"] = self.calculate_differential_distance()
         return self._wrap(tel)
 
@@ -1030,7 +1290,7 @@ class Telemetry(pd.DataFrame):
         if "RelativeDistance" in self.columns:
             return self
 
-        tel = self.add_distance(drop_existing=drop_existing).copy()
+        tel = self.add_distance(drop_existing=drop_existing)._owned_copy()
         distance = pd.to_numeric(cast(pd.Series, tel["Distance"]), errors="coerce")
         max_dist = distance.max()
         if pd.isna(max_dist) or max_dist == 0:
@@ -1043,9 +1303,10 @@ class Telemetry(pd.DataFrame):
     def calculate_driver_ahead(self, return_reference: bool = False):
         if "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns:
             driver_ahead = self["DriverAhead"].to_numpy(copy=True)
-            distance_to_driver_ahead = pd.to_numeric(
-                self["DistanceToDriverAhead"], errors="coerce"
-            ).to_numpy(copy=True)
+            distance = self["DistanceToDriverAhead"]
+            if distance.dtype != np.float64:  # already numeric: no to_numeric pass
+                distance = pd.to_numeric(distance, errors="coerce")
+            distance_to_driver_ahead = distance.to_numpy(copy=True)
             if return_reference:
                 return driver_ahead, distance_to_driver_ahead, self
             return driver_ahead, distance_to_driver_ahead
@@ -1074,7 +1335,7 @@ class Telemetry(pd.DataFrame):
         return self._wrap(pd.DataFrame(self).join(new_cols, how="outer"))
 
     def add_track_status(self):
-        tel = self.copy()
+        tel = self._owned_copy()
         if "TrackStatus" not in tel.columns:
             tel["TrackStatus"] = "1"
         return self._wrap(tel)
@@ -1265,13 +1526,34 @@ class Telemetry(pd.DataFrame):
         lap_mask = self["LapNumber"].isin(lap_numbers).to_numpy(copy=False)
         return self.slice_by_mask(lap_mask, pad=pad, pad_side=pad_side)
 
+    @staticmethod
+    def _is_lone_timedelta_column(frame: pd.DataFrame, col: str) -> bool:
+        """True when ``col`` is a numpy timedelta column alone in its block.
+
+        ``pd.to_timedelta`` returns such a column unchanged, and re-assigning
+        it only moves its block to the end of the manager, so the
+        ``frame[col] = pd.to_timedelta(frame[col])`` normalization can be
+        skipped without changing the values, dtypes or block count.
+        """
+        columns = frame.columns
+        if not columns.is_unique:
+            return False
+        mgr = frame._mgr
+        block = mgr.blocks[mgr.blknos[columns.get_loc(col)]]
+        dtype = block.dtype
+        return isinstance(dtype, np.dtype) and dtype.kind == "m" and len(block.mgr_locs) == 1
+
     def merge_channels(self, other, **kwargs):
         _ = kwargs
         if "Time" in self.columns and "Time" in other.columns:
-            left = self.copy()
-            right = pd.DataFrame(other).copy()
-            left["Time"] = pd.to_timedelta(left["Time"], errors="coerce")
-            right["Time"] = pd.to_timedelta(right["Time"], errors="coerce")
+            left = self._owned_copy()
+            right = pd.DataFrame(other)  # shallow: a new manager, safe to assign into
+            if not right._mgr.is_consolidated():
+                right = right.copy()  # keep the consolidating deep copy's layout
+            if not self._is_lone_timedelta_column(left, "Time"):
+                left["Time"] = pd.to_timedelta(left["Time"], errors="coerce")
+            if not self._is_lone_timedelta_column(right, "Time"):
+                right["Time"] = pd.to_timedelta(right["Time"], errors="coerce")
             merged = pd.merge_asof(
                 left.sort_values("Time"),
                 right.sort_values("Time"),
@@ -1287,12 +1569,29 @@ class Telemetry(pd.DataFrame):
         _ = kwargs
         rule = _modern_offset_alias(rule)
         if "Time" not in self.columns or self.empty:
-            return self._wrap(self.copy())
-        frame = self.copy()
-        frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
-        frame = frame.dropna(subset=["Time"]).set_index("Time").sort_index()
-        numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
-        resampled = frame[numeric_cols].resample(rule).mean().interpolate(limit_direction="both")
+            return self._wrap(self._owned_copy())
+        if not self.columns.is_unique:
+            frame = self.copy()
+            frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
+            frame = frame.dropna(subset=["Time"]).set_index("Time").sort_index()
+            numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
+            frame = frame[numeric_cols]
+        else:
+            # Only ``Time`` and the numeric channels reach the resampler: take
+            # them first so the text/object columns are not carried through
+            # the NaT filter, ``set_index`` and ``sort_index``.
+            numeric_cols = [
+                col
+                for col, dtype in zip(self.columns, self.dtypes, strict=True)
+                if col != "Time" and pd.api.types.is_numeric_dtype(dtype)
+            ]
+            frame = self[["Time", *numeric_cols]]
+            if not self._is_lone_timedelta_column(frame, "Time"):
+                frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
+            if frame["Time"].isna().any():
+                frame = frame.dropna(subset=["Time"])
+            frame = frame.set_index("Time").sort_index()
+        resampled = frame.resample(rule).mean().interpolate(limit_direction="both")
         resampled = resampled.reset_index()
         return self._wrap(resampled)
 
@@ -1485,16 +1784,24 @@ class Driver(pd.Series):
 
                 driver_info = self.session._get_driver_info(self.driver)
 
-                self._laps = _create_lap_df(
-                    lap_data, self.driver, driver_info["team"], self.session.lib
+                # Q19: the pipeline's result from one pass per column (~25-40 ms
+                # -> ~2 ms); None when a value needs the pipeline itself.
+                processed = (
+                    self._fast_laps_frame(lap_data, driver_info["team"])
+                    if self.session.lib == "pandas"
+                    else None
                 )
-                # Remove duplicate columns if they exist (pandas only)
-                if self.session.lib == "pandas" and isinstance(self._laps.columns, pd.Index):
-                    if self._laps.columns.duplicated().any():
-                        laps_pd = cast(pd.DataFrame, self._laps)
-                        self._laps = laps_pd.loc[:, ~laps_pd.columns.duplicated()]
+                if processed is None:
+                    self._laps = _create_lap_df(
+                        lap_data, self.driver, driver_info["team"], self.session.lib
+                    )
+                    # Remove duplicate columns if they exist (pandas only)
+                    if self.session.lib == "pandas" and isinstance(self._laps.columns, pd.Index):
+                        if self._laps.columns.duplicated().any():
+                            laps_pd = cast(pd.DataFrame, self._laps)
+                            self._laps = laps_pd.loc[:, ~laps_pd.columns.duplicated()]
 
-                processed = _process_lap_df(self._laps, self.session.lib)
+                    processed = _process_lap_df(self._laps, self.session.lib)
                 if self.session.lib == "pandas":
                     self._laps = Laps(cast(pd.DataFrame, processed))
                     self._laps.session = self.session
@@ -1523,6 +1830,15 @@ class Driver(pd.Series):
                 self._lap_index_map_df_ref = None
 
         return self._laps
+
+    def _fast_laps_frame(self, lap_data: dict, team: Any) -> pd.DataFrame | None:
+        """:func:`build_driver_laps_frame`, or None to run the pipeline (also on its errors)."""
+        try:
+            return build_driver_laps_frame(lap_data, self.driver, team)
+        except (OverflowError, TypeError, ValueError) as e:
+            # The pipeline then raises (or not) exactly as it always did.
+            logger.debug("Fast laps build fell back for %s: %s", self.driver, e)
+            return None
 
     def _ensure_lap_index_map(self, laps_pd: pd.DataFrame) -> dict[int, int]:
         """Build and cache lap-number -> row-position map for O(1) lap lookup."""
@@ -1571,6 +1887,14 @@ class Driver(pd.Series):
             return prefetched
 
         ultra_cold_enabled = self.session._resolve_ultra_cold_mode(None)
+        if not ultra_cold_enabled:
+            # Q19: a payload already memoized (or derivable from the memoized
+            # session table) is what _fetch_laptime_payloads returns too; that
+            # call also re-derived every other driver's payload (~1-2 ms), work
+            # only an ultra-cold backfill consumes.
+            local_payload = self.session._get_or_derive_driver_laptime_payload(self.driver)
+            if isinstance(local_payload, dict):
+                return local_payload
         payloads, cacheable_payloads = self.session._fetch_laptime_payloads(
             [(self.session._get_driver_info(self.driver), path)],
             operation="driver_laps",

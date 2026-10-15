@@ -1,0 +1,122 @@
+diff --git a/src/tif1/cdn.py b/src/tif1/cdn.py
+index 378174d..cbb146b 100644
+--- a/src/tif1/cdn.py
++++ b/src/tif1/cdn.py
+@@ -93,7 +93,7 @@ class CDNManager:
+     """Manage multiple CDN sources with fallback and rate limiting.
+ 
+     The module-level manager (:func:`get_cdn_manager`) reads ``cdns`` and
+-    ``cdn_use_minification`` from the config when ``tif1.cdn`` is imported;
++    ``cdn_use_minification`` from the config when it is first requested;
+     call :meth:`reload` after ``config.set(...)`` to apply a change.
+     """
+ 
+@@ -667,9 +667,20 @@ class CDNManager:
+         )
+ 
+ 
+-_cdn_manager = CDNManager()
++# Pergamon Q3: built on first use rather than at import. A warm-cache load
++# never touches the CDN, and ``CDNManager()`` reads the config and builds the
++# source list (~0.4 ms) that only a fetch needs.
++_cdn_manager: CDNManager | None = None
++_cdn_manager_lock = threading.Lock()
+ 
+ 
+ def get_cdn_manager() -> CDNManager:
+-    """Get global CDN manager instance."""
+-    return _cdn_manager
++    """Get global CDN manager instance (created on first call)."""
++    global _cdn_manager
++    manager = _cdn_manager
++    if manager is None:
++        with _cdn_manager_lock:
++            manager = _cdn_manager
++            if manager is None:
++                manager = _cdn_manager = CDNManager()
++    return manager
+diff --git a/src/tif1/core_utils/frame_codec.py b/src/tif1/core_utils/frame_codec.py
+index c019e8b..849dd0c 100644
+--- a/src/tif1/core_utils/frame_codec.py
++++ b/src/tif1/core_utils/frame_codec.py
+@@ -41,8 +41,8 @@ import numpy as np
+ import pandas as pd
+ 
+ from .helpers import (
+-    _DIRECT_BLOCKS_OK,
+     _block_placement,
++    _direct_blocks_ok,
+     _extension_block,
+     _extension_block_placed,
+     _frame_from_blocks,
+@@ -120,7 +120,7 @@ def _decode_str(cats: list[str], codes: np.ndarray) -> Any:
+ 
+ def encode_frame(frame: pd.DataFrame) -> bytes | None:
+     """Encode a telemetry DataFrame; ``None`` when a block is not supported."""
+-    if not _DIRECT_BLOCKS_OK or not isinstance(frame, pd.DataFrame):
++    if not _direct_blocks_ok() or not isinstance(frame, pd.DataFrame):
+         return None
+     if (
+         not isinstance(frame.index, pd.RangeIndex)
+@@ -213,7 +213,7 @@ def decode_frame(blob: bytes | bytearray | memoryview, frame_class: Any = None)
+     Raises ``ValueError`` on a malformed blob (callers treat it as a
+     corrupt-row cache miss).
+     """
+-    if not _DIRECT_BLOCKS_OK:
++    if not _direct_blocks_ok():
+         raise ValueError("direct block assembly unavailable")
+     view = memoryview(blob)
+     if bytes(view[:4]) != FRAME_CODEC_MAGIC:
+@@ -319,7 +319,7 @@ def _frame_parts(frame: pd.DataFrame) -> tuple[list[str], int, list[tuple[Any, .
+     placement so frames with the same blocks in a different order still
+     share one layout. ``values`` are the live block arrays (no copies).
+     """
+-    if not _DIRECT_BLOCKS_OK or not isinstance(frame, pd.DataFrame):
++    if not _direct_blocks_ok() or not isinstance(frame, pd.DataFrame):
+         return None
+     index = frame.index
+     if not isinstance(index, pd.RangeIndex) or index.start != 0 or index.step != 1:
+@@ -561,7 +561,7 @@ def _group_parts(
+ def _writable_body(
+     blob: bytes | bytearray | memoryview,
+ ) -> tuple[list[tuple[Any, ...]], memoryview]:
+-    if not _DIRECT_BLOCKS_OK:
++    if not _direct_blocks_ok():
+         raise ValueError("direct block assembly unavailable")
+     view = memoryview(blob)
+     header, body_start = _driver_header(view)
+diff --git a/src/tif1/core_utils/helpers.py b/src/tif1/core_utils/helpers.py
+index 6f80aad..3a49461 100644
+--- a/src/tif1/core_utils/helpers.py
++++ b/src/tif1/core_utils/helpers.py
+@@ -791,12 +791,28 @@ def _probe_direct_blocks() -> bool:
+         return False
+ 
+ 
+-_DIRECT_BLOCKS_OK = _probe_direct_blocks()
++# Pergamon Q3: the round-trip probe runs on first use instead of at import.
++# It costs ~1 ms of frame building plus the lazy ``pyarrow.pandas_compat``
++# import its str column triggers (~1 ms more), which an import-only or
++# laps-only process never needs. Every direct-block entry point (the builders
++# below and the codec in ``frame_codec``) goes through ``_direct_blocks_ok``,
++# so the probe still runs before the first direct block build. ``None`` means
++# "not probed yet"; tests may pin the flag to ``False`` to force the fallback.
++_DIRECT_BLOCKS_OK: bool | None = None
++
++
++def _direct_blocks_ok() -> bool:
++    """Whether direct block assembly may be used (probes pandas internals once)."""
++    global _DIRECT_BLOCKS_OK
++    ok = _DIRECT_BLOCKS_OK
++    if ok is None:
++        ok = _DIRECT_BLOCKS_OK = _probe_direct_blocks()
++    return ok
+ 
+ 
+ def _frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+     """Consolidated DataFrame from ready 1-D columns (direct blocks, else ``_from_arrays``)."""
+-    if _DIRECT_BLOCKS_OK:
++    if _direct_blocks_ok():
+         try:
+             return _direct_frame_from_columns(arrays, columns, n_rows)
+         except (AttributeError, TypeError, ValueError):
