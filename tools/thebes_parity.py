@@ -77,7 +77,11 @@ def _work(item: tuple[tuple, bytes]) -> tuple[tuple, tuple]:
     from tif1.core_utils.helpers import _create_telemetry_df
 
     key, blob = item
-    data = orjson.loads(blob)
+    try:
+        from tif1.core_utils.json_utils import telemetry_json_loads as _loads
+    except ImportError:  # control trees without the Thebes decoder
+        _loads = orjson.loads
+    data = _loads(blob)
     tel = data.get("tel", data) if isinstance(data, dict) else data
     driver, lap = str(key[-2]), int(key[-1])
     try:

@@ -972,10 +972,13 @@ def _coerce_polars_telemetry_sentinels(frame):
     polars infers a String column with nulls directly.
     """
     schema = frame.schema
+    # A channel that is a sentinel on every sample arrives as String (the
+    # "None" spelling) or as Null (the null spelling, Thebes TH9); both
+    # become the Float64 column the contract promises.
     exprs = [
         pl.col(col).cast(pl.Float64, strict=False)
         for col in _NUMERIC_TELEMETRY_CHANNELS
-        if schema.get(col) == pl.String
+        if schema.get(col) in (pl.String, pl.Null)
     ]
     if schema.get(_DRIVER_AHEAD_CHANNEL) == pl.Null:
         # Every sample was a sentinel (a race leader's lap): keep the String
