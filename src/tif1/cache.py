@@ -21,12 +21,12 @@ what is cached where:
 
 from __future__ import annotations
 
-import asyncio
 import atexit
 import contextlib
 import gc
 import importlib
 import logging
+import os
 import pickle
 import sqlite3
 import sys
@@ -34,6 +34,7 @@ import threading
 import time
 import zlib
 from collections import OrderedDict
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
@@ -145,18 +146,102 @@ def _compress_frame_blob(blob: bytes) -> bytes:
     return _zstd_compress(blob)
 
 
-def _decompress_frame_blob(blob: bytes) -> bytes:
+def _decompress_frame_blob(blob: bytes) -> bytes | bytearray:
     """Decompress a frame-tier blob; both lz4 and legacy zstd rows read.
 
-    Raises ``ValueError`` when no importable codec can read the row (for
-    example a legacy zstd row on an interpreter with lz4 but no zstd binding),
-    so the batch reader treats it as a corrupt-row miss instead of aborting.
+    lz4 rows come back as a writable ``bytearray`` so the typed-columnar
+    decoder can view them in place instead of copying. Raises ``ValueError``
+    when no importable codec can read the row (for example a legacy zstd row
+    on an interpreter with lz4 but no zstd binding), so the batch reader
+    treats it as a corrupt-row miss instead of aborting.
     """
     if _lz4_frame is not None and blob[:4] == _LZ4_MAGIC:
-        return _lz4_frame.decompress(blob)
+        return _lz4_frame.decompress(blob, return_bytearray=True)
     if _zstd_decompress is None:
         raise ValueError("No codec available for frame-tier row")
     return _zstd_decompress(blob)
+
+
+# Pergamon P2: python-lz4 holds the GIL, so decompressing 1400+ frame blobs
+# is serial (~35 ms on the Monaco set) however many cores there are.
+# pyarrow's lz4 codec reads the same lz4-frame blobs, releases the GIL and
+# returns a mutable buffer (no bytearray copy): 8 worker threads measured
+# 33 -> 10 ms, and the chunks are consumed as they complete so frame
+# decoding overlaps the remaining decompression. The lz4 frame header
+# carries the content size python-lz4 stored (FLG bit 3); blobs without it,
+# legacy zstd rows and pyarrow builds without lz4 use the serial path.
+_PA_LZ4_CODEC: Any = None
+_PA_LZ4_PROBED = False
+_PARALLEL_DECOMPRESS_MIN_BLOBS = 32
+_PARALLEL_DECOMPRESS_MAX_WORKERS = 8
+# Legacy per-frame hits below this count are not worth a background rewrite.
+_LEGACY_UPGRADE_MIN_FRAMES = 32
+_LEGACY_UPGRADE_DELAY_S = 0.25
+
+
+def _pa_lz4_codec() -> Any:
+    global _PA_LZ4_CODEC, _PA_LZ4_PROBED
+    if not _PA_LZ4_PROBED:
+        _PA_LZ4_PROBED = True
+        try:
+            pa = importlib.import_module("pyarrow")
+            _PA_LZ4_CODEC = pa.Codec("lz4")
+        except Exception:  # pragma: no cover - pyarrow without lz4 support
+            _PA_LZ4_CODEC = None
+    return _PA_LZ4_CODEC
+
+
+def _lz4_frame_content_size(blob: bytes) -> int:
+    """Content size stored in an lz4 frame header, or -1 when absent."""
+    if len(blob) < 15 or blob[:4] != _LZ4_MAGIC or not (blob[4] & 0x08):
+        return -1
+    return int.from_bytes(blob[6:14], "little")
+
+
+def _decompress_frame_rows(
+    rows: list[tuple[Any, ...]],
+    workers: int | None = None,
+    min_parallel: int = _PARALLEL_DECOMPRESS_MIN_BLOBS,
+) -> Iterator[list[tuple[Any, ...]]]:
+    """Yield ``rows`` with the trailing blob decompressed, in completion order chunks.
+
+    Each yielded chunk is a list of ``(*key, buffer)`` tuples; ``buffer`` is
+    writable (a ``bytearray`` or a mutable pyarrow buffer) for lz4 rows.
+    Rows a codec cannot read are dropped (the caller logs the miss).
+    """
+    n_rows = len(rows)
+    codec = _pa_lz4_codec()
+    if workers is None:
+        workers = min(_PARALLEL_DECOMPRESS_MAX_WORKERS, os.cpu_count() or 1)
+
+    def _decompress_chunk(part: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        out: list[tuple[Any, ...]] = []
+        for row in part:
+            blob = row[-1]
+            size = _lz4_frame_content_size(blob) if codec is not None else -1
+            try:
+                if size >= 0:
+                    # pyarrow's decoder is ~2x python-lz4's even serially
+                    # (0.9 vs 1.9 ms on a 1.2 MB driver row) and copies nothing.
+                    out.append((*row[:-1], codec.decompress(blob, decompressed_size=size)))
+                else:
+                    out.append((*row[:-1], _decompress_frame_blob(blob)))
+            except (*_ZSTD_ERRORS, RuntimeError, TypeError, ValueError, ArrowError):
+                continue
+        return out
+
+    if codec is None or workers < 2 or n_rows < min_parallel:
+        yield _decompress_chunk(rows)
+        return
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    chunk_size = max(8, -(-n_rows // (workers * 2)))
+    parts = [rows[i : i + chunk_size] for i in range(0, n_rows, chunk_size)]
+    with ThreadPoolExecutor(max_workers=min(workers, len(parts))) as pool:
+        futures = [pool.submit(_decompress_chunk, part) for part in parts]
+        for future in as_completed(futures):
+            yield future.result()
 
 
 # Parsed-object front tiers: bounded small because parsed payloads are far
@@ -175,6 +260,18 @@ _FRAME_TABLES: dict[str, str] = {"pandas": "telemetry_frames", "polars": "teleme
 # frame. The per-frame ``telemetry_frames_pl`` table stays readable (rows
 # from earlier releases, and drivers whose laps do not share one schema).
 _POLARS_IPC_TABLE = "telemetry_frames_pl_ipc"
+# Pergamon P3: pandas frames are materialized per driver as one typed-columnar
+# blob (``frame_codec.encode_driver_frames``): a session reads ~22 rows
+# instead of ~1450, and every lap frame is a view into its driver's arrays.
+# The per-frame ``telemetry_frames`` table stays readable (rows written by
+# earlier releases, frames whose blocks the codec does not know); a session
+# served from it is re-materialized into driver rows in the background.
+_PANDAS_DRIVER_TABLE = "telemetry_frames_drv"
+_ALL_FRAME_TABLES: tuple[str, ...] = (
+    *_FRAME_TABLES.values(),
+    _POLARS_IPC_TABLE,
+    _PANDAS_DRIVER_TABLE,
+)
 
 try:  # pragma: no cover - pyarrow is a declared dependency
     from pyarrow import ArrowException as ArrowError
@@ -658,6 +755,7 @@ class Cache:
                 conn.execute("DROP TABLE IF EXISTS telemetry_frames")
                 conn.execute("DROP TABLE IF EXISTS telemetry_frames_pl")
                 conn.execute(f"DROP TABLE IF EXISTS {_POLARS_IPC_TABLE}")
+                conn.execute(f"DROP TABLE IF EXISTS {_PANDAS_DRIVER_TABLE}")
                 conn.execute(f"PRAGMA user_version = {_FRAME_TIER_SCHEMA_VERSION}")
 
             conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT)")
@@ -694,6 +792,19 @@ class Cache:
             conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {_POLARS_IPC_TABLE} (
+                    year INTEGER,
+                    gp TEXT,
+                    session TEXT,
+                    driver TEXT,
+                    laps TEXT,
+                    frame BLOB,
+                    PRIMARY KEY (year, gp, session, driver)
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {_PANDAS_DRIVER_TABLE} (
                     year INTEGER,
                     gp TEXT,
                     session TEXT,
@@ -952,7 +1063,7 @@ class Cache:
                 self.conn.execute(f"DELETE FROM {laps_table}")
             if scope == "telemetry":
                 # Frames are derived from telemetry payloads (both backends).
-                for frame_table in (*_FRAME_TABLES.values(), _POLARS_IPC_TABLE):
+                for frame_table in _ALL_FRAME_TABLES:
                     self.conn.execute(f"DELETE FROM {frame_table}")
             self.conn.commit()
             self._pending_writes = 0
@@ -1014,6 +1125,8 @@ class Cache:
 
     async def get_async(self, key: str) -> Any | None:
         """Get cached data asynchronously."""
+        import asyncio  # lazy: only async/network paths need it
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get, key)
 
@@ -1079,6 +1192,8 @@ class Cache:
 
     async def set_async(self, key: str, data: Any) -> None:
         """Set cached data asynchronously."""
+        import asyncio  # lazy: only async/network paths need it
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.set, key, data)
 
@@ -1149,6 +1264,8 @@ class Cache:
         self, year: int, gp: str, session: str, driver: str, lap: int
     ) -> Any | None:
         """Get cached telemetry data asynchronously."""
+        import asyncio  # lazy: only async/network paths need it
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_telemetry, year, gp, session, driver, lap)
 
@@ -1212,6 +1329,8 @@ class Cache:
         self, year: int, gp: str, session: str, driver_laps: list[tuple[str, int]]
     ) -> dict[tuple[str, int], Any]:
         """Get multiple cached telemetry entries asynchronously in a single batch."""
+        import asyncio  # lazy: only async/network paths need it
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.get_telemetry_batch, year, gp, session, driver_laps
@@ -1233,6 +1352,8 @@ class Cache:
         session: str,
         driver_laps: list[tuple[str, int]],
         lib: Literal["pandas", "polars"] = "pandas",
+        whole_driver: bool = False,
+        frame_class: Any = None,
     ) -> dict[tuple[str, int], Any]:
         """Batch-read materialized telemetry frames.
 
@@ -1240,6 +1361,12 @@ class Cache:
             lib: Backend whose frame table to read (``pandas`` or ``polars``);
                 rows from the other backend are never returned because a
                 foreign frame object would surface in caller maps.
+            whole_driver: pandas only — also return every other lap stored
+                in a driver row the batch touches (the row is decoded anyway;
+                callers memoize the extras so later laps of that driver are
+                free).
+            frame_class: pandas only — DataFrame subclass to build (e.g.
+                ``Telemetry``) instead of wrapping afterwards.
 
         Returns:
             Mapping of ``(driver, lap)`` to the unpickled DataFrame; refs with
@@ -1255,6 +1382,14 @@ class Cache:
             driver_laps = [ref for ref in driver_laps if ref not in results]
             if not driver_laps:
                 return results
+        else:
+            results = self._get_driver_frames(
+                year, gp, session, driver_laps, whole_driver=whole_driver, frame_class=frame_class
+            )
+            driver_laps = [ref for ref in driver_laps if ref not in results]
+            if not driver_laps:
+                return results
+        legacy_refs = set(driver_laps)
         try:
             with self._sqlite_lock:
                 # Whole-session batches (fetch_all_laps_telemetry) read far
@@ -1321,23 +1456,44 @@ class Cache:
         else:
             FRAME_CODEC_MAGIC, decode_frame = b"", None
         with _suspend_gc():
-            for driver_code, lap_num, blob in rows:
-                try:
-                    raw = _decompress_frame_blob(blob)
-                    # Thebes TH1: typed-columnar rows rebuild through direct
-                    # block assembly (~80 us/frame vs ~130 us unpickling);
-                    # rows written by earlier releases are still pickles.
-                    if decode_frame is not None and raw[:4] == FRAME_CODEC_MAGIC:
-                        frame = decode_frame(raw)
-                    else:
-                        frame = pickle.loads(raw)
-                    # A foreign-backend blob (hand-migrated cache) degrades to
-                    # a tier miss instead of surfacing in caller maps.
-                    if not hasattr(frame, _foreign_marker):
-                        raise TypeError("foreign frame object")
-                    results[(driver_code, lap_num)] = frame
-                except frame_errors:
-                    logger.debug("Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num)
+            for chunk in _decompress_frame_rows(rows):
+                for driver_code, lap_num, raw in chunk:
+                    try:
+                        # Thebes TH1: typed-columnar rows rebuild through
+                        # direct block assembly; rows written by earlier
+                        # releases are still pickles.
+                        if decode_frame is not None and bytes(raw[:4]) == FRAME_CODEC_MAGIC:
+                            frame = decode_frame(raw, frame_class)
+                        else:
+                            frame = pickle.loads(raw)
+                        # A foreign-backend blob (hand-migrated cache) degrades
+                        # to a tier miss instead of surfacing in caller maps.
+                        if not hasattr(frame, _foreign_marker):
+                            raise TypeError("foreign frame object")
+                        results[(driver_code, lap_num)] = frame
+                    except frame_errors:
+                        logger.debug(
+                            "Corrupt telemetry frame row skipped: %s/%s", driver_code, lap_num
+                        )
+        if lib == "pandas" and not self.read_only:
+            legacy_hits = [
+                (driver_code, lap_num, frame)
+                for (driver_code, lap_num), frame in results.items()
+                if (driver_code, lap_num) in legacy_refs
+            ]
+            if len(legacy_hits) >= _LEGACY_UPGRADE_MIN_FRAMES:
+                # Re-materialize per driver in the background so the next
+                # load reads driver rows; the legacy rows are deleted once
+                # the driver rows are in (see _set_driver_frames).
+                def _upgrade_legacy_rows() -> None:
+                    # Let the caller finish its critical path first: the
+                    # encode is GIL-bound and would otherwise interleave with
+                    # the remaining frame work of the load that found the
+                    # legacy rows (measured +60 ms on the 1452-frame batch).
+                    time.sleep(_LEGACY_UPGRADE_DELAY_S)
+                    self.set_telemetry_frames_batch(year, gp, session, legacy_hits, lib="pandas")
+
+                register_frame_writer(_upgrade_legacy_rows)
         return results
 
     def set_telemetry_frames_batch(
@@ -1363,6 +1519,10 @@ class Cache:
         written = 0
         if lib == "polars":
             frames, written = self._set_polars_ipc_frames(year, gp, session, frames)
+            if not frames:
+                return written
+        else:
+            frames, written = self._set_driver_frames(year, gp, session, frames)
             if not frames:
                 return written
         if lib == "pandas":
@@ -1401,13 +1561,213 @@ class Cache:
                             for driver, lap, frame in frames
                         ),
                     )
-                written = len(frames)
-                self._pending_writes += written
+                # Per-frame rows add to the per-driver (or IPC) rows written above.
+                written += len(frames)
+                self._pending_writes += len(frames)
                 self._commit_if_needed()
         except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             logger.debug("Telemetry frames write skipped: %s", e)
             return 0
         return written
+
+    # -- pandas per-driver typed-columnar tier (Pergamon P3) -----------------
+
+    def _get_driver_frames(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        driver_laps: list[tuple[str, int]],
+        whole_driver: bool = False,
+        frame_class: Any = None,
+    ) -> dict[tuple[str, int], Any]:
+        """Serve pandas frames from the per-driver rows (missing refs are absent)."""
+        wanted: dict[str, set[int]] = {}
+        for driver, lap in driver_laps:
+            wanted.setdefault(driver, set()).add(int(lap))
+        results: dict[tuple[str, int], Any] = {}
+        conn = self.conn
+        if conn is None or not wanted:
+            return results
+        try:
+            placeholders = ", ".join("?" for _ in wanted)
+            with self._sqlite_lock:
+                # The lap list is read first (no blob): a driver row that
+                # holds none of the wanted laps is not transferred or
+                # decompressed (~1 MB and ~1.5 ms per row).
+                useful = list(wanted)
+                if not whole_driver:
+                    stored = conn.execute(
+                        f"SELECT driver, laps FROM {_PANDAS_DRIVER_TABLE} WHERE year = ? "
+                        f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                        (year, gp, session, *wanted),
+                    ).fetchall()
+                    useful = [
+                        driver
+                        for driver, laps_json in stored
+                        if wanted[driver].intersection(json_loads(laps_json))
+                    ]
+                    if not useful:
+                        return results
+                placeholders = ", ".join("?" for _ in useful)
+                rows = conn.execute(
+                    f"SELECT driver, frame FROM {_PANDAS_DRIVER_TABLE} WHERE year = ? "
+                    f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                    (year, gp, session, *useful),
+                ).fetchall()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Driver frame tier read error: %s", e)
+            return results
+        if not rows:
+            return results
+        from .core_utils.frame_codec import decode_driver_frames
+
+        with _suspend_gc():
+            for chunk in _decompress_frame_rows(rows, min_parallel=2):
+                for driver, raw in chunk:
+                    try:
+                        frames = decode_driver_frames(
+                            raw, None if whole_driver else wanted[driver], frame_class
+                        )
+                    except (AttributeError, TypeError, ValueError) as e:
+                        logger.debug("Corrupt driver frame row skipped: %s: %s", driver, e)
+                        continue
+                    for lap, frame in frames.items():
+                        results[(driver, lap)] = frame
+        return results
+
+    def get_driver_merged_frame(
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        driver: str,
+        laps: list[int],
+        frame_class: Any = None,
+    ) -> Any | None:
+        """One frame of ``laps`` back to back from the driver's row, or None.
+
+        Pergamon P10: serves ``Laps.telemetry`` for a driver without building
+        and concatenating per-lap frames. None when the tier has no row for
+        the driver, the row cannot be read, or a lap is not stored in it
+        (the caller falls back to per-lap frames + concat).
+        """
+        conn = self.conn
+        if conn is None or not laps or not _FRAME_CODEC_AVAILABLE:
+            return None
+        try:
+            with self._sqlite_lock:
+                row = conn.execute(
+                    f"SELECT frame FROM {_PANDAS_DRIVER_TABLE} WHERE year = ? AND gp = ? "
+                    "AND session = ? AND driver = ?",
+                    (year, gp, session, driver),
+                ).fetchone()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Driver frame tier read error: %s", e)
+            return None
+        if row is None:
+            return None
+        from .core_utils.frame_codec import decode_driver_merged
+
+        try:
+            for chunk in _decompress_frame_rows([(driver, row[0])], min_parallel=2):
+                for _driver, raw in chunk:
+                    return decode_driver_merged(raw, [int(lap) for lap in laps], frame_class)
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.debug("Corrupt driver frame row skipped: %s: %s", driver, e)
+        return None
+
+    def _set_driver_frames(
+        self, year: int, gp: str, session: str, frames: list[tuple[str, int, Any]]
+    ) -> tuple[list[tuple[str, int, Any]], int]:
+        """Write per-driver rows; returns ``(leftover frames, frames written)``.
+
+        A driver's laps are merged with the laps already stored for it, so a
+        partial batch never drops frames. Frames the codec cannot encode are
+        handed back for the per-frame table. Per-frame rows of the laps now
+        covered by a driver row are deleted (they were either the legacy
+        copy of the same frame or superseded by this batch).
+        """
+        from .core_utils.frame_codec import (
+            decode_driver_frames,
+            encode_driver_frames,
+        )
+
+        by_driver: dict[str, dict[int, Any]] = {}
+        for driver, lap, frame in frames:
+            by_driver.setdefault(driver, {})[int(lap)] = frame
+        leftovers: list[tuple[str, int, Any]] = []
+        conn = self.conn
+        if conn is None:
+            return frames, 0
+        existing: dict[str, bytes] = {}
+        try:
+            placeholders = ", ".join("?" for _ in by_driver)
+            with self._sqlite_lock:
+                for driver, blob in conn.execute(
+                    f"SELECT driver, frame FROM {_PANDAS_DRIVER_TABLE} WHERE year = ? "
+                    f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                    (year, gp, session, *by_driver),
+                ).fetchall():
+                    existing[driver] = bytes(blob)
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.debug("Driver frame tier merge read skipped: %s", e)
+            existing = {}
+        rows: list[tuple[Any, ...]] = []
+        covered: list[tuple[str, int]] = []
+        written = 0
+        with _suspend_gc():
+            for driver, lap_frames in by_driver.items():
+                merged = dict(lap_frames)
+                if driver in existing:
+                    try:
+                        stored = decode_driver_frames(_decompress_frame_blob(existing[driver]))
+                    except (*_ZSTD_ERRORS, AttributeError, RuntimeError, TypeError, ValueError):
+                        stored = {}  # unreadable row: rewrite it from this batch
+                    for lap, frame in stored.items():
+                        merged.setdefault(int(lap), frame)
+                blob, unsupported = encode_driver_frames(list(merged.items()))
+                if unsupported:
+                    unsupported_laps = {lap for lap, _ in unsupported}
+                    leftovers.extend(
+                        (driver, lap, frame)
+                        for lap, frame in lap_frames.items()
+                        if lap in unsupported_laps
+                    )
+                if blob is None:
+                    continue
+                stored_laps = [lap for lap in merged if lap not in {lo for lo, _ in unsupported}]
+                rows.append(
+                    (
+                        year,
+                        gp,
+                        session,
+                        driver,
+                        json_dumps_bytes(sorted(stored_laps)).decode("utf-8"),
+                        _compress_frame_blob(blob),
+                    )
+                )
+                covered.extend((driver, lap) for lap in stored_laps)
+                written += sum(1 for lap in lap_frames if lap in stored_laps)
+        if rows:
+            try:
+                with self._sqlite_lock:
+                    conn.executemany(
+                        f"INSERT OR REPLACE INTO {_PANDAS_DRIVER_TABLE} VALUES (?, ?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                    if covered:
+                        conn.executemany(
+                            "DELETE FROM telemetry_frames WHERE year = ? AND gp = ? "
+                            "AND session = ? AND driver = ? AND lap = ?",
+                            [(year, gp, session, driver, lap) for driver, lap in covered],
+                        )
+                    self._pending_writes += len(rows)
+                    self._commit_if_needed()
+            except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+                logger.debug("Driver frame tier write skipped: %s", e)
+                return frames, 0
+        return leftovers, written
 
     # -- polars per-driver Arrow IPC frame tier (Thebes TH8) ----------------
 
@@ -1435,24 +1795,62 @@ class Cache:
             return results
         if not rows:
             return results
+        import polars as pl
+        import pyarrow as pa
+        import pyarrow.ipc as pa_ipc
         from polars.exceptions import PolarsError
 
-        for driver, laps_json, blob in rows:
+        # Pergamon P4: the IPC blobs are read in worker threads (pyarrow
+        # releases the GIL: 15.5 -> 9.6 ms for 22 driver blobs) and converted
+        # to polars ONCE from the concatenated table (10 ms) instead of once
+        # per driver (25 ms); a driver's laps are then slices at a global
+        # offset. A blob that fails to read or whose schema differs from the
+        # others is converted on its own (its laps are still served).
+        def _read(row: tuple[Any, ...]) -> tuple[Any, ...]:
+            driver, laps_json, blob = row
             try:
-                lap_spans = json_loads(laps_json)
-                frame = _read_polars_ipc(bytes(blob))
+                table = pa_ipc.open_file(pa.BufferReader(bytes(blob))).read_all()
+                return driver, json_loads(laps_json), table, None
+            except (TypeError, ValueError, OSError, ArrowError) as e:
+                return driver, None, None, e
+
+        if len(rows) >= 4 and (os.cpu_count() or 1) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(
+                max_workers=min(_PARALLEL_DECOMPRESS_MAX_WORKERS, len(rows))
+            ) as pool:
+                read_rows = list(pool.map(_read, rows))
+        else:
+            read_rows = [_read(row) for row in rows]
+
+        groups: dict[Any, list[tuple[Any, ...]]] = {}
+        for driver, lap_spans, table, error in read_rows:
+            if error is not None:
+                logger.debug("Corrupt polars frame row skipped: %s: %s", driver, error)
+                continue
+            groups.setdefault(table.schema, []).append((driver, lap_spans, table))
+        for schema_rows in groups.values():
+            try:
+                tables = [table for _, _, table in schema_rows]
+                combined = pl.from_arrow(
+                    pa.concat_tables(tables) if len(tables) > 1 else tables[0], rechunk=True
+                )
                 offset = 0
-                for raw_lap, raw_rows in lap_spans:
-                    lap, n_rows = int(raw_lap), int(raw_rows)
-                    if lap in wanted[driver]:
-                        results[(driver, lap)] = frame.slice(offset, n_rows)
-                    offset += n_rows
-                if offset != frame.height:
-                    raise ValueError("lap spans do not cover the driver frame")
+                for driver, lap_spans, table in schema_rows:
+                    base = offset
+                    for raw_lap, raw_rows in lap_spans:
+                        lap, n_rows = int(raw_lap), int(raw_rows)
+                        if lap in wanted[driver]:
+                            results[(driver, lap)] = combined.slice(offset, n_rows)
+                        offset += n_rows
+                    if offset - base != table.num_rows:
+                        raise ValueError("lap spans do not cover the driver frame")
             except (PolarsError, TypeError, ValueError, OSError, ArrowError) as e:
-                logger.debug("Corrupt polars frame row skipped: %s: %s", driver, e)
-                for lap in wanted[driver]:
-                    results.pop((driver, lap), None)
+                for driver, _spans, _table in schema_rows:
+                    logger.debug("Corrupt polars frame row skipped: %s: %s", driver, e)
+                    for lap in wanted[driver]:
+                        results.pop((driver, lap), None)
         return results
 
     def _set_polars_ipc_frames(
@@ -1654,6 +2052,8 @@ class Cache:
         self, year: int, gp: str, session: str, driver: str, lap: int, data: Any
     ) -> None:
         """Set cached telemetry data asynchronously."""
+        import asyncio  # lazy: only async/network paths need it
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.set_telemetry, year, gp, session, driver, lap, data
@@ -1714,7 +2114,7 @@ class Cache:
         with self._sqlite_lock:
             self.conn.execute("DELETE FROM cache")
             self.conn.execute("DELETE FROM telemetry_cache")
-            for frame_table in (*_FRAME_TABLES.values(), _POLARS_IPC_TABLE):
+            for frame_table in _ALL_FRAME_TABLES:
                 self.conn.execute(f"DELETE FROM {frame_table}")
             for laps_table in _LAPS_FRAME_TABLES.values():
                 self.conn.execute(f"DELETE FROM {laps_table}")

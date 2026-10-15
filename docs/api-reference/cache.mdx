@@ -19,7 +19,7 @@ keywords:
 1. **Parsed-object LRUs**: Decoded JSON payloads (128 items) and telemetry payloads (256 items); fixed size
 2. **Blob LRUs**: Serialized JSON bytes (1024 items) and telemetry bytes (2048 items); sized by `memory_cache_max_items` and `memory_telemetry_cache_max_items`
 3. **SQLite payload tables**: Durable `cache` and `telemetry_cache` tables that survive across processes
-4. **SQLite frame tiers**: Materialized telemetry DataFrames and the processed laps DataFrame of a session. Pandas telemetry frames live in `telemetry_frames`, one typed-columnar row per lap. Polars telemetry frames live in `telemetry_frames_pl_ipc`, one Arrow IPC row per driver. `telemetry_frames_pl` holds per-lap polars rows from earlier releases, and rows for drivers whose laps have different schemas. The laps DataFrame lives in `laps_frames` / `laps_frames_pl`. Both tiers derive from the payload tables, and the loader rebuilds missing rows. SQLite's `PRAGMA user_version` versions the telemetry frame tables (`_FRAME_TIER_SCHEMA_VERSION`, now `1`). A cache file with an older version drops these two tables once
+4. **SQLite frame tiers**: Materialized telemetry DataFrames and the processed laps DataFrame of a session. Pandas telemetry frames live in `telemetry_frames_drv`, one typed-columnar row per driver. `telemetry_frames` holds per-lap pandas rows from earlier releases, and frames with a column outside the telemetry dtype contract. Polars telemetry frames live in `telemetry_frames_pl_ipc`, one Arrow IPC row per driver. `telemetry_frames_pl` holds per-lap polars rows from earlier releases, and rows for drivers whose laps have different schemas. The laps DataFrame lives in `laps_frames` / `laps_frames_pl`. Both tiers derive from the payload tables, and the loader rebuilds missing rows. SQLite's `PRAGMA user_version` versions the telemetry frame tables (`_FRAME_TIER_SCHEMA_VERSION`, now `1`). A cache file with an older version drops these two tables once
 5. **Negative-verdict tier**: The `missing_payloads` table remembers payloads that every CDN reported missing, for `missing_payloads_ttl_days` (default 7 days)
 
 The `cache` table also holds one TTL-scoped row per live season, `f1schedule/schedule_{year}.json`, written by `tif1.events`. After `schedule_ttl_hours` (default 6) the stale row is still served, and a background thread fetches the new file.
@@ -84,7 +84,7 @@ The cache behavior can be customized through environment variables. The `Cache` 
 def clear() -> None
 ```
 
-Removes all cached data from every in-memory tier and from the SQLite `cache`, `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` tables. This operation is irreversible and forces all later data requests to fetch from the CDN.
+Removes all cached data from every in-memory tier and from the SQLite `cache`, `telemetry_cache`, `telemetry_frames_drv`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` tables. This operation is irreversible and forces all later data requests to fetch from the CDN.
 
 **Use Cases:**
 - Clearing corrupted cache data
@@ -135,7 +135,7 @@ Invalidates cached data by scope. This is the only selective invalidation API; p
   - `"all"` - Every tier, memory and SQLite; equivalent to `clear()`
   - `"memory"` - Only the four in-memory LRU tiers and the in-memory verdict mirror; SQLite rows persist
   - `"json"` - The JSON payload tier: the `cache` table, `missing_payloads`, the derived `laps_frames` / `laps_frames_pl` rows, and the JSON LRUs
-  - `"telemetry"` - The telemetry tier: `telemetry_cache`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames` / `laps_frames_pl`, `missing_payloads`, and the telemetry LRUs
+  - `"telemetry"` - The telemetry tier: `telemetry_cache`, `telemetry_frames_drv`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames` / `laps_frames_pl`, `missing_payloads`, and the telemetry LRUs
 
 Any other value raises `ValueError`. The method first joins pending background frame writers, so a late write cannot re-insert cleared rows.
 
@@ -654,17 +654,38 @@ def get_telemetry_frames_batch(
     session: str,
     driver_laps: list[tuple[str, int]],
     lib: Literal["pandas", "polars"] = "pandas",
+    whole_driver: bool = False,
+    frame_class: Any = None,
 ) -> dict[tuple[str, int], Any]
 ```
 
-Batch-reads materialized telemetry DataFrames from the frame tier. Pandas rows in `telemetry_frames` hold a typed-columnar encoding of the frame's blocks: raw column bytes behind a small header, compressed with lz4 (zstd as fallback). The reader rebuilds the frame without the DataFrame constructor. Rows written by earlier releases hold a pickle and still read. Polars frames come from `telemetry_frames_pl_ipc`, one Arrow IPC blob per driver with the lap boundaries alongside. A lap is a slice of the driver frame. Refs not found there fall back to the per-lap `telemetry_frames_pl` rows. The method never returns rows from the other backend. Refs without a frame row, or with a corrupt row, are absent from the result. They fall through to the payload tier.
+Batch-reads materialized telemetry DataFrames from the frame tier. Pandas frames come from `telemetry_frames_drv`, one typed-columnar blob per driver. The blob holds the raw bytes of every block over all laps of the driver, behind a small header, compressed with lz4 (zstd as fallback). Each lap frame is a set of views into the driver's arrays, built without the DataFrame constructor. Refs not found there fall back to the per-lap `telemetry_frames` rows (typed-columnar or pickle, written by earlier releases). When a session serves 32 or more laps that way, a background thread rewrites them as driver rows. Polars frames come from `telemetry_frames_pl_ipc`, one Arrow IPC blob per driver with the lap boundaries alongside. A lap is a slice of the driver frame. Refs not found there fall back to the per-lap `telemetry_frames_pl` rows. The method never returns rows from the other backend. Refs without a frame row, or with a corrupt row, are absent from the result. They fall through to the payload tier.
 
 **Parameters:**
 - `year`, `gp`, `session`: Session identity, as for `get_telemetry_batch()`
 - `driver_laps` (list[tuple[str, int]]): `(driver, lap)` refs to read
 - `lib` (`"pandas"` or `"polars"`): Backend whose frame table to read
+- `whole_driver` (bool): pandas only. Also return the other laps stored in each driver row the batch touches. The session memoizes them, so the next lap of that driver is a memo hit.
+- `frame_class` (type or None): pandas only. DataFrame subclass to build, for example `Telemetry`. Its `_metadata` attributes start as `None`.
 
 **Returns:** `dict[tuple[str, int], Any]` - `(driver, lap)` to DataFrame; empty when the connection is closed or no frame codec is available
+
+---
+
+### `get_driver_merged_frame()`
+
+```python
+def get_driver_merged_frame(
+    year: int,
+    gp: str,
+    session: str,
+    driver: str,
+    laps: list[int],
+    frame_class: Any = None,
+) -> Any | None
+```
+
+Builds one pandas frame that holds `laps` back to back, in the given order, from the driver's `telemetry_frames_drv` row. `Laps.telemetry` uses it for a single driver. Each run of laps stored consecutively in one layout group is a slice of the group arrays; several runs are concatenated. Returns `None` when the tier has no row for the driver, the row cannot be read, or a lap is not stored in it. The caller then concatenates per-lap frames.
 
 ---
 
@@ -680,7 +701,7 @@ def set_telemetry_frames_batch(
 ) -> int
 ```
 
-Persists assembled telemetry frames in one bulk write. The payload tier stays the source of truth: frames are derived data. Pandas frames whose columns all have the telemetry contract's dtypes are stored in the typed-columnar encoding. Any other frame is pickled. Polars frames are grouped per driver and merged with the laps already stored for that driver. Each driver is written as one Arrow IPC row. A driver whose laps have different schemas falls back to per-lap pickle rows.
+Persists assembled telemetry frames in one bulk write. The payload tier stays the source of truth: frames are derived data. Pandas frames whose columns all have the telemetry contract's dtypes are grouped per driver. Each group is merged with the laps already stored for that driver and written as one typed-columnar driver row. Per-lap rows of the laps now covered by the driver row are deleted. Any other frame is pickled into the per-lap table. Polars frames are grouped per driver and merged with the laps already stored for that driver. Each driver is written as one Arrow IPC row. A driver whose laps have different schemas falls back to per-lap pickle rows.
 
 **Parameters:**
 - `frames` (list[tuple[str, int, Any]]): `(driver, lap, DataFrame)` tuples to persist
@@ -1116,7 +1137,7 @@ Per-session memo tier held as `Session._memo`. It consolidates the session-scope
 
 ## Cache Statistics and Monitoring
 
-The `Cache` class does not expose built-in statistics methods. Query the SQLite database directly for monitoring purposes. The payload tables are `cache` and `telemetry_cache`; the derived tables are `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads`.
+The `Cache` class does not expose built-in statistics methods. Query the SQLite database directly for monitoring purposes. The payload tables are `cache` and `telemetry_cache`; the derived tables are `telemetry_frames_drv`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads`.
 
 ### Example - Cache Size Analysis
 
@@ -1311,7 +1332,7 @@ cache.invalidate("telemetry")
 cache.invalidate("json")
 ```
 
-`invalidate()` has no per-session scope. A per-session purge needs raw SQL and must cover the derived tables too. Otherwise `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` keep stale rows for the session.
+`invalidate()` has no per-session scope. A per-session purge needs raw SQL and must cover the derived tables too. Otherwise `telemetry_frames_drv`, `telemetry_frames`, `telemetry_frames_pl`, `telemetry_frames_pl_ipc`, `laps_frames`, `laps_frames_pl`, and `missing_payloads` keep stale rows for the session.
 
 <Warning>
 Run this only when no `Cache` writer is active in the process. The singleton batches writes and commits every `cache_commit_interval` operations, so a second connection can hit `database is locked` while a batch is open. Run the purge from a dedicated maintenance process after every tif1 process that writes to the cache has exited. Do not close the global singleton in a process that keeps using tif1. `close()` is final and disables caching for the rest of that process.

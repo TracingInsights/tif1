@@ -601,6 +601,32 @@ class Laps(pd.DataFrame):
             if cached is not None and cached[0] == len(refs) and cached[1] == refs:
                 return cached[2]
 
+            # Pergamon P10: the driver's row in the frame tier holds the laps
+            # back to back, so the merged frame is a slice of it — no per-lap
+            # frames, no concat (14 ms for a 76-lap driver otherwise).
+            if refs and not ultra_cold and session.enable_cache:
+                drivers = {driver for driver, _ in refs}
+                if len(drivers) == 1 and session._session_cache_available():
+                    merged_driver = next(iter(drivers))
+                    merged_frame = get_cache().get_driver_merged_frame(
+                        session.year,
+                        session.gp,
+                        session.session,
+                        merged_driver,
+                        [lap for _, lap in refs],
+                        frame_class=Telemetry,
+                    )
+                    if merged_frame is not None:
+                        tel = (
+                            merged_frame
+                            if isinstance(merged_frame, Telemetry)
+                            else Telemetry(merged_frame)
+                        )
+                        tel.session = session
+                        tel.driver = merged_driver
+                        object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
+                        return tel
+
             # Ithome U11: when every ref already has an assembled frame
             # (in-process memo or the materialized frame tier), concat them
             # exactly like the legacy per-lap fallback below — skipping the
@@ -614,14 +640,26 @@ class Laps(pd.DataFrame):
                     frame_hits[ref] = memoized_df
                 else:
                     missing_frames.append(ref)
+            missing_frames_set = set(missing_frames)
             if missing_frames and not ultra_cold and session.enable_cache:
                 if session._session_cache_available():
                     tier_hits = get_cache().get_telemetry_frames_batch(
-                        session.year, session.gp, session.session, missing_frames, lib="pandas"
+                        session.year,
+                        session.gp,
+                        session.session,
+                        missing_frames,
+                        lib="pandas",
+                        whole_driver=True,
+                        frame_class=Telemetry,
                     )
                     for ref, frame in tier_hits.items():
-                        session._memo.set("telemetry_df", ref, frame)
-                        frame_hits[ref] = frame
+                        if session._memo.get("telemetry_df", ref) is None:
+                            if isinstance(frame, Telemetry):
+                                object.__setattr__(frame, "session", session)
+                                object.__setattr__(frame, "driver", ref[0])
+                            session._memo.set("telemetry_df", ref, frame)
+                        if ref in missing_frames_set:
+                            frame_hits[ref] = frame
             if refs and len(frame_hits) == len(refs):
                 tel = Telemetry(pd.concat([frame_hits[ref] for ref in refs], ignore_index=True))
                 tel.session = session
@@ -667,7 +705,8 @@ class Laps(pd.DataFrame):
                 for drv, lap_num in refs
                 if (drv, lap_num) in collected
             ]
-        except AttributeError:
+        except AttributeError as e:
+            logger.debug("Merged telemetry path unavailable: %s", e, exc_info=True)
             return None
         if not entries:
             tel = Telemetry()

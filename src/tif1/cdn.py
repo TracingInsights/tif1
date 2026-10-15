@@ -18,15 +18,17 @@ budget on files that are missing everywhere.
 
 """
 
-import asyncio
 import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError, TIF1Error
+
+if TYPE_CHECKING:
+    import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -489,6 +491,8 @@ class CDNManager:
         estimate stays honest), and ``InvalidDataError`` from either source
         propagates.
         """
+        import asyncio  # lazy: only async/network paths need it
+
         awaitable = fetch_func(primary, url)
         delay = self.hedge_delay(primary.name)
         started = time.monotonic()
@@ -557,7 +561,7 @@ class CDNManager:
         self.mark_failure(primary.name)
 
     def _settle_primary(
-        self, primary: CDNSource, task: asyncio.Future, started: float
+        self, primary: CDNSource, task: "asyncio.Future", started: float
     ) -> tuple[Any, BaseException | None]:
         error = task.exception()
         if error is None:
@@ -586,6 +590,8 @@ class CDNManager:
         :class:`InvalidDataError` propagates immediately, exactly like the
         sequential loop.
         """
+
+        import asyncio  # lazy: only async/network paths need it
 
         class _RaceFailureError(Exception):
             def __init__(self, source_name: str, error: Exception) -> None:

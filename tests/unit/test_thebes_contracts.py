@@ -177,10 +177,13 @@ def test_frame_tier_writes_codec_rows_and_reads_legacy_pickles(tmp_path):
     try:
         frame = _frame()
         assert cache.set_telemetry_frames_batch(2026, "GP", "Race", [("VER", 1, frame)]) == 1
-        row = cache.conn.execute("SELECT frame FROM telemetry_frames").fetchone()[0]
+        # Pergamon P3: pandas frames are materialized per driver; the
+        # per-frame table only serves rows written by earlier releases.
+        row = cache.conn.execute("SELECT frame FROM telemetry_frames_drv").fetchone()[0]
         from tif1.cache import _decompress_frame_blob
 
-        assert frame_codec.is_encoded_frame(_decompress_frame_blob(row))
+        assert frame_codec.is_driver_blob(_decompress_frame_blob(row))
+        assert cache.conn.execute("SELECT COUNT(*) FROM telemetry_frames").fetchone()[0] == 0
         # A row written by an earlier release (plain pickle) reads too.
         cache.conn.execute(
             "INSERT OR REPLACE INTO telemetry_frames VALUES (?, ?, ?, ?, ?, ?)",

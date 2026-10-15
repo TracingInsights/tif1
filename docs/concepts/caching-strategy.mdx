@@ -26,6 +26,8 @@ A load stops at the first hit:
 
 - `session.laps` checks the backend lap LRU, then the laps frame tier, then the payloads.
 - A telemetry load checks the session memo, then the telemetry frame tier, then the payloads.
+- A single lap (`lap.get_telemetry()`) reads its driver's frame-tier row and memoizes every lap of that driver. Later laps of the same driver are memo hits.
+- A load served from the memo and the frame tiers never starts an event loop. The async fetch pipeline runs only for laps the tiers do not hold.
 - A payload read checks the session memo, the LRU tiers, and the SQLite payload tables, in that order. On a miss, the fetch path checks the negative-verdict tier and then the CDN.
 
 A fresh network result is written back to the memo, the LRU tiers, and SQLite. Every tier lives in `src/tif1/cache.py`.
@@ -94,6 +96,14 @@ Telemetry payloads (`{driver}/{lap}_tel.json`) are routed to `telemetry_cache`. 
 The frame tiers store assembled DataFrames so a warm load skips JSON parsing and frame construction. Each backend has its own tables with the same columns:
 
 ```sql
+CREATE TABLE telemetry_frames_drv (
+    year INTEGER, gp TEXT, session TEXT, driver TEXT,
+    laps TEXT,      -- JSON list of the lap numbers stored in the row
+    frame BLOB,     -- typed-columnar blob with every lap of the driver (lz4)
+    PRIMARY KEY (year, gp, session, driver)
+);
+-- telemetry_frames holds one row per lap: pandas frames written by earlier
+-- releases, and frames with a column outside the telemetry dtype contract.
 CREATE TABLE telemetry_frames (
     year INTEGER, gp TEXT, session TEXT, driver TEXT, lap INTEGER,
     frame BLOB,
@@ -167,13 +177,15 @@ zstd-1 compresses about 4.5x faster and decompresses about 2x faster than the pr
 
 ### Frame rows
 
-Pandas telemetry frame rows hold a typed-columnar encoding of the frame. The row stores the raw bytes of each block (one block per dtype), a dictionary for the string columns, and a small header. The header lists the column names, dtypes and block layout. The reader rebuilds the frame from these blocks directly, without the DataFrame constructor. A frame with a column outside the telemetry dtype contract is pickled instead. Rows written by earlier releases are pickles too. The reader tells the formats apart by a magic prefix. Laps frame rows hold a pickle (protocol 5).
+Pandas telemetry frames are stored per driver in `telemetry_frames_drv`. The row holds a typed-columnar encoding of every lap of the driver. The laps are grouped by block layout. Each group stores one array per block over all of its rows, a dictionary for the string columns, and a small header. The header lists the column names, the lap numbers, the row count of each lap, and the block layout. The reader builds each lap frame from views into the group arrays, without the DataFrame constructor and without a copy. A driver's merged telemetry (`Laps.telemetry`) is a slice of the same arrays. A partial write merges with the laps already stored for the driver. A frame with a column outside the telemetry dtype contract is pickled into the per-lap `telemetry_frames` table instead.
 
-The blob is compressed with lz4 frame at level 0. When `lz4` is not installed, the writer falls back to zstd-1. Python 3.15 has no `lz4` wheels yet, so the frame tier uses zstd there. The reader detects the codec from the magic prefix, so lz4 and zstd rows coexist in one table.
+Rows written by earlier releases sit in `telemetry_frames` as per-lap pickles or per-lap typed-columnar blobs. The reader still serves them. When a load serves 32 or more laps of a session from these rows, a background thread rewrites them as driver rows. The per-lap rows are then deleted. The reader tells the formats apart by a magic prefix. Laps frame rows hold a pickle (protocol 5).
 
-Polars telemetry frames are stored per driver in `telemetry_frames_pl_ipc` as one Arrow IPC file with lz4 inside the stream. A lap is a slice of the driver frame; the row's `laps` column lists the lap numbers and row counts in storage order. A partial write merges with the laps already stored for the driver.
+The blob is compressed with lz4 frame at level 0. When `lz4` is not installed, the writer falls back to zstd-1. Python 3.15 has no `lz4` wheels yet, so the frame tier uses zstd there. The reader detects the codec from the magic prefix, so lz4 and zstd rows coexist in one table. The reader decompresses lz4 rows through pyarrow's codec, which releases the GIL. A batch read decompresses in a thread pool. Each chunk is decoded while the others are still in flight. Without pyarrow's lz4 support, the reader uses the serial `lz4` codec.
 
-On the 1452-frame 2026 Monaco race set, the typed-columnar rows read in 115 ms against 187 ms for pickled rows. The polars driver rows read in 47 ms against 68 ms. The frame tier is write-once and read-many, so read speed wins over ratio.
+Polars telemetry frames are stored per driver in `telemetry_frames_pl_ipc` as one Arrow IPC file with lz4 inside the stream. A lap is a slice of the driver frame; the row's `laps` column lists the lap numbers and row counts in storage order. A partial write merges with the laps already stored for the driver. A batch read reads the IPC files in a thread pool and converts them to polars in one step. The laps are slices at a global offset.
+
+On the 1452-frame 2026 Monaco race set, a fresh process reads the pandas driver rows in 57 ms against 179 ms for per-lap rows. The polars driver rows read in 53 ms against 87 ms. The frame tier is write-once and read-many, so read speed wins over ratio.
 
 ## Cache location and configuration
 

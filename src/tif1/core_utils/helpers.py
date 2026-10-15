@@ -564,19 +564,159 @@ def _shared_column_index(columns: list[str]) -> pd.Index:
     return index
 
 
-def _frame_from_blocks(blocks: tuple[Any, ...], columns: list[str], n_rows: int) -> pd.DataFrame:
-    """DataFrame over ready 2-D blocks (``(ncols, n_rows)`` values + placements)."""
-    mgr = _BlockManager(
-        blocks, [_shared_column_index(columns), pd.RangeIndex(n_rows)], verify_integrity=False
+# Pergamon P1: the per-frame skeleton is built from parts pandas would
+# otherwise re-derive on every call. ``RangeIndex`` and ``BlockPlacement``
+# objects are immutable and shared between frames (pandas itself shares an
+# index between a frame and its column slices); block classes are resolved
+# once from ``new_block`` so construction skips the dtype dispatch, the ndim
+# check and ``maybe_coerce_values`` — the values handed in are already the
+# coerced kinds ``new_block`` would produce (float/bool/object ndarrays,
+# ``TimedeltaArray``/``DatetimeArray`` for datetime-likes, extension arrays
+# for the rest). ``_probe_direct_blocks`` verifies the whole route against
+# the public constructor at import; any drift disables it.
+_RANGE_INDEX_CACHE: dict[int, pd.RangeIndex] = {}
+_RANGE_INDEX_CACHE_MAX = 4096
+_PLACEMENT_CACHE: dict[Any, Any] = {}
+_PLACEMENT_CACHE_MAX = 4096
+
+
+def _range_index(n_rows: int) -> pd.RangeIndex:
+    index = _RANGE_INDEX_CACHE.get(n_rows)
+    if index is None:
+        if len(_RANGE_INDEX_CACHE) >= _RANGE_INDEX_CACHE_MAX:
+            _RANGE_INDEX_CACHE.clear()
+        index = pd.RangeIndex(n_rows)
+        _RANGE_INDEX_CACHE[n_rows] = index
+    return index
+
+
+def _placement_for(positions: Any) -> Any:
+    """Shared ``BlockPlacement`` for an int position or a tuple of positions."""
+    key = positions if isinstance(positions, int | tuple) else tuple(int(p) for p in positions)
+    placement = _PLACEMENT_CACHE.get(key)
+    if placement is None:
+        if len(_PLACEMENT_CACHE) >= _PLACEMENT_CACHE_MAX:
+            _PLACEMENT_CACHE.clear()
+        placement = _BlockPlacement(key if isinstance(key, int) else np.asarray(key, dtype="int64"))
+        _PLACEMENT_CACHE[key] = placement
+    return placement
+
+
+try:  # pragma: no cover - import-time resolution of pandas block classes
+    _probe_placement = _BlockPlacement(0)
+    _NUMPY_BLOCK_CLASS: Any = type(_new_block(np.zeros((1, 1)), placement=_probe_placement, ndim=2))
+    _DATETIMELIKE_BLOCK_CLASS: Any = type(
+        _new_block(
+            _ensure_wrapped_if_datetimelike(np.zeros((1, 1), dtype="m8[ns]")),
+            placement=_probe_placement,
+            ndim=2,
+        )
     )
-    return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
+    _EXTENSION_BLOCK_CLASS: Any = type(
+        _new_block(
+            pd.arrays.IntegerArray(np.zeros(1, dtype="int64"), np.zeros(1, dtype=bool)),
+            placement=_probe_placement,
+            ndim=2,
+        )
+    )
+    _TimedeltaArray: Any = pd.arrays.TimedeltaArray
+    _DatetimeArray: Any = pd.arrays.DatetimeArray
+    _IntegerArray: Any = pd.arrays.IntegerArray
+    _INTEGER_ARRAY_SIMPLE_NEW: Any = getattr(_IntegerArray, "_simple_new", None)
+    _DIRECT_BLOCK_CLASSES_OK = (
+        _NUMPY_BLOCK_CLASS is not _EXTENSION_BLOCK_CLASS
+        and callable(getattr(_TimedeltaArray, "_simple_new", None))
+        and callable(_INTEGER_ARRAY_SIMPLE_NEW)
+    )
+except Exception:  # pragma: no cover - pandas internals changed
+    _DIRECT_BLOCK_CLASSES_OK = False
+    _INTEGER_ARRAY_SIMPLE_NEW = None
+
+
+def _frame_from_blocks(
+    blocks: tuple[Any, ...], columns: list[str], n_rows: int, frame_class: Any = None
+) -> pd.DataFrame:
+    """DataFrame over ready 2-D blocks (``(ncols, n_rows)`` values + placements).
+
+    ``frame_class`` (a DataFrame subclass such as ``Telemetry``) builds that
+    class directly: wrapping a finished frame afterwards costs a shallow
+    manager copy (~70 us per frame), building it here costs nothing. Its
+    ``_metadata`` attributes start as None.
+    """
+    mgr = _BlockManager(
+        blocks, [_shared_column_index(columns), _range_index(n_rows)], verify_integrity=False
+    )
+    if frame_class is None or frame_class is pd.DataFrame:
+        return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
+    frame = frame_class._from_mgr(mgr, axes=mgr.axes)
+    for name in getattr(frame_class, "_metadata", ()):
+        object.__setattr__(frame, name, None)
+    return cast(pd.DataFrame, frame)
+
+
+def _wrap_datetimelike(values: np.ndarray) -> Any:
+    """``TimedeltaArray``/``DatetimeArray`` over a datetime-like ndarray (no re-validation)."""
+    kind = values.dtype.kind
+    try:
+        if kind == "m":
+            return _TimedeltaArray._simple_new(values, dtype=values.dtype)
+        if kind == "M":
+            return _DatetimeArray._simple_new(values, dtype=values.dtype)
+    except (AssertionError, AttributeError, TypeError, ValueError):
+        pass
+    return _ensure_wrapped_if_datetimelike(values)
 
 
 def _numpy_block(values: np.ndarray, placement: Any) -> Any:
     """A 2-D numpy block; datetime-like values are wrapped the way pandas does."""
     if values.dtype.kind in "mM":
-        values = _ensure_wrapped_if_datetimelike(values)
+        wrapped = _wrap_datetimelike(values)
+        if _DIRECT_BLOCK_CLASSES_OK:
+            return _DATETIMELIKE_BLOCK_CLASS(wrapped, placement=_placement_for(placement), ndim=2)
+        return _new_block(wrapped, placement=_BlockPlacement(placement), ndim=2)
+    if _DIRECT_BLOCK_CLASSES_OK:
+        return _NUMPY_BLOCK_CLASS(values, placement=_placement_for(placement), ndim=2)
     return _new_block(values, placement=_BlockPlacement(placement), ndim=2)
+
+
+def _block_placement(placement: Any) -> Any:
+    """A (shared) ``BlockPlacement`` the ``*_placed`` builders accept as-is."""
+    if _DIRECT_BLOCK_CLASSES_OK:
+        return _placement_for(placement)
+    return _BlockPlacement(placement)
+
+
+def _numpy_block_placed(values: np.ndarray, placement: Any) -> Any:
+    """``_numpy_block`` over a ready ``BlockPlacement`` (hot loops resolve it once)."""
+    if values.dtype.kind in "mM":
+        wrapped = _wrap_datetimelike(values)
+        if _DIRECT_BLOCK_CLASSES_OK:
+            return _DATETIMELIKE_BLOCK_CLASS(wrapped, placement=placement, ndim=2)
+        return _new_block(wrapped, placement=placement, ndim=2)
+    if _DIRECT_BLOCK_CLASSES_OK:
+        return _NUMPY_BLOCK_CLASS(values, placement=placement, ndim=2)
+    return _new_block(values, placement=placement, ndim=2)
+
+
+def _extension_block(values: Any, placement: Any) -> Any:
+    """A 2-D block over a 1-D extension array at one column position."""
+    if _DIRECT_BLOCK_CLASSES_OK:
+        return _EXTENSION_BLOCK_CLASS(values, placement=_placement_for(placement), ndim=2)
+    return _new_block(values, placement=_BlockPlacement(placement), ndim=2)
+
+
+def _extension_block_placed(values: Any, placement: Any) -> Any:
+    """``_extension_block`` over a ready ``BlockPlacement``."""
+    if _DIRECT_BLOCK_CLASSES_OK:
+        return _EXTENSION_BLOCK_CLASS(values, placement=placement, ndim=2)
+    return _new_block(values, placement=placement, ndim=2)
+
+
+def _int64_array(data: np.ndarray, mask: np.ndarray) -> Any:
+    """``Int64`` extension array over ready int64 data + bool mask ndarrays."""
+    if _INTEGER_ARRAY_SIMPLE_NEW is not None:
+        return _INTEGER_ARRAY_SIMPLE_NEW(data, mask)
+    return pd.arrays.IntegerArray(data, mask)
 
 
 def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
@@ -603,11 +743,10 @@ def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: in
             blocks.append(_numpy_block(arr.reshape(1, n_rows), position))
         else:
             values = np.vstack([arr for _, arr in items])
-            placement = np.fromiter((pos for pos, _ in items), dtype="int64", count=len(items))
-            blocks.append(_numpy_block(values, placement))
+            blocks.append(_numpy_block(values, tuple(pos for pos, _ in items)))
         del dtype
     for position, column in ea_columns:
-        blocks.append(_new_block(column, placement=_BlockPlacement(position), ndim=2))
+        blocks.append(_extension_block(column, position))
     return _frame_from_blocks(tuple(blocks), columns, n_rows)
 
 
@@ -629,11 +768,24 @@ def _probe_direct_blocks() -> bool:
         ]
         direct = _direct_frame_from_columns(arrays, columns, 3)
         public = _frame_from_arrays(arrays, columns, 3)
+        # Block classes and value types must match too (a NumpyBlock over a
+        # raw m8 ndarray would compare equal yet misbehave on arithmetic).
+        direct_kinds = sorted(
+            (type(b).__name__, type(b.values).__name__) for b in direct._mgr.blocks
+        )
+        public_kinds = sorted(
+            (type(b).__name__, type(b.values).__name__) for b in public._mgr.blocks
+        )
+        mutated = direct.copy()
+        mutated.iloc[0, 1] = 1.5
         return bool(
             list(direct.columns) == list(public.columns)
             and direct.dtypes.equals(public.dtypes)
             and direct.equals(public)
             and len(direct._mgr.blocks) == len(public._mgr.blocks)
+            and direct_kinds == public_kinds
+            and mutated.iloc[0, 1] == 1.5
+            and direct.iloc[0, 1] == 10000.0
         )
     except Exception:
         return False

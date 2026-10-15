@@ -7,6 +7,68 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Pergamon series (2026-10-15)
+
+Ten hypotheses on the warm path (sessions already in the persistent cache),
+measured on a 32-core workstation (`.agents/perf-pergamon/RESULTS.md`,
+harnesses `tools/pergamon_*.py`); seven shipped, three rejected by measurement.
+Warm pandas load of the 2026 Monaco race (1452 frames, fresh process,
+8 interleaved pairs vs the Thebes tree): total 0.430 → 0.279 s (−35 %),
+telemetry 0.179 → 0.057 s (−68 %), candidate faster 8/8. Warm polars:
+telemetry 0.087 → 0.053 s (−40 %), 6/6. Caches written by earlier releases
+read 65-67 % faster after a one-time background rewrite (2018-2025 sessions).
+
+- **Per-driver typed-columnar frame rows (P3, `telemetry_frames_drv`,
+  `core_utils/frame_codec.py`).** Pandas telemetry frames are materialized
+  per driver: the laps are grouped by block layout and each group stores one
+  array per block over all of its rows. A lap frame is a set of views into
+  those arrays (no copy, no constructor), and a session reads ~22 rows
+  instead of ~1450. Rows from earlier releases (per-lap pickles and per-lap
+  typed-columnar blobs) stay readable; a session served from them is
+  rewritten as driver rows in a background thread and the per-lap rows are
+  deleted. Frames the codec cannot encode keep the per-lap table.
+  Materialization write 237 → 141 ms, stored bytes −14 %. Parity: 0
+  mismatches on 1452 (2026) + 9859 (2018-2025) frames.
+- **Fast frame-decode primitives (P1, `core_utils/helpers.py`).** Block
+  classes are resolved once and called directly (no `new_block` dispatch),
+  `TimedeltaArray`/`IntegerArray` are built through `_simple_new`, and
+  `RangeIndex`/`BlockPlacement` objects are shared between frames. Per-lap
+  decode 80 → 42 ms per 1452 frames; the cold typed assembly uses the same
+  primitives.
+- **GIL-released parallel lz4 decompression (P2, `cache.py`).** Frame-tier
+  blobs are decompressed through pyarrow's lz4 codec (same stored format,
+  releases the GIL, returns a mutable buffer) in a thread pool, and decoded
+  chunk by chunk as they complete: 33 → 10 ms for 1452 blobs on 8 threads,
+  no bytearray copy. python-lz4 stays the serial fallback.
+- **Batched polars tier read (P4, `cache.py`).** The per-driver IPC blobs are
+  read in a thread pool and converted to polars once from the concatenated
+  table (25 → 10 ms for 22 drivers); laps are slices at a global offset.
+- **asyncio-free warm path (P5, `core.py`, `cache.py`, `cdn.py`,
+  `async_fetch.py`).** `asyncio` is imported lazily (23 ms of the import
+  chain, with `ssl` and `concurrent.futures`), laps and telemetry tier hits
+  are served synchronously, and laps the negative-result cache knows are
+  missing everywhere do not start the fetch pipeline. A warm `load()` never
+  creates an event loop.
+- **Single-lap telemetry from the frame tier (P6, `core.py`).**
+  `lap.get_telemetry()` / `lap.telemetry` read the driver's frame-tier row
+  before the payload tier and memoize every lap of that driver: the next lap
+  of the same driver 1.1 → 0.2 ms (first touch of a driver 1.6 → 4.3 ms,
+  the cost of decoding the whole row once). Frames are built as `Telemetry`
+  objects directly, so a memo hit no longer pays a shallow manager copy
+  (memo hit 28 → 1 µs); the wrapped object is kept in the memo.
+- **Driver-merged telemetry from the driver row (P10, `models.py`,
+  `Cache.get_driver_merged_frame`).** `laps.pick_driver(x).telemetry` is a
+  slice of the driver's arrays (one slice per run of consecutively stored
+  laps) instead of a concat of 60-80 lap frames: 14 → 5.4 ms for a 76-lap
+  driver, dtypes and values equal to the concat.
+- Measured and rejected: speculative tier prefetch under the pandas import
+  (P7: the import lock and GIL made the overlapped run slower, 0.29-0.36 →
+  0.38-0.65 s), batch orchestration trimming (P8: 2.5 ms left after P5),
+  compact integer encoding of float channels (P9: no telemetry channel is
+  integral — RPM, Speed and Throttle are interpolated floats).
+- Fixed while wiring the tier: `set_telemetry_frames_batch` reported only the
+  per-lap fallback rows when a batch mixed driver rows and fallback rows.
+
 ### Performance — Thebes series (2026-10-15)
 
 Ten hypotheses measured on a 32-core workstation (`.agents/perf-thebes/RESULTS.md`,

@@ -1,6 +1,5 @@
 """Core functionality for tif1."""
 
-import asyncio
 import logging
 import math
 import re
@@ -144,6 +143,8 @@ _NEST_ASYNCIO2_APPLIED = False
 # Helper functions
 def _ensure_nested_loop_support(operation: str) -> None:
     """Apply nest_asyncio2 on demand for sync APIs invoked inside an async loop."""
+    import asyncio  # lazy: only async/network paths need it
+
     global _NEST_ASYNCIO2_APPLIED
 
     try:
@@ -1827,6 +1828,8 @@ class Session:
 
     def _prefetch_driver_lookup_and_laps(self, driver: str) -> dict[str, Any] | None:
         """Fetch drivers and target driver laps concurrently on first driver lookup."""
+        import asyncio  # lazy: only async/network paths need it
+
         if self._drivers is not None:
             return None
         if not bool(config.get("prefetch_driver_laps_on_get_driver", True)):
@@ -2099,6 +2102,8 @@ class Session:
         prefer_session_payload: bool = True,
     ) -> tuple[list[dict[str, Any] | None], list[tuple[str, dict[str, Any]]]]:
         """Fetch laptime payloads using session-wide data first, with per-driver fallback."""
+        import asyncio  # lazy: only async/network paths need it
+
         if not driver_requests:
             return [], []
 
@@ -3074,6 +3079,7 @@ class Session:
             >>> # Filter for specific driver
             >>> ver_laps = laps[laps["Driver"] == "VER"]
         """
+
         if self._laps is None:
             cache_key = f"{self.year}_{self.gp}_{self.session}_laps"
             lap_cache = get_backend_lap_cache(self.lib) if self.enable_cache else None
@@ -3084,9 +3090,17 @@ class Session:
                     self._laps = cached_laps
                     return self._laps
 
-            logger.info(f"Loading laps async ({self.lib}): {cache_key}")
-            _ensure_nested_loop_support("laps property")
-            self._laps = self._as_session_laps(asyncio.run(self.laps_async()))
+            # Pergamon P5: a laps frame-tier hit needs no event loop (and no
+            # asyncio import) — only loads that must fetch go async.
+            tier_frame = self._laps_from_frame_tier()
+            if tier_frame is not None:
+                self._laps = tier_frame
+            else:
+                import asyncio  # lazy: only async/network paths need it
+
+                logger.info(f"Loading laps async ({self.lib}): {cache_key}")
+                _ensure_nested_loop_support("laps property")
+                self._laps = self._as_session_laps(asyncio.run(self.laps_async()))
             if lap_cache is not None:
                 lap_cache.set(cache_key, self._laps)
             self._maybe_start_background_telemetry_prefetch()
@@ -3100,6 +3114,24 @@ class Session:
                 frame = Laps(frame)
             frame.session = self
         return frame
+
+    def _laps_from_frame_tier(self, ultra_cold_enabled: bool | None = None) -> DataFrame | None:
+        """Session-bound laps from the laps frame tier, or None on a miss.
+
+        Laps frame tier (KR-1/KR-10): the processed frame materializes once
+        per backend; warm loads unpickle it instead of re-running the
+        payload read + merge + dtype-processing pipeline (~66 ms pandas /
+        ~29 ms polars on the Monaco corpus).
+        """
+        if ultra_cold_enabled is None:
+            ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
+        if not self.enable_cache or ultra_cold_enabled:
+            return None
+        cached_frame = get_cache().get_laps_frame(self.year, self.gp, self.session, lib=self.lib)
+        if cached_frame is None:
+            return None
+        logger.info("Laps frame tier hit: %s/%s/%s", self.year, self.gp, self.session)
+        return self._as_session_laps(cached_frame)
 
     async def laps_async(self) -> DataFrame:
         """Get all laps data asynchronously (faster for multiple drivers).
@@ -3122,18 +3154,10 @@ class Session:
             return self._laps
 
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
-        # Laps frame tier (KR-1/KR-10): the processed frame materializes once
-        # per backend; warm loads unpickle it instead of re-running the
-        # payload read + merge + dtype-processing pipeline (~66 ms pandas /
-        # ~29 ms polars on the Monaco corpus).
-        if self.enable_cache and not ultra_cold_enabled:
-            cached_frame = get_cache().get_laps_frame(
-                self.year, self.gp, self.session, lib=self.lib
-            )
-            if cached_frame is not None:
-                logger.info("Laps frame tier hit: %s/%s/%s", self.year, self.gp, self.session)
-                self._laps = self._as_session_laps(cached_frame)
-                return self._laps
+        tier_frame = self._laps_from_frame_tier(ultra_cold_enabled)
+        if tier_frame is not None:
+            self._laps = tier_frame
+            return self._laps
 
         # Thebes TH6: every session table the laps build needs (drivers,
         # session laptimes, and weather/rcm when requested) is fetched in ONE
@@ -3705,6 +3729,8 @@ class Session:
 
     def _prefetch_all_loaded_laps_telemetry(self, *, ultra_cold: bool) -> None:
         """Bulk-fetch telemetry for all loaded laps on first per-lap telemetry request."""
+        import asyncio  # lazy: only async/network paths need it
+
         if not bool(config.get("prefetch_all_telemetry_on_first_lap_request", True)):
             return
         if self._telemetry_bulk_prefetch_done:
@@ -4088,6 +4114,8 @@ class Session:
             1  0.124s   299.1      0.87
             ...
         """
+        import asyncio  # lazy: only async/network paths need it
+
         _validate_drivers_list(drivers)
         requested_ultra_cold = self._resolve_ultra_cold_mode(None)
         auto_ultra_cold = (
@@ -4319,6 +4347,16 @@ class Session:
         # longer ultra-cold-gated), so no explicit cache write here.
         return tel_payload
 
+    def _telemetry_frame_class(self) -> Any:
+        """DataFrame subclass the frame tier builds for this backend (pandas: Telemetry)."""
+        return Telemetry if self.lib == "pandas" else None
+
+    def _adopt_telemetry_frame(self, frame: Any, driver: str) -> None:
+        """Attach this session to a tier-built ``Telemetry`` frame (no-op otherwise)."""
+        if isinstance(frame, Telemetry):
+            object.__setattr__(frame, "session", self)
+            object.__setattr__(frame, "driver", driver)
+
     def _get_telemetry_df_for_ref(
         self, driver: str, lap_num: int, *, ultra_cold: bool, allow_prefetch: bool = True
     ) -> DataFrame:
@@ -4327,18 +4365,52 @@ class Session:
         def _as_pandas_telemetry(frame: DataFrame) -> DataFrame:
             if self.lib != "pandas":
                 return frame
+            # object.__setattr__: both names are Telemetry._metadata, and
+            # pandas' __setattr__ costs ~15 us per assignment on this path.
             if isinstance(frame, Telemetry):
-                frame.session = self
-                frame.driver = driver
+                object.__setattr__(frame, "session", self)
+                object.__setattr__(frame, "driver", driver)
                 return frame
             telemetry = Telemetry(cast(pd.DataFrame, frame), copy=False)
-            telemetry.session = self
-            telemetry.driver = driver
+            object.__setattr__(telemetry, "session", self)
+            object.__setattr__(telemetry, "driver", driver)
             return telemetry
 
         cached_df = self._memo.get("telemetry_df", (driver, lap_num))
         if cached_df is not None:
-            return _as_pandas_telemetry(cached_df)
+            wrapped = _as_pandas_telemetry(cached_df)
+            if wrapped is not cached_df:
+                # Wrapping costs a shallow manager copy; keep the wrapped
+                # object so repeat accesses of this lap are a memo hit.
+                self._memo.set("telemetry_df", (driver, lap_num), wrapped)
+            return wrapped
+
+        # Pergamon P6: a single lap is served from the materialized frame
+        # tier before the payload tier (0.8 ms of SQL + orjson + assembly
+        # per lap otherwise). The driver's row is decoded as a whole, so
+        # every other lap of that driver is memoized in the same read.
+        tier_read = (
+            getattr(get_cache(), "get_telemetry_frames_batch", None)
+            if not ultra_cold and self.enable_cache and self._session_cache_available()
+            else None
+        )
+        if callable(tier_read):
+            tier_hits = tier_read(
+                self.year,
+                self.gp,
+                self.session,
+                [(driver, lap_num)],
+                lib=self.lib,
+                whole_driver=True,
+                frame_class=self._telemetry_frame_class(),
+            )
+            for ref, frame in tier_hits.items():
+                if self._memo.get("telemetry_df", ref) is None:
+                    self._adopt_telemetry_frame(frame, ref[0])
+                    self._memo.set("telemetry_df", ref, frame)
+            tier_frame = tier_hits.get((driver, lap_num))
+            if tier_frame is not None:
+                return _as_pandas_telemetry(tier_frame)
 
         tel_payload = self._get_telemetry_payload_for_ref(
             driver, lap_num, ultra_cold=ultra_cold, allow_prefetch=allow_prefetch
@@ -4483,6 +4555,70 @@ class Session:
         self._fastest_lap_tel_df = tel_df
         return tel_df
 
+    def _telemetry_lap_refs(self, laps: DataFrame) -> list[tuple[str, int]]:
+        """``(driver, lap_number)`` references of every lap row, in row order."""
+        lap_refs: list[tuple[str, int]] = []
+        if self.lib == "polars":
+            laps_pl = cast(Any, laps)
+            for row in laps_pl.iter_rows(named=True):
+                driver = row.get("Driver")
+                lap_num = row.get("LapNumber")
+                if driver and lap_num is not None:
+                    lap_refs.append((str(driver), int(lap_num)))
+        else:
+            # Vectorized extraction: iterrows over ~1500 rows costs ~200 ms.
+            refs_frame = cast(pd.DataFrame, laps)[[COL_DRIVER, COL_LAP_NUMBER]].dropna()
+            lap_refs.extend(
+                zip(
+                    refs_frame[COL_DRIVER].astype(str),
+                    refs_frame[COL_LAP_NUMBER].astype(int),
+                )
+            )
+        return lap_refs
+
+    def _memoized_telemetry(
+        self, lap_refs: list[tuple[str, int]], ultra_cold_enabled: bool
+    ) -> tuple[dict[tuple[str, int], DataFrame], list[tuple[str, int]]]:
+        """Frames already available without the network: ``(frames, pending refs)``.
+
+        Frames memoized earlier in this Session (built by a previous
+        fetch_all call or the per-lap telemetry path) are reused as-is, then
+        the materialized-frame tier serves the rest of a warm load: those
+        refs skip the payload read, decompress, parse and frame
+        construction. Frames are only written from payload-tier hits, so
+        cold fetches never pay for this tier. Both backends keep their own
+        frame table (Rhodes R4); a pandas session never reads polars rows
+        and vice versa.
+        """
+        telemetry_map: dict[tuple[str, int], DataFrame] = {}
+        pending_refs: list[tuple[str, int]] = []
+        for ref in lap_refs:
+            memoized_df = self._memo.get("telemetry_df", ref)
+            if memoized_df is not None:
+                telemetry_map[ref] = memoized_df
+            else:
+                pending_refs.append(ref)
+        if (
+            pending_refs
+            and not ultra_cold_enabled
+            and self.enable_cache
+            and self._session_cache_available()
+        ):
+            frame_hits = get_cache().get_telemetry_frames_batch(
+                self.year,
+                self.gp,
+                self.session,
+                pending_refs,
+                lib=self.lib,
+                frame_class=self._telemetry_frame_class(),
+            )
+            for ref, frame in frame_hits.items():
+                self._adopt_telemetry_frame(frame, ref[0])
+                self._memo.set("telemetry_df", ref, frame)
+                telemetry_map[ref] = frame
+            pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
+        return telemetry_map, pending_refs
+
     async def fetch_all_laps_telemetry_async(
         self, *, ultra_cold: bool | None = None
     ) -> dict[tuple[str, int], DataFrame]:
@@ -4511,60 +4647,10 @@ class Session:
         if _is_empty_df(laps, self.lib):
             return {}
 
-        # Extract all (driver, lap_number) references
-        lap_refs: list[tuple[str, int]] = []
-        if self.lib == "polars":
-            laps_pl = cast(Any, laps)
-            for row in laps_pl.iter_rows(named=True):
-                driver = row.get("Driver")
-                lap_num = row.get("LapNumber")
-                if driver and lap_num is not None:
-                    lap_refs.append((str(driver), int(lap_num)))
-        else:
-            # Vectorized extraction: iterrows over ~1500 rows costs ~200 ms.
-            refs_frame = cast(pd.DataFrame, laps)[[COL_DRIVER, COL_LAP_NUMBER]].dropna()
-            lap_refs.extend(
-                zip(
-                    refs_frame[COL_DRIVER].astype(str),
-                    refs_frame[COL_LAP_NUMBER].astype(int),
-                )
-            )
-
+        lap_refs = self._telemetry_lap_refs(laps)
         if not lap_refs:
             return {}
-
-        # Frames memoized earlier in this Session (built by a previous
-        # fetch_all call or the per-lap telemetry path) are reused as-is:
-        # a repeat fetch_all_laps_telemetry() call then skips the payload
-        # reads and the per-frame DataFrame construction entirely.
-        telemetry_map: dict[tuple[str, int], DataFrame] = {}
-        pending_refs: list[tuple[str, int]] = []
-        for ref in lap_refs:
-            memoized_df = self._memo.get("telemetry_df", ref)
-            if memoized_df is not None:
-                telemetry_map[ref] = memoized_df
-            else:
-                pending_refs.append(ref)
-
-        # Materialized-frame tier (warm loads): refs with a stored assembled
-        # frame skip the payload read, decompress, parse and frame
-        # construction. Frames are only written from payload-tier hits, so
-        # cold fetches never pay for this tier. Both backends keep their own
-        # frame table (Rhodes R4); a pandas session never reads polars rows
-        # and vice versa.
-        if (
-            pending_refs
-            and not ultra_cold_enabled
-            and self.enable_cache
-            and self._session_cache_available()
-        ):
-            frame_hits = get_cache().get_telemetry_frames_batch(
-                self.year, self.gp, self.session, pending_refs, lib=self.lib
-            )
-            for ref, frame in frame_hits.items():
-                self._memo.set("telemetry_df", ref, frame)
-                telemetry_map[ref] = frame
-            pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
+        telemetry_map, pending_refs = self._memoized_telemetry(lap_refs, ultra_cold_enabled)
 
         # Fetch telemetry in batch
         requests, lap_info, cached_tels = await self._fetch_telemetry_batch_from_refs_async(
@@ -4662,7 +4748,41 @@ class Session:
             >>> telemetry_map = session.fetch_all_laps_telemetry()
             >>> ver_lap_1 = telemetry_map.get(("VER", 1))
         """
+        # Pergamon P5: a warm load (every frame memoized or in the frame
+        # tier) is served synchronously — no event loop, no asyncio import.
+        ultra_cold_enabled = self._resolve_telemetry_ultra_cold_mode(ultra_cold)
+        laps = self.laps
+        if _is_empty_df(laps, self.lib):
+            return {}
+        lap_refs = self._telemetry_lap_refs(laps)
+        if not lap_refs:
+            return {}
+        telemetry_map, pending_refs = self._memoized_telemetry(lap_refs, ultra_cold_enabled)
+        if not pending_refs or self._all_known_missing(pending_refs):
+            return telemetry_map
+
+        import asyncio  # lazy: only async/network paths need it
+
         return asyncio.run(self.fetch_all_laps_telemetry_async(ultra_cold=ultra_cold))
+
+    def _all_known_missing(self, refs: list[tuple[str, int]]) -> bool:
+        """True when every ref is a payload the negative-result cache knows is missing.
+
+        Sessions routinely list a few laps whose telemetry file exists on no
+        CDN (recorded by the L2 verdict tier); a warm load must not spin up
+        the async fetch pipeline just to re-confirm them.
+        """
+        if not self.enable_cache or len(refs) > 64:
+            return False
+        try:
+            cache = get_cache()
+            loader = self._payload_loader
+            return all(
+                cache.is_known_missing(loader.cache_key(f"{driver}/{int(lap)}_tel.json"))
+                for driver, lap in refs
+            )
+        except Exception:
+            return False
 
 
 SESSION_MAPPING = {

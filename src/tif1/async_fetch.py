@@ -1,6 +1,5 @@
 """Async functionality for parallel data fetching."""
 
-import asyncio
 import atexit
 import logging
 import random
@@ -17,7 +16,7 @@ from .http_session import close_session as close_http_session
 from .http_session import get_session as get_http_session
 
 if TYPE_CHECKING:
-    pass
+    import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -360,7 +359,7 @@ def _flush_telemetry_writes(cache: Any, entries: list[tuple[Any, ...]]) -> None:
 async def fetch_with_rate_limit(
     coro_func,
     *args,
-    semaphore: asyncio.Semaphore | None = None,
+    semaphore: "asyncio.Semaphore | None" = None,
     **kwargs,
 ):
     """Execute async function with rate limiting using semaphore.
@@ -389,6 +388,8 @@ async def fetch_with_rate_limit(
         ...     semaphore=semaphore
         ... )
     """
+    import asyncio  # lazy: only async/network paths need it
+
     if semaphore is None:
         from .config import get_config
 
@@ -433,6 +434,8 @@ async def fetch_json_async(
         DataNotFoundError: If data doesn't exist
         InvalidDataError: If data is corrupted
     """
+    import asyncio  # lazy: only async/network paths need it
+
     from .config import get_config
 
     config = get_config()
@@ -496,6 +499,8 @@ async def fetch_json_async(
         Retry/backoff policy across attempts stays here (circuit breaker,
         pool-exhaustion backoff).
         """
+        import asyncio  # lazy: only async/network paths need it
+
         try:
             response = await loop.run_in_executor(
                 executor, partial(_get_resolved, session_client, url, timeout)
@@ -778,6 +783,8 @@ async def _gather_fetches(
     max_concurrent: int,
 ) -> list[Any]:
     """Gather per-request fetches under the concurrency cap."""
+    import asyncio  # lazy: only async/network paths need it
+
     if max_concurrent < len(requests):
         semaphore = asyncio.Semaphore(max_concurrent)
 

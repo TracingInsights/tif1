@@ -1,0 +1,13 @@
+{
+ "protocol": "tools/pergamon_idioms_bench.py, fresh process per run, control = /tmp/tif1-control/src on /tmp/tif1-warm-cache, candidate = working tree on /tmp/tif1-warm-p3, 5 interleaved pairs; candidate re-run x3 after the single-row pyarrow decode",
+ "control_ms": {"first_lap": [1.61, 1.66, 1.68, 1.77, 1.63], "next_lap_same_driver": [1.17, 1.10, 1.16, 1.12, 1.14], "driver_merged": [14.3, 13.78, 13.91, 13.85, 13.5], "fifty_laps": [8.6, 8.69, 8.54, 8.42, 8.6]},
+ "candidate_ms": {"first_lap": [5.42, 5.42, 5.39, 5.43, 5.61], "next_lap_same_driver": [0.22, 0.23, 0.21, 0.22, 0.26], "driver_merged": [5.12, 5.2, 5.24, 5.41, 5.4], "fifty_laps": [6.66, 6.53, 6.51, 6.46, 6.57]},
+ "candidate_final_ms": {"first_lap": [4.3, 4.61, 4.34], "next_lap_same_driver": [0.25, 0.28, 0.23], "driver_merged": [5.98, 5.64, 5.41], "fifty_laps": [6.93, 6.73, 6.59]},
+ "legacy_read_ab_ms": {
+  "protocol": "tools/pergamon_legacy_read_bench.py, fresh process per run; control reads the original pickled per-lap rows (copy of ~/.cache/tif1), candidate reads the upgraded driver rows (/tmp/tif1-legacy)",
+  "2018 Monaco Race (1516 frames)": {"control": [266.6, 268.3, 261.2], "candidate": [92.4, 92.4, 80.2]},
+  "2024 Monaco Race (1237 frames)": {"control": [236.6, 239.9, 237.2], "candidate": [76.7, 77.6, 81.3]},
+  "2025 British Race (826 frames)": {"control": [165.8, 160.8, 160.2], "candidate": [59.4, 55.4, 56.0]}
+ },
+ "write_cost_ms": {"protocol": "set_telemetry_frames_batch of the 1452 decoded Monaco frames into an empty cache, in-process", "control": {"ms": 237, "db_mb": 27.1}, "candidate": {"ms": 141, "db_mb": 23.3}, "partial_rewrite_10_frames": {"control_ms": 1.8, "candidate_ms": 11.4}}
+}
