@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from tif1.config import get_config
+from tif1.core_utils.runtime import import_supported_polars
 from tif1.exceptions import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
 from .constants import (
@@ -38,6 +39,7 @@ else:
 
 POLARS_AVAILABLE = False
 
+
 logger = logging.getLogger(__name__)
 
 # Shared global configuration singleton (same instance as tif1.core.config).
@@ -54,13 +56,8 @@ def _ensure_polars_available() -> bool:
     if POLARS_AVAILABLE and pl is not None:
         return True
 
-    try:
-        import polars as pl
-
-        POLARS_AVAILABLE = True
-    except ImportError:
-        pl = None  # type: ignore[ty:invalid-assignment]
-        POLARS_AVAILABLE = False
+    pl = import_supported_polars()  # type: ignore[ty:invalid-assignment]
+    POLARS_AVAILABLE = pl is not None
     return POLARS_AVAILABLE
 
 

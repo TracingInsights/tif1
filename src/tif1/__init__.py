@@ -7,6 +7,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 from .exceptions import (
+    AsyncRequiredError,
     CacheError,
     CircuitBreakerOpenError,
     DataNotFoundError,
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     import threading
 
 __all__ = [
+    "AsyncRequiredError",
     "BackendType",
     "CircuitInfo",
     "CompoundType",
@@ -68,6 +70,7 @@ __all__ = [
     "plotting",
     "charts",
     "assets",
+    "browser",
     "configure_chart_saving",
     "get_chart_save_config",
     "plot_annotated_speed_trace",
@@ -125,6 +128,7 @@ _LAZY_EXPORTS = {
     "models": ("tif1.models", None),
     "utils": ("tif1.utils", None),
     "assets": ("tif1.assets", None),
+    "browser": ("tif1.browser", None),
     "core": ("tif1.core", None),
     "get_event": ("tif1.events", "get_event"),
     "get_event_by_name": ("tif1.events", "get_event_by_name"),
@@ -239,7 +243,8 @@ def _start_preload() -> "threading.Thread | None":
     import finds them in ``sys.modules`` (or waits on the module lock, which
     costs nothing extra). Non-interactive processes never start the thread.
     """
-    if not _preload_wanted() or "pandas" in sys.modules:
+    # Pyodide (Emscripten) has no threads; the import is paid on first use.
+    if not _preload_wanted() or "pandas" in sys.modules or sys.platform == "emscripten":
         return None
     import threading
 

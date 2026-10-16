@@ -16,6 +16,7 @@ keywords:
 
 - **Python:** 3.11 or higher (3.11 through 3.15 are tested in CI)
 - **OS:** Windows, macOS, or Linux
+- **Browser:** Pyodide 314 or later (JupyterLite, PyScript, marimo). Refer to [Pyodide and the Browser](/concepts/pyodide)
 
 ## Quick Install
 
@@ -59,6 +60,14 @@ keywords:
     from tif1.core_utils.json_utils import NATIVE_TELEMETRY_DECODER_AVAILABLE
     print(NATIVE_TELEMETRY_DECODER_AVAILABLE)
     ```
+  </Step>
+  <Step title="Optional: install in the browser">
+    Pyodide installs `tif1` with micropip. The Pyodide distribution provides the native packages; the `polars` backend is not available there.
+    ```python Pyodide
+    import micropip
+    await micropip.install("tif1")
+    ```
+    Load sessions with `await session.load_async()`. Refer to [Pyodide and the Browser](/concepts/pyodide) for the details.
   </Step>
   <Step title="Verify the installation">
     Run this check to confirm that the installation works:

@@ -45,6 +45,8 @@ keywords:
     laps = session.laps # Fetches automatically
     ```
     ```python fastf1 (Explicit)
+    import fastf1
+
     session = fastf1.get_session(2025, "Monaco", "R")
     session.load()
     laps = session.laps

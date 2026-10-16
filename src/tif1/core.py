@@ -67,6 +67,12 @@ from .core_utils.helpers import (
     _validate_string_param,
     _validate_year,
 )
+from .core_utils.runtime import (
+    IS_EMSCRIPTEN,
+    THREADS_AVAILABLE,
+    import_supported_polars,
+    run_sync_in_browser,
+)
 from .exceptions import (
     DataNotFoundError,
     DriverNotFoundError,
@@ -106,13 +112,8 @@ def _ensure_polars_available() -> bool:
     if POLARS_AVAILABLE is True and pl is not None:
         return True
 
-    try:
-        import polars as pl
-
-        POLARS_AVAILABLE = True
-    except ImportError:
-        pl = None
-        POLARS_AVAILABLE = False
+    pl = import_supported_polars()
+    POLARS_AVAILABLE = pl is not None
     return POLARS_AVAILABLE
 
 
@@ -167,6 +168,34 @@ def _ensure_nested_loop_support(operation: str) -> None:
             f"{operation} cannot run inside an active event loop without nest_asyncio2. "
             "Use async APIs (e.g. laps_async) or install nest-asyncio2."
         ) from e
+
+
+def _async_alternative(operation: str) -> str:
+    """The ``await``-able call that replaces the synchronous ``operation``."""
+    candidate = f"{operation}_async"
+    if callable(getattr(Session, candidate, None)):
+        return f"session.{candidate}()"
+    return "session.laps_async()"
+
+
+def _run_coroutine_sync(factory: Any, operation: str, *, alternative: str | None = None) -> Any:
+    """Run the coroutine ``factory`` builds to completion from synchronous code.
+
+    The one bridge every synchronous entry point uses. Natively it applies the
+    nested-loop shim and ``asyncio.run``s the coroutine. Pyodide cannot block
+    on its browser event loop: there the coroutine runs through JavaScript
+    Promise Integration when the runtime offers it, otherwise
+    :class:`~tif1.exceptions.AsyncRequiredError` names ``alternative``, the
+    async call to await instead.
+    """
+    if IS_EMSCRIPTEN:
+        return run_sync_in_browser(
+            factory, operation, alternative=alternative or _async_alternative(operation)
+        )
+    import asyncio  # lazy: only async/network paths need it
+
+    _ensure_nested_loop_support(operation)
+    return asyncio.run(factory())
 
 
 def _extract_driver_codes(drivers: list[dict] | None) -> set[str]:
@@ -778,8 +807,113 @@ class Session:
             self._load_all_laps_telemetry()
         return self
 
+    async def load_async(self, laps=True, telemetry=True, weather=True, messages=True):
+        """Load session data without blocking: the async twin of :meth:`load`.
+
+        Fetches the same tables as :meth:`load`, through the async pipeline
+        only (one concurrent wave per phase), so it never has to block on the
+        event loop. It is the entry point for runtimes whose synchronous API
+        cannot wait on the network, such as Pyodide in a browser without
+        JavaScript Promise Integration, and for callers already inside an
+        event loop.
+
+        Args:
+            laps: Fetch laps data (forced on when ``telemetry`` is requested).
+            telemetry: Fetch telemetry for all laps.
+            weather: Fetch weather data.
+            messages: Fetch race control messages.
+
+        Returns:
+            self: The Session object for method chaining.
+
+        Example:
+            >>> session = get_session(2025, "Silverstone Grand Prix", "Race")
+            >>> await session.load_async(telemetry=False)
+            >>> session.laps.head()
+        """
+        if telemetry and not laps:
+            laps = True
+
+        if weather:
+            self._requested_session_tables.add("weather.json")
+        if messages:
+            self._requested_session_tables.add("rcm.json")
+
+        if laps:
+            await self.laps_async()
+        if weather or messages:
+            # Tables the laps wave did not bring (laps served from the frame
+            # tier, or laps=False) arrive in one more wave; the properties
+            # below are then memo hits.
+            await self._prefetch_session_tables_async()
+        if weather:
+            _ = self.weather
+        if messages:
+            _ = self.race_control_messages
+        if telemetry:
+            await self._load_all_laps_telemetry_async()
+        return self
+
+    async def _prefetch_session_tables_async(self) -> None:
+        """Fetch the requested session tables still missing from the memo (``load_async``).
+
+        The async twin of :meth:`_prefetch_session_tables`: weather, race
+        control and drivers go out in one concurrent wave through
+        :func:`fetch_multiple_async`, so the table properties that follow are
+        memo hits. Nothing is fetched when the laps wave already brought them.
+        """
+        paths: list[str] = []
+        for table, attr in (("weather.json", "_weather"), ("rcm.json", "_race_control_messages")):
+            if (
+                table in self._requested_session_tables
+                and self._get_local_payload(table) is None
+                and getattr(self, attr) is None
+            ):
+                paths.append(table)
+        if self._get_local_payload("drivers.json") is None and self._drivers is None:
+            paths.append("drivers.json")
+        if not paths or config.get("offline_mode", False):
+            return
+
+        ultra_cold = self._resolve_ultra_cold_mode(None)
+        use_cache = self.enable_cache and not ultra_cold and self._session_cache_available()
+        requests = [(self.year, self.gp, self.session, path) for path in paths]
+        try:
+            try:
+                results = await fetch_multiple_async(
+                    requests,
+                    use_cache=use_cache,
+                    write_cache=self.enable_cache,
+                    validate_payload=not ultra_cold,
+                )
+            except TypeError as e:
+                if "unexpected keyword argument" not in str(e):
+                    raise
+                results = await fetch_multiple_async(requests)
+        except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+            logger.debug("Session table prefetch skipped: %s", e)
+            return
+
+        for path, result in zip(paths, results):
+            if not isinstance(result, dict) or not result:
+                continue
+            if path == "drivers.json" and not isinstance(result.get("drivers"), list):
+                continue  # not a driver list: leave it to the validated loader
+            self._remember_local_payload(path, result)
+        self._session_tables_prefetched = True
+
     def _load_all_laps_telemetry(self) -> None:
-        """Make every lap's telemetry available without the network (``load()``).
+        """Make every lap's telemetry available without the network (``load()``)."""
+        if self._telemetry_load_pending():
+            self.fetch_all_laps_telemetry()
+
+    async def _load_all_laps_telemetry_async(self) -> None:
+        """Async twin of :meth:`_load_all_laps_telemetry` (``load_async()``)."""
+        if self._telemetry_load_pending():
+            await self.fetch_all_laps_telemetry_async()
+
+    def _telemetry_load_pending(self) -> bool:
+        """Whether ``load()`` still needs the eager telemetry batch.
 
         Pergamon Q1: a warm pandas load reads and decodes the driver rows of
         the frame tier but leaves the per-lap frame construction (~11 us
@@ -797,10 +931,10 @@ class Session:
         ):
             laps = self.laps
             if _is_empty_df(laps, self.lib):
-                return
+                return False
             lap_refs = self._telemetry_lap_refs(laps)
             if not lap_refs:
-                return
+                return False
             memo = self._memo
             pending = [ref for ref in lap_refs if not memo.contains("telemetry_df", ref)]
             if pending:
@@ -817,8 +951,8 @@ class Session:
                         memo.add_telemetry_source(driver, source)
                     pending = [ref for ref in pending if not memo.contains("telemetry_df", ref)]
             if not pending or self._all_known_missing(pending):
-                return
-        self.fetch_all_laps_telemetry()
+                return False
+        return True
 
     def _get_local_payload(self, path: str) -> dict[str, Any] | None:
         """Get in-memory payload previously fetched during this session."""
@@ -900,6 +1034,11 @@ class Session:
             paths_to_fetch = still_to_fetch
 
         if not paths_to_fetch:
+            return
+        if not THREADS_AVAILABLE:
+            # Pyodide: no thread pool and no niquests. load_async() fetches
+            # these tables in its wave; a table property reached without it
+            # fetches its own file through the browser transport.
             return
 
         import niquests as _nq
@@ -1142,6 +1281,9 @@ class Session:
             except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 logger.debug("Background cache fill skipped: %s", e)
 
+        if not THREADS_AVAILABLE:
+            _worker()
+            return
         threading.Thread(target=_worker, name="tif1-ultra-cold-cache-fill", daemon=True).start()
 
     def _delegate_loader_fetch(self, path: str, *, fast: bool) -> dict[str, Any]:
@@ -2261,16 +2403,15 @@ class Session:
         operation: str, requests: list[tuple[int, str, str, str]], **fetch_kwargs: Any
     ) -> list[Any]:
         """Run ``fetch_multiple_async`` to completion from synchronous code."""
-        import asyncio  # lazy: only async/network paths need it
-
-        _ensure_nested_loop_support(operation)
         try:
-            return asyncio.run(fetch_multiple_async(requests, **fetch_kwargs))
+            return _run_coroutine_sync(
+                lambda: fetch_multiple_async(requests, **fetch_kwargs), operation
+            )
         except TypeError as e:
             # Some tests monkeypatch fetch_multiple_async with a simplified signature.
             if "unexpected keyword argument" not in str(e):
                 raise
-            return asyncio.run(fetch_multiple_async(requests))
+            return _run_coroutine_sync(lambda: fetch_multiple_async(requests), operation)
 
     def _fetch_laptime_payloads(
         self,
@@ -3337,11 +3478,12 @@ class Session:
             if tier_frame is not None:
                 self._laps = tier_frame
             else:
-                import asyncio  # lazy: only async/network paths need it
-
                 logger.info(f"Loading laps async ({self.lib}): {cache_key}")
-                _ensure_nested_loop_support("laps property")
-                self._laps = self._as_session_laps(asyncio.run(self.laps_async()))
+                self._laps = self._as_session_laps(
+                    _run_coroutine_sync(
+                        self.laps_async, "laps property", alternative="session.laps_async()"
+                    )
+                )
             if lap_cache is not None:
                 lap_cache.set(cache_key, self._unbound_laps(self._laps))
             self._maybe_start_background_telemetry_prefetch()
@@ -3994,8 +4136,6 @@ class Session:
 
     def _prefetch_all_loaded_laps_telemetry(self, *, ultra_cold: bool) -> None:
         """Bulk-fetch telemetry for all loaded laps on first per-lap telemetry request."""
-        import asyncio  # lazy: only async/network paths need it
-
         if not bool(config.get("prefetch_all_telemetry_on_first_lap_request", True)):
             return
         if self._telemetry_bulk_prefetch_done:
@@ -4015,8 +4155,6 @@ class Session:
 
         requests, lap_info, _ = self._fetch_telemetry_batch_from_refs(refs, skip_cache=ultra_cold)
         if requests:
-            _ensure_nested_loop_support("bulk telemetry prefetch")
-
             max_retries = (
                 1 if (ultra_cold and config.get("ultra_cold_skip_retries", True)) else None
             )
@@ -4025,15 +4163,17 @@ class Session:
                 config.get("telemetry_prefetch_max_concurrent_requests", 128),
             )
             try:
-                results = asyncio.run(
-                    fetch_multiple_async(
+                results = _run_coroutine_sync(
+                    lambda: fetch_multiple_async(
                         requests,
                         use_cache=not ultra_cold,
                         write_cache=False,
                         validate_payload=not ultra_cold,
                         max_retries=max_retries,
                         max_concurrent_requests=max_concurrent,
-                    )
+                    ),
+                    "bulk telemetry prefetch",
+                    alternative="session.fetch_all_laps_telemetry_async()",
                 )
                 self._memoize_prefetched_telemetry_payloads(
                     lap_info,
@@ -4124,6 +4264,9 @@ class Session:
         if self._laps is None or _is_empty_df(self._laps, self.lib):
             return
         if self._telemetry_bulk_prefetch_done or self._telemetry_bulk_prefetch_attempted:
+            return
+        if not THREADS_AVAILABLE:
+            logger.debug("Background telemetry prefetch skipped: no threads in this runtime")
             return
 
         self._telemetry_background_prefetch_started = True
@@ -4424,28 +4567,30 @@ class Session:
             )
 
         if requests:
-            import asyncio  # lazy: only async/network paths need it
-
             try:
-                _ensure_nested_loop_support("get_fastest_laps_tels")
                 if ultra_cold_enabled:
                     max_retries = 1 if config.get("ultra_cold_skip_retries", True) else None
                     try:
-                        results = asyncio.run(
-                            fetch_multiple_async(
+                        results = _run_coroutine_sync(
+                            lambda: fetch_multiple_async(
                                 requests,
                                 use_cache=False,
                                 write_cache=self.enable_cache,
                                 validate_payload=False,
                                 max_retries=max_retries,
-                            )
+                            ),
+                            "get_fastest_laps_tels",
                         )
                     except TypeError as e:
                         if "unexpected keyword argument" not in str(e):
                             raise
-                        results = asyncio.run(fetch_multiple_async(requests))
+                        results = _run_coroutine_sync(
+                            lambda: fetch_multiple_async(requests), "get_fastest_laps_tels"
+                        )
                 else:
-                    results = asyncio.run(fetch_multiple_async(requests))
+                    results = _run_coroutine_sync(
+                        lambda: fetch_multiple_async(requests), "get_fastest_laps_tels"
+                    )
                 tels = self._process_telemetry_results(
                     results,
                     lap_info,
@@ -5090,13 +5235,13 @@ class Session:
         if not missing_refs or self._all_known_missing(missing_refs):
             return telemetry_map
 
-        import asyncio  # lazy: only async/network paths need it
-
         # Q16: since laps can come from the frame tier without an event loop,
         # nothing has applied nest_asyncio2 yet when this runs in a Jupyter
-        # cell (a running loop) — without it ``asyncio.run`` raises there.
-        _ensure_nested_loop_support("fetch_all_laps_telemetry")
-        return asyncio.run(self.fetch_all_laps_telemetry_async(ultra_cold=ultra_cold))
+        # cell (a running loop) — the bridge applies it before ``asyncio.run``.
+        return _run_coroutine_sync(
+            lambda: self.fetch_all_laps_telemetry_async(ultra_cold=ultra_cold),
+            "fetch_all_laps_telemetry",
+        )
 
     def _all_known_missing(self, refs: list[tuple[str, int]]) -> bool:
         """True when every ref is a payload the negative-result cache knows is missing.
@@ -5278,6 +5423,8 @@ def _preconnect_cdn(session: Session) -> None:
     offline/CI mode or when ``cdn_preconnect`` is off.
     """
     global _preconnect_started
+    if not THREADS_AVAILABLE:
+        return
     if (
         _preconnect_started
         or not bool(config.get("cdn_preconnect", True))

@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import wraps
 from typing import TypeVar
 
+from .core_utils.runtime import IS_EMSCRIPTEN, can_block_on_awaitables
 from .exceptions import CircuitBreakerOpenError, DataNotFoundError, InvalidDataError, NetworkError
 
 logger = logging.getLogger(__name__)
@@ -241,7 +242,10 @@ def retry_with_backoff(
                         backoff *= 0.5 + random.random()
 
                     logger.warning(f"Retry {attempt + 1}/{attempts} after {backoff:.2f}s: {e}")
-                    time.sleep(backoff)
+                    # A browser main thread without JSPI cannot sleep without
+                    # freezing the page; retry immediately there.
+                    if not IS_EMSCRIPTEN or can_block_on_awaitables():
+                        time.sleep(backoff)
 
             if last_exception is not None:
                 raise last_exception

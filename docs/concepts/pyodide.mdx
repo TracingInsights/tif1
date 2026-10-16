@@ -1,0 +1,130 @@
+---
+title: "Pyodide and the Browser"
+icon: "globe"
+description: "Run tif1 in the browser with Pyodide: install with micropip, load sessions with load_async, keep the cache in IndexedDB"
+keywords:
+  - "tif1"
+  - "Pyodide"
+  - "WebAssembly"
+  - "JupyterLite"
+  - "PyScript"
+  - "marimo"
+  - "browser"
+  - "micropip"
+---
+
+`tif1` runs inside Pyodide, the CPython build for WebAssembly behind JupyterLite, PyScript, and marimo. The browser fetches the data, and the SQLite cache lives in the memory of the page. `await session.load_async()` loads a session through the same concurrent pipeline as a native install.
+
+## Overview
+
+A browser runtime differs from a native interpreter in three ways. `tif1` detects Pyodide at import time (`sys.platform == "emscripten"`) and adapts to each one:
+
+| Native interpreter | Pyodide | What `tif1` does |
+| :--- | :--- | :--- |
+| Sockets and HTTP/2 through niquests | Browser `fetch` and `XMLHttpRequest` only | `tif1.browser.PyodideTransport` fetches through the browser |
+| Thread pools for fetches and cache writes | No threads | Each background thread runs inline or is skipped |
+| `asyncio.run()` blocks the caller | One event loop that cannot block | The synchronous API uses JavaScript Promise Integration when the runtime has it |
+
+---
+
+## Installation
+
+Install `tif1` with micropip. The Pyodide distribution provides pandas, numpy, pyarrow, orjson, pydantic, matplotlib, scipy, and urllib3. micropip downloads the pure Python packages from PyPI.
+
+<CodeGroup>
+```python Pyodide console
+import micropip
+await micropip.install("tif1")
+```
+```text JupyterLite
+%pip install tif1
+```
+```toml PyScript
+# pyscript.toml
+packages = ["tif1"]
+```
+</CodeGroup>
+
+The `polars` backend, `rapidfuzz`, and `niquests` have no WebAssembly build, so micropip does not install them. Sessions use the pandas backend. Event-name resolution uses a pure Python matcher that gives the same scores as rapidfuzz.
+
+---
+
+## Loading a Session
+
+`get_session()` works as on a native install. Load the data with `load_async()`, the async twin of `load()`. It fetches the session tables in one concurrent wave per phase through the `fetch` API of the browser.
+
+```python Pyodide
+import tif1
+session = tif1.get_session(2025, "Bahrain", "R")
+await session.load_async(telemetry=False)
+laps = session.laps
+weather = session.weather
+```
+
+The other async methods work the same way: `laps_async()`, `get_fastest_laps_async()`, `get_fastest_laps_tels_async()`, `get_fastest_lap_tel_async()`, `fetch_driver_laps_parallel()`, and `fetch_all_laps_telemetry_async()`. Data in the session memo or in the cache is served synchronously. After `load_async()`, `session.laps` needs no event loop.
+
+### The Synchronous API and JSPI
+
+`session.load()` and the lazy properties block until the data arrives. In the browser they can only block when the runtime has JavaScript Promise Integration (JSPI) and the code was entered through `runPythonAsync` or a notebook cell. Chrome 137 and later enable JSPI by default. Firefox keeps it behind the `javascript.options.wasm_js_promise_integration` flag. Node 24 needs `--experimental-wasm-jspi`.
+
+Without JSPI, the synchronous entry points raise `AsyncRequiredError`. The message names the coroutine to await instead:
+
+```text
+AsyncRequiredError: `laps property` cannot block on network fetches in this runtime
+(no JavaScript Promise Integration); use `await session.laps_async()` instead
+```
+
+`tif1` recommends `load_async()` in browser code. It works in each browser and keeps the page responsive.
+
+---
+
+## Network
+
+All requests go through the browser, so the CORS policy of each CDN applies. jsDelivr, the Hugging Face bucket, and StaticDelivr answer with `Access-Control-Allow-Origin` headers. The live schedule source on GitHub does the same. A mirror that the page cannot reach counts as a failed source, and `tif1` tries the next CDN.
+
+Timeouts, retries, and the circuit breaker work as on a native install. The browser owns redirects, compression, and TLS. The HTTP/2, DNS resolver, and connection pool settings have no effect.
+
+---
+
+## Cache
+
+The SQLite cache opens in the Emscripten file system of the page (`~/.tif1`) with an in-memory rollback journal. The memory of the page is lost on reload. To keep the cache across reloads, mount the cache directory on IndexedDB before the first `get_session()`. Write it back after the loads that must survive:
+
+```python Pyodide
+import tif1
+from tif1.browser import enable_persistent_cache, persist_cache
+await enable_persistent_cache()
+session = tif1.get_session(2025, "Bahrain", "R")
+await session.load_async(telemetry=False)
+await persist_cache()
+```
+
+Browsers never run `atexit` hooks, so `persist_cache()` is the only point where the cache reaches IndexedDB. After a reload, `enable_persistent_cache()` loads the stored cache before the first session.
+
+---
+
+## Limitations
+
+- The `polars` backend is not available. `lib="polars"` falls back to pandas with a warning.
+- The `tif1` command line tool does not run in the browser.
+- Streaming responses, HTTP/2 multiplexing, DNS-over-HTTPS resolvers, and connection statistics belong to the browser and are not configurable.
+- `tif1.plotting.load_custom_font()` needs a font URL with CORS headers.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Browser API" icon="code" href="/api-reference/browser">
+    `PyodideTransport`, `enable_persistent_cache()`, and `persist_cache()`.
+  </Card>
+  <Card title="Jupyter Integration" icon="book-open" href="/concepts/jupyter">
+    HTML cards for sessions, drivers, and laps in notebook front ends.
+  </Card>
+  <Card title="Caching Strategy" icon="database" href="/concepts/caching-strategy">
+    The cache tiers behind each load.
+  </Card>
+  <Card title="Exceptions" icon="triangle-exclamation" href="/api-reference/exceptions">
+    `AsyncRequiredError` and the rest of the hierarchy.
+  </Card>
+</CardGroup>

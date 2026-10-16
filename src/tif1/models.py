@@ -40,6 +40,7 @@ from .core_utils.helpers import (
     _telemetry_frame_from_merged,
     _validate_lap_number,
 )
+from .core_utils.runtime import import_supported_polars
 from .exceptions import (
     DataNotFoundError,
     InvalidDataError,
@@ -65,13 +66,8 @@ def _ensure_polars_available() -> bool:
     if POLARS_AVAILABLE and pl is not None:
         return True
 
-    try:
-        import polars as pl
-
-        POLARS_AVAILABLE = True
-    except ImportError:
-        pl = None  # type: ignore[ty:invalid-assignment]
-        POLARS_AVAILABLE = False
+    pl = import_supported_polars()  # type: ignore[ty:invalid-assignment]
+    POLARS_AVAILABLE = pl is not None
     return POLARS_AVAILABLE
 
 

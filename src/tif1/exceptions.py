@@ -86,6 +86,30 @@ class CacheError(TIF1Error):
     """Raised when cache operations fail."""
 
 
+class AsyncRequiredError(TIF1Error):
+    """Raised when a synchronous API cannot block on its network fetch.
+
+    Inside Pyodide the event loop is the browser's own and synchronous code
+    can only wait on it through JavaScript Promise Integration (JSPI). Without
+    JSPI (Firefox and Safari by default, or code entered through
+    ``runPython`` instead of ``runPythonAsync``) the synchronous entry points
+    (``session.load()``, ``session.laps``) raise this error; the async
+    counterpart named in ``alternative`` works everywhere.
+    """
+
+    def __init__(
+        self, operation: str | None = None, alternative: str | None = None, **context: Any
+    ) -> None:
+        what = f"`{operation}`" if operation else "This operation"
+        message = (
+            f"{what} cannot block on network fetches in this runtime "
+            "(no JavaScript Promise Integration)"
+        )
+        if alternative:
+            message += f"; use `await {alternative}` instead"
+        super().__init__(message, operation=operation, alternative=alternative, **context)
+
+
 class SessionNotLoadedError(TIF1Error):
     """Raised when accessing session data before loading."""
 

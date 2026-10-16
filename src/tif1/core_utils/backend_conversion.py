@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from tif1.core_utils.runtime import import_supported_polars
+
 from .helpers import _ensure_polars_available
 
 if TYPE_CHECKING:
@@ -26,8 +28,7 @@ def _ensure_polars_bound() -> bool:
         return True
     if not _ensure_polars_available():
         return False
-    import polars as pl
-
+    pl = import_supported_polars()
     return pl is not None
 
 

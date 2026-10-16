@@ -48,6 +48,7 @@ from .core_utils.json_utils import (
     json_dumps_bytes,
     json_loads,
 )
+from .core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -179,7 +180,7 @@ def _frame_compress_pool(n_blobs: int) -> Any:
     Only python-lz4 is known to release the GIL here; the zstd fallback
     compresses inline.
     """
-    if n_blobs < 2 or _lz4_frame is None:
+    if n_blobs < 2 or _lz4_frame is None or not THREADS_AVAILABLE:
         return None
     from concurrent.futures import ThreadPoolExecutor
 
@@ -255,6 +256,8 @@ _PER_ROW_TASK_MIN_BYTES = 256 * 1024
 
 
 def _decompress_workers() -> int:
+    if not THREADS_AVAILABLE:
+        return 1
     return min(_PARALLEL_DECOMPRESS_MAX_WORKERS, os.cpu_count() or 1)
 
 
@@ -394,6 +397,8 @@ _PARALLEL_PAYLOAD_CHUNKS_PER_WORKER = 4
 
 def _usable_cpu_count() -> int:
     """CPUs this process may run on (affinity / cgroup aware where possible)."""
+    if not THREADS_AVAILABLE:
+        return 1
     try:
         return len(os.sched_getaffinity(0))
     except (AttributeError, OSError):  # pragma: no cover - non-Linux
@@ -1041,8 +1046,12 @@ class Cache:
                 str(self.db_path), check_same_thread=False, timeout=self._sqlite_timeout
             )
 
-            # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA journal_mode=WAL")
+            # Enable WAL mode for better concurrency. Emscripten's in-memory
+            # file system has no shared-memory mmap for the WAL index, so the
+            # browser build keeps the rollback journal in memory instead.
+            conn.execute(
+                "PRAGMA journal_mode=MEMORY" if IS_EMSCRIPTEN else "PRAGMA journal_mode=WAL"
+            )
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
 
@@ -1170,6 +1179,16 @@ class Cache:
         if force or self._pending_writes >= self._commit_interval:
             self.conn.commit()
             self._pending_writes = 0
+
+    def flush(self) -> None:
+        """Commit every pending write now (batched writes commit every ``cache_commit_interval``).
+
+        ``close()`` commits too; ``flush()`` keeps the connection open, for
+        callers that copy the cache file elsewhere (``tif1.browser.persist_cache``).
+        """
+        _join_frame_writers()
+        with self._sqlite_lock:
+            self._commit_if_needed(force=True)
 
     def _get_from_memory(self, key: str) -> Any | None:
         """Get cache entry from in-memory LRU only (no SQLite access).
@@ -1797,7 +1816,8 @@ class Cache:
                     # encode is GIL-bound and would otherwise interleave with
                     # the remaining frame work of the load that found the
                     # legacy rows (measured +60 ms on the 1452-frame batch).
-                    time.sleep(_LEGACY_UPGRADE_DELAY_S)
+                    if THREADS_AVAILABLE:  # inline (no threads): nothing to yield to
+                        time.sleep(_LEGACY_UPGRADE_DELAY_S)
                     self.set_telemetry_frames_batch(year, gp, session, legacy_hits, lib="pandas")
 
                 register_frame_writer(_upgrade_legacy_rows)
@@ -2173,7 +2193,7 @@ class Cache:
         # worker reads its blob single-threaded: the pool already spreads the
         # drivers over the cores, pyarrow's own per-column pool on top only
         # oversubscribes (and is spun up cold on the first warm read).
-        parallel = len(wanted) >= 4 and (os.cpu_count() or 1) > 1
+        parallel = THREADS_AVAILABLE and len(wanted) >= 4 and (os.cpu_count() or 1) > 1
         read_options = pa_ipc.IpcReadOptions(use_threads=not parallel)
 
         def _read(row: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -2591,7 +2611,15 @@ _frame_writers_lock = threading.Lock()
 
 
 def register_frame_writer(write_fn) -> None:
-    """Start a daemon frame-tier writer thread and register it for joining."""
+    """Start a daemon frame-tier writer thread and register it for joining.
+
+    Without threads (Pyodide) the write runs inline before returning; the
+    callers hold no lock at that point, and the frame tier is complete the
+    moment the load returns.
+    """
+    if not THREADS_AVAILABLE:
+        write_fn()
+        return
     thread = threading.Thread(target=write_fn, name="tif1-frame-write", daemon=True)
     with _frame_writers_lock:
         _frame_writers.append(thread)

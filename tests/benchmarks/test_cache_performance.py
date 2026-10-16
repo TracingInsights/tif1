@@ -228,63 +228,66 @@ class TestLockFreeReadPerformance:
         assert p95_time < 1.0, f"P95 memory read time {p95_time:.3f}ms exceeds 1ms target"
 
     def test_concurrent_reads_dont_block(self, temp_cache: Cache):
-        """Test that concurrent reads don't block each other.
+        """Concurrent memory-tier reads scale like a plain dict under the same contention.
 
         Requirement: Lock-free cache reads (Requirement 5)
-        Target: Concurrent reads should execute in parallel
+        Target: no lock contention. Memory-tier reads are pure Python, so the
+        GIL serialises them and ten threads cost more than one thread even
+        for a plain ``dict`` (thread switching). A lock on the read path adds
+        handoffs on top of that, so the cache's concurrent/sequential ratio
+        is compared with the ratio a plain dict shows in the same run.
         """
-        # Warm up cache with test data
         test_data = {"value": "x" * 1000}
         for i in range(50):
             temp_cache.set(f"key_{i}", test_data)
+        plain = {f"key_{i}": test_data for i in range(50)}
 
         num_threads = 10
         reads_per_thread = 100
-        results = []
-        errors = []
 
-        def read_worker():
-            """Worker that performs many reads."""
-            try:
-                start = time.perf_counter()
-                for _ in range(reads_per_thread):
+        def contention_ratio(read) -> float:
+            def read_many(rounds: int) -> None:
+                for _ in range(rounds):
                     for i in range(50):
-                        temp_cache.get(f"key_{i}")
-                duration = time.perf_counter() - start
-                results.append(duration)
-            except Exception as e:
-                errors.append(e)
+                        read(f"key_{i}")
 
-        # Run concurrent reads
-        threads = [threading.Thread(target=read_worker) for _ in range(num_threads)]
-        start = time.perf_counter()
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        total_duration = time.perf_counter() - start
+            read_many(reads_per_thread)  # warm up
+            start = time.perf_counter()
+            read_many(reads_per_thread * num_threads)
+            sequential_duration = time.perf_counter() - start
 
-        assert not errors, f"Errors during concurrent reads: {errors}"
+            errors = []
 
-        # Calculate expected time if reads were sequential
-        avg_thread_time = sum(results) / len(results)
-        sequential_time = avg_thread_time * num_threads
+            def read_worker():
+                try:
+                    read_many(reads_per_thread)
+                except Exception as e:
+                    errors.append(e)
 
-        # Parallel execution should be much faster than sequential
-        speedup = sequential_time / total_duration
+            threads = [threading.Thread(target=read_worker) for _ in range(num_threads)]
+            start = time.perf_counter()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            concurrent_duration = time.perf_counter() - start
+            assert not errors, f"Errors during concurrent reads: {errors}"
+            return concurrent_duration / sequential_duration
+
+        dict_ratio = contention_ratio(plain.get)
+        cache_ratio = contention_ratio(temp_cache.get)
 
         print("\nConcurrent read performance:")
-        print(f"  Threads: {num_threads}")
-        print(f"  Reads per thread: {reads_per_thread * 50}")
-        print(f"  Total duration: {total_duration:.3f}s")
-        print(f"  Avg thread time: {avg_thread_time:.3f}s")
-        print(f"  Sequential time: {sequential_time:.3f}s")
-        print(f"  Speedup: {speedup:.1f}x")
+        print(f"  Threads: {num_threads}, reads per thread: {reads_per_thread * 50}")
+        print(f"  plain dict concurrent/sequential: {dict_ratio:.2f}x")
+        print(f"  Cache.get concurrent/sequential:  {cache_ratio:.2f}x")
 
-        # Lock-free reads should show some parallelism despite GIL limitations
-        # Note: json_loads is CPU-bound and limited by GIL, so we can't expect
-        # perfect parallelism. A speedup > 1.5x indicates reads aren't blocking on locks.
-        assert speedup > 1.5, f"Speedup {speedup:.1f}x indicates reads are blocking on locks"
+        # Lock-free reads pay only the interpreter's thread switching, like the
+        # dict; a lock on the read path adds handoffs and pushes the ratio up.
+        assert cache_ratio <= dict_ratio * 1.25 + 0.1, (
+            f"Cache.get scaled worse than a plain dict under contention "
+            f"({cache_ratio:.2f}x vs {dict_ratio:.2f}x): reads block on a lock"
+        )
 
     def test_no_lock_contention_on_reads(self, temp_cache: Cache):
         """Test that concurrent reads don't cause lock contention.

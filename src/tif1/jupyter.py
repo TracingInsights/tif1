@@ -3,6 +3,7 @@
 import html
 import importlib
 import logging
+import sys
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Union, cast
 
@@ -25,6 +26,9 @@ def _is_notebook() -> bool:
         if shell is None:
             return False
         if "IPKernelApp" in getattr(shell, "config", {}):
+            return True
+        # JupyterLite's Pyodide kernel configures IPython without IPKernelApp.
+        if "pyodide_kernel" in sys.modules:
             return True
     except Exception:
         pass

@@ -3,7 +3,41 @@
 from __future__ import annotations
 
 import numpy as np
-from rapidfuzz import fuzz
+
+
+def _lcs_length(a: str, b: str) -> int:
+    """Length of the longest common subsequence (one-row dynamic programme)."""
+    if not a or not b:
+        return 0
+    previous = [0] * (len(b) + 1)
+    for char_a in a:
+        current = [0]
+        for j, char_b in enumerate(b, start=1):
+            if char_a == char_b:
+                current.append(previous[j - 1] + 1)
+            else:
+                current.append(max(previous[j], current[j - 1]))
+        previous = current
+    return previous[-1]
+
+
+def _indel_ratio(s1: str, s2: str) -> float:
+    """rapidfuzz ``fuzz.ratio`` in pure Python: the normalized Indel similarity in percent.
+
+    The fallback for runtimes without a rapidfuzz build (Pyodide); identical
+    scores, so event-name resolution behaves the same everywhere.
+    """
+    total = len(s1) + len(s2)
+    if total == 0:
+        return 100.0
+    indel_distance = total - 2 * _lcs_length(s1, s2)
+    return 100.0 * (1.0 - indel_distance / total)
+
+
+try:
+    from rapidfuzz.fuzz import ratio as _ratio
+except ImportError:  # Pyodide: rapidfuzz has no wasm wheel
+    _ratio = _indel_ratio
 
 
 def fuzzy_matcher(
@@ -77,7 +111,7 @@ def _fuzzy_match(query: str, reference: list[list[str]]) -> tuple[int, bool, flo
 
     ratios = np.zeros((len(reference), width), dtype=float)
     for i in candidate_indices:
-        ratios[i] = [fuzz.ratio(val, query) if val else 0.0 for val in reference[i]]
+        ratios[i] = [_ratio(val, query) if val else 0.0 for val in reference[i]]
 
     max_ratio = float(ratios.max())
     tied = np.flatnonzero(ratios.max(axis=1) == max_ratio)

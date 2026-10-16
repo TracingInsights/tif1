@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .cdn import CDNManager, get_cdn_manager
 from .core_utils.json_utils import parse_response_json
+from .core_utils.runtime import IS_EMSCRIPTEN
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .retry import retry_with_backoff
 
@@ -57,6 +58,34 @@ class HttpTransport(Protocol):
     def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
         """Fetch ``url`` and return the parsed JSON object."""
         ...
+
+
+@runtime_checkable
+class AsyncHttpTransport(Protocol):
+    """Optional async side of a transport, used by the async fan-out in the browser.
+
+    ``tif1.async_fetch`` runs its per-URL fetch through this method when the
+    runtime has no thread pool (Pyodide); a transport may also offer
+    ``get_bytes_async`` returning the raw body so telemetry payloads keep
+    their typed decode. Same exception contract as :class:`HttpTransport`.
+    """
+
+    async def get_json_async(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
+        """Fetch ``url`` without blocking and return the parsed JSON object."""
+        ...
+
+
+def default_transport() -> HttpTransport:
+    """The production transport of this runtime.
+
+    niquests over sockets natively; inside Pyodide (Emscripten) the browser's
+    own fetch/XHR through :class:`tif1.browser.PyodideTransport`.
+    """
+    if IS_EMSCRIPTEN:
+        from .browser import get_pyodide_transport
+
+        return get_pyodide_transport()
+    return NiquestsTransport()
 
 
 def _import_niquests() -> Any:
@@ -165,6 +194,10 @@ class InMemoryTransport:
             entry = self.default
         return self._resolve(entry, url)
 
+    async def get_json_async(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
+        """Async twin of :meth:`get_json` (same mapping, same ``calls`` log)."""
+        return self.get_json(url, timeout=timeout)
+
 
 class PayloadLoader:
     """Single owner of the payload pipeline: memo -> cache -> CDN -> retry -> validate.
@@ -217,7 +250,7 @@ class PayloadLoader:
         self.year = year
         self.gp = gp
         self.session = session
-        self.transport: HttpTransport = transport if transport is not None else NiquestsTransport()
+        self.transport: HttpTransport = transport if transport is not None else default_transport()
         self._cdn_manager = cdn_manager
         self.memo = memo
         self.enable_cache = enable_cache
@@ -568,6 +601,8 @@ def get_url_loader() -> PayloadLoader:
 
 
 __all__ = [
+    "AsyncHttpTransport",
+    "default_transport",
     "HttpTransport",
     "InMemoryTransport",
     "NiquestsTransport",

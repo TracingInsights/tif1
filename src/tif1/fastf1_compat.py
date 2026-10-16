@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import _default_cache_dir, get_config
-from .exceptions import NetworkError
+from .exceptions import NetworkError, TIF1Error
 
 logger = logging.getLogger(__name__)
 
@@ -202,11 +202,24 @@ class Cache:
                 size += file_path.stat().st_size
         return str(cache_dir), size
 
+    @staticmethod
+    def _require_native_http(url: str) -> None:
+        """The shared niquests session does not exist inside Pyodide (no sockets)."""
+        from .core_utils.runtime import IS_EMSCRIPTEN
+
+        if IS_EMSCRIPTEN:
+            raise TIF1Error(
+                "Cache.requests_get/requests_post are not available inside Pyodide; "
+                "use tif1.browser.PyodideTransport or the session API",
+                url=url,
+            )
+
     @classmethod
     def requests_get(cls, url: str, **kwargs: Any) -> Any:
         """Issue an HTTP GET request through tif1's shared session."""
         if cls._offline_mode:
             raise NetworkError(url=url, status_code=None)
+        cls._require_native_http(url)
 
         from .http_session import get_session as get_http_session
 
@@ -218,6 +231,7 @@ class Cache:
         """Issue an HTTP POST request through tif1's shared session."""
         if cls._offline_mode:
             raise NetworkError(url=url, status_code=None)
+        cls._require_native_http(url)
 
         from .http_session import get_session as get_http_session
 

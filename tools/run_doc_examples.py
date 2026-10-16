@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Run Python code blocks from the documentation headless and report results.
 
-Executes every fenced Python block per page sequentially in one subprocess per
+Executes every fenced Python block per page (except blocks whose title names
+Pyodide, which run in the browser only, and ``.py``-titled module listings)
+sequentially in one subprocess per
 page (blocks in a page share state, matching the reading order). Blocks that
 raise are reported with the exception; a block whose own text announces an
 error ("Raises", "Error", "try:") is classified as an error demonstration.
@@ -116,9 +118,23 @@ def _is_signature(block):
 
 
 blocks = json.loads(sys.argv[1])
-ns = {}
+# Blocks share one namespace in reading order. Tabbed pandas/polars examples
+# (fence titles "Pandas ..." / "Polars ...") are alternatives, not a sequence:
+# each backend continues its own namespace, seeded from the page state the
+# first time it appears.
+ns_main = {}
+# A Jupyter kernel exposes display() as a builtin; the notebook pages use it.
+try:
+    from IPython.display import display as _display
+
+    ns_main["display"] = _display
+except ImportError:
+    pass
+tab_namespaces = {}
 results = []
-for i, block in enumerate(blocks):
+for i, (title, block) in enumerate(blocks):
+    backend = next((name for name in ("Pandas", "Polars") if title.startswith(name)), None)
+    ns = ns_main if backend is None else tab_namespaces.setdefault(backend, dict(ns_main))
     try:
         code = compile(block, f"<block {i}>", "exec")
     except SyntaxError as exc:
@@ -136,17 +152,19 @@ print(json.dumps(results))
 """
 
 
-def extract_blocks(page: Path) -> list[str]:
+def extract_blocks(page: Path) -> list[tuple[str, str]]:
+    """``(fence title, code)`` for every runnable Python block of ``page``."""
     text = page.read_text(encoding="utf-8").replace("\r\n", "\n")
-    blocks: list[str] = []
+    blocks: list[tuple[str, str]] = []
     current: list[str] = []
     in_fence = False
     lang = ""
+    title = ""
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith(("```", "~~~")):
             if in_fence:
-                blocks.append("\n".join(current))
+                blocks.append((title, "\n".join(current)))
                 current = []
                 in_fence = False
             else:
@@ -155,10 +173,16 @@ def extract_blocks(page: Path) -> list[str]:
                 # title after it (```python Pandas inside a CodeGroup).
                 info = stripped.lstrip("`~").split()
                 lang = info[0].lower() if info else ""
+                # A title naming Pyodide marks browser-only code (top-level
+                # await, micropip); a title that is a ``.py`` path marks a
+                # module listing. Neither is a native example.
+                title = " ".join(info[1:])
+                if "pyodide" in title.lower() or title.endswith(".py"):
+                    lang = ""
             continue
         if in_fence and lang in {"python", "py"}:
             current.append(line)
-    return [textwrap.dedent(b).strip() for b in blocks if b.strip()]
+    return [(t, textwrap.dedent(b).strip()) for t, b in blocks if b.strip()]
 
 
 def is_error_demo(block: str) -> bool:
@@ -220,7 +244,7 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
             "status": "crashed",
             "error": proc.stdout[-2000:] + proc.stderr[-2000:],
         }
-    for i, block in enumerate(blocks):
+    for i, (_title, block) in enumerate(blocks):
         for row in results:
             if row["index"] == i and row["status"] == "error":
                 row["error_demo"] = is_error_demo(block)

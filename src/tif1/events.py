@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 from .cache import get_cache
 from .config import get_config
 from .core_utils.constants import EVENT_NAME_ALIASES
+from .core_utils.runtime import THREADS_AVAILABLE
 from .exceptions import (
     CacheError,
     DataNotFoundError,
@@ -334,6 +335,10 @@ def _refresh_schedule_in_background(year: int) -> None:
                 _refreshing_years.discard(year)
                 _refresh_threads.pop(year, None)
 
+    if not THREADS_AVAILABLE:
+        # Pyodide: no background thread; one small fetch refreshes the row now.
+        _run()
+        return
     thread = threading.Thread(target=_run, name=f"tif1-schedule-refresh-{year}", daemon=True)
     with _year_schedules_lock:
         _refresh_threads[year] = thread

@@ -26,6 +26,15 @@ def _legacy_get_telemetry(cache: Cache, year: int, gp: str, session: str, driver
     return json.loads(result[0]) if result else None
 
 
+def _as_plain_lists(payload):
+    """Channels as Python lists: the native telemetry decoder returns numpy arrays."""
+    if not isinstance(payload, dict):
+        return payload
+    return {
+        key: value.tolist() if hasattr(value, "tolist") else value for key, value in payload.items()
+    }
+
+
 def _run_legacy_get_loop(cache: Cache, key: str, iterations: int = 3_000) -> int:
     hits = 0
     for _ in range(iterations):
@@ -76,7 +85,7 @@ def test_cache_memory_lookup_telemetry_parity(tmp_path):
     key = (2025, "Abu Dhabi Grand Prix", "Race", "VER", 1)
     cache.set_telemetry(*key, tel)
 
-    assert cache.get_telemetry(*key) == _legacy_get_telemetry(cache, *key)
+    assert _as_plain_lists(cache.get_telemetry(*key)) == _legacy_get_telemetry(cache, *key)
 
 
 @pytest.mark.benchmark(group="cache_hot_read")

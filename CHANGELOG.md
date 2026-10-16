@@ -7,6 +7,69 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Added — Pyodide (2026-10-16)
+
+`tif1` runs in the browser: Pyodide 314 (JupyterLite, PyScript, marimo).
+`await micropip.install("tif1")`, `get_session(...)` and
+`await session.load_async()` work in every browser; the synchronous API works
+where JavaScript Promise Integration is available (Chrome 137+).
+
+- **Install.** `pyproject.toml` carries `sys_platform == 'emscripten'` twins
+  with major-only floors for the packages the Pyodide distribution ships
+  (pandas, pyarrow, orjson, pydantic, matplotlib, scipy, lz4) and excludes
+  niquests, polars, rapidfuzz and nest-asyncio2, which have no WebAssembly
+  build. `tests/unit/test_pyproject_markers.py` checks the twins against
+  `tools/pyodide_target.json`, so a floor bump that breaks the browser
+  install fails without a network.
+- **Transport.** `tif1.browser.PyodideTransport` fetches through the browser:
+  Pyodide's `urllib3` on the synchronous `HttpTransport` seam (`fetch` under
+  JSPI, `XMLHttpRequest` otherwise) and `pyodide.http.pyfetch` for the async
+  fan-out, which runs without a thread pool there (`AsyncHttpTransport`).
+- **`Session.load_async()`**, the async twin of `load()`: one concurrent
+  wave per phase, never blocking the event loop.
+- **One sync bridge.** `core._run_coroutine_sync` replaces the five
+  `asyncio.run` sites. Under Pyodide it blocks through
+  `pyodide.ffi.run_sync` (JSPI) and otherwise raises the new
+  `AsyncRequiredError`, whose message names the coroutine to await.
+- **No threads.** The import-time preload, CDN pre-connect, session-table
+  prefetch, frame writers, schedule refresh, cache codec pools and the
+  telemetry prefetch are gated on `THREADS_AVAILABLE`; writers run inline.
+- **Cache.** SQLite uses an in-memory journal on Emscripten (no shared-memory
+  WAL there); `tif1.browser.enable_persistent_cache()` / `persist_cache()`
+  keep the cache directory in IndexedDB across reloads; `Cache.flush()`.
+- **Fallbacks.** Event-name fuzzy matching uses a pure Python Indel ratio
+  with the same scores as rapidfuzz when rapidfuzz is missing; polars 1.x
+  (what Pyodide ships) is treated as not installed (`import_supported_polars`).
+- **CI.** `tools/pyodide_smoke.mjs` installs the built wheel in Node's
+  Pyodide and loads a session offline and against the CDNs (`pyodide-smoke`
+  job, `node --experimental-wasm-jspi` for the synchronous API);
+  `tools/pyodide_browser_check.mjs` repeats the checks in Chromium and
+  Firefox through Playwright: main thread and Web Worker, the
+  `XMLHttpRequest` path, and IndexedDB persistence across a page reload.
+  Both run `tools/pyodide_checks.py`.
+- `Cache.requests_get()` / `requests_post()` (fastf1 compat) raise a clear
+  `TIF1Error` inside Pyodide instead of an import error.
+- Docs: `concepts/pyodide`, `api-reference/browser`.
+
+### Fixed — verification sweep (2026-10-16)
+
+- `async_fetch.cleanup_resources()` closed the shared niquests session
+  without resetting the `http_session` singleton, so a fetch after an
+  explicit cleanup reused a closed session and failed to parse its response.
+  The shared session is now closed through its owner and rebuilt on demand.
+- `tools/run_doc_examples.py`: skips `.py`-titled module listings and
+  Pyodide-titled blocks, and runs the `Pandas` / `Polars` tab examples in
+  their own namespaces (the tabs are alternatives, not a sequence).
+- Doc examples: the `ResourceManager` listing imports its type names; the
+  HTTP examples fetch from the Hugging Face mirror (jsDelivr refuses the
+  2024 and 2025 data repositories, which exceed its 50 MB package limit,
+  and the CDN manager falls through to the mirrors).
+- Benchmarks: the telemetry parity check accepts the typed arrays of the
+  native decoder; the concurrent-read benchmark measures lock contention
+  (concurrent versus sequential time) instead of a parallel speedup that
+  GIL-bound reads cannot deliver.
+- `native/README.md`: the maturin commands take `-m native/Cargo.toml`.
+
 ### Performance — Pergamon wave 2 (2026-10-15)
 
 Twenty more warm-path hypotheses, each run in its own worktree against the

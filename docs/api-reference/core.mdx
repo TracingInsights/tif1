@@ -510,6 +510,38 @@ session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 laps = session.laps  # Loads automatically
 ```
 
+#### `load_async()`
+
+```python
+async def load_async(
+    laps: bool = True,
+    telemetry: bool = True,
+    weather: bool = True,
+    messages: bool = True
+) -> Session
+```
+
+The async twin of `load()`. It fetches the same tables through the async pipeline only, so it never blocks the event loop. Use it inside a running event loop and in Pyodide, where the synchronous API needs JavaScript Promise Integration. Refer to [Pyodide and the Browser](/concepts/pyodide).
+
+**Parameters:**
+- The same four flags as `load()`
+
+**Returns:**
+- Self (for method chaining)
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def main():
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+    await session.load_async(telemetry=False)
+    print(f"Loaded {len(session.laps)} laps")
+
+asyncio.run(main())
+```
+
 #### `laps_async()`
 
 ```python

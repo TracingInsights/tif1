@@ -29,13 +29,14 @@ Architecture:
 - Optional polars backend: lazy-loaded, gate behind `_ensure_polars_available()` in `core.py`.
 - CLI (typer + rich) in `cli.py`; Jupyter support in `jupyter.py`; plotting in `plotting.py`.
 - `fastf1_compat.py` provides fastf1 compatibility shims (e.g. `set_log_level`).
+- Pyodide (browser) support: `core_utils/runtime.py` owns the runtime facts (`IS_EMSCRIPTEN`, `THREADS_AVAILABLE`, `can_block_on_awaitables()`, `run_sync_in_browser()`, `import_supported_polars()`); every thread/pool start is gated on `THREADS_AVAILABLE` (inline fallback) and the five sync entry points bridge to their coroutine through one helper, `core._run_coroutine_sync` (native: nest_asyncio2 shim + `asyncio.run`; Pyodide: `pyodide.ffi.run_sync` under JSPI, else `AsyncRequiredError`). `browser.py` is the Pyodide transport (`urllib3` for the sync `HttpTransport` seam, `pyodide.http.pyfetch` for the async fan-out via `AsyncHttpTransport`) plus IndexedDB persistence; `payload_loader.default_transport()` picks it on emscripten. `Session.load_async()` is the async twin of `load()`. `pyproject.toml` carries `sys_platform == 'emscripten'` dependency twins (major-only floors) checked against `tools/pyodide_target.json` by `tests/unit/test_pyproject_markers.py`; `tools/pyodide_smoke.mjs` installs the wheel in Node's Pyodide and `tools/pyodide_browser_check.mjs` drives Chrome/Firefox through Playwright (main thread, Web Worker, XMLHttpRequest path, IndexedDB persistence); both run `tools/pyodide_checks.py` (CI job `pyodide-smoke`).
 - Tests in `tests/` split into `unit/`, `integration/`, `property/`, `benchmarks/`.
 
 Key patterns:
 - Session.load() accepts `laps`, `telemetry`, `messages`, `weather` booleans to control what data gets fetched.
 - Data flows: CDN URL → async HTTP fetch → JSON parse → DataFrame construction → column rename/reorder → cache.
 - The CDN system fetches from TracingInsights GitHub data repos (per-year repos like `{year}`), served via jsDelivr (primary) with Hugging Face buckets (`huggingface.co/buckets/tracinginsights/{year}`, same repo layout via `/resolve/`) as fallback and StaticDelivr as last-resort backup. A 404 from one CDN falls through to the next; `DataNotFoundError` is raised only when every CDN returns 404.
-- Exception hierarchy: TIF1Error → DataNotFoundError → {DriverNotFoundError, LapNotFoundError}; TIF1Error → {NetworkError, InvalidDataError, CacheError, SessionNotLoadedError}. Event-name failures are `ValueError`s outside that tree: ValueError → EventNotFoundError → EventNotInSeasonError.
+- Exception hierarchy: TIF1Error → DataNotFoundError → {DriverNotFoundError, LapNotFoundError}; TIF1Error → {NetworkError, InvalidDataError, CacheError, SessionNotLoadedError, AsyncRequiredError}. Event-name failures are `ValueError`s outside that tree: ValueError → EventNotFoundError → EventNotInSeasonError.
 - All exceptions accept `**context` kwargs for structured error info.
 
 Constraints:

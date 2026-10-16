@@ -68,3 +68,52 @@ jobs:
         if: matrix.python-version == env.DEFAULT_PYTHON
         run: |
           python -m uv run pytest -o addopts='' tests/ -v -n 0 --cov=src/tif1 --cov-append --cov-report=xml --cov-report=term -m integration
+
+  pyodide-smoke:
+    # tif1 inside Pyodide (Python on WebAssembly): build the wheel, install it
+    # with micropip in Node's Pyodide and load a session offline, then online.
+    # Fails when a dependency floor outruns the Pyodide distribution
+    # (tools/pyodide_target.json) or a browser code path regresses.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python ${{ env.DEFAULT_PYTHON }}
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Build the wheel
+        run: python -m uv build --wheel
+
+      - name: Install Pyodide
+        run: |
+          PYODIDE_VERSION=$(python -c "import json; print(json.load(open('tools/pyodide_target.json'))['pyodide'])")
+          npm install --no-save "pyodide@${PYODIDE_VERSION}"
+
+      - name: Run the Pyodide smoke test
+        env:
+          TIF1_SMOKE_NETWORK: "1"
+        run: node --experimental-wasm-jspi tools/pyodide_smoke.mjs dist/tif1-*.whl
+
+      - name: Install Playwright browsers
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium firefox
+
+      - name: Run the Pyodide browser check
+        # Chromium (JSPI) and Firefox (no JSPI): main thread, Web Worker,
+        # urllib3's XMLHttpRequest path and IndexedDB persistence across a reload.
+        env:
+          TIF1_SMOKE_NETWORK: "1"
+          TIF1_BROWSERS: "chromium,firefox"
+        run: node tools/pyodide_browser_check.mjs dist/tif1-*.whl

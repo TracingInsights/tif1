@@ -35,30 +35,44 @@ keywords = [
     "lap-times",
 ]
 dependencies = [
-    "pandas>=3.0.6,<4",
-    "niquests>=3.21.1,<4",
-    "pydantic>=2.14.0,<3",
+    # Pyodide (Python in the browser) resolves the `sys_platform == 'emscripten'`
+    # lines: micropip serves the native packages from the Pyodide distribution,
+    # so those carry major-only floors (the shipped versions are listed in
+    # tools/pyodide_target.json and checked by tests/unit/test_pyproject_markers.py).
+    # niquests, polars, rapidfuzz and nest-asyncio2 have no WebAssembly build and
+    # stay native-only; tif1.browser fetches through Pyodide's urllib3 instead.
+    "pandas>=3.0.6,<4; sys_platform != 'emscripten'",
+    "pandas>=3,<4; sys_platform == 'emscripten'",
+    "niquests>=3.21.1,<4; sys_platform != 'emscripten'",
+    "urllib3>=2.2,<3; sys_platform == 'emscripten'",
+    "pydantic>=2.14.0,<3; sys_platform != 'emscripten'",
+    "pydantic>=2,<3; sys_platform == 'emscripten'",
     "typer>=0.27.2,<0.28.0",
     "rich>=15.0.0,<16",
     "typing-extensions>=4.16.0,<5",
-    "nest-asyncio2>=1.7.2,<2",
-    "matplotlib>=3.11.2,<4",
+    "nest-asyncio2>=1.7.2,<2; sys_platform != 'emscripten'",
+    "matplotlib>=3.11.2,<4; sys_platform != 'emscripten'",
+    "matplotlib>=3,<4; sys_platform == 'emscripten'",
     "seaborn>=0.13.2,<1",
     # scipy 1.18 dropped Python 3.11; 1.18.1 is the first release with 3.15 wheels.
-    "scipy>=1.17.1,<2; python_version < '3.15'",
-    "scipy>=1.18.1,<2; python_version >= '3.15'",
+    "scipy>=1.17.1,<2; python_version < '3.15' and sys_platform != 'emscripten'",
+    "scipy>=1.18.1,<2; python_version >= '3.15' and sys_platform != 'emscripten'",
+    "scipy>=1,<2; sys_platform == 'emscripten'",
     "timple==0.1.8",
-    "orjson>=3.12.0,<4",
-    "rapidfuzz>=3.14.6,<4",
-    "polars>=2.0.0,<3",
+    "orjson>=3.12.0,<4; sys_platform != 'emscripten'",
+    "orjson>=3,<4; sys_platform == 'emscripten'",
+    "rapidfuzz>=3.14.6,<4; sys_platform != 'emscripten'",
+    "polars>=2.0.0,<3; sys_platform != 'emscripten'",
     # polars <-> pandas conversion (to_pandas/from_pandas) goes through Arrow.
-    "pyarrow>=25.0.1,<27",
+    "pyarrow>=25.0.1,<27; sys_platform != 'emscripten'",
+    "pyarrow>=22,<27; sys_platform == 'emscripten'",
     # Python 3.14+ ships zstd in the standard library (PEP 784); the wheel is
     # only needed on older interpreters (see tif1.cache codec selection).
     "zstandard>=0.25.0,<0.26; python_version < '3.14'",
     # lz4 publishes no cp315 wheels yet; on 3.15 the frame tier falls back to
     # zstd. Drop the marker once lz4 ships 3.15 wheels.
-    "lz4>=4.4.5,<5; python_version < '3.15'",
+    "lz4>=4.4.5,<5; python_version < '3.15' and sys_platform != 'emscripten'",
+    "lz4>=4,<5; python_version < '3.15' and sys_platform == 'emscripten'",
 ]
 
 [project.urls]

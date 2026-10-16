@@ -8,6 +8,6 @@ releasing the GIL, so the fetch threads parse in parallel on multi-core hosts.
 
 Build locally (needs a Rust toolchain):
 
-    uvx maturin develop --release -m native/pyproject.toml
+    uvx maturin develop --release -m native/Cargo.toml
 
-or build a wheel with `uvx maturin build --release -m native/pyproject.toml`.
+or build a wheel with `uvx maturin build --release -m native/Cargo.toml`.

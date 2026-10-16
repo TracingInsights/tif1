@@ -565,8 +565,8 @@ from tif1.http_session import get_session
 session = get_session()
 
 # Make requests (connection automatically reused)
-response1 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain%20Grand%20Prix/Race/drivers.json")
-response2 = session.get("https://cdn.jsdelivr.net/gh/TracingInsights/2024@main/Bahrain%20Grand%20Prix/Race/VER/laptimes.json")
+response1 = session.get("https://huggingface.co/buckets/tracinginsights/2024/resolve/Bahrain%20Grand%20Prix/Race/drivers.json")
+response2 = session.get("https://huggingface.co/buckets/tracinginsights/2024/resolve/Bahrain%20Grand%20Prix/Race/VER/laptimes.json")
 
 # Connections are automatically reused between requests
 data1 = response1.json()
@@ -1769,15 +1769,15 @@ JSON parsing is a significant bottleneck for large payloads (lap data, telemetry
 By default, JSON parsing happens in the thread pool using `orjson`, which is faster than the standard library parser:
 
 ```python
-import orjson
+from tif1.core_utils.json_utils import parse_response_json
 from tif1.http_session import get_session
 
 response = get_session().get(
-    "https://cdn.jsdelivr.net/gh/TracingInsights/2025@main/Bahrain%20Grand%20Prix/Race/drivers.json"
+    "https://huggingface.co/buckets/tracinginsights/2025/resolve/Bahrain%20Grand%20Prix/Race/drivers.json"
 )
 
-# Fast parsing with orjson
-data = orjson.loads(response.content)
+# orjson on the raw bytes; a lazy (multiplexed) response is resolved first
+data = parse_response_json(response)
 print(len(data["drivers"]))
 ```
 

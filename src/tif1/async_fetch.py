@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from . import cache as _cache
 from .core_utils.constants import telemetry_ref_from_path
 from .core_utils.json_utils import decode_telemetry_payload, json_loads, parse_response_json
+from .core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .http_session import close_session as close_http_session
 from .http_session import get_session as get_http_session
@@ -140,6 +141,10 @@ def _get_executor() -> Any:  # Returns ThreadPoolExecutor
     global _executor
     if _executor is not None:
         return _executor
+    if not THREADS_AVAILABLE:
+        # Pyodide: no worker threads; callers pass ``None`` to
+        # ``run_in_executor`` and the WebLoop runs the function inline.
+        return None
 
     with _executor_lock:
         if _executor is not None:
@@ -222,6 +227,8 @@ def _get_json_parse_executor() -> Any | None:
     global _json_parse_executor
     if _json_parse_executor is not None:
         return _json_parse_executor
+    if not THREADS_AVAILABLE:
+        return None
 
     with _json_parse_executor_lock:
         if _json_parse_executor is not None:
@@ -248,6 +255,23 @@ def close_session() -> None:
             close_http_session()
             _async_session = None
             logger.debug("HTTP session closed")
+
+
+def _get_async_transport() -> Any:
+    """The async-capable transport of browser runtimes (``tif1.browser``).
+
+    Resolved through the shared URL loader, so a test (or caller) that swaps
+    ``get_url_loader().transport`` for one with ``get_json_async`` steers the
+    async fan-out as well as the sync fetches.
+    """
+    from .payload_loader import get_url_loader
+
+    transport = get_url_loader().transport
+    if hasattr(transport, "get_json_async"):
+        return transport
+    from .browser import get_pyodide_transport
+
+    return get_pyodide_transport()
 
 
 def _get_async_session():
@@ -302,8 +326,13 @@ def cleanup_resources() -> None:
     # Handle each resource independently so one failure doesn't prevent others
     if session_to_close is not None:
         try:
-            # Close the session directly
-            if hasattr(session_to_close, "close"):
+            from . import http_session as _http_session
+
+            if session_to_close is _http_session._shared_session:
+                # The shared singleton: close it through its owner, so the next
+                # fetch builds a fresh session instead of reusing a closed one.
+                close_http_session()
+            elif hasattr(session_to_close, "close"):
                 session_to_close.close()
             logger.debug("HTTP session closed")
         except (AttributeError, OSError, RuntimeError) as e:
@@ -447,7 +476,9 @@ async def fetch_json_async(
     cache = get_cache() if (use_cache or write_cache) else None
 
     loop = asyncio.get_running_loop()
-    executor = _get_executor()
+    # Pyodide has no thread pool: ``run_in_executor(None, ...)`` on its
+    # WebLoop runs the function inline, so every offload below still works.
+    executor = None if IS_EMSCRIPTEN else _get_executor()
 
     if use_cache and cache is not None:
         cached = None
@@ -482,8 +513,24 @@ async def fetch_json_async(
 
     cdn_manager = get_cdn_manager()
     circuit_breaker = get_circuit_breaker()
-    niquests = _import_niquests()
-    session_client = _get_async_session()
+    transport_errors: tuple[type[BaseException], ...]
+    if IS_EMSCRIPTEN:
+        # Browser: the fetch API through the async transport (tif1.browser).
+        # niquests and the thread pool are never imported here.
+        session_client = None
+        transport = _get_async_transport()
+        transport_errors = (NetworkError, TimeoutError, OSError, ConnectionError)
+    else:
+        niquests = _import_niquests()
+        session_client = _get_async_session()
+        transport = None
+        transport_errors = (
+            niquests.RequestException,
+            niquests.exceptions.HTTPError,
+            TimeoutError,
+            OSError,
+            ConnectionError,
+        )
 
     backoff_factor = config.get("retry_backoff_factor", 2.0)
     use_jitter = config.get("retry_jitter", True)
@@ -502,47 +549,74 @@ async def fetch_json_async(
         import asyncio  # lazy: only async/network paths need it
 
         try:
-            response = await loop.run_in_executor(
-                executor, partial(_get_resolved, session_client, url, timeout)
-            )
-
-            from .http_session import _response_reused_connection, _track_request
-
-            _track_request(reused=_response_reused_connection(response))
-
-            if response.status_code == 404:
-                raise DataNotFoundError(year=year, event=gp, session=session)
-
-            response.raise_for_status()
-
-            try:
-                json_parse_executor = _get_json_parse_executor()
-                is_telemetry_payload = path.endswith("_tel.json")
-                if json_parse_executor and not is_telemetry_payload:
-                    # Opt-in process-pool parse: decode bytes in a worker
-                    # thread, then parse in the process pool.
-                    content = await loop.run_in_executor(executor, _response_bytes, response)
-                    if isinstance(content, bytes | bytearray | memoryview):
-                        data = await loop.run_in_executor(
-                            json_parse_executor, _parse_json_payload_bytes, bytes(content)
+            if transport is not None:
+                # Browser fetch: the transport maps 404 -> DataNotFoundError,
+                # other failures -> NetworkError (status_code set for HTTP
+                # errors, so the CDN manager still recognises refusals).
+                fetch_bytes = getattr(transport, "get_bytes_async", None)
+                try:
+                    if fetch_bytes is not None:
+                        content = await fetch_bytes(url, timeout=timeout)
+                        typed_decode = path.endswith("_tel.json") and not (
+                            validate_payload and config.get("validate_telemetry", True)
                         )
+                        try:
+                            data = (
+                                decode_telemetry_payload(content)
+                                if typed_decode
+                                else json_loads(content)
+                            )
+                        except (ValueError, TypeError) as e:
+                            raise InvalidDataError(reason=f"JSON parsing failed: {e}")
                     else:
+                        data = await transport.get_json_async(url, timeout=timeout)
                         content = None
-                        data = await loop.run_in_executor(executor, parse_response_json, response)
-                else:
-                    # niquests' lazy content decode plus orjson parse cost
-                    # milliseconds per response; paying that on the event loop
-                    # serializes the whole batch. Decode + parse in a worker.
-                    # The typed decoder only when the pydantic-free telemetry
-                    # validator (list-shaped) will not run on the payload.
-                    typed_decode = is_telemetry_payload and not (
-                        validate_payload and config.get("validate_telemetry", True)
-                    )
-                    data, content = await loop.run_in_executor(
-                        executor, partial(_decode_and_parse, response, telemetry=typed_decode)
-                    )
-            except (ValueError, TypeError, AttributeError) as e:
-                raise InvalidDataError(reason=f"JSON parsing failed: {e}")
+                except DataNotFoundError as e:
+                    raise DataNotFoundError(year=year, event=gp, session=session) from e
+            else:
+                response = await loop.run_in_executor(
+                    executor, partial(_get_resolved, session_client, url, timeout)
+                )
+
+                from .http_session import _response_reused_connection, _track_request
+
+                _track_request(reused=_response_reused_connection(response))
+
+                if response.status_code == 404:
+                    raise DataNotFoundError(year=year, event=gp, session=session)
+
+                response.raise_for_status()
+
+                try:
+                    json_parse_executor = _get_json_parse_executor()
+                    is_telemetry_payload = path.endswith("_tel.json")
+                    if json_parse_executor and not is_telemetry_payload:
+                        # Opt-in process-pool parse: decode bytes in a worker
+                        # thread, then parse in the process pool.
+                        content = await loop.run_in_executor(executor, _response_bytes, response)
+                        if isinstance(content, bytes | bytearray | memoryview):
+                            data = await loop.run_in_executor(
+                                json_parse_executor, _parse_json_payload_bytes, bytes(content)
+                            )
+                        else:
+                            content = None
+                            data = await loop.run_in_executor(
+                                executor, parse_response_json, response
+                            )
+                    else:
+                        # niquests' lazy content decode plus orjson parse cost
+                        # milliseconds per response; paying that on the event loop
+                        # serializes the whole batch. Decode + parse in a worker.
+                        # The typed decoder only when the pydantic-free telemetry
+                        # validator (list-shaped) will not run on the payload.
+                        typed_decode = is_telemetry_payload and not (
+                            validate_payload and config.get("validate_telemetry", True)
+                        )
+                        data, content = await loop.run_in_executor(
+                            executor, partial(_decode_and_parse, response, telemetry=typed_decode)
+                        )
+                except (ValueError, TypeError, AttributeError) as e:
+                    raise InvalidDataError(reason=f"JSON parsing failed: {e}")
 
             if not isinstance(data, dict):
                 raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
@@ -610,13 +684,7 @@ async def fetch_json_async(
         except (DataNotFoundError, InvalidDataError):
             # Fatal errors - no fallback, no retry.
             raise
-        except (
-            niquests.RequestException,
-            niquests.exceptions.HTTPError,
-            TimeoutError,
-            OSError,
-            ConnectionError,
-        ) as e:
+        except transport_errors as e:
             if (
                 type(e).__name__ == "MultiplexingError"
                 and "non-multiplexed response after a redirect" in str(e)

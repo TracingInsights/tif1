@@ -46,7 +46,9 @@ TIF1Error (base exception for all tif1 errors)
 │
 ├── CacheError (defined and exported; tif1 does not raise it)
 │
-└── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+├── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+│
+└── AsyncRequiredError (synchronous API in a browser without JavaScript Promise Integration)
 
 ValueError (built-in)
 ├── EventNotFoundError (event name that matches no event of the season)
@@ -1748,6 +1750,40 @@ def progressive_load_session(year: int, gp: str, session_name: str):
 
 session, loaded = progressive_load_session(2024, "Monaco", "Race")
 print(f"Session ready with {len(loaded)} data types")
+```
+
+---
+
+## Runtime Errors
+
+### `AsyncRequiredError`
+
+A `TIF1Error` subclass raised when a synchronous entry point cannot wait on its network fetch. Inside Pyodide the event loop belongs to the browser. Synchronous code can only wait on it through JavaScript Promise Integration (JSPI). Without JSPI (Firefox and Safari by default, or code entered through `runPython` instead of `runPythonAsync`), `session.load()`, `session.laps`, and the other blocking entry points raise this error. The async counterpart named in the message works in each browser. Refer to [Pyodide and the Browser](/concepts/pyodide).
+
+**Signature:**
+```python
+class AsyncRequiredError(TIF1Error):
+    def __init__(self, operation: str | None = None, alternative: str | None = None) -> None
+```
+
+**Context Keys:**
+- `operation` (str | None): The synchronous operation, for example `laps property`
+- `alternative` (str | None): The coroutine to await instead, for example `session.laps_async()`
+
+The message is `` `<operation>` cannot block on network fetches in this runtime (no JavaScript Promise Integration); use `await <alternative>` instead ``.
+
+**Example - Fall Back to the Async API:**
+```python
+import tif1
+from tif1 import AsyncRequiredError
+
+session = tif1.get_session(2025, "Bahrain", "R")
+
+async def laps_for(session):
+    try:
+        return session.laps
+    except AsyncRequiredError:
+        return await session.laps_async()
 ```
 
 ---
