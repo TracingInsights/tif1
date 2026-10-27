@@ -42,6 +42,15 @@ python examples/basic_usage.py
 - **`new_features_demo.py`**: Configuration, logging, the circuit breaker, the CDN manager, type definitions, and a full session load.
 - **`plotting_colors_demo.py`**: Team, driver, and compound colors from `tif1.plotting`. This script uses a mock session and does not download data.
 
+### Experimental Podium Prediction
+
+The [podium predictor](podium_predictor/README.md) combines `tif1` session laps
+with race history and archived forecasts. It includes chronological evaluation
+and consistent ordered-podium probabilities. The example requires optional
+model dependencies and native Python 3.12 or newer.
+Its original development benchmark does not establish an accuracy improvement.
+The `tif1` adapter still needs a complete benchmark run.
+
 ## Running Examples
 
 Run each script from the repository root:
@@ -62,10 +71,13 @@ TIF1_CACHE_DIR=/tmp/tif1-demo-cache python examples/cache_management.py
 
 ## Requirements
 
-The scripts work with the base installation:
+The standalone scripts work with the base installation:
 ```bash
 pip install tif1
 ```
+
+The optional podium predictor has a separate
+[installation procedure](podium_predictor/README.md#install).
 
 ## Learning Path
 
