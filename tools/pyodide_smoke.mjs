@@ -42,7 +42,7 @@ try {
 
   const report = JSON.parse(
     await pyodide.runPythonAsync(
-      "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check())",
+      "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check(), ergast_check())",
     ),
   );
   // A synchronous entry point never has JSPI: the synchronous API must raise.

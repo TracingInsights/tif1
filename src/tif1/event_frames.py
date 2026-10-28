@@ -16,22 +16,31 @@ from typing import Any, ClassVar, Self, cast
 import pandas as pd
 
 from . import events as _events
+from .types import ScheduleBackend
 
 
 class Event(pd.Series):
     __module__ = "tif1.events"
-    _metadata: ClassVar[list[str]] = ["_name", "_year", "_event_name"]
+    _metadata: ClassVar[list[str]] = ["_name", "_year", "_event_name", "_backend"]
     _year: int
     _event_name: str
+    _backend: ScheduleBackend | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow Series-style subclass construction without re-implementing __new__."""
         return cast(Self, super().__new__(cls))
 
-    def __init__(self, year: int, name: str, metadata: dict | None = None):
+    def __init__(
+        self,
+        year: int,
+        name: str,
+        metadata: dict | None = None,
+        *,
+        backend: ScheduleBackend | None = None,
+    ):
         from datetime import timezone as tz
 
-        sessions = _events.get_sessions(year, name)
+        sessions = _events.get_sessions(year, name, backend=backend)
         data = {
             "RoundNumber": 0,
             "Country": "",
@@ -65,6 +74,7 @@ class Event(pd.Series):
         super().__init__(data=data, name=data.get("RoundNumber", 0))  # type: ignore[ty:unknown-argument]
         self._year = year
         self._event_name = name
+        self._backend = backend
 
     def _reconstruct(self, data=None, *args, **kwargs):
         """Reconstruct an Event Series without invoking schedule lookup."""
@@ -72,6 +82,7 @@ class Event(pd.Series):
         cast(Any, pd.Series).__init__(result, data, *args, **kwargs)
         result._year = self._year
         result._event_name = self._event_name
+        result._backend = getattr(self, "_backend", None)
         return result
 
     @property
@@ -89,6 +100,10 @@ class Event(pd.Series):
     def year(self):
         return self._year
 
+    def is_testing(self) -> bool:
+        """True when this event is a pre-season testing event."""
+        return bool(self.get("EventFormat") == "testing")
+
     def get_session_name(self, identifier: int | str) -> str:
         """Return a full session name for a session identifier.
 
@@ -103,7 +118,9 @@ class Event(pd.Series):
             ValueError: If the identifier is invalid or the resolved session
                 does not exist for this event.
         """
-        available_sessions = _events.get_sessions(self._year, self._event_name)
+        available_sessions = _events.get_sessions(
+            self._year, self._event_name, backend=getattr(self, "_backend", None)
+        )
 
         try:
             session_num = float(identifier)
@@ -169,7 +186,12 @@ class Event(pd.Series):
         from .core import get_session
 
         resolved_session_name = self.get_session_name(session_name)
-        return get_session(self._year, self._event_name, resolved_session_name)
+        return get_session(
+            self._year,
+            self._event_name,
+            resolved_session_name,
+            backend=getattr(self, "_backend", None),
+        )
 
     def get_race(self):
         """Return the race session."""
@@ -204,16 +226,30 @@ class EventSchedule(pd.DataFrame):
     """FastF1-compatible event schedule container."""
 
     __module__ = "tif1.events"
-    _metadata: ClassVar[list[str]] = ["year"]
+    _metadata: ClassVar[list[str]] = ["year", "backend"]
     year: int | None
+    backend: ScheduleBackend | None
 
-    def __init__(self, *args: Any, year: int | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        *args: Any,
+        year: int | None = None,
+        backend: ScheduleBackend | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(*args, **kwargs)
         self.year = year
+        self.backend = backend
 
     @property
     def _constructor(self):
         return EventSchedule
+
+    def is_testing(self) -> pd.Series:
+        """One boolean per event: True for pre-season testing events."""
+        if "EventFormat" not in self.columns:
+            return pd.Series([False] * len(self), index=self.index, dtype=bool)
+        return pd.Series(self["EventFormat"] == "testing")
 
     def get_event_by_round(self, round_number: int) -> Event:
         """Return event for a specific championship round."""
@@ -226,7 +262,9 @@ class EventSchedule(pd.DataFrame):
         matches = self.loc[rounds == round_number]
         if len(matches) == 1:
             event_name = str(matches.iloc[0].get("EventName", ""))
-            return _events._get_event_for_year(int(self.year or 0), event_name)
+            return _events._get_event_for_year(
+                int(self.year or 0), event_name, getattr(self, "backend", None)
+            )
         if len(matches) == 0:
             raise ValueError(f"Invalid round: {round_number}")
         raise ValueError("Something went wrong, cannot determine a unique event.")
@@ -239,7 +277,11 @@ class EventSchedule(pd.DataFrame):
         if "EventName" in self.columns:
             event_names = [item for item in self["EventName"].dropna().astype(str).tolist() if item]
         return _events._find_event_by_name(
-            int(self.year), event_names, name, exact_match=strict_search
+            int(self.year),
+            event_names,
+            name,
+            exact_match=strict_search,
+            backend=getattr(self, "backend", None),
         )
 
     def get_event(self, identifier: int | str, strict_search: bool = False) -> Event | None:

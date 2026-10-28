@@ -35,7 +35,7 @@ app = typer.Typer(help="tif1 - Fast F1 data access CLI")
 
 @app.command()
 def events(
-    year: int = typer.Argument(..., help="Year (2018-current)"),
+    year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
 ) -> None:
     """List all events for a year."""
     from rich.table import Table
@@ -64,7 +64,7 @@ def events(
 
 @app.command()
 def sessions(
-    year: int = typer.Argument(..., help="Year (2018-current)"),
+    year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
     event: str = typer.Argument(..., help="Event name"),
 ) -> None:
     """List all sessions for an event."""
@@ -84,7 +84,7 @@ def sessions(
 
 @app.command()
 def drivers(
-    year: int = typer.Argument(..., help="Year (2018-current)"),
+    year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
     event: str = typer.Argument(..., help="Event name"),
     session: str = typer.Argument(..., help="Session name"),
 ) -> None:
@@ -137,7 +137,7 @@ def _adopt_warm_laps(sess: Any) -> None:
 
 @app.command()
 def fastest(
-    year: int = typer.Argument(..., help="Year (2018-current)"),
+    year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
     event: str = typer.Argument(..., help="Event name"),
     session: str = typer.Argument(..., help="Session name"),
     driver: str | None = typer.Option(None, "--driver", "-d", help="Specific driver"),
@@ -202,6 +202,140 @@ def fastest(
         _console().print(table)
 
 
+def _fmt_td(value: Any) -> str:
+    """``m:ss.mmm`` / ``h:mm:ss.mmm`` for a Timedelta, blank for missing values."""
+    import pandas as pd
+
+    if value is None or pd.isna(value):
+        return ""
+    total = float(pd.Timedelta(value).total_seconds())
+    sign = "-" if total < 0 else ""
+    total = abs(total)
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours >= 1:
+        return f"{sign}{int(hours)}:{int(minutes):02d}:{seconds:06.3f}"
+    return f"{sign}{int(minutes)}:{seconds:06.3f}"
+
+
+def _fmt_num(value: Any, digits: int = 0) -> str:
+    import pandas as pd
+
+    if value is None or pd.isna(value):
+        return ""
+    return f"{float(value):.{digits}f}" if digits else str(int(float(value)))
+
+
+@app.command()
+def results(
+    year: int = typer.Argument(..., help="Year (1950-current)"),
+    event: str = typer.Argument(..., help="Event name or round number"),
+    session: str = typer.Argument(..., help="Session name (Race, Qualifying, Sprint, ...)"),
+    no_ergast: bool = typer.Option(
+        False, "--no-ergast", help="Skip the official Ergast classification merge"
+    ),
+) -> None:
+    """Show the session classification (official Ergast data when available)."""
+    from rich.progress import Progress
+    from rich.table import Table
+
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Loading session...", total=1)
+        gp: int | str = int(event) if event.isdigit() else event
+        sess = tif1.get_session(year, gp, session, ergast=not no_ergast)
+        frame = sess.results
+        progress.update(task, advance=1)
+
+    if frame.empty:
+        _rprint(f"[red]No results for {year} {event} {session}[/red]")
+        raise typer.Exit(code=1)
+
+    quali = "Q1" in frame.columns and frame["Q1"].notna().any()
+    table = Table(title=f"{sess.event_name} {year} - {sess.session_name}")
+    table.add_column("Pos", style="cyan")
+    table.add_column("No.", style="magenta")
+    table.add_column("Driver", style="yellow")
+    table.add_column("Team", style="green")
+    if quali:
+        for segment in ("Q1", "Q2", "Q3"):
+            table.add_column(segment)
+    else:
+        table.add_column("Grid")
+        table.add_column("Status")
+        table.add_column("Points")
+        table.add_column("Time / Gap")
+    for row in frame.itertuples(index=False):
+        position = getattr(row, "ClassifiedPosition", "") or _fmt_num(
+            getattr(row, "Position", None)
+        )
+        cells = [str(position), str(row.DriverNumber), str(row.Abbreviation), str(row.TeamName)]
+        if quali:
+            cells.extend(_fmt_td(getattr(row, segment)) for segment in ("Q1", "Q2", "Q3"))
+        else:
+            gap_text = _fmt_td(getattr(row, "TimeGap", None))
+            time_text = _fmt_td(getattr(row, "Time", None))
+            winner = _fmt_num(getattr(row, "Position", None)) == "1"
+            shown = (
+                time_text if winner or not gap_text or gap_text == "0:00.000" else f"+{gap_text}"
+            )
+            cells.extend(
+                [
+                    _fmt_num(getattr(row, "GridPosition", None)),
+                    str(getattr(row, "Status", "") or ""),
+                    _fmt_num(getattr(row, "Points", None), 1),
+                    shown,
+                ]
+            )
+        table.add_row(*cells)
+    _console().print(table)
+
+
+@app.command()
+def standings(
+    year: int = typer.Argument(..., help="Year (1950-current)"),
+    round_number: int | None = typer.Argument(
+        None, help="Round number (default: last completed round)"
+    ),
+    constructors: bool = typer.Option(
+        False, "--constructors", "-c", help="Constructors' instead of drivers' standings"
+    ),
+) -> None:
+    """Show the championship standings after a round (Ergast data)."""
+    from rich.table import Table
+
+    if constructors:
+        frame = tif1.get_constructor_standings(year, round_number, lib="pandas")
+        title = f"Constructors' standings {year}"
+    else:
+        frame = tif1.get_driver_standings(year, round_number, lib="pandas")
+        title = f"Drivers' standings {year}"
+    if round_number is not None:
+        title += f" after round {round_number}"
+    if frame.empty:
+        _rprint(f"[red]No standings for {year}[/red]")
+        raise typer.Exit(code=1)
+
+    table = Table(title=title)
+    table.add_column("Pos", style="cyan")
+    if constructors:
+        table.add_column("Team", style="green")
+    else:
+        table.add_column("Driver", style="yellow")
+        table.add_column("Team", style="green")
+    table.add_column("Points", style="magenta")
+    table.add_column("Wins")
+    for row in frame.itertuples(index=False):
+        position = str(getattr(row, "PositionText", "") or _fmt_num(row.Position))
+        if constructors:
+            cells = [position, str(row.TeamName)]
+        else:
+            name = str(row.Abbreviation) or str(row.FullName)
+            cells = [position, name, ", ".join(row.TeamNames)]
+        cells.extend([_fmt_num(row.Points, 1), _fmt_num(row.Wins)])
+        table.add_row(*cells)
+    _console().print(table)
+
+
 @app.command()
 def cache_info() -> None:
     """Show cache information."""
@@ -220,15 +354,23 @@ def cache_info() -> None:
 @app.command()
 def cache_clear(
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    ergast: bool = typer.Option(
+        False, "--ergast", help="Clear only the Ergast tier (Stats files and Jolpica answers)"
+    ),
 ) -> None:
     """Clear cache."""
+    what = "the Ergast cache tier" if ergast else "the cache"
     if not confirm:
-        confirm = typer.confirm("Are you sure you want to clear the cache?")
+        confirm = typer.confirm(f"Are you sure you want to clear {what}?")
 
     if confirm:
         cache = tif1.get_cache()
-        cache.clear()
-        _rprint("[green]Cache cleared successfully![/green]")
+        if ergast:
+            cache.invalidate("ergast")
+            _rprint("[green]Ergast cache tier cleared successfully![/green]")
+        else:
+            cache.clear()
+            _rprint("[green]Cache cleared successfully![/green]")
     else:
         _rprint("[yellow]Cache clear cancelled[/yellow]")
 
@@ -241,7 +383,7 @@ def version() -> None:
 
 @app.command()
 def debug(
-    year: int = typer.Argument(..., help="Year (2018-current)"),
+    year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
     event: str = typer.Argument(..., help="Event name"),
     session: str = typer.Argument(..., help="Session name"),
 ) -> None:

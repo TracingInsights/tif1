@@ -501,6 +501,118 @@ export TIF1_SCHEDULE_TTL_HOURS=1.0
   Type: `float`. Default: `6.0`. `0` re-fetches on every lookup.
 </Info>
 
+## Ergast Data
+
+The Ergast tier (`tif1.ergast` and the classification merged into `Session.results`) reads the TracingInsights Stats repository first. The Jolpica API answers only what that repository cannot. Refer to [Ergast](/api-reference/ergast).
+
+### TIF1_ERGAST_RESULTS
+
+Merge the official Ergast classification into `session.results` and order `session.drivers` by it. Off, sessions keep the lap-derived classification and fetch nothing extra.
+
+```bash
+export TIF1_ERGAST_RESULTS=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_ERGAST_FALLBACK
+
+Ask the Jolpica API for what the Stats repository cannot answer. Off, those queries raise `ErgastInvalidRequestError` or `DataNotFoundError`.
+
+```bash
+export TIF1_ERGAST_FALLBACK=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
+### TIF1_JOLPICA_BASE_URL
+
+Base URL of the Jolpica API; a self-hosted instance works.
+
+```bash
+export TIF1_JOLPICA_BASE_URL=https://api.jolpi.ca/ergast/f1
+```
+
+<Info>
+  Type: `str`. Default: `https://api.jolpi.ca/ergast/f1`
+</Info>
+
+### TIF1_ERGAST_TTL_HOURS
+
+Lifetime in hours of current-season Stats files and of every Jolpica answer in the cache. Past-season Stats files never expire.
+
+```bash
+export TIF1_ERGAST_TTL_HOURS=1.0
+```
+
+<Info>
+  Type: `float`. Default: `6.0`
+</Info>
+
+### TIF1_ERGAST_TIMEOUT
+
+Jolpica request timeout in seconds.
+
+```bash
+export TIF1_ERGAST_TIMEOUT=10
+```
+
+<Info>
+  Type: `float`. Default: `5.0`
+</Info>
+
+### TIF1_ERGAST_RATE_LIMIT_BURST
+
+Jolpica requests per second the client allows itself.
+
+```bash
+export TIF1_ERGAST_RATE_LIMIT_BURST=2
+```
+
+<Info>
+  Type: `int`. Default: `4`
+</Info>
+
+### TIF1_ERGAST_RATE_LIMIT_HOURLY
+
+Jolpica requests per hour the client allows itself.
+
+```bash
+export TIF1_ERGAST_RATE_LIMIT_HOURLY=300
+```
+
+<Info>
+  Type: `int`. Default: `500`
+</Info>
+
+### TIF1_STATS_REPO
+
+GitHub repository (`owner/repo`) holding the Ergast Stats files, served through the configured CDNs.
+
+```bash
+export TIF1_STATS_REPO=TracingInsights-Archive/Stats
+```
+
+<Info>
+  Type: `str`. Default: `TracingInsights-Archive/Stats`
+</Info>
+
+### TIF1_STATS_BRANCH
+
+Branch of the Stats repository.
+
+```bash
+export TIF1_STATS_BRANCH=main
+```
+
+<Info>
+  Type: `str`. Default: `main`
+</Info>
+
 ## Data Loading and Validation
 
 ### TIF1_ULTRA_COLD_START

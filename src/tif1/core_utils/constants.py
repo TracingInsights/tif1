@@ -1,11 +1,51 @@
 """Constants and configuration for tif1 core."""
 
-# Year range
-MIN_YEAR = 2018
+# Year range. Sessions from 1950 are served from Ergast data (results, lap
+# timings, pit stops, standings); the TracingInsights timing/telemetry
+# repositories start with F1_API_FIRST_YEAR.
+MIN_YEAR = 1950
 MAX_YEAR = 2100
+F1_API_FIRST_YEAR = 2018
+#: Sessions a season before F1_API_FIRST_YEAR can load (Ergast carries no practice data).
+ERGAST_LOADABLE_SESSIONS: tuple[str, ...] = ("Qualifying", "Sprint", "Race")
 
 # Cache configuration
 MAX_CACHE_SIZE = 100
+
+#: Raw keys of one driver's laptime payload (TracingInsights names), in file order.
+#: An empty payload built from them runs through the lap pipeline to give a
+#: driver without laps a frame that still carries every laps column.
+LAP_PAYLOAD_KEYS: tuple[str, ...] = (
+    "lap",
+    "time",
+    "pos",
+    "sesT",
+    "lST",
+    "stint",
+    "dNum",
+    "iacc",
+    "ff1G",
+    "del",
+    "compound",
+    "life",
+    "fresh",
+    "s1",
+    "s2",
+    "s3",
+    "s1T",
+    "s2T",
+    "s3T",
+    "vi1",
+    "vi2",
+    "vfl",
+    "vst",
+    "pin",
+    "pout",
+    "lSD",
+    "status",
+    "delR",
+    "pb",
+)
 
 # Column name mappings
 LAP_RENAME_MAP = {
@@ -301,3 +341,54 @@ NUMERIC_TELEMETRY_PAYLOAD_KEYS = frozenset(
     }
     | NUMERIC_TELEMETRY_CHANNELS
 )
+
+
+# Session name -> Stats repository file holding its Ergast classification.
+# Practice and the quali-like sprint formats borrow the race results file for
+# driver identity (DriverId/TeamId) only, as fastf1 does for practice.
+ERGAST_SESSION_FILES: dict[str, str] = {
+    "Race": "results.json",
+    "Qualifying": "quali_results.json",
+    "Sprint": "sprint_results.json",
+}
+
+# fastf1's SessionResults column contract, in its order, followed by the tif1
+# extras carried from Ergast. ``Session.results`` always has every column.
+FASTF1_RESULTS_COLUMNS: tuple[str, ...] = (
+    "DriverNumber",
+    "BroadcastName",
+    "Abbreviation",
+    "DriverId",
+    "TeamName",
+    "TeamColor",
+    "TeamId",
+    "FirstName",
+    "LastName",
+    "FullName",
+    "HeadshotUrl",
+    "CountryCode",
+    "Position",
+    "ClassifiedPosition",
+    "GridPosition",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Time",
+    "Status",
+    "Points",
+    "Laps",
+)
+TIF1_RESULTS_EXTRA_COLUMNS: tuple[str, ...] = (
+    "TimeGap",
+    "FastestLapRank",
+    "FastestLapNumber",
+    "FastestLapTime",
+    "FastestLapAvgSpeed",
+    "PermanentNumber",
+    "DriverNationality",
+    "TeamNationality",
+    "DateOfBirth",
+    "DriverUrl",
+    "TeamUrl",
+)
+RESULTS_COLUMN_ORDER: tuple[str, ...] = FASTF1_RESULTS_COLUMNS + TIF1_RESULTS_EXTRA_COLUMNS

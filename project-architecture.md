@@ -197,6 +197,13 @@ Override the default with the `TIF1_CACHE_DIR` environment variable or the `cach
 - `types.py`: TypedDicts and Literal types
 - `core_utils/`: constants (column rename maps), DataFrame helpers, JSON parsing, resource management
 
+### 9. Ergast Tier (`src/tif1/ergast/`)
+
+- `interface.py`: `Ergast` and the fastf1 response classes; `structure.py`: the flattening tables
+- `router.py`: the routing matrix. Season-scoped tables (results, qualifying, sprint, laps, pit stops, standings, schedule, circuits, constructors) come from the `TracingInsights-Archive/Stats` repository through `stats.py`; seasons, drivers, status counts, `status=` filters, no-season queries and `current`/`last` go to Jolpica through `jolpica.py` (rate limiter, page merging). A missing or empty Stats file falls through to Jolpica for that round
+- `payloads.py`: memo -> SQLite `json` tier (`fetched_at` wrapper, TTL by season age) -> `CDNManager.try_sources_repo`
+- `core_utils/ergast_results.py`: the classification merged into `Session.results`/`drivers`, pit stops and standings frames, laps synthesized from Ergast timings for seasons before 2018
+
 ## Data Flow
 
 ### Cold Cache Flow (First Request)
@@ -343,7 +350,8 @@ tif1/
 │   ├── core.py              # Session, data loading and parsing
 │   ├── models.py            # Laps, Lap, Telemetry, Driver, SessionResults, CircuitInfo
 │   ├── session.py           # Re-export shim into core.py
-│   ├── events.py            # Event schedule, get_events/get_sessions
+│   ├── events.py            # Event schedule, get_events/get_sessions (f1schedule + Ergast backends)
+│   ├── ergast/              # Ergast tier: Stats repository first, Jolpica fallback (fastf1.ergast parity)
 │   ├── schedule_schema.py   # Schedule payload validation
 │   ├── fuzzy.py             # Fuzzy event-name matching
 │   ├── payload_loader.py    # Single payload-loading pipeline

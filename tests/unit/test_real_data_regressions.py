@@ -455,7 +455,7 @@ class TestDriverClassification:
         assert results["Position"].dtype == "float64"
         assert not results.iloc[0].dnf
         assert not results.iloc[2].dnf  # "+2 Laps" counts as classified
-        assert results.iloc[3].dnf
+        assert not results.iloc[3].dnf  # so does "+3 Laps" (any lapped finisher)
 
     def test_driver_without_laps_is_last_and_did_not_start(self):
         payload = [dict(d) for d in _NUMBER_SORTED] + [{"driver": "BOT", "dn": "77"}]

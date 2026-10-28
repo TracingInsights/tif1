@@ -94,6 +94,20 @@ class Config:
             # re-fetched from GitHub once this many hours have passed since the
             # cached copy was downloaded (0 re-fetches on every lookup).
             "schedule_ttl_hours": 6.0,
+            # Ergast data (tif1.ergast and the Session results merge): the
+            # TracingInsights-Archive/Stats repository is read first, Jolpica
+            # (api.jolpi.ca) only for what Stats cannot answer. Current-season
+            # payloads and Jolpica answers expire after ergast_ttl_hours; past
+            # seasons are cached permanently.
+            "ergast_results": True,
+            "ergast_fallback": True,
+            "jolpica_base_url": "https://api.jolpi.ca/ergast/f1",
+            "ergast_ttl_hours": 6.0,
+            "ergast_timeout": 5.0,
+            "ergast_rate_limit_burst": 4,
+            "ergast_rate_limit_hourly": 500,
+            "stats_repo": "TracingInsights-Archive/Stats",
+            "stats_branch": "main",
             # HTTP session configuration constants
             "keepalive_timeout": 120,
             "keepalive_max_requests": 10000,
@@ -205,6 +219,15 @@ class Config:
             "TIF1_SQLITE_TIMEOUT": ("sqlite_timeout", float),
             "TIF1_MISSING_PAYLOADS_TTL_DAYS": ("missing_payloads_ttl_days", float),
             "TIF1_SCHEDULE_TTL_HOURS": ("schedule_ttl_hours", float),
+            "TIF1_ERGAST_RESULTS": ("ergast_results", _to_bool),
+            "TIF1_ERGAST_FALLBACK": ("ergast_fallback", _to_bool),
+            "TIF1_JOLPICA_BASE_URL": "jolpica_base_url",
+            "TIF1_ERGAST_TTL_HOURS": ("ergast_ttl_hours", float),
+            "TIF1_ERGAST_TIMEOUT": ("ergast_timeout", float),
+            "TIF1_ERGAST_RATE_LIMIT_BURST": ("ergast_rate_limit_burst", int),
+            "TIF1_ERGAST_RATE_LIMIT_HOURLY": ("ergast_rate_limit_hourly", int),
+            "TIF1_STATS_REPO": "stats_repo",
+            "TIF1_STATS_BRANCH": "stats_branch",
             "TIF1_MEMORY_CACHE_MAX_ITEMS": ("memory_cache_max_items", int),
             "TIF1_MEMORY_TELEMETRY_CACHE_MAX_ITEMS": ("memory_telemetry_cache_max_items", int),
             "TIF1_KEEPALIVE_TIMEOUT": ("keepalive_timeout", int),
@@ -280,6 +303,8 @@ class Config:
             "keepalive_timeout",
             "keepalive_max_requests",
             "telemetry_prefetch_max_concurrent_requests",
+            "ergast_rate_limit_burst",
+            "ergast_rate_limit_hourly",
         ):
             if value is not None and (not isinstance(value, int | float) or value <= 0):
                 logger.warning(f"Invalid {key}={value}, using default={default}")
@@ -304,6 +329,7 @@ class Config:
             "pool_exhaustion_backoff_base",
             "pool_exhaustion_backoff_max",
             "pool_exhaustion_backoff_jitter",
+            "ergast_timeout",
         ):
             if value is not None and (not isinstance(value, int | float) or value <= 0):
                 logger.warning(f"Invalid {key}={value}, using default={default}")
@@ -312,7 +338,7 @@ class Config:
         # 0.0 is a legitimate retry_jitter_max (jitter disabled) and a
         # legitimate schedule_ttl_hours (always re-fetch); only reject negative
         # or non-numeric values.
-        if key in ("retry_jitter_max", "schedule_ttl_hours"):
+        if key in ("retry_jitter_max", "schedule_ttl_hours", "ergast_ttl_hours"):
             if value is not None and (not isinstance(value, int | float) or value < 0):
                 logger.warning(f"Invalid {key}={value}, using default={default}")
                 return default

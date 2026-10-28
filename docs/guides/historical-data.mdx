@@ -1,0 +1,115 @@
+---
+title: "Historical data and standings"
+sidebarTitle: "Historical data"
+icon: "clock-rotate-left"
+description: "Load any season since 1950, read official classifications, pit stops and championship standings, and query the Ergast tables directly"
+keywords:
+  - "historical F1 data"
+  - "1950"
+  - "championship standings"
+  - "pit stops"
+  - "official classification"
+  - "Ergast"
+---
+
+`tif1` serves timing and telemetry from 2018 onward from the TracingInsights data repositories. Results, lap times, pit stops and standings reach back to 1950 through the Ergast tables. Those come from the TracingInsights Stats repository, with the Jolpica API as fallback. This guide shows what that adds to a session and how to reach the tables directly.
+
+## Official classifications in a session
+
+From 2018 onward every session carries the official Ergast classification next to the timing data. Reading `session.results` or `session.drivers` fetches one small file for the round in parallel with the driver list.
+
+```python
+import tif1
+
+session = tif1.get_session(2024, "Bahrain Grand Prix", "Race")
+results = session.results
+
+print(results[["Abbreviation", "Position", "GridPosition", "Status", "Points", "Time", "TimeGap"]].head())
+print(session.total_laps)           # 57: the race distance from the classification
+print(session.drivers[:3])          # ['1', '11', '55']: official finishing order
+```
+
+What the classification fills in:
+
+- Race and Sprint: `Position`, `ClassifiedPosition`, `GridPosition`, `Status`, `Points`, `Time` (the true total race time), `Laps`, and the extras `TimeGap`, `FastestLapRank`, `FastestLapNumber`, `FastestLapTime`, `FastestLapAvgSpeed`.
+- Qualifying: `Position`, `Q1`, `Q2`, `Q3`.
+- Every session: `DriverId`, `TeamId`, `PermanentNumber`, `DriverNationality`, `TeamNationality`, `DateOfBirth`, `DriverUrl`, `TeamUrl`, and `BroadcastName`.
+
+Drivers that appear only in the classification (did not start) are added with NaN `Position` and `GridPosition`, as fastf1 does. `session.drivers`, `session.drivers_df` and `session.results` follow the official order, which includes post-race penalties.
+
+<Tip>
+  Pass `ergast=False` to `get_session()` or set `TIF1_ERGAST_RESULTS=0` to keep the lap-derived results of earlier releases. Nothing is fetched then.
+</Tip>
+
+## Pit stops and standings
+
+```python
+stops = session.pit_stops
+print(stops[["Driver", "Stop", "Lap", "Duration"]].head())
+
+drivers = session.driver_standings          # after this round
+teams = session.constructor_standings
+print(drivers[["Position", "Abbreviation", "Points", "Wins"]].head(3))
+
+# The same tables without a session: the standings after round 10 of 2024,
+# or the final standings of 2023 when the round is omitted.
+print(tif1.get_driver_standings(2024, 10).head(3))
+print(tif1.get_constructor_standings(2023).head(3))
+```
+
+The frames follow the session's `lib`: pandas by default, polars with `lib="polars"`. `session.results` stays pandas.
+
+## Seasons before 2018
+
+Schedules and sessions reach back to 1950. The schedule of those years lists all five sessions, as fastf1's Ergast backend does, but only `Qualifying`, `Sprint` and `Race` can be loaded. `get_session(1995, "Monaco", "Practice 1")` raises `DataNotFoundError` because Ergast carries no practice data. Results come from the classification, laps from the Ergast lap timings (1996 onward), pit stops from 2011 onward. Telemetry, weather and race control messages do not exist for those years and raise `DataNotFoundError`.
+
+Before the 1960s a car was sometimes shared by two drivers, who then appear as two rows of the classification under one number. `session.results` keeps the plain number as the label of the first driver. The other drivers of that car are labelled `number/Abbreviation`, for example `"10/shawe-taylor"`, so every label names one row. The `DriverNumber` column keeps the car number for both drivers. `session.drivers` lists the same labels, and `session.get_driver()` accepts a label, a number or an abbreviation.
+
+```python
+session = tif1.get_session(2010, "Abu Dhabi Grand Prix", "Race")
+results = session.results
+print(results[["Abbreviation", "DriverId", "TeamName", "Position", "Points"]].head())
+
+laps = session.laps
+print(laps[["Driver", "LapNumber", "LapTime", "Position", "Stint"]].head())
+```
+
+Lap frames of those seasons have the usual columns. `Time` and `LapStartTime` are the cumulative race time (Ergast has no session clock). `Stint` follows the pit-stop laps, and channels Ergast does not know (sectors, tyres, speed traps) are empty. Drivers without an Ergast three-letter code (most drivers before the 1990s) keep their Ergast id as `Abbreviation` and as the `Driver` value of the lap rows.
+
+The schedule of a season before 2018 is built from the Ergast race table: practice sessions are listed with estimated dates, as fastf1's `backend="ergast"` does. Ask for that schedule for any season:
+
+```python
+schedule = tif1.get_event_schedule(2024, backend="ergast")
+print(schedule[["RoundNumber", "EventName", "CircuitId", "Session5DateUtc"]].head())
+```
+
+Every schedule, whichever backend built it, carries `CircuitId`, `CircuitName`, `CircuitLatitude`, `CircuitLongitude`, `EventUrl` and `CircuitUrl` after fastf1's columns.
+
+## The Ergast tables directly
+
+```python
+from tif1.ergast import Ergast
+
+ergast = Ergast()
+
+# Every race winner of 2021.
+winners = ergast.get_race_results(season=2021, results_position=1)
+for race, content in zip(winners.description["raceName"], winners.content):
+    print(race, content.loc[0, "driverId"])
+
+# Lap timings of one race, lap 1 only.
+first_lap = ergast.get_lap_times(2021, 1, lap_number=1)
+print(first_lap.content[0].head())
+```
+
+Refer to [Ergast](/api-reference/ergast) for the routing rules, the response classes and the configuration keys.
+
+## Command line
+
+```bash
+tif1 results 2024 "Bahrain Grand Prix" Race
+tif1 results 2010 "Abu Dhabi Grand Prix" Qualifying
+tif1 standings 2024 10
+tif1 standings 2023 --constructors
+tif1 cache-clear --ergast --yes
+```

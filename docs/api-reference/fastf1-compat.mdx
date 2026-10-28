@@ -469,11 +469,14 @@ When migrating from fastf1 to tif1:
 
 ---
 
+## Ergast data
+
+`tif1.ergast` is a drop-in for `fastf1.ergast`. `from tif1.ergast import Ergast` keeps the thirteen endpoint methods, their keyword arguments, the flattened column names, the response classes and the legacy `fetch_season`/`fetch_day`/`fetch_results` helpers. The data comes from the TracingInsights Stats repository first and from the Jolpica API only for what that repository cannot answer. The 500-requests-per-hour ceiling therefore stays out of the way for season-wide queries. `Session.results` carries the official classification (grid, points, status, race time, qualifying segments) and `get_session`, `get_event` and `get_event_schedule` accept fastf1's `backend=` keyword. Refer to [Ergast](/api-reference/ergast).
+
 ## Known Limitations
 
 The following fastf1 features are not supported in tif1:
 
-- **Ergast API integration**: tif1 reads only the TracingInsights data repositories (through jsDelivr, Hugging Face, and StaticDelivr)
 - **Live timing**: tif1 focuses on historical data
 - **Custom data sources**: the `cdns` setting can point at a mirror, but the mirror must use the same file layout as the TracingInsights repositories
 

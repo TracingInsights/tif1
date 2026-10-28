@@ -35,6 +35,27 @@ def _normalize_resolver(resolver: str) -> str:
     return _LEGACY_RESOLVER_SPELLINGS.get(resolver.lower(), resolver)
 
 
+_user_agent_value: str | None = None
+
+
+def user_agent() -> str:
+    """``tif1/{version} (+homepage)``: the User-Agent of every tif1 request.
+
+    The Jolpica API refuses requests without a descriptive User-Agent; the
+    CDNs ignore it. The version lookup (importlib.metadata) runs once.
+    """
+    global _user_agent_value
+    if _user_agent_value is None:
+        try:
+            from importlib.metadata import version
+
+            tif1_version = version("tif1")
+        except Exception:
+            tif1_version = "0.0.0"
+        _user_agent_value = f"tif1/{tif1_version} (+https://github.com/TracingInsights/tif1)"
+    return _user_agent_value
+
+
 def _response_reused_connection(response: Any) -> bool:
     """Whether a niquests response rode an already-open pooled connection.
 
@@ -167,6 +188,7 @@ def _create_session() -> Any:
             keepalive_max_requests = config.get("keepalive_max_requests", 1000)
             session.headers.update(
                 {
+                    "User-Agent": user_agent(),
                     "Connection": "keep-alive",
                     "Keep-Alive": f"timeout={keepalive_timeout}, max={keepalive_max_requests}",
                 }

@@ -162,7 +162,7 @@ tif1 version
 
 **Expected output:**
 ```text
-tif1 version 0.9.0
+tif1 version 0.10.0
 ```
 
 If the command is not found, troubleshoot using these steps:
@@ -447,7 +447,7 @@ The help output shows:
  Show fastest laps.
 
 ╭─ Arguments ──────────────────────────────────────────────────────╮
-│ *    year         <int>  Year (2018-current) [required]          │
+│ *    year         <int>  Year (1950-current) [required]          │
 │ *    event        <str>  Event name [required]                   │
 │ *    session      <str>  Session name [required]                 │
 ╰──────────────────────────────────────────────────────────────────╯
@@ -1271,7 +1271,7 @@ tif1 events YEAR
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `YEAR` | Integer | Yes | Season year (2018-current). Must be a valid F1 season year. |
+| `YEAR` | Integer | Yes | Season year (1950-current; timing and telemetry from 2018). Must be a valid F1 season year. |
 
 **Description:**
 
@@ -1360,7 +1360,7 @@ tif1 sessions YEAR EVENT
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `YEAR` | Integer | Yes | Season year (1950-current; timing and telemetry from 2018) |
 | `EVENT` | String | Yes | Event name (use quotes for multi-word names). Resolved like `tif1.get_event_by_name()`. |
 
 **Description:**
@@ -1466,7 +1466,7 @@ tif1 drivers YEAR EVENT SESSION
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `YEAR` | Integer | Yes | Season year (1950-current; timing and telemetry from 2018) |
 | `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
 | `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
 
@@ -1574,7 +1574,7 @@ tif1 fastest YEAR EVENT SESSION [OPTIONS]
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `YEAR` | Integer | Yes | Season year (1950-current; timing and telemetry from 2018) |
 | `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
 | `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
 
@@ -1717,6 +1717,74 @@ tif1 fastest 2025 "Monaco Grand Prix" "Race" --driver ABC
 
 ---
 
+### `results` - Show the Session Classification
+
+Display the official classification of a session: the Ergast results merged into `session.results`.
+
+**Syntax:**
+```bash
+tif1 results YEAR EVENT SESSION [--no-ergast]
+```
+
+**Arguments:**
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (1950-current) |
+| `EVENT` | String | Yes | Event name or round number |
+| `SESSION` | String | Yes | Session name (`Race`, `Qualifying`, `Sprint`, abbreviations accepted) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--no-ergast` | Skip the Ergast merge and print the lap-derived classification |
+
+**Description:**
+
+Races and sprints list position, car number, driver, team, grid, status and points. The last column is the winner's total race time and every other driver's gap. Qualifying lists the Q1, Q2 and Q3 times. Seasons before 2018 are served from Ergast data alone.
+
+**Examples:**
+
+```bash
+tif1 results 2024 "Bahrain Grand Prix" Race
+tif1 results 2024 2 Qualifying
+tif1 results 2010 "Abu Dhabi Grand Prix" Race
+```
+
+---
+
+### `standings` - Show Championship Standings
+
+Display the drivers' or constructors' championship standings after a round.
+
+**Syntax:**
+```bash
+tif1 standings YEAR [ROUND] [--constructors]
+```
+
+**Arguments:**
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `YEAR` | Integer | Yes | Season year (1950-current) |
+| `ROUND` | Integer | No | Round number; the last completed round (the final standings of a past season) when omitted |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--constructors`, `-c` | Constructors' instead of drivers' standings |
+
+**Examples:**
+
+```bash
+tif1 standings 2024 10
+tif1 standings 2023 --constructors
+```
+
+---
+
 ### `cache-info` - Display Cache Statistics
 
 Show information about the tif1 cache: location, file count, and size.
@@ -1825,6 +1893,8 @@ If cache size seems incorrect:
 ---
 
 ### `cache-clear` - Clear Cache Database
+
+`--ergast` clears only the Ergast tier (the Stats repository files and the Jolpica answers) and keeps the timing and telemetry payloads.
 
 Delete all cached data to force fresh data fetches.
 
@@ -1984,7 +2054,7 @@ tif1 version
 
 **Sample Output:**
 ```text
-tif1 version 0.9.0
+tif1 version 0.10.0
 ```
 
 **Output Format:**
@@ -2060,7 +2130,7 @@ tif1 debug YEAR EVENT SESSION
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `YEAR` | Integer | Yes | Season year (2018-current) |
+| `YEAR` | Integer | Yes | Season year (1950-current; timing and telemetry from 2018) |
 | `EVENT` | String | Yes | Event name (use quotes for multi-word names) |
 | `SESSION` | String | Yes | Session name (use quotes for multi-word names) |
 
@@ -3444,7 +3514,7 @@ A: Yes, tif1 CLI is completely free and open-source.
 A: No, tif1 CLI does not require any API keys or authentication.
 
 **Q: What data is available?**
-A: F1 data from 2018 onwards, including lap times, telemetry, weather, and race control messages. The CLI shows schedules, drivers, and fastest laps.
+A: Lap times, telemetry, weather and race control messages from 2018 onwards, and Ergast results, lap times and standings from 1950 onwards. The CLI shows schedules, drivers, fastest laps, classifications and standings.
 
 **Q: Can I use this for commercial purposes?**
 A: tif1 is released under the MIT License. Read the LICENSE file for the terms.

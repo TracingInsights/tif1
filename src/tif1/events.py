@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import threading
 import time
 import unicodedata
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -16,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from .cache import get_cache
 from .config import get_config
-from .core_utils.constants import EVENT_NAME_ALIASES
+from .core_utils.constants import EVENT_NAME_ALIASES, F1_API_FIRST_YEAR, MIN_YEAR
 from .core_utils.runtime import THREADS_AVAILABLE
 from .exceptions import (
     CacheError,
@@ -31,6 +33,7 @@ from .schedule_schema import validate_schedule_payload
 
 if TYPE_CHECKING:
     from .event_frames import Event, EventSchedule
+    from .types import ScheduleBackend
 
 
 def __getattr__(name: str) -> Any:
@@ -400,8 +403,8 @@ def _build_year_schedule(year: int, now: float) -> _YearSchedule:
     )
 
 
-def _get_year_schedule(year: int) -> _YearSchedule:
-    """Return the memoized season schedule, refreshing a live season past its TTL."""
+def _get_f1schedule_year_schedule(year: int) -> _YearSchedule:
+    """Return the memoized f1schedule season, refreshing a live season past its TTL."""
     now = time.time()
     record = _year_schedules.get(year)
     if record is not None and record.expires_at > now and _is_current_generation(record, year):
@@ -430,8 +433,286 @@ def _is_current_generation(record: _YearSchedule, year: int) -> bool:
         return record.generation == _schedule_generation.get(year, 0)
 
 
-def _resolve_year_payload(year: int) -> dict[str, Any]:
-    return _get_year_schedule(year).payload
+def _resolve_year_payload(year: int, backend: ScheduleBackend | None = None) -> dict[str, Any]:
+    return _get_year_schedule(year, backend).payload
+
+
+# -- schedule backends ---------------------------------------------------------
+
+_ERGAST_SESSION_KEYS = {
+    "Practice 1": "FirstPractice",
+    "Practice 2": "SecondPractice",
+    "Practice 3": "ThirdPractice",
+    "Qualifying": "Qualifying",
+    "Sprint": "Sprint",
+    "Sprint Qualifying": "SprintQualifying",
+    "Sprint Shootout": "SprintShootout",
+}
+_ERGAST_CIRCUIT_KEYS = (
+    "CircuitId",
+    "CircuitName",
+    "CircuitLatitude",
+    "CircuitLongitude",
+    "EventUrl",
+    "CircuitUrl",
+)
+_EMPTY_CIRCUIT_EXTRAS: dict[str, Any] = {
+    "CircuitId": "",
+    "CircuitName": "",
+    "CircuitLatitude": None,
+    "CircuitLongitude": None,
+    "EventUrl": "",
+    "CircuitUrl": "",
+}
+_ergast_year_schedules: dict[int, _YearSchedule] = {}
+_ergast_vendored_years: dict[int, list[dict[str, Any]] | None] = {}
+
+
+def _effective_backend(year: int, backend: ScheduleBackend | None) -> str:
+    """``"f1schedule"`` or ``"ergast"`` for a fastf1-style backend name.
+
+    ``None`` means the f1schedule calendar from :data:`F1_API_FIRST_YEAR` (with
+    Ergast as fallback when it has no season) and Ergast before it;
+    ``"fastf1"`` and ``"f1timing"`` both name the f1schedule calendar (tif1 has
+    no live-timing backend), ``"ergast"`` the Ergast race table.
+    """
+    if backend is None:
+        return "f1schedule" if year >= F1_API_FIRST_YEAR else "ergast"
+    if backend in ("fastf1", "f1timing"):
+        return "f1schedule"
+    if backend == "ergast":
+        return "ergast"
+    raise ValueError(f"Unknown schedule backend {backend!r}; use 'fastf1', 'f1timing' or 'ergast'")
+
+
+def _normalize_backend(
+    backend: ScheduleBackend | None, force_ergast: bool
+) -> ScheduleBackend | None:
+    if force_ergast:
+        warnings.warn(
+            "Option ``force_ergast`` has been deprecated, use ``backend='ergast'`` instead",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return "ergast"
+    return backend
+
+
+def _get_year_schedule(year: int, backend: ScheduleBackend | None = None) -> _YearSchedule:
+    """The memoized season schedule of ``backend`` (see :func:`_effective_backend`)."""
+    effective = _effective_backend(year, backend)
+    if effective == "ergast":
+        return _get_ergast_year_schedule(year)
+    record = _get_f1schedule_year_schedule(year)
+    if backend is None and not record.events:
+        # No f1schedule calendar for the season (not published yet): Ergast
+        # knows the race table.
+        ergast_record = _get_ergast_year_schedule(year)
+        if ergast_record.events:
+            return ergast_record
+    return record
+
+
+def _load_vendored_ergast_year(year: int) -> list[dict[str, Any]] | None:
+    """The packaged compact Ergast race list of ``year`` (None when not vendored)."""
+    if year in _ergast_vendored_years:
+        return _ergast_vendored_years[year]
+    path = files("tif1").joinpath(f"data/schedules/ergast/schedule_{year}.json")
+    races: list[dict[str, Any]] | None = None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        candidate = payload.get("races") if isinstance(payload, dict) else None
+        if isinstance(candidate, list):
+            races = candidate
+    except (FileNotFoundError, OSError, ValueError):
+        races = None
+    _ergast_vendored_years[year] = races
+    return races
+
+
+def _fetch_live_ergast_year(year: int) -> list[dict[str, Any]] | None:
+    """The season's ``events.json`` from the Stats repository (None when unavailable)."""
+    from .ergast.stats import get_stats_source
+
+    if year < MIN_YEAR:
+        return None
+    try:
+        return get_stats_source().races(year, fast=True)
+    except (CacheError, DataNotFoundError, InvalidDataError, NetworkError) as exc:
+        logger.warning("Failed to fetch the Ergast schedule for %s: %s", year, exc)
+        return None
+
+
+def _build_ergast_year_schedule(year: int, now: float) -> _YearSchedule:
+    races: list[dict[str, Any]] | None
+    offline = bool(get_config().get("offline_mode", False))
+    if _is_current_or_future_season(year):
+        races = None if offline else _fetch_live_ergast_year(year)
+        expires_at = now + _schedule_ttl_seconds()
+        if races is None:
+            races = _load_vendored_ergast_year(year)
+            expires_at = now + _F1SCHEDULE_RETRY_AFTER_SECONDS
+    else:
+        races = _load_vendored_ergast_year(year)
+        expires_at = math.inf
+        if races is None and not offline:
+            races = _fetch_live_ergast_year(year)
+            expires_at = now + _schedule_ttl_seconds()
+    payload = _convert_ergast_year(races or [], year)
+    return _YearSchedule(payload, tuple(payload["events"]), expires_at)
+
+
+def _get_ergast_year_schedule(year: int) -> _YearSchedule:
+    now = time.time()
+    record = _ergast_year_schedules.get(year)
+    if record is not None and record.expires_at > now:
+        return record
+    fresh = _build_ergast_year_schedule(year, now)
+    with _year_schedules_lock:
+        _ergast_year_schedules[year] = fresh
+    return fresh
+
+
+def _ergast_iso(block: Any) -> str | None:
+    """``YYYY-MM-DDTHH:MM:SS`` (UTC, no suffix) from an Ergast ``{date, time}`` block."""
+    if not isinstance(block, dict):
+        return None
+    date = block.get("date")
+    if not isinstance(date, str) or not date:
+        return None
+    time_part = block.get("time")
+    if isinstance(time_part, str) and time_part:
+        return f"{date}T{time_part.replace('Z', '')}"
+    return f"{date}T00:00:00"
+
+
+def _ergast_session_layout(race: dict[str, Any], year: int) -> tuple[str, list[str]]:
+    """``(EventFormat, session names)`` of a race as fastf1's Ergast backend names them."""
+    if "Sprint" in race:
+        if year in (2021, 2022):
+            return "sprint", ["Practice 1", "Qualifying", "Practice 2", "Sprint", "Race"]
+        if year == 2023:
+            return "sprint_shootout", [
+                "Practice 1",
+                "Qualifying",
+                "Sprint Shootout",
+                "Sprint",
+                "Race",
+            ]
+        return "sprint_qualifying", [
+            "Practice 1",
+            "Sprint Qualifying",
+            "Sprint",
+            "Qualifying",
+            "Race",
+        ]
+    return "conventional", ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _ergast_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _convert_ergast_year(races: list[dict[str, Any]], year: int) -> dict[str, Any]:
+    """The schedule payload (events, sessions, metadata) of an Ergast race list.
+
+    Session names follow fastf1's Ergast backend; session dates come from the
+    real Jolpica session keys when present and fastf1's day-offset estimates
+    otherwise (two days before the race for sessions 1-2, one day for 3-4).
+    The session list and the ``Session1..5`` columns always agree, so
+    ``Event.get_session_name(i)`` is ``Session{i}`` for every season; which
+    of them a season before :data:`F1_API_FIRST_YEAR` can load is decided
+    by :func:`tif1.get_session` (:data:`ERGAST_LOADABLE_SESSIONS`).
+    A race whose ``round`` is not a number is skipped, never the season.
+    """
+    numbered: list[tuple[int, dict[str, Any]]] = []
+    for race in races:
+        if not isinstance(race, dict):
+            continue
+        try:
+            round_number = int(race.get("round", 0))
+        except (TypeError, ValueError):
+            continue
+        numbered.append((round_number, race))
+    numbered.sort(key=lambda item: item[0])
+    events: list[str] = []
+    sessions: dict[str, list[str]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    for round_number, race in numbered:
+        name = str(race.get("raceName", "")).strip()
+        if not name:
+            continue
+        event_format, names = _ergast_session_layout(race, year)
+        race_iso = _ergast_iso(race)
+        race_date = datetime.fromisoformat(race_iso) if race_iso else None
+        circuit = _as_dict(race.get("Circuit"))
+        location = _as_dict(circuit.get("Location"))
+        row: dict[str, Any] = {
+            "RoundNumber": round_number,
+            "EventDate": race.get("date"),
+            "Location": location.get("locality", ""),
+            "Country": location.get("country", ""),
+            "OfficialEventName": "",
+            "EventFormat": event_format,
+            "GmtOffset": None,
+            "F1ApiSupport": year >= F1_API_FIRST_YEAR,
+        }
+        for index, session_name in enumerate(names, 1):
+            row[f"Session{index}"] = session_name
+            row[f"Session{index}Date"] = None
+            key = _ERGAST_SESSION_KEYS.get(session_name)
+            if session_name == "Race":
+                iso = race_iso
+            else:
+                iso = _ergast_iso(race.get(key)) if key else None
+                if iso is None and race_date is not None:
+                    days = 2 if index <= 2 else 1
+                    midnight = race_date.replace(hour=0, minute=0, second=0)
+                    iso = (midnight - timedelta(days=days)).isoformat()
+            row[f"Session{index}DateUtc"] = iso
+        row.update(
+            {
+                "CircuitId": circuit.get("circuitId", ""),
+                "CircuitName": circuit.get("circuitName", ""),
+                "CircuitLatitude": _ergast_float(location.get("lat")),
+                "CircuitLongitude": _ergast_float(location.get("long")),
+                "EventUrl": race.get("url", ""),
+                "CircuitUrl": circuit.get("url", ""),
+            }
+        )
+        events.append(name)
+        metadata[name] = row
+        sessions[name] = list(names)
+    return {"events": events, "sessions": sessions, "metadata": metadata}
+
+
+@lru_cache(maxsize=128)
+def _ergast_year_metadata(year: int) -> dict[str, dict[str, Any]]:
+    """Per-event metadata of the packaged Ergast schedule (offline only)."""
+    races = _load_vendored_ergast_year(year) or []
+    return _convert_ergast_year(races, year)["metadata"]
+
+
+def _ergast_circuit_extras(year: int, round_number: Any) -> dict[str, Any]:
+    """Circuit columns of a round from the packaged Ergast schedule (never a request)."""
+    try:
+        number = int(round_number)
+    except (TypeError, ValueError):
+        return {}
+    if number <= 0:
+        return {}
+    for row in _ergast_year_metadata(year).values():
+        if row.get("RoundNumber") == number:
+            return {key: row[key] for key in _ERGAST_CIRCUIT_KEYS}
+    return {}
 
 
 def _clear_schedule_memo() -> None:
@@ -443,6 +724,7 @@ def _clear_schedule_memo() -> None:
     _join_schedule_refreshes(timeout=5.0)
     with _year_schedules_lock:
         _year_schedules.clear()
+        _ergast_year_schedules.clear()
         _refreshing_years.clear()
         _refresh_threads.clear()
         _schedule_generation.clear()
@@ -455,12 +737,14 @@ def _load_schedule_payload() -> dict[str, Any]:
     return validate_schedule_payload(payload)
 
 
-def _build_events_for_year(year: int) -> list[str]:
+def _build_events_for_year(year: int, backend: ScheduleBackend | None = None) -> list[str]:
     """Get list of events for a given year."""
-    return list(_get_year_schedule(year).events)
+    return list(_get_year_schedule(year, backend).events)
 
 
-def _build_sessions_for_event(year: int, event: str) -> list[str]:
+def _build_sessions_for_event(
+    year: int, event: str, backend: ScheduleBackend | None = None
+) -> list[str]:
     """Get list of sessions for a given year and event.
 
     ``event`` is resolved like ``get_event_by_name`` (exact name, then alias,
@@ -470,58 +754,78 @@ def _build_sessions_for_event(year: int, event: str) -> list[str]:
     (``EventNotInSeasonError`` for an alias of an event not held that year).
     """
     standard = ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
-    year_payload = _resolve_year_payload(year)
+    year_payload = _resolve_year_payload(year, backend)
     sessions = year_payload.get("sessions", {})
     if not isinstance(sessions, dict):
         return standard
     event_sessions = sessions.get(event)
-    if event_sessions is None and event and _get_events_cached(year):
+    if event_sessions is None and event and _get_events_cached(year, backend):
         # Raises for a name that matches no event, as get_session does: the
         # generic five sessions would describe a race that does not exist.
-        event_sessions = sessions.get(_resolve_event_name(year, event))
+        event_sessions = sessions.get(_resolve_event_name(year, event, backend=backend))
     if not isinstance(event_sessions, list) or not event_sessions:
         return standard
     return list(event_sessions)
 
 
-def _get_events_cached(year: int) -> tuple[str, ...]:
+def _get_events_cached(year: int, backend: ScheduleBackend | None = None) -> tuple[str, ...]:
     """Get the season's event names as an immutable tuple (memoized per season)."""
-    return _get_year_schedule(year).events
+    return _get_year_schedule(year, backend).events
 
 
-def get_events(year: int) -> EventSchedule:
+def get_events(year: int, *, backend: ScheduleBackend | None = None) -> EventSchedule:
     """Get event schedule for a given year."""
-    return get_event_schedule(year)
+    return get_event_schedule(year, backend=backend)
 
 
-def _get_sessions_cached(year: int, event: str) -> tuple[str, ...]:
+def _get_sessions_cached(
+    year: int, event: str, backend: ScheduleBackend | None = None
+) -> tuple[str, ...]:
     """Get the resolved session list as an immutable tuple (memoized per season)."""
-    record = _get_year_schedule(year)
+    record = _get_year_schedule(year, backend)
     sessions = record.sessions.get(event)
     if sessions is None:
-        sessions = tuple(_build_sessions_for_event(year, event))
+        sessions = tuple(_build_sessions_for_event(year, event, backend))
         record.sessions[event] = sessions
     return sessions
 
 
-def get_sessions(year: int, event: str) -> list[str]:
-    """Get list of sessions for a given year and event."""
-    return list(_get_sessions_cached(year, event))
+def get_sessions(year: int, event: str, *, backend: ScheduleBackend | None = None) -> list[str]:
+    """Get list of sessions for a given year and event.
+
+    Args:
+        year: Championship year.
+        event: Event name (resolved like :func:`get_event_by_name`).
+        backend: Schedule backend (see :func:`get_event_schedule`).
+    """
+    return list(_get_sessions_cached(year, event, backend))
 
 
-def _get_event_for_year(year: int, event_name: str) -> Event:
-    year_payload = _resolve_year_payload(year)
+def _get_event_for_year(
+    year: int, event_name: str, backend: ScheduleBackend | None = None
+) -> Event:
+    year_payload = _resolve_year_payload(year, backend)
     metadata_dict = year_payload.get("metadata", {})
     metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
-    return _create_event(year, event_name, metadata)
+    return _create_event(year, event_name, metadata, backend)
 
 
-def _create_event(year: int, event_name: str, metadata: Any) -> Event:
+def _create_event(
+    year: int, event_name: str, metadata: Any, backend: ScheduleBackend | None = None
+) -> Event:
     from .event_frames import Event
 
     event_factory = cast(Any, Event)
-    event_metadata = metadata if isinstance(metadata, dict) else None
-    return cast(Event, event_factory(year, event_name, event_metadata))
+    event_metadata = dict(metadata) if isinstance(metadata, dict) else None
+    if event_metadata is not None and _effective_backend(year, backend) == "f1schedule":
+        # Circuit columns (id, name, coordinates, URLs) from the packaged
+        # Ergast schedule, joined by round; never a network request. Rows
+        # without a round (testing) keep empty values so the columns exist.
+        extras = dict(_EMPTY_CIRCUIT_EXTRAS)
+        extras.update(_ergast_circuit_extras(year, event_metadata.get("RoundNumber")))
+        for key, value in extras.items():
+            event_metadata.setdefault(key, value)
+    return cast(Event, event_factory(year, event_name, event_metadata, backend=backend))
 
 
 # Lowest fuzzy score (rapidfuzz ratio, 0-100) that still counts as a match.
@@ -552,10 +856,14 @@ def _event_alias_targets(name: str) -> tuple[str, ...]:
 
 
 def _find_event_by_name(
-    year: int, event_names: list[str], name: str, exact_match: bool = False
+    year: int,
+    event_names: list[str],
+    name: str,
+    exact_match: bool = False,
+    backend: ScheduleBackend | None = None,
 ) -> Event | None:
     matched = _match_event_name(year, event_names, name, exact_match=exact_match)
-    return None if matched is None else _get_event_for_year(year, matched)
+    return None if matched is None else _get_event_for_year(year, matched, backend)
 
 
 def _match_event_name(
@@ -655,9 +963,29 @@ def _match_event_name(
     return matched_event_name
 
 
-def get_event(year: int, gp: int | str, exact_match: bool = False) -> Event | None:
-    """Get event by round number or name."""
-    schedule = get_event_schedule(year)
+def get_event(
+    year: int,
+    gp: int | str,
+    exact_match: bool = False,
+    *,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+    strict_search: bool = False,
+) -> Event | None:
+    """Get event by round number or name.
+
+    Args:
+        year: Championship year.
+        gp: Round number or event name (fuzzy-matched unless ``exact_match``).
+        exact_match: Require an exact name match (``strict_search`` is
+            fastf1's name for the same switch).
+        backend: Schedule backend (see :func:`get_event_schedule`).
+        force_ergast: Deprecated alias of ``backend="ergast"``.
+        strict_search: Same as ``exact_match``.
+    """
+    backend = _normalize_backend(backend, force_ergast)
+    exact_match = exact_match or strict_search
+    schedule = get_event_schedule(year, backend=backend)
     if isinstance(gp, int):
         return schedule.get_event_by_round(gp)
 
@@ -673,12 +1001,16 @@ def get_event(year: int, gp: int | str, exact_match: bool = False) -> Event | No
     return None
 
 
-def get_event_by_round(year: int, round_number: int) -> Event:
+def get_event_by_round(
+    year: int, round_number: int, *, backend: ScheduleBackend | None = None
+) -> Event:
     """Get event by round number."""
-    return get_event_schedule(year).get_event_by_round(round_number)
+    return get_event_schedule(year, backend=backend).get_event_by_round(round_number)
 
 
-def get_event_by_name(year: int, name: str, exact_match: bool = False) -> Event:
+def get_event_by_name(
+    year: int, name: str, exact_match: bool = False, *, backend: ScheduleBackend | None = None
+) -> Event:
     """Get event by name with optional fuzzy matching.
 
     A fuzzy match is performed to find the event that best matches the
@@ -693,13 +1025,18 @@ def get_event_by_name(year: int, name: str, exact_match: bool = False) -> Event:
             event for the British Grand Prix.
         exact_match: Search only for exact query matches instead of
             using fuzzy search.
+        backend: Schedule backend (see :func:`get_event_schedule`).
     """
-    return _get_event_for_year(year, _resolve_event_name(year, name, exact_match=exact_match))
+    return _get_event_for_year(
+        year, _resolve_event_name(year, name, exact_match=exact_match, backend=backend), backend
+    )
 
 
-def _resolve_event_name(year: int, name: str, exact_match: bool = False) -> str:
+def _resolve_event_name(
+    year: int, name: str, exact_match: bool = False, backend: ScheduleBackend | None = None
+) -> str:
     """Season event name ``name`` resolves to; raises like :func:`get_event_by_name`."""
-    events = list(_get_events_cached(year))
+    events = list(_get_events_cached(year, backend))
     event = _match_event_name(year, events, name, exact_match=exact_match)
     if event is None:
         alias_targets = () if exact_match else _event_alias_targets(name)
@@ -715,28 +1052,128 @@ def _resolve_event_name(year: int, name: str, exact_match: bool = False) -> str:
     return event
 
 
-def get_event_schedule(year: int, include_testing: bool = True) -> EventSchedule:
-    """Return FastF1-compatible event schedule for a specific season."""
+def get_event_schedule(
+    year: int,
+    include_testing: bool = True,
+    *,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+) -> EventSchedule:
+    """Return FastF1-compatible event schedule for a specific season.
+
+    Args:
+        year: Championship year (1950 onward).
+        include_testing: Keep pre-season testing events (f1schedule only).
+        backend: ``"fastf1"`` or ``"f1timing"`` read the f1schedule calendar
+            (2018 onward, local session times); ``"ergast"`` builds the
+            schedule from the Ergast race table (1950 onward, UTC times,
+            estimated practice times for old seasons). ``None`` uses
+            f1schedule from 2018 (Ergast when it has no season yet) and
+            Ergast before.
+        force_ergast: Deprecated alias of ``backend="ergast"``.
+    """
     import pandas as pd
 
     from .event_frames import EventSchedule
 
-    year_payload = _resolve_year_payload(year)
+    backend = _normalize_backend(backend, force_ergast)
+    year_payload = _resolve_year_payload(year, backend)
     metadata_dict = year_payload.get("metadata", {})
-    events = list(_get_events_cached(year))
+    events = list(_get_events_cached(year, backend))
 
     rows: list[dict[str, Any]] = []
     for event_name in events:
         metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
-        event = _create_event(year, event_name, metadata)
+        event = _create_event(year, event_name, metadata, backend)
         rows.append(cast(dict[str, Any], event.to_dict()))
 
     schedule = EventSchedule(rows)
     schedule.year = year
+    schedule.backend = backend
     if include_testing or "RoundNumber" not in schedule.columns:
         return schedule
 
     rounds = pd.to_numeric(schedule["RoundNumber"], errors="coerce")
     filtered = schedule.loc[rounds > 0].copy()
     filtered.year = year
+    filtered.backend = backend
     return filtered
+
+
+def get_events_remaining(
+    dt: datetime | None = None,
+    *,
+    include_testing: bool = True,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+) -> EventSchedule:
+    """Events of the season of ``dt`` (default: now, UTC) that have not finished yet.
+
+    An event is kept while its last session (the third session for testing
+    events) starts after ``dt``.
+
+    Args:
+        dt: Reference time (naive UTC). Defaults to the current UTC time.
+        include_testing: Keep pre-season testing events.
+        backend: Schedule backend (see :func:`get_event_schedule`).
+        force_ergast: Deprecated alias of ``backend="ergast"``.
+    """
+    import pandas as pd
+
+    if dt is None:
+        dt = datetime.now(UTC).replace(tzinfo=None)
+    events = get_event_schedule(
+        dt.year, include_testing=include_testing, backend=backend, force_ergast=force_ergast
+    )
+    if events.empty:
+        return events
+    if not include_testing:
+        # An event without a race time (no UTC offset parsed, or none
+        # published yet) is not over: keep it, as the loop below does.
+        race_dates = pd.to_datetime(events["Session5DateUtc"])
+        result = events.loc[race_dates.isna() | (race_dates > dt)]
+        result.year = events.year
+        result.backend = events.backend
+        return result
+
+    indexes_to_drop = []
+    for idx, event in events.iterrows():
+        testing = str(event.get("EventFormat", "")) == "testing"
+        column = "Session3DateUtc" if testing else "Session5DateUtc"
+        session_date = pd.Timestamp(event[column]) if column in event.index else pd.NaT
+        if not pd.isna(session_date) and session_date <= dt:
+            indexes_to_drop.append(idx)
+    result = events.drop(index=indexes_to_drop)
+    result.year = events.year
+    result.backend = events.backend
+    return result
+
+
+def get_testing_event(
+    year: int, test_number: int, *, backend: ScheduleBackend | None = None
+) -> Event:
+    """The ``test_number``-th pre-season testing event of ``year`` (1-based).
+
+    Raises:
+        ValueError: ``backend="ergast"`` (Ergast has no testing events) or no such test.
+    """
+    if backend == "ergast":
+        raise ValueError("The 'ergast' backend does not support testing events.")
+    schedule = get_event_schedule(year, include_testing=True, backend=backend)
+    if schedule.empty or "EventFormat" not in schedule.columns:
+        raise ValueError(f"Testing event number {test_number} does not exist in {year}")
+    testing = schedule.loc[schedule["EventFormat"] == "testing"]
+    if "EventDate" in testing.columns:
+        testing = testing.sort_values("EventDate", kind="stable")
+    if test_number < 1 or test_number > len(testing):
+        raise ValueError(f"Testing event number {test_number} does not exist in {year}")
+    event_name = str(testing.iloc[test_number - 1]["EventName"])
+    return _get_event_for_year(year, event_name, backend)
+
+
+def get_testing_session(
+    year: int, test_number: int, session_number: int, *, backend: ScheduleBackend | None = None
+):
+    """Session ``session_number`` (1-based) of a pre-season testing event."""
+    event = get_testing_event(year, test_number, backend=backend)
+    return event.get_session(session_number)
