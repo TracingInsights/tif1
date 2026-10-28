@@ -1,6 +1,6 @@
 # tif1
 
-A fast, canonical Formula 1 data library fetched from TracingInsights data https://github.com/TracingInsights/2026 (2018-current).
+A fast, canonical Formula 1 data library fetched from TracingInsights data https://github.com/TracingInsights/2026 (timing and telemetry 2018-current) and the TracingInsights Stats repository https://github.com/TracingInsights-Archive/Stats (Ergast results, lap times, pit stops and standings 1950-current).
 
 [![CI/CD](https://github.com/TracingInsights/tif1/workflows/CI%2FCD/badge.svg)](https://github.com/TracingInsights/tif1/actions)
 [![codecov](https://codecov.io/gh/TracingInsights/tif1/branch/main/graph/badge.svg)](https://codecov.io/gh/TracingInsights/tif1)
@@ -9,7 +9,7 @@ A fast, canonical Formula 1 data library fetched from TracingInsights data https
 
 
 
-Data is available ~30 minutes after the session ends. tif1's files are built from the same F1 timing data that fastf1 reads, so they appear a few minutes after that data reaches fastf1: tif1 has more data and does more processing to enrich it before making it available.
+Data is available shortly after the session ends. tif1's files are built from the same F1 timing data that fastf1 reads and appear in under a minute after that data reaches fastf1, enriched with the extra channels tif1 adds.
 
 
 ## Why use tif1 instead of fastf1?
@@ -46,7 +46,7 @@ and answers excessive traffic with `HTTP 429 Too Many Requests` ("Request was th
 
 Apps that loop over many sessions in a single run — a whole season, an entire grid, backtesting, live dashboards — can approach these ceilings quickly. It's a real consideration in production, and one of the reasons I built `tif1` for my own app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
 
-`tif1` does **not call a rate-limited API**. It reads public static files from free, global CDNs (jsDelivr primary, Hugging Face bucket fallback, StaticDelivr backup) with automatic failover, retries, and a circuit breaker — no API keys, no tokens, no request quotas to track in your code.
+`tif1` keeps rate-limited APIs out of the loop. Timing, telemetry and the Ergast tables (results, standings, lap times, pit stops) are public static files on free, global CDNs (jsDelivr primary, Hugging Face bucket fallback, StaticDelivr backup) with automatic failover, retries, and a circuit breaker — no API keys, no tokens, no request quotas to track in your code. jolpica-f1 is asked only for what those files cannot answer, paced to its limits.
 
 Sources: [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
 
@@ -408,9 +408,11 @@ Status key:
 | `set_log_level` | supported | compatibility shim |
 | `plotting.setup_mpl` | supported | compatibility helper module |
 | `utils` module | partial | core helpers implemented; not full parity |
-| `get_testing_session` | missing | planned |
-| `get_testing_event` | missing | planned |
-| `get_events_remaining` | missing | planned |
+| `get_testing_session` | supported | f1schedule testing events |
+| `get_testing_event` | supported | f1schedule testing events |
+| `get_events_remaining` | supported | implemented |
+| `get_session`/`get_event`/`get_event_schedule` `backend=` | supported | `"fastf1"`/`"f1timing"` read the f1schedule calendar, `"ergast"` the Ergast race table (1950 onward) |
+| `fastf1.ergast` | supported | `tif1.ergast`: the thirteen methods, response classes, paging, legacy helpers; Stats repository first, Jolpica fallback |
 
 ### `core.Session`
 
@@ -420,7 +422,7 @@ Status key:
 | `laps` | supported | main lap timing surface |
 | `get_driver` | supported | driver validation present |
 | `get_circuit_info` | partial | `corners` and `rotation` from `corners.json`; `marshal_lights` / `marshal_sectors` are empty |
-| `results` | partial | classification order, status and laps; no `Q1`/`Q2`/`Q3` or `Time`; `GridPosition` and `Points` are NaN |
+| `results` | supported | the official Ergast classification: grid, points, status, total race time, Q1 to Q3, driver and team ids, plus tif1 extras (`TimeGap`, fastest-lap facts) |
 | `session_info` | partial | minimal metadata dict (`Year`, `EventName`, `SessionName`) |
 | `session_start_time` / `t0_date` | partial | placeholder: always `NaT` |
 | `session_status` | partial | returns the race control messages table |
@@ -452,12 +454,8 @@ Status key:
 
 High-priority API gaps for parity with `docs.fastf1.dev`:
 
-- `get_testing_session`
-- `get_testing_event`
-- `get_events_remaining`
-- deeper parity for `Session` metadata/classification fields
+- deeper parity for `Session` metadata (`session_info`, `session_start_time`)
 
 ## What's out of scope for tif1 from fastf1
 
-- Ergast (`fastf1.ergast`)
 - LiveTiming (`fastf1.livetiming`)

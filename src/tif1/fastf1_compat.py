@@ -239,6 +239,16 @@ class Cache:
         return get_http_session().post(url, data=data, timeout=timeout, **kwargs)
 
     @classmethod
+    def api_request_wrapper(cls, func: Any) -> Any:
+        """Pass ``func`` through unchanged (fastf1 parity).
+
+        fastf1 wraps API functions to cache their results in its stage-2
+        cache; tif1 caches every payload in its own SQLite tiers, so the
+        decorator has nothing to add.
+        """
+        return func
+
+    @classmethod
     def delete_response(cls, url: str) -> None:
         """Invalidate a URL response from stage-1 cache.
 

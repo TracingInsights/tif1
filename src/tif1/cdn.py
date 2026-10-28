@@ -88,6 +88,45 @@ class CDNSource:
             return f"{self.base_url}/{year}/main/{gp}/{session}/{path}"
         return f"{self.base_url}/{year}@main/{gp}/{session}/{path}"
 
+    def _repo_base(self) -> str:
+        """The base URL without its organisation segment (``.../gh`` or ``.../buckets``)."""
+        return self.base_url.rstrip("/").rsplit("/", 1)[0]
+
+    def _owner(self) -> str:
+        """The organisation segment of the base URL (``TracingInsights``)."""
+        return self.base_url.rstrip("/").rsplit("/", 1)[-1]
+
+    def serves(self, owner_repo: str) -> bool:
+        """True when this mirror can hold ``owner_repo`` (``owner/repo``).
+
+        Hugging Face buckets exist only for the organisation the base URL
+        names (one bucket per year repository); any other owner has no bucket
+        there, so the request would only pay a 401 round trip. GitHub-backed
+        CDNs serve every public repository.
+        """
+        if "huggingface" not in self.base_url.lower():
+            return True
+        owner = owner_repo.partition("/")[0]
+        return owner.lower() == self._owner().lower()
+
+    def format_repo_url(self, owner_repo: str, branch: str, path: str) -> str:
+        """URL of ``path`` inside the GitHub repository ``owner_repo`` on this mirror.
+
+        jsDelivr: ``https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}``;
+        StaticDelivr: ``https://cdn.staticdelivr.com/gh/{owner}/{repo}/{branch}/{path}``;
+        Hugging Face: ``https://huggingface.co/buckets/{owner}/{repo}/resolve/{path}``.
+        Used for repositories that do not follow the per-year session layout
+        (the Ergast ``Stats`` repository).
+        """
+        lowered = self.base_url.lower()
+        base = self._repo_base()
+        if "huggingface" in lowered:
+            owner, _, repo = owner_repo.partition("/")
+            return f"{base}/{owner.lower()}/{repo}/resolve/{path}"
+        if "staticdelivr" in lowered:
+            return f"{base}/{owner_repo}/{branch}/{path}"
+        return f"{base}/{owner_repo}@{branch}/{path}"
+
 
 class CDNManager:
     """Manage multiple CDN sources with fallback and rate limiting.
@@ -347,6 +386,57 @@ class CDNManager:
         raise NetworkError(
             url=f"{year}/{gp}/{session}/{path}",
             status_code=self._response_status(last_exception),
+        )
+
+    def try_sources_repo(
+        self, owner_repo: str, branch: str, path: str, fetch_func: Callable[[str], Any]
+    ) -> Any:
+        """Fetch ``path`` of a GitHub repository through the CDN chain (sync).
+
+        The repository-layout twin of :meth:`try_sources` for repositories
+        outside the per-year session layout (the Ergast ``Stats`` repository).
+        Mirrors that cannot hold the repository (:meth:`CDNSource.serves`) are
+        skipped. A 404 or a per-file 403 falls through to the next source
+        without a health penalty; any other failure marks the source down.
+        When every source refused with a 4xx, :class:`DataNotFoundError` is
+        raised with the per-source statuses in its ``statuses`` context, so
+        the caller can tell "404 everywhere" (record a missing verdict) from
+        a transient 403 (never persisted); otherwise :class:`NetworkError`.
+        :class:`InvalidDataError` propagates immediately.
+        """
+        sources = [source for source in self.get_sources() if source.serves(owner_repo)]
+        if not sources:
+            raise NetworkError(url=f"{owner_repo}/{path}", status_code=None)
+
+        last_exception = None
+        statuses: list[int | None] = []
+        for source in sources:
+            try:
+                url = source.format_repo_url(owner_repo, branch, path)
+                logger.debug(f"Trying CDN: {source.name} - {url}")
+                started = time.monotonic()
+                result = fetch_func(url)
+                self.mark_success(source.name, time.monotonic() - started)
+                return result
+            except DataNotFoundError:
+                logger.debug(f"CDN {source.name} returned 404 for {path}, trying next source")
+                statuses.append(404)
+            except InvalidDataError:
+                raise
+            except Exception as e:
+                status = self._response_status(e)
+                if CDNManager._is_file_refusal(status):
+                    logger.debug(f"CDN {source.name} refused {path} ({status}), trying next source")
+                else:
+                    logger.warning(f"CDN {source.name} failed: {e}")
+                    self.mark_failure(source.name)
+                last_exception = e
+                statuses.append(status)
+
+        if CDNManager._all_client_refusals(statuses):
+            raise DataNotFoundError(repo=owner_repo, path=path, statuses=statuses)
+        raise NetworkError(
+            url=f"{owner_repo}/{path}", status_code=self._response_status(last_exception)
         )
 
     @staticmethod

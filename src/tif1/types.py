@@ -160,6 +160,16 @@ CompoundType = Literal["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN
 # Track status types
 TrackStatusType = Literal["1", "2", "4", "5", "6", "7"]
 
+# Ergast result container types (``tif1.ergast.Ergast(result_type=...)``)
+ErgastResultType = Literal["pandas", "raw", "polars"]
+
+# Ergast data sources: the Stats repository, Jolpica, or automatic routing
+ErgastSourceType = Literal["auto", "stats", "jolpica"]
+
+# Event schedule backends (fastf1 names; "fastf1" and "f1timing" both read
+# the f1schedule calendar, "ergast" the Ergast race table)
+ScheduleBackend = Literal["fastf1", "f1timing", "ergast"]
+
 
 class DataFrameProtocol(Protocol):
     """Protocol for DataFrame-like objects."""
@@ -184,8 +194,11 @@ __all__ = [
     "DataFrame",
     "DataFrameProtocol",
     "DriverInfoDict",
+    "ErgastResultType",
+    "ErgastSourceType",
     "LapDataDict",
     "RaceControlDataDict",
+    "ScheduleBackend",
     "SessionType",
     "TelemetryDataDict",
     "TrackStatusType",

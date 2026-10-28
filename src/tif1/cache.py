@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 TelemetryCacheKey = tuple[int, str, str, str, int]
 CacheKind = Literal["json", "telemetry"]
-InvalidateScope = Literal["all", "memory", "json", "telemetry"]
+InvalidateScope = Literal["all", "memory", "json", "telemetry", "ergast"]
 SessionMemoKind = Literal["json", "telemetry_payload", "telemetry_df"]
 FastestLapRefKind = Literal["laps", "drivers"]
 
@@ -1362,6 +1362,9 @@ class Cache:
                 self._missing_payloads = None
             logger.info("Memory cache tiers invalidated")
             return
+        if scope == "ergast":
+            self._invalidate_ergast()
+            return
         if scope not in ("json", "telemetry"):
             raise ValueError(f"Unknown invalidate scope: {scope!r}")
         if self.conn is None or self.read_only:
@@ -1391,6 +1394,31 @@ class Cache:
             if self._missing_payloads is not None:
                 self._missing_payloads.clear()
         logger.info("Cache tier invalidated: %s", scope)
+
+    def _invalidate_ergast(self) -> None:
+        """Drop the Ergast tier: Stats repository files and Jolpica answers (memory + SQLite)."""
+        from .ergast.payloads import JOLPICA_CACHE_PREFIX, STATS_CACHE_PREFIX, clear_memo
+
+        clear_memo()
+        if self.conn is not None and not self.read_only:
+            with self._sqlite_lock:
+                self.conn.execute(
+                    "DELETE FROM cache WHERE key LIKE ? OR key LIKE ?",
+                    (f"{STATS_CACHE_PREFIX}%", f"{JOLPICA_CACHE_PREFIX}%"),
+                )
+                self.conn.commit()
+                self._pending_writes = 0
+        with self._memory_cache_lock:
+            for tier in (self._memory_cache, self._parsed_cache):
+                ergast_keys = [
+                    key
+                    for key in list(tier)
+                    if isinstance(key, str)
+                    and key.startswith((STATS_CACHE_PREFIX, JOLPICA_CACHE_PREFIX))
+                ]
+                for key in ergast_keys:
+                    tier.pop(key, None)
+        logger.info("Cache tier invalidated: ergast")
 
     def _get_json(self, key: str) -> Any | None:
         """Get cached JSON payload (thread-safe); core of ``get``."""

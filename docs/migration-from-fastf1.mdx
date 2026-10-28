@@ -17,7 +17,7 @@ keywords:
 
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
-| **Data Source** | F1 live-timing API + jolpica-f1 (Ergast-compatible) API | TracingInsights static files (CDN) |
+| **Data Source** | F1 live-timing API + jolpica-f1 (Ergast-compatible) API | TracingInsights static files (CDN); Ergast tables from the TracingInsights Stats repository, jolpica-f1 only as fallback |
 | **Loading** | Session-wide `session.load()` | **Lazy, per file**; multi-file loads run in parallel |
 | **Lib** | Pandas only | **Pandas + Polars** |
 | **Caching** | SQLite HTTP cache + pickle files of parsed data | **SQLite + Memory LRU** |
@@ -152,13 +152,26 @@ async def main():
 laps = asyncio.run(main())
 ```
 
+### 7. Ergast Data
+
+`fastf1.ergast` code works with an import change. The answers come from the TracingInsights Stats repository (one file per table and round, no rate limit). jolpica-f1 is asked only when that repository cannot answer. By default a Stats-backed query returns every row instead of fastf1's first 30; pass `limit` to page.
+
+```python
+from tif1.ergast import Ergast
+
+results = Ergast().get_race_results(season=2024)
+print(results.content[0][["driverId", "points", "totalRaceTime"]].head())
+```
+
+`session.results` also carries the official classification (grid, points, status, total race time, Q1 to Q3), so the `GridPosition` and `Points` columns are no longer empty. Refer to [Ergast](/api-reference/ergast).
+
 ---
 
 ## Feature Parity
 
 <CardGroup cols={2}>
   <Card title="Archive Only" icon="box-archive">
-    `tif1` focuses on historical data (2018-current). It does not support Live Timing.
+    `tif1` focuses on historical data: timing and telemetry from 2018, Ergast results, lap times and standings from 1950. It does not support Live Timing.
   </Card>
   <Card title="Track Maps" icon="map">
     `session.get_circuit_info()` returns the corners and the rotation. Marshal lights and marshal sectors are empty. Six track-map charts, such as `plot_track_speed_map` and `plot_gear_shifts`, draw the layout.

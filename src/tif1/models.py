@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .cache import get_cache
-from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER
+from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER, LAP_PAYLOAD_KEYS
 from .core_utils.driver_laps import build_driver_laps_frame
 from .core_utils.helpers import (
     DataFrame,
@@ -391,6 +391,10 @@ class _IterLapResult(tuple):
 
 class Laps(pd.DataFrame):
     """Laps object for accessing lap (timing) data of multiple laps."""
+
+    #: Laps slower than this multiple of the fastest lap are not "quick"
+    #: (fastf1's ``pick_quicklaps`` default threshold).
+    QUICKLAP_THRESHOLD: ClassVar[float] = 1.07
 
     _metadata: ClassVar[list[str]] = ["session"]
 
@@ -1049,7 +1053,58 @@ def _modern_offset_alias(rule: str) -> str:
 class Telemetry(pd.DataFrame):
     """Multi-channel time series telemetry data."""
 
+    #: Sampling policy of merged/resampled telemetry (fastf1 parity; tif1
+    #: telemetry arrives merged at the source, so ``"original"`` is the only
+    #: value with an effect).
+    TELEMETRY_FREQUENCY: ClassVar[str | int] = "original"
+    #: Channel registry (fastf1 parity): name -> (signal type, interpolation).
+    #: tif1 ships every channel pre-merged; registering a channel documents
+    #: how ``merge_channels``/``resample_channels`` should treat a custom one.
+    _CHANNELS: ClassVar[dict[str, dict[str, str | None]]] = {
+        "Time": {"type": "continuous", "missing": "quadratic"},
+        "SessionTime": {"type": "continuous", "missing": "quadratic"},
+        "Date": {"type": "continuous", "missing": "quadratic"},
+        "RPM": {"type": "continuous", "missing": "linear"},
+        "Speed": {"type": "continuous", "missing": "linear"},
+        "nGear": {"type": "discrete", "missing": None},
+        "Throttle": {"type": "continuous", "missing": "linear"},
+        "Brake": {"type": "discrete", "missing": None},
+        "DRS": {"type": "discrete", "missing": None},
+        "X": {"type": "continuous", "missing": "quadratic"},
+        "Y": {"type": "continuous", "missing": "quadratic"},
+        "Z": {"type": "continuous", "missing": "quadratic"},
+        "Status": {"type": "discrete", "missing": None},
+        "Distance": {"type": "continuous", "missing": "linear"},
+        "RelativeDistance": {"type": "continuous", "missing": "linear"},
+        "DifferentialDistance": {"type": "continuous", "missing": "linear"},
+        "DriverAhead": {"type": "discrete", "missing": None},
+        "DistanceToDriverAhead": {"type": "continuous", "missing": "linear"},
+    }
+
     _metadata: ClassVar[list[str]] = ["session", "driver"]
+
+    @classmethod
+    def register_new_channel(
+        cls, name: str, signal_type: str, interpolation_method: str | None = None
+    ) -> None:
+        """Register a custom telemetry channel (fastf1 parity).
+
+        Args:
+            name: Channel (column) name.
+            signal_type: ``"continuous"`` or ``"discrete"``.
+            interpolation_method: Interpolation for missing values of a
+                continuous channel (for example ``"linear"``); ``None`` for
+                discrete channels.
+
+        Raises:
+            ValueError: ``signal_type`` is unknown, or a discrete channel names
+                an interpolation method.
+        """
+        if signal_type not in ("discrete", "continuous"):
+            raise ValueError(f"Unknown signal type {signal_type!r}")
+        if signal_type == "discrete" and interpolation_method is not None:
+            raise ValueError("Interpolation method not supported for discrete signals")
+        cls._CHANNELS[name] = {"type": signal_type, "missing": interpolation_method}
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow DataFrame-style subclass construction without re-implementing __new__."""
@@ -1598,8 +1653,16 @@ class Telemetry(pd.DataFrame):
         return self._wrap(cast(Any, super()).merge(*args, **kwargs))
 
 
+#: Finishing statuses that count as classified finishes (``Finished``, ``+1 Lap``,
+#: ``+2 Laps`` ..., ``Lapped``); everything else is a DNF.
+_CLASSIFIED_STATUS_RE = re.compile(r"^(finished|lapped|\+\s*\d+\s*laps?)$", re.IGNORECASE)
+
+
 class SessionResults(pd.DataFrame):
-    """Session result with driver information."""
+    """Session result with driver information (fastf1 columns first, tif1 extras last).
+
+    See ``tif1.core.Session.results`` for the column contract.
+    """
 
     _metadata: ClassVar[list[str]] = ["session"]
 
@@ -1638,11 +1701,43 @@ class DriverResult(pd.Series):
         return DriverResult
 
     @property
-    def dnf(self):
+    def dnf(self) -> bool:
+        """True when the driver did not finish: a status other than ``Finished``/``+N Lap(s)``.
+
+        ``Lapped`` (Jolpica's status for classified drivers a lap down) counts
+        as a finish; ``Not classified`` counts as a DNF, as in Ergast. An
+        empty or unknown status is not a DNF.
+        """
         status = self.get("Status", "")
-        if isinstance(status, str):
-            return status.lower() not in ("finished", "+1 lap", "+2 laps", "not classified")
-        return False
+        if not isinstance(status, str) or not status.strip():
+            return False
+        return _CLASSIFIED_STATUS_RE.match(status.strip()) is None
+
+
+def _empty_driver_laps(session: TelemetryProvider) -> DataFrame:
+    """An empty laps frame that still carries the laps columns (a bound ``Laps`` for pandas).
+
+    The loaded session table lends its schema (exact dtypes); without one,
+    the lap pipeline runs on an empty payload. Either way a driver without
+    laps (did not start) answers ``laps["LapNumber"]`` or ``pick_fastest()``
+    like every other driver instead of raising on a column-less frame.
+    """
+    lib = session.lib
+    source = getattr(session, "_laps", None)
+    if lib == "polars":
+        _ensure_polars_available()
+        if isinstance(source, pl.DataFrame):
+            return source.clear()
+        payload = {key: [] for key in LAP_PAYLOAD_KEYS}
+        return _process_lap_df(_create_lap_df(payload, "", "", lib), lib)
+    if isinstance(source, pd.DataFrame):
+        frame = source.iloc[:0].copy()
+    else:
+        payload = {key: [] for key in LAP_PAYLOAD_KEYS}
+        frame = _process_lap_df(_create_lap_df(payload, "", "", lib), lib)
+    laps = frame if isinstance(frame, Laps) else Laps(cast(pd.DataFrame, frame))
+    laps.session = session
+    return laps
 
 
 class Driver(pd.Series):
@@ -1690,6 +1785,11 @@ class Driver(pd.Series):
             "FullName": full_name,
             "HeadshotUrl": info.get("headshot_url", info.get("url", "")),
         }
+        # Ergast identity (tif1.ergast) when the session carries the official
+        # classification: ids, nationality, permanent number, date of birth.
+        ergast_identity = getattr(session, "_ergast_identity", None)
+        if callable(ergast_identity):
+            data.update(ergast_identity(driver_number, driver))
 
         # Initialize Series with driver data and name
         cast(Any, super()).__init__(data, name=driver_number if driver_number else driver)
@@ -1737,6 +1837,16 @@ class Driver(pd.Series):
             self._laps = Laps(cast(pd.DataFrame, self._laps))
             self._laps.session = self.session
         if self._laps is None:
+            session = self.session
+            # A driver only the Ergast classification lists (did not start) has
+            # no timing data; a season served from Ergast alone builds every
+            # driver's laps at once from the lap timings.
+            has_timing_data = getattr(session, "_driver_has_timing_data", None)
+            if callable(has_timing_data) and not has_timing_data(self.driver):
+                return self._set_empty_laps()
+            ergast_only = bool(getattr(session, "_ergast_only", False))
+            if ergast_only and session._laps is None:
+                _ = session.laps
             try:
                 if self.session._laps is not None and not _is_empty_df(
                     self.session._laps, self.session.lib
@@ -1768,15 +1878,13 @@ class Driver(pd.Series):
                         self._lap_index_map_df_ref = None
                         return self._laps
 
+                if ergast_only:
+                    # The session table holds every lap Ergast knows: a driver
+                    # absent from it has none, and there is nothing to fetch.
+                    return self._set_empty_laps()
                 lap_data = self._load_laps()
                 if not lap_data:
-                    self._laps = _create_empty_df(self.session.lib)
-                    self._lap_numbers = set()
-                    self._lap_numbers_df_id = id(self._laps)
-                    self._lap_index_map = None
-                    self._lap_index_map_df_id = None
-                    self._lap_index_map_df_ref = None
-                    return self._laps
+                    return self._set_empty_laps()
 
                 driver_info = self.session._get_driver_info(self.driver)
 
@@ -1862,6 +1970,16 @@ class Driver(pd.Series):
         self._lap_index_map_df_id = current_df_id
         self._lap_index_map_df_ref = laps_pd
         return lap_map
+
+    def _set_empty_laps(self) -> DataFrame:
+        """Memoize and return an empty laps frame that carries the laps columns."""
+        self._laps = _empty_driver_laps(self.session)
+        self._lap_numbers = set()
+        self._lap_numbers_df_id = id(self._laps)
+        self._lap_index_map = None
+        self._lap_index_map_df_id = None
+        self._lap_index_map_df_ref = None
+        return self._laps
 
     def _load_laps(self) -> dict:
         """

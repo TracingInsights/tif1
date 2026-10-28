@@ -1,0 +1,216 @@
+---
+title: "Ergast"
+icon: "database"
+description: "Results, qualifying, sprint results, lap times, pit stops, standings and schedules from 1950 onward, served from the TracingInsights Stats repository with the Jolpica API as fallback"
+keywords:
+  - "Ergast"
+  - "Jolpica"
+  - "race results"
+  - "driver standings"
+  - "constructor standings"
+  - "pit stops"
+  - "lap times"
+  - "historical F1 data"
+  - "fastf1.ergast"
+---
+
+<Note>
+  `tif1.ergast` is a drop-in replacement for `fastf1.ergast`. `from tif1.ergast import Ergast` keeps the same thirteen methods, the same keyword arguments, the same flattened column names and the same response classes. The data comes from the [TracingInsights Stats repository](https://github.com/TracingInsights-Archive/Stats) first, which holds the complete Jolpica response of every table and round as one file. The [Jolpica API](https://api.jolpi.ca/ergast/f1) answers only what that repository cannot.
+</Note>
+
+## Overview
+
+The Ergast database (continued by Jolpica) is the reference for Formula 1 results since 1950. It holds race, qualifying and sprint classifications, lap timings (1996 onward) and pit stops (2011 onward). It also holds championship standings, race schedules, drivers, constructors, circuits and finishing statuses.
+
+`tif1` reads that data in two ways:
+
+- **Directly**, through `tif1.ergast.Ergast`, for analysis across seasons, rounds or drivers.
+- **Inside `Session`**, where the official classification fills `session.results`, orders `session.drivers`, and backs `session.pit_stops`, `session.driver_standings` and `session.constructor_standings`. Sessions before 2018 are built from Ergast data alone. Refer to [Core API](/api-reference/core) for the session view.
+
+### Data sources
+
+| Source | What it serves | Limits |
+| :--- | :--- | :--- |
+| Stats repository (`TracingInsights-Archive/Stats`) | Every table for a `(season, round)`: results, qualifying, sprint, lap times, pit stops, driver and constructor standings, and the season schedule. One JSON file per table, all pages merged. Served through the same CDN chain as the timing data. | None. Updated a day or two after each round. |
+| Jolpica API | Seasons list, drivers list, finishing status counts, any query without a season, any `status=` filter, the `current`/`last` selectors, and any round the repository does not hold yet. | 4 requests per second, 500 per hour unauthenticated. `tif1` paces requests and honours `Retry-After`. |
+
+A query that Stats can answer never touches Jolpica. A Stats file that is missing on every mirror or empty (`total` of `0`) falls through to Jolpica for that round only. The answer is cached either way.
+
+<Note>
+  The Stats files are snapshots of the Jolpica answers taken when each round was published. Results, times, positions, points and lap data do not change afterwards, but Jolpica keeps editing metadata. That covers Wikipedia URLs (`http` to `https`), localities and circuit names, a driver's current permanent number, and the finishing-status vocabulary (`Lapped` and `Retired` since 2025). Those edits reach `tif1` when the repository regenerates a round. Pin `source="jolpica"` for a query that needs the live metadata.
+</Note>
+
+<Info>
+  Jolpica lists drivers who only drove practice sessions, which no Stats file contains. `get_driver_info` therefore always uses Jolpica, and `get_finishing_status` does too because the Stats files carry no numeric `statusId`.
+</Info>
+
+### Freshness
+
+| Payload | Past season | Current season |
+| :--- | :--- | :--- |
+| Stats files | Cached permanently | Expire after `ergast_ttl_hours` (default 6) |
+| Jolpica answers | Expire after `ergast_ttl_hours` | Expire after `ergast_ttl_hours` |
+| `current` / `last` resolution | n/a | Expire after one hour |
+| Missing or empty files | Re-probed after `missing_payloads_ttl_days` (default 7) | Re-probed after `ergast_ttl_hours` |
+
+Results get corrected after a weekend (penalties, appeals) and standings move on, so the current season is never held longer than the TTL. `tif1 cache-clear --ergast` drops only this tier.
+
+---
+
+## `Ergast`
+
+```python
+from tif1.ergast import Ergast
+
+ergast = Ergast(result_type="pandas", auto_cast=True, limit=None, source="auto")
+```
+
+<ParamField path="result_type" type='"pandas" | "raw" | "polars"' default="pandas">
+  `"pandas"` returns `ErgastSimpleResponse` or `ErgastMultiResponse` depending on the endpoint. `"raw"` returns `ErgastRawResponse`, the JSON-like data as a list. `"polars"` returns polars frames: an `ErgastPolarsResponse` (a `polars.DataFrame` with the same `source`, `total_results`, `is_complete` and paging methods) for simple endpoints, otherwise an `ErgastMultiResponse` whose `description` and `content` are polars frames.
+</ParamField>
+
+<ParamField path="auto_cast" type="bool" default="True">
+  Cast values from their string form to numbers, dates, times and timedeltas.
+</ParamField>
+
+<ParamField path="limit" type="int | None" default="None">
+  Maximum number of result rows. `None` returns every row when the Stats repository answered and the API default of 30 when Jolpica did. Set it to page through a result set with `get_next_result_page()`.
+</ParamField>
+
+<ParamField path="source" type='"auto" | "stats" | "jolpica"' default="auto">
+  Pin the data source. `"stats"` raises `DataNotFoundError` for queries the repository cannot answer; `"jolpica"` skips the repository. Every response reports the source that answered through `.source`.
+</ParamField>
+
+### Methods
+
+Every method accepts `result_type`, `auto_cast`, `limit` and `offset` to override the instance defaults for one call. The selectors are fastf1's: `season` (a year or `"current"`), `round` (a number or `"last"`), and `circuit`, `constructor` and `driver` (Ergast ids such as `"monza"`, `"mclaren"`, `"norris"`). The row filters are `grid_position`, `results_position`, `fastest_rank`, `status` (a numeric status id), `lap_number`, `stop_number` and `standings_position`.
+
+| Method | Response | Source |
+| :--- | :--- | :--- |
+| `get_seasons(...)` | simple | Jolpica |
+| `get_race_schedule(season, round=None, ...)` | simple | Stats `events.json` |
+| `get_driver_info(season=None, round=None, ...)` | simple | Jolpica |
+| `get_constructor_info(season=None, round=None, ...)` | simple | Derived from the season's Stats results |
+| `get_circuits(season=None, round=None, ...)` | simple | Stats `events.json` |
+| `get_finishing_status(season=None, round=None, ...)` | simple | Jolpica |
+| `get_race_results(season=None, round=None, ...)` | multi | Stats `results.json` per round |
+| `get_qualifying_results(season=None, round=None, ...)` | multi | Stats `quali_results.json` per round |
+| `get_sprint_results(season=None, round=None, ...)` | multi | Stats `sprint_results.json` per sprint round |
+| `get_driver_standings(season=None, round=None, driver=None, standings_position=None, ...)` | multi | Stats `driverPoints.json` of the round |
+| `get_constructor_standings(season=None, round=None, constructor=None, standings_position=None, ...)` | multi | Stats `teamPoints.json` of the round |
+| `get_lap_times(season, round, lap_number=None, driver=None, ...)` | multi | Stats `laptimes.json` |
+| `get_pit_stops(season, round, stop_number=None, lap_number=None, driver=None, ...)` | multi | Stats `pitstops.json` |
+
+Season-wide queries (`get_race_results(season=2024)`) are assembled from the per-round files in one parallel fetch. Filters on a results-like endpoint (`driver`, `constructor`, `circuit`, `grid_position`, `results_position`, `fastest_rank`) are applied locally. A `status` filter, a query without a season, or a qualifying query with `grid_position`/`fastest_rank` goes to Jolpica, which holds the tables those need. Standings without a `round` return the standings after the last completed round, the final standings for a past season.
+
+### Example
+
+```python
+from tif1.ergast import Ergast
+
+ergast = Ergast()
+
+# Every race result of 2024: one frame per race, complete.
+results = ergast.get_race_results(season=2024)
+print(results.description[["round", "raceName"]].head(3))
+print(results.content[0][["position", "driverId", "points", "totalRaceTime"]].head(3))
+print(results.source, results.is_complete, results.total_results)
+
+# Lando Norris' standings position after round 10.
+standings = ergast.get_driver_standings(2024, 10, driver="norris")
+print(standings.content[0][["position", "points", "wins"]])
+
+# Pit stops of one race.
+stops = ergast.get_pit_stops(2024, 1)
+print(stops.content[0].head())
+```
+
+---
+
+## Response classes
+
+### `ErgastSimpleResponse`
+
+A pandas `DataFrame` (an `ErgastResultFrame`) with the response metadata of `ErgastResponseMixin`. Slicing it returns an `ErgastResultFrame` without the metadata, as in fastf1.
+
+### `ErgastPolarsResponse`
+
+The polars twin of `ErgastSimpleResponse`: a `polars.DataFrame` with the response metadata of `ErgastResponseMixin`, returned by the simple endpoints with `result_type="polars"`. Frames derived from it (`head`, `filter`, slices) are plain polars frames without the metadata. The class is built on first use, so importing `tif1.ergast` never imports polars.
+
+### `ErgastMultiResponse`
+
+Holds the descriptive rows in `description` (one per race or standings list) and the main data in `content`, a list with one frame per description row. Both are pandas frames, or polars frames with `result_type="polars"`.
+
+### `ErgastRawResponse`
+
+A `list` of the JSON-like response elements, cast when `auto_cast` is on. The list is a private copy, so mutating it never changes the cache.
+
+### `ErgastResponseMixin`
+
+<ResponseField name="total_results" type="int">
+  Total number of rows available for the request.
+</ResponseField>
+
+<ResponseField name="is_complete" type="bool">
+  True when the response holds every available row (`offset` of zero and `limit` at least `total`).
+</ResponseField>
+
+<ResponseField name="source" type="str">
+  `"stats"` or `"jolpica"`: the source that answered. A `tif1` addition.
+</ResponseField>
+
+<ResponseField name="get_next_result_page()" type="response">
+  The next page within the request's `limit`. Raises `ValueError` after the last page.
+</ResponseField>
+
+<ResponseField name="get_prev_result_page()" type="response">
+  The previous page. Raises `ValueError` before the first page.
+</ResponseField>
+
+---
+
+## Columns
+
+The flattened column names are fastf1's (`tif1.ergast.structure` carries the same tables). Two things differ, both additive:
+
+- `totalRaceTime` is the true total race time of every classified driver, built from `Time.millis`. fastf1 parses `Time.time` instead, which Ergast fills with the gap to the winner for everyone but the winner. The gap is available as `totalRaceTimeGap` (zero for the winner). `totalRaceTimeMillis` is unchanged.
+- Race schedules also flatten Jolpica's `SprintQualifying` and `SprintShootout` session keys into `sprintQualifyingDate`/`sprintQualifyingTime` and `sprintShootoutDate`/`sprintShootoutTime`.
+
+Rows without a value for a column hold `NaN` (or `NaT` for times), which is what pandas fills in when fastf1 builds its frames.
+
+---
+
+## Legacy helpers
+
+`fetch_season(year)`, `fetch_day(year, gp, day)` and `fetch_results(year, gp, session)` keep fastf1's signatures and return the raw `Races` lists, routed like every other query.
+
+---
+
+## Configuration
+
+| Key | Environment variable | Default | Effect |
+| :--- | :--- | :--- | :--- |
+| `ergast_results` | `TIF1_ERGAST_RESULTS` | `true` | Merge the official classification into `Session.results` and `Session.drivers` |
+| `ergast_fallback` | `TIF1_ERGAST_FALLBACK` | `true` | Ask Jolpica for what the Stats repository cannot answer. Off, those queries raise `ErgastInvalidRequestError` or `DataNotFoundError` |
+| `jolpica_base_url` | `TIF1_JOLPICA_BASE_URL` | `https://api.jolpi.ca/ergast/f1` | Base URL of the Jolpica API (a self-hosted instance works) |
+| `ergast_ttl_hours` | `TIF1_ERGAST_TTL_HOURS` | `6.0` | Lifetime of current-season Stats files and of every Jolpica answer |
+| `ergast_timeout` | `TIF1_ERGAST_TIMEOUT` | `5.0` | Jolpica request timeout in seconds |
+| `ergast_rate_limit_burst` | `TIF1_ERGAST_RATE_LIMIT_BURST` | `4` | Jolpica requests per second |
+| `ergast_rate_limit_hourly` | `TIF1_ERGAST_RATE_LIMIT_HOURLY` | `500` | Jolpica requests per hour |
+| `stats_repo` | `TIF1_STATS_REPO` | `TracingInsights-Archive/Stats` | GitHub repository holding the Stats files |
+| `stats_branch` | `TIF1_STATS_BRANCH` | `main` | Branch of that repository |
+
+## Errors
+
+- `ErgastInvalidRequestError`: Jolpica rejected the request (a 404 or another non-200 answer), or Jolpica is needed but `ergast_fallback` is off.
+- `ErgastJsonError`: a Jolpica answer could not be parsed.
+- `RateLimitExceededError`: Jolpica kept answering 429 after three retries. A `NetworkError` subclass.
+- `DataNotFoundError`: `source="stats"` was pinned and the repository cannot answer.
+
+All three Ergast errors derive from `ErgastError`, a `TIF1Error`. Refer to [Exceptions](/api-reference/exceptions).
+
+## Related pages
+
+- [Historical data guide](/guides/historical-data): sessions before 2018, standings, pit stops
+- [Core API](/api-reference/core): the classification inside `Session.results`
+- [Events & Schedule](/api-reference/events): the `backend="ergast"` schedule

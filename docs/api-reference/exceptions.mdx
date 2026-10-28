@@ -40,7 +40,12 @@ TIF1Error (base exception for all tif1 errors)
 │   └── LapNotFoundError (specific lap not found for driver)
 │
 ├── NetworkError (HTTP request failures after retries)
-│   └── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
+│   ├── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
+│   └── RateLimitExceededError (the Jolpica API kept answering 429 after the retries)
+│
+├── ErgastError (the Ergast data layer, tif1.ergast)
+│   ├── ErgastJsonError (a Jolpica answer could not be parsed)
+│   └── ErgastInvalidRequestError (Jolpica rejected the request, or Jolpica is needed but disabled)
 │
 ├── InvalidDataError (data validation/parsing failures)
 │
@@ -1784,6 +1789,39 @@ async def laps_for(session):
         return session.laps
     except AsyncRequiredError:
         return await session.laps_async()
+```
+
+---
+
+## Ergast Errors
+
+### `ErgastError`
+
+The base class of the errors raised by `tif1.ergast` (fastf1 keeps the same three names in `fastf1.exceptions`). A `TIF1Error` subclass.
+
+### `ErgastJsonError`
+
+Raised when a Jolpica answer is not a JSON object with the `MRData` envelope.
+
+### `ErgastInvalidRequestError`
+
+Raised when the Jolpica API rejects a request (a 404 for an unknown path or any other non-200 answer). Also raised when a query needs Jolpica while `ergast_fallback` is off. The message carries the request URL and the server's answer; the context holds `url` and `status_code`.
+
+### `RateLimitExceededError`
+
+A `NetworkError` subclass raised when Jolpica keeps answering `429 Too Many Requests` after three retries that honour `Retry-After`. The context holds `url`, `status_code` (429) and `retry_after`.
+
+**Example:**
+```python
+import tif1
+from tif1.ergast import Ergast
+
+try:
+    seasons = Ergast().get_seasons()
+except tif1.RateLimitExceededError as exc:
+    print(f"slow down: retry after {exc.context['retry_after']} s")
+except tif1.ErgastInvalidRequestError as exc:
+    print(f"rejected: {exc}")
 ```
 
 ---

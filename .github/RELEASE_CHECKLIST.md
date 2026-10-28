@@ -130,6 +130,15 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.10.0 (Ergast data, Pyodide, Thebes/Pergamon performance)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.10.0"`
+- [ ] Confirm `get_session(2024, "Monza", "Race").results` carries `Points`, `GridPosition` and `Status` from the Ergast classification, and `ergast=False` restores the lap-derived view
+- [ ] Confirm `get_session(1995, "Monaco", "Race").results` and `.laps` work offline after one fetch, and `"Practice 1"` raises `DataNotFoundError`
+- [ ] Confirm `Ergast().get_race_results(2024).source == "stats"` without a Jolpica request, and `TIF1_ERGAST_FALLBACK=0` blocks Jolpica
+- [ ] Confirm `tif1 results 2024 "Monza" Race` and `tif1 standings 2024` print tables
+- [ ] Confirm the wheel passes `node --experimental-wasm-jspi tools/pyodide_smoke.mjs dist/tif1-*.whl` and `node tools/pyodide_browser_check.mjs dist/tif1-*.whl`
+- [ ] Confirm `import tif1` works without the optional `tif1-native` decoder
+
 ### v0.9.0 (Python 3.15, polars 2.0, live schedule)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.9.0"`
 - [ ] Confirm `pip install tif1` on Python 3.15 installs from wheels only

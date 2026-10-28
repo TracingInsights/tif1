@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import threading
+import warnings
 from collections.abc import Iterable
 from typing import Any, Literal, cast
 from urllib.parse import unquote
@@ -25,6 +26,7 @@ from .cache import (
 )
 from .cdn import get_cdn_manager
 from .config import get_config
+from .core_utils import ergast_results as _er
 
 # Import from core utilities modules
 from .core_utils.constants import (
@@ -35,7 +37,9 @@ from .core_utils.constants import (
     COL_LAP_TIME,
     COL_LAP_TIME_SECONDS,
     COL_TEAM,
+    ERGAST_LOADABLE_SESSIONS,
     EVENT_NAME_ALIASES,
+    F1_API_FIRST_YEAR,
     MAX_YEAR,
     MIN_YEAR,
     RACE_CONTROL_RENAME_MAP,
@@ -80,6 +84,7 @@ from .exceptions import (
     InvalidDataError,
     LapNotFoundError,  # noqa: F401  # re-exported for backward compatibility
     NetworkError,
+    TIF1Error,
 )
 from .models import (
     _CORNERS_DF_COLUMNS,
@@ -95,6 +100,7 @@ from .models import (
     _LapInternal,  # noqa: F401  # re-exported for backward compatibility
 )
 from .payload_loader import PayloadLoader
+from .types import ScheduleBackend
 
 pl: Any = None
 POLARS_AVAILABLE: bool | None = None
@@ -228,6 +234,8 @@ def _extract_driver_info_map(drivers: list[dict] | None) -> dict[str, dict]:
 
 
 _RACE_LIKE_SESSION_NAMES = frozenset({"Race", "Sprint"})
+_UNSET: Any = object()
+_ERGAST_TABLE_ENDPOINTS = ("results", "qualifying", "sprint", "laps", "pitstops")
 # Serializes background frame-tier materialization writes (Pergamon Q15).
 _FRAME_MATERIALIZATION_LOCK = threading.Lock()
 
@@ -610,6 +618,11 @@ class Session:
         session_name: Session name as the schedule spells it
         drivers_df: DataFrame with driver information
         laps: DataFrame with all laps
+        ergast: Merge the official Ergast classification into ``results`` and
+            ``drivers`` (default: the ``ergast_results`` setting, on).
+            Seasons before 2018 are always served from Ergast data.
+        backend: Schedule backend the event name belongs to (``"fastf1"``,
+            ``"f1timing"``, ``"ergast"`` or ``None`` for the default).
 
     Raises:
         ValueError: If year is out of range
@@ -622,9 +635,18 @@ class Session:
         session: str,
         enable_cache: bool | None = None,
         lib: Literal["pandas", "polars"] | None = None,
+        ergast: bool | None = None,
+        backend: ScheduleBackend | None = None,
     ):
         _validate_year(year, MIN_YEAR, MAX_YEAR)
-        gp_name = _resolve_gp_name(year, gp)
+        # The schedule backend the event was resolved with; every later
+        # lookup (event, sessions) must use the same calendar.
+        self._schedule_backend: ScheduleBackend | None = backend
+        gp_name = (
+            _resolve_gp_name(year, gp)
+            if backend is None
+            else _resolve_gp_name(year, gp, backend=backend)
+        )
         _validate_string_param(gp_name, "gp")
         _validate_string_param(session, "session")
 
@@ -642,7 +664,7 @@ class Session:
         self._driver_index_source_id = None
         # Classification-ordered driver rows and the per-driver lap facts they
         # are built from, keyed on the identity of the payload they came from.
-        self._driver_rows_cache: tuple[int, list[dict], bool] | None = None
+        self._driver_rows_cache: tuple[tuple[int, int | None], list[dict], bool] | None = None
         self._lap_summary_cache: tuple[int, dict[str, dict[str, Any]]] | None = None
         # Single session-tier cache: JSON payloads, telemetry payloads/frames,
         # fastest-lap-reference memo, cache probe result, and failure tracking
@@ -658,6 +680,24 @@ class Session:
         self._car_data: DataFrame | None = None
         self._results = None
         self._circuit_info: CircuitInfo | None = None
+        # Ergast classification (tif1.ergast): the Stats repository file of
+        # this round (Jolpica fallback) merged into results/drivers. Seasons
+        # before the timing data (F1_API_FIRST_YEAR) are Ergast-only.
+        self._ergast_only = year < F1_API_FIRST_YEAR
+        self._ergast_enabled = (
+            True
+            if self._ergast_only
+            else (bool(config.get("ergast_results", True)) if ergast is None else bool(ergast))
+        )
+        self._ergast_payload: dict[str, Any] | None = None
+        self._ergast_loaded = False
+        self._ergast_error: BaseException | None = None
+        self._ergast_prefetch_started = False
+        self._ergast_lock = threading.Lock()
+        self._ergast_round: Any = _UNSET
+        self._pit_stops: DataFrame | None = None
+        self._driver_standings: DataFrame | None = None
+        self._constructor_standings: DataFrame | None = None
         self._telemetry_bulk_prefetch_lock = threading.Lock()
         self._telemetry_bulk_prefetch_attempted = False
         self._telemetry_bulk_prefetch_done = False
@@ -862,6 +902,8 @@ class Session:
         :func:`fetch_multiple_async`, so the table properties that follow are
         memo hits. Nothing is fetched when the laps wave already brought them.
         """
+        if self._ergast_only:
+            return
         paths: list[str] = []
         for table, attr in (("weather.json", "_weather"), ("rcm.json", "_race_control_messages")):
             if (
@@ -986,6 +1028,8 @@ class Session:
         Uses a dedicated HTTP session and thread pool to avoid corrupting the
         shared session state used by subsequent asyncio.run() calls.
         """
+        if self._ergast_only:
+            return
         if self._session_tables_prefetched:
             return
         self._session_tables_prefetched = True
@@ -1103,6 +1147,8 @@ class Session:
         Failures stay graceful: a table that did not arrive is fetched by its
         own loader as before.
         """
+        if self._ergast_only:
+            return
         paths: list[str] = []
         if self._drivers is None and self._get_local_payload("drivers.json") is None:
             paths.append("drivers.json")
@@ -1304,6 +1350,14 @@ class Session:
         fetched payload, so a cold session becomes a warm cache for the next
         process instead of re-downloading the full session every time.
         """
+        if self._ergast_only:
+            raise DataNotFoundError(
+                year=self.year,
+                event=self.gp,
+                session=self.session,
+                path=path,
+                reason=f"timing data is not available before {F1_API_FIRST_YEAR}",
+            )
         return self._payload_loader.get(
             path,
             validate=False,
@@ -1322,6 +1376,14 @@ class Session:
 
     def _fetch_json(self, path: str) -> dict:
         """Fetch JSON data with caching, retry logic, and CDN fallback."""
+        if self._ergast_only:
+            raise DataNotFoundError(
+                year=self.year,
+                event=self.gp,
+                session=self.session,
+                path=path,
+                reason=f"timing data is not available before {F1_API_FIRST_YEAR}",
+            )
         return self._payload_loader.get(
             path,
             validate=True,
@@ -1343,10 +1405,18 @@ class Session:
         a place or two. Numbers missing from ``drivers.json`` are filled in
         from the laps table as well.
 
+        A car two drivers shared (classifications before the 1960s) appears
+        once per driver: the first keeps the car number, the others are
+        labelled ``number/Abbreviation`` so that every entry is a unique
+        identifier for :meth:`get_driver` and a unique label of the
+        ``results`` index.
+
         Returns:
             List of driver numbers as strings (e.g., ['81', '63', '4', ...])
         """
-        return [str(d["dn"]) for d in self._driver_rows() if d.get("dn")]
+        return _er.unique_driver_labels(
+            [(str(d["dn"]), str(d.get("driver") or "")) for d in self._driver_rows() if d.get("dn")]
+        )
 
     def _driver_rows(self) -> list[dict]:
         """Driver payload rows in classification order; see :attr:`drivers`."""
@@ -1359,12 +1429,27 @@ class Session:
         numbers, no laps access). Only a number-sorted or number-less payload
         reads the laps table, through :meth:`_lap_summary`.
         """
+        if self._ergast_enabled and self._drivers is None:
+            # The classification file rides alongside drivers.json (D4).
+            self._start_ergast_prefetch()
         rows = [d for d in self._drivers_data if isinstance(d, dict)]
-        if not rows:
+        if not rows and not self._ergast_enabled:
             return rows, False
         cache = self._driver_rows_cache
-        if cache is not None and cache[0] == id(self._drivers):
+        if cache is not None and cache[0] == self._driver_rows_token():
             return cache[1], cache[2]
+        if self._ergast_enabled and _er.session_kind(self.session_name) != "identity":
+            classification = _er.ergast_rows(self._ergast_race(), self._ergast_endpoint())
+            if classification:
+                # Official classification: no laps table needed, drivers only
+                # Ergast knows (did not start) are added in their place.
+                ordered = _er.order_driver_rows(
+                    rows, classification, _er.team_color_map(rows, self.year)
+                )
+                self._driver_rows_cache = (self._driver_rows_token(), ordered, True)
+                return ordered, True
+        if not rows:
+            return rows, False
 
         numbers = [str(d.get("dn") or "") for d in rows]
         needs_numbers = not all(numbers)
@@ -1384,8 +1469,15 @@ class Session:
                 if number_sorted or needs_numbers:
                     rows = _classification_sort(rows, summary, race=self._is_race_like())
                 classified = True
-        self._driver_rows_cache = (id(self._drivers), rows, classified)
+        self._driver_rows_cache = (self._driver_rows_token(), rows, classified)
         return rows, classified
+
+    def _driver_rows_token(self) -> tuple[int, int | None]:
+        """Identity of the payloads the ordered driver rows were built from."""
+        return (
+            id(self._drivers),
+            id(self._ergast_payload) if self._ergast_loaded else None,
+        )
 
     def _is_race_like(self) -> bool:
         return self.session_name in _RACE_LIKE_SESSION_NAMES
@@ -1433,6 +1525,8 @@ class Session:
     @property
     def _drivers_data(self) -> list[dict]:
         """Get list of driver dictionaries (internal use)."""
+        if self._drivers is None and self._ergast_only:
+            self._drivers = self._ergast_driver_payload()
         if self._drivers is None:
             self._prefetch_session_tables()
             ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
@@ -1592,8 +1686,16 @@ class Session:
         return self.car_data
 
     @property
-    def total_laps(self):
-        return None  # Placeholder
+    def total_laps(self) -> int | None:
+        """Laps of the race distance: the leader's lap count from the Ergast classification.
+
+        None for sessions without an official race classification.
+        """
+        if self.session_name not in _RACE_LIKE_SESSION_NAMES or not self._ergast_enabled:
+            return None
+        return _er.total_laps_from_rows(
+            _er.ergast_rows(self._ergast_race(), self._ergast_endpoint())
+        )
 
     @property
     def results(self) -> "SessionResults":
@@ -1612,7 +1714,13 @@ class Session:
             driver_rows, classified = self._driver_rows_info()
             if not driver_rows:
                 return SessionResults()
-            summary = self._lap_summary()
+            kind = _er.session_kind(self.session_name)
+            race = self._ergast_race() if self._ergast_enabled else None
+            classification = _er.ergast_rows(race, self._ergast_endpoint())
+            official = bool(classification) and kind != "identity"
+            # With the official classification the laps table is not needed
+            # for Position/Status/Laps; practice keeps the lap-derived view.
+            summary = {} if official else self._lap_summary()
             race_like = self._is_race_like()
             leader_laps = max((info["laps"] for info in summary.values()), default=0)
 
@@ -1620,8 +1728,11 @@ class Session:
             for index, d in enumerate(driver_rows, start=1):
                 info = summary.get(str(d.get("driver", "")))
                 laps_done = info["laps"] if info is not None else 0
-                if not summary:
-                    status: str | None = None
+                if official:
+                    # Race/sprint: Ergast fills Status; qualifying has none.
+                    status: str | None = None if kind == "race" else "Finished"
+                elif not summary:
+                    status = None
                 elif not race_like:
                     status = "Finished"
                 elif laps_done == 0:
@@ -1641,16 +1752,25 @@ class Session:
                         "LastName": d.get("ln", ""),
                         "FullName": f"{d.get('fn', '')} {d.get('ln', '')}".strip(),
                         "HeadshotUrl": d.get("url", ""),
-                        "Position": float(index) if classified else math.nan,
-                        "ClassifiedPosition": str(index) if classified else "",
+                        "Position": float(index) if classified and not official else math.nan,
+                        "ClassifiedPosition": str(index) if classified and not official else "",
                         "GridPosition": math.nan,
                         "Status": status,
                         "Points": math.nan,
                         "Laps": float(laps_done) if summary else math.nan,
+                        # Did-not-start rows (only Ergast knows the driver) keep
+                        # NaN positions, except in Ergast-only seasons where
+                        # every driver comes from the classification.
+                        "_ergast_only": bool(d.get("_ergast_only")) and not self._ergast_only,
                     }
                 )
+            if classification:
+                rows = _er.merge_ergast_rows(rows, classification, kind)
+            else:
+                for row in rows:
+                    row.pop("_ergast_only", None)
 
-            self._results = SessionResults(rows)
+            self._results = SessionResults(_er.finalize_results_frame(rows))
             self._results.session = self
         return self._results
 
@@ -1843,9 +1963,13 @@ class Session:
             session_key = f"Session{i}"
             if session_key in event.index and event[session_key] == session_name:
                 date_key = f"Session{i}Date"
-                if date_key in event.index:
+                if date_key in event.index and not pd.isna(event[date_key]):
                     ts = pd.Timestamp(event[date_key])
                     return ts.tz_localize(None) if ts.tz else ts
+                # Ergast-backed events carry UTC times only.
+                utc_key = f"Session{i}DateUtc"
+                if utc_key in event.index and not pd.isna(event[utc_key]):
+                    return pd.Timestamp(event[utc_key])
 
         return pd.NaT
 
@@ -1855,7 +1979,10 @@ class Session:
         # We will implement Event properly in events.py
         from .events import get_event_by_name
 
-        return get_event_by_name(self.year, self.event_name)
+        backend = getattr(self, "_schedule_backend", None)
+        if backend is None:
+            return get_event_by_name(self.year, self.event_name)
+        return get_event_by_name(self.year, self.event_name, backend=backend)
 
     @property
     def weather(self) -> DataFrame:
@@ -2187,16 +2314,332 @@ class Session:
     def _has_driver_code(self, driver: str) -> bool:
         """Check whether a driver code exists for this session."""
         _ = self._drivers_data
-        if self._driver_codes is None:
-            return False
-        return driver in self._driver_codes
+        if self._driver_codes is not None and driver in self._driver_codes:
+            return True
+        return any(row.get("driver") == driver for row in self._ergast_extra_rows())
 
     def _get_driver_info(self, driver: str) -> dict:
         """Get cached driver metadata by code."""
         _ = self._drivers_data
-        if self._driver_info_by_code is None:
-            return {"driver": driver, "team": ""}
-        return self._driver_info_by_code.get(driver, {"driver": driver, "team": ""})
+        info = None if self._driver_info_by_code is None else self._driver_info_by_code.get(driver)
+        if info is not None:
+            return info
+        for row in self._ergast_extra_rows():
+            if row.get("driver") == driver:
+                return row
+        return {"driver": driver, "team": ""}
+
+    def _ergast_identity(self, driver_number: str, abbreviation: str) -> dict[str, Any]:
+        """Ergast identity columns of one driver for :class:`Driver` (empty when unknown)."""
+        if not self._ergast_enabled:
+            return {}
+        classification = _er.ergast_rows(self._ergast_race(), self._ergast_endpoint())
+        # The code names the driver; the car number is only a fallback, since
+        # a shared car (pre-1960s) lists two drivers under one number.
+        matches = [
+            row for row in classification if abbreviation and _er.driver_code(row) == abbreviation
+        ]
+        if not matches:
+            matches = [
+                row
+                for row in classification
+                if str(row.get("number", "")).strip() == str(driver_number)
+            ]
+        for row in matches[:1]:
+            driver = row.get("Driver", {}) if isinstance(row.get("Driver"), dict) else {}
+            constructor = (
+                row.get("Constructor", {}) if isinstance(row.get("Constructor"), dict) else {}
+            )
+            return {
+                "DriverId": str(driver.get("driverId", "")),
+                "TeamId": str(constructor.get("constructorId", "")),
+                "PermanentNumber": str(driver.get("permanentNumber", "")),
+                "DriverNationality": str(driver.get("nationality", "")),
+                "DateOfBirth": str(driver.get("dateOfBirth", "")),
+            }
+        return {}
+
+    def _driver_has_timing_data(self, driver: str) -> bool:
+        """False for drivers only the Ergast classification lists (no laps or telemetry).
+
+        Decided from the ordered driver rows already built (never a fetch):
+        a driver the rows do not mark as Ergast-only is assumed to have
+        timing data, which keeps sessions with stubbed driver lists working.
+        In a season served from Ergast alone every row is synthesized from
+        the classification, so the flag says nothing there: the laps table
+        (built from the Ergast lap timings) decides per driver instead.
+        """
+        if self._ergast_only:
+            return True
+        cache = self._driver_rows_cache
+        if cache is None:
+            return True
+        return not any(row.get("driver") == driver and row.get("_ergast_only") for row in cache[1])
+
+    def _ergast_extra_rows(self) -> list[dict]:
+        """Driver rows only the Ergast classification knows (did not start)."""
+        if self._driver_rows_cache is None and self._ergast_enabled and not self._ergast_only:
+            self._driver_rows_info()
+        cache = self._driver_rows_cache
+        if cache is None:
+            return []
+        return [row for row in cache[1] if row.get("_ergast_only")]
+
+    # -- Ergast classification (tif1.ergast) ---------------------------------
+
+    def _ergast_endpoint(self) -> str:
+        """Ergast endpoint whose rows classify this session (race results otherwise)."""
+        return _er.ergast_endpoint(self.session_name)
+
+    def _ergast_round_number(self) -> int | None:
+        """This event's championship round (None for testing or unresolved events)."""
+        if self._ergast_round is not _UNSET:
+            return self._ergast_round
+        number = 0
+        try:
+            event = self.event
+            if "RoundNumber" in event.index:
+                number = int(event["RoundNumber"])
+        except (EventNotFoundError, ValueError, TypeError, KeyError) as exc:
+            logger.debug("No round number for %s/%s: %s", self.year, self.event_name, exc)
+        self._ergast_round = number if number > 0 else None
+        return self._ergast_round
+
+    def _ergast_table_race(self, endpoint: str) -> dict[str, Any] | None:
+        """``Races[0]`` of an Ergast table for this round (Stats first, Jolpica fallback)."""
+        if endpoint not in _ERGAST_TABLE_ENDPOINTS:
+            raise ValueError(f"Unknown Ergast table {endpoint!r}")
+        round_number = self._ergast_round_number()
+        if round_number is None:
+            return None
+        from .ergast import structure
+        from .ergast.router import QueryPlan, execute
+        from .ergast.stats import StatsSource
+
+        categories = {
+            "results": (structure.Races_RaceResults, structure.RaceResults),
+            "qualifying": (structure.Races_QualifyingResults, structure.QualifyingResults),
+            "sprint": (structure.Races_SprintResults, structure.SprintResults),
+            "laps": (structure.Races_Laps, structure.Laps),
+            "pitstops": (structure.Races_PitStops, structure.PitStops),
+        }
+        category, subcategory = categories[endpoint]
+        try:
+            executed = execute(
+                QueryPlan(
+                    endpoint=endpoint,
+                    table="RaceTable",
+                    category=category,
+                    subcategory=subcategory,
+                    selectors={"season": self.year, "round": round_number},
+                )
+            )
+        except TIF1Error as exc:
+            if self._ergast_only:
+                # Ergast is the only source of this season: a failure is the
+                # caller's to see, never an empty session.
+                raise
+            logger.warning(
+                "Ergast %s unavailable for %s/%s/%s: %s",
+                endpoint,
+                self.year,
+                self.event_name,
+                self.session_name,
+                exc,
+            )
+            return None
+        return StatsSource.first_race(executed.payload)
+
+    def _load_ergast_payload(self) -> dict[str, Any] | None:
+        """Fetch (once) the Ergast race record that classifies this session.
+
+        The outcome is memoized either way: an Ergast-only season stores the
+        error of a failed fetch and re-raises it on every later call instead
+        of walking the mirrors again (the background prefetch fails exactly
+        as the main thread would); a merge session keeps ``None`` because
+        :meth:`_ergast_table_race` already degraded and logged.
+        """
+        with self._ergast_lock:
+            if self._ergast_loaded:
+                if self._ergast_error is not None:
+                    raise self._ergast_error
+                return self._ergast_payload
+            payload = None
+            if self._ergast_enabled:
+                try:
+                    payload = self._ergast_table_race(self._ergast_endpoint())
+                except Exception as exc:
+                    if self._ergast_only:
+                        self._ergast_error = exc
+                        self._ergast_loaded = True
+                        raise
+                    # A bug in the enrichment must not break a timing load.
+                    logger.warning(
+                        "Ergast classification skipped for %s/%s/%s: %s",
+                        self.year,
+                        self.event_name,
+                        self.session_name,
+                        exc,
+                    )
+            self._ergast_payload = payload
+            self._ergast_loaded = True
+            return payload
+
+    def _ergast_race(self) -> dict[str, Any] | None:
+        """The Ergast race record of this session (None when unavailable or disabled)."""
+        if not self._ergast_enabled:
+            return None
+        return self._load_ergast_payload()
+
+    def _start_ergast_prefetch(self) -> None:
+        """Fetch the Ergast classification in the background while drivers.json loads.
+
+        A daemon thread rather than a pool: ``ThreadPoolExecutor`` workers are
+        joined when the interpreter exits, so a fetch still retrying against
+        slow mirrors would hold up a script that is already done. The thread
+        only fills the memo; :meth:`_load_ergast_payload` hands the outcome
+        (or the stored error) to whoever asks next.
+        """
+        if not self._ergast_enabled or self._ergast_loaded or self._ergast_prefetch_started:
+            return
+        self._ergast_prefetch_started = True
+        if not THREADS_AVAILABLE:
+            return
+        try:
+            threading.Thread(
+                target=self._prefetch_ergast_payload, name="tif1-ergast", daemon=True
+            ).start()
+        except RuntimeError:  # interpreter shutting down
+            self._ergast_prefetch_started = False
+
+    def _prefetch_ergast_payload(self) -> None:
+        """Thread target of :meth:`_start_ergast_prefetch`: never lets an error escape."""
+        try:
+            self._load_ergast_payload()
+        except Exception as exc:  # memoized; the main thread re-raises or degrades
+            logger.debug(
+                "Ergast prefetch failed for %s/%s/%s: %s",
+                self.year,
+                self.event_name,
+                self.session_name,
+                exc,
+            )
+
+    def _ergast_driver_payload(self) -> list[dict]:
+        """Driver dicts synthesized from the Ergast classification (seasons before 2018)."""
+        classification = _er.ergast_rows(self._ergast_race(), self._ergast_endpoint())
+        if not classification:
+            logger.info(
+                "No Ergast classification for %s/%s/%s",
+                self.year,
+                self.event_name,
+                self.session_name,
+            )
+            return []
+        return _er.order_driver_rows([], classification, _er.team_color_map([], self.year))
+
+    def _ergast_laps(self) -> DataFrame:
+        """Laps built from Ergast lap timings (races from 1996; empty otherwise)."""
+        if self.session_name != "Race":
+            return _create_empty_df(self.lib)
+        classification = _er.ergast_rows(self._ergast_race(), "results")
+        laps_race = self._ergast_table_race("laps")
+        stops_race = self._ergast_table_race("pitstops") if laps_race is not None else None
+        payloads = _er.build_laps_payloads(laps_race, classification, stops_race)
+        if not payloads:
+            logger.info("No Ergast lap timings for %s/%s", self.year, self.event_name)
+            return _create_empty_df(self.lib)
+        if self.lib == "polars":
+            merged = [
+                (_normalize_lap_payload_polars(payload), driver, team)
+                for payload, driver, team in payloads
+            ]
+            frame: DataFrame = pl.DataFrame(_merge_lap_payloads(merged), strict=False)
+        else:
+            merged = [
+                (_normalize_lap_payload(payload), driver, team)
+                for payload, driver, team in payloads
+            ]
+            frame = pd.DataFrame(_merge_lap_payloads(merged), copy=False)
+        return _process_lap_df(frame, self.lib)
+
+    def _as_session_lib(self, frame: pd.DataFrame) -> DataFrame:
+        """A pandas frame in the session's backend (Arrow conversion for polars)."""
+        if self.lib == "polars":
+            from .core_utils.backend_conversion import pandas_to_polars
+
+            return pandas_to_polars(frame)
+        return frame
+
+    @property
+    def pit_stops(self) -> DataFrame:
+        """Pit stops of the race from Ergast (2011 onward), one row per stop.
+
+        Columns: ``DriverNumber``, ``Driver``, ``DriverId``, ``Stop``, ``Lap``,
+        ``TimeOfDay`` (local time of the stop since midnight) and ``Duration``
+        (pit-lane time). Empty for sessions other than the race and when no
+        data exists; follows the session's ``lib``.
+        """
+        if self._pit_stops is None:
+            race = self._ergast_table_race("pitstops") if self.session_name == "Race" else None
+            # Driver numbers and codes come from the race classification; an
+            # explicit pit-stop request fetches it even with the merge off.
+            results = self._ergast_race() if self._ergast_enabled else None
+            if race and results is None:
+                results = self._ergast_table_race("results")
+            classification = _er.ergast_rows(results, "results") if race else []
+            self._pit_stops = self._as_session_lib(_er.build_pit_stops_frame(race, classification))
+        return self._pit_stops
+
+    def _ergast_standings(self, kind: str) -> DataFrame:
+        from .ergast import structure
+        from .ergast.router import QueryPlan, execute
+
+        round_number = self._ergast_round_number()
+        payload = None
+        if round_number is not None:
+            endpoint = "driverStandings" if kind == "driver" else "constructorStandings"
+            category = (
+                structure.StandingsLists_Driver
+                if kind == "driver"
+                else structure.StandingsLists_Constructor
+            )
+            subcategory = (
+                structure.DriverStandings if kind == "driver" else structure.ConstructorStandings
+            )
+            try:
+                payload = execute(
+                    QueryPlan(
+                        endpoint=endpoint,
+                        table="StandingsTable",
+                        category=category,
+                        subcategory=subcategory,
+                        selectors={"season": self.year, "round": round_number},
+                    )
+                ).payload
+            except TIF1Error as exc:
+                logger.warning(
+                    "Ergast %s standings unavailable for %s round %s: %s",
+                    kind,
+                    self.year,
+                    round_number,
+                    exc,
+                )
+        return self._as_session_lib(_er.build_standings_frame(payload, kind))
+
+    @property
+    def driver_standings(self) -> DataFrame:
+        """Drivers' championship standings after this event's round (Ergast)."""
+        if self._driver_standings is None:
+            self._driver_standings = self._ergast_standings("driver")
+        return self._driver_standings
+
+    @property
+    def constructor_standings(self) -> DataFrame:
+        """Constructors' championship standings after this event's round (Ergast)."""
+        if self._constructor_standings is None:
+            self._constructor_standings = self._ergast_standings("constructor")
+        return self._constructor_standings
 
     def _derive_driver_laptime_payloads_from_session(
         self,
@@ -3462,6 +3905,9 @@ class Session:
             >>> ver_laps = laps[laps["Driver"] == "VER"]
         """
 
+        if self._laps is None and self._ergast_only:
+            self._laps = self._as_session_laps(self._ergast_laps())
+            return self._laps
         if self._laps is None:
             cache_key = f"{self.year}_{self.gp}_{self.session}_laps"
             lap_cache = get_backend_lap_cache(self.lib) if self.enable_cache else None
@@ -3558,6 +4004,9 @@ class Session:
             >>> laps = asyncio.run(load_data())
         """
         if self._laps is not None:
+            return self._laps
+        if self._ergast_only:
+            self._laps = self._as_session_laps(self._ergast_laps())
             return self._laps
 
         ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
@@ -3767,6 +4216,11 @@ class Session:
         if isinstance(driver, (str, int)):
             value = str(driver).strip()
             _validate_string_param(value, "driver")
+            number, separator, code = value.partition("/")
+            if separator and number.isdigit() and code.strip():
+                # "number/Abbreviation": the label of a shared car's later
+                # driver (see ``drivers``); the code names the driver.
+                return code.strip()
             # If it looks like a driver number, resolve to driver code first
             if value.isdigit():
                 for info in self._driver_rows():
@@ -5311,11 +5765,11 @@ def _normalize_session_name(session: str) -> str:
     return _CANONICAL_SESSION_NAMES.get(" ".join(key.lower().split()), session)
 
 
-def _resolve_gp_name(year: int, gp: str | int) -> str:
+def _resolve_gp_name(year: int, gp: str | int, *, backend: ScheduleBackend | None = None) -> str:
     if isinstance(gp, int):
         from .events import get_event
 
-        event = get_event(year, gp)
+        event = get_event(year, gp) if backend is None else get_event(year, gp, backend=backend)
         if event is None:
             raise ValueError(f"could not resolve event round '{gp}' for year={year}")
         event_obj = cast(Any, event)
@@ -5336,7 +5790,11 @@ def _resolve_gp_name(year: int, gp: str | int) -> str:
 
     # Use get_event_by_name which has fuzzy matching to resolve abbreviated names
     try:
-        event = get_event_by_name(year, gp_str, exact_match=False)
+        event = (
+            get_event_by_name(year, gp_str, exact_match=False)
+            if backend is None
+            else get_event_by_name(year, gp_str, exact_match=False, backend=backend)
+        )
         return str(event.EventName)
     except EventNotFoundError:
         # "Suzuka" in 2021 (alias understood, race not held) or "Invalid GP"
@@ -5348,11 +5806,17 @@ def _resolve_gp_name(year: int, gp: str | int) -> str:
         return gp_str
 
 
-def _resolve_session_name(year: int, gp_name: str, session: str | int) -> str:
+def _resolve_session_name(
+    year: int, gp_name: str, session: str | int, *, backend: ScheduleBackend | None = None
+) -> str:
     if isinstance(session, int):
         from .events import get_sessions
 
-        sessions = get_sessions(year, gp_name)
+        sessions = (
+            get_sessions(year, gp_name)
+            if backend is None
+            else get_sessions(year, gp_name, backend=backend)
+        )
         if 1 <= session <= len(sessions):
             return sessions[session - 1]
         raise ValueError(f"session index out of range: {session}")
@@ -5365,6 +5829,10 @@ def get_session(
     session: str | int,
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] | None = None,
+    *,
+    ergast: bool | None = None,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
 ) -> Session:
     """
     Get a session object.
@@ -5375,12 +5843,22 @@ def get_session(
         session: Session name (e.g., "Practice 1", "Qualifying", "Race")
         enable_cache: Enable caching. If None, uses configured default.
         lib: Data lib choice - 'pandas' or 'polars'. If None, uses configured default.
+        ergast: Merge the official Ergast classification into ``results`` and
+            ``drivers`` (default: the ``ergast_results`` setting).
+        backend: Schedule backend used to resolve the event name
+            (``"fastf1"``/``"f1timing"`` read the f1schedule calendar,
+            ``"ergast"`` the Ergast race table). Default: f1schedule from
+            2018, Ergast before.
+        force_ergast: Deprecated alias of ``backend="ergast"``.
 
     Returns:
         Session object with lap and telemetry data
 
     Raises:
         ValueError: If year is out of supported range or session doesn't exist for the event
+        DataNotFoundError: A practice session of a season before 2018 (the
+            schedule lists it, as fastf1's Ergast backend does, but Ergast
+            carries no practice data)
 
     Example:
         >>> session = get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
@@ -5390,20 +5868,53 @@ def get_session(
         ['81', '63', '4', ...]
         >>> laps = session.laps
     """
-    gp_name = _resolve_gp_name(year, gp)
-    session_name = _resolve_session_name(year, gp_name, session)
+    if force_ergast:
+        warnings.warn(
+            "Option ``force_ergast`` has been deprecated, use ``backend='ergast'`` instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        backend = "ergast"
+    # The backend keyword is only passed when set, so test doubles of the
+    # event helpers with the original two-argument signature keep working.
+    gp_name = (
+        _resolve_gp_name(year, gp)
+        if backend is None
+        else _resolve_gp_name(year, gp, backend=backend)
+    )
+    session_name = (
+        _resolve_session_name(year, gp_name, session)
+        if backend is None
+        else _resolve_session_name(year, gp_name, session, backend=backend)
+    )
 
     # Validate that the session exists for this event
     from .events import get_sessions
 
-    available_sessions = get_sessions(year, gp_name)
+    available_sessions = (
+        get_sessions(year, gp_name)
+        if backend is None
+        else get_sessions(year, gp_name, backend=backend)
+    )
     if session_name not in available_sessions:
         raise ValueError(
             f"Session '{session_name}' does not exist for {year} {gp_name}.\n"
             f"Available sessions: {', '.join(available_sessions)}"
         )
+    if year < F1_API_FIRST_YEAR and session_name not in ERGAST_LOADABLE_SESSIONS:
+        # Listed in the schedule (fastf1's Ergast backend lists practice with
+        # estimated dates) but Ergast holds no practice data: fail here.
+        raise DataNotFoundError(
+            year=year,
+            event=gp_name,
+            session=session_name,
+            reason=(
+                f"Ergast has no {session_name} data; seasons before {F1_API_FIRST_YEAR} "
+                f"load {', '.join(ERGAST_LOADABLE_SESSIONS)} only"
+            ),
+        )
 
-    new_session = Session(year, gp_name, session_name, enable_cache, lib)
+    new_session = Session(year, gp_name, session_name, enable_cache, lib, ergast, backend)
     _preconnect_cdn(new_session)
     return new_session
 

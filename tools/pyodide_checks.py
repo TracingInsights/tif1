@@ -115,6 +115,106 @@ def sync_api_check() -> dict:
     return {"sync_api": f"AsyncRequiredError: {message}"}
 
 
+ERGAST_RESULTS = {
+    "MRData": {
+        "xmlns": "",
+        "series": "f1",
+        "url": "",
+        "limit": "30",
+        "offset": "0",
+        "total": "2",
+        "RaceTable": {
+            "season": "2025",
+            "round": "1",
+            "Races": [
+                {
+                    "season": "2025",
+                    "round": "1",
+                    "raceName": "Bahrain Grand Prix",
+                    "Circuit": {"circuitId": "bahrain", "circuitName": "Bahrain", "Location": {}},
+                    "date": "2025-03-16",
+                    "Results": [
+                        {
+                            "number": "1",
+                            "position": "1",
+                            "positionText": "1",
+                            "points": "25",
+                            "Driver": {"driverId": "max_verstappen", "code": "VER"},
+                            "Constructor": {"constructorId": "red_bull", "name": "Red Bull"},
+                            "grid": "1",
+                            "laps": "57",
+                            "status": "Finished",
+                            "Time": {"millis": "5400000", "time": "1:30:00.000"},
+                        },
+                        {
+                            "number": "16",
+                            "position": "2",
+                            "positionText": "2",
+                            "points": "18",
+                            "Driver": {"driverId": "leclerc", "code": "LEC"},
+                            "Constructor": {"constructorId": "ferrari", "name": "Ferrari"},
+                            "grid": "2",
+                            "laps": "57",
+                            "status": "Finished",
+                            "Time": {"millis": "5410000", "time": "+10.000"},
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+}
+ERGAST_EVENTS = {
+    "MRData": {
+        "total": "1",
+        "limit": "30",
+        "offset": "0",
+        "RaceTable": {
+            "season": "2025",
+            "Races": [
+                {
+                    "season": "2025",
+                    "round": "1",
+                    "raceName": "Bahrain Grand Prix",
+                    "date": "2025-03-16",
+                    "Circuit": {"circuitId": "bahrain", "circuitName": "Bahrain", "Location": {}},
+                }
+            ],
+        },
+    }
+}
+
+
+def ergast_check() -> dict:
+    """``tif1.ergast`` answers from an in-memory Stats mirror without threads or sockets."""
+    from tif1.config import get_config
+    from tif1.ergast import Ergast
+    from tif1.ergast import jolpica as jolpica_module
+    from tif1.ergast import payloads as ergast_payloads
+    from tif1.ergast import stats as ergast_stats
+
+    transport = InMemoryTransport(
+        {"2025/events.json": ERGAST_EVENTS, "2025/bahrain-grand-prix/results.json": ERGAST_RESULTS}
+    )
+    ergast_payloads.reset_ergast_loader()
+    ergast_stats.reset_stats_source()
+    jolpica_module.reset_rate_limiter()
+    ergast_payloads.get_ergast_loader().transport = transport
+    config = get_config()
+    previous_fallback = config.get("ergast_fallback", True)
+    config.set("ergast_fallback", False)
+    try:
+        response = Ergast().get_race_results(2025, 1)
+    finally:
+        config.set("ergast_fallback", previous_fallback)
+    content = response.content[0]
+    assert response.source == "stats", response.source
+    assert content["driverId"].tolist() == ["max_verstappen", "leclerc"], content
+    gap = content["totalRaceTimeGap"].iloc[1]
+    assert gap.total_seconds() == 10.0, gap
+    return {"ergast_source": response.source, "ergast_rows": len(content)}
+
+
 def journal_mode_check() -> dict:
     cache = get_cache()
     mode = cache.conn.execute("PRAGMA journal_mode").fetchone()[0] if cache.conn else None

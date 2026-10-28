@@ -2888,7 +2888,7 @@ if not tel.empty:
 
 ## SessionResults
 
-The `SessionResults` class contains the classification of a session, one row per driver in classification order. It inherits from `pandas.DataFrame`. The data source publishes no official classification table. tif1 builds the results from the driver list and the lap data.
+The `SessionResults` class contains the classification of a session, one row per driver in classification order, indexed by driver number. A shared car's later drivers are labelled `number/Abbreviation`, so the index stays unique. It inherits from `pandas.DataFrame`. Race, Sprint and Qualifying sessions carry the official Ergast classification merged into the driver list. Practice sessions (and every session with `ergast=False`) are built from the driver list and the lap data.
 
 ### Class Overview
 
@@ -2919,20 +2919,28 @@ The SessionResults DataFrame contains the following columns:
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `DriverNumber` | str | Racing number (for example, "81") |
-| `Abbreviation` | str | 3-letter driver code (for example, "PIA") |
+| `DriverNumber` | str | Racing number (for example, "81"); also the index |
+| `BroadcastName` | str | Initial and surname in capitals ("O PIASTRI") |
+| `Abbreviation` | str | 3-letter driver code (for example, "PIA"); the Ergast driver id before codes existed |
+| `DriverId`, `TeamId` | str | Ergast `driverId` and `constructorId` |
 | `TeamName` | str | Team name |
 | `TeamColor` | str | Team color hex code without `#` |
 | `FirstName`, `LastName`, `FullName` | str | Driver names |
 | `HeadshotUrl` | str | URL of the driver headshot image |
-| `Position` | float | Classification position (1.0 to N) |
-| `ClassifiedPosition` | str | Classification position as text ("1" to "N") |
-| `GridPosition` | float | Always NaN: the data source has no starting grid |
-| `Status` | str | Races and sprints: "Finished", "+1 Lap", "+N Laps", or "Did not start". Other sessions: "Finished" |
-| `Points` | float | Always NaN: the data source has no points |
+| `CountryCode` | str | Always empty: not in the data |
+| `Position` | float | Classification position (1.0 to N); NaN for drivers that did not start |
+| `ClassifiedPosition` | str | Official classification text: "1" to "N", or "R", "D", "W", "E", "F", "N" |
+| `GridPosition` | float | Starting position (races and sprints; 0 for a pit-lane start) |
+| `Q1`, `Q2`, `Q3` | Timedelta | Qualifying segment times (qualifying only) |
+| `Time` | Timedelta | Total race time of every classified driver |
+| `Status` | str | Ergast status: "Finished", "Lapped", "+1 Lap", "Retired", "Disqualified", ...; lap-derived "Finished"/"+N Laps"/"Did not start" without Ergast data |
+| `Points` | float | Points scored |
 | `Laps` | float | Number of laps completed |
+| `TimeGap` | Timedelta | Gap to the winner (zero for the winner) |
+| `FastestLapRank`, `FastestLapNumber`, `FastestLapTime`, `FastestLapAvgSpeed` | float, float, Timedelta, float | Fastest-lap facts of the race |
+| `PermanentNumber`, `DriverNationality`, `TeamNationality`, `DateOfBirth`, `DriverUrl`, `TeamUrl` | str, str, str, datetime, str, str | Driver and constructor identity from Ergast |
 
-**Note:** There is no `Driver`, `Team`, or `Time` column. Use `Abbreviation` and `TeamName`. Some seasons have a source file sorted by car number. For those, tif1 rebuilds the order from the laps and can miss a post-race penalty.
+**Note:** There is no `Driver` or `Team` column. Use `Abbreviation` and `TeamName`. fastf1's 22 columns come first, in fastf1's order; the tif1 extras follow. Every column exists in every session; values a session cannot have are NaN, NaT or empty strings.
 
 ### Usage Examples
 
@@ -3027,13 +3035,13 @@ if not results.empty:
 </ResponseField>
 
 <ResponseField name="dnf" type="bool">
-  Whether the driver did not finish (computed property). tif1 derives `Status` from lap counts, so a retirement shows as "+N Laps".
+  Whether the driver did not finish (computed property).
 
   **Behavior:**
-  - Returns `True` if status is NOT one of: "Finished", "+1 Lap", "+2 Laps", "Not classified"
-  - Returns `False` otherwise, and also when `Status` is missing (not a string)
+  - Returns `False` for "Finished", "Lapped" and any "+N Lap(s)" status (a classified finisher, however many laps down)
+  - Returns `True` for every other status: "Retired", "Accident", "Disqualified", "Did not start", "Not classified", ...
+  - Returns `False` when `Status` is missing or empty
   - Case-insensitive comparison
-  - A driver three or more laps down ("+3 Laps") counts as DNF, and "Did not start" also returns `True`
 
   **Usage:**
   ```python

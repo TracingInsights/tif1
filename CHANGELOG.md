@@ -7,6 +7,112 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-28
+
+### Summary
+
+`0.10.0` adds the Ergast data tier: `tif1.ergast` is a drop-in for
+`fastf1.ergast`, `Session.results` carries the official classification (grid,
+points, status, race time, qualifying segments), and sessions, schedules and
+standings reach back to 1950. The answers come from the TracingInsights Stats
+repository (one static file per table and round) with the Jolpica API only as
+fallback, so season-wide queries are one parallel fetch instead of a paged,
+rate-limited API walk. The library now also runs in the browser under Pyodide
+(`Session.load_async()`, IndexedDB persistence, a checked wheel), and the
+Thebes and Pergamon performance series add CDN hedging, typed and per-driver
+columnar telemetry frame tiers, an optional Rust decoder, GIL-released
+decompression and an asyncio-free warm path (per-series numbers below). A
+verification sweep fixed cleanup, cache and dtype bugs found by running the
+documentation against real data.
+
+Upgrade notes:
+
+- `Session.results`, `drivers` and `drivers_df` follow the official Ergast
+  classification for Race, Sprint and Qualifying sessions (post-race penalties
+  included, drivers that did not start added with NaN `Position`); one small
+  classification file is fetched alongside `drivers.json`. Pass
+  `get_session(..., ergast=False)` or set `TIF1_ERGAST_RESULTS=0` for the
+  previous lap-derived view.
+- `DriverResult.dnf` counts every `+N Laps` and `Lapped` status as a
+  classified finish.
+- `MIN_YEAR` is 1950. Seasons before 2018 load `Qualifying`, `Sprint` and
+  `Race` from Ergast; their schedules list all five sessions, and loading a
+  practice session or any timing payload raises `DataNotFoundError`.
+- The `results` index is always unique: the later drivers of a car two drivers
+  shared (classifications before the 1960s) are labelled
+  `number/Abbreviation`; `session.drivers` lists the same labels.
+- New configuration keys (`ergast_results`, `ergast_fallback`,
+  `jolpica_base_url`, `ergast_ttl_hours`, `ergast_timeout`,
+  `ergast_rate_limit_*`, `stats_repo`, `stats_branch`) and the
+  `TIF1_ERGAST_*`, `TIF1_JOLPICA_BASE_URL`, `TIF1_STATS_*` variables.
+
+### Added — Ergast data: results, standings, lap times from 1950 (2026-10-28)
+
+- **`tif1.ergast`**, a drop-in for `fastf1.ergast`: `Ergast` with the
+  thirteen endpoint methods, fastf1's keyword arguments, flattened column
+  names, `ErgastSimpleResponse`/`ErgastMultiResponse`/`ErgastRawResponse`
+  with paging, the `fetch_season`/`fetch_day`/`fetch_results` helpers and the
+  `ErgastError`/`ErgastJsonError`/`ErgastInvalidRequestError`/
+  `RateLimitExceededError` exceptions. Answers come from the
+  `TracingInsights-Archive/Stats` repository (one static file per table and
+  round, no rate limit, season-wide queries assembled in one parallel fetch)
+  and from the Jolpica API only for what that repository cannot answer
+  (paced to 4 req/s and 500 req/h, `Retry-After` honoured). A Stats-backed
+  answer is complete by default; a Jolpica-backed one keeps the API default of
+  30 rows. `result_type="polars"` (`ErgastPolarsResponse`, a polars frame
+  with the same paging attributes) and a `source` attribute are additions.
+  `totalRaceTime` is the true total race time (fastf1 stores the gap for every
+  driver but the winner); the gap is the new `totalRaceTimeGap`.
+- **Official classifications in `Session.results`**: `GridPosition`,
+  `Points`, `Status`, `ClassifiedPosition`, `Time` (the total race time),
+  `Q1`/`Q2`/`Q3`, `DriverId`, `TeamId`, `BroadcastName`, plus the extras
+  `TimeGap`, `FastestLapRank`/`Number`/`Time`/`AvgSpeed`, `PermanentNumber`,
+  nationalities, `DateOfBirth` and URLs. `Session.drivers`, `drivers_df` and
+  `results` follow the official order (penalties included); drivers that did
+  not start are added. The frame is indexed by `DriverNumber`, kept unique
+  for a car two drivers shared (pre-1960s) by labelling the later drivers
+  `number/Abbreviation`; fastf1's 22 columns come first. `get_session(..., ergast=False)` or
+  `TIF1_ERGAST_RESULTS=0` restores the lap-derived view.
+- **`Session.pit_stops`**, **`Session.driver_standings`**,
+  **`Session.constructor_standings`**, **`Session.total_laps`**, and the
+  top-level **`get_driver_standings`** / **`get_constructor_standings`**.
+- **Seasons from 1950**: `get_event_schedule(1995)` (packaged Ergast race
+  tables, `tools/vendor_ergast_schedules.py`, all five sessions listed as
+  fastf1 does), `get_session(1995, "Monaco", "Race")` with results, lap
+  timings (1996+) and pit stops (2011+); a practice session of those seasons
+  raises `DataNotFoundError` (Ergast has no practice data); every
+  schedule carries `CircuitId`, `CircuitName`, `CircuitLatitude`,
+  `CircuitLongitude`, `EventUrl`, `CircuitUrl`.
+- **fastf1 parity**: `backend=`/`force_ergast=` on `get_session`, `get_event`,
+  `get_event_schedule`; `strict_search=` on `get_event`;
+  `get_events_remaining`, `get_testing_event`, `get_testing_session`;
+  `Event.is_testing()`, `EventSchedule.is_testing()`;
+  `Laps.QUICKLAP_THRESHOLD`, `Telemetry.TELEMETRY_FREQUENCY`,
+  `Telemetry.register_new_channel`, `Cache.api_request_wrapper`.
+- **CLI**: `tif1 results YEAR EVENT SESSION`, `tif1 standings YEAR [ROUND]
+  [--constructors]`, `tif1 cache-clear --ergast`.
+- **Configuration**: `ergast_results`, `ergast_fallback`, `jolpica_base_url`,
+  `ergast_ttl_hours`, `ergast_timeout`, `ergast_rate_limit_burst`,
+  `ergast_rate_limit_hourly`, `stats_repo`, `stats_branch` (env
+  `TIF1_ERGAST_*`, `TIF1_JOLPICA_BASE_URL`, `TIF1_STATS_*`).
+  `Cache.invalidate("ergast")` drops only the Ergast tier.
+- **CDN**: `CDNSource.format_repo_url`/`serves` and
+  `CDNManager.try_sources_repo` for repositories outside the
+  per-year layout; a "missing" verdict needs a 404 from every mirror, a
+  transient jsDelivr 403 is retried once and never persisted. Requests carry a
+  `tif1/{version}` User-Agent.
+
+### Changed
+
+- `DriverResult.dnf` treats every `+N Laps` and `Lapped` status as a
+  classified finish (`+3 Laps` counted as a DNF before).
+- `MIN_YEAR` is 1950. Schedules before 2018 list all five sessions (fastf1
+  parity); `get_session` loads `Qualifying`, `Sprint` and `Race` there and
+  raises `DataNotFoundError` for practice, as every timing payload of those
+  seasons does.
+- `Session.results` is indexed by `DriverNumber` and always has every column
+  of the fastf1 contract.
+
 ### Added — Pyodide (2026-10-16)
 
 `tif1` runs in the browser: Pyodide 314 (JupyterLite, PyScript, marimo).

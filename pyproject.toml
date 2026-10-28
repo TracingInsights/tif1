@@ -1,7 +1,7 @@
 [project]
 name = "tif1"
-version = "0.9.0"
-description = "A faster alternative to fastf1 with the same bindings. Access Formula 1 timing data from TracingInsights Github cache (2018-current)"
+version = "0.10.0"
+description = "A faster alternative to fastf1 with the same bindings. Formula 1 timing and telemetry data from the TracingInsights GitHub cache (2018-current) and Ergast results, standings and lap times (1950-current)"
 readme = "README.md"
 authors = [
     { name = "Tracing Insights", email = "tracing.insights@gmail.com" }
@@ -96,7 +96,6 @@ dev = [
     "pandas-stubs>=3.0.5.260730,<4",
     "hypothesis>=6.167.1,<7",
 ]
-
 [project.scripts]
 tif1 = "tif1.cli:app"
 

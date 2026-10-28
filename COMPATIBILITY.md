@@ -6,20 +6,29 @@
 
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
-| **Data Source** | Ergast + F1 Live Timing | TracingInsights (CDN) |
+| **Data Source** | Ergast + F1 Live Timing | TracingInsights (CDN); Ergast tables from the TracingInsights Stats repository, Jolpica only as fallback |
 | **Loading** | `session.load()` downloads the whole session | **Lazy, per-file fetching** (async, parallel) |
 | **Backends** | Pandas only | **Pandas + Polars** |
 | **Caching** | Pickle files + SQLite HTTP cache | **SQLite + Memory LRU** |
-| **Live Timing** | Supported | **Historical only (2018-present)** |
+| **Live Timing** | Supported | **Historical only (timing/telemetry 2018-present, Ergast results 1950-present)** |
 
 ## Current Status
 
 ### 🏁 Event & Session API
 Most `EVENT` and `SESSION` level APIs work as expected.
-- [x] `get_session(year, event, type)`
+- [x] `get_session(year, event, type)` (with fastf1's `backend=`/`force_ergast=` keywords)
 - [x] Lazy loading (no need for `session.load()`)
-- [ ] `is_testing()` - Currently not working/implemented.
-- [ ] Session Results - Quali/Sprint Quali results have no Q1/Q2/Q3 (or SQ1/SQ2/SQ3) time columns. The laps carry the segment in `QualifyingSession`, and `laps.split_qualifying_sessions()` splits on it.
+- [x] `is_testing()` on `Event` and `EventSchedule`
+- [x] `get_events_remaining`, `get_testing_event`, `get_testing_session`
+- [x] Schedules from 1950 (`backend="ergast"` for any season)
+- [x] Session Results - the official Ergast classification: `GridPosition`, `Points`, `Status`, `ClassifiedPosition`, `Time`, `Q1`/`Q2`/`Q3`, `DriverId`, `TeamId`; tif1 adds `TimeGap`, fastest-lap facts and identity columns. Sprint Qualifying/Shootout results have no SQ1/SQ2/SQ3 columns: the laps carry the segment in `QualifyingSession`, and `laps.split_qualifying_sessions()` splits on it.
+
+### 📚 Ergast
+- [x] `tif1.ergast.Ergast` with the thirteen fastf1 methods, response classes and paging
+- [x] `fetch_season` / `fetch_day` / `fetch_results`
+- [x] `Session.pit_stops`, `Session.driver_standings`, `Session.constructor_standings`, `tif1.get_driver_standings`, `tif1.get_constructor_standings`
+- [x] Sessions before 2018 (`Qualifying`, `Race`) with results, Ergast lap timings (1996+) and pit stops (2011+)
+- [/] `totalRaceTime` is the true total race time (fastf1 stores the gap for every driver but the winner); the gap is `totalRaceTimeGap`
 
 ### 🏎️ Telemetry
 

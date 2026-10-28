@@ -115,7 +115,8 @@ class TestEventsForYears:
         assert "Pre-Season Testing" in _event_names(events)
 
     def test_get_events_unknown_year_returns_empty(self):
-        assert get_events(2015).empty
+        # Seasons from 1950 are served from the packaged Ergast schedules.
+        assert get_events(1900).empty
 
 
 class TestSessionFormats2019:
@@ -243,7 +244,8 @@ class TestUnknownYear:
     """Test that unknown years return standard sessions."""
 
     def test_unknown_year_returns_standard(self):
-        sessions = _build_sessions_for_event(2015, "Some Grand Prix")
+        # 1950 onward is served from the packaged Ergast schedules.
+        sessions = _build_sessions_for_event(1900, "Some Grand Prix")
         assert sessions == ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"]
 
     def test_get_sessions_wraps_cached_result(self):
@@ -824,8 +826,14 @@ class TestLiveSchedule:
             _raw_f1schedule_year(2017, (1, "Historic Grand Prix")),
         )
 
-        assert _event_names(get_events(2017)) == ["Historic Grand Prix"]
-        assert get_sessions(2017, "Historic Grand Prix") == ["Practice 1", "Qualifying", "Race"]
+        # Before 2018 the default backend is Ergast; the f1schedule calendar
+        # is still reachable by naming its backend.
+        assert _event_names(get_events(2017, backend="fastf1")) == ["Historic Grand Prix"]
+        assert get_sessions(2017, "Historic Grand Prix", backend="fastf1") == [
+            "Practice 1",
+            "Qualifying",
+            "Race",
+        ]
         assert live_schedule.calls == [_RAW_SCHEDULE_URL.format(year=2017)]
 
     def test_year_without_upstream_file_is_empty(self, live_schedule):

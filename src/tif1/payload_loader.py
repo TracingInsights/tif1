@@ -118,12 +118,28 @@ class NiquestsTransport:
         try:
             response.raise_for_status()
         except niquests.RequestException as e:
-            raise NetworkError(url=url, status_code=getattr(response, "status_code", None)) from e
+            status_code = getattr(response, "status_code", None)
+            if status_code == 429:
+                # Jolpica (tif1.ergast) honours the server's Retry-After.
+                raise NetworkError(
+                    url=url, status_code=429, retry_after=_retry_after_seconds(response)
+                ) from e
+            raise NetworkError(url=url, status_code=status_code) from e
 
         data = parse_response_json(response)
         if not isinstance(data, dict):
             raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
         return data
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    """Seconds from a ``Retry-After`` header (delay form only), or None."""
+    headers = getattr(response, "headers", None)
+    value = headers.get("Retry-After") if headers is not None else None
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class InMemoryTransport:

@@ -302,6 +302,24 @@ Information about the physical corners of the racetrack layout.
 
 Some newer files, for example 2026, add more keys such as `CornerLetter`, `MarshalSectorNumber`, `TrackX`, and `TrackY`. tif1 reads only the keys in this table.
 
+## Ergast Data (`TracingInsights-Archive/Stats`)
+
+The Stats repository stores the Ergast tables as raw Jolpica responses, one JSON file per table and round, every page merged. `tif1.ergast` reads it first and asks the Jolpica API only for what it cannot answer.
+
+| File | Jolpica request | Available from |
+| :--- | :--- | :--- |
+| `{year}/events.json` | `/{year}/races/` | 1950 |
+| `{year}/{slug}/event_info.json` | one `Race` object of the schedule | 1950 |
+| `{year}/{slug}/results.json` | `/{year}/{round}/results` | 1950 |
+| `{year}/{slug}/quali_results.json` | `/{year}/{round}/qualifying` | 1994 (empty files before) |
+| `{year}/{slug}/sprint_results.json` | `/{year}/{round}/sprint` | 2021 (sprint rounds only) |
+| `{year}/{slug}/laptimes.json` | `/{year}/{round}/laps`, all pages | 1996 |
+| `{year}/{slug}/pitstops.json` | `/{year}/{round}/pitstops`, all pages | 2011 |
+| `{year}/{slug}/driverPoints.json` | `/{year}/{round}/driverstandings` | 1950 |
+| `{year}/{slug}/teamPoints.json` | `/{year}/{round}/constructorstandings` | 1958 |
+
+`slug` is the race name of `events.json` in lower case with spaces replaced by hyphens, so tif1 resolves it by round through that file. A lap whose timings were split across two Jolpica pages appears twice in `laptimes.json`; tif1 merges the timings. The season-level `driverPoints.json` and `teamPoints.json` files are stale and are not read.
+
 ## Where to Find More Information
 
 Official **FastF1 Documentation**: https://docs.fastf1.dev/
@@ -309,4 +327,4 @@ Official **FastF1 Documentation**: https://docs.fastf1.dev/
 - Detailed API documentation
 - Examples and tutorials
 - Data accuracy information
-- Troubleshooting guides
+- Troubleshooting guides

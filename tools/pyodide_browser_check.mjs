@@ -64,7 +64,7 @@ window.tif1Check = async function (opts) {
   const syncRun = (expr) => Object.assign(report, JSON.parse(pyodide.runPython(expr)));
   if (opts.stage === "first") {
     await asyncRun(
-      "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check())",
+      "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check(), ergast_check())",
     );
     report.sync_entry = JSON.parse(pyodide.runPython("merge(sync_api_check())")).sync_api;
     if (opts.network) {
@@ -116,7 +116,7 @@ self.onmessage = async (event) => {
     pyodide.runPython(opts.checks);
     const report = JSON.parse(
       await pyodide.runPythonAsync(
-        "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check())",
+        "merge(runtime_checks(), await offline_load_async(), offline_sync_weather(), sync_api_check(), journal_mode_check(), ergast_check())",
       ),
     );
     report.sync_entry = JSON.parse(pyodide.runPython("merge(sync_api_check())")).sync_api;

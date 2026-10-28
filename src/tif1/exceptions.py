@@ -169,6 +169,38 @@ class LapNotFoundError(DataNotFoundError):
         )
 
 
+class ErgastError(TIF1Error):
+    """Base class for errors raised by the Ergast data layer (``tif1.ergast``)."""
+
+
+class ErgastJsonError(ErgastError):
+    """Raised when an Ergast/Jolpica response body cannot be parsed as JSON."""
+
+
+class ErgastInvalidRequestError(ErgastError):
+    """Raised when the Ergast/Jolpica API rejects a request (non-200 answer)."""
+
+
+class RateLimitExceededError(NetworkError):
+    """Raised when the Jolpica API keeps answering 429 after the configured retries.
+
+    A ``NetworkError`` so callers that handle transport failures handle this
+    one too; the message names the limit that was hit.
+    """
+
+    def __init__(
+        self, url: str | None = None, retry_after: float | None = None, **context: Any
+    ) -> None:
+        message = "Jolpica rate limit exceeded"
+        if retry_after:
+            message += f" (retry after {retry_after:.0f}s)"
+        if url:
+            message += f": url='{url}'"
+        TIF1Error.__init__(
+            self, message, url=url, status_code=429, retry_after=retry_after, **context
+        )
+
+
 # Null-like string sentinels shared by payload normalization
 # (``helpers``) and payload validation (``validation``). Defined here so
 # hot-path helpers stay importable without pulling in pydantic.

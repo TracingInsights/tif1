@@ -1,6 +1,9 @@
 """Shared pytest configuration and fixtures."""
 
+import json
 import socket
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -80,6 +83,10 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
     config.set("cache_dir", str(cache_dir))
     previous_preconnect = config.get("cdn_preconnect")
     config.set("cdn_preconnect", False)
+    # The Ergast classification merge reaches a CDN; the socket-blocked unit
+    # suite keeps it off unless a test opts in (config.set("ergast_results", True)).
+    previous_ergast = config.get("ergast_results")
+    config.set("ergast_results", False)
     monkeypatch.setattr(fastf1_compat.Cache, "_cache_dir", None)
     stale = cache_module._cache
     cache_module._cache = None
@@ -95,6 +102,7 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
         cache_module._cache = stale
         config.set("cache_dir", previous)
         config.set("cdn_preconnect", previous_preconnect)
+        config.set("ergast_results", previous_ergast)
 
 
 @pytest.fixture(autouse=True)
@@ -107,6 +115,13 @@ def reset_global_state():
     from tif1.retry import reset_circuit_breaker
 
     def _reset() -> None:
+        from tif1.ergast import jolpica as jolpica_module
+        from tif1.ergast import payloads as ergast_payloads
+        from tif1.ergast import stats as ergast_stats
+
+        ergast_payloads.reset_ergast_loader()
+        ergast_stats.reset_stats_source()
+        jolpica_module.reset_rate_limiter()
         async_fetch_module.cleanup_resources()
         async_fetch_module._async_session = None
         get_cdn_manager().reset()
@@ -121,3 +136,74 @@ def reset_global_state():
 
     # Reset after test
     _reset()
+
+
+# -- Ergast fixtures (tif1.ergast) --------------------------------------------
+
+_ERGAST_FIXTURES = Path(__file__).parent / "fixtures" / "ergast"
+#: Jolpica request URL fragment -> fixture file.
+_JOLPICA_FIXTURES = {
+    "api.jolpi.ca/ergast/f1/seasons.json?limit=5": "seasons_limit5.json",
+    "api.jolpi.ca/ergast/f1/2024/drivers.json?limit=30": "drivers_2024.json",
+    "api.jolpi.ca/ergast/f1/2024/status.json": "status_2024.json",
+    "api.jolpi.ca/ergast/f1/2024/constructors.json": "constructors_2024.json",
+    "api.jolpi.ca/ergast/f1/2024/circuits.json": "circuits_2024.json",
+    "api.jolpi.ca/ergast/f1/current.json?limit=1": "current.json",
+    "api.jolpi.ca/ergast/f1/2026/last.json?limit=1": "current_last.json",
+    "api.jolpi.ca/ergast/f1/2024/1/laps.json?limit=100&offset=0": "laps_2024_1_page0.json",
+}
+
+
+def load_ergast_fixture_payloads() -> dict[str, Any]:
+    """URL fragment -> parsed payload for every Stats and Jolpica fixture file."""
+    payloads: dict[str, Any] = {}
+    stats_dir = _ERGAST_FIXTURES / "stats"
+    for path in stats_dir.rglob("*.json"):
+        payloads[str(path.relative_to(stats_dir))] = json.loads(path.read_text(encoding="utf-8"))
+    for fragment, name in _JOLPICA_FIXTURES.items():
+        payloads[fragment] = json.loads(
+            (_ERGAST_FIXTURES / "jolpica" / name).read_text(encoding="utf-8")
+        )
+    return payloads
+
+
+@pytest.fixture
+def ergast_transport():
+    """In-memory transport serving the Stats and Jolpica fixture files."""
+    from tif1.payload_loader import InMemoryTransport
+
+    return InMemoryTransport(load_ergast_fixture_payloads())
+
+
+@pytest.fixture
+def ergast_offline(monkeypatch, ergast_transport):
+    """Route every Ergast fetch (Stats and Jolpica) through the fixture transport.
+
+    Enables the Session results merge and the Jolpica fallback for the test
+    (the fallback answers only the fixture URLs) and keeps the SQLite tier
+    off so the process memo is the only cache.
+    """
+    from tif1.config import get_config
+    from tif1.ergast import jolpica as jolpica_module
+    from tif1.ergast import payloads as ergast_payloads
+    from tif1.ergast import stats as ergast_stats
+
+    ergast_payloads.reset_ergast_loader()
+    ergast_stats.reset_stats_source()
+    jolpica_module.reset_rate_limiter()
+    monkeypatch.setattr(ergast_payloads, "default_transport", lambda: ergast_transport)
+    monkeypatch.setattr(jolpica_module, "default_transport", lambda: ergast_transport)
+    config = get_config()
+    previous = {
+        key: config.get(key) for key in ("ergast_results", "ergast_fallback", "enable_cache")
+    }
+    config.set("ergast_results", True)
+    config.set("ergast_fallback", True)
+    config.set("enable_cache", False)
+    try:
+        yield ergast_transport
+    finally:
+        for key, value in previous.items():
+            config.set(key, value)
+        ergast_payloads.reset_ergast_loader()
+        ergast_stats.reset_stats_source()

@@ -65,6 +65,16 @@ def display_session_info(session) -> str:
     loaded = getattr(session, "_drivers", None) or getattr(session, "_laps", None) is not None
     num_drivers = len(session.drivers) if loaded else "Not loaded"
     num_drivers_str = html.escape(str(num_drivers))
+    # Official classification (tif1.ergast): report only what is already in memory.
+    if not getattr(session, "_ergast_enabled", False):
+        classification = "off"
+    elif not getattr(session, "_ergast_loaded", False):
+        classification = "Not loaded"
+    elif getattr(session, "_ergast_payload", None):
+        classification = "official (Ergast)"
+    else:
+        classification = "lap-derived (no Ergast data)"
+    classification_str = html.escape(classification)
 
     html_content = f"""
     <div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #f9f9f9;">
@@ -89,6 +99,10 @@ def display_session_info(session) -> str:
             <tr>
                 <td style="padding: 5px;"><strong>Drivers:</strong></td>
                 <td style="padding: 5px;">{num_drivers_str}</td>
+            </tr>
+            <tr>
+                <td style="padding: 5px;"><strong>Classification:</strong></td>
+                <td style="padding: 5px;">{classification_str}</td>
             </tr>
         </table>
     </div>
