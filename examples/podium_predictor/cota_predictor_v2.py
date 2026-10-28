@@ -420,24 +420,22 @@ def extra_form(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def historical_qualifying_grid(frame: pd.DataFrame, raw_history: pd.DataFrame) -> pd.DataFrame:
-    """Final result grids can contain penalties announced after our cutoff.
+    """Apply the historical post-stage grid policy before feature construction.
 
-    Use qualifying order for historical post-stage rows, as the default live
-    forecast does. A confirmed live --grid override remains available. We do not
-    infer historical penalty announcements from the final race result.
+    Qualifying order matches the default live forecast. All grid-derived
+    statistics must use these inputs consistently, including shifted circuit
+    statistics. A confirmed live --grid override remains untouched. Final result
+    grids do not establish when historical penalties were announced.
     """
     out = frame.copy()
     keys = ["season", "rnd", "driverId"]
     qualifying = raw_history.set_index(keys).quali_pos
     raw = qualifying.reindex(pd.MultiIndex.from_frame(out[keys])).to_numpy()
-    size = out.groupby("race_idx").driverId.transform("size").to_numpy()
+    size = out.groupby(["season", "rnd"]).driverId.transform("size").to_numpy()
     historical = out.position.notna().to_numpy()
     known = np.where(np.isfinite(raw), raw, size)
     out.loc[historical, "grid"] = known[historical]
     out.loc[historical, "quali_pos"] = known[historical]
-    out["teammate_grid_gap"] = out.grid - out.groupby(["race_idx", "constructorId"]).grid.transform(
-        "mean"
-    )
     return out
 
 
@@ -656,7 +654,12 @@ def run(args: argparse.Namespace) -> None:
     summaries = {}
     for mode in modes:
         print(f"\nPreparing {mode} features...", flush=True)
-        stage_frame = historical_qualifying_grid(frame, hist) if mode == "post" else frame
+        # Normalize raw post-stage grids before deriving direct or shifted features.
+        stage_frame = (
+            extra_form(base.add_features(historical_qualifying_grid(rows, hist)))
+            if mode == "post"
+            else frame
+        )
         augmented, audit = weekend.attach_weekends(
             stage_frame,
             calendars,

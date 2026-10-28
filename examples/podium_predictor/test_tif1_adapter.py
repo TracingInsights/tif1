@@ -3,7 +3,7 @@
 import datetime as dt
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import pandas as pd
 import pytest
@@ -152,6 +152,69 @@ class Tif1AdapterTests(unittest.TestCase):
         ):
             with pytest.raises(data.tif1.InvalidDataError):
                 data.tif1_session_data(2026, "Monaco", "Practice 1")
+
+    def test_missing_optional_session_from_public_api_is_audited(self) -> None:
+        """A schedule mismatch must not abort the full chronological evaluation."""
+        for offline in (False, True):
+            with (
+                self.subTest(offline=offline),
+                patch.object(
+                    data.tif1, "get_config", return_value=Mock(get=Mock(return_value=True))
+                ),
+                patch("tif1.core._resolve_gp_name", return_value="United States Grand Prix"),
+                patch(
+                    "tif1.events.get_sessions",
+                    return_value=["Practice 1", "Qualifying", "Sprint", "Race"],
+                ),
+                patch("tif1.core.Session") as construct,
+                pytest.warns(RuntimeWarning, match="Practice 3.*ValueError"),
+            ):
+                actual, audit = data.tif1_session_data(
+                    2026, "Austin", "Practice 3", offline=offline
+                )
+            assert actual is None
+            assert "Session 'Practice 3' does not exist" in audit["status"]
+            assert "Available sessions:" in audit["status"]
+            prefix = "offline cache unavailable" if offline else "session unavailable"
+            assert audit["status"].startswith(prefix)
+            construct.assert_not_called()
+
+    def test_unrelated_construction_value_errors_propagate(self) -> None:
+        """Retain caller and event errors instead of treating them as missing sessions."""
+        for error in (
+            ValueError("year is out of supported range"),
+            data.tif1.EventNotFoundError("unknown event"),
+        ):
+            with (
+                self.subTest(error=error),
+                patch.object(data.tif1, "get_session", side_effect=error),
+                pytest.raises(type(error), match=str(error)),
+            ):
+                data.tif1_session_data(2026, "Monaco", "Practice 1")
+
+    def test_lap_property_value_error_propagates(self) -> None:
+        """Even a missing-session-shaped decoding error must remain actionable."""
+        loaded = Mock()
+        message = "Session 'Practice 1' does not exist for 2026 Monaco.\nAvailable sessions: Race"
+        with (
+            patch.object(type(loaded), "laps", new_callable=PropertyMock, create=True) as laps,
+            patch.object(data.tif1, "get_session", return_value=loaded),
+        ):
+            laps.side_effect = ValueError(message)
+            with pytest.raises(ValueError, match="Available sessions: Race"):
+                data.tif1_session_data(2026, "Monaco", "Practice 1")
+
+    def test_malformed_loaded_lap_schema_propagates(self) -> None:
+        """Do not convert a successful load with invalid columns into missing features."""
+        with (
+            patch.object(
+                data.tif1,
+                "get_session",
+                return_value=SimpleNamespace(laps=pd.DataFrame({"Driver": ["VER"]})),
+            ),
+            pytest.raises(data.tif1.InvalidDataError),
+        ):
+            data.tif1_session_data(2026, "Monaco", "Practice 1")
 
     def test_unfinished_weekend_session_is_never_loaded(self) -> None:
         """Require the conservative session completion/publication buffer first."""

@@ -261,6 +261,10 @@ def tif1_session_data(
         Adapted laps and an explicit source/status audit. Missing optional sessions
         and download failures return no features with a visible warning. Malformed
         data raises rather than silently producing an empty prediction input.
+
+    Raises:
+        ValueError: Caller arguments are invalid or loaded lap data is malformed.
+        tif1.InvalidDataError: The loaded lap table lacks essential model columns.
     """
     source = f'tif1.get_session({season}, {event!r}, {session!r}, lib="pandas").laps'
     audit: dict[str, Any] = {"source": source, "status": "ok", "cache": "tif1 shared cache"}
@@ -270,14 +274,37 @@ def tif1_session_data(
         )
         warnings.warn(audit["status"], RuntimeWarning, stacklevel=2)
         return None, audit
-    try:
-        loaded = tif1.get_session(int(season), event, session, enable_cache=True, lib="pandas")
-        laps = loaded.laps
-    except (tif1.DataNotFoundError, tif1.NetworkError, tif1.CacheError) as exc:
+
+    def unavailable(exc: Exception) -> tuple[None, dict[str, Any]]:
+        """Record an unavailable optional input without hiding its cause."""
         prefix = "offline cache unavailable" if offline else "session unavailable"
         audit["status"] = f"{prefix}: {type(exc).__name__}: {exc}"
-        warnings.warn(f"{event} {session}: {audit['status']}", RuntimeWarning, stacklevel=2)
+        warnings.warn(f"{event} {session}: {audit['status']}", RuntimeWarning, stacklevel=3)
         return None, audit
+
+    season_number = int(season)
+    try:
+        try:
+            loaded = tif1.get_session(
+                season_number, event, session, enable_cache=True, lib="pandas"
+            )
+        except ValueError as exc:
+            # get_session has no dedicated exception for a session absent from
+            # the event schedule. Match only that construction error; event
+            # lookup, caller, and subsequent lap-decoding errors must propagate.
+            message = str(exc)
+            if (
+                type(exc) is not ValueError
+                or not message.startswith(
+                    f"Session '{session}' does not exist for {season_number} "
+                )
+                or "\nAvailable sessions: " not in message
+            ):
+                raise
+            return unavailable(exc)
+        laps = loaded.laps
+    except (tif1.DataNotFoundError, tif1.NetworkError, tif1.CacheError) as exc:
+        return unavailable(exc)
     data = laps_to_model_data(laps)
     audit["rows"] = len(laps)
     if laps.empty:

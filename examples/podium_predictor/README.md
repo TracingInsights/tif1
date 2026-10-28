@@ -49,6 +49,11 @@ Activate it in Windows PowerShell:
 .venv-podium\Scripts\Activate.ps1
 ```
 
+On Windows, install the [Microsoft Visual C++ v14 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+matching your Python architecture before installing XGBoost.
+[XGBoost 3.4.1](https://github.com/dmlc/xgboost/blob/v3.4.1/doc/install.rst#python)
+requires its runtime DLLs; skip this step if your Visual Studio installation already supplies them.
+
 Install the checkout and the optional dependencies:
 
 ```sh

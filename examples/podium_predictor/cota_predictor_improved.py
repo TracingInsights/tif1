@@ -47,6 +47,7 @@ HTTP.mount(
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=("GET",),
             respect_retry_after_header=True,
+            raise_on_status=False,
         )
     ),
 )
@@ -140,16 +141,37 @@ def get_features(mode: str, pace: bool, env: bool = False) -> list[str]:
 
 
 def jget(
-    path: str, params: dict[str, Any] | None = None, ttl: float | None = None
+    path: str,
+    params: dict[str, Any] | None = None,
+    ttl: float | None = None,
+    *,
+    valid_after: float | None = None,
 ) -> dict[str, Any]:
-    """GET from Jolpica with on-disk caching. ttl=None -> cache forever."""
+    """Get Jolpica JSON with bounded rate-limit retries and freshness checks.
+
+    Args:
+        path: Jolpica-relative endpoint.
+        params: Query parameters included in the cache identity.
+        ttl: Maximum online cache age in seconds; None disables age expiry.
+        valid_after: Earliest acceptable cache-write UTC epoch timestamp. A
+            completed season must have been downloaded after its finalization
+            watermark before it can be cached indefinitely. Offline reads accept
+            existing snapshots without imposing either freshness requirement.
+
+    Returns:
+        Parsed Jolpica response data.
+    """
     params = params or {}
     key = hashlib.sha256(
         path.encode() + orjson.dumps(params, option=orjson.OPT_SORT_KEYS)
     ).hexdigest()
     f = CACHE / f"{key}.json"
-    if f.exists() and (OFFLINE or ttl is None or time.time() - f.stat().st_mtime < ttl):
-        return orjson.loads(f.read_bytes())
+    if f.exists():
+        modified = f.stat().st_mtime
+        age_valid = ttl is None or time.time() - modified < ttl
+        finalized = valid_after is None or modified >= valid_after
+        if OFFLINE or (age_valid and finalized):
+            return orjson.loads(f.read_bytes())
     if OFFLINE:
         raise RuntimeError(
             f"Offline Jolpica cache is missing {path}; run once with internet access"
@@ -157,7 +179,8 @@ def jget(
     for attempt in range(6):
         r = HTTP.get(f"{BASE}/{path}", params=params, timeout=30)
         if r.status_code == 429:  # rate limited -> back off
-            time.sleep(2**attempt)
+            if attempt < 5:
+                time.sleep(2**attempt)
             continue
         r.raise_for_status()
         data = orjson.loads(r.content)
@@ -168,12 +191,19 @@ def jget(
     raise RuntimeError(f"Jolpica API kept rate-limiting: {path}")
 
 
-def fetch_races(season: int, endpoint: str, ttl: float | None) -> dict[int, dict[str, Any]]:
-    """All races of a season for 'results' or 'qualifying' (handles pagination)."""
+def fetch_races(
+    season: int, endpoint: str, ttl: float | None, *, valid_after: float | None = None
+) -> dict[int, dict[str, Any]]:
+    """Load every results/qualifying page with the same freshness watermark."""
     key = "Results" if endpoint == "results" else "QualifyingResults"
     races, offset = {}, 0
     while True:
-        mr = jget(f"{season}/{endpoint}.json", {"limit": 100, "offset": offset}, ttl)["MRData"]
+        mr = jget(
+            f"{season}/{endpoint}.json",
+            {"limit": 100, "offset": offset},
+            ttl,
+            valid_after=valid_after,
+        )["MRData"]
         for race in mr["RaceTable"]["Races"]:
             rnd = int(race["round"])
             if rnd not in races:
@@ -223,9 +253,14 @@ def load_history(first_season: int, last_season: int) -> pd.DataFrame:
     this_year = dt.datetime.now(dt.UTC).year
     for season in range(first_season, last_season + 1):
         ttl = None if season < this_year else 3600  # refresh the live season hourly
+        # Year-end is a conservative completion watermark, independent of an old
+        # cached schedule. A mid-season snapshot gets refreshed once next year.
+        valid_after = (
+            dt.datetime(season + 1, 1, 1, tzinfo=dt.UTC).timestamp() if season < this_year else None
+        )
         print(f"  loading {season} ...", end="\r", flush=True)
-        res = fetch_races(season, "results", ttl)
-        qual = fetch_races(season, "qualifying", ttl)
+        res = fetch_races(season, "results", ttl, valid_after=valid_after)
+        qual = fetch_races(season, "qualifying", ttl, valid_after=valid_after)
         for rnd, race in sorted(res.items()):
             q = {x["Driver"]["driverId"]: x for x in qual.get(rnd, {}).get("QualifyingResults", [])}
             for r in race["Results"]:

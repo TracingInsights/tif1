@@ -227,6 +227,30 @@ class OrderedPodiumTests(unittest.TestCase):
 class ChronologyTests(unittest.TestCase):
     """Guard feature chronology and race-group weighting in model fitting."""
 
+    def prepared_post_features(self, raw: pd.DataFrame) -> pd.DataFrame:
+        """Capture the actual post-stage inputs without downloads or model fitting."""
+        arguments = model.parse_arguments(
+            ["--season", "2026", "--evaluate-only", "--mode", "post", "--no-weekend-data"]
+        )
+        race = {"date": "2026-10-25", "raceName": "United States Grand Prix"}
+        report = {"selected": {}, "selection_last_date": "2025-12-07", "tuning_race_count": 18}
+        schedule = {"MRData": {"RaceTable": {"Races": []}}}
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            with (
+                patch.object(model, "OUT", Path(directory)),
+                patch.object(model.base, "load_history", return_value=raw),
+                patch.object(model.base, "jget", return_value=schedule),
+                patch.object(model.base, "cota_race", return_value=race),
+                patch.object(
+                    model.weekend, "attach_weekends", side_effect=lambda f, *_a, **_k: (f, [])
+                ),
+                patch.object(model, "evaluate", return_value=(report, {}, 1.0)) as evaluate,
+                patch("summarize_v2.main"),
+                redirect_stdout(io.StringIO()),
+            ):
+                model.run(arguments)
+        return evaluate.call_args.args[0]
+
     def test_historical_grid_does_not_use_later_penalties(self) -> None:
         """Replace final result grids with qualifying order for historical rows."""
         raw = history()
@@ -236,6 +260,68 @@ class ChronologyTests(unittest.TestCase):
         corrected = model.historical_qualifying_grid(frame, raw)
         self.assertTrue((corrected.grid == corrected.quali_pos).all())
         self.assertTrue((corrected.loc[corrected.driverId == "d0", "grid"] == 1).all())
+
+    def test_post_features_ignore_final_grids_when_qualifying_is_unchanged(self) -> None:
+        """Derive every post feature from qualifying order, including past circuit stats."""
+        raw = history()
+        changed = raw.copy()
+        changed["grid"] = 13 - changed.grid
+        expected = self.prepared_post_features(raw)
+        actual = self.prepared_post_features(changed)
+        pd.testing.assert_frame_equal(actual, expected)
+        # The fixture would distinguish a feature calculation using final grids.
+        original_final = model.base.add_features(raw)
+        changed_final = model.base.add_features(changed)
+        for column in ["circuit_chaos", "circuit_pole_win", "circuit_grid_corr"]:
+            self.assertFalse(original_final[column].equals(changed_final[column]), column)
+
+    def test_qualifying_changes_reach_direct_and_shifted_post_features(self) -> None:
+        """Update affected features only when qualifying inputs become historical."""
+        raw = history()
+        changed = raw.copy()
+        third = changed.rnd.eq(3)
+        changed.loc[third & changed.driverId.eq("d0"), "quali_pos"] = 10
+        changed.loc[third & changed.driverId.eq("d9"), "quali_pos"] = 1
+        expected = self.prepared_post_features(raw)
+        actual = self.prepared_post_features(changed)
+        pd.testing.assert_frame_equal(
+            actual.loc[actual.rnd.lt(3)], expected.loc[expected.rnd.lt(3)]
+        )
+        for column in ["grid", "quali_pos", "teammate_grid_gap"]:
+            self.assertFalse(expected[column].equals(actual[column]), column)
+        for column in ["circuit_chaos", "circuit_pole_win", "circuit_grid_corr"]:
+            self.assertTrue(actual.loc[actual.rnd.eq(1), column].isna().all(), column)
+            pd.testing.assert_series_equal(
+                actual.loc[actual.rnd.le(3), column], expected.loc[expected.rnd.le(3), column]
+            )
+            self.assertFalse(
+                expected.loc[expected.rnd.gt(3), column].equals(
+                    actual.loc[actual.rnd.gt(3), column]
+                ),
+                column,
+            )
+        self.assertAlmostEqual(actual.loc[actual.rnd.eq(4), "circuit_pole_win"].iloc[0], 1 / 3)
+        pd.testing.assert_frame_equal(raw, history())
+
+    def test_qualifying_normalization_preserves_live_grid_overrides(self) -> None:
+        """Keep upcoming confirmed grids and derive their teammate gaps unchanged."""
+        raw = history()
+        upcoming = raw[raw.rnd.eq(4)].copy()
+        upcoming["rnd"] = 5
+        upcoming["position"] = np.nan
+        upcoming["grid"] = 13 - upcoming.grid
+        rows = pd.concat([raw, upcoming], ignore_index=True)
+        corrected = model.historical_qualifying_grid(rows, raw)
+        live = corrected[corrected.position.isna()]
+        pd.testing.assert_frame_equal(live.reset_index(drop=True), upcoming.reset_index(drop=True))
+        features = model.base.add_features(corrected)
+        live_features = features[features.position.isna()].set_index("driverId")
+        expected = upcoming.set_index("driverId").reindex(live_features.index)
+        pd.testing.assert_series_equal(live_features.grid, expected.grid, check_dtype=False)
+        expected_gap = expected.grid - expected.groupby("constructorId").grid.transform("mean")
+        pd.testing.assert_series_equal(
+            live_features.teammate_grid_gap, expected_gap, check_names=False
+        )
 
     def test_walk_forward_never_fits_future_races(self) -> None:
         """Ensure every training block ends before its prediction block begins."""
