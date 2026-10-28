@@ -367,7 +367,7 @@ class TestCachePerformanceSummary:
         memory_hit_rate = memory_hits / total_reads if total_reads > 0 else 0
         print(f"\n1. Memory cache hit rate: {memory_hit_rate:.1%} (target: >80%)")
         assert memory_hit_rate > 0.80, "FAIL: Memory hit rate below target"
-        print("   ✓ PASS")
+        print("   PASS")
 
         # Test 2: SQLite population
         temp_cache._memory_cache.clear()
@@ -380,9 +380,9 @@ class TestCachePerformanceSummary:
         time2 = time.perf_counter() - start2
 
         speedup = time1 / time2 if time2 > 0 else 0
-        print(f"\n2. SQLite→Memory speedup: {speedup:.1f}x (target: >2x)")
+        print(f"\n2. SQLite->Memory speedup: {speedup:.1f}x (target: >2x)")
         assert speedup > 2.0, "FAIL: Memory reads not faster than SQLite"
-        print("   ✓ PASS")
+        print("   PASS")
 
         # Test 3: Memory read speed
         read_times = []
@@ -394,7 +394,7 @@ class TestCachePerformanceSummary:
         avg_read_time = sum(read_times) / len(read_times)
         print(f"\n3. Average memory read time: {avg_read_time:.3f}ms (target: <1ms)")
         assert avg_read_time < 1.0, "FAIL: Memory reads too slow"
-        print("   ✓ PASS")
+        print("   PASS")
 
         # Test 4: Concurrent read performance (GIL-limited)
         results = []
@@ -422,13 +422,13 @@ class TestCachePerformanceSummary:
         # With truly lock-free reads, we should see at least some speedup
         # Even with GIL, we expect >1.0x due to I/O interleaving
         if parallel_speedup > 1.5:
-            print("   ✓ PASS (excellent parallelism)")
+            print("   PASS (excellent parallelism)")
         elif parallel_speedup > 1.0:
-            print("   ✓ PASS (acceptable, GIL-limited)")
+            print("   PASS (acceptable, GIL-limited)")
         else:
-            print("   ⚠ WARNING (may indicate lock contention)")
+            print("   WARNING (may indicate lock contention)")
             # Don't fail the test, just warn - GIL can cause this
 
         print("\n" + "=" * 70)
-        print("ALL CACHE PERFORMANCE TARGETS MET ✓")
+        print("ALL CACHE PERFORMANCE TARGETS MET")
         print("=" * 70)

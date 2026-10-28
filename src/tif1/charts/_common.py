@@ -11,7 +11,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, fields
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -240,6 +240,15 @@ def _session_slug(session: Any) -> str:
     return _slugify(session)
 
 
+def _relative_folder(folder: str) -> str:
+    """The template folder with both separator kinds trimmed, forward slashes inside.
+
+    A template that starts with a backslash would be rooted on Windows and
+    escape ``output_dir``; the caller rejects any remaining anchor.
+    """
+    return folder.replace("\\", "/").strip("/")
+
+
 def _safe_stem(value: str) -> str:
     """Sanitize a file stem (keeps underscores, drops path separators)."""
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
@@ -308,7 +317,7 @@ def build_save_path(
         "chart": _chart_slug(chart_name),
     }
     try:
-        folder = cfg.folder_template.format(**values).strip("/")
+        folder = _relative_folder(cfg.folder_template.format(**values))
         stem = _safe_stem(cfg.filename_template.format(**values))
     except (KeyError, IndexError, ValueError) as exc:
         raise ValueError(
@@ -319,6 +328,11 @@ def build_save_path(
     filename = f"{stem}.{str(cfg.format).lstrip('.')}"
 
     base = Path(cfg.output_dir).expanduser()
+    if folder and (PureWindowsPath(folder).anchor or PurePosixPath(folder).is_absolute()):
+        raise ValueError(
+            f"Invalid chart saving template (folder_template={cfg.folder_template!r}): "
+            "the folder must be relative to output_dir"
+        )
     directory = base / folder if folder else base
     if not cfg.overwrite:
         filename = _uniquify(directory, filename)

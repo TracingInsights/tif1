@@ -128,7 +128,9 @@ class TestMergeSplitLaps:
 
     def test_stats_laptimes_fixture_has_split_laps(self):
         payload = json.loads(
-            (FIXTURES / "stats" / "2025" / "chinese-grand-prix" / "laptimes.json").read_text()
+            (FIXTURES / "stats" / "2025" / "chinese-grand-prix" / "laptimes.json").read_text(
+                encoding="utf-8"
+            )
         )
         laps = payload["MRData"]["RaceTable"]["Races"][0]["Laps"]
         merged = merge_split_laps(laps)

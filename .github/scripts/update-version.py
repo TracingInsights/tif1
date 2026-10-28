@@ -54,7 +54,7 @@ def update_version(new_version):
             return False
 
         # Write updated content
-        pyproject_path.write_text(new_content, encoding="utf-8")
+        pyproject_path.write_text(new_content, encoding="utf-8", newline="\n")
 
         # Verify file was actually changed
         new_hash = get_file_hash(pyproject_path)
@@ -71,6 +71,8 @@ def update_version(new_version):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # emoji on a cp1252 console
     """Main entry point."""
     if len(sys.argv) != 2:
         print("Usage: python update-version.py <new_version>")

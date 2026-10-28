@@ -78,7 +78,9 @@ def main() -> None:
         }
         print(entry, json.dumps(summary[entry]), flush=True)
     if args.out:
-        Path(args.out).write_text(json.dumps({"summary": summary, "runs": runs}, indent=1))
+        Path(args.out).write_text(
+            json.dumps({"summary": summary, "runs": runs}, indent=1), encoding="utf-8"
+        )
 
 
 if __name__ == "__main__":

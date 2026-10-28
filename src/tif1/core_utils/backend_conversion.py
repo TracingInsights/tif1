@@ -53,7 +53,7 @@ def pandas_to_polars(df: pd.DataFrame, *, rechunk: bool = False) -> "pl.DataFram
         # Use from_pandas with rechunk=False for zero-copy conversion via Arrow
         return pl.from_pandas(df, rechunk=rechunk)
     except Exception as e:
-        logger.warning(f"Zero-copy pandas→polars conversion failed: {e}")
+        logger.warning(f"Zero-copy pandas->polars conversion failed: {e}")
         raise ValueError(f"Failed to convert pandas DataFrame to polars: {e}") from e
 
 
@@ -78,7 +78,7 @@ def polars_to_pandas(df: "pl.DataFrame", *, use_pyarrow: bool = True) -> pd.Data
         # Use to_pandas with use_pyarrow_extension_array=True for zero-copy via Arrow
         return df.to_pandas(use_pyarrow_extension_array=use_pyarrow)
     except Exception as e:
-        logger.warning(f"Zero-copy polars→pandas conversion failed: {e}")
+        logger.warning(f"Zero-copy polars->pandas conversion failed: {e}")
         raise ValueError(f"Failed to convert polars DataFrame to pandas: {e}") from e
 
 

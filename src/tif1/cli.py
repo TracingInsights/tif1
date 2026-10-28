@@ -33,6 +33,17 @@ def _console():
 app = typer.Typer(help="tif1 - Fast F1 data access CLI")
 
 
+@app.callback()
+def _configure_output() -> None:
+    """Replace characters a legacy (cp1252) console cannot show instead of failing."""
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
+
+
 @app.command()
 def events(
     year: int = typer.Argument(..., help="Year (1950-current; timing and telemetry from 2018)"),
@@ -263,7 +274,7 @@ def results(
         table.add_column("Grid")
         table.add_column("Status")
         table.add_column("Points")
-        table.add_column("Time / Gap")
+        table.add_column("Time / Gap", no_wrap=True)  # never truncate a race time
     for row in frame.itertuples(index=False):
         position = getattr(row, "ClassifiedPosition", "") or _fmt_num(
             getattr(row, "Position", None)

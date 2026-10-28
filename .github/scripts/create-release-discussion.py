@@ -19,7 +19,7 @@ def graphql(query: str, variables: dict) -> dict:
         ["gh", "api", "graphql", "--input", "-"],
         input=payload,
         capture_output=True,
-        text=True,
+        encoding="utf-8",  # gh writes UTF-8 whatever the console code page
         timeout=30,  # 30 second timeout for network operations
         check=False,
     )

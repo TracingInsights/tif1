@@ -404,12 +404,12 @@ class TestHelpers:
         )
 
     def test_build_laps_payloads_from_timings(self):
-        laps_race = json.loads((FIXTURES / "2025/chinese-grand-prix/laptimes.json").read_text())[
-            "MRData"
-        ]["RaceTable"]["Races"][0]
-        stops_race = json.loads((FIXTURES / "2025/chinese-grand-prix/pitstops.json").read_text())[
-            "MRData"
-        ]["RaceTable"]["Races"][0]
+        laps_race = json.loads(
+            (FIXTURES / "2025/chinese-grand-prix/laptimes.json").read_text(encoding="utf-8")
+        )["MRData"]["RaceTable"]["Races"][0]
+        stops_race = json.loads(
+            (FIXTURES / "2025/chinese-grand-prix/pitstops.json").read_text(encoding="utf-8")
+        )["MRData"]["RaceTable"]["Races"][0]
         from tif1.ergast.jolpica import merge_split_laps
 
         laps_race = {**laps_race, "Laps": merge_split_laps(laps_race["Laps"])}

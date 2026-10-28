@@ -31,8 +31,8 @@ for path, subs in (
     ),
 ):
     p = Path(path)
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     for old, new in subs:
         text = text.replace(old, new)
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     print(f"updated {path}")

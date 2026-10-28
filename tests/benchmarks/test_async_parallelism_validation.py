@@ -52,7 +52,9 @@ class TestAsyncParallelismValidation:
             # Verify parallel execution: time should be ~request_delay (0.1s)
             # not num_requests * request_delay (1.0s)
             # Allow 50% overhead for scheduling/coordination
-            max_expected_time = request_delay * 1.5
+            max_expected_time = (
+                request_delay * 1.5 + 0.1
+            )  # +0.1 s absolute: Windows' 15.6 ms timer tick
             sequential_time = num_requests * request_delay
 
             assert elapsed_time < max_expected_time, (
@@ -117,7 +119,9 @@ class TestAsyncParallelismValidation:
         # Expected: 3 batches * 0.1s = 0.3s
         expected_batches = (num_operations + max_concurrent - 1) // max_concurrent
         expected_time = expected_batches * operation_delay
-        max_expected_time = expected_time * 1.5  # 50% overhead allowance
+        max_expected_time = (
+            expected_time * 1.5 + 0.1
+        )  # 50% overhead allowance; +0.1 s absolute: Windows' 15.6 ms timer tick
 
         assert elapsed_time < max_expected_time, (
             f"Execution took {elapsed_time:.3f}s, expected <{max_expected_time:.3f}s"
@@ -162,7 +166,9 @@ class TestAsyncParallelismValidation:
         # Verify parallel execution of fallbacks
         # Total time should be ~(primary_delay + fallback_delay) = 0.1s
         # NOT num_requests * (primary_delay + fallback_delay) = 0.5s
-        max_expected_time = (primary_delay + fallback_delay) * 1.5
+        max_expected_time = (
+            primary_delay + fallback_delay
+        ) * 1.5 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
         sequential_time = num_requests * (primary_delay + fallback_delay)
 
         assert elapsed_time < max_expected_time, (
@@ -203,7 +209,9 @@ class TestAsyncParallelismValidation:
 
         # Verify parallel execution with more generous threshold for CI environments
         # Allow 2x the operation delay plus overhead for scheduling
-        max_expected_time = operation_delay * 2.0
+        max_expected_time = (
+            operation_delay * 2.0 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         sequential_time = num_operations * operation_delay
 
         assert elapsed_time < max_expected_time, (
@@ -286,7 +294,7 @@ class TestRealWorldAsyncParallelism:
         assert len(results) == len(operation_delays)
 
         # Time should be ~max_delay (parallel), not sum(delays) (sequential)
-        max_expected_time = max_delay * 1.5
+        max_expected_time = max_delay * 1.5 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
         sequential_time = sum(operation_delays)
 
         assert elapsed_time < max_expected_time, (
@@ -325,7 +333,9 @@ class TestRealWorldAsyncParallelism:
         assert error_count == len(error_indices)
 
         # Verify parallel execution despite errors
-        max_expected_time = operation_delay * 1.5
+        max_expected_time = (
+            operation_delay * 1.5 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time < max_expected_time, (
             f"Error handling took {elapsed_time:.3f}s, expected <{max_expected_time:.3f}s"
         )

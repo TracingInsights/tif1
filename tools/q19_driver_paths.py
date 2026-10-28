@@ -216,7 +216,9 @@ def ab(control_src: str, candidate_src: str, cache_dir: str, pairs: int, out: st
             f"faster {summary[key]['candidate_faster']}"
         )
     if out:
-        Path(out).write_text(json.dumps({"runs": runs, "summary": summary}, indent=1) + "\n")
+        Path(out).write_text(
+            json.dumps({"runs": runs, "summary": summary}, indent=1) + "\n", encoding="utf-8"
+        )
 
 
 def main() -> None:

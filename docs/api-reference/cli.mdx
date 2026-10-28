@@ -162,7 +162,7 @@ tif1 version
 
 **Expected output:**
 ```text
-tif1 version 0.10.0
+tif1 version 0.10.1
 ```
 
 If the command is not found, troubleshoot using these steps:
@@ -2054,7 +2054,7 @@ tif1 version
 
 **Sample Output:**
 ```text
-tif1 version 0.10.0
+tif1 version 0.10.1
 ```
 
 **Output Format:**
@@ -3221,7 +3221,7 @@ All data requests use HTTPS:
 tif1 debug 2025 "Monaco Grand Prix" "Race" 2>&1 | grep "https://"
 ```
 
-The HTTP session sets `trust_env = False`, so tif1 ignores the `HTTPS_PROXY` and `HTTP_PROXY` environment variables.
+The HTTP session sets `trust_env = False`, so no request pays for environment lookups. The proxies are resolved once when the session is created. That covers the `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` variables on every platform, and the system proxy setting on Windows. Set the variables before the first request.
 
 **3. Input Validation**
 

@@ -146,7 +146,8 @@ def main() -> None:
                 {"lib": args.lib, "no_native": args.no_native, "pairs": pairs, "summary": summary},
                 indent=1,
             )
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
 
 

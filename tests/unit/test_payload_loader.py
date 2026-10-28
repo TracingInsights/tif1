@@ -1,6 +1,7 @@
 """Unit tests for the payload loading pipeline (tif1.payload_loader)."""
 
 import asyncio
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 from unittest.mock import patch
 
@@ -58,6 +59,24 @@ class TestInMemoryTransport:
         transport = InMemoryTransport()
         with pytest.raises(DataNotFoundError):
             transport.get_json("https://cdn.example/missing.json")
+
+    def test_fixture_keys_are_url_fragments_on_every_platform(self):
+        # Windows renders a relative path with backslashes: str() would give a
+        # key that is never a substring of the mirrored file's URL.
+        root = PureWindowsPath(r"C:\repo\tests\fixtures\ergast\stats")
+        path = root / "2025" / "chinese-grand-prix" / "results.json"
+        key = InMemoryTransport.key_for(path, root)
+        assert key == "2025/chinese-grand-prix/results.json"
+        assert str(path.relative_to(root)) == "2025\\chinese-grand-prix\\results.json"
+        posix_root = PurePosixPath("/repo/tests/fixtures/ergast/stats")
+        posix_path = posix_root / "2025" / "chinese-grand-prix" / "results.json"
+        assert InMemoryTransport.key_for(posix_path, posix_root) == key
+        transport = InMemoryTransport({key: {"ok": True}})
+        url = (
+            "https://cdn.jsdelivr.net/gh/TracingInsights-Archive/Stats@main"
+            "/2025/chinese-grand-prix/results.json"
+        )
+        assert transport.get_json(url) == {"ok": True}
 
 
 class TestPayloadLoaderGet:

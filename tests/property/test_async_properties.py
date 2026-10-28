@@ -56,7 +56,7 @@ class TestAsyncParallelismProperties:
         sum_duration = sum(durations)
 
         # Allow 120% overhead for scheduling and context switching (Windows can be slow)
-        max_allowed_time = max_duration * 2.2
+        max_allowed_time = max_duration * 2.2 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
 
         assert len(results) == num_operations, f"Expected {num_operations} results"
         assert all("completed_" in r for r in results), "All operations should complete"
@@ -110,7 +110,7 @@ class TestAsyncParallelismProperties:
 
         # Property: elapsed time is close to max duration
         # Allow 50% overhead for scheduling
-        max_allowed_time = max_duration * 1.5
+        max_allowed_time = max_duration * 1.5 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel execution took {elapsed_time:.3f}s, "
             f"expected ~{max_duration:.3f}s (max duration)"
@@ -149,7 +149,9 @@ class TestAsyncParallelismProperties:
         assert all(r is not None for r in results)
 
         # Property: parallel execution time is close to max (single request time)
-        max_allowed_time = request_duration * 1.8  # Allow 80% overhead
+        max_allowed_time = (
+            request_duration * 1.8 + 0.1
+        )  # Allow 80% overhead; +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel fetch took {elapsed_time:.3f}s, expected ~{request_duration:.3f}s"
         )
@@ -189,7 +191,9 @@ class TestAsyncParallelismProperties:
         assert sorted(results) == list(range(num_operations))
 
         # Property: execution time is close to single operation (parallel)
-        max_allowed_time = operation_duration * 1.8
+        max_allowed_time = (
+            operation_duration * 1.8 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Rate-limited parallel execution took {elapsed_time:.3f}s, "
             f"expected ~{operation_duration:.3f}s"
@@ -228,7 +232,9 @@ class TestAsyncParallelismProperties:
         # With 10 operations and max_concurrent=2, we expect ~5 batches
         expected_batches = (num_operations + max_concurrent - 1) // max_concurrent
         expected_time = expected_batches * operation_duration
-        max_allowed_time = expected_time * 1.5  # Allow 50% overhead
+        max_allowed_time = (
+            expected_time * 1.5 + 0.1
+        )  # Allow 50% overhead; +0.1 s absolute: Windows' 15.6 ms timer tick
 
         assert elapsed_time >= expected_time * 0.8, (
             f"Rate-limited execution took {elapsed_time:.3f}s, "
@@ -281,7 +287,7 @@ class TestAsyncParallelismProperties:
 
         # Property: elapsed time is close to slow_duration (max)
         # Allow 100% overhead for Windows scheduling
-        max_allowed_time = slow_duration * 2.0
+        max_allowed_time = slow_duration * 2.0 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Mixed parallel execution took {elapsed_time:.3f}s, "
             f"expected ~{slow_duration:.3f}s (slowest operation, "
@@ -328,7 +334,9 @@ class TestAsyncParallelismProperties:
         assert all(r is not None for r in results)
 
         # Property: parallel execution time is close to single operation time
-        max_allowed_time = cache_op_duration * 1.8
+        max_allowed_time = (
+            cache_op_duration * 1.8 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel cache operations took {elapsed_time:.3f}s, "
             f"expected ~{cache_op_duration:.3f}s"
@@ -379,7 +387,7 @@ class TestAsyncParallelismProperties:
 
         # Property: total time is close to (primary + fallback) duration, not sum
         expected_time = primary_duration + fallback_duration
-        max_allowed_time = expected_time * 1.8
+        max_allowed_time = expected_time * 1.8 + 0.1  # +0.1 s absolute: Windows' 15.6 ms timer tick
 
         assert elapsed_time <= max_allowed_time, (
             f"Parallel fallback execution took {elapsed_time:.3f}s, expected ~{expected_time:.3f}s"
@@ -456,7 +464,9 @@ class TestAsyncParallelismProperties:
                 assert result == f"success_{i}"
 
         # Property: execution time is still parallel (not blocked by exception)
-        max_allowed_time = operation_duration * 1.8
+        max_allowed_time = (
+            operation_duration * 1.8 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel execution with exception took {elapsed_time:.3f}s, "
             f"expected ~{operation_duration:.3f}s"
@@ -502,7 +512,9 @@ class TestAsyncParallelismIntegration:
         assert len(results) == num_drivers
 
         # Property: parallel execution (single fetch call for all drivers)
-        max_allowed_time = fetch_duration * 2.0  # Allow 100% overhead
+        max_allowed_time = (
+            fetch_duration * 2.0 + 0.1
+        )  # Allow 100% overhead; +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel driver fetch took {elapsed_time:.3f}s, expected ~{fetch_duration:.3f}s"
         )
@@ -536,7 +548,9 @@ class TestAsyncParallelismIntegration:
         assert len(results) == num_cdns
 
         # Property: parallel execution time is close to single attempt
-        max_allowed_time = cdn_attempt_duration * 1.8
+        max_allowed_time = (
+            cdn_attempt_duration * 1.8 + 0.1
+        )  # +0.1 s absolute: Windows' 15.6 ms timer tick
         assert elapsed_time <= max_allowed_time, (
             f"Parallel CDN attempts took {elapsed_time:.3f}s, expected ~{cdn_attempt_duration:.3f}s"
         )

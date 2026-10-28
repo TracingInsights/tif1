@@ -99,7 +99,9 @@ def main() -> None:
     for variant in ("h3", "h2"):
         walls = [r["wall_s"] for r in records if r.get("variant") == variant and "wall_s" in r]
         summary[variant] = {"median": statistics.median(walls) if walls else None, "values": walls}
-    Path(args.out).write_text(json.dumps({"records": records, "summary": summary}, indent=2))
+    Path(args.out).write_text(
+        json.dumps({"records": records, "summary": summary}, indent=2), encoding="utf-8"
+    )
     print(json.dumps(summary))
 
 

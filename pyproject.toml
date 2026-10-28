@@ -1,6 +1,6 @@
 [project]
 name = "tif1"
-version = "0.10.0"
+version = "0.10.1"
 description = "A faster alternative to fastf1 with the same bindings. Formula 1 timing and telemetry data from the TracingInsights GitHub cache (2018-current) and Ergast results, standings and lap times (1950-current)"
 readme = "README.md"
 authors = [
@@ -132,7 +132,17 @@ extend-exclude = ["examples/", "test_tif1.ipynb", "*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "A", "C4", "DTZ", "T10", "EM", "ISC", "ICN", "PIE", "PT", "Q", "RSE", "RET", "SIM", "TID", "ARG", "PTH", "PD", "PL", "NPY", "PERF", "RUF"]
+# PLW1514 (unspecified-encoding) is a preview rule: text read or written
+# without encoding="utf-8" uses cp1252 on Windows before Python 3.15.
+preview = true
+explicit-preview-rules = true
+extend-select = ["PLW1514"]
 ignore = ["PLR0913", "PLR2004", "S101", "PLC0415", "PLW0603", "PERF203", "PLR0912", "PLR0911", "PLR0915", "PLR0917", "EM101", "EM102", "RET504", "SIM102", "SIM105", "SIM108", "SIM117", "RUF001", "RUF003", "RUF022", "B904", "B905", "N806", "E501", "PTH123", "ARG001", "PD011", "UP007", "DTZ005", "ISC001", "PLW0108"]
+
+[tool.ruff.lint.per-file-ignores]
+# Lazy exports: every name in __all__ is served by the module's __getattr__.
+"src/tif1/__init__.py" = ["F822"]
+"src/tif1/ergast/__init__.py" = ["F822"]
 
 [tool.ruff.format]
 quote-style = "double"

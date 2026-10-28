@@ -51,6 +51,7 @@ Constraints:
 - Handle errors via custom exceptions in `exceptions.py`; never swallow network/data errors.
 - orjson for JSON parsing (not stdlib json).
 - pandas >=3.0.6 as primary backend; polars (`>=2.0.0,<3`) is a declared dependency but lazy-loaded (`_ensure_polars_available()` falls back to pandas if it is missing). pyarrow is a runtime dependency too (polars↔pandas conversion goes through Arrow). Charts always draw from a pandas session; `lib="polars"` on a chart loads the pandas view of the same session.
+- Windows is a supported platform even though CI's blocking jobs run on Ubuntu (two advisory `windows-latest` legs run the unit suite): read and write text with an explicit `encoding="utf-8"` (ruff `PLW1514` enforces it), never turn a filesystem path into a URL or cache key with `str()` (use `.as_posix()`; `InMemoryTransport.key_for` builds fixture keys), resolve the home directory through `config._home_dir()`, and keep the unit-suite socket blocker's loopback exception (asyncio's `socketpair()` self-pipe needs it on Windows). Two conftest guards fail a test that leaks config state (`_config_leak_guard`) or writes the developer's real `~/.tif1rc` (`_real_config_file_guard`): patch `HOME` and `Path.home` with a temporary directory instead.
 - Always optimize for performance. Entire existence of this library is to focus on optimization, speed and performance. Performance is critical
 
 Documentation (Mintlify):

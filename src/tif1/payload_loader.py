@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable, Mapping
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .cdn import CDNManager, get_cdn_manager
@@ -173,6 +174,16 @@ class InMemoryTransport:
     def add(self, key: str, value: Any) -> None:
         """Register (or replace) the payload for a URL fragment."""
         self._payloads[key] = value
+
+    @staticmethod
+    def key_for(path: PurePath, root: PurePath) -> str:
+        """The fragment key of a fixture file: its path under ``root`` as a URL path.
+
+        Keys match URLs by substring, so they need forward slashes on every
+        platform. ``str()`` of a Windows path renders backslashes and would
+        never match the URL of the file it mirrors.
+        """
+        return path.relative_to(root).as_posix()
 
     def _lookup(self, url: str) -> Any:
         if url in self._payloads:

@@ -398,6 +398,8 @@ class TestConfigSetAndSave:
     def test_save_default_path_used_when_none(self, monkeypatch, tmp_path):
         home = tmp_path / "fakehome"
         home.mkdir()
+        # save() and the loader share one rule: $HOME first, then Path.home().
+        monkeypatch.setenv("HOME", str(home))
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
         config = config_module.Config()
         config.save()

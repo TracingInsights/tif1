@@ -141,7 +141,7 @@ def main() -> None:
     print("fallback sample:", report["fallback"][:10])
     print("skipped sample:", report["skipped"][:5])
     if args.out:
-        Path(args.out).write_text(json.dumps(report, indent=1) + "\n")
+        Path(args.out).write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ def main() -> None:
             v: {"total_s": med(v, "total_s"), "telemetry_s": med(v, "telemetry_s")} for v in "AB"
         },
     }
-    OUT.write_text(json.dumps(report, indent=2) + "\n")
+    OUT.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print("median:", json.dumps(report["median"]))
 
 

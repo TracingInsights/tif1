@@ -13,19 +13,39 @@
  *   npm install --no-save pyodide@$(python -c "import json; print(json.load(open('tools/pyodide_target.json'))['pyodide'])")
  *   uv build --wheel
  *   node --experimental-wasm-jspi tools/pyodide_smoke.mjs dist/tif1-<version>-py3-none-any.whl
+ *   (the wheel argument may be omitted: the newest wheel in dist/ is used;
+ *   on PowerShell set the switches with $env:TIF1_SMOKE_NETWORK="1")
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadPyodide } from "pyodide";
 
 const here = new URL(".", import.meta.url);
+
+// cmd.exe and PowerShell hand "dist/tif1-*.whl" over unexpanded: resolve a
+// missing or wildcard argument to the newest wheel in dist/ here.
+function resolveWheel(arg, usage) {
+  if (arg && !arg.includes("*")) return arg;
+  const dist = fileURLToPath(new URL("../dist/", here));
+  let wheels = [];
+  try {
+    wheels = readdirSync(dist)
+      .filter((name) => /^tif1-.*-py3-none-any\.whl$/.test(name))
+      .map((name) => ({ name, mtime: statSync(resolve(dist, name)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch {
+    wheels = [];
+  }
+  if (!wheels.length) {
+    console.error(`usage: ${usage}\nno tif1 wheel found in ${dist}; run: uv build --wheel`);
+    process.exit(2);
+  }
+  return resolve(dist, wheels[0].name);
+}
 const target = JSON.parse(readFileSync(new URL("pyodide_target.json", here), "utf8"));
 const checks = readFileSync(new URL("pyodide_checks.py", here), "utf8");
-const wheelPath = process.argv[2];
-if (!wheelPath) {
-  console.error("usage: node tools/pyodide_smoke.mjs <tif1 wheel>");
-  process.exit(2);
-}
+const wheelPath = resolveWheel(process.argv[2], "node tools/pyodide_smoke.mjs [tif1 wheel]");
 const wheelName = basename(wheelPath);
 const network = ["1", "true", "yes"].includes((process.env.TIF1_SMOKE_NETWORK ?? "").toLowerCase());
 

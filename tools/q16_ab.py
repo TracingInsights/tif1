@@ -85,7 +85,7 @@ def main() -> None:
         if errs:
             print(name, "errors", errs)
     if args.out:
-        Path(args.out).write_text(json.dumps(runs, indent=1) + "\n")
+        Path(args.out).write_text(json.dumps(runs, indent=1) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

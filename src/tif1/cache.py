@@ -986,12 +986,25 @@ class Cache:
             )
 
         self.cache_dir = cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # mode=0o700 matters on Windows too: chmod only toggles the read-only
+        # attribute there, while a new directory created with this mode gets
+        # a current-user-only ACL (CPython 3.12.4+); the frame tiers are
+        # unpickled from this directory. An unusable path (invalid characters,
+        # reserved names, no permission) degrades to an uncached session.
+        cache_dir_usable = True
         try:
-            # Harden permissions to 0o700 (user read/write/execute only)
-            self.cache_dir.chmod(0o700)
-        except OSError:
-            logger.debug(f"Failed to set restricted permissions on {self.cache_dir}")
+            self.cache_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as exc:
+            cache_dir_usable = False
+            logger.warning(
+                f"Cache directory {self.cache_dir} is unusable ({exc}); running uncached"
+            )
+        if cache_dir_usable:
+            try:
+                # Harden permissions to 0o700 (user read/write/execute only)
+                self.cache_dir.chmod(0o700)
+            except OSError:
+                logger.debug(f"Failed to set restricted permissions on {self.cache_dir}")
 
         self.conn = None
         self.read_only = False

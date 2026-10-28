@@ -89,7 +89,11 @@ def main() -> int:
             continue
         compact = {"season": year, "races": [compact_race(race) for race in races]}
         target = OUT_DIR / f"schedule_{year}.json"
-        target.write_text(json.dumps(compact, separators=(",", ":"), ensure_ascii=False) + "\n")
+        target.write_text(
+            json.dumps(compact, separators=(",", ":"), ensure_ascii=False) + "\n",
+            encoding="utf-8",
+            newline="\n",  # LF on Windows too: the files are committed
+        )
         written += 1
         time.sleep(0.05)
     print(f"wrote {written} seasons to {OUT_DIR}")

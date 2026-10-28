@@ -20,7 +20,6 @@ import os
 import pickle
 import subprocess
 import sys
-import time
 import types
 
 import pandas as pd
@@ -399,9 +398,9 @@ def test_single_lap_access_reads_the_frame_tier_and_memoizes_the_driver(tmp_path
         assert tel.driver == "LEC"
         assert session._memo.get("telemetry_df", ("LEC", 1)) is not None  # whole driver memoized
         assert session._memo.get("telemetry_df", ("VER", 1)) is None
-        t0 = time.perf_counter()
+        # A memo hit returns the memoized frame itself (identity): the
+        # contract, without a sub-10 ms clock bound a Windows timer tick breaks.
         again = lap.telemetry
-        assert time.perf_counter() - t0 < 0.01
         assert again is session._memo.get("telemetry_df", ("LEC", 2))
     finally:
         cache.close()
@@ -442,6 +441,10 @@ def _python(
 ) -> subprocess.CompletedProcess:
     full_env = dict(os.environ)
     full_env.pop("TIF1_PRELOAD_IMPORTS", None)
+    # Windows: DEVNULL is a character device, so 3.13+ would start the new
+    # REPL for ``python -i`` and fail on the piped stdout; the basic REPL
+    # reads EOF and exits as on Linux.
+    full_env["PYTHON_BASIC_REPL"] = "1"
     full_env.update(env or {})
     return subprocess.run(
         [sys.executable, *flags, "-c", code],

@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    patch = json.loads(Path(sys.argv[1]).read_text())
+    patch = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     for entry in patch:
         path = Path(entry["path"])
         raw = path.read_bytes()

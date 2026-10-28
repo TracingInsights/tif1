@@ -155,7 +155,9 @@ def main() -> None:
         }
         for c in order
     }
-    Path(args.out).write_text(json.dumps({"records": records, "summary": summary}, indent=2))
+    Path(args.out).write_text(
+        json.dumps({"records": records, "summary": summary}, indent=2), encoding="utf-8"
+    )
     print(json.dumps(summary))
 
 

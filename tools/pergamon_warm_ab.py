@@ -76,7 +76,8 @@ def main() -> None:
         )
     if args.out:
         Path(args.out).write_text(
-            json.dumps({"lib": args.lib, "pairs": pairs, "summary": summary}, indent=1) + "\n"
+            json.dumps({"lib": args.lib, "pairs": pairs, "summary": summary}, indent=1) + "\n",
+            encoding="utf-8",
         )
 
 

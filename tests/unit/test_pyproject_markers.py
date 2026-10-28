@@ -19,7 +19,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGET = json.loads((ROOT / "tools" / "pyodide_target.json").read_text())
+TARGET = json.loads((ROOT / "tools" / "pyodide_target.json").read_text(encoding="utf-8"))
 
 # No WebAssembly wheel exists: these must never apply under Pyodide.
 NATIVE_ONLY = {"niquests", "polars", "rapidfuzz", "nest-asyncio2"}
@@ -52,7 +52,7 @@ NATIVE_ENV = {
 
 
 def _requirements() -> list[Requirement]:
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return [Requirement(line) for line in data["project"]["dependencies"]]
 
 

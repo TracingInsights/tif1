@@ -7,6 +7,57 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-28
+
+### Summary
+
+`0.10.1` is a maintenance release: the seven CodeQL findings on the 0.10.0
+code are resolved, and the test suite and tooling run on Windows (the
+library already did; CI still runs on Ubuntu).
+
+### Fixed
+
+- CDN configuration: a mirror URL is rejected as a raw GitHub URL when its
+  parsed hostname is `raw.githubusercontent.com`, not when that string
+  appears anywhere in the URL (CodeQL `py/incomplete-url-substring-sanitization`).
+- Windows (library): `Config.save()` and the config loader share one home
+  rule (`$HOME`, else the platform home), so a `.tif1rc` written by one is
+  read by the other; a stripped environment without a resolvable home no
+  longer fails `import tif1`; a `.tif1rc` saved with a byte-order mark
+  (PowerShell 5, old Notepad) is read; the cache directory is created with
+  mode 0o700 (a current-user-only ACL on Windows, where `chmod` is a no-op)
+  and an unusable cache path degrades to an uncached session instead of
+  failing every load; the shared HTTP session honours the proxies of the
+  environment and of the Windows registry (`trust_env` stays off for speed);
+  the opt-in JSON parse process pool caps its workers at Windows' limit of
+  61; a chart `folder_template` cannot escape `output_dir` through a
+  backslash or drive prefix; the CLI replaces characters a legacy console
+  cannot encode instead of aborting, and `tif1 results` never truncates the
+  race time column (an 80-column Windows console showed `1:30:55.0...`).
+- Windows (tooling): `tools/run_doc_examples.py` points both `HOME` and
+  `USERPROFILE` at its throwaway home (it could overwrite the maintainer's
+  real `.tif1rc`), runs pages in UTF-8 mode, passes the blocks on stdin and
+  uses the configured cache directory; `tools/check_code_blocks.py` compares
+  fenced blocks independent of CRLF checkouts; `tools/ste_check.py` gains
+  `--write-baseline` (UTF-8, LF; a PowerShell redirect writes UTF-16); the
+  Pyodide check scripts resolve a missing or unexpanded `dist/tif1-*.whl`
+  argument themselves; the vendoring tool writes LF on every platform.
+- CI runs the unit suite on `windows-latest` (Python 3.11 and 3.14) as
+  advisory legs, and ruff enforces explicit encodings on text I/O
+  (`PLW1514`).
+- `tif1.ergast.structure.date_from_ergast` no longer logs the unparsable
+  stamp; its callers pass drivers' dates of birth (CodeQL
+  `py/clear-text-logging-sensitive-data`).
+- Test suite on Windows: the Ergast fixture transport keyed its payloads by
+  `str(path)`, which renders backslashes on Windows and never matches the
+  forward-slash URL of the mirrored file, so every Stats fixture lookup
+  missed there. `InMemoryTransport.key_for` builds the key as a URL path on
+  every platform (reported in #104). The unit-suite socket blocker now lets
+  loopback connections through, which asyncio's event loop needs on Windows
+  for its `socketpair()` self-pipe; fixture and data files are read and
+  written with an explicit UTF-8 encoding; two conversion warnings use ASCII
+  arrows so a cp1252 console can print them.
+
 ## [0.10.0] - 2026-10-28
 
 ### Summary

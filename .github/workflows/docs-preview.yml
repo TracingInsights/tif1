@@ -45,7 +45,8 @@ jobs:
         run: |
           # Fails only when violations grow beyond the recorded baseline
           # (tools/ste_baseline.json). Regenerate the baseline when the count
-          # intentionally drops: python3 tools/ste_check.py docs/ --json > tools/ste_baseline.json
+          # intentionally drops (never via a shell redirect, which PowerShell
+          # writes as UTF-16): uv run python tools/ste_check.py docs/ --write-baseline tools/ste_baseline.json
           python3 tools/ste_check.py docs/ --baseline tools/ste_baseline.json
 
       - name: Comment on PR

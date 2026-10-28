@@ -25,13 +25,25 @@ def _default_cache_dir() -> Path:
         local = os.environ.get("LOCALAPPDATA")
         if local:
             return Path(local) / "Temp" / "tif1"
-        return Path.home() / "AppData" / "Local" / "Temp" / "tif1"
+        return _platform_home() / "AppData" / "Local" / "Temp" / "tif1"
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "tif1"
-    dot_cache = Path.home() / ".cache"
+        return _platform_home() / "Library" / "Caches" / "tif1"
+    dot_cache = _platform_home() / ".cache"
     if dot_cache.exists():
         return dot_cache / "tif1"
-    return Path.home() / ".tif1"
+    return _platform_home() / ".tif1"
+
+
+def _platform_home() -> Path:
+    """``Path.home()`` that never raises: a stripped Windows environment (no
+    USERPROFILE/HOMEPATH) falls back to the temporary directory instead of
+    failing ``Config()`` and with it ``import tif1``."""
+    try:
+        return Path.home()
+    except RuntimeError:
+        import tempfile
+
+        return Path(tempfile.gettempdir())
 
 
 def _to_bool(value: str) -> bool:
@@ -45,6 +57,17 @@ def _to_bool(value: str) -> bool:
 
 def _to_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _home_dir() -> Path:
+    """The home directory that holds ``.tif1rc``: ``$HOME`` when set, else the platform home.
+
+    ``Path.home()`` ignores ``HOME`` on Windows (it reads ``USERPROFILE``), so
+    the loader and :meth:`Config.save` share this rule; a tool that points
+    ``HOME`` at a throwaway directory then reads and writes the same file.
+    """
+    home = os.environ.get("HOME")
+    return Path(home) if home else _platform_home()
 
 
 class Config:
@@ -176,14 +199,13 @@ class Config:
             config_paths.append(Path(explicit_config).expanduser())
         if trust_cwd_config:
             config_paths.append(Path.cwd() / ".tif1rc")
-        # Use HOME environment variable if set, otherwise use Path.home()
-        home_path = Path(os.environ.get("HOME", Path.home()))
-        config_paths.append(home_path / ".tif1rc")
+        config_paths.append(_home_dir() / ".tif1rc")
 
         for path in config_paths:
             if path.exists():
                 try:
-                    with open(path, encoding="utf-8") as f:
+                    # utf-8-sig: PowerShell 5 and old Notepad write a byte-order mark.
+                    with open(path, encoding="utf-8-sig") as f:
                         user_config = json.load(f)
                     if not isinstance(user_config, dict):
                         logger.warning(f"Config file {path} must contain a JSON object")
@@ -385,7 +407,7 @@ class Config:
     def save(self, path: Path | None = None):
         """Save configuration to file."""
         if path is None:
-            path = Path.home() / ".tif1rc"
+            path = _home_dir() / ".tif1rc"
 
         try:
             with open(path, "w", encoding="utf-8") as f:

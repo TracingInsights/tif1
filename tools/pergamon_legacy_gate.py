@@ -105,7 +105,7 @@ def main() -> None:
     total_bad = sum(r["mismatch_legacy"] + r["mismatch_driver"] for r in report)
     print(f"TOTAL frames {sum(r['frames'] for r in report)} mismatches {total_bad}")
     if args.out:
-        Path(args.out).write_text(json.dumps(report, indent=1) + "\n")
+        Path(args.out).write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     sys.exit(1 if total_bad else 0)
 
 

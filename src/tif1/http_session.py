@@ -166,6 +166,14 @@ def _create_session() -> Any:
                 logger.debug("HTTP session initialized with standard DNS")
             # Skip env/netrc resolution on every request; this is costly at telemetry scale.
             session.trust_env = False
+            # ... but resolve the proxies once: the environment variables on
+            # every platform and the registry setting on Windows, which
+            # trust_env=False would otherwise ignore.
+            from urllib.request import getproxies
+
+            proxies = getproxies()
+            if proxies:
+                session.proxies = proxies
 
             # The adapter owns name resolution in niquests, so the resolver
             # must be handed to the replacement adapter or it is silently lost.

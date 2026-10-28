@@ -130,6 +130,12 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.10.1 (CodeQL fixes, Windows test suite)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.10.1"`
+- [ ] Confirm the code-scanning tab shows 0 open CodeQL alerts after the release commit
+- [ ] Confirm a CDN mirror URL whose host is not `raw.githubusercontent.com` but contains that string is accepted, and one whose host is that domain is rejected
+- [ ] Run `uv run pytest tests/unit -q` on a Windows machine: the Ergast fixture tests and the asyncio tests pass
+
 ### v0.10.0 (Ergast data, Pyodide, Thebes/Pergamon performance)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.10.0"`
 - [ ] Confirm `get_session(2024, "Monza", "Race").results` carries `Points`, `GridPosition` and `Status` from the Ergast classification, and `ergast=False` restores the lap-derived view

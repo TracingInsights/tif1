@@ -3,6 +3,7 @@
 import atexit
 import logging
 import random
+import sys
 import threading
 from contextvars import ContextVar
 from functools import partial
@@ -242,6 +243,11 @@ def _get_json_parse_executor() -> Any | None:
             return None
 
         ProcessPoolExecutor = _import_process_executor()
+        if sys.platform == "win32":
+            # WaitForMultipleObjects limit; a larger value raises ValueError.
+            # Windows also starts workers with spawn: a script using this
+            # opt-in pool needs an ``if __name__ == "__main__":`` guard.
+            worker_count = min(worker_count, 61)
         _json_parse_executor = ProcessPoolExecutor(max_workers=max(1, worker_count))
         logger.debug("JSON parse process pool initialized (max_workers=%s)", worker_count)
         return _json_parse_executor

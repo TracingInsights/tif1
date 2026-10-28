@@ -585,7 +585,7 @@ class TestErrorPathCoverage:
             db_path = cache_dir / "cache.sqlite"
 
             # Create a corrupted database file
-            db_path.write_text("corrupted data")
+            db_path.write_text("corrupted data", encoding="utf-8")
 
             # Cache should handle corruption gracefully
             cache = Cache(cache_dir=cache_dir)

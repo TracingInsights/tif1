@@ -9,10 +9,11 @@ This is a heuristic gate, not an ASD-STE100 compliance certificate. Human
 review against the house guide is the authority.
 
 Usage:
-    python3 tools/ste_check.py docs/
-    python3 tools/ste_check.py docs/ --strict
-    python3 tools/ste_check.py docs/ --json
-    python3 tools/ste_check.py docs/ --baseline tools/ste_baseline.json
+    uv run python tools/ste_check.py docs/
+    uv run python tools/ste_check.py docs/ --strict
+    uv run python tools/ste_check.py docs/ --json
+    uv run python tools/ste_check.py docs/ --baseline tools/ste_baseline.json
+    uv run python tools/ste_check.py docs/ --write-baseline tools/ste_baseline.json
 """
 
 from __future__ import annotations
@@ -254,6 +255,8 @@ def iter_doc_files(root: Path) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # excerpts may hold emoji
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("path", type=Path, help="docs directory or a single file")
     parser.add_argument("--strict", action="store_true", help="exit 1 on any violation")
@@ -262,6 +265,11 @@ def main(argv: list[str] | None = None) -> int:
         "--baseline",
         type=Path,
         help="JSON baseline file; exit 1 when violations exceed the baseline count",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help="write the JSON report to this file (UTF-8, LF) to record a new baseline",
     )
     args = parser.parse_args(argv)
 
@@ -280,21 +288,24 @@ def main(argv: list[str] | None = None) -> int:
     total_words = sum(r.words for r in reports)
     max_words = max((r.max_sentence_words for r in reports), default=0)
 
+    report_json = json.dumps(
+        {
+            "files": len(reports),
+            "sentences": total_sentences,
+            "words": total_words,
+            "max_sentence_words": max_words,
+            "violations": total_violations,
+            "warnings": total_warnings,
+            "reports": [asdict(r) for r in reports],
+        },
+        indent=2,
+    )
+    if args.write_baseline:
+        # Never through a shell redirect: PowerShell 5 writes UTF-16 with a BOM.
+        with open(args.write_baseline, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(report_json + "\n")
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "files": len(reports),
-                    "sentences": total_sentences,
-                    "words": total_words,
-                    "max_sentence_words": max_words,
-                    "violations": total_violations,
-                    "warnings": total_warnings,
-                    "reports": [asdict(r) for r in reports],
-                },
-                indent=2,
-            )
-        )
+        print(report_json)
     else:
         avg = round(total_words / total_sentences, 1) if total_sentences else 0.0
         print("tif1 STE checker - house ruleset (docs/style-ste100.md)")
@@ -322,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             baseline_violations = json.loads(args.baseline.read_text(encoding="utf-8"))[
                 "violations"
             ]
-        except (OSError, json.JSONDecodeError, KeyError):
+        except (OSError, ValueError, KeyError):  # ValueError: bad JSON or a UTF-16 file
             print(f"error: cannot read baseline {args.baseline}", file=sys.stderr)
             return 2
         verdict = (

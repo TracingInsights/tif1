@@ -8,6 +8,7 @@ the real ``get_session`` is never called.
 from __future__ import annotations
 
 import itertools
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 from unittest import mock
@@ -773,7 +774,9 @@ def test_build_save_path_slugification():
     """Non-ASCII/spacey names slugify; SQ maps to sprint-qualifying."""
     _common.configure_chart_saving(enabled=True, output_dir="plots")
     path = _common.build_save_path("lap_delta", 2024, "São Paulo Grand Prix", "SQ")
-    assert path == "plots/2024/sao-paulo-grand-prix/sprint-qualifying/lap_delta.png"
+    assert (
+        Path(path).as_posix() == "plots/2024/sao-paulo-grand-prix/sprint-qualifying/lap_delta.png"
+    )
 
 
 # ---------------------------------------------------------------------------

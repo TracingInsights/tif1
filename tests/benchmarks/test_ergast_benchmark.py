@@ -19,7 +19,9 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "ergast" / "stats"
 
 @pytest.fixture
 def results_rows() -> list:
-    payload = json.loads((FIXTURES / "2025/chinese-grand-prix/results.json").read_text())
+    payload = json.loads(
+        (FIXTURES / "2025/chinese-grand-prix/results.json").read_text(encoding="utf-8")
+    )
     return payload["MRData"]["RaceTable"]["Races"][0]["Results"]
 
 
@@ -31,7 +33,9 @@ def test_flatten_race_results(benchmark, results_rows):
 
 @pytest.mark.benchmark
 def test_flatten_lap_timings(benchmark):
-    payload = json.loads((FIXTURES / "2025/chinese-grand-prix/laptimes.json").read_text())
+    payload = json.loads(
+        (FIXTURES / "2025/chinese-grand-prix/laptimes.json").read_text(encoding="utf-8")
+    )
     laps = payload["MRData"]["RaceTable"]["Races"][0]["Laps"]
     rows = benchmark(structure.flatten_rows, laps, structure.Laps)
     assert len(rows["driverId"]) == 1065

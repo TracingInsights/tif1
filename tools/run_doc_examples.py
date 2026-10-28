@@ -117,7 +117,7 @@ def _is_signature(block):
     return True
 
 
-blocks = json.loads(sys.argv[1])
+blocks = json.loads(sys.stdin.read())  # stdin: Windows caps the command line at 32 K
 # Blocks share one namespace in reading order. Tabbed pandas/polars examples
 # (fence titles "Pandas ..." / "Polars ...") are alternatives, not a sequence:
 # each backend continues its own namespace, seeded from the page state the
@@ -210,15 +210,22 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
     # pin the default backend.
     env = dict(os.environ)
     home = tempfile.mkdtemp(prefix="tif1_docs_")
-    env["HOME"] = home
-    shared_cache = Path.home() / ".cache" / "tif1"
-    env["TIF1_CACHE_DIR"] = str(shared_cache)
+    # Windows resolves Path.home() from USERPROFILE, so set both: a page that
+    # calls config.save() must write the throwaway home's .tif1rc, never the
+    # maintainer's.
+    env["HOME"] = env["USERPROFILE"] = home
+    env["TIF1_CACHE_DIR"] = str(_shared_cache_dir())
     env["TIF1_LIB"] = "pandas"
+    # The child's stdout is a pipe: without UTF-8 mode, Windows would encode
+    # it with the ANSI code page and a printed emoji would fail the block.
+    env["PYTHONUTF8"] = "1"
     try:
         proc = subprocess.run(  # noqa: PLW1510 -- exit code handled below
-            [sys.executable, runner_path, json.dumps(blocks)],
+            [sys.executable, runner_path],
+            input=json.dumps(blocks),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             cwd=home,
             env=env,
@@ -252,7 +259,21 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
     return {"page": page.as_posix(), "blocks": len(blocks), "results": results}
 
 
+def _shared_cache_dir() -> Path:
+    """The data cache the pages share: tif1's configured ``cache_dir``.
+
+    Follows ``TIF1_CACHE_DIR``, ``.tif1rc`` and the platform default
+    (``~/.cache/tif1`` on Linux, ``%LOCALAPPDATA%/Temp/tif1`` on Windows).
+    """
+    from tif1.config import get_config
+
+    return Path(str(get_config().get("cache_dir"))).expanduser()
+
+
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        # Doc output can carry emoji; a cp1252 console must not abort the run.
+        sys.stdout.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="*", type=Path, help="mdx files or directories")
     parser.add_argument("--json", action="store_true", help="print JSON report")

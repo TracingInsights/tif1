@@ -18,7 +18,9 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "ergast" / "stats"
 
 
 def _drivers_payload() -> dict:
-    payload = json.loads((FIXTURES / "2025/chinese-grand-prix/results.json").read_text())
+    payload = json.loads(
+        (FIXTURES / "2025/chinese-grand-prix/results.json").read_text(encoding="utf-8")
+    )
     rows = payload["MRData"]["RaceTable"]["Races"][0]["Results"]
     return {
         "drivers": [

@@ -6,8 +6,8 @@ Phase 3+ of DOCS_STE100_PLAN.md rewrites prose only. Every fenced code block
 extracts the fences from both versions and compares them.
 
 Usage:
-    python3 tools/check_code_blocks.py docs/guides/ docs/concepts/data-flow.mdx
-    python3 tools/check_code_blocks.py --ref HEAD~1 docs/
+    uv run python tools/check_code_blocks.py docs/guides/ docs/concepts/data-flow.mdx
+    uv run python tools/check_code_blocks.py --ref HEAD~1 docs/
 """
 
 from __future__ import annotations
@@ -42,7 +42,8 @@ def extract_fences(text: str) -> list[str]:
 
 def git_show(ref: str, path: str) -> str:
     result = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, check=True)
-    return result.stdout.decode("utf-8")
+    # Git stores LF; a Windows checkout (core.autocrlf) has CRLF: compare alike.
+    return result.stdout.decode("utf-8").replace("\r\n", "\n")
 
 
 def iter_files(paths: list[str]) -> list[Path]:
@@ -57,6 +58,8 @@ def iter_files(paths: list[str]) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # excerpts may hold emoji
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", help="files or directories to check")
     parser.add_argument("--ref", default="HEAD", help="git ref to compare against")
@@ -69,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         except subprocess.CalledProcessError:
             print(f"SKIP {path}: not present at {args.ref}")
             continue
-        new = path.read_bytes().decode("utf-8")
+        new = path.read_bytes().decode("utf-8").replace("\r\n", "\n")
         old_blocks, new_blocks = extract_fences(old), extract_fences(new)
         if old_blocks == new_blocks:
             print(f"OK   {path}: {len(new_blocks)} fenced blocks identical")

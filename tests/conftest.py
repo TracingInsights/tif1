@@ -1,7 +1,12 @@
 """Shared pytest configuration and fixtures."""
 
 import json
+import os
 import socket
+
+# Headless matplotlib for every test file, whichever one runs first
+# (a Windows session would otherwise pick TkAgg).
+os.environ.setdefault("MPLBACKEND", "Agg")
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +23,34 @@ _BLOCK_MESSAGE = (
 )
 
 
-def _blocked_connect(self, *args, **kwargs):
+_REAL_CONNECT = socket.socket.connect
+_REAL_CONNECT_EX = socket.socket.connect_ex
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback(address: object) -> bool:
+    """True for a loopback destination (host, port[, ...]) tuple.
+
+    asyncio builds its event-loop self-pipe with ``socket.socketpair()``;
+    on Windows that is an emulation that ``connect()``s to 127.0.0.1, so
+    blocking loopback would fail every asyncio test there.
+    """
+    return isinstance(address, tuple) and bool(address) and str(address[0]) in _LOOPBACK_HOSTS
+
+
+def _blocked_connect(self, address=None, *args, **kwargs):
+    if _is_loopback(address):
+        return _REAL_CONNECT(self, address, *args, **kwargs)
+    raise OSError(_BLOCK_MESSAGE)
+
+
+def _blocked_connect_ex(self, address=None, *args, **kwargs):
+    if _is_loopback(address):
+        return _REAL_CONNECT_EX(self, address, *args, **kwargs)
+    raise OSError(_BLOCK_MESSAGE)
+
+
+def _blocked_sendto(self, *args, **kwargs):
     raise OSError(_BLOCK_MESSAGE)
 
 
@@ -44,8 +76,8 @@ def block_network(request, monkeypatch):
         yield
         return
     monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
-    monkeypatch.setattr(socket.socket, "connect_ex", _blocked_connect)
-    monkeypatch.setattr(socket.socket, "sendto", _blocked_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", _blocked_connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", _blocked_sendto)
     monkeypatch.setattr(socket, "getaddrinfo", _blocked_getaddrinfo)
     yield
 
@@ -85,6 +117,27 @@ def _config_leak_guard():
         if before.get(key) != after.get(key)
     }
     assert not leaked, f"the test leaked config changes into the process: {leaked}"
+
+
+@pytest.fixture(autouse=True)
+def _real_config_file_guard():
+    """Fail the test that creates or changes the developer's real ``~/.tif1rc``.
+
+    ``Config.save()`` writes to ``$HOME/.tif1rc`` (``Path.home()`` when HOME is
+    unset): a test that only patches ``Path.home`` still hits the real file.
+    Patch ``HOME`` (and ``Path.home`` for Windows) with a temporary directory.
+    """
+    import os
+
+    home = os.environ.get("HOME")
+    rc_path = (Path(home) if home else Path.home()) / ".tif1rc"
+    before = rc_path.stat().st_mtime_ns if rc_path.exists() else None
+    yield
+    after = rc_path.stat().st_mtime_ns if rc_path.exists() else None
+    assert before == after, (
+        f"the test wrote the real config file {rc_path}; point HOME (and Path.home) at a "
+        "temporary directory"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -191,10 +244,15 @@ _JOLPICA_FIXTURES = {
 
 def load_ergast_fixture_payloads() -> dict[str, Any]:
     """URL fragment -> parsed payload for every Stats and Jolpica fixture file."""
+    from tif1.payload_loader import InMemoryTransport
+
     payloads: dict[str, Any] = {}
     stats_dir = _ERGAST_FIXTURES / "stats"
     for path in stats_dir.rglob("*.json"):
-        payloads[str(path.relative_to(stats_dir))] = json.loads(path.read_text(encoding="utf-8"))
+        # key_for keeps forward slashes on Windows; str(path) would not.
+        payloads[InMemoryTransport.key_for(path, stats_dir)] = json.loads(
+            path.read_text(encoding="utf-8")
+        )
     for fragment, name in _JOLPICA_FIXTURES.items():
         payloads[fragment] = json.loads(
             (_ERGAST_FIXTURES / "jolpica" / name).read_text(encoding="utf-8")

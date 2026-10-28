@@ -138,7 +138,7 @@ def main() -> None:
     }
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(out, indent=2) + "\n")
+    out_path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {out_path}")
     for name in CDNS:
         s = out["cdns"][name]

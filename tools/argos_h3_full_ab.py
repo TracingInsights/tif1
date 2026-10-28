@@ -71,7 +71,9 @@ def main() -> None:
         for key in ("total_s", "telemetry_s"):
             vals = [r[key] for r in records if r.get("variant") == variant and key in r]
             summary[f"{variant}_{key}_median"] = statistics.median(vals) if vals else None
-    Path(args.out).write_text(json.dumps({"records": records, "summary": summary}, indent=2))
+    Path(args.out).write_text(
+        json.dumps({"records": records, "summary": summary}, indent=2), encoding="utf-8"
+    )
     print(json.dumps(summary))
 
 

@@ -151,6 +151,15 @@ def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
 
 Resolve `url` against the in-memory mapping and record `url` in `calls`. Raises `DataNotFoundError` when no mapping matched and no default was provided. Raises the matched exception when the matched entry specifies one.
 
+#### `key_for`
+
+```python
+@staticmethod
+def key_for(path: PurePath, root: PurePath) -> str
+```
+
+Build the fragment key of a fixture file: its path under `root` as a URL path with forward slashes on every platform. `str()` of a Windows path renders backslashes, which never match the URL of the mirrored file.
+
 ## PayloadLoader
 
 `PayloadLoader` owns the pipeline order: memo, cache, CDN fetch, validation, write-back. The loader is parameterized by session coordinates (`year`, `gp`, `session`) that build cache keys and CDN URLs. All storage and the fetch step are injectable as callables.
