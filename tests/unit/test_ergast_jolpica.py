@@ -68,11 +68,7 @@ class TestBuildUrl:
     def test_uses_configured_base(self, monkeypatch):
         from tif1.config import get_config
 
-        monkeypatch.setattr(
-            get_config(),
-            "_config",
-            {**get_config()._config, "jolpica_base_url": "https://mirror.example/f1/"},
-        )
+        monkeypatch.setitem(get_config()._config, "jolpica_base_url", "https://mirror.example/f1/")
         assert build_url("seasons") == "https://mirror.example/f1/seasons.json"
 
 
@@ -111,9 +107,7 @@ class TestRateLimiter:
         from tif1.config import get_config
 
         jolpica.reset_rate_limiter()
-        monkeypatch.setattr(
-            get_config(), "_config", {**get_config()._config, "ergast_rate_limit_burst": 7}
-        )
+        monkeypatch.setitem(get_config()._config, "ergast_rate_limit_burst", 7)
         try:
             assert jolpica.get_rate_limiter().burst_per_second == 7
         finally:

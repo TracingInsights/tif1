@@ -411,9 +411,7 @@ def test_stale_schedule_row_is_served_while_a_background_refresh_runs(monkeypatc
         return {"events": []}
 
     monkeypatch.setattr(events, "_fetch_f1schedule_year", slow_fetch)
-    monkeypatch.setattr(
-        events.get_config(), "_config", dict(events.get_config()._config, offline_mode=False)
-    )
+    monkeypatch.setitem(events.get_config()._config, "offline_mode", False)
     t0 = time.perf_counter()
     payload, expires_at = events._load_live_year_payload(year, time.time())
     elapsed = time.perf_counter() - t0
@@ -430,9 +428,7 @@ def test_no_cached_row_still_fetches_inline(monkeypatch):
 
     monkeypatch.setattr(events, "_read_cached_f1schedule_year", lambda _y: None)
     monkeypatch.setattr(events, "_fetch_f1schedule_year", lambda _y: {"events": ["live"]})
-    monkeypatch.setattr(
-        events.get_config(), "_config", dict(events.get_config()._config, offline_mode=False)
-    )
+    monkeypatch.setitem(events.get_config()._config, "offline_mode", False)
     payload, _ = events._load_live_year_payload(2099, time.time())
     assert payload == {"events": ["live"]}
 
