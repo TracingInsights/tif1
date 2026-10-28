@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import pandas as pd
 import pytest
@@ -64,7 +65,7 @@ class TestErgastSchedule:
         assert row["F1ApiSupport"] is False or row["F1ApiSupport"] == False  # noqa: E712
         assert row["CircuitId"] == "interlagos"
         assert row["CircuitLatitude"] == pytest.approx(-23.7036)
-        assert row["EventUrl"].startswith("https://en.wikipedia.org")
+        assert urlsplit(row["EventUrl"]).hostname == "en.wikipedia.org"
         assert not schedule.is_testing().any()
 
     def test_fastf1_columns_come_first(self):

@@ -53,7 +53,8 @@ def date_from_ergast(d_str: Any) -> datetime.datetime | None:
     try:
         return datetime.datetime.strptime(d_str, "%Y-%m-%d")  # noqa: DTZ007
     except (ValueError, TypeError):
-        logger.debug("Failed to parse date stamp %r in Ergast response", d_str)
+        # Never log the value: the callers pass drivers' dates of birth.
+        logger.debug("Ergast response carries a date stamp that is not YYYY-MM-DD; ignored")
         return None
 
 

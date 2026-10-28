@@ -24,6 +24,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError, TIF1Error
 
@@ -157,7 +158,7 @@ class CDNManager:
             if not isinstance(base_url, str) or not base_url.startswith("https://"):
                 logger.warning(f"Skipping invalid CDN URL: {base_url}")
                 continue
-            if "raw.githubusercontent.com" in base_url:
+            if urlsplit(base_url).hostname == "raw.githubusercontent.com":
                 logger.warning(f"Skipping unsupported CDN URL: {base_url}")
                 continue
             name = self._name_for_url(base_url, i)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 
 from tif1 import async_fetch
@@ -54,7 +56,7 @@ async def test_json_transport_serves_the_payload(browser_runtime):
     get_url_loader().transport = transport
     assert await _fetch("drivers.json") == {"drivers": [{"driver": "VER"}]}
     assert len(transport.calls) == 1
-    assert "cdn.jsdelivr.net" in transport.calls[0]
+    assert urlsplit(transport.calls[0]).hostname == "cdn.jsdelivr.net"
 
 
 async def test_bytes_transport_persists_the_raw_body(browser_runtime, monkeypatch):

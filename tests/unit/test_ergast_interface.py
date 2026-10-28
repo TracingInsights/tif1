@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from urllib.parse import urlsplit
 
 import pandas as pd
 import pytest
@@ -27,7 +28,7 @@ class TestPackage:
 
         assert package.Ergast is Ergast
         assert tif1.Ergast is Ergast
-        assert BASE_URL.startswith("https://api.jolpi.ca")
+        assert urlsplit(BASE_URL).hostname == "api.jolpi.ca"
         assert TIMEOUT == 5.0
         assert "User-Agent" in HEADERS
         with pytest.raises(AttributeError):

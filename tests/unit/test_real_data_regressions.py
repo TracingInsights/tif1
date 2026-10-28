@@ -13,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from types import SimpleNamespace
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import numpy as np
 import pandas as pd
@@ -590,9 +591,11 @@ class TestInfrastructureFindings:
         flags = {source.base_url: source.use_minification for source in manager.sources}
         # jsDelivr/StaticDelivr answer 404 for .min.json: the global option is a
         # guaranteed wasted round trip there, so only the custom mirror minifies.
-        assert [flag for url, flag in flags.items() if "example.com" not in url] == [False] * 3
+        custom_host = "mirror.example.com"
+        bundled = [flag for url, flag in flags.items() if urlsplit(url).hostname != custom_host]
+        assert bundled == [False] * 3
         assert flags["https://mirror.example.com/tif1"] is True
-        custom = next(s for s in manager.sources if "example.com" in s.base_url)
+        custom = next(s for s in manager.sources if urlsplit(s.base_url).hostname == custom_host)
         assert custom.format_url(2025, "X", "Race", "drivers.json").endswith("/drivers.min.json")
 
     def test_error_messages_without_context(self):

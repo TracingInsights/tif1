@@ -38,8 +38,7 @@ class TestExceptions:
     def test_network_error(self):
         """Test NetworkError with URL and status."""
         error = NetworkError(url="https://example.com", status_code=404)
-        assert "https://example.com" in str(error)
-        assert "404" in str(error)
+        assert str(error) == "Network request failed: url='https://example.com', status=404"
         assert error.context["url"] == "https://example.com"
         assert error.context["status_code"] == 404
 
