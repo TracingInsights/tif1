@@ -16,9 +16,14 @@ class TestConfigurationErrorRecovery:
     """Property tests for configuration validation and error recovery."""
 
     def setup_method(self):
-        """Reset config singleton before each test."""
-        # Reset singleton instance to get fresh config
+        """Reset config singleton before each test (restored in teardown_method)."""
+        # A fresh instance for the test; the original comes back afterwards so
+        # modules that bound it at import (tif1.core) keep seeing later changes.
+        self._previous_instance = Config._instance
         Config._instance = None
+
+    def teardown_method(self):
+        Config._instance = self._previous_instance
 
     @given(
         valid_timeout=st.integers(min_value=1, max_value=300),

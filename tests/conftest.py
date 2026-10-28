@@ -67,6 +67,13 @@ def _config_leak_guard():
     mapping = config._config
     before = dict(mapping)
     yield
+    # tif1.core and core_utils.helpers bind the instance at import: a test
+    # that leaves a fresh singleton behind (Config._instance = None) makes
+    # every later get_config().set(...) invisible to them.
+    assert config_module.Config._instance is config, (
+        "the test replaced the Config singleton; reset it with "
+        "monkeypatch.setattr(Config, '_instance', None) so the original comes back"
+    )
     after = config._config
     assert after is mapping, (
         "the test replaced Config._config; patch one key with "

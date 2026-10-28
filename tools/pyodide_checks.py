@@ -196,9 +196,13 @@ def ergast_check() -> dict:
     transport = InMemoryTransport(
         {"2025/events.json": ERGAST_EVENTS, "2025/bahrain-grand-prix/results.json": ERGAST_RESULTS}
     )
-    ergast_payloads.reset_ergast_loader()
-    ergast_stats.reset_stats_source()
-    jolpica_module.reset_rate_limiter()
+
+    def reset() -> None:
+        ergast_payloads.reset_ergast_loader()
+        ergast_stats.reset_stats_source()
+        jolpica_module.reset_rate_limiter()
+
+    reset()
     ergast_payloads.get_ergast_loader().transport = transport
     config = get_config()
     previous_fallback = config.get("ergast_fallback", True)
@@ -207,6 +211,10 @@ def ergast_check() -> dict:
         response = Ergast().get_race_results(2025, 1)
     finally:
         config.set("ergast_fallback", previous_fallback)
+        # Leave no trace: the stub transport and the memoized stub payloads
+        # must not serve the network stage, whose Ergast files have to reach
+        # the (later mounted) persistent cache for the reload check.
+        reset()
     content = response.content[0]
     assert response.source == "stats", response.source
     assert content["driverId"].tolist() == ["max_verstappen", "leclerc"], content

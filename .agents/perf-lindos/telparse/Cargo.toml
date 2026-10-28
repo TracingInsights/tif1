@@ -8,8 +8,8 @@ name = "telparse"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26", features = ["extension-module"] }
-numpy = "0.26"
+pyo3 = { version = "0.30", features = ["extension-module"] }
+numpy = "0.30"
 
 [profile.release]
 opt-level = 3

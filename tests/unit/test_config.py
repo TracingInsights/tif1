@@ -119,12 +119,12 @@ def test_runtime_cache_dir_override_is_used_by_cache(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def reset_config_singleton(monkeypatch):
-    config_module.Config._instance = None
+    # A fresh instance for the test; monkeypatch brings the original back so
+    # modules that bound it at import (tif1.core) keep seeing later changes.
+    monkeypatch.setattr(config_module.Config, "_instance", None)
     monkeypatch.delenv("TIF1_CACHE_DIR", raising=False)
     monkeypatch.delenv("TIF1_CONFIG_FILE", raising=False)
     monkeypatch.delenv("TIF1_TRUST_CWD_CONFIG", raising=False)
-    yield
-    config_module.Config._instance = None
 
 
 def test_config_ignores_cwd_by_default(tmp_path, monkeypatch):
