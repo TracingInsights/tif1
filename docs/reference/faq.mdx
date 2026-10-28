@@ -13,7 +13,7 @@ keywords:
 
 ### What is tif1?
 
-tif1 is a Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current. Parallel async loading is more than 3x faster than sequential fetching in the benchmark suite.
+tif1 is a Python library for Formula 1 data analysis. It provides fast access to timing, telemetry, and weather data from 2018-current, and to Ergast results, lap times, pit stops and standings from 1950-current. Parallel async loading is more than 3x faster than sequential fetching in the benchmark suite.
 
 ### How is tif1 different from fastf1?
 
@@ -22,7 +22,7 @@ tif1 is designed as a faster alternative to fastf1 with API compatibility. Key d
 - **Speed**: Parallel data loading with async/HTTP/2 (3x+ vs sequential, benchmark-validated)
 - **Backends**: Supports both pandas and polars
 - **Caching**: SQLite + memory LRU vs file-based pickle
-- **Data Source**: TracingInsights CDN vs Ergast + Live Timing
+- **Data Source**: TracingInsights CDN (timing, telemetry) and the TracingInsights Stats repository (Ergast tables, jolpica-f1 only as fallback) vs live timing + jolpica-f1
 - **Focus**: Historical data only (no live timing)
 
 ### Is tif1 free to use?
@@ -32,6 +32,7 @@ Yes, tif1 is open source under the MIT License. Use it freely for personal, acad
 ### What data is available?
 
 - Lap times and sectors (2018-current)
+- Official classifications, pit stops and championship standings (1950-current, Ergast data)
 - Telemetry (speed, throttle, brake, RPM, gear, DRS)
 - Position data (X, Y, Z coordinates)
 - Acceleration data (X, Y, Z axes)
@@ -82,11 +83,11 @@ The first access to a session downloads data from the CDN. Later loads read the 
 
 ### Can I access live timing data?
 
-No, tif1 focuses on historical data (2018-current). For live timing, use fastf1.
+No, tif1 focuses on historical data (timing and telemetry 2018-current, Ergast results 1950-current). For live timing, use fastf1.
 
 ### How recent is the data?
 
-The TracingInsights data repositories publish a session some time after it ends. Scheduled jobs in those repositories do the publication, so the delay varies. A session that is not published yet raises `DataNotFoundError`.
+The TracingInsights data repositories publish a session shortly after it ends. The files are built from the same F1 timing data that fastf1 reads and are available in under a minute after that data reaches fastf1. A session that is not published yet raises `DataNotFoundError`. The Ergast classification of a round appears in the Stats repository a day or two after the race; until then `session.results` is merged from jolpica-f1.
 
 ### Why am I getting DataNotFoundError?
 

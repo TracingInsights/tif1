@@ -14,6 +14,6 @@ if __name__ == "__main__":
         "Race",
         save_path=Path(__file__).resolve().parent / "tire_degradation.png",
         dpi=300,
-        color_scheme="default-dark",
+        color_scheme="dark",
     )
     print("Chart saved to docs/assets/tire_degradation.png")

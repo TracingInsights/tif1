@@ -457,6 +457,17 @@ export TIF1_POOL_EXHAUSTION_BACKOFF_JITTER=0.01
 export TIF1_POLARS_LAP_CATEGORICAL=false
 export TIF1_JSON_PARSE_WORKERS=0
 
+# Ergast data (tif1.ergast, Session.results merge)
+export TIF1_ERGAST_RESULTS=true
+export TIF1_ERGAST_FALLBACK=true
+export TIF1_JOLPICA_BASE_URL=https://api.jolpi.ca/ergast/f1
+export TIF1_ERGAST_TTL_HOURS=6.0
+export TIF1_ERGAST_TIMEOUT=5.0
+export TIF1_ERGAST_RATE_LIMIT_BURST=4
+export TIF1_ERGAST_RATE_LIMIT_HOURLY=500
+export TIF1_STATS_REPO=TracingInsights-Archive/Stats
+export TIF1_STATS_BRANCH=main
+
 # Configuration File Control
 export TIF1_CONFIG_FILE=/path/to/config.json
 export TIF1_TRUST_CWD_CONFIG=false
@@ -996,6 +1007,22 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="cdn_hedge" type="bool" default="True">
+  Re-issue a stalled request on the next CDN source and take the first answer. Each source keeps a moving average of its request latency. A request waits two times that average before the second request starts, clamped between 1 second and `cdn_hedge_max_delay`. A source measured at more than twice the latency of a lower-priority source is re-ranked behind it for the process. A healthy source still sends one request per file.
+
+  ```python
+  config.set("cdn_hedge", False)  # sequential fallback only
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_hedge_max_delay" type="float" default="4.0">
+  Upper bound, in seconds, for the hedge wait. A source without latency samples uses this value, so a warm edge never hedges and a cold edge hedges from its first wave.
+
+  ```python
+  config.set("cdn_hedge_max_delay", 2.0)
+  ```
+</ResponseField>
+
 <ResponseField name="pool_connections" type="int" default="dynamic">
   Number of connection pools to maintain. If not set, automatically calculated as `max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)`.
 
@@ -1153,6 +1180,42 @@ config.set("pool_connections", 1024)
   ```python
   config.set("schedule_ttl_hours", 1.0)  # pick up calendar changes within the hour
   ```
+</ResponseField>
+
+<ResponseField name="ergast_results" type="bool" default="True">
+  Merge the official Ergast classification into `Session.results` and order `Session.drivers` by it. Off, every session keeps the lap-derived classification and nothing extra is fetched. Environment variable: `TIF1_ERGAST_RESULTS`.
+</ResponseField>
+
+<ResponseField name="ergast_fallback" type="bool" default="True">
+  Ask the Jolpica API for what the TracingInsights Stats repository cannot answer (seasons list, driver lists, status counts, rounds not published yet). Off, those queries raise `ErgastInvalidRequestError` or `DataNotFoundError`. Environment variable: `TIF1_ERGAST_FALLBACK`.
+</ResponseField>
+
+<ResponseField name="jolpica_base_url" type="str" default="https://api.jolpi.ca/ergast/f1">
+  Base URL of the Jolpica API; a self-hosted instance works. Environment variable: `TIF1_JOLPICA_BASE_URL`.
+</ResponseField>
+
+<ResponseField name="ergast_ttl_hours" type="float" default="6.0">
+  Lifetime in hours of current-season Stats files and of every Jolpica answer in the cache; past-season Stats files never expire. `0` re-fetches on every lookup. Environment variable: `TIF1_ERGAST_TTL_HOURS`.
+</ResponseField>
+
+<ResponseField name="ergast_timeout" type="float" default="5.0">
+  Jolpica request timeout in seconds. Environment variable: `TIF1_ERGAST_TIMEOUT`.
+</ResponseField>
+
+<ResponseField name="ergast_rate_limit_burst" type="int" default="4">
+  Jolpica requests per second the client allows itself (the API's unauthenticated burst limit). Environment variable: `TIF1_ERGAST_RATE_LIMIT_BURST`.
+</ResponseField>
+
+<ResponseField name="ergast_rate_limit_hourly" type="int" default="500">
+  Jolpica requests per hour the client allows itself (the API's unauthenticated sustained limit). Environment variable: `TIF1_ERGAST_RATE_LIMIT_HOURLY`.
+</ResponseField>
+
+<ResponseField name="stats_repo" type="str" default="TracingInsights-Archive/Stats">
+  GitHub repository (`owner/repo`) holding the Ergast Stats files, served through the configured CDNs. Environment variable: `TIF1_STATS_REPO`.
+</ResponseField>
+
+<ResponseField name="stats_branch" type="str" default="main">
+  Branch of the Stats repository. Environment variable: `TIF1_STATS_BRANCH`.
 </ResponseField>
 
 </Accordion>
@@ -1386,6 +1449,8 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_multiplexed": true,
   "http_disable_http3": true,
   "cdn_preconnect": true,
+  "cdn_hedge": true,
+  "cdn_hedge_max_delay": 4.0,
   "keepalive_timeout": 300,
   "keepalive_max_requests": 5000,
   "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"]
@@ -2490,6 +2555,15 @@ Legend: ↑ = Increases, ↓ = Decreases
   "memory_telemetry_cache_max_items": 2048,
   "missing_payloads_ttl_days": 7.0,
   "schedule_ttl_hours": 6.0,
+  "ergast_results": true,
+  "ergast_fallback": true,
+  "jolpica_base_url": "https://api.jolpi.ca/ergast/f1",
+  "ergast_ttl_hours": 6.0,
+  "ergast_timeout": 5.0,
+  "ergast_rate_limit_burst": 4,
+  "ergast_rate_limit_hourly": 500,
+  "stats_repo": "TracingInsights-Archive/Stats",
+  "stats_branch": "main",
   "keepalive_timeout": 120,
   "keepalive_max_requests": 10000,
   "connection_stats_log_interval": 60.0,

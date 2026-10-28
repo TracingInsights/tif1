@@ -26,16 +26,16 @@ keywords:
 
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
-| **Data source** | F1 live-timing API + Ergast-compatible jolpica-f1 API | TracingInsights static files on public CDNs |
+| **Data source** | F1 live-timing API + Ergast-compatible jolpica-f1 API | TracingInsights static files on public CDNs; the Ergast tables from the TracingInsights Stats repository, jolpica-f1 only as fallback |
 | **Granularity** | Session-wide `session.load()`, with flags per data type | Lazy, per file — fetch one lap of telemetry directly |
-| **Rate limits** | Yes — fastf1 raises an error after **500 uncached requests/hour**, the jolpica-f1 limit | **None** — static CDN files, no quotas, no API keys |
+| **Rate limits** | Yes — fastf1 raises an error after **500 uncached requests/hour**, the jolpica-f1 limit | **None** for timing, telemetry and the Ergast tables served from CDNs; jolpica-f1 is asked only for what the Stats repository cannot answer, paced to its limits |
 | **Access** | Some cloud runtimes get HTTP 403 from the live-timing host | Public CDN files, no key or login |
 | **Built-in charts** | Plotting helpers for colors and styles; chart code in matplotlib | **22 optional one-call chart helpers** |
 | **Mini-sector data** | Not in the laps data | Mini-sector color codes (`ms1`, `ms2`, `ms3`) on every lap |
 | **Backends** | pandas only | pandas **and** polars |
 | **Caching** | SQLite HTTP cache + pickle files of parsed data | SQLite persistent cache + in-memory LRU |
 | **Network** | HTTP/1.1 (`requests`) | HTTP/2, asynchronous, multi-CDN fallback |
-| **Live timing** | Supported | Archive only (2018-current) |
+| **Live timing** | Supported | Archive only (timing and telemetry 2018-current, Ergast results 1950-current) |
 
 ---
 
@@ -94,6 +94,8 @@ The jolpica-f1 [Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/ma
 Requests above the limits receive `HTTP 429 Too Many Requests` with the message *"Request was throttled"*. The same guide states that the unauthenticated limits decrease in the future as token access rolls out. The [Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) add that abuse or excessive use may result in temporary or permanent blocking.
 
 fastf1 applies the same ceiling on the client side. Its request session waits at least 0.25 s between requests. It raises `RateLimitExceededError` after 500 requests in one hour. One counter covers the live-timing API and jolpica-f1 together. Requests that fastf1 serves from its cache do not count.
+
+`tif1` reads the same Ergast tables from the [TracingInsights Stats repository](https://github.com/TracingInsights-Archive/Stats), one static file per table and round, through the CDN chain. A season of race results is 24 files fetched in parallel, not a paged API walk. jolpica-f1 is asked only for what that repository cannot answer: the seasons list, driver lists, status counts, a round that is not published yet. Those requests are paced to its limits.
 
 ### When the limit matters
 
@@ -224,9 +226,9 @@ print(laps[["Driver", "LapNumber", "ms1", "ms2", "ms3"]].head())
 
 Both libraries have strengths, and fastf1 remains the better choice in a few situations:
 
-- **Live timing.** tif1 is an archive library (2018-current). Real-time lap and telemetry data during a live session needs fastf1.
+- **Live timing.** tif1 is an archive library (timing and telemetry from 2018, Ergast results from 1950). Real-time lap and telemetry data during a live session needs fastf1.
 - **Freshest data.** fastf1 reads the F1 live-timing archive directly. tif1 can load a session only after the TracingInsights pipeline publishes its files.
-- **Deep fastf1-internal dependencies.** A codebase that relies on fastf1 internals beyond the documented API surface (for example `fastf1.ergast`, `fastf1.livetiming`) needs those specific modules. tif1 does not include them.
+- **Deep fastf1-internal dependencies.** A codebase that relies on fastf1 internals beyond the documented API surface (for example `fastf1.livetiming` or `fastf1._api`) needs those specific modules. tif1 does not include them; `fastf1.ergast` has its counterpart in `tif1.ergast`.
 
 ## Migration
 

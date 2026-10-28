@@ -81,7 +81,11 @@ def get_session(
     gp: str | int,
     session: str | int,
     enable_cache: bool | None = None,
-    lib: Literal["pandas", "polars"] | None = None
+    lib: Literal["pandas", "polars"] | None = None,
+    *,
+    ergast: bool | None = None,
+    backend: Literal["fastf1", "f1timing", "ergast"] | None = None,
+    force_ergast: bool = False,
 ) -> Session
 ```
 
@@ -90,9 +94,21 @@ def get_session(
 <ParamField path="year" type="int" required>
   Season year. Must be within the supported range.
 
-  **Valid range**: 2018 to 2100 (the validation range). Data exists only for the seasons that the data source has published.
+  **Valid range**: 1950 to 2100 (the validation range). Timing and telemetry exist from 2018; earlier seasons offer `Qualifying` and `Race` sessions built from Ergast data (results, lap times from 1996, pit stops from 2011).
 
-  **Example**: `2024`, `2025`
+  **Example**: `2024`, `2025`, `1995`
+</ParamField>
+
+<ParamField path="ergast" type="bool | None" default="None">
+  Merge the official Ergast classification into `session.results` and order `session.drivers` by it. `None` uses the `ergast_results` setting (on by default). Seasons before 2018 always use Ergast data.
+</ParamField>
+
+<ParamField path="backend" type='"fastf1" | "f1timing" | "ergast" | None' default="None">
+  Schedule backend used to resolve the event name: `"fastf1"` and `"f1timing"` read the f1schedule calendar, `"ergast"` the Ergast race table. `None` uses f1schedule from 2018 and Ergast before.
+</ParamField>
+
+<ParamField path="force_ergast" type="bool" default="False">
+  Deprecated alias of `backend="ergast"`.
 </ParamField>
 
 <ParamField path="gp" type="str | int" required>
@@ -413,17 +429,29 @@ class Session:
 </ResponseField>
 
 <ResponseField name="results" type="SessionResults">
-  The session classification: one row per driver, in classification order (a pandas DataFrame on both backends). Columns:
-  - `DriverNumber`, `Abbreviation`: Car number (string) and 3-letter code
-  - `FirstName`, `LastName`, `FullName`: Driver names
-  - `TeamName`, `TeamColor`: Team name and hex color without `#`
-  - `HeadshotUrl`: URL to driver photo
-  - `Position` (float, 1 to N) and `ClassifiedPosition` (string, `"1"` to `"N"`): Classified position
-  - `Status`: For races and sprints, `"Finished"` on the lead lap count, `"+1 Lap"` or `"+N Laps"` behind, and `"Did not start"` with no laps. Other sessions show `"Finished"`.
-  - `Laps`: Laps completed (float)
-  - `GridPosition`, `Points`: Always `NaN`, because the data source has no grid or points data
+  The session classification: one row per driver, indexed by driver number, in classification order (a pandas DataFrame on both backends). A car two drivers shared (classifications before the 1960s) keeps the plain number for its first driver. The other drivers are labelled `number/Abbreviation`, so the index is always unique while the `DriverNumber` column keeps the car number. The columns are fastf1's, in fastf1's order, followed by tif1's extras:
+  - `DriverNumber`, `BroadcastName`, `Abbreviation`, `DriverId`, `TeamName`, `TeamColor`, `TeamId`, `FirstName`, `LastName`, `FullName`, `HeadshotUrl`, `CountryCode` (always empty: not in the data)
+  - `Position` (float) and `ClassifiedPosition` (string, including `"R"`, `"D"`, `"W"` for retired, disqualified, withdrawn)
+  - `GridPosition`, `Q1`, `Q2`, `Q3`, `Time` (the total race time), `Status`, `Points`, `Laps`
+  - Extras: `TimeGap` (gap to the winner), `FastestLapRank`, `FastestLapNumber`, `FastestLapTime`, `FastestLapAvgSpeed`, `PermanentNumber`, `DriverNationality`, `TeamNationality`, `DateOfBirth`, `DriverUrl`, `TeamUrl`
 
-  The order follows `session.drivers`, so a rebuilt order can miss a post-session penalty. `results.iloc[0]` is the winner; `results.iloc[i].dnf` is `True` unless `Status` is `"Finished"`, `"+1 Lap"`, `"+2 Laps"`, or `"Not classified"`.
+  Race, Sprint and Qualifying sessions take these values from the official Ergast classification (grid, points, status, times, qualifying segments). Post-race penalties are therefore included, and drivers that did not start are added with NaN `Position`. Practice and the sprint qualifying formats keep the lap-derived `Position`, `Status` and `Laps` and only gain the identity columns. With `ergast=False` (or `TIF1_ERGAST_RESULTS=0`) every session keeps the lap-derived values and `GridPosition`, `Points` and the times stay empty. `results.iloc[0]` is the winner; `results.iloc[i].dnf` is `True` unless `Status` is `"Finished"`, `"Lapped"` or `"+N Lap(s)"`.
+</ResponseField>
+
+<ResponseField name="total_laps" type="int | None">
+  The race distance in laps (the leader's lap count of the Ergast classification) for Race and Sprint sessions; `None` otherwise.
+</ResponseField>
+
+<ResponseField name="pit_stops" type="DataFrame">
+  Ergast pit stops of the race (2011 onward): `DriverNumber`, `Driver`, `DriverId`, `Stop`, `Lap`, `TimeOfDay`, `Duration`. Empty for other sessions. Follows the session's `lib`.
+</ResponseField>
+
+<ResponseField name="driver_standings" type="DataFrame">
+  Drivers' championship standings after this event's round: `Position`, `PositionText`, `Points`, `Wins`, `DriverNumber`, `Abbreviation`, `DriverId`, `FirstName`, `LastName`, `FullName`, `DateOfBirth`, `DriverNationality`, `TeamIds`, `TeamNames`, `DriverUrl`. Follows the session's `lib`.
+</ResponseField>
+
+<ResponseField name="constructor_standings" type="DataFrame">
+  Constructors' championship standings after this event's round: `Position`, `PositionText`, `Points`, `Wins`, `TeamId`, `TeamName`, `TeamNationality`, `TeamUrl`. Follows the session's `lib`.
 </ResponseField>
 
 <ResponseField name="car_data" type="Telemetry">
@@ -508,6 +536,38 @@ session.load(laps=True, telemetry=False, weather=True, messages=False)
 # Or use lazy loading (recommended)
 session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 laps = session.laps  # Loads automatically
+```
+
+#### `load_async()`
+
+```python
+async def load_async(
+    laps: bool = True,
+    telemetry: bool = True,
+    weather: bool = True,
+    messages: bool = True
+) -> Session
+```
+
+The async twin of `load()`. It fetches the same tables through the async pipeline only, so it never blocks the event loop. Use it inside a running event loop and in Pyodide, where the synchronous API needs JavaScript Promise Integration. Refer to [Pyodide and the Browser](/concepts/pyodide).
+
+**Parameters:**
+- The same four flags as `load()`
+
+**Returns:**
+- Self (for method chaining)
+
+**Example:**
+```python
+import asyncio
+import tif1
+
+async def main():
+    session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+    await session.load_async(telemetry=False)
+    print(f"Loaded {len(session.laps)} laps")
+
+asyncio.run(main())
 ```
 
 #### `laps_async()`

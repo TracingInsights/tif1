@@ -29,7 +29,7 @@ The events module provides a complete set of functions and classes. These list t
 
 Use the events API to:
 
-- **Query season schedules**: Retrieve complete event calendars for any supported F1 season (2018-present). Each calendar carries full metadata, including event names, locations, countries, dates, and formats
+- **Query season schedules**: Retrieve complete event calendars for any F1 season (1950-present; local session times and testing events from 2018). Each calendar carries full metadata, including event names, locations, countries, dates, and formats
 - **Discover scheduled sessions**: List the sessions of each event from the schedule. Sessions include Practice 1-3, Qualifying, Sprint Shootout, Sprint Qualifying, Sprint, and Race
 - **Access event metadata**: Get detailed information about each Grand Prix. The information includes official event names (with sponsors), circuit locations, round numbers, event dates, and weekend formats
 - **Navigate flexibly**: Use fuzzy matching to find events by partial names, abbreviations, circuit names, or round numbers. Exact string matches are not required
@@ -56,10 +56,10 @@ The events module is built on several key design principles:
 
 Schedule data is sourced from two locations:
 
-- **Live f1schedule file**: The current and future seasons are fetched from the `theOehrly/f1schedule` GitHub repository (`raw.githubusercontent.com`). FastF1 reads the same file. The raw file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`). A rescheduled or cancelled round shows up once that cached copy expires. Years without a vendored file use the same path
+- **Live f1schedule file**: The current and future seasons are fetched from the `theOehrly/f1schedule` GitHub repository (`raw.githubusercontent.com`). FastF1 reads the same file. The raw file is cached in SQLite for `schedule_ttl_hours` (default 6, `TIF1_SCHEDULE_TTL_HOURS`). After that window the cached copy is still served, and a background thread fetches the new file; the next lookup uses it. A rescheduled or cancelled round shows up with that refresh. Years without a vendored file use the same path
 - **Vendored JSON files**: The seasons 2018-2026 are packaged with `tif1`. Past seasons are served from them without a network request. When the fetch fails or `offline_mode` is on, the current season uses the last cached copy, even an expired one. Without a cached copy, it uses its vendored file
 
-**Supported years**: 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026
+**Supported years**: 1950 to the current season. Seasons from 2018 come from the f1schedule calendar. Earlier seasons (and `backend="ergast"` for any season) come from the Ergast race table packaged with `tif1`. Those schedules carry estimated practice times and UTC session times only. Every schedule also carries `CircuitId`, `CircuitName`, `CircuitLatitude`, `CircuitLongitude`, `EventUrl` and `CircuitUrl` after fastf1's columns. Refer to [Historical data](/guides/historical-data).
 
 The schedule data includes:
 - All championship Grand Prix events
@@ -130,7 +130,7 @@ A year without schedule data does not raise: when the repository has no file for
 - **Caching**: The raw schedule data is cached in memory after the first request. Later calls for the same year make no network requests until `schedule_ttl_hours` have passed for a live season, but each call builds a new `EventSchedule`.
 - **Data Source**: The current and future seasons come from the live `theOehrly/f1schedule` repository (`raw.githubusercontent.com`, the same file FastF1 reads). tif1 fetches the file again once the cached copy is older than `schedule_ttl_hours` (default 6). Past seasons come from the vendored JSON files (2018 onwards); earlier years fall back to the repository.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Testing rows have `RoundNumber` 0 and come after the race weekends. Use `get_event_schedule(year, include_testing=False)` to exclude them.
-- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. The first fetch of a live season (once per TTL window per cache directory) adds the network time.
+- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. Only the first fetch of a live season into an empty cache directory adds the network time. A later refresh runs in a background thread while the cached copy is served.
 
 **Example Usage:**
 
@@ -2304,7 +2304,7 @@ race = event.get_session(sessions[-1])  # Last session is usually the race
 
 **Problem**: `get_events()` returns an empty schedule.
 
-**Solution**: Past seasons from 2018 ship with `tif1` as vendored files. Other years come from the live `theOehrly/f1schedule` repository. The schedule is empty when the repository has no file for the year (HTTP 404). It is also empty when the fetch fails and no cached or vendored copy exists. No exception is raised:
+**Solution**: Seasons from 1950 to 2017 come from the packaged Ergast race tables; seasons from 2018 ship with `tif1` as vendored f1schedule files. Other years come from the live `theOehrly/f1schedule` repository. The schedule is empty when the repository has no file for the year (HTTP 404). It is also empty when the fetch fails and no cached or vendored copy exists. No exception is raised:
 
 ```python
 schedule = tif1.get_events(2017)

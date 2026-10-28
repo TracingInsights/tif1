@@ -27,7 +27,7 @@ import tif1
 
 OUT = Path(__file__).resolve().parent
 # Docs charts use the TracingInsights-brand dark theme (#011627 background, lime text).
-THEME = "default-dark"
+THEME = "dark"
 SAVE_KW = {"bbox_inches": "tight"}
 
 print("Starting chart generation...")

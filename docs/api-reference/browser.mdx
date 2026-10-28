@@ -1,0 +1,151 @@
+---
+title: "Browser"
+description: "tif1.browser: the Pyodide HTTP transport and IndexedDB persistence for the SQLite cache"
+keywords:
+  - "tif1"
+  - "Pyodide"
+  - "browser"
+  - "PyodideTransport"
+  - "IndexedDB"
+  - "micropip"
+---
+
+`tif1.browser` holds the parts of `tif1` that exist for Pyodide only. They are the HTTP transport that fetches through the browser, and two coroutines that keep the SQLite cache in IndexedDB. The module imports on each platform. Its functions touch the Pyodide runtime only when they run.
+
+```python
+from tif1.browser import (
+    PyodideTransport,
+    enable_persistent_cache,
+    get_pyodide_transport,
+    persist_cache,
+)
+```
+
+Refer to [Pyodide and the Browser](/concepts/pyodide) for the usage guide.
+
+---
+
+## `PyodideTransport`
+
+```python
+class PyodideTransport:
+    def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
+    async def get_bytes_async(self, url: str, *, timeout: float | None = None) -> bytes
+    async def get_json_async(self, url: str, *, timeout: float | None = None) -> dict[str, Any]
+```
+
+The production transport inside Pyodide. `PayloadLoader` and the shared URL loader select it when `sys.platform == "emscripten"`; `tif1.async_fetch` runs its per-URL fetch through `get_bytes_async()` there, so the bulk loads need no thread pool.
+
+| Method | Mechanism | Use |
+| :--- | :--- | :--- |
+| `get_json()` | The `urllib3` build of Pyodide: `fetch` under JavaScript Promise Integration, a synchronous `XMLHttpRequest` otherwise | The synchronous `HttpTransport` seam: single payloads and the live schedule |
+| `get_bytes_async()` | `pyodide.http.pyfetch` with an `AbortSignal.timeout` | The async fan-out; the raw body keeps the typed telemetry decode and the byte-identical cache write |
+| `get_json_async()` | `get_bytes_async()` plus the JSON parse | Callers that want the parsed object |
+
+**Exception contract** (the same as every `HttpTransport`):
+
+| Response | Exception |
+| :--- | :--- |
+| HTTP 404 | `DataNotFoundError` with the `url` context key |
+| Other HTTP error status | `NetworkError` with `status_code`, so `CDNManager` recognises refusals |
+| Network failure, abort, timeout | `NetworkError` with `status_code=None` |
+| Body that is not a JSON object | `InvalidDataError` |
+
+`timeout` defaults to the `timeout` configuration value. Retries belong to the pipeline (`retry_with_backoff` and the async retry loop), so the pool manager runs with `retries=False`. The browser owns redirects, compression, and TLS.
+
+**Example:**
+```python Pyodide
+from tif1.browser import PyodideTransport
+from tif1.cache import SessionMemo
+from tif1.payload_loader import PayloadLoader
+
+loader = PayloadLoader(2025, "Bahrain%20Grand%20Prix", "Race", transport=PyodideTransport(), memo=SessionMemo())
+drivers = loader.get("drivers.json")
+```
+
+---
+
+## `get_pyodide_transport()`
+
+```python
+def get_pyodide_transport() -> PyodideTransport
+```
+
+The shared transport of the runtime (one pool manager per page). `tif1.payload_loader.default_transport()` returns it inside Pyodide.
+
+---
+
+## `enable_persistent_cache()`
+
+```python
+async def enable_persistent_cache(cache_dir: str | Path | None = None) -> Path
+```
+
+Mount the cache directory on IndexedDB and load its stored contents. Call it once, before the first `get_session()`. An open SQLite cache is closed first, and the next `get_cache()` reopens it on the mounted directory. The mount keeps living in memory; `persist_cache()` copies the changes to IndexedDB.
+
+**Parameters:**
+- `cache_dir`: Directory to mount. Defaults to the configured `cache_dir`.
+
+**Returns:**
+- The mounted cache directory.
+
+**Raises:**
+- `TIF1Error`: Outside Pyodide, or when IndexedDB refuses the sync.
+
+---
+
+## `persist_cache()`
+
+```python
+async def persist_cache() -> None
+```
+
+Write the cache directory to IndexedDB. Pending SQLite writes are committed first (`Cache.flush()`). Browsers never run `atexit` hooks, so call it after the loads that must survive a reload.
+
+**Raises:**
+- `TIF1Error`: Outside Pyodide, or when IndexedDB refuses the sync.
+
+**Example:**
+```python Pyodide
+import tif1
+from tif1.browser import enable_persistent_cache, persist_cache
+await enable_persistent_cache()
+session = tif1.get_session(2025, "Bahrain", "R")
+await session.load_async(telemetry=False)
+await persist_cache()
+```
+
+---
+
+## Runtime Detection
+
+`tif1.core_utils.runtime` holds the facts the rest of the library consults:
+
+| Name | Value |
+| :--- | :--- |
+| `IS_EMSCRIPTEN` | `True` under Emscripten (Pyodide); evaluated once at import |
+| `THREADS_AVAILABLE` | `False` when the runtime cannot start threads; each background thread of `tif1` is gated on it |
+| `is_pyodide()` | `True` inside the Pyodide runtime specifically |
+| `can_block_on_awaitables()` | `True` when synchronous code can wait on a coroutine: always natively, under JSPI in the browser |
+| `import_supported_polars()` | The polars module when it is version 2 or later, otherwise `None` |
+
+The synchronous entry points of `Session` run their coroutine through one bridge. Natively it is `asyncio.run()`; in the browser it is `pyodide.ffi.run_sync()` under JSPI, and `AsyncRequiredError` without it.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Pyodide and the Browser" icon="globe" href="/concepts/pyodide">
+    Installation, `load_async()`, JSPI, and cache persistence.
+  </Card>
+  <Card title="Payload Loader" icon="layer-group" href="/api-reference/payload-loader">
+    The `HttpTransport` seam and the payload pipeline.
+  </Card>
+  <Card title="Async Fetch" icon="bolt" href="/api-reference/async-fetch">
+    The concurrent fetch pipeline that `load_async()` drives.
+  </Card>
+  <Card title="Exceptions" icon="triangle-exclamation" href="/api-reference/exceptions">
+    `AsyncRequiredError` and the transport exception contract.
+  </Card>
+</CardGroup>

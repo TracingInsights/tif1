@@ -14,6 +14,6 @@ if __name__ == "__main__":
         "R",
         save_path=Path(__file__).resolve().parent / "track_temperature.png",
         dpi=150,
-        color_scheme="default-dark",
+        color_scheme="dark",
     )
     print("Chart saved to docs/assets/track_temperature.png")

@@ -1921,7 +1921,7 @@ MIN_YEAR = 2018  # First year with TracingInsights data
 MAX_YEAR = 2100  # Maximum supported year (future-proofing)
 ```
 
-These constants define the valid range for F1 season data. The library supports data from 2018 onwards (the earliest TracingInsights data repository) through 2100 (allowing for future scheduled races).
+These constants define the valid range for F1 season data. The library supports seasons from 1950 onward (Ergast results). Timing and telemetry start with `F1_API_FIRST_YEAR` (2018, the earliest TracingInsights data repository). The upper bound is 2100, allowing for future scheduled races.
 
 **Example Usage:**
 ```python
@@ -2331,6 +2331,9 @@ The `ResourceManager` class implements the context manager protocol and tracks r
 ### `ResourceManager`
 
 ```python
+from typing import Any, Self
+
+
 class ResourceManager:
     """Base class for resource management with guaranteed cleanup."""
 

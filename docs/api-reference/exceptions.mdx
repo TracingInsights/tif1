@@ -40,13 +40,20 @@ TIF1Error (base exception for all tif1 errors)
 │   └── LapNotFoundError (specific lap not found for driver)
 │
 ├── NetworkError (HTTP request failures after retries)
-│   └── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
+│   ├── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
+│   └── RateLimitExceededError (the Jolpica API kept answering 429 after the retries)
+│
+├── ErgastError (the Ergast data layer, tif1.ergast)
+│   ├── ErgastJsonError (a Jolpica answer could not be parsed)
+│   └── ErgastInvalidRequestError (Jolpica rejected the request, or Jolpica is needed but disabled)
 │
 ├── InvalidDataError (data validation/parsing failures)
 │
 ├── CacheError (defined and exported; tif1 does not raise it)
 │
-└── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+├── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+│
+└── AsyncRequiredError (synchronous API in a browser without JavaScript Promise Integration)
 
 ValueError (built-in)
 ├── EventNotFoundError (event name that matches no event of the season)
@@ -1748,6 +1755,73 @@ def progressive_load_session(year: int, gp: str, session_name: str):
 
 session, loaded = progressive_load_session(2024, "Monaco", "Race")
 print(f"Session ready with {len(loaded)} data types")
+```
+
+---
+
+## Runtime Errors
+
+### `AsyncRequiredError`
+
+A `TIF1Error` subclass raised when a synchronous entry point cannot wait on its network fetch. Inside Pyodide the event loop belongs to the browser. Synchronous code can only wait on it through JavaScript Promise Integration (JSPI). Without JSPI (Firefox and Safari by default, or code entered through `runPython` instead of `runPythonAsync`), `session.load()`, `session.laps`, and the other blocking entry points raise this error. The async counterpart named in the message works in each browser. Refer to [Pyodide and the Browser](/concepts/pyodide).
+
+**Signature:**
+```python
+class AsyncRequiredError(TIF1Error):
+    def __init__(self, operation: str | None = None, alternative: str | None = None) -> None
+```
+
+**Context Keys:**
+- `operation` (str | None): The synchronous operation, for example `laps property`
+- `alternative` (str | None): The coroutine to await instead, for example `session.laps_async()`
+
+The message is `` `<operation>` cannot block on network fetches in this runtime (no JavaScript Promise Integration); use `await <alternative>` instead ``.
+
+**Example - Fall Back to the Async API:**
+```python
+import tif1
+from tif1 import AsyncRequiredError
+
+session = tif1.get_session(2025, "Bahrain", "R")
+
+async def laps_for(session):
+    try:
+        return session.laps
+    except AsyncRequiredError:
+        return await session.laps_async()
+```
+
+---
+
+## Ergast Errors
+
+### `ErgastError`
+
+The base class of the errors raised by `tif1.ergast` (fastf1 keeps the same three names in `fastf1.exceptions`). A `TIF1Error` subclass.
+
+### `ErgastJsonError`
+
+Raised when a Jolpica answer is not a JSON object with the `MRData` envelope.
+
+### `ErgastInvalidRequestError`
+
+Raised when the Jolpica API rejects a request (a 404 for an unknown path or any other non-200 answer). Also raised when a query needs Jolpica while `ergast_fallback` is off. The message carries the request URL and the server's answer; the context holds `url` and `status_code`.
+
+### `RateLimitExceededError`
+
+A `NetworkError` subclass raised when Jolpica keeps answering `429 Too Many Requests` after three retries that honour `Retry-After`. The context holds `url`, `status_code` (429) and `retry_after`.
+
+**Example:**
+```python
+import tif1
+from tif1.ergast import Ergast
+
+try:
+    seasons = Ergast().get_seasons()
+except tif1.RateLimitExceededError as exc:
+    print(f"slow down: retry after {exc.context['retry_after']} s")
+except tif1.ErgastInvalidRequestError as exc:
+    print(f"rejected: {exc}")
 ```
 
 ---

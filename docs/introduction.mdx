@@ -17,7 +17,7 @@ keywords:
 
 # Welcome to tif1
 
-`tif1` is a Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current).
+`tif1` is a Python library for Formula 1 data analysis. It provides access to timing, telemetry, and weather data from TracingInsights (2018-current), and to Ergast results, lap times, pit stops and championship standings (1950-current).
 
 `tif1` is an alternative to `fastf1` with a compatible API. It loads data lazily, fetches multi-file loads in parallel over HTTP/2, and supports pandas and polars backends.
 
@@ -43,7 +43,7 @@ keywords:
 `fastf1` is an established library at the center of the F1 data community. `tif1` started as a personal project with a different approach in a few areas:
 
 1. **Fetch only the necessary data.** `session.load()` is not necessary. One lap of telemetry for one driver needs three small files. They hold the driver list, the lap table, and the telemetry of that lap.
-2. **No API rate limits.** fastf1 raises `RateLimitExceededError` after **500 uncached requests in one hour**. The jolpica-f1 API behind it documents the same limit for unauthenticated use. `tif1` reads static CDN files and keeps no request quota.
+2. **No API rate limits.** fastf1 raises `RateLimitExceededError` after **500 uncached requests in one hour**. The jolpica-f1 API behind it documents the same limit for unauthenticated use. `tif1` reads static CDN files, the Ergast tables included, and keeps no request quota; jolpica-f1 is asked only for what the static files cannot answer.
 3. **Charts included.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
 4. **Public CDN access.** `tif1` needs no API key, cookie, or account. Any network that can reach jsDelivr, Hugging Face, or StaticDelivr can load the data.
 5. **More data.** Mini-sector color codes, weather columns on every lap row, and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
@@ -56,7 +56,7 @@ keywords:
 
 - **Multi-CDN**: jsDelivr, Hugging Face buckets, and StaticDelivr with automatic fallback and SQLite caching
 - **Complete**: Lap times, sectors, telemetry, tire compounds, weather, and race control messages
-- **Historical**: Data from 2018-current
+- **Historical**: Timing and telemetry from 2018-current; Ergast results, lap times and standings from 1950-current
 - **Reliable**: Automatic retry logic with circuit breaker and multi-CDN fallback
 - **Async**: Parallel data fetching for multi-file loads
 - **HTTP/2**: Uses niquests for multiplexed, connection-efficient network requests
