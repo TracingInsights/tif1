@@ -18,6 +18,7 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 - Preserve the original development benchmark with its limitations. It predates
   the `tif1` adapter, has not been rerun through it, and establishes no clear
   accuracy improvement over the baselines.
+
 ## [0.10.0] - 2026-10-28
 
 ### Summary
