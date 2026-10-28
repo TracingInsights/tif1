@@ -124,6 +124,9 @@ Upgrade notes:
   seasons does.
 - `Session.results` is indexed by `DriverNumber` and always has every column
   of the fastf1 contract.
+- Dependencies (Dependabot alerts, `uv.lock`): Pillow 13.0.0, certifi
+  2026.10.23, urllib3 2.8.0, filelock 4.2.4; the rejected `telparse` probe
+  crate under `.agents/perf-lindos` builds against pyo3 0.29.
 
 ### Added — Pyodide (2026-10-16)
 
