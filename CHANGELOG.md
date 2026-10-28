@@ -7,6 +7,18 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Added — Experimental Podium Predictor (2026-10-27)
+
+- Add `examples/podium_predictor`, an optional research example using `tif1`
+  session laps, Jolpica race history, and archived Open-Meteo forecasts.
+- Include chronological evaluation, probability calibration, ordered podium
+  probabilities, offline regression tests, and a development roadmap.
+- Keep the model dependencies separate from the main library. The example
+  requires native Python 3.12 or newer.
+- Preserve the original development benchmark with its limitations. It predates
+  the `tif1` adapter, has not been rerun through it, and establishes no clear
+  accuracy improvement over the baselines.
+
 ## [0.10.0] - 2026-10-28
 
 ### Summary

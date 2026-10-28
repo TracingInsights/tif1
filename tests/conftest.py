@@ -194,7 +194,9 @@ def load_ergast_fixture_payloads() -> dict[str, Any]:
     payloads: dict[str, Any] = {}
     stats_dir = _ERGAST_FIXTURES / "stats"
     for path in stats_dir.rglob("*.json"):
-        payloads[str(path.relative_to(stats_dir))] = json.loads(path.read_text(encoding="utf-8"))
+        payloads[path.relative_to(stats_dir).as_posix()] = json.loads(
+            path.read_text(encoding="utf-8")
+        )
     for fragment, name in _JOLPICA_FIXTURES.items():
         payloads[fragment] = json.loads(
             (_ERGAST_FIXTURES / "jolpica" / name).read_text(encoding="utf-8")
