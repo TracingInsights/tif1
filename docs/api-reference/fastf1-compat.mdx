@@ -456,28 +456,7 @@ print(by_driver["1"][["SessionTime", "DriverAhead", "DistanceToDriverAhead"]].he
 
 ## Complete migration example
 
-This complete example shows how to migrate a fastf1 script to tif1:
-
-**Original fastf1 code:**
-```python fastf1
-import fastf1
-import logging
-
-# Setup
-fastf1.Cache.enable_cache("./cache")
-fastf1.set_log_level(logging.INFO)
-
-# Load session
-session = fastf1.get_session(2024, "Monaco", "Q")
-session.load()
-
-# Get the fastest lap of one driver
-fastest = session.laps.pick_drivers("VER").pick_fastest()
-
-# Get telemetry
-tel = fastest.get_telemetry()
-print(f"Max speed: {tel['Speed'].max()}")
-```
+This complete example shows a fastf1 script migrated to tif1. The fastf1 original is the same script with `fastf1` in place of `tif1`; only the import and the module prefix change.
 
 **Migrated tif1 code (minimal changes):**
 ```python

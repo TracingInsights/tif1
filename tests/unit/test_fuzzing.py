@@ -30,13 +30,13 @@ class TestFuzzing:
         """Test handling of malformed JSON."""
         mock_fetch.side_effect = json.JSONDecodeError("Invalid", "", 0)
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(json.JSONDecodeError):
             session._fetch_json("test.json")
 
     def test_non_dict_response(self):
         """Non-dict JSON responses are rejected by the payload pipeline."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport(
             {"test.json": ["list", "not", "dict"]}
         )
@@ -45,7 +45,7 @@ class TestFuzzing:
 
     def test_null_response(self):
         """Null responses are rejected by the payload pipeline."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport({"test.json": None})
         with pytest.raises(InvalidDataError, match="Expected dict"):
             session._fetch_json("test.json")
@@ -56,7 +56,7 @@ class TestFuzzing:
         """Test handling of empty drivers list."""
         mock_fetch.return_value = {"drivers": []}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         drivers = session.drivers
         assert drivers == []
 
@@ -66,7 +66,7 @@ class TestFuzzing:
         """Test handling of missing drivers key."""
         mock_fetch.return_value = {"data": []}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         drivers = session.drivers
         assert drivers == []
 
@@ -79,7 +79,7 @@ class TestFuzzing:
         async def corrupted(requests, **_kwargs):
             return [{"time": "invalid", "lap": "not_a_number"} for _ in requests]
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with patch("tif1.core.fetch_multiple_async", new=corrupted):
             laps = session.laps
         assert isinstance(laps, pd.DataFrame)
@@ -90,7 +90,7 @@ class TestFuzzing:
         """Test handling of empty telemetry data."""
         mock_fetch.return_value = {"tel": {}}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 1}, session=session)
         telemetry = lap.telemetry
         assert len(telemetry) == 0
@@ -103,7 +103,7 @@ class TestFuzzing:
             "tel": {"time": [0, 1, 2], "speed": [100, 200]}  # Mismatched lengths
         }
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 1}, session=session)
         telemetry = lap.telemetry
         assert len(telemetry) >= 0  # Should handle gracefully

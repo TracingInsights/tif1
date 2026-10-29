@@ -53,7 +53,7 @@ class TestBenchmarks:
                 mock_async.return_value = [mock_lap_data] * 20
 
                 def load_laps():
-                    session = Session(2025, "Test GP", "Race", enable_cache=False)
+                    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
                     return session.laps
 
                 result = benchmark(load_laps)
@@ -74,7 +74,7 @@ class TestBenchmarks:
                 mock_async.return_value = [mock_lap_data] * 20
 
                 def load_laps():
-                    session = Session(2025, "Test GP", "Race", enable_cache=False)
+                    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
                     return session.laps  # Just use sync version for benchmark
 
                 result = benchmark(load_laps)

@@ -14,7 +14,7 @@ class TestConcurrentCacheOperations:
     @pytest.mark.asyncio
     async def test_fetch_telemetry_batch_from_refs_async_uses_batch(self):
         """Test that _fetch_telemetry_batch_from_refs_async uses batch cache ops."""
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Mock cache with async methods
         mock_cache = MagicMock()
@@ -46,7 +46,7 @@ class TestConcurrentCacheOperations:
     @pytest.mark.asyncio
     async def test_fetch_telemetry_batch_from_refs_async_cache_hits(self):
         """Test that cache hits are processed correctly with batch operations."""
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Mock cache with some hits and some misses
         mock_cache = MagicMock()
@@ -86,7 +86,7 @@ class TestConcurrentCacheOperations:
     @pytest.mark.asyncio
     async def test_fetch_telemetry_batch_from_refs_async_handles_cache_errors(self):
         """Test that cache errors are handled gracefully in batch operations."""
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Mock cache that raises errors
         mock_cache = MagicMock()
@@ -117,7 +117,7 @@ class TestConcurrentCacheOperations:
     @pytest.mark.asyncio
     async def test_fetch_telemetry_batch_async_uses_concurrent_cache(self):
         """Test that _fetch_telemetry_batch_async uses the batch cache method."""
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Create mock DataFrame with driver and lap data
         import pandas as pd
@@ -151,7 +151,7 @@ class TestConcurrentCacheOperations:
         config = get_config()
         monkeypatch.setitem(config._config, "ultra_cold_start", False)
 
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Mock the dependencies
         mock_cache = MagicMock()
@@ -187,7 +187,7 @@ class TestConcurrentCacheOperations:
     @pytest.mark.asyncio
     async def test_concurrent_cache_operations_performance(self):
         """Test that batch cache operations are fast."""
-        session = Session(2025, "Test GP", "Race", lib="pandas", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", lib="pandas", enable_cache=True)
 
         # Mock cache with artificial delay
         mock_cache = MagicMock()

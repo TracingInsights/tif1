@@ -151,20 +151,35 @@ class EventNotFoundError(ValueError):
     """
 
 
-class EventNotInSeasonError(EventNotFoundError):
-    """Raised when an event alias names a Grand Prix that is not on that season's calendar.
-
-    ``get_event_by_name(2021, "Suzuka")`` resolves the alias to the Japanese
-    Grand Prix, which was not held in 2021.
-    """
-
-
 class FuzzyMatchError(EventNotFoundError):
     """Raised when no fuzzy event-name match reaches the confidence threshold.
 
     fastf1's name for the failure ``get_event_by_name`` reports as
     :class:`EventNotFoundError`; it stays a ``ValueError`` like its parent.
     """
+
+
+class EventNotInSeasonError(FuzzyMatchError):
+    """Raised when an event alias names a Grand Prix that is not on that season's calendar.
+
+    ``get_event_by_name(2021, "Suzuka")`` resolves the alias to the Japanese
+    Grand Prix, which was not held in 2021. Also a :class:`FuzzyMatchError`:
+    fastf1 reports every name it cannot place in the season that way, so a
+    handler written for fastf1 catches this too.
+    """
+
+
+class ExactEventNotFoundError(EventNotFoundError, KeyError):
+    """Raised when ``exact_match=True`` finds no event with exactly that name.
+
+    Also a ``KeyError``: fastf1's exact search raises ``KeyError`` there, so a
+    handler written for fastf1 keeps catching it, as does one written for
+    :class:`EventNotFoundError` (a ``ValueError``).
+    """
+
+    def __str__(self) -> str:
+        # KeyError's __str__ would quote the message; keep ValueError's.
+        return ValueError.__str__(self)
 
 
 class LapNotFoundError(DataNotFoundError):

@@ -66,7 +66,7 @@ def _parse_driver_and_lap(path: str) -> tuple[str, int]:
 
 def test_get_fastest_lap_tel_ultra_cold_skips_telemetry_cache_lookup(monkeypatch):
     """Ultra-cold mode should skip sync telemetry cache read on critical path."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     session._drivers = [{"driver": "VER", "team": "Red Bull"}]
     session._memo.set_fastest_lap_ref(
         ("VER", 5), source_kind="drivers", source_id=id(session._drivers)
@@ -96,7 +96,7 @@ def test_get_fastest_lap_tel_ultra_cold_skips_telemetry_cache_lookup(monkeypatch
 
 def test_find_fastest_lap_reference_ultra_cold_schedules_backfill(monkeypatch):
     """Ultra-cold laptime scan should trigger background cache backfill."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     drivers = [
         {"driver": "VER", "team": "Red Bull"},
         {"driver": "HAM", "team": "Mercedes"},
@@ -125,7 +125,7 @@ def test_find_fastest_lap_reference_ultra_cold_schedules_backfill(monkeypatch):
 
 def test_get_fastest_lap_tel_auto_cold_start_uses_unvalidated_path(monkeypatch):
     """First default fastest-lap telemetry call should auto-enable cold fast path."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
 
     def _unexpected_fetch_json(_path: str):
         raise AssertionError("validated fetch path should not run during auto cold-start")
@@ -166,7 +166,7 @@ def test_get_fastest_lap_tel_auto_cold_start_uses_unvalidated_path(monkeypatch):
 
 def test_get_fastest_lap_tel_auto_cold_start_memoizes_result(monkeypatch):
     """Auto cold-start path should memoize telemetry to avoid duplicate fetches."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     telemetry_fetch_calls = 0
 
     def _fake_fetch_unvalidated(path: str):
@@ -201,7 +201,7 @@ def test_get_fastest_lap_tel_auto_cold_start_memoizes_result(monkeypatch):
 
 def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkeypatch):
     """First bulk fastest-laps telemetry call should use the ultra-cold critical path."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     fetch_kwargs: list[dict] = []
     cache = _StubCache()
 
@@ -273,7 +273,7 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
 
 def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypatch):
     """Ultra-cold bulk telemetry fetch should backfill telemetry cache asynchronously."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
 
     async def _fake_fetch_multiple_async(requests, **_kwargs):
         results = []
@@ -340,7 +340,7 @@ def test_get_fastest_laps_tels_ultra_cold_schedules_telemetry_backfill(monkeypat
 def test_driver_get_fastest_lap_tel_uses_prefetched_laptime_payload(mock_fetch, monkeypatch):
     """Driver fastest telemetry should reuse prefetched laptime payload without fallback path."""
     mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     driver = Driver(
         session,
         "VER",
@@ -369,7 +369,7 @@ def test_driver_get_fastest_lap_tel_uses_prefetched_laptime_payload(mock_fetch, 
 
 def test_lap_telemetry_reuses_session_memoized_payload(monkeypatch):
     """Lap telemetry should reuse session memoized payload before fetching from network/cache."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     session._remember_telemetry_payload("VER", 19, _build_tel_payload(19)["tel"])
     lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
 

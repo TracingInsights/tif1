@@ -62,8 +62,9 @@ TIF1Error (base exception for all tif1 errors)
 
 ValueError (built-in)
 ├── EventNotFoundError (event name that matches no event of the season)
-│   ├── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
-│   └── FuzzyMatchError (fastf1 name: a fuzzy name search below the score floor)
+│   ├── FuzzyMatchError (fastf1 name: a fuzzy name search below the score floor)
+│   │   └── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
+│   └── ExactEventNotFoundError (exact_match=True miss; also a KeyError, as in fastf1)
 ├── DriverNotFoundError (also a DataNotFoundError, see above)
 └── ValueError itself (unknown session name, invalid round, lap number below 1)
 ```
@@ -114,7 +115,7 @@ except tif1.TIF1Error:
 
 ### `TIF1Error`
 
-The root exception class for tif1 errors. Every `tif1` exception class except `EventNotFoundError` and its subclass `EventNotInSeasonError` (both `ValueError`) inherits from this class. A single except clause on `TIF1Error` catches all of them.
+The root exception class for tif1 errors. Every `tif1` exception class except `EventNotFoundError` and its subclasses (`FuzzyMatchError`, `EventNotInSeasonError`, `ExactEventNotFoundError`, all `ValueError`s) inherits from this class. A single except clause on `TIF1Error` catches all of them.
 
 **Signature:**
 ```python
@@ -230,7 +231,7 @@ The exception has no `message` attribute and no `context` dictionary. Use `str(e
 
 **When Raised:**
 - `get_session()` and `get_event_by_name()` get a name that resembles no event. Event resolution tries the exact name (case-insensitive), then the alias table, then fuzzy matching. A fuzzy match needs a score of at least 70 (rapidfuzz ratio, 0-100). The message is `No event matching '<name>' in <year>`. This case raises the subclass `FuzzyMatchError`.
-- `get_event_by_name(..., exact_match=True)` finds no event with that exact name. The message is `No exact match found for event '<name>' in <year>`.
+- `get_event_by_name(..., exact_match=True)` finds no event with that exact name. It raises the subclass `ExactEventNotFoundError`, which is also a `KeyError` (fastf1 raises `KeyError`). The message is `No exact match found for event '<name>' in <year>`.
 
 A season with no events raises a plain `ValueError` (`No events found for <year>`). A typo such as "Monacco" or "Zandvort" still resolves to the closest event and logs a `Correcting user input` warning.
 
@@ -251,13 +252,13 @@ print(session.event_name)  # Monaco Grand Prix
 
 ### `EventNotInSeasonError`
 
-Raised when an alias names a Grand Prix that is not on the calendar of that season. It is a subclass of `EventNotFoundError`, so an except clause on `EventNotFoundError` also catches it. Import it as `tif1.EventNotInSeasonError`.
+Raised when an alias names a Grand Prix that is not on the calendar of that season. It is a subclass of `FuzzyMatchError` and so of `EventNotFoundError`: an except clause on either class also catches it. Import it as `tif1.EventNotInSeasonError`.
 
 `get_session()` and `get_event_by_name()` raise it, for example for `tif1.get_session(2021, "Suzuka", "Race")`. The message names the event: `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`.
 
 ### `FuzzyMatchError`
 
-The fastf1 name for a failed fuzzy event match. It is a subclass of `EventNotFoundError` and a `ValueError`. Import it as `tif1.FuzzyMatchError`. `get_session()`, `get_event_by_name()`, and `get_sessions()` raise it for a name below the fuzzy score floor (`No event matching '<name>' in <year>`). An `except FuzzyMatchError` clause from fastf1 code and an `except EventNotFoundError` clause both catch it. A miss with `exact_match=True` raises `EventNotFoundError` itself.
+The fastf1 name for a failed fuzzy event match. It is a subclass of `EventNotFoundError` and a `ValueError`. Import it as `tif1.FuzzyMatchError`. `get_session()`, `get_event_by_name()`, and `get_sessions()` raise it for a name below the fuzzy score floor (`No event matching '<name>' in <year>`). An `except FuzzyMatchError` clause from fastf1 code and an `except EventNotFoundError` clause both catch it. A miss with `exact_match=True` raises `ExactEventNotFoundError` instead, an `EventNotFoundError` and a `KeyError`.
 
 ---
 

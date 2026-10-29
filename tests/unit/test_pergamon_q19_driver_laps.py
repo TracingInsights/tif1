@@ -165,7 +165,7 @@ def test_fast_build_is_exact_or_defers_on_randomized_payloads():
 
 
 def _offline_session(payload: dict) -> Session:
-    session = Session(2025, "Test GP", "Race", enable_cache=False)
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
     session._drivers = [{"driver": "LEC", "dn": "16", "team": "Ferrari"}]
     session._refresh_driver_indices()
     session._remember_local_payload("LEC/laptimes.json", payload)

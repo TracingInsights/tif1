@@ -257,7 +257,10 @@ def telemetry_ref_from_path(path: str) -> tuple[str, int] | None:
 # a substring of "Spain", "USA" of "Lusail", and "Interlagos" or "Suzuka"
 # resemble no event string at all. A name is listed only when it identifies
 # one event; countries that hosted several (Germany: German and Eifel GP)
-# are left to fuzzy matching.
+# are left to fuzzy matching. Event names that fuzzy matching sends to a
+# neighbour in the seasons they were not held are listed too: "Australian"
+# scores the Austrian GP in 2020/21 and "Styrian" the Austrian GP outside
+# 2020/21; as aliases they raise ``EventNotInSeasonError`` there instead.
 EVENT_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     **dict.fromkeys(
         ("spa", "spa francorchamps", "francorchamps", "belgium"), ("Belgian Grand Prix",)
@@ -282,13 +285,16 @@ EVENT_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     **dict.fromkeys(("baku", "azerbaijan"), ("Azerbaijan Grand Prix",)),
     **dict.fromkeys(("jeddah", "saudi", "saudi arabia"), ("Saudi Arabian Grand Prix",)),
     **dict.fromkeys(("suzuka", "japan"), ("Japanese Grand Prix",)),
-    **dict.fromkeys(("melbourne", "albert park", "australia"), ("Australian Grand Prix",)),
+    **dict.fromkeys(
+        ("melbourne", "albert park", "australia", "australian"), ("Australian Grand Prix",)
+    ),
     **dict.fromkeys(("shanghai", "china"), ("Chinese Grand Prix",)),
     **dict.fromkeys(("montreal", "canada"), ("Canadian Grand Prix",)),
     **dict.fromkeys(("spielberg", "red bull ring", "austria"), ("Austrian Grand Prix",)),
+    **dict.fromkeys(("styria", "styrian"), ("Styrian Grand Prix",)),
     **dict.fromkeys(("zandvoort", "netherlands", "holland"), ("Dutch Grand Prix",)),
     **dict.fromkeys(
-        ("austin", "cota", "usa", "us", "united states", "america"),
+        ("austin", "austin texas", "cota", "usa", "us", "united states", "america"),
         ("United States Grand Prix",),
     ),
     **dict.fromkeys(("miami", "miami gardens"), ("Miami Grand Prix",)),

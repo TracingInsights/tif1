@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
+import numbers
 import re
 import threading
 import time
@@ -12,9 +12,11 @@ import unicodedata
 import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
+from functools import cache, lru_cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any, cast
+
+import orjson
 
 from .cache import get_cache
 from .config import get_config
@@ -23,8 +25,9 @@ from .core_utils.runtime import THREADS_AVAILABLE
 from .exceptions import (
     CacheError,
     DataNotFoundError,
-    EventNotFoundError,
+    EventNotFoundError,  # noqa: F401 - re-exported as tif1.events.EventNotFoundError
     EventNotInSeasonError,
+    ExactEventNotFoundError,
     FuzzyMatchError,
     InvalidDataError,
     NetworkError,
@@ -33,6 +36,8 @@ from .payload_loader import get_url_loader
 from .schedule_schema import validate_schedule_payload
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .event_frames import Event, EventSchedule
     from .types import ScheduleBackend
 
@@ -204,20 +209,47 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
     }
 
 
+@cache
+def _load_vendored_f1schedule_year(year: int) -> dict[str, Any] | None:
+    """One packaged f1schedule season, converted and validated (None when not packaged).
+
+    Only the requested season is parsed: resolving a 2025 event never reads
+    the other vendored files.
+    """
+    name = f"schedule_{year}.json"
+    try:
+        raw_year = orjson.loads(
+            files("tif1").joinpath(f"data/schedules/f1schedule/{name}").read_bytes()
+        )
+    except OSError:
+        return None
+    if not isinstance(raw_year, dict):
+        raise InvalidDataError(reason=f"Invalid schedule payload file: {name}")
+    converted = _convert_f1schedule_year(raw_year, year)
+    validate_schedule_payload({"schema_version": 1, "years": {str(year): converted}})
+    return converted
+
+
 def _load_vendored_f1schedule_years() -> dict[str, Any]:
+    """Every packaged f1schedule season, keyed by year string."""
     schedules_dir = files("tif1").joinpath("data/schedules/f1schedule")
     years: dict[str, Any] = {}
     for item in schedules_dir.iterdir():
         match = _F1SCHEDULE_YEAR_PATTERN.match(item.name)
         if match is None:
             continue
-        year_str = match.group(1)
-        with item.open("r", encoding="utf-8") as handle:
-            raw_year = json.load(handle)
-        if not isinstance(raw_year, dict):
-            raise InvalidDataError(reason=f"Invalid schedule payload file: {item.name}")
-        years[year_str] = _convert_f1schedule_year(raw_year, int(year_str))
+        converted = _load_vendored_f1schedule_year(int(match.group(1)))
+        if converted is not None:
+            years[match.group(1)] = converted
     return years
+
+
+# Distinct event-name queries remembered per season record before the memo
+# starts over (bounds memory for services that resolve arbitrary user input).
+_RESOLUTION_MEMO_MAX = 1024
+
+# A deferred log call: (level, format string, arguments).
+_LogLine = tuple[int, str, tuple[Any, ...]]
 
 
 @dataclass(slots=True)
@@ -228,12 +260,19 @@ class _YearSchedule:
     consulted again; ``math.inf`` for seasons served from the vendored files.
     ``sessions`` memoizes resolved session lists per queried event name (the
     fuzzy event resolution is the expensive part of ``get_sessions``).
+    ``resolutions`` memoizes event-name resolution per ``(query, exact_match)``:
+    the matched event (None when nothing matched) and the log line the first
+    resolution emitted, replayed on every hit. Both memos live on the record,
+    so a schedule refresh that changes the calendar (a new record) drops them.
     """
 
     payload: dict[str, Any]
     events: tuple[str, ...]
     expires_at: float
     sessions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    resolutions: dict[tuple[str, bool], tuple[str | None, _LogLine | None]] = field(
+        default_factory=dict
+    )
     # Refresh generation the record was built from; a background refresh
     # that lands bumps the season's generation so the memo re-reads the row.
     generation: int = 0
@@ -383,13 +422,13 @@ def _load_live_year_payload(year: int, now: float) -> tuple[dict[str, Any], floa
         if fetched is not None:
             return fetched, now + ttl
 
-    vendored = _load_schedule_payload()["years"].get(str(year), {})
+    vendored = _load_vendored_f1schedule_year(year) or {}
     return vendored, now + _F1SCHEDULE_RETRY_AFTER_SECONDS
 
 
 def _build_year_schedule(year: int, now: float) -> _YearSchedule:
     if not _is_current_or_future_season(year):
-        vendored = _load_schedule_payload()["years"].get(str(year))
+        vendored = _load_vendored_f1schedule_year(year)
         if isinstance(vendored, dict) and vendored:
             return _YearSchedule(vendored, tuple(vendored.get("events", ())), float("inf"))
     with _year_schedules_lock:
@@ -521,8 +560,7 @@ def _load_vendored_ergast_year(year: int) -> list[dict[str, Any]] | None:
     path = files("tif1").joinpath(f"data/schedules/ergast/schedule_{year}.json")
     races: list[dict[str, Any]] | None = None
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = orjson.loads(path.read_bytes())
         candidate = payload.get("races") if isinstance(payload, dict) else None
         if isinstance(candidate, list):
             races = candidate
@@ -733,6 +771,11 @@ def _clear_schedule_memo() -> None:
 
 @lru_cache(maxsize=1)
 def _load_schedule_payload() -> dict[str, Any]:
+    """Every packaged f1schedule season in the validated schema-v1 envelope.
+
+    Not on the lookup path: schedule lookups load only the season they need
+    (:func:`_load_vendored_f1schedule_year`).
+    """
     vendored_years = _load_vendored_f1schedule_years()
     payload = {"schema_version": 1, "years": vendored_years}
     return validate_schedule_payload(payload)
@@ -834,7 +877,7 @@ def _create_event(
 # every event score 67 or less ("Moon GP", "Paris", "Invalid GP" 57).
 _FUZZY_MIN_SCORE = 70.0
 
-_ALIAS_NOISE_RE = re.compile(r"\b(?:grand prix|gp|formula 1|f1)\b")
+_ALIAS_NOISE_RE = re.compile(r"\b(?:grand prix|gp|formula ?1|f1)\b")
 
 
 def _event_alias_key(name: str) -> str:
@@ -856,6 +899,12 @@ def _event_alias_targets(name: str) -> tuple[str, ...]:
     return EVENT_NAME_ALIASES.get(_event_alias_key(name), ())
 
 
+def _record_metadata(record: _YearSchedule) -> dict[str, Any]:
+    """Per-event metadata of a season record (empty if none)."""
+    metadata = record.payload.get("metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
 def _find_event_by_name(
     year: int,
     event_names: list[str],
@@ -863,40 +912,95 @@ def _find_event_by_name(
     exact_match: bool = False,
     backend: ScheduleBackend | None = None,
 ) -> Event | None:
-    matched = _match_event_name(year, event_names, name, exact_match=exact_match)
+    matched = _match_event_name(year, event_names, name, exact_match=exact_match, backend=backend)
     return None if matched is None else _get_event_for_year(year, matched, backend)
 
 
 def _match_event_name(
-    year: int, event_names: list[str], name: str, exact_match: bool = False
+    year: int,
+    event_names: list[str],
+    name: str,
+    exact_match: bool = False,
+    backend: ScheduleBackend | None = None,
 ) -> str | None:
     """Name of the event ``name`` refers to among ``event_names`` (``None`` if none).
 
     Resolution only: no :class:`Event` (a pandas Series) is built, so session
     lookups by alias or near-miss name stay pandas-free.
     """
-    year_payload = _resolve_year_payload(year)
-    metadata_dict = year_payload.get("metadata", {})
+    matched, log_line = _match_event_name_unlogged(
+        year,
+        event_names,
+        name,
+        exact_match,
+        lambda: _record_metadata(_get_year_schedule(year, backend)),
+    )
+    if log_line is not None:
+        logger.log(log_line[0], log_line[1], *log_line[2])
+    return matched
 
+
+def _remove_common_words(text: str, year: int) -> str:
+    """``text`` casefolded, without fastf1's common words (its list, in its order)."""
+    text = text.casefold()
+    for word in ("formula 1", "formula1", str(year), "grand prix", "gp"):
+        text = text.replace(word, "")
+    return text.strip()
+
+
+def _matcher_strings(event_name: str, metadata: dict[str, Any], year: int) -> list[str]:
+    strings = []
+    if metadata.get("Location"):
+        strings.append(metadata["Location"].casefold())
+    if metadata.get("Country"):
+        strings.append(metadata["Country"].casefold())
+    # The schedule metadata carries no EventName key, so the event's own
+    # name ("british") was never a feature: "Britain" then scored
+    # "Bahrain" highest. Always match against the name itself.
+    strings.append(_remove_common_words(str(metadata.get("EventName") or event_name), year))
+    if metadata.get("OfficialEventName"):
+        strings.append(_remove_common_words(metadata["OfficialEventName"], year))
+    return strings
+
+
+def _is_testing_metadata(metadata: Any) -> bool:
+    return isinstance(metadata, dict) and metadata.get("EventFormat") == "testing"
+
+
+def _match_event_name_unlogged(
+    year: int,
+    event_names: list[str],
+    name: str,
+    exact_match: bool,
+    metadata_of: Callable[[], dict[str, Any]],
+) -> tuple[str | None, _LogLine | None]:
+    """:func:`_match_event_name`, returning its log line instead of emitting it.
+
+    ``metadata_of`` returns the season's per-event metadata; it is only called
+    when the name needs fuzzy matching.
+    """
     if exact_match:
         query = name.lower()
         for event_name in event_names:
             if event_name.lower() == query:
-                return event_name
-        return None
+                return event_name, None
+        return None, None
 
     if not event_names:
-        return None
+        return None, None
 
     # Exact (case-insensitive) names are the common call pattern; returning
     # them directly skips the fuzzy machinery *and* its rapidfuzz import
     # (~14 ms on the first resolve of a process). The fuzzy path returns the
     # same event for exact names (ratio 100 -> exact=True, no warning), so
     # behavior is identical; near-miss names still take the fuzzy route.
+    # Testing events are reachable here only: fastf1 never matches them by
+    # name, and as fuzzy candidates they captured race queries ("Barcelone"
+    # in 2020 hit Pre-Season Test 1).
     folded = name.casefold()
     for event_name in event_names:
         if event_name.casefold() == folded:
-            return event_name
+            return event_name, None
 
     # Circuit/city/country aliases ("Spa", "Interlagos", "USA") resolve
     # directly: fuzzy matching sends several of them to the wrong race. An
@@ -906,62 +1010,75 @@ def _match_event_name(
     if alias_targets:
         for target in alias_targets:
             if target in event_names:
-                return target
-        logger.info(
-            "'%s' refers to the %s, which is not on the %s calendar", name, alias_targets[0], year
+                return target, None
+        return None, (
+            logging.INFO,
+            "'%s' refers to the %s, which is not on the %s calendar",
+            (name, alias_targets[0], year),
         )
-        return None
+
+    metadata_dict = metadata_of()
+    candidates = [
+        event_name
+        for event_name in event_names
+        if not _is_testing_metadata(metadata_dict.get(event_name))
+    ]
+    if not candidates:
+        return None, None
 
     from .fuzzy import _fuzzy_match
 
-    def _remove_common_words(event_name: str) -> str:
-        common_words = ["formula 1", str(year), "grand prix", "gp"]
-        event_name = event_name.casefold()
-        for word in common_words:
-            event_name = event_name.replace(word, "")
-        return event_name.strip()
-
-    def _matcher_strings(event_name: str, metadata: dict[str, Any]) -> list[str]:
-        strings = []
-        if metadata.get("Location"):
-            strings.append(metadata["Location"].casefold())
-        if metadata.get("Country"):
-            strings.append(metadata["Country"].casefold())
-        # The schedule metadata carries no EventName key, so the event's own
-        # name ("british") was never a feature: "Britain" then scored
-        # "Bahrain" highest. Always match against the name itself.
-        strings.append(_remove_common_words(str(metadata.get("EventName") or event_name)))
-        if metadata.get("OfficialEventName"):
-            strings.append(_remove_common_words(metadata["OfficialEventName"]))
-        return strings
-
-    user_input = name
-    name = _remove_common_words(name)
     reference = [
-        _matcher_strings(
-            event_name,
-            metadata_dict.get(event_name) or {} if isinstance(metadata_dict, dict) else {},
-        )
-        for event_name in event_names
+        _matcher_strings(event_name, metadata_dict.get(event_name) or {}, year)
+        for event_name in candidates
     ]
-    index, exact, score = _fuzzy_match(name, reference)
-    matched_event_name = event_names[index]
+    index, exact, score = _fuzzy_match(_remove_common_words(name, year), reference)
+    matched_event_name = candidates[index]
 
     if score < _FUZZY_MIN_SCORE:
         # Resembles no event: loading the least-bad match would be a wrong race.
-        logger.info(
+        return None, (
+            logging.INFO,
             "'%s' matches no %s event (closest: '%s', score %.0f)",
-            user_input,
-            year,
-            matched_event_name,
-            score,
+            (name, year, matched_event_name, score),
         )
-        return None
 
     if not exact:
-        logger.warning(f"Correcting user input '{user_input}' to '{matched_event_name}'")
+        return matched_event_name, (
+            logging.WARNING,
+            "Correcting user input '%s' to '%s'",
+            (name, matched_event_name),
+        )
+    return matched_event_name, None
 
-    return matched_event_name
+
+def _resolve_event_round(
+    year: int, round_number: numbers.Real, backend: ScheduleBackend | None = None
+) -> str:
+    """Season event name of championship round ``round_number`` (pandas-free).
+
+    Accepts any real number as fastf1's ``get_event_by_round`` does (numpy
+    integers, whole floats); raises like :meth:`EventSchedule.get_event_by_round`.
+    """
+    if round_number == 0:
+        raise ValueError("Cannot get testing event by round number!")
+    record = _get_year_schedule(year, backend)
+    metadata = _record_metadata(record)
+    matches: list[str] = []
+    for event_name in record.events:
+        value = (metadata.get(event_name) or {}).get("RoundNumber")
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            if float(value) == round_number:
+                matches.append(event_name)
+        except (TypeError, ValueError):
+            continue
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError(f"Invalid round: {round_number}")
+    raise ValueError("Something went wrong, cannot determine a unique event.")
 
 
 def get_event(
@@ -987,7 +1104,8 @@ def get_event(
     backend = _normalize_backend(backend, force_ergast)
     exact_match = exact_match or strict_search
     schedule = get_event_schedule(year, backend=backend)
-    if isinstance(gp, int):
+    if not isinstance(gp, str):
+        # Any non-string is a round number, as in fastf1 (numpy ints, 8.0).
         return schedule.get_event_by_round(gp)
 
     event = schedule.get_event_by_name(gp, strict_search=exact_match)
@@ -1036,19 +1154,36 @@ def get_event_by_name(
 def _resolve_event_name(
     year: int, name: str, exact_match: bool = False, backend: ScheduleBackend | None = None
 ) -> str:
-    """Season event name ``name`` resolves to; raises like :func:`get_event_by_name`."""
-    events = list(_get_events_cached(year, backend))
-    event = _match_event_name(year, events, name, exact_match=exact_match)
+    """Season event name ``name`` resolves to; raises like :func:`get_event_by_name`.
+
+    Memoized per season record and ``(name, exact_match)``; the record is
+    per schedule backend and is replaced when a refresh changes the calendar,
+    so a memoized answer never outlives the schedule it was resolved against.
+    """
+    record = _get_year_schedule(year, backend)
+    key = (name, exact_match)
+    resolution = record.resolutions.get(key)
+    if resolution is None:
+        resolution = _match_event_name_unlogged(
+            year, list(record.events), name, exact_match, lambda: _record_metadata(record)
+        )
+        if len(record.resolutions) >= _RESOLUTION_MEMO_MAX:
+            record.resolutions.clear()
+        record.resolutions[key] = resolution
+    event, log_line = resolution
+    if log_line is not None:
+        logger.log(log_line[0], log_line[1], *log_line[2])
     if event is None:
         alias_targets = () if exact_match else _event_alias_targets(name)
         if alias_targets:
             raise EventNotInSeasonError(
                 f"'{name}' refers to the {alias_targets[0]}, which is not on the {year} calendar"
             )
-        if not events:
+        if not record.events:
             raise ValueError(f"No events found for {year}")
         if exact_match:
-            raise EventNotFoundError(f"No exact match found for event '{name}' in {year}")
+            # A KeyError too, as fastf1's exact search raises.
+            raise ExactEventNotFoundError(f"No exact match found for event '{name}' in {year}")
         # fastf1's name for a fuzzy search below the score floor; an
         # EventNotFoundError (and ValueError), so existing handlers still catch it.
         raise FuzzyMatchError(f"No event matching '{name}' in {year}")

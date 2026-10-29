@@ -403,8 +403,12 @@ class TestBackendLapCacheIsolation:
 
         clear_lap_cache()
         try:
-            pandas_session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
-            polars_session = Session(2025, "Test GP", "Race", enable_cache=True, lib="polars")
+            pandas_session = Session(
+                2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas"
+            )
+            polars_session = Session(
+                2025, "Pre-Season Testing", "Race", enable_cache=True, lib="polars"
+            )
 
             cache_key = f"{pandas_session.year}_{pandas_session.gp}_{pandas_session.session}_laps"
             pandas_laps = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1], "LapTime": [90.1]})
@@ -427,7 +431,7 @@ class TestBackendLapCacheIsolation:
 
         clear_lap_cache()
         try:
-            session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+            session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
             cache_key = f"{session.year}_{session.gp}_{session.session}_laps"
             cached_laps = pd.DataFrame({"Driver": ["CACHED"], "LapNumber": [1], "LapTime": [90.1]})
             fetched_laps = pd.DataFrame({"Driver": ["LIVE"], "LapNumber": [2], "LapTime": [91.2]})
@@ -451,88 +455,88 @@ class TestSessionInternalMethods:
     """Test Session internal methods."""
 
     def test_remember_and_get_local_payload(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("drivers.json", {"drivers": []})
         assert session._get_local_payload("drivers.json") == {"drivers": []}
 
     def test_remember_and_get_local_payload_race_control(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("rcm.json", {"time": [10.0]})
         assert session._get_local_payload("rcm.json") == {"time": [10.0]}
 
     def test_remember_and_get_local_payload_weather(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("weather.json", {"wT": [10.0]})
         assert session._get_local_payload("weather.json") == {"wT": [10.0]}
 
     def test_remember_local_payload_ignores_non_dict(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("drivers.json", [1, 2, 3])
         assert session._get_local_payload("drivers.json") is None
 
     def test_remember_local_payload_ignores_unknown_path(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("unknown.json", {"data": 1})
         assert session._get_local_payload("unknown.json") is None
 
     def test_remember_and_get_telemetry_payload(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         tel = {"speed": [100, 200]}
         session._remember_telemetry_payload("VER", 1, tel)
         assert session._get_telemetry_payload("VER", 1) == tel
 
     def test_get_telemetry_payload_miss(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._get_telemetry_payload("VER", 1) is None
 
     def test_remember_telemetry_ignores_empty(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_telemetry_payload("VER", 1, {})
         assert session._get_telemetry_payload("VER", 1) is None
 
     def test_resolve_ultra_cold_mode_explicit_true(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._resolve_ultra_cold_mode(True) is True
 
     def test_resolve_ultra_cold_mode_explicit_false(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._resolve_ultra_cold_mode(False) is False
 
     def test_is_fastest_lap_tel_cold_start(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._is_fastest_lap_tel_cold_start() is True
 
     def test_is_fastest_lap_tel_cold_start_not_cold(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._laps = pd.DataFrame({"LapNumber": [1]})
         assert session._is_fastest_lap_tel_cold_start() is False
 
     def test_should_backfill_ultra_cold_cache_disabled(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._should_backfill_ultra_cold_cache(True) is False
 
     def test_should_backfill_not_ultra_cold(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         assert session._should_backfill_ultra_cold_cache(False) is False
 
     def test_mark_session_cache_populated(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         session._mark_session_cache_populated()
         assert session._memo.has_session_data is True
 
     def test_mark_session_cache_not_populated_when_disabled(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._mark_session_cache_populated()
         assert session._memo.has_session_data is None
 
     def test_build_driver_laptime_requests_empty_drivers(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = []
         result = session._build_driver_laptime_requests()
         assert result == []
 
     def test_build_driver_laptime_requests_with_filter(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [
             {"driver": "VER", "team": "Red Bull"},
             {"driver": "HAM", "team": "Mercedes"},
@@ -542,7 +546,7 @@ class TestSessionInternalMethods:
         assert result[0][0]["driver"] == "VER"
 
     def test_build_driver_laptime_requests_skips_invalid(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [
             {"driver": "VER", "team": "Red Bull"},
             "invalid",
@@ -553,26 +557,26 @@ class TestSessionInternalMethods:
         assert len(result) == 1
 
     def test_extract_fastest_lap_candidate_valid(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap_data = {"lap": [1, 2, 3], "time": [91.0, 89.5, 90.0]}
         result = session._extract_fastest_lap_candidate("VER", lap_data)
         assert result == ("VER", 2, 89.5)
 
     def test_extract_fastest_lap_candidate_none_data(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._extract_fastest_lap_candidate("VER", None) is None
 
     def test_extract_fastest_lap_candidate_no_lap_key(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._extract_fastest_lap_candidate("VER", {"data": "other"}) is None
 
     def test_extract_fastest_lap_candidate_all_invalid(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap_data = {"lap": ["a", "b"], "time": ["x", "y"]}
         assert session._extract_fastest_lap_candidate("VER", lap_data) is None
 
     def test_extract_fastest_lap_row_valid(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver_info = {"driver": "VER", "team": "Red Bull"}
         lap_data = {
             "lap": [1, 2],
@@ -587,46 +591,46 @@ class TestSessionInternalMethods:
         assert result["time"] == 89.5
 
     def test_extract_fastest_lap_row_no_driver_code(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver_info = {"team": "Red Bull"}
         lap_data = {"lap": [1], "time": [90.0]}
         assert session._extract_fastest_lap_row(driver_info, lap_data) is None
 
     def test_extract_fastest_lap_row_non_dict(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._extract_fastest_lap_row({"driver": "VER"}, "not a dict") is None
 
     def test_session_cache_available_disabled(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._session_cache_available() is False
 
     def test_refresh_driver_indices_none_drivers(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = None
         session._refresh_driver_indices()
         assert session._driver_codes == set()
 
     def test_has_driver_code_with_loaded_drivers(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         assert session._has_driver_code("VER") is True
         assert session._has_driver_code("HAM") is False
 
     def test_get_driver_info_with_loaded_drivers(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         info = session._get_driver_info("VER")
         assert info["team"] == "Red Bull"
 
     def test_get_driver_info_missing(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         info = session._get_driver_info("HAM")
         assert info["driver"] == "HAM"
         assert info["team"] == ""
 
     def test_get_from_cache_disabled(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session._get_from_cache("key") is None
 
 
@@ -634,7 +638,7 @@ class TestSessionGetFastestLapsWithDrivers:
     """Test get_fastest_laps with driver filter on preloaded laps."""
 
     def test_filters_by_driver(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM", "VER", "HAM"],
@@ -649,7 +653,7 @@ class TestSessionGetFastestLapsWithDrivers:
         assert fastest.iloc[0]["Driver"] == "VER"
 
     def test_empty_after_driver_filter(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER"],
@@ -661,12 +665,12 @@ class TestSessionGetFastestLapsWithDrivers:
         assert len(fastest) == 0
 
     def test_invalid_drivers_param_raises(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(TypeError):
             session.get_fastest_laps(drivers="VER")  # type: ignore[ty:invalid-argument-type]
 
     def test_empty_drivers_list_raises(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(ValueError, match="drivers"):
             session.get_fastest_laps(drivers=[])
 
@@ -675,7 +679,7 @@ class TestDriverGetFastestLapTel:
     """Test Driver.get_fastest_lap_tel."""
 
     def test_uses_raw_payload(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         driver = Driver(session, "VER")
         driver._prefetched_lap_data = {"lap": [1, 2], "time": [91.0, 89.5]}
@@ -694,7 +698,7 @@ class TestDriverGetFastestLap:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_empty_laps(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = pd.DataFrame()
         result = driver.get_fastest_lap()
@@ -705,7 +709,7 @@ class TestDriverGetFastestLap:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_all_invalid_laps(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = pd.DataFrame({"LapTime": ["None", "None"], "LapNumber": [1, 2]})
         result = driver.get_fastest_lap()
@@ -804,7 +808,7 @@ class TestSessionCacheProbe:
 
         monkeypatch.setattr(cache, "has_session_data", failing_has_session_data)
 
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         # Should fall back to True
         assert session._session_cache_available() is True
 
@@ -815,7 +819,7 @@ class TestScheduleBackgroundCacheFill:
     def test_background_cache_fill_with_json_payloads(self):
         import time
 
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         json_payloads = [("drivers.json", {"drivers": []})]
 
         session._schedule_background_cache_fill(json_payloads=json_payloads)
@@ -824,7 +828,7 @@ class TestScheduleBackgroundCacheFill:
     def test_background_cache_fill_with_telemetry(self):
         import time
 
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         telemetry_payloads = [("VER", 1, {"speed": [100, 200]})]
 
         session._schedule_background_cache_fill(telemetry_payloads=telemetry_payloads)
@@ -833,7 +837,7 @@ class TestScheduleBackgroundCacheFill:
     def test_background_cache_fill_with_non_dict_payload(self):
         import time
 
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         json_payloads = [("drivers.json", [1, 2, 3])]  # Non-dict
 
         session._schedule_background_cache_fill(json_payloads=json_payloads)  # type: ignore[ty:invalid-argument-type]
@@ -851,7 +855,7 @@ class TestScheduleBackgroundCacheFill:
 
         monkeypatch.setattr(cache, "set", failing_set)
 
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         json_payloads = [("drivers.json", {"drivers": []})]
 
         # Should not raise, just log
@@ -863,7 +867,7 @@ class TestFetchJsonUnvalidated:
     """Test _fetch_json_unvalidated."""
 
     def test_returns_dict_from_cdn_fast(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         def fake_fetch(path):
             return {"data": "value"}
@@ -873,7 +877,7 @@ class TestFetchJsonUnvalidated:
         assert result == {"data": "value"}
 
     def test_handles_response_object_with_json(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         class FakeResponse:
             status_code = 200
@@ -892,7 +896,7 @@ class TestFetchJsonUnvalidated:
         assert result == {"data": "value"}
 
     def test_handles_404_response(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         class FakeResponse:
             status_code = 404
@@ -912,7 +916,7 @@ class TestFetchJsonUnvalidated:
             session._fetch_json_unvalidated("test.json")
 
     def test_handles_non_dict_json_response(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         class FakeResponse:
             status_code = 200
@@ -932,7 +936,7 @@ class TestFetchJsonUnvalidated:
             session._fetch_json_unvalidated("test.json")
 
     def test_handles_non_dict_non_response_result(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         def fake_fetch(path):
             return "not a dict"
@@ -947,21 +951,21 @@ class TestFetchFromCdnFast:
     """Test _fetch_from_cdn_fast through the payload loader HTTP seam."""
 
     def test_successful_fetch(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport({"test.json": {"data": "value"}})
 
         result = session._fetch_from_cdn_fast("test.json")
         assert result == {"data": "value"}
 
     def test_404_raises_data_not_found(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport()
 
         with pytest.raises(DataNotFoundError):
             session._fetch_from_cdn_fast("test.json")
 
     def test_non_dict_response_raises_invalid_data(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport(
             {"test.json": InvalidDataError(reason="Expected dict, got list")}
         )
@@ -974,21 +978,21 @@ class TestFetchFromCdn:
     """Test _fetch_from_cdn (with retry logic) through the payload loader HTTP seam."""
 
     def test_successful_fetch_with_retry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport({"test.json": {"data": "value"}})
 
         result = session._fetch_from_cdn("test.json")
         assert result == {"data": "value"}
 
     def test_404_raises_data_not_found_with_retry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport()
 
         with pytest.raises(DataNotFoundError):
             session._fetch_from_cdn("test.json")
 
     def test_non_dict_response_raises_invalid_data_with_retry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._payload_loader.transport = InMemoryTransport(
             {"test.json": InvalidDataError(reason="Expected dict, got list")}
         )
@@ -1001,19 +1005,19 @@ class TestExtractFastestRefFromFastestLaps:
     """Test _extract_fastest_ref_from_fastest_laps."""
 
     def test_empty_dataframe(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         fastest_laps = pd.DataFrame()
         result = session._extract_fastest_ref_from_fastest_laps(fastest_laps)
         assert result is None
 
     def test_missing_columns(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         fastest_laps = pd.DataFrame({"Driver": ["VER"]})
         result = session._extract_fastest_ref_from_fastest_laps(fastest_laps)
         assert result is None
 
     def test_valid_fastest_lap(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         fastest_laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM"],
@@ -1029,12 +1033,12 @@ class TestFindTelemetryDfForRef:
     """Test _find_telemetry_df_for_ref."""
 
     def test_empty_tels_list(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session._find_telemetry_df_for_ref([], ("VER", 5))
         assert result is None
 
     def test_matching_ref_found(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         tels = [("VER", 5, {"speed": [100.0]})]
         result = session._find_telemetry_df_for_ref(tels, ("VER", 5))
         assert isinstance(result, pd.DataFrame)
@@ -1042,7 +1046,7 @@ class TestFindTelemetryDfForRef:
         assert int(result["LapNumber"].iloc[0]) == 5
 
     def test_no_matching_ref(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         tels = [("HAM", 3, {"speed": [100.0]})]
         result = session._find_telemetry_df_for_ref(tels, ("VER", 5))
         assert result is None
@@ -1052,12 +1056,12 @@ class TestHydrateFastestLapTelFromBatch:
     """Test _hydrate_fastest_lap_tel_from_batch."""
 
     def test_no_fastest_ref(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._hydrate_fastest_lap_tel_from_batch([], None)
         # Should not raise, just return early
 
     def test_tel_found_in_batch(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         tels = [("VER", 5, {"speed": [100.0]})]
         session._hydrate_fastest_lap_tel_from_batch(tels, ("VER", 5))
         assert session._fastest_lap_tel_ref == ("VER", 5)
@@ -1066,7 +1070,7 @@ class TestHydrateFastestLapTelFromBatch:
         assert fastest_tel_df["Driver"].iloc[0] == "VER"
 
     def test_tel_not_found_in_batch(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         tels = [("HAM", 3, {"speed": [100.0]})]
         session._hydrate_fastest_lap_tel_from_batch(tels, ("VER", 5))
         # Should not set anything when not found
@@ -1104,7 +1108,7 @@ class TestCoreHighYieldCoverage:
             _ = lazy["XXX"]
 
     def test_coerce_driver_code_paths(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"dn": "1", "driver": "VER"}]
 
         assert session._coerce_driver_code({"driver": " HAM "}) == "HAM"
@@ -1116,7 +1120,7 @@ class TestCoreHighYieldCoverage:
             session._coerce_driver_code(object())
 
     def test_process_fastest_lap_refs_sort_and_backfill(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         scheduled = []
         monkeypatch.setattr(
             session, "_schedule_background_cache_fill", lambda **k: scheduled.append(k)
@@ -1134,7 +1138,7 @@ class TestCoreHighYieldCoverage:
         assert scheduled
 
     def test_fastest_lap_reference_sync_and_async(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._laps = pd.DataFrame({"Driver": ["VER"], "LapNumber": [7], "LapTime": [88.8]})
         first = session._get_fastest_lap_reference()
         second = session._get_fastest_lap_reference()
@@ -1166,7 +1170,7 @@ class TestCoreHighYieldCoverage:
         assert asyncio.run(_run()) == ("VER", 6)
 
     def test_fetch_telemetry_batch_from_refs_sync_and_async(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
         session._remember_telemetry_payload("VER", 1, {"speed": [300.0]})
         remembered = []
@@ -1202,7 +1206,7 @@ class TestCoreHighYieldCoverage:
         assert len(atels) == 2
 
     def test_collect_prefetch_precompute_and_background(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "VER", "HAM", 1],
@@ -1259,7 +1263,7 @@ class TestCoreHighYieldCoverage:
         assert started
 
     def test_fetch_batch_process_results_and_public_fastest_tels(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._drivers = [
             {"driver": "VER", "team": "Red Bull"},
             {"driver": "HAM", "team": "Mercedes"},
@@ -1318,7 +1322,7 @@ class TestCoreHighYieldCoverage:
         assert not async_df.empty
 
     def test_drivers_results_tables_and_aliases(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._drivers = [
             {
                 "driver": "VER",
@@ -1385,7 +1389,7 @@ class TestCoreHighYieldCoverage:
         }
         assert session.name == "Race"
 
-        dirty = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        dirty = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         dirty._drivers = [{"dn": "16"}, "bad-row"]
         assert dirty.drivers == ["16"]
         assert dirty.driver_list == ["16"]
@@ -1400,7 +1404,7 @@ class TestCoreHighYieldCoverage:
         assert pd.isna(session.date)
 
     def test_race_control_weather_and_track_status_branches(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         session._load_session_table = lambda _path, _rename: pd.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": ["2025-06-29T12:20:01.000000000"], "Status": ["GREEN"]}
@@ -1415,7 +1419,9 @@ class TestCoreHighYieldCoverage:
         assert list(status.columns) == ["Time", "Status"]
         assert status.empty
 
-        weather_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        weather_session = Session(
+            2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas"
+        )
         weather_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         weather_session._load_session_table = lambda _path, _rename: pd.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": [12.5], "AirTemp": [24.0]}
@@ -1425,7 +1431,7 @@ class TestCoreHighYieldCoverage:
         assert weather["Time"].dtype.kind == "m"
         assert weather_session.weather_data is weather
 
-        err_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        err_session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         err_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         err_session._load_session_table = lambda path, _rename: (_ for _ in ()).throw(  # type: ignore[ty:invalid-assignment]
             NetworkError(url=path)
@@ -1470,7 +1476,9 @@ class TestCoreHighYieldCoverage:
         self, lap, sector, expected_lap, expected_sector
     ):
         pl = pytest.importorskip("polars")
-        session = Session(2025, "Test GP", "Qualifying", enable_cache=False, lib="polars")
+        session = Session(
+            2025, "Pre-Season Testing", "Qualifying", enable_cache=False, lib="polars"
+        )
         session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
             {
@@ -1516,7 +1524,7 @@ class TestCoreHighYieldCoverage:
             "wWD": [123.7, "None"],
             "wWS": [2.9, "n/a"],
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
         session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         session._resolve_ultra_cold_mode = lambda _value: False  # type: ignore[ty:invalid-assignment]
         session._fetch_json = lambda path: payload  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
@@ -1540,7 +1548,7 @@ class TestCoreHighYieldCoverage:
             "wR": [True, "None"],
             "wWD": [123.7, "None"],
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         session._resolve_ultra_cold_mode = lambda _value: False  # type: ignore[ty:invalid-assignment]
         session._fetch_json = lambda path: payload  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
@@ -1564,7 +1572,7 @@ class TestCoreHighYieldCoverage:
         with a warning, exactly as the pandas branch does for TypeError."""
         pl = pytest.importorskip("polars")
         # String → Boolean is unsupported in polars even with strict=False.
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
         session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": [1.0], "Rainfall": ["yes"]}
@@ -1576,7 +1584,7 @@ class TestCoreHighYieldCoverage:
         assert "Failed to load weather" in caplog.text
 
         # List → Int64 is unsupported too; race control takes the same path.
-        rcm_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        rcm_session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
         rcm_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
         rcm_session._load_session_table = lambda _path, _rename: pl.DataFrame(  # type: ignore[ty:invalid-assignment]
             {"Time": ["2025-06-29T12:20:01"], "Lap": [[1, 2]]}
@@ -1588,7 +1596,7 @@ class TestCoreHighYieldCoverage:
         assert "Failed to load race control messages" in caplog.text
 
     def test_prefetch_driver_lookup_and_laps_branches(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._drivers = None
         session._resolve_ultra_cold_mode = lambda _: False  # type: ignore[ty:invalid-assignment]
         session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
@@ -1620,7 +1628,7 @@ class TestCoreCoverageSecondPass:
     """Second-pass targeted coverage for deep core branches."""
 
     def test_get_fastest_laps_from_raw_sync_and_async(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
 
         drivers = [{"driver": "VER", "team": "Red Bull"}, {"driver": "HAM", "team": "Mercedes"}]
         reqs = [(drivers[0], "VER/laptimes.json"), (drivers[1], "HAM/laptimes.json")]
@@ -1673,7 +1681,7 @@ class TestCoreCoverageSecondPass:
         assert scheduled
 
     def test_fastest_ref_resolution_helpers(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         drivers = [{"driver": "VER"}, {"driver": "HAM"}, {"driver": 1}]
 
         monkeypatch.setattr(
@@ -1727,7 +1735,7 @@ class TestCoreCoverageSecondPass:
 
     def test_laps_property_polars_and_laps_async_branches(self, monkeypatch):
         pl = pytest.importorskip("polars")
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
 
         async def fake_laps_async():
             return pl.DataFrame({"Driver": ["VER"], "LapNumber": [1], "LapTime": [90.0]})
@@ -1736,13 +1744,17 @@ class TestCoreCoverageSecondPass:
         laps = session.laps
         assert laps.height == 1
 
-        empty_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        empty_session = Session(
+            2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas"
+        )
         empty_session._drivers = []
         out = asyncio.run(empty_session.laps_async())
         assert isinstance(out, pd.DataFrame)
         assert out.empty
 
-        no_req_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        no_req_session = Session(
+            2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas"
+        )
         no_req_session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         monkeypatch.setattr(
             no_req_session,
@@ -1754,7 +1766,7 @@ class TestCoreCoverageSecondPass:
         assert no_req_out.empty
 
     def test_get_telemetry_df_for_ref_branches(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._session_cache_available = lambda: True  # type: ignore[ty:invalid-assignment]
         session._should_skip_telemetry_fetch = lambda _driver: False  # type: ignore[ty:invalid-assignment]
         session._prefetch_all_loaded_laps_telemetry = lambda ultra_cold=False: None  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
@@ -1811,7 +1823,7 @@ class TestCoreCoverageSecondPass:
         assert empty_payload.empty
 
     def test_get_fastest_lap_tel_branches(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._resolve_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
         session._session_cache_available = lambda: False  # type: ignore[ty:invalid-assignment]
         session._is_fastest_lap_tel_cold_start = lambda: True  # type: ignore[ty:invalid-assignment]
@@ -1838,7 +1850,7 @@ class TestCoreCoverageSecondPass:
         assert first is second
 
     def test_get_fastest_lap_tel_async_branches(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._resolve_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
         session._session_cache_available = lambda: False  # type: ignore[ty:invalid-assignment]
         session._is_fastest_lap_tel_cold_start = lambda: True  # type: ignore[ty:invalid-assignment]
@@ -1889,7 +1901,7 @@ class TestCoreCoverageSecondPass:
             asyncio.run(session.get_fastest_lap_tel_async(ultra_cold=True))
 
     def test_fetch_all_laps_telemetry_async_paths(self, monkeypatch):
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
         session._resolve_telemetry_ultra_cold_mode = lambda value: bool(value)  # type: ignore[ty:invalid-assignment]
 
         async def empty_laps():

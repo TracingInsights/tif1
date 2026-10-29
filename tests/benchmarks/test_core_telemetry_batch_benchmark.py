@@ -70,7 +70,7 @@ def _legacy_fetch_telemetry_batch(session: Session, fastest_laps: pd.DataFrame, 
 
 def test_fetch_telemetry_batch_semantics_match_legacy(monkeypatch):
     """Optimized telemetry batch prep should match legacy behavior."""
-    session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
     fastest_laps = pd.DataFrame(
         {
             COL_DRIVER: ["VER", "HAM", "LEC", "NOR"],
@@ -106,7 +106,7 @@ class TestCoreTelemetryBatchBenchmarks:
 
     def test_benchmark_fetch_telemetry_batch_legacy(self, benchmark):
         """Benchmark legacy telemetry batch prep."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         fastest_laps = _build_fastest_laps(5000)
         cache = _StubCache()
 
@@ -119,7 +119,7 @@ class TestCoreTelemetryBatchBenchmarks:
 
     def test_benchmark_fetch_telemetry_batch_optimized(self, benchmark, monkeypatch):
         """Benchmark optimized telemetry batch prep."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         fastest_laps = _build_fastest_laps(5000)
         cache = _StubCache()
         monkeypatch.setattr("tif1.core.get_cache", lambda: cache)

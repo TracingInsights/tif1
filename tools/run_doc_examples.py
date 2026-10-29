@@ -25,8 +25,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -120,18 +118,6 @@ def _is_signature(block):
 
 
 blocks = json.loads(sys.stdin.read())  # stdin: Windows caps the command line at 32 K
-# fastf1 (3.9+) signs its live-timing requests with the developer's stored F1TV
-# token, which it looks up under the home directory this run replaced. Point
-# fastf1's token manager back at the real file on pages that run fastf1.
-_fastf1_token = os.environ.get("TIF1_DOCS_FASTF1_TOKEN")
-if _fastf1_token and any(_re.search(r"^\s*(?:import|from)\s+fastf1\b", b, _re.M) for _t, b in blocks):
-    try:
-        from fastf1.internals import f1account as _f1account
-    except ImportError:
-        pass
-    else:
-        if hasattr(_f1account.token_manager, "_token_path"):
-            _f1account.token_manager._token_path = Path(_fastf1_token)
 # Blocks share one namespace in reading order. Tabbed pandas/polars examples
 # (fence titles "Pandas ..." / "Polars ...") are alternatives, not a sequence:
 # each backend continues its own namespace, seeded from the page state the
@@ -208,42 +194,6 @@ def is_network_demo(block: str) -> bool:
     return bool(re.search(r"get_session|\.load\(|laps_async|get_fastest|fetch|Session\(", block))
 
 
-_FASTF1_IMPORT = re.compile(r"^\s*(?:import|from)\s+fastf1\b", re.MULTILINE)
-
-
-def _fastf1_token_path() -> Path | None:
-    """fastf1's stored F1 account token (``platformdirs.user_data_dir("fastf1")``), if any."""
-    try:
-        import platformdirs
-    except ImportError:
-        return None
-    path = Path(platformdirs.user_data_dir("fastf1")) / "f1auth_token.json"
-    return path if path.is_file() else None
-
-
-def _fastf1_sign_in_hint(token: Path | None) -> str | None:
-    """Why fastf1 cannot load data here, when its sign-in is the cause (else ``None``).
-
-    Since 3.9 fastf1 reads timing data from livetiming.formula1.com only with an
-    F1TV subscription token (401 without one); its mirror does not serve these
-    files. A failed load surfaces as ``DataNotLoadedError`` with the cause logged.
-    """
-    renew = (
-        "sign in again in a terminal: uv run python -c "
-        '"from fastf1.internals.f1account import get_token; get_token(force_renew=True)"'
-    )
-    if token is None:
-        return f"fastf1 has no stored F1 account token; {renew}"
-    try:
-        expires_at = float(json.loads(token.read_text(encoding="utf-8"))["expires_at"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return f"fastf1's token file {token.as_posix()} is unreadable; {renew}"
-    if expires_at > time.time():
-        return None
-    expired = datetime.fromtimestamp(expires_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
-    return f"fastf1's F1 account token expired {expired}; {renew}"
-
-
 def run_page(page: Path, timeout: int) -> dict[str, object]:
     blocks = extract_blocks(page)
     if not blocks:
@@ -266,9 +216,6 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
     env["HOME"] = env["USERPROFILE"] = home
     env["TIF1_CACHE_DIR"] = str(_shared_cache_dir())
     env["TIF1_LIB"] = "pandas"
-    token = _fastf1_token_path()
-    if token is not None:
-        env["TIF1_DOCS_FASTF1_TOKEN"] = os.fspath(token)
     # The child's stdout is a pipe: without UTF-8 mode, Windows would encode
     # it with the ANSI code page and a printed emoji would fail the block.
     env["PYTHONUTF8"] = "1"
@@ -309,10 +256,6 @@ def run_page(page: Path, timeout: int) -> dict[str, object]:
             if row["index"] == i and row["status"] == "error":
                 row["error_demo"] = is_error_demo(block)
                 row["network"] = is_network_demo(block)
-                if row["error"].startswith("DataNotLoadedError") and _FASTF1_IMPORT.search(block):
-                    hint = _fastf1_sign_in_hint(token)
-                    if hint:
-                        row["hint"] = hint
     return {"page": page.as_posix(), "blocks": len(blocks), "results": results}
 
 
@@ -369,8 +312,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         for f in failures:
             print(f"    block {f['index']}: {f['error']}", flush=True)
-            if f.get("hint"):
-                print(f"        {f['hint']}", flush=True)
 
     if args.json:
         print(json.dumps(report, indent=2))

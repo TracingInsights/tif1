@@ -1098,14 +1098,19 @@ class Laps(pd.DataFrame):
         return _apply_telemetry_frequency(self.telemetry.add_driver_ahead(), frequency)
 
     def _padded_car_data(self, kwargs: dict[str, Any]) -> "Telemetry | None":
-        """Driver's session-long telemetry sliced to these laps when ``pad`` is asked for.
+        """Driver's session-long telemetry sliced to these laps when ``pad`` or edges are asked for.
 
-        ``get_car_data(pad=..)`` in fastf1 slices ``session.car_data[driver]``;
-        tif1 keeps one frame per lap, so a pad reaching into the neighbouring
-        laps needs the driver's whole timeline. Returns None when no pad is
+        ``get_car_data(pad=.., interpolate_edges=..)`` in fastf1 slices
+        ``session.car_data[driver]``; tif1 keeps one frame per lap, so a pad
+        reaching into the neighbouring laps, or an interpolated edge sample,
+        needs the driver's whole timeline. Returns None when neither is
         requested (the per-lap fast path answers) or the session is unknown.
         """
-        if not kwargs or not kwargs.get("pad") or self.session is None:
+        if (
+            not kwargs
+            or not (kwargs.get("pad") or kwargs.get("interpolate_edges"))
+            or self.session is None
+        ):
             return None
         drivers = self["Driver"].dropna().unique()
         if len(drivers) != 1:
@@ -2456,7 +2461,12 @@ class Telemetry(pd.DataFrame):
         sample is already there): continuous channels interpolated linearly
         between the neighbouring samples, the clocks advanced to the edge,
         discrete channels and text the value in force, ``Source``
-        ``"interpolation"``. The rest of the frame is unchanged.
+        ``"interpolation"``. The rest of the frame is unchanged. fastf1 fits a
+        quadratic spline through ``X``/``Y``/``Z``/``Distance`` instead: on real
+        data that differs by ~0.1 m in X/Y (p95 ~1 m) and ~1 cm in Distance,
+        below the decimetre noise of the position data; the spline overshoots
+        across gaps and glitches and would ring on the per-lap ``Distance``
+        reset of a session-long frame, so tif1 keeps the linear value.
         """
         time_ref_col = "SessionTime" if "SessionTime" in self.columns else "Time"
         if time_ref_col not in self.columns:

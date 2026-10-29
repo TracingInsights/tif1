@@ -366,7 +366,7 @@ class TestFrameTierSchemaVersion:
 
 
 def _session_with(drivers: list[dict], laps: pd.DataFrame | None, session: str = "Race"):
-    sess = core.Session(2025, "Test GP", session, enable_cache=False, lib="pandas")
+    sess = core.Session(2025, "Pre-Season Testing", session, enable_cache=False, lib="pandas")
     sess._drivers = drivers
     sess._refresh_driver_indices()
     if laps is not None:
@@ -724,7 +724,7 @@ class TestApiReferenceFindings:
     def test_nameless_drivers_are_not_fuzzy_matched(self):
         from tif1 import plotting
 
-        session = core.Session(2024, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = core.Session(2024, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._drivers = [
             {"driver": "SAI", "dn": "55", "team": "Ferrari", "tc": "E80020"},
             {"driver": "HAM", "dn": "44", "team": "Mercedes", "tc": "27F4D2"},
@@ -762,7 +762,7 @@ class TestApiReferenceFindings:
         from tif1.cdn import get_cdn_manager
         from tif1.exceptions import NetworkError
 
-        session = core.Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = core.Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._drivers = [{"driver": "VER", "dn": "1", "team": "Red Bull Racing"}]
         session._refresh_driver_indices()
 
@@ -779,7 +779,7 @@ class TestApiReferenceFindings:
     def test_laps_empty_when_payloads_are_missing_not_failing(self, monkeypatch):
         import asyncio
 
-        session = core.Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = core.Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._drivers = [{"driver": "VER", "dn": "1", "team": "Red Bull Racing"}]
         session._refresh_driver_indices()
 

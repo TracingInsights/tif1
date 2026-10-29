@@ -2382,7 +2382,7 @@ class Telemetry(pd.DataFrame):
 ```
 
 - **`drop_unknown_channels=True`**: Keep only the registered channels and the `Driver` and `LapNumber` columns. Other columns are dropped
-- **`register_new_channel()`**: Register a custom column as a `"continuous"`, `"discrete"`, or `"excluded"` channel, with the fastf1 arguments and checks. `resample_channels()` then averages a continuous channel and holds a discrete one. `fill_missing()` and the resampling leave an excluded channel alone. A continuous channel needs an `interpolation_method`, and an unknown `signal_type` raises `ValueError`. The method is stored under the `"method"` key, as in fastf1. tif1 interpolates every continuous channel linearly
+- **`register_new_channel()`**: Register a custom column as a `"continuous"`, `"discrete"`, or `"excluded"` channel, with the fastf1 arguments and checks. `resample_channels()` then averages a continuous channel and holds a discrete one. `fill_missing()` and the resampling leave an excluded channel alone. A continuous channel needs an `interpolation_method`, and an unknown `signal_type` raises `ValueError`. The method is stored under the `"method"` key, as in fastf1. tif1 interpolates every continuous channel linearly. fastf1 uses a quadratic spline for `X`, `Y`, `Z`, and `Distance` (see `slice_by_time`)
 
 ### Available Columns
 
@@ -2476,7 +2476,7 @@ def slice_by_time(
 - **`end_time`**: End time (same format as start_time)
 - **`pad`** (int, default=0): Number of samples to include before/after the slice
 - **`pad_side`** (str, default="both"): Where to apply padding ("both", "before", "after")
-- **`interpolate_edges`** (bool, default=False): Add one interpolated sample at each edge of the slice, as fastf1 does. A continuous channel takes the linear value between the two neighbouring samples, and a discrete channel takes the value in force. The added samples have the `Source` `"interpolation"`. Nothing is added at an edge that falls on a sample
+- **`interpolate_edges`** (bool, default=False): Add one interpolated sample at each edge of the slice, as fastf1 does. A continuous channel takes the linear value between the two neighbouring samples, and a discrete channel takes the value in force. The added samples have the `Source` `"interpolation"`. Nothing is added at an edge that falls on a sample. fastf1 fits a quadratic spline through `X`, `Y`, `Z`, and `Distance` instead. On real data the two methods differ by about 0.1 m in `X`/`Y` and about 1 cm in `Distance`. Both values are below the noise of the position data. A lap's start and end are stored samples, so lap edges get no interpolated sample with either method
 
 **Returns:**
 - **`Telemetry`** DataFrame containing only the specified time window
@@ -3020,7 +3020,7 @@ if not tel.empty:
 
 The `SessionResults` class contains the classification of a session, one row per driver in classification order, indexed by driver number. A shared car's later drivers are labelled `number/Abbreviation`, so the index stays unique. It inherits from `pandas.DataFrame`. Race, Sprint and Qualifying sessions carry the official Ergast classification merged into the driver list. The other sessions (and every session with `ergast=False`) are classified from the lap data, as fastf1 does:
 - Practice: `Position` by best lap, `Status` `"Finished"`, `Laps`, and `Time` (the best lap that is not deleted)
-- Sprint Qualifying, Sprint Shootout, and Qualifying with `ergast=False`: the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A Q1 time outside 107% has `ClassifiedPosition` `"N"`
+- Sprint Qualifying, Sprint Shootout, and Qualifying with `ergast=False`: the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A Q1 time outside 107% has `ClassifiedPosition` `"N"`. A driver out in Q1 or Q2 keeps no time from a later segment (the knockout)
 - Races and sprints with `ergast=False`: laps completed, then the position on the last lap
 
 ### Class Overview

@@ -39,20 +39,11 @@ keywords:
     ```
   </Step>
   <Step title="Update get_session Calls">
-    Full GP names are the clearest. Circuit, city, and country names such as `"Monaco"` or `"Spa"` also resolve to the event of that season. Session names are case-insensitive, so `"Race"`, `"race"`, and `"R"` all work. `session.load()` is optional because `tif1` loads data lazily.
-    <CodeGroup>
-    ```python tif1 (Lazy)
+    Full GP names are the clearest. Circuit, city, and country names such as `"Monaco"` or `"Spa"` also resolve to the event of that season. Session names are case-insensitive, so `"Race"`, `"race"`, and `"R"` all work. In fastf1, `session.laps` is available only after `session.load()`. In `tif1`, `session.load()` is optional because `tif1` loads data lazily.
+    ```python
     session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
     laps = session.laps # Fetches automatically
     ```
-    ```python fastf1 (Explicit)
-    import fastf1
-
-    session = fastf1.get_session(2025, "Monaco", "R")
-    session.load()
-    laps = session.laps
-    ```
-    </CodeGroup>
   </Step>
   <Step title="Check Filters">
     `tif1.Laps` has every `pick_` method of `fastf1.core.Laps`, with the same names and the same rules. For example, `pick_drivers` upper-cases the codes, `pick_quicklaps` keeps the laps strictly below the threshold, and `pick_fastest` takes the `IsPersonalBest` laps. `pick_driver` accepts a 3-letter code or a driver number. `Session` adds direct accessors. `session.get_fastest_laps()` skips only the deleted laps, so it can pick a lap that is not a personal best.
@@ -69,23 +60,14 @@ keywords:
 ## Key API Differences
 
 ### 1. Lazy Loading
-tif1 uses lazy loading by default. A `session.load()` call is not necessary.
+tif1 uses lazy loading by default. A `session.load()` call is not necessary. fastf1 raises `DataNotLoadedError` when code reads `session.laps` before `session.load()`.
 
-<CodeGroup>
-```python fastf1
-import fastf1
-
-session = fastf1.get_session(2025, "Monaco", "R")
-session.load()
-laps = session.laps
-```
-```python tif1
+```python
 import tif1
 
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Automatically fetches on first access
 ```
-</CodeGroup>
 
 ### 2. Telemetry Access
 Both libraries have the `lap.telemetry` property and the `lap.get_telemetry()` method. Telemetry code needs no change. `get_telemetry(frequency=...)` accepts fastf1's values: `"original"`, or a sampling rate in Hz.

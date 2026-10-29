@@ -105,7 +105,7 @@ class TestCoreFastestLapsColdBenchmark:
 
     def test_optimized_cold_path(self, benchmark, monkeypatch):
         _setup_fastest_mocks(monkeypatch)
-        session = Session(2025, "Test GP", "Race", enable_cache=True, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True, lib="pandas")
 
         def _run():
             session._drivers = None

@@ -444,7 +444,7 @@ Race, Sprint, and Qualifying sessions take `Status` and the times from the offic
 
 The other sessions are classified from the laps, as fastf1 does:
 - Practice: `Position` by best lap, `Status` `"Finished"` for every driver, `Laps`, and `Time`, the best lap that is not deleted. `get_driver()` returns the same row.
-- Sprint Qualifying and Sprint Shootout: the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A driver out in Q1 outside 107% of the best Q1 time has `ClassifiedPosition` `"N"`. For the 2024 Chinese Sprint Qualifying, the top three are NOR, HAM, and ALO.
+- Sprint Qualifying and Sprint Shootout: the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A driver out in Q1 outside 107% of the best Q1 time has `ClassifiedPosition` `"N"`. The knockout applies. A driver out in Q1 has no `Q2` or `Q3` time, and a driver out in Q2 has no `Q3` time. The Q1 cut is 15 of 20 cars or 16 of 22. For the 2024 Chinese Sprint Qualifying, the top three are NOR, HAM, and ALO.
 - With `ergast=False`, qualifying follows the same segment rule, and races and sprints use the lap count for `Status`: `"Finished"`, `"+N Laps"`, or `"Did not start"`.
 
 Practice and the sprint qualifying formats take `DriverId` and `TeamId` from the Ergast race results. `results.iloc[i].dnf` is `True` unless the status is `"Finished"`, `"Lapped"`, or `"+N Lap(s)"`.

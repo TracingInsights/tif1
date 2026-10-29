@@ -494,7 +494,7 @@ class TestAsyncParallelismIntegration:
             payloads = [{"time": [1.0], "lap": [1]} for _ in driver_requests]
             return payloads, []
 
-        session = Session(2024, "Test GP", "Race", lib="pandas", enable_cache=False)
+        session = Session(2024, "Pre-Season Testing", "Race", lib="pandas", enable_cache=False)
         session._drivers = [{"driver": f"DRV{i}", "team": "Team"} for i in range(num_drivers)]
 
         with patch.object(

@@ -448,13 +448,14 @@ def _ns_values(values: list[Any], scalar: type, dtype: str) -> np.ndarray | None
     return out.view(dtype)
 
 
-def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
-    """:func:`finalize_results_frame` for a non-empty ``rows``, built column by column.
+def _result_columns(rows: list[dict[str, Any]]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """``(typed array per results column, row order by Position)`` of non-empty ``rows``.
 
     The rows are a handful of dicts with known value types (``str``, ``float``,
     ``Timedelta``/``Timestamp``/``NaT``), so every column becomes one typed
-    array in Python and the frame is assembled once; a column holding any other
-    type goes through the pandas conversion of the general path.
+    array in Python; a column holding any other type goes through the pandas
+    conversion of the general path. The order is ``Position``, unknown last,
+    stable. Shared by the pandas and the polars results builders.
     """
     present: set[str] = set()
     for row in rows:
@@ -503,7 +504,12 @@ def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
         else:
             filled = np.full(count, _NAT_NS, dtype="int64").view("datetime64[ns]")
         columns[column] = filled
-    order = np.argsort(columns["Position"], kind="stable")  # NaN sorts last
+    return columns, np.argsort(columns["Position"], kind="stable")  # NaN sorts last
+
+
+def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """:func:`finalize_results_frame` for a non-empty ``rows``: one frame of typed columns."""
+    columns, order = _result_columns(rows)
     labels = unique_driver_labels(
         [(str(columns["DriverNumber"][i]), str(columns["Abbreviation"][i])) for i in order.tolist()]
     )
@@ -523,21 +529,6 @@ def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
     )
 
 
-def _polars_cell(value: Any) -> Any:
-    """A results value as polars accepts it (pandas ``NaT``/``NaN`` become null)."""
-    if value is None:
-        return None
-    if value is pd.NaT:
-        return None
-    if isinstance(value, float) and math.isnan(value):
-        return None
-    if isinstance(value, pd.Timedelta):
-        return value.to_pytimedelta()
-    if isinstance(value, pd.Timestamp):
-        return value.to_pydatetime()
-    return value
-
-
 def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
     """polars twin of :func:`finalize_results_frame` (no pandas frame is built).
 
@@ -549,21 +540,22 @@ def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
     """
     import polars as pl
 
-    columns: dict[str, list[Any]] = {column: [] for column in RESULTS_COLUMN_ORDER}
-    for row in rows:
-        for column in RESULTS_COLUMN_ORDER:
-            value = _polars_cell(row.get(column))
-            if column in _STR_COLUMNS:
-                if value is None:
-                    value = None if column in _NO_FILL_STR else ""
-                else:
-                    value = str(value)
-            elif column in _FLOAT_COLUMNS and value is not None:
-                try:
-                    value = float(value)
-                except (TypeError, ValueError):
-                    value = None
-            columns[column].append(value)
+    if rows:
+        # The pandas builder's typed arrays: one ``pl.Series`` per column, no
+        # non-strict cast of Python values (each ran a query plan).
+        columns, order = _result_columns(rows)
+        series = []
+        for column, array in columns.items():
+            values = array[order]
+            if column in _STR_SET:
+                texts = [None if _is_missing(value) else str(value) for value in values.tolist()]
+                series.append(pl.Series(column, texts, dtype=pl.String))
+            elif column in _FLOAT_SET:
+                series.append(pl.Series(column, values, dtype=pl.Float64, nan_to_null=True))
+            else:  # timedelta64[ns] / datetime64[ns]: NaT becomes null
+                series.append(pl.Series(column, values))
+        return pl.DataFrame(series)
+
     schema: dict[str, Any] = {}
     for column in RESULTS_COLUMN_ORDER:
         if column in _FLOAT_COLUMNS:
@@ -574,10 +566,7 @@ def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
             schema[column] = pl.Datetime("ns")
         else:
             schema[column] = pl.String
-    frame = pl.DataFrame(columns, schema=schema, strict=False)
-    if frame.height:
-        frame = frame.sort("Position", nulls_last=True, maintain_order=True)
-    return frame
+    return pl.DataFrame(schema=schema)
 
 
 def results_columns() -> tuple[tuple[str, ...], tuple[str, ...]]:

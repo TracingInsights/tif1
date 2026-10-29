@@ -118,7 +118,7 @@ def get_session(
 </ParamField>
 
 <ParamField path="exact_match" type="bool" default="False">
-  Match `gp` against the event names only (case-insensitive), as fastf1 does. The alias table and fuzzy matching are skipped, so `"Monaco"` raises `EventNotFoundError` and `"Monaco Grand Prix"` resolves.
+  Match `gp` against the event names only (case-insensitive), as fastf1 does. The alias table and fuzzy matching are skipped, so `"Monaco"` raises `ExactEventNotFoundError` (an `EventNotFoundError` and a `KeyError`) and `"Monaco Grand Prix"` resolves.
 </ParamField>
 
 <ParamField path="gp" type="str | int" required>
@@ -126,9 +126,9 @@ def get_session(
 
   - **Full name**: `"Monaco Grand Prix"`, `"British Grand Prix"`
   - **Abbreviated name**: `"Monaco"`, `"Silverstone"`, `"Spa"` (resolved through the alias table, then fuzzy matching)
-  - **Round number**: `6`, `12` (1-indexed, based on calendar order)
+  - **Round number**: `6`, `12` (1-indexed, based on calendar order). Any number that is not a string is a round number, as in fastf1: a numpy integer or a whole float (`8.0`) works too.
 
-  The function automatically resolves abbreviated names and round numbers to the official event name.
+  The function automatically resolves abbreviated names and round numbers to the official event name. A testing event matches only by its exact name (`"Pre-Season Testing"`); aliases and fuzzy matching never return it.
 
   **Example**: `"Monaco Grand Prix"`, `"Monaco"`, `8` (Monaco was round 8 in 2024)
 </ParamField>
@@ -138,7 +138,7 @@ def get_session(
 
   - **Full name**: `"Practice 1"`, `"Qualifying"`, `"Race"`
   - **Abbreviated**: `"FP1"`, `"FP2"`, `"FP3"`, `"Q"`, `"S"` (Sprint), `"SQ"` (Sprint Qualifying), `"SS"` (Sprint Shootout), `"R"`
-  - **Session number**: `1` (Practice 1), `2` (Practice 2), `3` (Practice 3), `4` (Qualifying), `5` (Race)
+  - **Session number**: `1` (Practice 1), `2` (Practice 2), `3` (Practice 3), `4` (Qualifying), `5` (Race). A numeric string, a float, or a numpy integer (`"5"`, `5.0`) works as in fastf1. In 2021 and 2022, `"SQ"` and `"Sprint Qualifying"` mean the Sprint, as in fastf1.
 
   Names and abbreviations are case-insensitive: `"race"`, `"Race"`, `"R"`, and `"fp1"` all work. Session numbers are 1-indexed and follow the weekend schedule order, so a sprint weekend numbers its sessions differently.
 
@@ -447,7 +447,7 @@ class Session:
 
   Race, Sprint and Qualifying sessions take these values from the official Ergast classification (grid, points, status, times, qualifying segments). Post-race penalties are therefore included, and drivers that did not start are added with NaN `Position`. Other sessions are classified from the laps, as fastf1 does:
   - Practice: `Position` and `ClassifiedPosition` by best lap, `Status` `"Finished"`, `Laps`, and `Time`, the best lap that is not deleted.
-  - Sprint Qualifying and Sprint Shootout (and Qualifying with `ergast=False`): the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A driver out in Q1 outside 107% of the best Q1 time has `ClassifiedPosition` `"N"`.
+  - Sprint Qualifying and Sprint Shootout (and Qualifying with `ergast=False`): the best accurate lap of each segment fills `Q1` to `Q3`. The order is by `Q3`, then `Q2`, then `Q1`. A driver out in Q1 outside 107% of the best Q1 time has `ClassifiedPosition` `"N"`. The knockout applies. A driver out in Q1 has no `Q2` or `Q3` time, and a driver out in Q2 has no `Q3` time. The Q1 cut is 15 of 20 cars or 16 of 22.
 
   These sessions take `DriverId` and `TeamId` from the Ergast race results. `GridPosition` and `Points` are NaN (polars: null) in every session except races and sprints. With `ergast=False` (or `TIF1_ERGAST_RESULTS=0`), no session reads Ergast. Races and sprints are then also classified from the laps, and `DriverId`, `TeamId`, `GridPosition`, `Points`, and the race `Time` stay empty. `results.iloc[0]` is the winner; `results.iloc[i].dnf` is `True` unless `Status` is `"Finished"`, `"Lapped"` or `"+N Lap(s)"`.
 </ResponseField>

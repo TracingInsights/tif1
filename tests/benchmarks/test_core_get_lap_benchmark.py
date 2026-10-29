@@ -10,7 +10,7 @@ from tif1.exceptions import LapNotFoundError
 
 
 def _build_driver_with_laps(size: int = 10_000) -> Driver:
-    session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
     session._drivers = [{"driver": "VER", "team": "Red Bull Racing", "number": 1}]
     session._refresh_driver_indices()
     driver = Driver(session, "VER")

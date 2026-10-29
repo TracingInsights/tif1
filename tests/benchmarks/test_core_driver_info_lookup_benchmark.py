@@ -6,7 +6,7 @@ from tif1.core import Session
 
 
 def _build_session_with_drivers(count: int = 500) -> Session:
-    session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
     session._drivers = [
         {"driver": f"D{i:03d}", "team": f"Team {i % 10}", "number": i + 1} for i in range(count)
     ]

@@ -2163,14 +2163,19 @@ class PolarsLaps(_TIF1Frame):
         return tel if rule is None else tel.resample_channels(rule=rule)
 
     def _padded_car_data(self, kwargs: Mapping[str, Any]) -> PolarsTelemetry | None:
-        """The driver's session-long telemetry sliced to these laps when ``pad`` is asked for.
+        """The driver's session-long telemetry sliced to these laps for ``pad`` or edges.
 
         fastf1 slices ``session.car_data[driver]``; tif1 keeps one frame per
-        lap, so a pad reaching into the neighbouring laps needs the driver's
-        whole timeline. ``None`` when no pad is requested or the session has
-        no ``car_data`` (the per-lap frames answer).
+        lap, so a pad reaching into the neighbouring laps, or an interpolated
+        edge sample, needs the driver's whole timeline. ``None`` when neither
+        is requested or the session has no ``car_data`` (the per-lap frames
+        answer).
         """
-        if not kwargs.get("pad") or self.session is None or self.height == 0:
+        if (
+            not (kwargs.get("pad") or kwargs.get("interpolate_edges"))
+            or self.session is None
+            or self.height == 0
+        ):
             return None
         car_data = getattr(self.session, "car_data", None)
         if car_data is None:

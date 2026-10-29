@@ -43,14 +43,7 @@ keywords:
 
 ### The fastf1 approach
 
-`fastf1` is session-oriented by design. `session.load()` fetches the entire session up front:
-
-```python fastf1
-import fastf1
-
-session = fastf1.get_session(2025, "Monaco", "R")
-session.load()  # Laps, telemetry, weather, and messages of all drivers
-```
+`fastf1` is session-oriented by design. `session.load()` fetches the entire session up front: the laps, telemetry, weather, and messages of all drivers.
 
 fastf1 reads session-wide files from the F1 live-timing API. The car data and the position data each arrive as one file for all drivers. `session.load(telemetry=False)` skips them. There is no option to load one driver or one lap. That volume is reasonable for a full-session analysis. Most of it goes unused when the analysis needs only a few laps.
 

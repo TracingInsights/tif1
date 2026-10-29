@@ -253,14 +253,14 @@ class TestSessionFetchJson:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_caches_result_in_local_payloads(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._fetch_json("drivers.json")
         assert session._get_local_payload("drivers.json") is not None
 
     @patch("tif1.core.Session._fetch_from_cdn_fast", new=_delegate_fast_fetch)
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_json_uses_local_payload(self, mock_fetch):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("drivers.json", {"drivers": []})
         result = session._fetch_json("drivers.json")
         assert result == {"drivers": []}
@@ -274,7 +274,7 @@ class TestSessionDriversProperty:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_empty_list(self, mock_fetch):
         mock_fetch.return_value = {}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         drivers = session.drivers
         assert drivers == []
 
@@ -282,7 +282,7 @@ class TestSessionDriversProperty:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_drivers_cached_on_second_access(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         d1 = session.drivers
         d2 = session.drivers
         # Drivers property returns a new list each time, but with same content
@@ -321,7 +321,7 @@ class TestSessionRaceControlAndWeather:
             else {}
         )
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session.race_control_messages
 
         assert isinstance(result, pd.DataFrame)
@@ -373,7 +373,7 @@ class TestSessionRaceControlAndWeather:
             else {}
         )
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session.weather
 
         assert isinstance(result, pd.DataFrame)
@@ -419,7 +419,7 @@ class TestSessionGetFastestLapFromRaw:
             {"time": [90.5, 89.0], "lap": [1, 2]},
             {"time": [91.0, 90.0], "lap": [1, 2]},
         ]
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session._get_fastest_laps_from_raw(by_driver=True)
         assert isinstance(result, pd.DataFrame)
 
@@ -437,7 +437,7 @@ class TestSessionGetFastestLapFromRaw:
             {"time": [90.5, 89.0], "lap": [1, 2]},
             {"time": [91.0, 90.0], "lap": [1, 2]},
         ]
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session._get_fastest_laps_from_raw(by_driver=False)
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 1
@@ -447,7 +447,7 @@ class TestSessionFetchTelemetryBatch:
     """Test _fetch_telemetry_batch."""
 
     def test_with_memoized_telemetry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_telemetry_payload("VER", 1, {"speed": [100, 200], "time": [0, 1]})
         fastest_laps = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1]})
         requests, _lap_info, tels = session._fetch_telemetry_batch(fastest_laps)
@@ -455,7 +455,7 @@ class TestSessionFetchTelemetryBatch:
         assert len(requests) == 0
 
     def test_with_no_memoized_telemetry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         fastest_laps = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1]})
         requests, lap_info, tels = session._fetch_telemetry_batch(fastest_laps)
         assert len(requests) == 1
@@ -467,21 +467,21 @@ class TestSessionProcessTelemetryResults:
     """Test _process_telemetry_results."""
 
     def test_processes_valid_results(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         results = [{"tel": {"speed": [100, 200], "time": [0, 1]}}]
         lap_info = [("VER", 1)]
         tels = session._process_telemetry_results(results, lap_info, [])
         assert len(tels) == 1
 
     def test_skips_non_dict_results(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         results = [None, "invalid"]
         lap_info = [("VER", 1), ("HAM", 1)]
         tels = session._process_telemetry_results(results, lap_info, [])
         assert len(tels) == 0
 
     def test_skips_empty_tel_payload(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         results = [{"tel": {}}, {"tel": None}]
         lap_info = [("VER", 1), ("HAM", 1)]
         tels = session._process_telemetry_results(results, lap_info, [])
@@ -497,12 +497,12 @@ class TestSessionGetFastestLapTel:
     def test_returns_empty_when_no_drivers(self, mock_fetch, mock_async):
         mock_fetch.return_value = {"drivers": []}
         mock_async.return_value = []
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session.get_fastest_lap_tel()
         assert isinstance(result, pd.DataFrame)
 
     def test_returns_cached_result(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         cached_df = pd.DataFrame({"Speed": [100, 200]})
         session._fastest_lap_tel_ref = ("VER", 1)
         session._fastest_lap_tel_df = cached_df
@@ -517,7 +517,7 @@ class TestSessionExtractFastestLapFromLoadedLaps:
     """Test _extract_fastest_lap_from_loaded_laps."""
 
     def test_with_valid_laps(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM"],
@@ -530,7 +530,7 @@ class TestSessionExtractFastestLapFromLoadedLaps:
         assert result == ("VER", 1)
 
     def test_with_empty_laps(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame({"Driver": [], "LapTime": []})
         result = session._extract_fastest_lap_from_loaded_laps()
         assert result is None
@@ -540,7 +540,7 @@ class TestSessionFetchJsonUnvalidated:
     """Test _fetch_json_unvalidated."""
 
     def test_returns_local_payload_if_available(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_local_payload("drivers.json", {"drivers": []})
         result = session._fetch_json_unvalidated("drivers.json")
         assert result == {"drivers": []}
@@ -548,14 +548,14 @@ class TestSessionFetchJsonUnvalidated:
     @patch("tif1.core.Session._fetch_from_cdn_fast")
     def test_fetches_from_cdn_fast(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         result = session._fetch_json_unvalidated("drivers.json")
         assert result == {"drivers": [{"driver": "VER"}]}
 
     @patch("tif1.core.Session._fetch_from_cdn_fast")
     def test_raises_on_non_dict_result(self, mock_fetch):
         mock_fetch.return_value = "not a dict"
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(InvalidDataError):
             session._fetch_json_unvalidated("drivers.json")
 
@@ -564,11 +564,11 @@ class TestSessionScheduleBackgroundCacheFill:
     """Test _schedule_background_cache_fill."""
 
     def test_skips_when_cache_disabled(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._schedule_background_cache_fill(json_payloads=[("drivers.json", {"drivers": []})])
 
     def test_skips_when_empty_payloads(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         session._schedule_background_cache_fill()
 
 
@@ -576,7 +576,7 @@ class TestDriverLapsProperty:
     """Test Driver.laps property paths."""
 
     def test_uses_prefetched_lap_data(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         prefetched = {"time": [90.5], "lap": [1], "compound": ["SOFT"]}
         driver = Driver(session, "VER", prefetched_lap_data=prefetched)
@@ -586,7 +586,7 @@ class TestDriverLapsProperty:
         assert laps["Driver"].iloc[0] == "VER"
 
     def test_data_not_found_returns_empty(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         driver = Driver(session, "VER")
         with patch.object(session, "_fetch_from_cdn", side_effect=DataNotFoundError(year=2025)):
@@ -613,7 +613,7 @@ class TestDriverLoadLaps:
 
         mock_async.side_effect = fake_fetch_multiple
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         result = driver._load_laps()
         assert isinstance(result, dict)
@@ -626,7 +626,7 @@ class TestLapFetchTelemetry:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_telemetry_standard(self, mock_fetch):
         mock_fetch.return_value = {"tel": {"speed": [100], "time": [0]}}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 1}, session=session)
         result = lap._fetch_telemetry()
         assert isinstance(result, dict)
@@ -636,7 +636,7 @@ class TestLapFetchTelemetry:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_fetch_telemetry_non_dict_tel(self, mock_fetch):
         mock_fetch.return_value = {"tel": "invalid"}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 1}, session=session)
         result = lap._fetch_telemetry()
         assert result == {}
@@ -646,7 +646,7 @@ class TestLapTelemetryProperty:
     """Test Lap.telemetry property edge cases."""
 
     def test_uses_memoized_telemetry(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._remember_telemetry_payload("VER", 1, {"speed": [100], "time": [0]})
         lap = Lap({"Driver": "VER", "LapNumber": 1}, session=session)
         telemetry = lap.telemetry
@@ -658,7 +658,7 @@ class TestSessionGetFastestLapsWithLoadedLaps:
     """Test get_fastest_laps when _laps is already loaded."""
 
     def test_overall_fastest_with_loaded_laps(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM", "VER"],
@@ -674,7 +674,7 @@ class TestSessionGetFastestLapsWithLoadedLaps:
         assert fastest.iloc[0]["LapTimeSeconds"] == 89.0
 
     def test_all_invalid_laptimes_returns_empty(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER"],
@@ -690,7 +690,7 @@ class TestGetFastestLapReference:
     """Test _get_fastest_lap_reference."""
 
     def test_with_loaded_laps(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM"],
@@ -702,7 +702,7 @@ class TestGetFastestLapReference:
         assert ref == ("VER", 1)
 
     def test_with_loaded_laps_memoized(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         laps = pd.DataFrame(
             {
                 "Driver": ["VER"],
@@ -736,7 +736,7 @@ class TestSessionDriversDf:
                 }
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         # Check all expected columns are present
@@ -777,7 +777,7 @@ class TestSessionDriversDf:
                 },
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         # Check first driver
@@ -815,7 +815,7 @@ class TestSessionDriversDf:
                 }
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         assert df.iloc[0]["Driver"] == "LEC"
@@ -838,7 +838,7 @@ class TestSessionDriversDf:
                 }
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         assert df.iloc[0]["Driver"] == "NOR"
@@ -854,7 +854,7 @@ class TestSessionDriversDf:
     def test_drivers_df_empty_drivers_list(self, mock_fetch):
         """Test that drivers_df returns empty DataFrame with correct columns."""
         mock_fetch.return_value = {"drivers": []}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         assert len(df) == 0
@@ -874,7 +874,7 @@ class TestSessionDriversDf:
     def test_drivers_df_no_drivers_key(self, mock_fetch):
         """Test that drivers_df handles missing drivers key."""
         mock_fetch.return_value = {}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         assert len(df) == 0
@@ -901,7 +901,7 @@ class TestSessionDriversDf:
                 {"driver": "HAM", "team": "Mercedes", "dn": "44"},
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         # Should only have 2 valid drivers
@@ -944,7 +944,7 @@ class TestSessionDriversDf:
                 },
             ]
         }
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         df = session.drivers_df
 
         assert len(df) == 3

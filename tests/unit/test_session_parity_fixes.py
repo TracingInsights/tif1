@@ -272,3 +272,86 @@ class TestResultsFrame:
         assert frame.loc["4", "DateOfBirth"] == pd.Timestamp("1999-11-13")
         assert frame["Status"].tolist() == ["Finished", "+1 Lap"]
         assert frame["Status"].dtype == object
+
+
+class TestQualifyingKnockout:
+    @staticmethod
+    def _bests(
+        q1: list[int], q2: dict[int, int], q3: dict[int, int]
+    ) -> dict[str, list[int | None]]:
+        return {f"D{i:02d}": [q1_time, q2.get(i), q3.get(i)] for i, q1_time in enumerate(q1)}
+
+    def test_a_driver_out_in_q1_loses_later_times(self):
+        # 20 cars: 15 go through. D15 is 16th in Q1 yet carries a Q2 time.
+        q1 = [90_000 + i for i in range(20)]
+        bests = self._bests(
+            q1, {i: 89_000 + i for i in range(16)}, {i: 88_000 + i for i in range(11)}
+        )
+        core._apply_quali_knockout(bests, 20)
+        assert bests["D15"][1:] == [None, None]
+        assert bests["D14"][1] == 89_014
+        assert bests["D10"][2] is None  # 11th in Q2: no Q3
+        assert bests["D09"][2] == 88_009
+
+    def test_the_q1_cut_follows_the_field_size(self):
+        q1 = [90_000 + i for i in range(22)]
+        bests = self._bests(q1, {i: 89_000 + i for i in range(17)}, {})
+        core._apply_quali_knockout(bests, 22)
+        assert bests["D15"][1] == 89_015  # 16 of 22 go through
+        assert bests["D16"][1] is None
+
+    def test_a_driver_without_a_q1_time_is_left_alone(self):
+        bests = {
+            "AAA": [None, 89_000, 88_000],
+            **self._bests([90_000 + i for i in range(20)], {}, {}),
+        }
+        core._apply_quali_knockout(bests, 21)
+        assert bests["AAA"] == [None, 89_000, 88_000]
+
+
+def test_polars_fastest_laps_match_the_expression_path():
+    pl = pytest.importorskip("polars")
+    seconds = [91.0, 90.5, None, 90.5, 92.0, 90.5, 89.9, 95.0]
+    laps = pl.DataFrame(
+        {
+            "Driver": ["VER", "VER", "HAM", "HAM", "LEC", "LEC", "LEC", "NOR"],
+            "LapNumber": [1, 2, 1, 2, 1, 2, 3, 1],
+            "LapTime": pl.Series(
+                [None if s is None else int(s * 1e9) for s in seconds], dtype=pl.Int64
+            ).cast(pl.Duration("ns")),
+            "Deleted": [False, False, None, False, False, False, True, None],
+        }
+    )
+    session = core.Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
+    for by_driver in (True, False):
+        for drivers in (None, ["VER", "LEC"], ["ZZZ"]):
+            fast = core._fastest_laps_polars(laps, by_driver=by_driver, drivers=drivers)
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(core, "_fastest_laps_polars", lambda *_a, **_k: None)
+                expected = session._select_fastest_laps(laps, by_driver=by_driver, drivers=drivers)
+            if not expected.height:
+                assert fast.height == 0
+                continue
+            assert fast.columns == expected.columns
+            assert fast.drop("LapTimeSeconds").equals(expected.drop("LapTimeSeconds"))
+            assert fast["LapTimeSeconds"].to_list() == pytest.approx(
+                expected["LapTimeSeconds"].to_list(), rel=1e-15
+            )
+    # Ties: VER and HAM both 90.5 s; VER appears first, LEC's 89.9 s is deleted.
+    by_driver = core._fastest_laps_polars(laps, by_driver=True, drivers=None)
+    assert by_driver["Driver"].to_list() == ["VER", "HAM", "LEC", "NOR"]
+    assert by_driver["LapNumber"].to_list() == [2, 2, 2, 1]
+
+
+def test_pandas_clock_columns_convert_any_resolution():
+    mask = np.array([True, False, True])
+    starts = pd.Series(pd.to_timedelta([1, 2, np.nan], unit="s").astype("timedelta64[ms]"))
+    dates = pd.Series(pd.to_datetime(["2025-04-13 15:00", None, "2025-04-13 15:01"]))
+    assert core._pandas_ns_values(starts, mask, timedelta=True).tolist() == [
+        1_000_000_000,
+        np.iinfo("int64").min,
+    ]
+    assert core._pandas_ns_values(dates, mask, timedelta=False).tolist() == [
+        pd.Timestamp("2025-04-13 15:00").value,
+        pd.Timestamp("2025-04-13 15:01").value,
+    ]

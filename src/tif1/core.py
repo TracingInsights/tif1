@@ -2,6 +2,7 @@
 
 import logging
 import math
+import numbers
 import re
 import threading
 import warnings
@@ -227,6 +228,98 @@ def _float_marker_distances(frame: Any) -> np.ndarray:
     if isinstance(column, pd.Series):
         return column.to_numpy(dtype=float, na_value=np.nan)
     return column.cast(float).to_numpy().astype(float, copy=False)
+
+
+def _pandas_ns_values(column: pd.Series, mask: np.ndarray, *, timedelta: bool) -> np.ndarray:
+    """A pandas clock column's ``mask`` rows as int64 ns (int64 min where unknown).
+
+    ``timedelta64``/naive ``datetime64`` of any resolution convert as arrays
+    (pandas 3 keeps ``ms``/``us`` units); other dtypes go value by value.
+    """
+    kind = column.dtype.kind if isinstance(column.dtype, np.dtype) else ""
+    if timedelta and kind == "m":
+        return column.to_numpy()[mask].astype("timedelta64[ns]").view("int64")
+    if not timedelta and kind == "M":
+        return column.to_numpy()[mask].astype("datetime64[ns]").view("int64")
+    values = column.to_numpy(dtype=object)[mask].tolist()
+    return _ss._timedelta_ns(values) if timedelta else _ss._datetime_ns(values)
+
+
+def _polars_ns_values(column: Any, mask: np.ndarray, *, timedelta: bool) -> np.ndarray:
+    """A polars clock column's ``mask`` rows as int64 ns (int64 min where unknown).
+
+    ``Duration("ns")`` / naive ``Datetime("ns")`` convert straight from
+    ``to_numpy()`` (no query plan); any other dtype goes through the
+    value-by-value session-state helpers.
+    """
+    dtype = column.dtype
+    unit_ns = getattr(dtype, "time_unit", None) == "ns"
+    if timedelta and isinstance(dtype, pl.Duration) and unit_ns:
+        return column.to_numpy()[mask].view("int64")
+    if (
+        not timedelta
+        and isinstance(dtype, pl.Datetime)
+        and unit_ns
+        and getattr(dtype, "time_zone", None) is None
+    ):
+        return column.to_numpy()[mask].view("int64")
+    values = column.to_numpy()[mask].tolist()
+    return _ss._timedelta_ns(values) if timedelta else _ss._datetime_ns(values)
+
+
+def _fastest_laps_polars(laps: Any, *, by_driver: bool, drivers: list[str] | None) -> Any:
+    """``Session._select_fastest_laps`` for a polars frame, on column ``to_numpy()`` arrays.
+
+    The expression path ran ~5 query plans for a ~1,100-row table (the
+    process's first plan alone costs ~7 ms while polars starts its thread
+    pool). Same rows: laps of ``drivers`` with a time that are not deleted;
+    per driver the fastest (the first on ties), ordered by time with ties in
+    the drivers' first-appearance order; or the single fastest lap.
+    ``LapTimeSeconds`` is set from ``LapTime`` as ``_filter_valid_laptimes``
+    does. Returns None for a frame it does not handle (a non-``Duration``
+    ``LapTime``, a non-boolean ``Deleted``, a null driver code): the caller
+    keeps the expression path.
+    """
+    columns = laps.columns
+    if COL_LAP_TIME not in columns or COL_DRIVER not in columns:
+        return None
+    lap_time = laps[COL_LAP_TIME]
+    if not isinstance(lap_time.dtype, pl.Duration):
+        return None
+    raw = lap_time.to_numpy().astype("timedelta64[ns]").view("int64")
+    keep = raw != _ss._NS_MIN
+    if COL_DELETED in columns:
+        deleted = laps[COL_DELETED]
+        if deleted.dtype != pl.Boolean:
+            return None
+        keep &= ~(deleted.to_numpy() == True)  # noqa: E712 - object array with None
+    codes = laps[COL_DRIVER].to_numpy()
+    if any(code is None for code in codes):
+        return None
+    if drivers:
+        keep &= np.isin(codes, list(drivers))
+    rows = np.flatnonzero(keep)
+    seconds = raw.astype("float64") / 1_000_000_000
+    if not len(rows):
+        picked: list[int] = []
+    elif not by_driver:
+        picked = [int(rows[np.argmin(seconds[rows])])]
+    else:
+        first_seen: dict[Any, int] = {}
+        for position, code in enumerate(codes[rows].tolist()):
+            first_seen.setdefault(code, position)
+        best: dict[Any, int] = {}
+        for row in rows[np.argsort(seconds[rows], kind="stable")].tolist():
+            best.setdefault(codes[row], row)
+        picked = sorted(best.values(), key=lambda row: (seconds[row], first_seen[codes[row]]))
+    base = pl.DataFrame._from_pydf(laps._df.clone())
+    result = base[np.asarray(picked, dtype="int64")]
+    lap_seconds = pl.Series(COL_LAP_TIME_SECONDS, seconds[picked], dtype=pl.Float64)
+    if COL_LAP_TIME_SECONDS in result.columns:
+        result.replace_column(result.get_column_index(COL_LAP_TIME_SECONDS), lap_seconds)
+    else:
+        result.hstack([lap_seconds], in_place=True)
+    return result
 
 
 def _identifier_car_number(identifier: Any) -> str | None:
@@ -509,6 +602,28 @@ def _segment_lap_times(segment: Any, lib: str) -> list[tuple[str, int]]:
     ]
 
 
+def _apply_quali_knockout(bests: dict[str, list[int | None]], entrants: int) -> None:
+    """Void the Q2/Q3 times of drivers the knockout eliminated (in place).
+
+    fastf1's lap-based classification keeps every segment time it finds, so a
+    driver whose Q1 lap the stewards deleted after Q2 (2025 Bahrain: HUL, Q1
+    lap 1:31.998 deleted 16 minutes after Q2, 15th -> 16th) kept a Q2 time the
+    rules void. The Q1 cut is ``10 + ceil((entrants - 10) / 2)`` (15 of 20
+    cars, 16 of 22), the Q2 cut 10; ties keep the drivers' order. A driver
+    without a Q1 time is left alone (the segment split may have missed it).
+    """
+    cuts = ((0, 10 + math.ceil(max(entrants - 10, 0) / 2)), (1, 10))
+    for slot, advancing in cuts:
+        ranked = sorted(
+            (times[slot], position, code)
+            for position, (code, times) in enumerate(bests.items())
+            if times[slot] is not None
+        )
+        for _time, _position, code in ranked[advancing:]:
+            for later in range(slot + 1, 3):
+                bests[code][later] = None
+
+
 def _quali_sort(rows: list[dict], bests: dict[str, list[int | None]]) -> list[dict]:
     """Driver rows in fastf1's qualifying order: by Q3, then Q2, then Q1 (missing times last)."""
 
@@ -774,16 +889,21 @@ class Session:
         lib: Literal["pandas", "polars"] | None = None,
         ergast: bool | None = None,
         backend: ScheduleBackend | None = None,
+        *,
+        _event_resolved: bool = False,
     ):
         _validate_year(year, MIN_YEAR, MAX_YEAR)
         # The schedule backend the event was resolved with; every later
         # lookup (event, sessions) must use the same calendar.
         self._schedule_backend: ScheduleBackend | None = backend
-        gp_name = (
-            _resolve_gp_name(year, gp)
-            if backend is None
-            else _resolve_gp_name(year, gp, backend=backend)
-        )
+        # get_session passes the event name it already resolved
+        # (``_event_resolved``); a direct construction resolves it here.
+        if _event_resolved:
+            gp_name = cast(str, gp)
+        elif backend is None:
+            gp_name = _resolve_gp_name(year, gp)
+        else:
+            gp_name = _resolve_gp_name(year, gp, backend=backend)
         _validate_string_param(gp_name, "gp")
         _validate_string_param(session, "session")
 
@@ -1660,8 +1780,9 @@ class Session:
         """Per driver code, the best Q1/Q2/Q3 lap in ns (``None`` where none), fastf1's rule.
 
         ``laps.pick_accurate().split_qualifying_sessions()``, then each
-        segment's fastest lap with a time that is not deleted. Memoized on the
-        laps table; ``{}`` without laps or when the split fails.
+        segment's fastest lap with a time that is not deleted, then the
+        knockout (:func:`_apply_quali_knockout`). Memoized on the laps table;
+        ``{}`` without laps or when the split fails.
         """
         laps = self._loaded_laps_or_none()
         if laps is None:
@@ -1683,6 +1804,8 @@ class Session:
                 current = entry[slot]
                 if current is None or lap_ns < current:
                     entry[slot] = lap_ns
+        entrants = sum(1 for row in self._drivers_data if isinstance(row, dict))
+        _apply_quali_knockout(bests, entrants)
         self._quali_bests_cache = (laps, bests)
         return bests
 
@@ -4756,6 +4879,11 @@ class Session:
             if laps.columns.duplicated().any():
                 laps = laps.loc[:, ~laps.columns.duplicated()]
 
+        if self.lib == "polars":
+            picked = _fastest_laps_polars(laps, by_driver=by_driver, drivers=drivers)
+            if picked is not None:
+                return picked if picked.height else _create_empty_df(self.lib)
+
         # Filter by drivers first to reduce data processing.
         if drivers:
             if self.lib == "polars":
@@ -5772,17 +5900,19 @@ class Session:
             columns = list(laps.columns)
             if {"Driver", "LapNumber", "LapStartTime", "LapStartDate"}.issubset(columns):
                 if self.lib == "polars":
-                    sub = cast(Any, laps).filter(pl.col("Driver") == driver)
-                    numbers = sub["LapNumber"].to_list()
-                    starts = _ss._timedelta_ns(sub["LapStartTime"].to_list())
-                    dates = _ss._datetime_ns(sub["LapStartDate"].to_list())
+                    # Column ``to_numpy()`` and a numpy mask: a ``filter`` runs a
+                    # query plan (~7 ms for the process's first one).
+                    frame = cast(Any, laps)
+                    mask = frame["Driver"].to_numpy() == driver
+                    numbers = frame["LapNumber"].to_numpy()[mask].tolist()
+                    starts = _polars_ns_values(frame["LapStartTime"], mask, timedelta=True)
+                    dates = _polars_ns_values(frame["LapStartDate"], mask, timedelta=False)
                 else:
                     laps_pd = cast(pd.DataFrame, laps)
-                    mask = (laps_pd["Driver"].astype(object) == driver).to_numpy()
-                    sub = laps_pd.loc[mask]
-                    numbers = sub["LapNumber"].tolist()
-                    starts = _ss._timedelta_ns(sub["LapStartTime"].tolist())
-                    dates = _ss._datetime_ns(sub["LapStartDate"].tolist())
+                    mask = laps_pd["Driver"].to_numpy(dtype=object) == driver
+                    numbers = laps_pd["LapNumber"].to_numpy()[mask].tolist()
+                    starts = _pandas_ns_values(laps_pd["LapStartTime"], mask, timedelta=True)
+                    dates = _pandas_ns_values(laps_pd["LapStartDate"], mask, timedelta=False)
         else:
             payload = self._get_or_derive_driver_laptime_payload(driver)
             if isinstance(payload, dict) and isinstance(payload.get("lap"), list):
@@ -6572,47 +6702,63 @@ _CANONICAL_SESSION_NAMES = {
 }
 
 
-def _normalize_session_name(session: str) -> str:
+def _normalize_session_name(session: str, year: int | None = None) -> str:
+    """Canonical session name for an abbreviation or a full name in any case/spacing.
+
+    ``year`` applies fastf1's 2021/22 correction: the sprint was called
+    "Sprint Qualifying" then, so "SQ" and "Sprint Qualifying" mean "Sprint".
+    Unknown names come back unchanged (``get_session`` reports them).
+    """
     key = session.strip()
     mapped = SESSION_MAPPING.get(key.upper())
-    if mapped is not None:
-        return mapped
-    return _CANONICAL_SESSION_NAMES.get(" ".join(key.lower().split()), session)
+    if mapped is None:
+        mapped = _CANONICAL_SESSION_NAMES.get(" ".join(key.lower().split()))
+    if mapped is None:
+        return session
+    if mapped == "Sprint Qualifying" and year in (2021, 2022):
+        return "Sprint"
+    return mapped
+
+
+def _session_number(session: object) -> int | None:
+    """Session number an identifier stands for (``None`` for a session name).
+
+    fastf1 parity: anything ``float()`` accepts is a number, so ``"1"``,
+    ``1.0`` and numpy integers mean session 1; a fractional or non-finite
+    number is invalid.
+    """
+    if isinstance(session, str):
+        try:
+            value = float(session)
+        except ValueError:
+            return None
+    elif isinstance(session, numbers.Real):
+        value = float(session)
+    else:
+        return None
+    if not value.is_integer():
+        raise ValueError(f"Invalid session type '{session}'")
+    return int(value)
 
 
 def _resolve_gp_name(
     year: int, gp: str | int, *, backend: ScheduleBackend | None = None, exact_match: bool = False
 ) -> str:
-    if isinstance(gp, int):
-        from .events import get_event
+    """Season event name for a round number or an event name (pandas-free).
 
-        event = get_event(year, gp) if backend is None else get_event(year, gp, backend=backend)
-        if event is None:
-            raise ValueError(f"could not resolve event round '{gp}' for year={year}")
-        event_obj = cast(Any, event)
-        event_name_value = (
-            event_obj.get("EventName", "")
-            if hasattr(event_obj, "get")
-            else getattr(event_obj, "EventName", "")
-        )
-        event_name = str(event_name_value).strip()
-        if not event_name:
-            raise ValueError(f"resolved event for round '{gp}' has no event name")
-        return event_name
+    Any real number is a round (numpy integers and whole floats included, as
+    in fastf1); a string goes through exact name, alias and fuzzy matching
+    (:func:`tif1.events._resolve_event_name`, memoized per season).
+    """
+    from .events import _resolve_event_name, _resolve_event_round
+
+    if isinstance(gp, numbers.Real):
+        return _resolve_event_round(year, gp, backend=backend)
     gp_str = str(gp).strip()
     if not gp_str:
         return gp_str
-
-    from .events import get_event_by_name
-
-    # Use get_event_by_name which has fuzzy matching to resolve abbreviated names
     try:
-        event = (
-            get_event_by_name(year, gp_str, exact_match=exact_match)
-            if backend is None
-            else get_event_by_name(year, gp_str, exact_match=exact_match, backend=backend)
-        )
-        return str(event.EventName)
+        return _resolve_event_name(year, gp_str, exact_match=exact_match, backend=backend)
     except EventNotFoundError:
         # "Suzuka" in 2021 (alias understood, race not held) or "Invalid GP"
         # (resembles no event). Loading a different race or failing later with
@@ -6626,7 +6772,8 @@ def _resolve_gp_name(
 def _resolve_session_name(
     year: int, gp_name: str, session: str | int, *, backend: ScheduleBackend | None = None
 ) -> str:
-    if isinstance(session, int):
+    number = _session_number(session)
+    if number is not None:
         from .events import get_sessions
 
         sessions = (
@@ -6634,10 +6781,12 @@ def _resolve_session_name(
             if backend is None
             else get_sessions(year, gp_name, backend=backend)
         )
-        if 1 <= session <= len(sessions):
-            return sessions[session - 1]
+        if 1 <= number <= len(sessions):
+            return sessions[number - 1]
         raise ValueError(f"session index out of range: {session}")
-    return _normalize_session_name(session)
+    if not isinstance(session, str):
+        raise ValueError(f"Invalid session type '{session}'")
+    return _normalize_session_name(session, year)
 
 
 def get_session(
@@ -6745,7 +6894,10 @@ def get_session(
             ),
         )
 
-    new_session = Session(year, gp_name, session_name, enable_cache, lib, ergast, backend)
+    # gp_name is resolved already: the constructor must not resolve it again.
+    new_session = Session(
+        year, gp_name, session_name, enable_cache, lib, ergast, backend, _event_resolved=True
+    )
     _preconnect_cdn(new_session)
     return new_session
 

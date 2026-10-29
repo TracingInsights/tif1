@@ -3707,7 +3707,7 @@ RapidFuzz runs compiled C++ code, which is much faster than Python. `fuzz.ratio(
 
 #### Schedule Memo Implementation
 
-The season memo is a plain dictionary keyed by year. A lock guards the writes. `_load_schedule_payload()` reads the vendored schedule files once and keeps them with `@lru_cache(maxsize=1)`:
+The season memo is a plain dictionary keyed by year. A lock guards the writes. A lookup reads only the vendored file of the requested season (`_load_vendored_f1schedule_year()`), and each season record memoizes its name resolutions per query:
 
 ```python
 def _get_events_cached(year: int) -> tuple[str, ...]:

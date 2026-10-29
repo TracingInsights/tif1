@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -466,9 +467,12 @@ def test_results_circuit_and_name_resolution_helpers(monkeypatch):
         "tif1.events.get_sessions",
         lambda _y, _gp: ["Practice 1", "Practice 2"],
     )
-    monkeypatch.setattr(core, "Session", lambda *args: ("session", args))
+    # get_session hands the resolved event name over (_event_resolved=True) so
+    # the constructor does not resolve it a second time.
+    monkeypatch.setattr(core, "Session", lambda *args, **kwargs: ("session", args, kwargs))
     created = core.get_session(2025, "Abu Dhabi Grand Prix", "Practice 1")
     assert cast(tuple, created)[0] == "session"
+    assert cast(tuple, created)[2] == {"_event_resolved": True}
 
     monkeypatch.setattr(core, "_resolve_session_name", lambda _y, _gp, _s: "Race")
     with pytest.raises(ValueError, match="does not exist"):
@@ -476,27 +480,39 @@ def test_results_circuit_and_name_resolution_helpers(monkeypatch):
 
 
 def test_resolve_helpers_with_event_module(monkeypatch):
+    # gp resolution goes through the pandas-free name/round resolvers of
+    # tif1.events (no Event Series is built just to read its name).
     monkeypatch.setattr(
-        "tif1.events.get_event", lambda _y, _r: SimpleNamespace(EventName="Test GP")
+        "tif1.events._resolve_event_round",
+        lambda _y, r, backend=None: f"Round {r} GP",  # noqa: ARG005
     )
-    assert core._resolve_gp_name(2025, 1) == "Test GP"
+    assert core._resolve_gp_name(2025, 1) == "Round 1 GP"
+    assert core._resolve_gp_name(2025, np.int64(2)) == "Round 2 GP"
 
     monkeypatch.setattr(
-        "tif1.events.get_event_by_name",
-        lambda y, n, exact_match=False: SimpleNamespace(EventName="Matched GP"),  # noqa: ARG005
+        "tif1.events._resolve_event_name",
+        lambda y, n, exact_match=False, backend=None: "Matched GP",  # noqa: ARG005
     )
     assert core._resolve_gp_name(2025, "matched") == "Matched GP"
 
     monkeypatch.setattr(
-        "tif1.events.get_event_by_name",
-        lambda y, n, exact_match=False: (_ for _ in ()).throw(ValueError("bad")),  # noqa: ARG005
+        "tif1.events._resolve_event_name",
+        lambda y, n, exact_match=False, backend=None: (_ for _ in ()).throw(  # noqa: ARG005
+            ValueError("bad")
+        ),
     )
     assert core._resolve_gp_name(2025, "raw name") == "raw name"
 
     monkeypatch.setattr("tif1.events.get_sessions", lambda _y, _gp: ["FP1", "Race"])
     assert core._resolve_session_name(2025, "Any", 2) == "Race"
+    # fastf1 parity: numeric strings, whole floats and numpy ints are numbers.
+    assert core._resolve_session_name(2025, "Any", "2") == "Race"
+    assert core._resolve_session_name(2025, "Any", 1.0) == "FP1"
+    assert core._resolve_session_name(2025, "Any", np.int64(2)) == "Race"
     with pytest.raises(ValueError, match="out of range"):
         core._resolve_session_name(2025, "Any", 9)
+    with pytest.raises(ValueError, match=r"Invalid session type '1\.5'"):
+        core._resolve_session_name(2025, "Any", 1.5)
 
 
 def test_driver_and_lapinternal_paths(monkeypatch):

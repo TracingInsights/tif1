@@ -50,7 +50,7 @@ class TestSession:
         """Test successful JSON fetch."""
         mock_fetch.return_value = {"drivers": []}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         data = session._fetch_json("drivers.json")
         assert isinstance(data, dict)
 
@@ -60,16 +60,16 @@ class TestSession:
         """Test 404 error handling."""
         mock_fetch.side_effect = DataNotFoundError(year=2025, event="Test GP", session="Race")
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(DataNotFoundError):
             session._fetch_json("missing.json")
 
     def test_backend_selection(self):
         """Test lib selection."""
-        session_pandas = Session(2025, "Test GP", "Race", lib="pandas")
+        session_pandas = Session(2025, "Pre-Season Testing", "Race", lib="pandas")
         assert session_pandas.lib == "pandas"
 
-        session_polars = Session(2025, "Test GP", "Race", lib="polars")
+        session_polars = Session(2025, "Pre-Season Testing", "Race", lib="polars")
         assert session_polars.lib in ["polars", "pandas"]  # Falls back if not available
 
 
@@ -81,7 +81,7 @@ class TestDriver:
     def test_driver_init(self, mock_fetch):
         """Test driver initialization."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race")
+        session = Session(2025, "Pre-Season Testing", "Race")
         driver = Driver(session, "VER")
         assert driver.driver == "VER"
         assert driver.session == session
@@ -92,7 +92,7 @@ class TestLap:
 
     def test_lap_init(self):
         """Test lap initialization."""
-        session = Session(2025, "Test GP", "Race")
+        session = Session(2025, "Pre-Season Testing", "Race")
         lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
         assert lap.driver == "VER"
         assert lap.lap_number == 19
@@ -111,7 +111,7 @@ class TestGetSession:
             "Qualifying",
             "Race",
         ]
-        session = get_session(2025, "Test GP", "Race")
+        session = get_session(2025, "Pre-Season Testing", "Race")
         assert isinstance(session, Session)
         assert session.year == 2025
 
@@ -125,7 +125,7 @@ class TestGetSession:
             "Qualifying",
             "Race",
         ]
-        session = get_session(2025, "Test GP", "Race", lib="pandas")
+        session = get_session(2025, "Pre-Season Testing", "Race", lib="pandas")
         assert session.lib == "pandas"
 
     @patch("tif1.events.get_sessions")
@@ -138,7 +138,7 @@ class TestGetSession:
             "Qualifying",
             "Race",
         ]
-        session = get_session(2025, "Test GP", "Race", enable_cache=False)
+        session = get_session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         assert session.enable_cache is False
 
     def test_get_session_invalid_session_raises_error(self):
@@ -175,7 +175,7 @@ class TestSessionAdvanced:
         """Test network error handling with retries."""
         mock_fetch.side_effect = NetworkError(reason="Network error")
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(NetworkError):
             session._fetch_json("test.json")
 
@@ -185,7 +185,7 @@ class TestSessionAdvanced:
         """Test invalid data error."""
         mock_fetch.side_effect = InvalidDataError(reason="Expected dict, got list")
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         with pytest.raises(InvalidDataError):
             session._fetch_json("test.json")
 
@@ -195,7 +195,7 @@ class TestSessionAdvanced:
         """Test drivers property."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         drivers = session.drivers
         assert len(drivers) == 1
         assert drivers[0] == "1"  # drivers property returns list of driver numbers
@@ -209,7 +209,7 @@ class TestSessionAdvanced:
         """Test drivers property with empty data."""
         mock_fetch.return_value = {"drivers": []}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         drivers = session.drivers
         assert len(drivers) == 0
 
@@ -239,7 +239,7 @@ class TestSessionAdvanced:
         mock_fetch.side_effect = side_effect
         mock_async.side_effect = fake_fetch_multiple
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         laps = session.laps
         assert isinstance(laps, pd.DataFrame)
         assert "Driver" in laps.columns
@@ -256,7 +256,7 @@ class TestSessionAdvanced:
             return [None] * len(requests)
 
         with patch("tif1.core.fetch_multiple_async", new=missing):
-            session = Session(2025, "Test GP", "Race", enable_cache=False)
+            session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
             laps = session.laps
         assert isinstance(laps, pd.DataFrame)
         assert laps.empty
@@ -271,7 +271,7 @@ class TestSessionAdvanced:
             {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]}
         ]
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         laps = asyncio.run(session.laps_async())
         assert isinstance(laps, pd.DataFrame)
 
@@ -285,7 +285,7 @@ class TestSessionAdvanced:
             {"time": [90.5], "lap": [1], "compound": ["SOFT"], "status": ["Valid"]}
         ]
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         laps = asyncio.run(session.laps_async())
 
         assert isinstance(laps, Laps)
@@ -312,7 +312,7 @@ class TestSessionAdvanced:
 
         clear_lap_cache()
         try:
-            session = Session(2025, "Test GP", "Race", enable_cache=False, lib="polars")
+            session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="polars")
             laps = asyncio.run(session.laps_async())
             assert isinstance(laps, pl.DataFrame)
             assert len(laps) == 2
@@ -339,7 +339,7 @@ class TestSessionAdvanced:
             ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [
             {"driver": "VER", "team": "Red Bull"},
             {"driver": "HAM", "team": "Mercedes"},
@@ -361,7 +361,7 @@ class TestSessionAdvanced:
         """Test get_fastest_laps with pandas."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull"}]}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {"Driver": ["VER", "VER"], "LapTime": [90.5, 91.0], "LapNumber": [1, 2]}
         )
@@ -374,7 +374,7 @@ class TestSessionAdvanced:
 
     def test_get_fastest_laps_empty(self):
         """Test get_fastest_laps with no valid laps."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame({"Driver": [], "LapTime": []})
 
         fastest = session.get_fastest_laps(by_driver=True)
@@ -386,7 +386,7 @@ class TestSessionAdvanced:
         """Test get_driver method."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = session.get_driver("VER")
         assert isinstance(driver, Driver)
         assert driver.driver == "VER"
@@ -406,7 +406,7 @@ class TestSessionAdvanced:
             return payloads
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM"],
@@ -452,7 +452,7 @@ class TestSessionAdvanced:
             ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
 
         driver = session.get_driver("VER")
         with patch.object(session, "_fetch_json", side_effect=AssertionError("unexpected fetch")):
@@ -485,7 +485,7 @@ class TestSessionAdvanced:
             ]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         driver = session.get_driver("VER")
         with patch.object(session, "_fetch_json", side_effect=AssertionError("unexpected fetch")):
@@ -498,7 +498,7 @@ class TestSessionAdvanced:
 
     def test_get_fastest_laps_async(self):
         """Async fastest-laps API should work from preloaded laps."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM", "VER"],
@@ -524,7 +524,7 @@ class TestSessionAdvanced:
             return [{"tel": {"time": [0.0, 1.0], "speed": [100, 120]}}]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
         session._memo.set_fastest_lap_ref(
             ("VER", 7), source_kind="drivers", source_id=id(session._drivers)
@@ -548,7 +548,7 @@ class TestSessionAdvanced:
             return [{"tel": {"time": [0.0, 1.0], "speed": [101, 123]}}]
 
         mock_fetch_multiple.side_effect = fake_fetch_multiple_async
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib="pandas")
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER"],
@@ -572,14 +572,14 @@ class TestSessionAdvanced:
         """Test get_driver raises after lazy-loading drivers when code is missing."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "team": "Red Bull", "number": 1}]}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
 
         with pytest.raises(DriverNotFoundError):
             session.get_driver("HAM")
 
     def test_get_driver_not_found_after_drivers_loaded(self):
         """Test get_driver raises when requested driver is not in loaded session drivers."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
 
         with pytest.raises(DriverNotFoundError):
@@ -587,7 +587,7 @@ class TestSessionAdvanced:
 
     def test_get_driver_found_after_drivers_loaded(self):
         """Test get_driver works when drivers are preloaded on the session."""
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Red Bull"}]
 
         driver = session.get_driver("VER")
@@ -609,7 +609,7 @@ class TestDriverAdvanced:
             "status": ["Valid"],
         }
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         laps = driver.laps
         assert isinstance(laps, pd.DataFrame)
@@ -619,7 +619,7 @@ class TestDriverAdvanced:
     def test_laps_property_reuses_loaded_session_laps(self, mock_fetch):
         """Driver.laps should reuse in-memory session laps when already available."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         session._laps = pd.DataFrame(
             {
                 "Driver": ["VER", "HAM", "VER"],
@@ -649,7 +649,7 @@ class TestDriverAdvanced:
 
         mock_fetch.side_effect = side_effect
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         laps = driver.laps
         assert isinstance(laps, pd.DataFrame)
@@ -660,7 +660,7 @@ class TestDriverAdvanced:
     def test_get_fastest_lap(self, mock_fetch):
         """Test driver get_fastest_lap."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = pd.DataFrame({"LapTime": [90.5, 91.0], "LapNumber": [1, 2]})
 
@@ -688,7 +688,7 @@ class TestDriverAdvanced:
 
         mock_async.side_effect = fake_fetch_multiple
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         lap = driver.get_lap(19)
         assert isinstance(lap, Lap)
@@ -699,7 +699,7 @@ class TestDriverAdvanced:
     def test_get_lap_missing_raises_when_laps_loaded(self, mock_fetch):
         """Test get_lap raises when lap is not present in preloaded laps."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = pd.DataFrame({"LapNumber": [1, 2, 3], "LapTime": [90.5, 91.0, 92.0]})
 
@@ -711,7 +711,7 @@ class TestDriverAdvanced:
     def test_get_lap_rebuilds_lookup_when_laps_replaced(self, mock_fetch):
         """Test get_lap lookup is rebuilt when _laps DataFrame is replaced."""
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = pd.DataFrame({"LapNumber": [1]})
         assert driver.get_lap(1).lap_number == 1
@@ -726,7 +726,7 @@ class TestDriverAdvanced:
         """Test team lookup is refreshed when session driver list is replaced."""
         mock_load_laps.return_value = {"time": [90.5], "lap": [1]}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = [{"driver": "VER", "team": "Alpha"}]
 
         first_driver = Driver(session, "VER")
@@ -748,7 +748,7 @@ class TestLapAdvanced:
         """Test lap telemetry property."""
         mock_fetch.return_value = {"tel": {"time": [0, 1], "speed": [100, 200]}}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
         telemetry = lap.telemetry
         assert isinstance(telemetry, pd.DataFrame)
@@ -757,7 +757,7 @@ class TestLapAdvanced:
 
     def test_telemetry_property_auto_ultra_cold_skips_cache_lookup(self, monkeypatch):
         """Cold telemetry path should skip cache lookup and use unvalidated fetch."""
-        session = Session(2025, "Test GP", "Race", enable_cache=True)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=True)
         lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
 
         class _CacheProbe:
@@ -788,7 +788,7 @@ class TestLapAdvanced:
         """Test lap telemetry property with empty data."""
         mock_fetch.return_value = {"tel": {}}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
         telemetry = lap.telemetry
         assert isinstance(telemetry, pd.DataFrame)
@@ -799,7 +799,7 @@ class TestLapAdvanced:
         """Test lap telemetry property with error."""
         mock_fetch.side_effect = InvalidDataError(reason="Failed")
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         lap = Lap({"Driver": "VER", "LapNumber": 19}, session=session)
         telemetry = lap.telemetry
         assert isinstance(telemetry, pd.DataFrame)
@@ -826,7 +826,7 @@ class TestCircuitInfo:
 
         mock_fetch.return_value = self._SAMPLE_PAYLOAD
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         assert isinstance(ci, CircuitInfo)
@@ -858,7 +858,7 @@ class TestCircuitInfo:
             "Rotation": "None",
         }
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         assert math.isnan(ci.corners["X"].iloc[1])
@@ -874,7 +874,7 @@ class TestCircuitInfo:
         """DataNotFoundError yields empty DataFrames and rotation=0.0."""
         mock_fetch.side_effect = DataNotFoundError(year=2025, event="Test GP", session="Race")
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         assert isinstance(ci.corners, pd.DataFrame)
@@ -888,7 +888,7 @@ class TestCircuitInfo:
         """get_circuit_info() returns cached result on second call."""
         mock_fetch.return_value = self._SAMPLE_PAYLOAD
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci1 = session.get_circuit_info()
         ci2 = session.get_circuit_info()
 
@@ -901,7 +901,7 @@ class TestCircuitInfo:
         """marshal_lights and marshal_sectors are always empty with correct columns."""
         mock_fetch.return_value = self._SAMPLE_PAYLOAD
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         _expected_cols = ["X", "Y", "Number", "Letter", "Angle", "Distance"]
@@ -923,7 +923,7 @@ class TestCircuitInfo:
         """An empty dict payload returns empty corners with rotation=0.0."""
         mock_fetch.return_value = {}
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         assert len(ci.corners) == 0
@@ -935,7 +935,7 @@ class TestCircuitInfo:
         """Letter column is always an empty string (not present in our data source)."""
         mock_fetch.return_value = self._SAMPLE_PAYLOAD
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         ci = session.get_circuit_info()
 
         assert (ci.corners["Letter"] == "").all()
@@ -959,7 +959,7 @@ class TestSessionTablePrefetchModes:
 
     @staticmethod
     def _session() -> Session:
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._requested_session_tables = {"weather.json", "rcm.json"}
         return session
 
@@ -1013,8 +1013,8 @@ def test_ci_mode_disables_every_persistent_cache_tier(monkeypatch):
     """CI mode turns enable_cache off, which gates the payload and frame tiers alike."""
     _set_config(monkeypatch, "ci_mode", True)
 
-    assert Session(2025, "Test GP", "Race").enable_cache is False
-    assert Session(2025, "Test GP", "Race", enable_cache=True).enable_cache is False
+    assert Session(2025, "Pre-Season Testing", "Race").enable_cache is False
+    assert Session(2025, "Pre-Season Testing", "Race", enable_cache=True).enable_cache is False
 
 
 class TestFastestLapSkipsDeletedLaps:
@@ -1048,7 +1048,7 @@ class TestFastestLapSkipsDeletedLaps:
 
     @pytest.mark.parametrize("lib", ["pandas", "polars"])
     def test_select_fastest_laps_skips_deleted(self, lib):
-        session = Session(2025, "Test GP", "Race", enable_cache=False, lib=lib)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib=lib)
         frame = self._frame(lib)
 
         by_driver = session._select_fastest_laps(frame, by_driver=True)
@@ -1062,14 +1062,14 @@ class TestFastestLapSkipsDeletedLaps:
     @patch("tif1.core.Session._fetch_from_cdn")
     def test_driver_get_fastest_lap_skips_deleted(self, mock_fetch):
         mock_fetch.return_value = {"drivers": [{"driver": "VER", "dn": "1", "team": "Red Bull"}]}
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         driver = Driver(session, "VER")
         driver._laps = self._frame("pandas").iloc[:3]
 
         assert list(driver.get_fastest_lap()["LapNumber"]) == [1]
 
     def test_raw_payload_scan_skips_deleted(self):
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         payload = {"lap": [1, 2, 3], "time": [91.0, 90.0, 92.0], "del": [False, True, False]}
 
         assert session._extract_fastest_lap_candidate("VER", payload) == ("VER", 1, 91.0)

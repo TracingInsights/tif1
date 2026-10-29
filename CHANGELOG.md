@@ -70,6 +70,16 @@ surface-compliance test.
 - An event name below the fuzzy score floor raises `FuzzyMatchError` (fastf1's
   name), a subclass of the `EventNotFoundError` it raised, so existing
   handlers still catch it.
+- Event names: a testing event matches only by its exact name
+  (`"Pre-Season Testing"`); `"testing"`, `"Pre-Season Test"` or a typo no
+  longer fuzzy-match a test (2020 "Barcelone" loaded Pre-Season Test 1, now
+  the Spanish GP). New season-aware aliases ("Australian", "Styrian",
+  "Austin Texas") raise `EventNotInSeasonError` where the race is not on the
+  calendar (2020/21 "Australian Grand Prix" loaded the Austrian GP), and
+  "Formula1" is stripped like "Formula 1". `EventNotInSeasonError` is now a
+  `FuzzyMatchError`; an `exact_match=True` miss raises the new
+  `ExactEventNotFoundError` (an `EventNotFoundError` and a `KeyError`, as
+  fastf1 raises `KeyError`).
 - `Laps.pick_track_status(how="invalid")` raises `ValueError` (fastf1); it
   returned the frame unchanged.
 - `Laps.split_qualifying_sessions()` returns `None` for a segment without
@@ -116,7 +126,11 @@ surface-compliance test.
   each edge, as fastf1 does (continuous channels linear between the two
   neighbours, discrete channels the value in force, `Source`
   `"interpolation"`); pandas ignored the flag and polars filled every null
-  of the frame.
+  of the frame. `get_car_data(interpolate_edges=True)` without `pad` now
+  takes the same path. fastf1 fits a quadratic spline through
+  `X`/`Y`/`Z`/`Distance`; measured on real data the two differ by ~0.1 m in
+  X/Y (p95 ~1 m) and ~1 cm in Distance, below the decimetre noise of the
+  position data, so tif1 keeps the linear value (no overshoot across gaps).
 - `Telemetry.fill_missing()` forward-/back-fills discrete channels and
   integer or boolean columns keeping their dtype (pandas interpolated `nGear`
   to 2.5 and made it float), fills `DriverAhead` gaps, and marks filled
@@ -164,6 +178,13 @@ surface-compliance test.
   fastf1's name of `session`; `exact_match` refuses aliases and fuzzy
   matches) and `Session.get_driver(identifier)` (`driver=` stays an alias),
   which also accepts the driver's full name.
+- `get_session`/`get_event` accept fastf1's other forms: a non-string `gp`
+  (numpy integer, whole float) is a round number; a session identifier that
+  `float()` accepts (`"5"`, `5.0`, `np.int64(5)`) is session N (`1.0` raised
+  `AttributeError`); 2021/22 "SQ" and "Sprint Qualifying" mean the Sprint.
+  On 1,182 event names and 468 identifiers tif1 now agrees with fastf1 on
+  979 and 441 (966 and 374 before); the rest are tif1's aliases and its
+  whitespace tolerance.
 - `tif1.legacy.inject_driver_ahead(session)` (fastf1's legacy module) and
   `base_class_view` on the Ergast result frames.
 - `tif1.logger` (`LoggingManager`, `get_logger`, `set_log_level`,
@@ -220,6 +241,20 @@ surface-compliance test.
 - Driver telemetry of many laps drops the repeated boundary samples while it
   decodes the driver's frame-tier row (compacting the decoded buffer in
   place) instead of copying the whole frame afterwards.
+- `get_session()` resolves the event without pandas and once: names and
+  rounds are matched on the schedule payload, only the requested vendored
+  season is read (orjson), and resolutions are memoized per query on the
+  season's schedule record (dropped when a live schedule refresh changes it).
+  Warm process: a name 0.55 -> 0.015 ms, a round number 10.6 -> 0.02 ms, a
+  fuzzy match 1.0 -> 0.03 ms (fastf1: ~20 ms); first call in a fresh process
+  14-25 -> 4.8 ms.
+- polars sessions skip the query engine on their hot paths: the fastest-lap
+  selection, the per-driver lap-clock lookup and the `results` frame work on
+  column `to_numpy()` arrays (a polars query plan costs ~0.5 ms, the first of
+  a process ~7 ms while polars starts one thread per core). Fresh process:
+  `results` 19 -> 11 ms, `get_fastest_lap_tel()` 19 -> 11 ms,
+  `get_driver(...).get_fastest_lap_tel()` 27 -> 17 ms. The pandas clock
+  lookup takes the same array route: `get_fastest_lap_tel()` 11 -> 9.5 ms.
 - The SQLite cache reads through the memory map (`PRAGMA mmap_size`,
   native 64-bit builds): ~25% off reading the multi-MB frame rows (33 ->
   25 ms for a race).
@@ -274,6 +309,15 @@ surface-compliance test.
   Sprint Qualifying gave STR, PIA, VER; the result is NOR, HAM, ALO).
   `drivers`/`drivers_df` follow the same order. On 2025 Bahrain qualifying
   without Ergast this reproduces the official top ten.
+- A qualifying classified from its laps applies the knockout: a driver
+  outside the Q1 cut (15 of 20 cars, 16 of 22) loses his later segment times,
+  and one outside the Q2 top ten his Q3 time. fastf1's lap-based fallback
+  keeps them, which matters when the stewards delete a Q1 lap after Q2: in
+  2025 Bahrain qualifying HUL's Q1 lap 8 was deleted 16 minutes after Q2,
+  dropping him from 15th to 16th, yet his Q2 lap kept him 13th. 2025
+  Bahrain qualifying without Ergast now equals the official result (20/20).
+- polars `get_fastest_laps()` `LapTimeSeconds` is the correctly rounded
+  seconds value, equal to pandas (the polars division was 1 ulp off).
 - Laps of seasons before 2018 (built from Ergast timings) flag
   `IsPersonalBest` on each lap faster than every earlier lap of the driver;
   every flag was False, so `pick_fastest()` found nothing.

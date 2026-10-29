@@ -43,7 +43,7 @@ def test_driver_lookup_semantics_match_legacy():
     drivers_payload = _build_driver_payload(1000)
     queries = _build_lookup_queries(drivers_payload, 200)
 
-    session = Session(2025, "Test GP", "Race", enable_cache=False)
+    session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
     session._drivers = drivers_payload
 
     legacy_found = _legacy_batch_lookup(drivers_payload, queries)
@@ -69,7 +69,7 @@ class TestCoreDriverBenchmarks:
         drivers_payload = _build_driver_payload(4000)
         queries = _build_lookup_queries(drivers_payload, 1000)
 
-        session = Session(2025, "Test GP", "Race", enable_cache=False)
+        session = Session(2025, "Pre-Season Testing", "Race", enable_cache=False)
         session._drivers = drivers_payload
         # Warm cache to emulate repeated lookups on the same session.
         session._has_driver_code("DRV0000")
