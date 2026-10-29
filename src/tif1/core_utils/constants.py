@@ -332,6 +332,50 @@ NUMERIC_TELEMETRY_CHANNELS = frozenset(
         "Z",
     }
 )
+# fastf1's telemetry column order (``Date`` .. ``Z``) followed by tif1's extras;
+# every telemetry frame is laid out in this order, unknown channels after it.
+TELEMETRY_COLUMN_ORDER = (
+    "Date",
+    "SessionTime",
+    "DriverAhead",
+    "DistanceToDriverAhead",
+    "Time",
+    "RPM",
+    "Speed",
+    "nGear",
+    "Throttle",
+    "Brake",
+    "DRS",
+    "Source",
+    "Distance",
+    "RelativeDistance",
+    "Status",
+    "X",
+    "Y",
+    "Z",
+    "AccelerationX",
+    "AccelerationY",
+    "AccelerationZ",
+    "Driver",
+    "LapNumber",
+)
+_TELEMETRY_COLUMN_RANK = {name: rank for rank, name in enumerate(TELEMETRY_COLUMN_ORDER)}
+#: Constant channels fastf1 reads from the live streams: tif1's payload is the
+#: car+pos merge (one ``Source``) and carries no off-track samples (``Status``).
+TELEMETRY_SOURCE_VALUE = "merged"
+TELEMETRY_STATUS_VALUE = "OnTrack"
+
+
+def ordered_telemetry_columns(columns: list[str]) -> list[str]:
+    """``columns`` in :data:`TELEMETRY_COLUMN_ORDER`, unknown names last in their order."""
+    unknown_rank = len(TELEMETRY_COLUMN_ORDER)
+    return (
+        sorted(columns, key=lambda name: (_TELEMETRY_COLUMN_RANK.get(name, unknown_rank), 0))
+        if any(name in _TELEMETRY_COLUMN_RANK for name in columns)
+        else list(columns)
+    )
+
+
 # The same channels under the raw payload keys (before TELEMETRY_RENAME_MAP).
 NUMERIC_TELEMETRY_PAYLOAD_KEYS = frozenset(
     {

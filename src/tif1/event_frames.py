@@ -182,10 +182,35 @@ class Event(pd.Series):
             return pd.Timestamp(date_utc)
         return pd.Timestamp(date)
 
-    def get_session(self, session_name: int | str):
+    def get_session(
+        self, identifier: int | str | None = None, *, session_name: int | str | None = None
+    ):
+        """Return a session of this event.
+
+        Args:
+            identifier: Session name, abbreviation or number (fastf1's
+                parameter name; positional use is unchanged).
+            session_name: tif1's older name for ``identifier``; pass one or
+                the other.
+
+        Raises:
+            ValueError: Neither or both of ``identifier``/``session_name``
+                were given, or the identifier matches no session of this
+                event.
+        """
+        if session_name is not None:
+            if identifier is not None:
+                raise ValueError(
+                    "Cannot pass both `identifier` and `session_name`; "
+                    "`session_name` is an alias of `identifier`."
+                )
+            identifier = session_name
+        if identifier is None:
+            raise ValueError("get_session() missing 1 required argument: 'identifier'")
+
         from .core import get_session
 
-        resolved_session_name = self.get_session_name(session_name)
+        resolved_session_name = self.get_session_name(identifier)
         return get_session(
             self._year,
             self._event_name,
@@ -245,14 +270,47 @@ class EventSchedule(pd.DataFrame):
     def _constructor(self):
         return EventSchedule
 
+    @property
+    def base_class_view(self) -> pd.DataFrame:
+        """The schedule as a plain :class:`pandas.DataFrame`.
+
+        fastf1 parity: a nicer view in debuggers and IDEs that render
+        ``DataFrame`` subclasses poorly.
+        """
+        return pd.DataFrame(self)
+
     def is_testing(self) -> pd.Series:
         """One boolean per event: True for pre-season testing events."""
         if "EventFormat" not in self.columns:
             return pd.Series([False] * len(self), index=self.index, dtype=bool)
         return pd.Series(self["EventFormat"] == "testing")
 
-    def get_event_by_round(self, round_number: int) -> Event:
-        """Return event for a specific championship round."""
+    def get_event_by_round(
+        self,
+        round_number: int | None = None,
+        *,
+        round: int | None = None,  # noqa: A002
+    ) -> Event:
+        """Return the event of a championship round.
+
+        Args:
+            round_number: The round number.
+            round: fastf1's keyword (deprecated there since 3.9.0) for the
+                same value; pass one or the other.
+
+        Raises:
+            ValueError: Neither or both keywords were given, the round is 0
+                (testing events have no round) or no event has that round.
+        """
+        if round is not None:
+            if round_number is not None:
+                raise ValueError(
+                    "Cannot pass both `round_number` and `round`. "
+                    "Use `round_number` only; `round` is deprecated."
+                )
+            round_number = round
+        if round_number is None:
+            raise ValueError("get_event_by_round() missing 1 required argument: 'round_number'")
         if round_number == 0:
             raise ValueError("Cannot get testing event by round number!")
         if "RoundNumber" not in self.columns:
@@ -269,8 +327,19 @@ class EventSchedule(pd.DataFrame):
             raise ValueError(f"Invalid round: {round_number}")
         raise ValueError("Something went wrong, cannot determine a unique event.")
 
-    def get_event_by_name(self, name: str, strict_search: bool = False) -> Event | None:
-        """Return event by name; optionally require strict exact matching."""
+    def get_event_by_name(
+        self, name: str, strict_search: bool = False, *, exact_match: bool = False
+    ) -> Event | None:
+        """Return the event ``name`` resolves to, or ``None`` when it matches nothing.
+
+        Args:
+            name: Event name, location or country; fuzzy-matched unless an
+                exact match is required.
+            strict_search: Require an exact (case-insensitive) event-name
+                match.
+            exact_match: fastf1's name for ``strict_search``; either enables
+                the exact match.
+        """
         if self.year is None:
             return None
         event_names: list[str] = []
@@ -280,12 +349,21 @@ class EventSchedule(pd.DataFrame):
             int(self.year),
             event_names,
             name,
-            exact_match=strict_search,
+            exact_match=strict_search or exact_match,
             backend=getattr(self, "backend", None),
         )
 
-    def get_event(self, identifier: int | str, strict_search: bool = False) -> Event | None:
-        """Return event by round number or name."""
+    def get_event(
+        self, identifier: int | str, strict_search: bool = False, *, exact_match: bool = False
+    ) -> Event | None:
+        """Return event by round number or name.
+
+        Args:
+            identifier: Round number or event name.
+            strict_search: Require an exact event-name match.
+            exact_match: fastf1's name for ``strict_search``.
+        """
+        strict_search = strict_search or exact_match
         if isinstance(identifier, int):
             return self.get_event_by_round(identifier)
         event = self.get_event_by_name(identifier, strict_search=strict_search)

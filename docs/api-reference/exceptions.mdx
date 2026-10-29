@@ -36,12 +36,16 @@ The exception hierarchy allows errors to be caught at different levels of specif
 TIF1Error (base exception for all tif1 errors)
 │
 ├── DataNotFoundError (data unavailable in CDN/cache)
-│   ├── DriverNotFoundError (specific driver not in session)
+│   ├── DriverNotFoundError (specific driver not in session; also a ValueError)
 │   └── LapNotFoundError (specific lap not found for driver)
+│       └── NoLapDataError (fastf1 name; defined, not raised by tif1)
 │
 ├── NetworkError (HTTP request failures after retries)
 │   ├── CircuitBreakerOpenError (the circuit breaker refuses a call while it is open)
 │   └── RateLimitExceededError (the Jolpica API kept answering 429 after the retries)
+│
+├── FastF1CriticalError (errors that soft_exceptions never swallows)
+│   └── RateLimitExceededError (also a NetworkError)
 │
 ├── ErgastError (the Ergast data layer, tif1.ergast)
 │   ├── ErgastJsonError (a Jolpica answer could not be parsed)
@@ -52,16 +56,21 @@ TIF1Error (base exception for all tif1 errors)
 ├── CacheError (defined and exported; tif1 does not raise it)
 │
 ├── SessionNotLoadedError (defined and exported; tif1 does not raise it)
+│     DataNotLoadedError is the fastf1 name of the same class
 │
 └── AsyncRequiredError (synchronous API in a browser without JavaScript Promise Integration)
 
 ValueError (built-in)
 ├── EventNotFoundError (event name that matches no event of the season)
-│   └── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
+│   ├── EventNotInSeasonError (alias of an event that is not on the calendar of that season)
+│   └── FuzzyMatchError (fastf1 name: a fuzzy name search below the score floor)
+├── DriverNotFoundError (also a DataNotFoundError, see above)
 └── ValueError itself (unknown session name, invalid round, lap number below 1)
 ```
 
-`EventNotFoundError` and `EventNotInSeasonError` are not `TIF1Error` subclasses. Refer to [Event Name Errors](#event-name-errors) for details.
+`DriverNotFoundError` has two bases: `DataNotFoundError` and `ValueError`. fastf1 raises `ValueError` for an unknown `get_driver()` identifier, so a fastf1 `except ValueError` handler still catches it. Put an `except DriverNotFoundError` clause before an `except ValueError` clause.
+
+`EventNotFoundError` and its subclasses are not `TIF1Error` subclasses. Refer to [Event Name Errors](#event-name-errors) for details. The fastf1 exception names are covered in [fastf1 Names](#fastf1-names).
 
 <Note>
   `get_session()` does not fetch data. A `DataNotFoundError` or `NetworkError` appears on the first data access: `session.load()`, `session.laps`, `session.drivers`, and similar properties. Data properties load on first access, so `SessionNotLoadedError` does not occur. A cache failure is logged as a warning, and `tif1` continues without the SQLite cache, so `CacheError` does not occur either.
@@ -82,11 +91,11 @@ except tif1.EventNotFoundError:
     # A name that matches no event, or an alias such as "Suzuka"
     # for a season without that event (EventNotInSeasonError)
     pass
+except tif1.DriverNotFoundError:
+    # Handle specific driver not found (before ValueError: it is one too)
+    pass
 except ValueError:
     # Unknown session name or invalid round number
-    pass
-except tif1.DriverNotFoundError:
-    # Handle specific driver not found
     pass
 except tif1.DataNotFoundError:
     # Handle any data not found (including driver/lap)
@@ -220,7 +229,7 @@ class EventNotFoundError(ValueError)
 The exception has no `message` attribute and no `context` dictionary. Use `str(e)` to get the message.
 
 **When Raised:**
-- `get_session()` and `get_event_by_name()` get a name that resembles no event. Event resolution tries the exact name (case-insensitive), then the alias table, then fuzzy matching. A fuzzy match needs a score of at least 70 (rapidfuzz ratio, 0-100). The message is `No event matching '<name>' in <year>`.
+- `get_session()` and `get_event_by_name()` get a name that resembles no event. Event resolution tries the exact name (case-insensitive), then the alias table, then fuzzy matching. A fuzzy match needs a score of at least 70 (rapidfuzz ratio, 0-100). The message is `No event matching '<name>' in <year>`. This case raises the subclass `FuzzyMatchError`.
 - `get_event_by_name(..., exact_match=True)` finds no event with that exact name. The message is `No exact match found for event '<name>' in <year>`.
 
 A season with no events raises a plain `ValueError` (`No events found for <year>`). A typo such as "Monacco" or "Zandvort" still resolves to the closest event and logs a `Correcting user input` warning.
@@ -245,6 +254,10 @@ print(session.event_name)  # Monaco Grand Prix
 Raised when an alias names a Grand Prix that is not on the calendar of that season. It is a subclass of `EventNotFoundError`, so an except clause on `EventNotFoundError` also catches it. Import it as `tif1.EventNotInSeasonError`.
 
 `get_session()` and `get_event_by_name()` raise it, for example for `tif1.get_session(2021, "Suzuka", "Race")`. The message names the event: `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`.
+
+### `FuzzyMatchError`
+
+The fastf1 name for a failed fuzzy event match. It is a subclass of `EventNotFoundError` and a `ValueError`. Import it as `tif1.FuzzyMatchError`. `get_session()`, `get_event_by_name()`, and `get_sessions()` raise it for a name below the fuzzy score floor (`No event matching '<name>' in <year>`). An `except FuzzyMatchError` clause from fastf1 code and an `except EventNotFoundError` clause both catch it. A miss with `exact_match=True` raises `EventNotFoundError` itself.
 
 ---
 
@@ -395,11 +408,11 @@ for failure in failed:
 
 ### `DriverNotFoundError`
 
-Raised when attempting to access a driver that does not exist in the session. This is a subclass of `DataNotFoundError`. It typically occurs due to typos in driver codes. It also occurs when requesting drivers who did not participate in the session.
+Raised when attempting to access a driver that does not exist in the session. This is a subclass of `DataNotFoundError` and of `ValueError`, the exception that fastf1 raises for an unknown driver. It typically occurs due to typos in driver codes. It also occurs when requesting drivers who did not participate in the session.
 
 **Signature:**
 ```python
-class DriverNotFoundError(DataNotFoundError):
+class DriverNotFoundError(DataNotFoundError, ValueError):
     def __init__(self, driver: str, **context: Any) -> None
 ```
 
@@ -753,6 +766,32 @@ for driver_code in session.drivers_df["Driver"]:
 # session.results shows the gap to the leader as Status ("+2 Laps", "+77 Laps").
 # The data has no retirement reason, so a retirement also reads "+N Laps".
 print(session.results[["Abbreviation", "Status", "Laps"]].tail(5))
+```
+
+---
+
+## fastf1 Names
+
+tif1 exports the fastf1 exception names, so fastf1 `except` clauses import without change. Import them from `tif1` or from `tif1.exceptions`.
+
+| Name | tif1 class | Raised by tif1 |
+| :--- | :--- | :--- |
+| `DataNotLoadedError` | The same class object as `SessionNotLoadedError` | No |
+| `NoLapDataError` | A `LapNotFoundError` subclass. The message is the fastf1 one: `Failed to load session because the API did not provide any usable data.` | No. tif1 raises `DataNotFoundError` for missing lap data |
+| `FuzzyMatchError` | An `EventNotFoundError` subclass (a `ValueError`) | Yes, for a fuzzy event-name search below the score floor |
+| `FastF1CriticalError` | A `TIF1Error` subclass, the base of errors that must stop loading | Through `RateLimitExceededError` |
+
+### `FastF1CriticalError`
+
+The base class of errors that `tif1.logger.soft_exceptions` always raises again. A function wrapped in `soft_exceptions` logs and swallows every other exception. `RateLimitExceededError` is a `FastF1CriticalError` and also a `NetworkError`.
+
+```python
+import tif1
+
+print(issubclass(tif1.RateLimitExceededError, tif1.FastF1CriticalError))  # True
+print(issubclass(tif1.RateLimitExceededError, tif1.NetworkError))  # True
+print(tif1.DataNotLoadedError is tif1.SessionNotLoadedError)  # True
+print(issubclass(tif1.NoLapDataError, tif1.LapNotFoundError))  # True
 ```
 
 ---
@@ -1640,7 +1679,7 @@ session = tif1.get_session(2024, "Monaco", "Race", enable_cache=False)
 
 ### `SessionNotLoadedError`
 
-A `TIF1Error` subclass for access to session data before a load. `tif1` defines and exports it, but the current library does not raise it. Data properties load on first access: `session.laps`, `session.weather`, `session.race_control_messages`, `session.drivers`, and `session.results` fetch their data when the code reads them. `session.load()` only controls which data is fetched in one call.
+A `TIF1Error` subclass for access to session data before a load. `DataNotLoadedError` (the fastf1 name) is the same class object. `tif1` defines and exports it, but the current library does not raise it. Data properties load on first access: `session.laps`, `session.weather`, `session.race_control_messages`, `session.drivers`, and `session.results` fetch their data when the code reads them. `session.load()` only controls which data is fetched in one call.
 
 **Signature:**
 ```python
@@ -1809,7 +1848,7 @@ Raised when the Jolpica API rejects a request (a 404 for an unknown path or any 
 
 ### `RateLimitExceededError`
 
-A `NetworkError` subclass raised when Jolpica keeps answering `429 Too Many Requests` after three retries that honour `Retry-After`. The context holds `url`, `status_code` (429) and `retry_after`.
+A `NetworkError` subclass raised when Jolpica keeps answering `429 Too Many Requests` after three retries that honour `Retry-After`. It is also a `FastF1CriticalError`, so `tif1.logger.soft_exceptions` never swallows it. The context holds `url`, `status_code` (429) and `retry_after`.
 
 **Example:**
 ```python

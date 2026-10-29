@@ -15,7 +15,7 @@ import importlib
 import logging
 import math
 import re
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, cast, runtime_checkable
 
@@ -25,6 +25,7 @@ import pandas as pd
 from .cache import get_cache
 from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER, LAP_PAYLOAD_KEYS
 from .core_utils.driver_laps import build_driver_laps_frame
+from .core_utils.ergast_results import unique_driver_labels
 from .core_utils.helpers import (
     DataFrame,
     _coerce_lap_number,
@@ -35,6 +36,7 @@ from .core_utils.helpers import (
     _get_lap_column,
     _is_empty_df,
     _merge_telemetry_payloads,
+    _not_deleted_mask,
     _numeric_seconds_to_timedelta,
     _process_lap_df,
     _telemetry_frame_from_merged,
@@ -46,6 +48,7 @@ from .exceptions import (
     InvalidDataError,
     LapNotFoundError,
     NetworkError,
+    TIF1Error,
 )
 
 if TYPE_CHECKING:
@@ -153,6 +156,290 @@ class TelemetryProvider(Protocol):
 
 #: Columns used in every corners / marshal-marker DataFrame.
 _CORNERS_DF_COLUMNS = ["X", "Y", "Number", "Letter", "Angle", "Distance"]
+#: tif1 extras of :class:`CircuitInfo`: the track outline and the track sections.
+_TRACK_DF_COLUMNS = ["X", "Y", "Time"]
+_SECTIONS_DF_COLUMNS = [
+    "Number",
+    "Section",
+    "SectionType",
+    "StartPercent",
+    "EndPercent",
+    "StartDistance",
+    "EndDistance",
+]
+
+
+def _empty_marker_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=_CORNERS_DF_COLUMNS)
+
+
+#: The per-lap weather sample the laps table carries (``WeatherTime`` first,
+#: then fastf1's seven weather channels in fastf1's order).
+_LAP_WEATHER_COLUMNS = (
+    "WeatherTime",
+    "AirTemp",
+    "Humidity",
+    "Pressure",
+    "Rainfall",
+    "TrackTemp",
+    "WindDirection",
+    "WindSpeed",
+)
+#: Columns of a per-lap weather sample (``get_weather_data``): ``Time`` (the
+#: sample's session time) then the seven channels.
+_WEATHER_SAMPLE_COLUMNS = ("Time", *_LAP_WEATHER_COLUMNS[1:])
+#: dtypes of ``session.weather_data`` (the all-missing sample frame uses them).
+_WEATHER_SAMPLE_DTYPES = {
+    "Time": "timedelta64[ns]",
+    "AirTemp": "float64",
+    "Humidity": "float64",
+    "Pressure": "float64",
+    "Rainfall": "boolean",
+    "TrackTemp": "float64",
+    "WindDirection": "Int64",
+    "WindSpeed": "float64",
+}
+#: Sessions ``split_qualifying_sessions`` accepts (fastf1's quali-like names).
+_QUALI_LIKE_SESSION_NAMES = frozenset({"Qualifying", "Sprint Qualifying", "Sprint Shootout"})
+#: Gap between consecutive lap starts that separates two qualifying segments
+#: when neither a ``QualifyingSession`` marker nor session status exists (5 min).
+_QUALI_SEGMENT_GAP = 5 * 60 * 10**9
+_NAT_NS = np.iinfo("int64").min
+#: Upper bound of the open-ended last qualifying segment (no lap starts after it).
+_NO_UPPER_BOUND = np.iinfo("int64").max
+
+
+def _timedelta_ns(values: pd.Series) -> np.ndarray:
+    """A time-like series as int64 nanoseconds, whatever its resolution (NaT: int64 min).
+
+    Numbers are seconds (fastf1 compatibility). pandas 3 keeps ``ms``/``us``
+    resolutions, so a bare ``.view("i8")`` of a timedelta column is not
+    nanoseconds in general.
+    """
+    coerced = Telemetry._coerce_timedelta_series(values)
+    return coerced.astype("timedelta64[ns]").to_numpy().view("i8")
+
+
+def _weather_rows_for_laps(
+    weather_times: np.ndarray, starts: np.ndarray, ends: np.ndarray
+) -> np.ndarray:
+    """Position of each lap's weather sample in ``weather_times`` (``-1`` when none).
+
+    fastf1's ``Lap.get_weather_data`` rule: the first sample within
+    ``[start, end]``, else the last sample at or before ``end``. All inputs
+    are int64 nanoseconds with ``NaT`` as the int64 minimum: a lap without a
+    start takes the last sample before its end, a lap without an end has no
+    sample, and a sample without a time is never picked (fastf1's NaT
+    comparisons are all False).
+    """
+    valid = np.flatnonzero(weather_times != _NAT_NS)
+    if not len(valid):
+        return np.full(len(starts), -1, dtype=np.intp)
+    order = valid[np.argsort(weather_times[valid], kind="stable")]
+    sorted_times = weather_times[order]
+    n = len(sorted_times)
+    has_end = ends != _NAT_NS
+    first = np.searchsorted(sorted_times, starts, side="left")
+    first_time = sorted_times[np.minimum(first, n - 1)]
+    within = (starts != _NAT_NS) & has_end & (first < n) & (first_time <= ends)
+    last_before = np.where(has_end, np.searchsorted(sorted_times, ends, side="right") - 1, -1)
+    rows = np.where(within, first, last_before)
+    return np.where(rows < 0, -1, order[np.maximum(rows, 0)])
+
+
+def _weather_sample_frame(weather: pd.DataFrame, rows: np.ndarray, index: pd.Index) -> pd.DataFrame:
+    """``weather``'s rows at ``rows`` (``-1``: all missing) as the sample columns on ``index``.
+
+    The session table's dtypes are kept (fastf1 restores them); a channel the
+    table lacks is all-NaN.
+    """
+    fill = bool((rows < 0).any())
+    data: dict[str, Any] = {}
+    for column in _WEATHER_SAMPLE_COLUMNS:
+        if column in weather.columns:
+            data[column] = pd.api.extensions.take(weather[column].array, rows, allow_fill=fill)
+        else:
+            data[column] = np.full(len(rows), np.nan)
+    return pd.DataFrame(data, index=index, copy=False)
+
+
+def _missing_weather_frame(index: pd.Index) -> pd.DataFrame:
+    """All-missing weather samples on ``index`` with ``session.weather_data``'s dtypes."""
+    return pd.DataFrame(
+        {
+            column: pd.Series(index=index, dtype=dtype)
+            for column, dtype in _WEATHER_SAMPLE_DTYPES.items()
+        },
+        index=index,
+    )
+
+
+def _session_weather_table(session: Any) -> pd.DataFrame | None:
+    """``session.weather_data`` when it is a non-empty pandas table with ``Time``."""
+    if session is None:
+        return None
+    weather = getattr(session, "weather_data", None)
+    if not isinstance(weather, pd.DataFrame) or weather.empty or "Time" not in weather.columns:
+        return None
+    return weather
+
+
+def _identifier_items(identifiers: Any) -> list[Any]:
+    """``identifiers`` as a list for the ``pick_*`` selectors.
+
+    A string, number, mapping or driver-like object (``.driver``/
+    ``.Abbreviation``, e.g. a results row) is one identifier; anything else
+    iterable (list, tuple, set, pandas/polars Series, numpy array, generator)
+    is consumed once.
+    """
+    if (
+        isinstance(identifiers, str | bytes | int | Mapping)
+        or hasattr(identifiers, "driver")
+        or hasattr(identifiers, "Abbreviation")
+    ):
+        return [identifiers]
+    try:
+        return list(identifiers)
+    except TypeError:
+        return [identifiers]
+
+
+def _true_flags(values: pd.Series) -> np.ndarray:
+    """``values == True`` as a numpy mask, a missing flag counting as False (fastf1's ``== True``)."""
+    if values.dtype == bool:
+        return values.to_numpy()
+    return values.eq(True).fillna(False).to_numpy(dtype=bool)
+
+
+def _require_qualifying_session(session: Any) -> None:
+    """fastf1's guard: only a qualifying-like session's laps split into Q1/Q2/Q3.
+
+    A session object without a name (an in-memory stand-in) is not checked.
+
+    Raises:
+        ValueError: ``session``'s name is not Qualifying, Sprint Qualifying or
+            Sprint Shootout (or not in its own ``_QUALI_LIKE_SESSIONS``).
+    """
+    if session is None:
+        return
+    name = getattr(session, "name", None)
+    if not isinstance(name, str):
+        name = getattr(session, "session_name", None)
+    if not isinstance(name, str):
+        return
+    quali_like = getattr(session, "_QUALI_LIKE_SESSIONS", None)
+    if not isinstance(quali_like, tuple | list | set | frozenset):
+        quali_like = _QUALI_LIKE_SESSION_NAMES
+    if name not in quali_like:
+        raise ValueError("Session is not a qualifying session!")
+
+
+def _session_status_rows(status: Any) -> list[tuple[int | None, str]]:
+    """``(Time in ns or None, Status)`` per row of a session-status table (pandas or polars)."""
+    columns = getattr(status, "columns", None)
+    if columns is None or "Time" not in columns or "Status" not in columns or not len(status):
+        return []
+    if isinstance(status, pd.DataFrame):
+        times = _timedelta_ns(cast(pd.Series, status["Time"]))
+    else:
+        times = _timedelta_ns(pd.Series(list(status["Time"]), dtype=object))
+    return [
+        (None if time == _NAT_NS else int(time), str(state))
+        for time, state in zip(times.tolist(), list(status["Status"]), strict=True)
+    ]
+
+
+def _qualifying_split_times(session: Any, starts: np.ndarray) -> list[int | None] | None:
+    """Qualifying segment bounds in int64 ns (``None`` is NaT: no lap matches it).
+
+    fastf1's algorithm on ``session.session_status``: every ``Started`` row
+    opens a segment except the restart after an ``Aborted`` row (a red flag),
+    which clears the suspension, as ``Finished`` does; a session's own
+    ``_session_split_times`` take precedence; the table's last time closes the
+    last segment. Without session status, :func:`_lap_start_gap_split_times`.
+    ``None`` when there is nothing to split on.
+    """
+    status_rows = (
+        _session_status_rows(getattr(session, "session_status", None))
+        if session is not None
+        else []
+    )
+    if not status_rows:
+        return _lap_start_gap_split_times(starts)
+    preset = getattr(session, "_session_split_times", None)
+    split_times: list[int | None] = []
+    if isinstance(preset, list | tuple) and preset:
+        split_times = [
+            None if time == _NAT_NS else int(time)
+            for time in _timedelta_ns(pd.Series(list(preset), dtype=object)).tolist()
+        ]
+    else:
+        suspended = False
+        for time, state in status_rows:
+            if state == "Started":
+                if suspended:
+                    suspended = False
+                else:
+                    split_times.append(time)
+            elif state == "Aborted":
+                suspended = True
+            elif state == "Finished":
+                # A segment that is not resumed after its red flag.
+                suspended = False
+    split_times.append(status_rows[-1][0])
+    return split_times
+
+
+def _lap_start_gap_split_times(starts: np.ndarray) -> list[int | None] | None:
+    """Segment bounds from the lap starts alone (the last resort, no session status).
+
+    The two longest gaps of more than :data:`_QUALI_SEGMENT_GAP` between
+    consecutive lap starts (any driver) are the breaks; a bound sits just
+    before the first lap start after each break and the last segment is
+    open-ended. ``None`` without any lap start.
+    """
+    valid = np.sort(starts[starts != _NAT_NS])
+    if not len(valid):
+        return None
+    gaps = np.diff(valid)
+    breaks = np.flatnonzero(gaps > _QUALI_SEGMENT_GAP)
+    if len(breaks) > 2:
+        # Longest first, ties to the earlier break; then back in time order.
+        breaks = np.sort(breaks[np.lexsort((breaks, -gaps[breaks]))][:2])
+    return [int(valid[0]) - 1, *(int(valid[b + 1]) - 1 for b in breaks), _NO_UPPER_BOUND]
+
+
+def _qualifying_segment_masks(
+    split_times: list[int | None], starts: np.ndarray, ends: np.ndarray, pit_out: np.ndarray
+) -> list[np.ndarray | None]:
+    """fastf1's lap assignment between consecutive ``split_times`` (three segments at most).
+
+    A lap belongs to the segment its start falls in (strictly between the
+    bounds); an out-lap that starts before a bound and ends after it belongs
+    to the next segment instead. ``starts``/``ends`` are int64 ns (``NaT``:
+    the int64 minimum, never matching); ``pit_out`` flags laps with a
+    ``PitOutTime``.
+    """
+    has_start = starts != _NAT_NS
+    has_end = ends != _NAT_NS
+    nothing = np.zeros(len(starts), dtype=bool)
+    masks: list[np.ndarray | None] = [None, None, None]
+    previous_early: np.ndarray | None = None
+    for i in range(min(3, len(split_times) - 1)):
+        low, high = split_times[i], split_times[i + 1]
+        if low is None or high is None:
+            cond = nothing
+        else:
+            cond = has_start & (starts > low) & (starts < high)
+        if previous_early is not None:
+            cond = cond | previous_early
+        if high is None:
+            is_early = nothing
+        else:
+            is_early = has_start & (starts < high) & has_end & (ends > high) & pit_out
+        masks[i] = cond & ~is_early
+        previous_early = is_early
+    return masks
 
 
 @dataclass
@@ -163,26 +450,60 @@ class CircuitInfo:
     Columns for all marker DataFrames: ``X <float>, Y <float>,
     Number <int>, Letter <str>, Angle <float>, Distance <float>``.
 
-    ``marshal_lights`` and ``marshal_sectors`` are not available through
-    the tif1 data source and are always returned as empty DataFrames with
-    the correct column schema.
+    ``corners``, ``marshal_lights``, ``marshal_sectors`` and ``rotation`` are
+    fastf1's attributes. The remaining attributes are tif1 extras read from
+    the new-schema ``corners.json`` or from the MultiViewer API; they are
+    empty (never ``None`` for the frames and strings) when the source does
+    not carry them. On a polars session every frame is a polars frame.
     """
 
-    corners: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=_CORNERS_DF_COLUMNS))
+    corners: pd.DataFrame = field(default_factory=_empty_marker_frame)
     """Location of corners (FastF1-compatible DataFrame)."""
 
-    marshal_lights: pd.DataFrame = field(
-        default_factory=lambda: pd.DataFrame(columns=_CORNERS_DF_COLUMNS)
-    )
-    """Location of marshal lights (always empty – not in source data)."""
+    marshal_lights: pd.DataFrame = field(default_factory=_empty_marker_frame)
+    """Location of marshal lights (new-schema ``corners.json`` or MultiViewer)."""
 
-    marshal_sectors: pd.DataFrame = field(
-        default_factory=lambda: pd.DataFrame(columns=_CORNERS_DF_COLUMNS)
-    )
-    """Location of marshal sectors (always empty – not in source data)."""
+    marshal_sectors: pd.DataFrame = field(default_factory=_empty_marker_frame)
+    """Location of marshal sectors (new-schema ``corners.json`` or MultiViewer)."""
 
     rotation: float = 0.0
     """Rotation of the circuit in degrees."""
+
+    circuit_key: int | None = None
+    """The F1 live-timing circuit key (the MultiViewer API's ``circuitKey``)."""
+
+    circuit_name: str = ""
+    """Short circuit name (``"Sakhir"``)."""
+
+    location: str = ""
+    """Circuit location (``"Sakhir"``)."""
+
+    country: str = ""
+    """Country name (``"Bahrain"``)."""
+
+    country_code: str = ""
+    """IOC country code (``"BRN"``)."""
+
+    country_key: int | None = None
+    """The F1 live-timing country key."""
+
+    pit_loss: dict[str, float] = field(default_factory=dict)
+    """Pit-lane time loss in seconds: ``normal``, ``sc``, ``vsc`` (empty when unknown)."""
+
+    track: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=_TRACK_DF_COLUMNS))
+    """Track outline: ``X``, ``Y`` and the session ``Time`` of each outline sample."""
+
+    sections: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=_SECTIONS_DF_COLUMNS)
+    )
+    """Track sections per corner: ``Number, Section, SectionType, StartPercent,
+    EndPercent, StartDistance, EndDistance``."""
+
+    mini_sector_index: list[int] = field(default_factory=list)
+    """Mini-sector boundaries as indices into the track outline."""
+
+    source: str = ""
+    """Where the data came from: ``"corners.json"``, ``"multiviewer"`` or both joined by ``+``."""
 
     def add_marker_distance(self, reference_lap: "Lap") -> None:
         """Compute the ``Distance`` value for each track marker.
@@ -195,12 +516,17 @@ class CircuitInfo:
         The distance is selected via a *best-fit* approach: for each marker
         the telemetry sample whose squared XY error relative to the marker
         position is smallest is chosen, and its ``Distance`` value is
-        assigned to the marker.
+        assigned to the marker. The frames may be pandas or polars (a polars
+        frame is replaced by its updated copy).
 
         Args:
             reference_lap: A :class:`Lap` whose telemetry contains
                 ``X``, ``Y``, and ``Distance`` columns.
         """
+        self._fit_marker_distances(reference_lap, only_missing=False)
+
+    def _fit_marker_distances(self, reference_lap: Any, *, only_missing: bool) -> None:
+        """:meth:`add_marker_distance`; ``only_missing`` keeps the distances already known."""
         _log = logging.getLogger(__name__)
 
         try:
@@ -212,7 +538,7 @@ class CircuitInfo:
             )
             return
 
-        if tel is None or tel.empty:
+        if tel is None or len(tel) == 0:
             _log.warning("Failed to generate marker distance information: telemetry data is empty")
             return
 
@@ -228,62 +554,152 @@ class CircuitInfo:
             )
             return
 
-        pos_tel = tel.dropna(subset=["X", "Y", "Distance"])
-        if pos_tel.empty:
+        samples = _float_columns(tel, ["X", "Y", "Distance"])
+        samples = samples[~np.isnan(samples).any(axis=1)]
+        if not len(samples):
             _log.warning(
                 "Failed to generate marker distance information: "
                 "no valid position samples found in telemetry"
             )
             return
+        xy_ref = samples[:, :2]
+        sample_distance = samples[:, 2]
 
-        # Numpy array of track XY coordinates  (shape: n_samples × 2)
-        xy_ref_array = pos_tel[["X", "Y"]].to_numpy(dtype=float)
-
-        for df in (self.corners, self.marshal_sectors, self.marshal_lights):
-            if df.empty:
+        for name in ("corners", "marshal_sectors", "marshal_lights"):
+            df = getattr(self, name)
+            if not len(df):
                 continue
+            marker_xy = _float_columns(df, ["X", "Y"])
+            current = _float_columns(df, ["Distance"])[:, 0]
+            target = ~np.isnan(marker_xy).any(axis=1)
+            if only_missing:
+                target &= np.isnan(current)
+            if not target.any():
+                continue
+            # Squared XY error of every marker against every track sample
+            # (n_markers x n_samples); the closest sample gives the distance.
+            diff = xy_ref[None, :, :] - marker_xy[target][:, None, :]
+            nearest = np.argmin(diff[..., 0] ** 2 + diff[..., 1] ** 2, axis=1)
+            distances = current.copy()
+            distances[target] = sample_distance[nearest]
+            if isinstance(df, pd.DataFrame):
+                df["Distance"] = distances
+            else:
+                import polars as pl
 
-            # Numpy array of marker XY positions  (shape: n_markers × 2)
-            marker_xy = df[["X", "Y"]].to_numpy(dtype=float)
-            n_markers = marker_xy.shape[0]
+                setattr(self, name, df.with_columns(pl.Series("Distance", distances)))
 
-            # Broadcast to (n_markers × n_samples × 2) and compute
-            # squared Euclidean error for every marker × sample pair.
-            xy_broadcast = xy_ref_array.reshape(1, -1, 2).repeat(n_markers, axis=0)
-            diff = xy_broadcast - marker_xy.reshape(-1, 1, 2)
-            sq_err = diff[..., 0] ** 2 + diff[..., 1] ** 2
 
-            # Index of the closest track sample for each marker.
-            indices = np.nanargmin(sq_err, axis=1)
-
-            # Assign the Distance at that sample to the marker.
-            distances = pos_tel.iloc[indices]["Distance"].to_list()
-            df["Distance"] = distances
+def _float_columns(frame: Any, columns: list[str]) -> np.ndarray:
+    """``columns`` of a pandas or polars frame as one float64 array (NaN for missing)."""
+    if isinstance(frame, pd.DataFrame):
+        return frame[columns].to_numpy(dtype=float, na_value=np.nan)
+    return np.column_stack(
+        [frame[column].cast(float).to_numpy().astype(float, copy=False) for column in columns]
+    )
 
 
 class LazyTelemetryDict(dict):
-    """Lazy-loading dictionary that fetches telemetry data per driver on demand."""
+    """``session.car_data`` / ``session.pos_data``: per-driver telemetry, fetched on first read.
+
+    Keyed by driver number like fastf1 (abbreviations are accepted too); the
+    value is the driver's laps concatenated in session order as one
+    :class:`Telemetry` (a ``PolarsTelemetry`` on a polars session), memoised
+    under the driver number. ``len()``, iteration and ``in`` answer from the
+    session's driver list without fetching anything.
+    """
 
     def __init__(self, session: TelemetryProvider):
         super().__init__()
         self.session = session
 
-    def __getitem__(self, key):
-        if key not in self:
-            driver_code = None
-            for d in self.session._drivers_data:
-                if str(d.get("dn")) == str(key) or d.get("driver") == str(key):
-                    driver_code = d.get("driver")
-                    break
-            if driver_code:
-                # session.laps is typed as the DataFrame union; on the pandas
-                # backend it is always a Laps instance carrying .telemetry.
-                laps = cast(Any, self.session.laps)
-                driver_laps = laps[laps["Driver"] == driver_code]
-                self[key] = driver_laps.telemetry
+    def _entries(self) -> list[tuple[str, str, str]]:
+        """``(key, car number, abbreviation)`` per driver of the session.
+
+        Car numbers a ``drivers.json`` lacks are resolved first (the session
+        backfills them from Ergast or the laps), so the keys never depend on
+        what was read before. A car two drivers shared is keyed
+        ``number/Abbreviation`` for every driver but its first, as
+        ``session.results`` labels it.
+        """
+        rows = [d for d in self.session._drivers_data if isinstance(d, dict)]
+        if any(not str(d.get("dn") or "").strip() for d in rows):
+            resolve = getattr(self.session, "_driver_rows_info", None)
+            if callable(resolve):
+                resolve()
+        pairs = [(str(d.get("dn") or "").strip(), str(d.get("driver") or "").strip()) for d in rows]
+        labels = unique_driver_labels([(number or code, code) for number, code in pairs])
+        return [(label, number, code) for label, (number, code) in zip(labels, pairs, strict=True)]
+
+    def _driver_entry(self, key: Any) -> tuple[str, str] | None:
+        """``(key, abbreviation)`` of ``key`` (car number, code or shared-car label)."""
+        wanted = str(key).strip()
+        code_hint = wanted.partition("/")[2].strip() if "/" in wanted else ""
+        for label, number, code in self._entries():
+            if wanted in (label, code) or (code_hint and code_hint == code):
+                return label, code
+            if wanted == number and label == number:  # a shared car's first driver
+                return label, code
+        return None
+
+    def __getitem__(self, key: Any):
+        entry = self._driver_entry(key)
+        if entry is None:
+            raise KeyError(key)
+        number, code = entry
+        if not dict.__contains__(self, number) and getattr(self.session, "_ergast_only", False):
+            # No telemetry exists before F1_API_FIRST_YEAR (nor, before 1996,
+            # any laps table to slice): fastf1's empty frame, nothing loaded.
+            empty = cast(Any, self.session)._empty_session_telemetry(code)
+            dict.__setitem__(self, number, empty)
+        if not dict.__contains__(self, number):
+            laps = cast(Any, self.session.laps)
+            if hasattr(laps, "pick_driver"):
+                driver_laps = laps.pick_driver(code)
+            elif isinstance(laps, pd.DataFrame):
+                driver_laps = laps[laps["Driver"] == code]
             else:
-                raise KeyError(key)
-        return super().__getitem__(key)
+                import polars as pl
+
+                driver_laps = laps.filter(pl.col("Driver") == code)
+            # fastf1's session-long ``car_data[n]``: ``Time`` is ``Date - t0_date``,
+            # i.e. ``SessionTime`` (the laps' frame runs from its first lap start).
+            telemetry = driver_laps.telemetry
+            session_clock = getattr(telemetry, "_session_time_as_time", None)
+            if callable(session_clock):
+                telemetry = session_clock()
+            dict.__setitem__(self, number, telemetry)
+        return dict.__getitem__(self, number)
+
+    def get(self, key: Any, default: Any = None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def _numbers(self) -> list[str]:
+        return [label for label, _number, _code in self._entries()]
+
+    def __contains__(self, key: object) -> bool:
+        return self._driver_entry(key) is not None
+
+    def __iter__(self):
+        return iter(self._numbers())
+
+    def __len__(self) -> int:
+        return len(self._numbers())
+
+    def keys(self):
+        return self._numbers()
+
+    def values(self):
+        return [self[number] for number in self._numbers()]
+
+    def items(self):
+        return [(number, self[number]) for number in self._numbers()]
+
+    def __repr__(self) -> str:
+        return f"LazyTelemetryDict(drivers={self._numbers()!r})"
 
 
 # -- per-row Lap construction (Pergamon Q7) -----------------------------------
@@ -471,7 +887,16 @@ class Laps(pd.DataFrame):
         return lap.__finalize__(self)
 
     def pick_driver(self, identifier):
-        return self.pick_drivers([identifier])
+        """Laps of one driver: fastf1's (deprecated) exact match, no case folding.
+
+        A number (int or digit string) matches ``DriverNumber``; anything else
+        must equal ``Driver`` as given (``pick_driver("ver")`` matches
+        nothing, as in fastf1; :meth:`pick_drivers` upper-cases codes).
+        """
+        code = self._normalize_driver_identifier(identifier)
+        if code.isdigit():
+            return self[self._driver_number_mask([code])]
+        return self[self["Driver"] == code]
 
     @staticmethod
     def _normalize_driver_identifier(identifier: Any) -> str:
@@ -500,88 +925,143 @@ class Laps(pd.DataFrame):
         return str(identifier)
 
     def pick_drivers(self, identifiers):
-        if isinstance(identifiers, str | int) or not isinstance(identifiers, list | tuple | set):
-            identifiers = [identifiers]
-        identifiers = [self._normalize_driver_identifier(i) for i in identifiers]
-        mask = self["Driver"].isin(identifiers)
-        # FastF1 accepts driver numbers as well as abbreviations: a numeric
-        # identifier is matched against DriverNumber (strings upstream) too.
-        if "DriverNumber" in self.columns and any(i.isdigit() for i in identifiers):
-            numbers = self["DriverNumber"]
-            if pd.api.types.is_numeric_dtype(numbers):
-                numbers = numbers.astype("Int64").astype("string")
-            elif not numbers.isin(identifiers).any():
-                # object column holding ints (hand-built frames): compare as text
-                numbers = numbers.astype("string")
-            mask = mask | numbers.isin(identifiers)
+        """Laps of the given drivers (fastf1 parity).
+
+        Args:
+            identifiers: One identifier or any iterable of them (list, tuple,
+                set, pandas/polars Series, numpy array, generator). An
+                identifier is a code (upper-cased, as fastf1 does), a car
+                number (int or digit string), a mapping or a driver-like
+                object (``.driver``/``.Abbreviation``).
+        """
+        codes = [self._normalize_driver_identifier(i) for i in _identifier_items(identifiers)]
+        names = [code.upper() for code in codes if not code.isdigit()]
+        numbers = [code for code in codes if code.isdigit()]
+        mask = self["Driver"].isin(names).to_numpy(dtype=bool)
+        if numbers:
+            mask = mask | self._driver_number_mask(numbers)
         return self[mask]
+
+    def _driver_number_mask(self, numbers: list[str]) -> np.ndarray:
+        """Rows whose ``DriverNumber`` is one of ``numbers`` (digit strings)."""
+        if "DriverNumber" not in self.columns:
+            return np.zeros(len(self), dtype=bool)
+        column = self["DriverNumber"]
+        if pd.api.types.is_numeric_dtype(column):
+            column = column.astype("Int64").astype("string")
+        elif not column.isin(numbers).any():
+            # object column holding ints (hand-built frames): compare as text
+            column = column.astype("string")
+        return column.isin(numbers).fillna(False).to_numpy(dtype=bool)
 
     def pick_lap(self, lap_number):
         return self[self["LapNumber"] == lap_number]
 
-    def pick_laps(self, laps):
+    def pick_laps(self, lap_numbers=None, *, laps=None):
+        """Laps with the given lap number(s) (fastf1's ``lap_numbers``; ``laps=`` is tif1's alias).
+
+        An int or float, any iterable of them, or a slice (inclusive
+        ``start..stop``, ``start`` defaulting to 1).
+
+        Raises:
+            ValueError: A lap number is a float that is not a whole number.
+        """
+        if lap_numbers is None:
+            lap_numbers = laps
+        if lap_numbers is None:
+            raise TypeError("pick_laps() missing required argument: 'lap_numbers'")
+        laps = lap_numbers
         if isinstance(laps, slice):
             start = 1 if laps.start is None else laps.start
             stop = laps.stop
             if stop is None:
                 return self[self["LapNumber"] >= start]
             return self[(self["LapNumber"] >= start) & (self["LapNumber"] <= stop)]
-        if isinstance(laps, int):
-            laps = [laps]
-        return self[self["LapNumber"].isin(list(laps))]
+        numbers = [laps] if isinstance(laps, int | float) else list(laps)
+        for number in numbers:
+            if isinstance(number, float) and not number.is_integer():
+                raise ValueError(f"Invalid value {number} in `lap_numbers`")
+        return self[self["LapNumber"].isin(numbers)]
 
     def pick_team(self, name):
-        return self.pick_teams([name])
+        """Laps of one team (fastf1's exact ``Team == name``)."""
+        return self[self["Team"] == name]
 
     def pick_teams(self, names):
+        """Laps of the given teams: a name or any iterable of names, matched exactly."""
         if isinstance(names, str):
-            names = [names]
-        return self[self["Team"].isin(names)]
+            return self[self["Team"] == names]
+        return self[self["Team"].isin(list(names))]
 
     def pick_fastest(self, only_by_time=False):
-        if self.empty:
+        """The lap with the lowest ``LapTime`` (fastf1 parity), or ``None``.
+
+        By default only laps marked ``IsPersonalBest`` are candidates (a lap
+        that is not a personal best did not count, e.g. a deleted time);
+        ``only_by_time=True`` takes every lap. A frame without an
+        ``IsPersonalBest`` column falls back to the laps not ``Deleted``. Ties
+        go to the first lap by position.
+        """
+        if self.empty or "LapTime" not in self.columns:
             return None
-        # FastF1 semantics: a deleted lap is not a candidate unless
-        # only_by_time asks for the plain minimum.
-        valid = _filter_valid_laptimes(self, "pandas", exclude_deleted=not only_by_time)
-        if valid.empty:
+        lap_times = _timedelta_ns(self["LapTime"])
+        usable = lap_times != _NAT_NS
+        if not only_by_time:
+            if "IsPersonalBest" in self.columns:
+                usable &= _true_flags(self["IsPersonalBest"])
+            else:
+                not_deleted = _not_deleted_mask(self)
+                if not_deleted is not None:
+                    usable &= not_deleted
+        candidates = np.flatnonzero(usable)
+        if not len(candidates):
             return None
-        # Argos A5: the first minimum by position (what nsmallest(1,
-        # keep="first") selected) without sorting/taking the whole frame;
-        # NaT rows are already filtered out, so the int64 view has no
-        # sentinel to mis-rank.
-        lap_times = cast(pd.Series, valid["LapTime"]).to_numpy()
-        if lap_times.dtype.kind == "m":
-            fastest_pos = int(np.argmin(lap_times.view("i8")))
-        else:
-            fastest_pos = int(np.nanargmin(lap_times.astype("float64")))
-        fastest = valid.iloc[fastest_pos]
+        fastest = self.iloc[int(candidates[np.argmin(lap_times[candidates])])]
         if isinstance(fastest, Lap):
             fastest.session = self.session
         return fastest
 
-    def pick_quicklaps(self, threshold=1.07):
+    def pick_quicklaps(self, threshold=None):
+        """Laps faster than ``threshold`` times the fastest lap (``None``: ``QUICKLAP_THRESHOLD``)."""
+        if threshold is None:
+            threshold = self.QUICKLAP_THRESHOLD
         if self.empty:
             return self
         best_time = self["LapTime"].min()
         if pd.isna(best_time):
             return self
-        return self[self["LapTime"] <= best_time * threshold]
+        return self[self["LapTime"] < best_time * threshold]
 
     def pick_tyre(self, compound):
-        return self.pick_compounds([compound])
+        """Laps on one compound (upper-cased, as fastf1 does)."""
+        return self[self["Compound"] == str(compound).upper()]
 
     def pick_compounds(self, compounds):
+        """Laps on the given compounds: a name or any iterable of names, upper-cased (fastf1)."""
         if isinstance(compounds, str):
-            compounds = [compounds]
-        return self[self["Compound"].isin(compounds)]
+            return self[self["Compound"] == compounds.upper()]
+        return self[self["Compound"].isin([str(compound).upper() for compound in compounds])]
 
     def pick_track_status(self, status, how="equals"):
+        """Laps set under a track status (fastf1's ``how``: equals/contains/excludes/any/none).
+
+        The match runs on the laps' ``TrackStatus`` code string (``"2"`` matches
+        ``"267"`` with ``how="contains"``), never on the session's time-based
+        ``track_status`` table.
+        """
+        status = str(status)
+        codes = self["TrackStatus"].astype(str)
         if how == "equals":
-            return self[self["TrackStatus"] == str(status)]
+            return self[codes == status]
         if how == "contains":
-            return self[self["TrackStatus"].astype(str).str.contains(str(status), na=False)]
-        return self
+            return self[codes.str.contains(status, regex=False, na=False)]
+        if how == "excludes":
+            return self[~codes.str.contains(status, regex=False, na=False)]
+        if how == "any":
+            return self[codes.str.contains("|".join(status), regex=True, na=False)]
+        if how == "none":
+            return self[~codes.str.contains("|".join(status), regex=True, na=False)]
+        raise ValueError(f"Invalid value '{how}' for kwarg 'how'")
 
     def pick_wo_box(self):
         if "PitInTime" not in self.columns or "PitOutTime" not in self.columns:
@@ -607,14 +1087,51 @@ class Laps(pd.DataFrame):
             return self[self["IsAccurate"]]
         return self
 
-    def get_telemetry(self):
-        # FastF1 compatibility: get_telemetry exposes driver-ahead channels.
-        return self.telemetry.add_driver_ahead()
+    def get_telemetry(self, *, frequency: int | Literal["original"] | None = None):
+        """Merged telemetry of these laps (fastf1 parity).
+
+        Args:
+            frequency: ``None`` (``Telemetry.TELEMETRY_FREQUENCY``),
+                ``"original"`` (the samples as published) or a sampling rate
+                in Hz to resample to.
+        """
+        return _apply_telemetry_frequency(self.telemetry.add_driver_ahead(), frequency)
+
+    def _padded_car_data(self, kwargs: dict[str, Any]) -> "Telemetry | None":
+        """Driver's session-long telemetry sliced to these laps when ``pad`` is asked for.
+
+        ``get_car_data(pad=..)`` in fastf1 slices ``session.car_data[driver]``;
+        tif1 keeps one frame per lap, so a pad reaching into the neighbouring
+        laps needs the driver's whole timeline. Returns None when no pad is
+        requested (the per-lap fast path answers) or the session is unknown.
+        """
+        if not kwargs or not kwargs.get("pad") or self.session is None:
+            return None
+        drivers = self["Driver"].dropna().unique()
+        if len(drivers) != 1:
+            raise ValueError("Cannot retrieve telemetry for multiple drivers.")
+        car_data = getattr(self.session, "car_data", None)
+        if car_data is None:
+            return None
+        full = car_data[str(drivers[0])]
+        if not isinstance(full, Telemetry) or full.empty:
+            return None
+        sliced = full.slice_by_lap(
+            self,
+            pad=kwargs.get("pad", 0),
+            pad_side=kwargs.get("pad_side", "both"),
+            interpolate_edges=kwargs.get("interpolate_edges", False),
+        )
+        # fastf1's get_car_data ends with ``reset_index(drop=True)``.
+        sliced.index = pd.RangeIndex(len(sliced))
+        return sliced
 
     def get_car_data(self, **kwargs):
-        _ = kwargs
         if self.empty:
-            return Telemetry()
+            return _empty_telemetry(self.session)
+        padded = self._padded_car_data(kwargs)
+        if padded is not None:
+            return padded
         try:
             return self.telemetry
         except ValueError:
@@ -627,39 +1144,118 @@ class Laps(pd.DataFrame):
                     return tel
             tels = [lap.telemetry for _, lap in self.iterrows() if hasattr(lap, "telemetry")]
             if not tels:
-                return Telemetry()
+                return _empty_telemetry(self.session)
             tel = Telemetry(pd.concat(tels, ignore_index=True))
             tel.session = self.session
-            return tel
+            return _join_lap_telemetry(_with_session_clock(self.session, tel), multi_driver=True)
 
     def get_pos_data(self, **kwargs):
-        _ = kwargs
-        return self.get_car_data()
+        return self.get_car_data(**kwargs)
 
     def get_weather_data(self):
-        if self.session is not None and hasattr(self.session, "weather_data"):
-            return self.session.weather_data
-        return pd.DataFrame()
+        """One weather sample per lap, aligned with this frame's index (fastf1 parity).
+
+        fastf1's rule on ``session.weather_data``: the first sample within
+        ``[LapStartTime, Time]``, else the last sample at or before the lap's
+        ``Time``, else all-missing (a lap without ``LapStartTime`` takes the
+        last sample before its end). Columns are ``Time`` (the sample's session
+        time) then the seven channels, with the session table's dtypes. Rows
+        keep this frame's index and order (fastf1 indexes them by weather
+        sample). Without a session weather table the laps' own
+        ``WeatherTime`` and channel columns answer; without those every
+        sample is missing.
+        """
+        session_weather = _session_weather_table(self.session)
+        if session_weather is not None:
+            starts, ends = self._weather_bounds()
+            rows = _weather_rows_for_laps(_timedelta_ns(session_weather["Time"]), starts, ends)
+            return _weather_sample_frame(session_weather, rows, self.index)
+        if all(col in self.columns for col in _LAP_WEATHER_COLUMNS):
+            weather = pd.DataFrame(self)[list(_LAP_WEATHER_COLUMNS)]
+            weather.columns = pd.Index(_WEATHER_SAMPLE_COLUMNS)
+            return weather
+        return _missing_weather_frame(self.index)
+
+    def _weather_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        """Each lap's ``(LapStartTime, Time)`` as int64 ns (``NaT``: the int64 minimum).
+
+        A frame without a ``Time`` column ends its laps at
+        ``LapStartTime + LapTime``.
+        """
+        n = len(self)
+        if "LapStartTime" in self.columns:
+            starts = _timedelta_ns(self["LapStartTime"])
+        else:
+            starts = np.full(n, _NAT_NS, dtype="int64")
+        if "Time" in self.columns:
+            ends = _timedelta_ns(self["Time"])
+        elif {"LapStartTime", "LapTime"} <= set(self.columns):
+            ends = _timedelta_ns(
+                Telemetry._coerce_timedelta_series(self["LapStartTime"])
+                + Telemetry._coerce_timedelta_series(self["LapTime"])
+            )
+        else:
+            ends = np.full(n, _NAT_NS, dtype="int64")
+        return starts, ends
 
     def split_qualifying_sessions(self):
+        """Split qualifying laps into ``[Q1, Q2, Q3]`` (fastf1 parity; ``None`` for an empty one).
+
+        The laps table's ``QualifyingSession`` marker decides when present.
+        Otherwise fastf1's algorithm runs on ``session.session_status``: each
+        ``Started`` row opens a segment, except the restart after an
+        ``Aborted`` (red flag) row, which continues it (``Finished`` also
+        clears the suspension); a lap belongs to the segment its
+        ``LapStartTime`` falls in, and an out-lap that starts before a split
+        and ends after it belongs to the next segment. Without session status
+        the two longest gaps of more than five minutes between lap starts
+        split the laps.
+
+        Raises:
+            ValueError: The laps belong to a session that is not
+                qualifying-like (Qualifying, Sprint Qualifying, Sprint
+                Shootout).
+        """
+        _require_qualifying_session(self.session)
         qualifying_sessions = self.get("QualifyingSession")
-        if qualifying_sessions is None:
-            # Keep a stable shape that matches FastF1's tuple contract when
-            # explicit qualifying session markers are unavailable.
-            return self.copy(), self.copy(), self.copy()
+        if qualifying_sessions is not None:
+            normalized = qualifying_sessions.astype("string").str.upper().str.strip()
+            session_suffix = normalized.str.extract(r"([123])$", expand=False)
+            if bool(session_suffix.notna().any()):
+                return [self._bound_subset(session_suffix == suffix) for suffix in ("1", "2", "3")]
+        n = len(self)
+        if "LapStartTime" in self.columns:
+            starts = _timedelta_ns(self["LapStartTime"])
+        else:
+            starts = np.full(n, _NAT_NS, dtype="int64")
+        split_times = _qualifying_split_times(self.session, starts)
+        if split_times is None:
+            return [self._bound_subset(np.ones(n, dtype=bool)), None, None]
+        if "Time" in self.columns:
+            ends = _timedelta_ns(self["Time"])
+        else:
+            ends = np.full(n, _NAT_NS, dtype="int64")
+        if "PitOutTime" in self.columns:
+            pit_out = self["PitOutTime"].notna().to_numpy(dtype=bool)
+        else:
+            pit_out = np.zeros(n, dtype=bool)
+        return [
+            None if mask is None else self._bound_subset(mask)
+            for mask in _qualifying_segment_masks(split_times, starts, ends, pit_out)
+        ]
 
-        normalized = qualifying_sessions.astype("string").str.upper().str.strip()
-        session_suffix = normalized.str.extract(r"([123])$", expand=False)
-        if not bool(session_suffix.notna().any()):
-            return self.copy(), self.copy(), self.copy()
+    def _bound_subset(self, mask: Any) -> "Laps | None":
+        subset = self.loc[np.asarray(mask, dtype=bool)]
+        if subset.empty:
+            return None
+        if isinstance(subset, Laps):
+            object.__setattr__(subset, "session", self.session)
+        return subset
 
-        def _slice_for_suffix(target_suffix: str) -> "Laps":
-            subset = self.loc[session_suffix == target_suffix].copy()
-            if isinstance(subset, Laps):
-                subset.session = self.session
-            return subset
-
-        return _slice_for_suffix("1"), _slice_for_suffix("2"), _slice_for_suffix("3")
+    @property
+    def base_class_view(self):
+        """The same data as a plain :class:`pandas.DataFrame` (fastf1 parity)."""
+        return pd.DataFrame(self)
 
     def join(self, *args, **kwargs):
         return cast(Any, super()).join(*args, **kwargs)
@@ -670,7 +1266,7 @@ class Laps(pd.DataFrame):
     @property
     def telemetry(self):
         if self.empty:
-            return Telemetry()
+            return _empty_telemetry(self.session)
         drivers = self["Driver"].unique()
         if len(drivers) > 1:
             raise ValueError("Cannot retrieve telemetry for multiple drivers.")
@@ -682,10 +1278,15 @@ class Laps(pd.DataFrame):
         for _, lap in self.iterrows():
             tels.append(lap.telemetry)
         if not tels:
-            return Telemetry()
+            return _empty_telemetry(self.session)
         tel = Telemetry(pd.concat(tels, ignore_index=True))
         tel.session = self.session
-        return tel
+        return self._joined_laps(_with_session_clock(self.session, tel), multi_driver=False)
+
+    def _joined_laps(self, tel: "Telemetry", *, multi_driver: bool) -> "Telemetry":
+        """These laps' frames back to back as one multi-lap slice (``_join_lap_telemetry``)."""
+        start = None if multi_driver else _first_lap_start_ns(self)
+        return _join_lap_telemetry(tel, start, multi_driver=multi_driver)
 
     def _telemetry_merged_available(self) -> bool:
         """Whether the merged-dict telemetry fast path is usable.
@@ -754,6 +1355,7 @@ class Laps(pd.DataFrame):
                         merged_driver,
                         [lap for _, lap in refs],
                         frame_class=Telemetry,
+                        drop_repeats=True,
                     )
                     if merged_frame is not None:
                         tel = (
@@ -763,6 +1365,8 @@ class Laps(pd.DataFrame):
                         )
                         tel.session = session
                         tel.driver = merged_driver
+                        tel = _with_session_clock(session, tel, merged_driver)
+                        tel = self._joined_laps(tel, multi_driver=False)
                         object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
                         return tel
 
@@ -802,6 +1406,8 @@ class Laps(pd.DataFrame):
             if refs and len(frame_hits) == len(refs):
                 tel = Telemetry(pd.concat([frame_hits[ref] for ref in refs], ignore_index=True))
                 tel.session = session
+                tel = _with_session_clock(session, tel)
+                tel = self._joined_laps(tel, multi_driver=len({d for d, _ in refs}) > 1)
                 object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
                 return tel
 
@@ -823,6 +1429,16 @@ class Laps(pd.DataFrame):
             # Emit entries in laps-row order (the per-ref chain's historical
             # order) so merged telemetry row order is unchanged.
             missing = [ref for ref in refs if ref not in collected]
+            prefetch = getattr(session, "_prefetch_telemetry_payloads", None)
+            if len(missing) > 1 and callable(prefetch):
+                # One parallel network wave for the laps no tier holds (a cold
+                # car_data[n] fetched ~60 laps one after another otherwise);
+                # the per-ref chain below still records the failures.
+                found = prefetch(missing, ultra_cold=ultra_cold)
+                if isinstance(found, list):
+                    for driver, lap_num, payload in found:
+                        collected[(driver, lap_num)] = payload
+                    missing = [ref for ref in refs if ref not in collected]
             for driver, lap_num in missing:
                 try:
                     payload = session._get_telemetry_payload_for_ref(
@@ -848,9 +1464,7 @@ class Laps(pd.DataFrame):
             logger.debug("Merged telemetry path unavailable: %s", e, exc_info=True)
             return None
         if not entries:
-            tel = Telemetry()
-            tel.session = session
-            return tel
+            return _empty_telemetry(session)
         try:
             merged = _merge_telemetry_payloads(entries)
             tel = Telemetry(_telemetry_frame_from_merged(merged))
@@ -858,59 +1472,52 @@ class Laps(pd.DataFrame):
             # Fall back to the legacy per-lap path on malformed payloads.
             return None
         tel.session = session
+        tel = _with_session_clock(session, tel)
+        tel = self._joined_laps(tel, multi_driver=len({d for d, _ in refs}) > 1)
         object.__setattr__(self, "_merged_telemetry_cache", (len(refs), refs, tel))
         return tel
 
     def iterlaps(
         self, require: Iterable[str] | None = None
     ) -> Generator[_IterLapResult, None, None]:
-        required_columns = ["LapTime", "Driver"] if require is None else list(require)
-        for column in required_columns:
-            if column not in self.columns:
-                raise KeyError(f"required column '{column}' is not present")
+        """Yield ``(index, Lap)`` for the laps in this frame (fastf1 parity).
 
-        # Argos A5: iterrows built one object Series per row and then ran
-        # isna()/drop() on it (~0.3 ms per lap); one frame-level isna pass and
-        # one object-array interleave give the same per-lap Series (same
-        # values, column order, name and dtype) ~10x cheaper.
+        Each :class:`Lap` holds every column of the frame, missing values
+        included, as fastf1's ``iterrows`` rows do.
+
+        Args:
+            require: Columns that must exist and hold a value (not
+                NaN/NaT/None) for a lap to be yielded. ``None`` or empty
+                yields every lap; a column the frame lacks yields none
+                (fastf1).
+
+        Yields:
+            ``(label, Lap)`` pairs (``item.index``/``item.lap`` also work).
+        """
+        required = [] if require is None else list(require)
         columns = self.columns
-        null_mask = self.isna().to_numpy(dtype=bool)
-        # Positions by label match (an array per label) so duplicate column
-        # names behave like the per-row ``lap.get(column)`` probe did.
-        required_positions = np.concatenate(
-            [np.flatnonzero(columns == column) for column in required_columns]
-        )
+        if any(column not in columns for column in required):
+            return
+        skip_rows: np.ndarray | None = None
+        if required and len(self):
+            # Positions by label match, so a duplicated column name requires
+            # each of its columns.
+            positions = np.concatenate([np.flatnonzero(columns == column) for column in required])
+            skip_rows = self.iloc[:, positions].isna().to_numpy(dtype=bool).any(axis=1)
+        # Argos A5 / Pergamon Q7: one object-array interleave for the frame
+        # and each Lap built through the Series constructor's own steps
+        # (``_lap_from_row``) on the shared, immutable column Index: the same
+        # Series as ``iterrows`` gives, several times cheaper.
         row_values = self.to_numpy(dtype=object)
         row_index = self.index
         session = self.session
-        # Pergamon Q7: rows share a handful of null patterns (14 over the
-        # 1455 laps of a race), so the kept positions and the column Index of
-        # each pattern are built once (an Index is immutable; per-row
-        # ``columns[keep]`` cost ~8 us), and each Lap is built through the
-        # constructor's own steps (``_lap_from_row``).
-        skip_rows = null_mask[:, required_positions].any(axis=1)
-        patterns: dict[bytes, tuple[np.ndarray | None, pd.Index]] = {}
         for position in range(len(self)):
-            if skip_rows[position]:
+            if skip_rows is not None and skip_rows[position]:
                 continue
-            null_row = null_mask[position]
-            key = null_row.tobytes()
-            pattern = patterns.get(key)
-            if pattern is None:
-                if null_row.any():
-                    keep = ~null_row
-                    pattern = (np.flatnonzero(keep), columns[keep])
-                else:
-                    pattern = (None, columns)
-                patterns[key] = pattern
-            keep_positions, lap_columns = pattern
-            values = (
-                row_values[position].copy()
-                if keep_positions is None
-                else row_values[position, keep_positions]
-            )
             name = row_index[position]
-            yield _IterLapResult(name, _lap_from_row(values, lap_columns, name, session))
+            yield _IterLapResult(
+                name, _lap_from_row(row_values[position].copy(), columns, name, session)
+            )
 
     def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
         """Reset index and drop the ``level_0`` column if one was created.
@@ -987,20 +1594,56 @@ class Lap(pd.Series):
                 return Telemetry()
         return Telemetry()
 
-    def get_telemetry(self):
-        # FastF1 compatibility: get_telemetry exposes driver-ahead channels.
-        return self.telemetry.add_driver_ahead()
+    def get_telemetry(self, *, frequency: int | Literal["original"] | None = None):
+        """This lap's telemetry (fastf1 parity; see :meth:`Laps.get_telemetry`)."""
+        return _apply_telemetry_frequency(self.telemetry.add_driver_ahead(), frequency)
+
+    def _as_laps(self) -> "Laps":
+        """This lap as a one-row :class:`Laps` bound to the same session."""
+        laps = Laps(pd.DataFrame([self]), session=self.session)
+        return laps
 
     def get_car_data(self, **kwargs):
-        _ = kwargs
+        if kwargs.get("pad") and self.session is not None:
+            padded = self._as_laps()._padded_car_data(kwargs)
+            if padded is not None:
+                return padded
         return self.telemetry
 
     def get_pos_data(self, **kwargs):
-        _ = kwargs
-        return self.telemetry
+        return self.get_car_data(**kwargs)
 
     def get_weather_data(self):
-        return pd.Series()
+        """The weather sample of this lap as a Series (fastf1 parity).
+
+        ``Time`` then the seven channels, named after the lap. fastf1's rule
+        on ``session.weather_data``: the first sample within
+        ``[LapStartTime, Time]``, else the last one at or before the lap's
+        ``Time``; with neither, a Series of NaN over the same keys. Without a
+        session weather table the lap's own ``WeatherTime`` and channel
+        values answer.
+        """
+        keys = list(_WEATHER_SAMPLE_COLUMNS)
+        session_weather = _session_weather_table(self.session)
+        if session_weather is not None:
+            start = Telemetry._coerce_timedelta(self.get("LapStartTime"))
+            if "Time" in self.index or "LapTime" not in self.index:
+                end = Telemetry._coerce_timedelta(self.get("Time"))
+            else:
+                end = start + Telemetry._coerce_timedelta(self.get("LapTime"))
+            row = _weather_rows_for_laps(
+                _timedelta_ns(session_weather["Time"]),
+                np.array([start.value], dtype="int64"),
+                np.array([end.value], dtype="int64"),
+            )[0]
+            if row >= 0:
+                sample = session_weather.iloc[int(row)]
+                values = [sample[key] if key in sample.index else np.nan for key in keys]
+                return pd.Series(values, index=keys, name=self.name, dtype=object)
+        elif all(col in self.index for col in _LAP_WEATHER_COLUMNS):
+            values = [self[col] for col in _LAP_WEATHER_COLUMNS]
+            return pd.Series(values, index=keys, name=self.name, dtype=object)
+        return pd.Series(np.nan, index=keys, name=self.name, dtype="float64")
 
     def _fetch_telemetry(self, *, ultra_cold: bool = False) -> dict:
         """Fetch telemetry data (raises DataNotFoundError if not found)."""
@@ -1050,6 +1693,283 @@ def _modern_offset_alias(rule: str) -> str:
     return f"{match.group(1)}{_LEGACY_OFFSET_ALIASES[match.group(2)]}"
 
 
+def _frequency_rule(frequency: float) -> str:
+    """The pandas offset alias of a sampling rate in Hz (``10`` -> ``"100ms"``)."""
+    period_ns = round(1_000_000_000 / float(frequency))
+    if period_ns % 1_000_000 == 0:
+        return f"{period_ns // 1_000_000}ms"
+    return f"{period_ns}ns"
+
+
+def _apply_telemetry_frequency(tel: Any, frequency: Any) -> Any:
+    """Resample ``tel`` to ``frequency`` (fastf1's ``get_telemetry(frequency=)`` contract).
+
+    ``None`` means :attr:`Telemetry.TELEMETRY_FREQUENCY`, ``"original"``
+    returns the frame as built, an int/float is a sampling rate in Hz.
+    """
+    if frequency is None:
+        frequency = Telemetry.TELEMETRY_FREQUENCY
+    if frequency == "original" or tel is None or getattr(tel, "empty", True):
+        return tel
+    if (
+        isinstance(frequency, bool)
+        or not isinstance(frequency, int | float | np.integer | np.floating)
+        or frequency <= 0
+    ):
+        raise ValueError(
+            f"frequency must be 'original' or a positive sampling rate in Hz, got {frequency!r}"
+        )
+    return tel.resample_channels(rule=_frequency_rule(float(frequency)))
+
+
+#: dtypes of an empty session telemetry frame, in fastf1's column order (the
+#: polars twin is ``models_polars.TELEMETRY_SCHEMA``).
+_EMPTY_TELEMETRY_DTYPES: dict[str, str] = {
+    "Date": "datetime64[ns]",
+    "SessionTime": "timedelta64[ns]",
+    "DriverAhead": "object",
+    "DistanceToDriverAhead": "float64",
+    "Time": "timedelta64[ns]",
+    "RPM": "float64",
+    "Speed": "float64",
+    "nGear": "Int64",
+    "Throttle": "float64",
+    "Brake": "bool",
+    "DRS": "Int64",
+    "Source": "object",
+    "Distance": "float64",
+    "RelativeDistance": "float64",
+    "Status": "object",
+    "X": "float64",
+    "Y": "float64",
+    "Z": "float64",
+    "AccelerationX": "float64",
+    "AccelerationY": "float64",
+    "AccelerationZ": "float64",
+    "Driver": "object",
+    "LapNumber": "Int64",
+}
+
+
+def _empty_telemetry(session: Any = None, driver: str | None = None) -> "Telemetry":
+    """A session's empty telemetry: no samples, fastf1's columns and dtypes."""
+    frame = pd.DataFrame(
+        {col: pd.Series(dtype=dtype) for col, dtype in _EMPTY_TELEMETRY_DTYPES.items()}
+    )
+    tel = Telemetry(frame, session=session, driver=driver)
+    return tel
+
+
+#: Clock columns, in the order the resampler picks its axis from (fastf1
+#: resamples on ``Date``; ``SessionTime`` and ``Time`` stand in without it).
+_RESAMPLE_AXIS_COLUMNS = ("Date", "SessionTime", "Time")
+_NAT_NS = np.iinfo("int64").min
+
+#: Telemetry columns that are metadata, not channels: never dropped by
+#: ``drop_unknown_channels`` and carried through a resampling unchanged.
+_TELEMETRY_META_COLUMNS = ("Driver", "LapNumber")
+
+
+def _with_session_clock(session: Any, tel: Any, driver: str | None = None) -> Any:
+    """Give ``tel`` its ``Date``/``SessionTime`` columns through the session (if it can)."""
+    attach = getattr(session, "_attach_session_clock", None)
+    if not callable(attach):
+        return tel
+    return attach(tel, driver)
+
+
+def _clock_ns_values(values: pd.Series) -> np.ndarray:
+    """A clock column (datetime, timedelta or numeric seconds) as int64 ns; NaT is int64 min."""
+    if pd.api.types.is_datetime64_any_dtype(values.dtype):
+        if getattr(values.dt, "tz", None) is not None:
+            values = values.dt.tz_localize(None)
+        return values.astype("datetime64[ns]").to_numpy().view("i8")
+    if values.dtype == object:
+        parsed = pd.to_datetime(values, errors="coerce")
+        if parsed.notna().any():
+            return _clock_ns_values(parsed)
+    return _timedelta_ns(values)
+
+
+def _fill_rule(channels: dict[str, dict[str, str | None]], col: Any, dtype: Any) -> str | None:
+    """How ``fill_missing`` fills ``col``: ``"interpolate"``, ``"hold"``, ``"source"`` or None.
+
+    fastf1's rule for registered channels (continuous interpolated, discrete
+    forward/backward filled, excluded untouched, ``Source`` gaps marked
+    ``"interpolation"``); unregistered float columns are interpolated and
+    integer/boolean ones held. The polars class applies the same rule.
+    """
+    if col == "Source":
+        return "source"
+    kind = channels.get(col, {}).get("type")
+    if kind == "excluded":
+        return None
+    if kind == "discrete" or col in _TELEMETRY_META_COLUMNS:
+        return "hold"
+    if pd.api.types.is_bool_dtype(dtype) or pd.api.types.is_integer_dtype(dtype):
+        return "hold"
+    if pd.api.types.is_float_dtype(dtype):
+        return "interpolate"
+    return None
+
+
+def _edge_linear(
+    t: int, prev_ref: int | None, prev_value: float, next_ref: int | None, next_value: float
+) -> float:
+    """A continuous channel at ``t`` ns: linear between the samples around it.
+
+    The sample present (or not NaN) alone beyond the data, NaN with
+    neither. ``models_polars`` has the same function: both classes compute
+    an edge sample with these Python-float operations, in this order.
+    """
+    if prev_ref is None or math.isnan(prev_value):
+        return math.nan if next_ref is None else next_value
+    if next_ref is None or math.isnan(next_value):
+        return prev_value
+    return prev_value + (next_value - prev_value) * ((t - prev_ref) / (next_ref - prev_ref))
+
+
+def _float_at(values: Any, position: int) -> float:
+    """``values[position]`` (an array of a numeric column) as a float; NaN when missing."""
+    if position < 0:
+        return math.nan
+    value = values[position]
+    return math.nan if value is None or value is pd.NA else float(value)
+
+
+def _clock_order(ns: np.ndarray, *, drop_missing: bool = False) -> np.ndarray | None:
+    """Stable ascending order of int64-ns clock values (None when already in order).
+
+    Missing values (NaT) go last, or are left out with ``drop_missing``.
+    """
+    missing = ns == _NAT_NS
+    if not missing.any() and not (np.diff(ns) < 0).any():
+        return None
+    if drop_missing:
+        kept = np.flatnonzero(~missing)
+        return kept[np.argsort(ns[kept], kind="stable")]
+    return np.argsort(np.where(missing, np.iinfo("int64").max, ns), kind="stable")
+
+
+def _nearest_positions(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """Position in ``right`` (sorted, no NaT) of the value nearest each ``left`` value.
+
+    A tie goes to the earlier value, an exact match to the last of equal
+    values (pandas ``merge_asof(direction="nearest")``); -1 for a missing
+    ``left`` value or an empty ``right``.
+    """
+    out = np.full(len(left), -1, dtype="int64")
+    n = len(right)
+    if n == 0 or not len(left):
+        return out
+    valid = left != _NAT_NS
+    x = left[valid]
+    after = np.searchsorted(right, x, side="right")
+    before = after - 1
+    nearest_after = np.minimum(after, n - 1)
+    gap_before = x - right[np.maximum(before, 0)]
+    gap_after = right[nearest_after] - x
+    take_after = (after < n) & ((before < 0) | (gap_after < gap_before))
+    out[valid] = np.where(take_after, nearest_after, before)
+    return out
+
+
+def _first_lap_start_ns(laps: Any) -> int | None:
+    """Earliest ``LapStartTime`` of a laps frame as int64 ns (None when unknown)."""
+    if not isinstance(laps, pd.DataFrame) or "LapStartTime" not in laps.columns or laps.empty:
+        return None
+    starts = _timedelta_ns(cast(pd.Series, laps["LapStartTime"]))
+    starts = starts[starts != _NAT_NS]
+    return int(starts.min()) if len(starts) else None
+
+
+def _join_lap_telemetry(
+    tel: "Telemetry", lap_start_ns: int | None = None, *, multi_driver: bool = False
+) -> "Telemetry":
+    """Per-lap frames concatenated into one frame, made a multi-lap slice as fastf1 has it.
+
+    Each lap frame repeats the sample at its lap boundary (the last sample of
+    lap N is the first of lap N + 1): the repeat is dropped, the first kept.
+    One driver's lap blocks are put in session-clock order, and ``Time``
+    becomes continuous: ``SessionTime`` minus the first lap's
+    ``LapStartTime`` (``lap_start_ns``, else the earliest lap start the
+    frame implies), fastf1's ``slice_by_lap`` clock. With ``multi_driver``
+    each driver keeps its own block order and ``Time`` origin. A frame of
+    one lap, or without a session clock, is returned unchanged.
+    """
+    n = len(tel)
+    columns = tel.columns
+    if n < 2 or "LapNumber" not in columns or not columns.is_unique:
+        return tel
+    clock_col = "Date" if "Date" in columns else "SessionTime" if "SessionTime" in columns else None
+    if clock_col is None:
+        return tel
+    lap_numbers = tel["LapNumber"]
+    if not pd.api.types.is_numeric_dtype(lap_numbers.dtype):
+        lap_numbers = pd.to_numeric(lap_numbers, errors="coerce")
+    lap = lap_numbers.to_numpy(dtype="float64", na_value=np.nan)
+    if not (lap[1:] != lap[:-1]).any():
+        return tel
+    clock = _clock_ns_values(tel[clock_col])
+    order: np.ndarray | None = None
+    if not multi_driver and not (clock == _NAT_NS).any() and (np.diff(clock) < 0).any():
+        order = np.lexsort((lap, clock))
+        clock = clock[order]
+        lap = lap[order]
+    same = np.zeros(n, dtype=bool)
+    same[1:] = (lap[1:] != lap[:-1]) & (clock[1:] == clock[:-1]) & (clock[1:] != _NAT_NS)
+    drivers = None
+    if multi_driver and "Driver" in columns:
+        drivers = tel["Driver"].to_numpy(dtype=object)
+        same[1:] &= drivers[1:] == drivers[:-1]
+    keep = np.flatnonzero(~same) if same.any() else None
+    if order is not None:
+        keep = order if keep is None else order[keep]
+    new_time = None
+    if "SessionTime" in columns and "Time" in columns:
+        session_time = _timedelta_ns(tel["SessionTime"])
+        lap_time = _timedelta_ns(tel["Time"])
+        known = (session_time != _NAT_NS) & (lap_time != _NAT_NS)
+        implied = session_time - lap_time  # each row's LapStartTime
+        origin: Any = None
+        if drivers is not None:
+            codes, _ = pd.factorize(drivers)
+            rows = known & (codes >= 0)
+            if rows.any():
+                origins = np.full(int(codes.max()) + 1, np.iinfo("int64").max, dtype="int64")
+                np.minimum.at(origins, codes[rows], implied[rows])
+                origin = origins[np.maximum(codes, 0)]
+        elif lap_start_ns is not None:
+            origin = lap_start_ns
+        elif known.any():
+            origin = int(implied[known].min())
+        if origin is not None:
+            if keep is not None:
+                session_time = session_time[keep]
+                if isinstance(origin, np.ndarray):
+                    origin = origin[keep]
+            new_time = session_time - origin
+            unknown = session_time == _NAT_NS
+            if unknown.any():
+                new_time[unknown] = _NAT_NS
+    out = tel if keep is None else tel._wrap(tel.take(keep))
+    if new_time is not None:
+        if out is tel:
+            out = tel._wrap(tel.copy(deep=False))
+        time_dtype = tel["Time"].dtype
+        values = new_time.view("m8[ns]")
+        if (
+            isinstance(time_dtype, np.dtype)
+            and time_dtype.kind == "m"
+            and time_dtype != values.dtype
+        ):
+            values = values.astype(time_dtype)
+        out["Time"] = values
+    if keep is not None:
+        out.index = pd.RangeIndex(len(out))
+    return out
+
+
 class Telemetry(pd.DataFrame):
     """Multi-channel time series telemetry data."""
 
@@ -1057,28 +1977,34 @@ class Telemetry(pd.DataFrame):
     #: telemetry arrives merged at the source, so ``"original"`` is the only
     #: value with an effect).
     TELEMETRY_FREQUENCY: ClassVar[str | int] = "original"
-    #: Channel registry (fastf1 parity): name -> (signal type, interpolation).
-    #: tif1 ships every channel pre-merged; registering a channel documents
-    #: how ``merge_channels``/``resample_channels`` should treat a custom one.
+    #: Channel registry (fastf1's table, plus tif1's acceleration channels):
+    #: name -> ``{"type": "continuous" | "discrete" | "excluded", "method": ...}``.
+    #: ``fill_missing``, ``resample_channels`` and
+    #: ``slice_by_time(interpolate_edges=True)`` interpolate continuous
+    #: channels (linearly), hold discrete ones and leave excluded ones alone.
     _CHANNELS: ClassVar[dict[str, dict[str, str | None]]] = {
-        "Time": {"type": "continuous", "missing": "quadratic"},
-        "SessionTime": {"type": "continuous", "missing": "quadratic"},
-        "Date": {"type": "continuous", "missing": "quadratic"},
-        "RPM": {"type": "continuous", "missing": "linear"},
-        "Speed": {"type": "continuous", "missing": "linear"},
-        "nGear": {"type": "discrete", "missing": None},
-        "Throttle": {"type": "continuous", "missing": "linear"},
-        "Brake": {"type": "discrete", "missing": None},
-        "DRS": {"type": "discrete", "missing": None},
-        "X": {"type": "continuous", "missing": "quadratic"},
-        "Y": {"type": "continuous", "missing": "quadratic"},
-        "Z": {"type": "continuous", "missing": "quadratic"},
-        "Status": {"type": "discrete", "missing": None},
-        "Distance": {"type": "continuous", "missing": "linear"},
-        "RelativeDistance": {"type": "continuous", "missing": "linear"},
-        "DifferentialDistance": {"type": "continuous", "missing": "linear"},
-        "DriverAhead": {"type": "discrete", "missing": None},
-        "DistanceToDriverAhead": {"type": "continuous", "missing": "linear"},
+        "X": {"type": "continuous", "method": "quadratic"},
+        "Y": {"type": "continuous", "method": "quadratic"},
+        "Z": {"type": "continuous", "method": "quadratic"},
+        "Status": {"type": "discrete"},
+        "Speed": {"type": "continuous", "method": "index"},
+        "RPM": {"type": "continuous", "method": "index"},
+        "Throttle": {"type": "continuous", "method": "index"},
+        "Brake": {"type": "discrete"},
+        "DRS": {"type": "discrete"},
+        "nGear": {"type": "discrete"},
+        "Source": {"type": "excluded"},
+        "Date": {"type": "excluded"},
+        "Time": {"type": "excluded"},
+        "SessionTime": {"type": "excluded"},
+        "Distance": {"type": "continuous", "method": "quadratic"},
+        "RelativeDistance": {"type": "continuous", "method": "quadratic"},
+        "DifferentialDistance": {"type": "continuous", "method": "quadratic"},
+        "DriverAhead": {"type": "discrete"},
+        "DistanceToDriverAhead": {"type": "continuous", "method": "index"},
+        "AccelerationX": {"type": "continuous", "method": "index"},
+        "AccelerationY": {"type": "continuous", "method": "index"},
+        "AccelerationZ": {"type": "continuous", "method": "index"},
     }
 
     _metadata: ClassVar[list[str]] = ["session", "driver"]
@@ -1091,20 +2017,25 @@ class Telemetry(pd.DataFrame):
 
         Args:
             name: Channel (column) name.
-            signal_type: ``"continuous"`` or ``"discrete"``.
-            interpolation_method: Interpolation for missing values of a
-                continuous channel (for example ``"linear"``); ``None`` for
-                discrete channels.
+            signal_type: ``"continuous"`` (Speed, RPM, Distance, ...),
+                ``"discrete"`` (DRS, nGear, status values, ...) or
+                ``"excluded"`` (left alone when filling and resampling).
+            interpolation_method: The interpolation method; required with
+                ``signal_type="continuous"``. tif1 interpolates continuous
+                channels linearly whatever the method; it is stored for
+                fastf1 compatibility.
 
         Raises:
-            ValueError: ``signal_type`` is unknown, or a discrete channel names
-                an interpolation method.
+            ValueError: ``signal_type`` is unknown, or a continuous channel
+                has no interpolation method.
         """
-        if signal_type not in ("discrete", "continuous"):
-            raise ValueError(f"Unknown signal type {signal_type!r}")
-        if signal_type == "discrete" and interpolation_method is not None:
-            raise ValueError("Interpolation method not supported for discrete signals")
-        cls._CHANNELS[name] = {"type": signal_type, "missing": interpolation_method}
+        if signal_type not in ("discrete", "continuous", "excluded"):
+            raise ValueError(f"Unknown signal type {signal_type}.")
+        if signal_type == "continuous" and interpolation_method is None:
+            raise ValueError(
+                "signal_type='continuous' requires interpolation_method to be specified."
+            )
+        cls._CHANNELS[name] = {"type": signal_type, "method": interpolation_method}
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow DataFrame-style subclass construction without re-implementing __new__."""
@@ -1116,8 +2047,17 @@ class Telemetry(pd.DataFrame):
         *args,
         session: TelemetryProvider | None = None,
         driver: str | None = None,
+        drop_unknown_channels: bool = False,
         **kwargs,
     ):
+        if drop_unknown_channels and data is not None:
+            frame = pd.DataFrame(data, *args, **kwargs)
+            known = [
+                col
+                for col in frame.columns
+                if col in self._CHANNELS or col in _TELEMETRY_META_COLUMNS
+            ]
+            data, args, kwargs = frame[known], (), {}
         cast(Any, super()).__init__(data, *args, **kwargs)
         self.session = session
         self.driver = driver
@@ -1219,8 +2159,23 @@ class Telemetry(pd.DataFrame):
             return _numeric_seconds_to_timedelta(values)
         return pd.to_timedelta(values, errors="coerce")
 
+    @property
     def base_class_view(self):
+        """The same data as a plain :class:`pandas.DataFrame` (fastf1 parity: a property)."""
         return pd.DataFrame(self)
+
+    def _session_time_as_time(self) -> "Telemetry":
+        """This frame on fastf1's session-long clock: ``Time`` equal to ``SessionTime``.
+
+        fastf1's ``session.car_data[n]``/``pos_data[n]`` carry
+        ``Time = Date - t0_date``, which is ``SessionTime``. Frames without
+        both columns come back unchanged.
+        """
+        if "SessionTime" not in self.columns or "Time" not in self.columns:
+            return self
+        tel = self._wrap(self.copy(deep=False))
+        tel["Time"] = self["SessionTime"].copy()
+        return tel
 
     def get_first_non_zero_time_index(self):
         if "Time" not in self.columns or self.empty:
@@ -1243,24 +2198,32 @@ class Telemetry(pd.DataFrame):
         return self.copy(deep=not self._mgr.is_consolidated())
 
     def fill_missing(self):
-        if not self.columns.is_unique:
-            filled = self.copy()
-            for col in filled.columns:
-                if pd.api.types.is_numeric_dtype(filled[col]):
-                    filled[col] = filled[col].interpolate(limit_direction="both")
-            return self._wrap(filled)
+        """Fill missing samples the way fastf1's ``fill_missing`` does (the polars class too).
+
+        Discrete channels (``nGear``, ``DRS``, ``Brake``, ``Status``,
+        ``DriverAhead``, registered discrete channels) and ``Driver``/
+        ``LapNumber`` take the value in force (forward then backward fill)
+        and keep their dtype; ``Source`` gaps become ``"interpolation"``;
+        excluded channels (the clocks) are left alone. Other float columns
+        are interpolated linearly in both directions, other integer and
+        boolean columns are held like discrete ones, anything else is kept.
+        Only columns with gaps are touched.
+        """
         filled = self._owned_copy()
-        float64 = np.dtype(np.float64)
         for i, (col, dtype) in enumerate(zip(self.columns, self.dtypes, strict=True)):
-            if not pd.api.types.is_numeric_dtype(dtype):
+            rule = _fill_rule(self._CHANNELS, col, dtype)
+            if rule is None:
                 continue
             values = cast(Any, self)._ixs(i, axis=1)
-            # A float64 column without NaN interpolates to itself: skip the
-            # interpolation but keep the per-column assignment, so the block
-            # layout of the result stays the same.
-            if dtype != float64 or np.isnan(values.to_numpy()).any():
+            if not values.hasnans:
+                continue
+            if rule == "interpolate":
                 values = values.interpolate(limit_direction="both")
-            filled[col] = values
+            elif rule == "hold":
+                values = values.ffill().bfill()
+            else:
+                values = values.fillna("interpolation")
+            filled.isetitem(i, values)
         return self._wrap(filled)
 
     def _differential_distance_fast(self) -> np.ndarray | None:
@@ -1324,32 +2287,58 @@ class Telemetry(pd.DataFrame):
             return speed_ms * dt
         return pd.Series(0.0, index=self.index)
 
-    def add_differential_distance(self):
+    def add_differential_distance(self, drop_existing: bool = True):
+        if "DifferentialDistance" in self.columns and not drop_existing:
+            return self
         tel = self._owned_copy()
         tel["DifferentialDistance"] = self.calculate_differential_distance()
         return self._wrap(tel)
 
-    def add_distance(self, drop_existing: bool = True):  # noqa: ARG002
-        if "Distance" in self.columns:
-            return self
+    def _with_float_column(self, name: str, values: np.ndarray):
+        """A copy with ``name`` set to ``values`` (in place when present, else appended)."""
+        tel = self._owned_copy()
+        tel[name] = values
+        return self._wrap(tel)
 
-        distance = self.integrate_distance()
-        new_dist = pd.DataFrame({"Distance": distance}, index=self.index)
-        return self.join(new_dist, how="outer")
+    def add_distance(self, drop_existing: bool = True):
+        """Add ``Distance``: metres driven since the first sample (fastf1 parity).
+
+        Integrated from ``Speed`` over the whole frame
+        (:meth:`integrate_distance`). An existing ``Distance`` (tif1 frames
+        carry the source's per-lap channel) is replaced in place with
+        ``drop_existing=True`` and kept, the frame returned unchanged, with
+        ``False``. As in fastf1, integrate a few laps at a time: the error
+        grows with the length of the slice.
+        """
+        if "Distance" in self.columns and not drop_existing:
+            return self
+        distance = self.integrate_distance().to_numpy(dtype="float64")
+        if len(distance) != len(self):  # no Speed channel
+            distance = np.full(len(self), np.nan)
+        return self._with_float_column("Distance", distance)
 
     def add_relative_distance(self, drop_existing: bool = True):
-        if "RelativeDistance" in self.columns:
-            return self
+        """Add ``RelativeDistance``: ``Distance`` over its last value (fastf1 parity).
 
-        tel = self.add_distance(drop_existing=drop_existing)._owned_copy()
-        distance = pd.to_numeric(cast(pd.Series, tel["Distance"]), errors="coerce")
-        max_dist = distance.max()
-        if pd.isna(max_dist) or max_dist == 0:
-            relative_distance = pd.Series(0.0, index=self.index, dtype=float)
+        ``0.0`` is the first sample and ``1.0`` the last. The frame's
+        ``Distance`` is used, integrated from ``Speed`` when the column is
+        missing (no ``Distance`` column is added). An existing
+        ``RelativeDistance`` is recomputed with ``drop_existing=True`` and
+        kept, the frame returned unchanged, with ``False``.
+        """
+        if "RelativeDistance" in self.columns and not drop_existing:
+            return self
+        if "Distance" in self.columns:
+            distance = pd.to_numeric(self["Distance"], errors="coerce")
+            values = distance.to_numpy(dtype="float64", na_value=np.nan)
         else:
-            relative_distance = distance / float(max_dist)
-        tel["RelativeDistance"] = relative_distance.to_numpy(copy=False)
-        return self._wrap(tel)
+            values = self.integrate_distance().to_numpy(dtype="float64")
+        if len(values) != len(self):  # no Speed channel
+            values = np.full(len(self), np.nan)
+        if len(values):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                values = values / values[-1]
+        return self._with_float_column("RelativeDistance", values)
 
     def calculate_driver_ahead(self, return_reference: bool = False):
         if "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns:
@@ -1369,6 +2358,13 @@ class Telemetry(pd.DataFrame):
         return driver_ahead, distance_to_driver_ahead
 
     def add_driver_ahead(self, drop_existing: bool = True):  # noqa: ARG002
+        """Add ``DriverAhead``/``DistanceToDriverAhead`` (kept when already present).
+
+        ``drop_existing`` is accepted for fastf1 parity. The source computes
+        both channels from every car's position; a frame of one driver cannot
+        recompute them, so existing channels are kept and missing ones are
+        added empty (``None``/NaN).
+        """
         has_existing = "DriverAhead" in self.columns and "DistanceToDriverAhead" in self.columns
         if has_existing:
             return self
@@ -1385,11 +2381,40 @@ class Telemetry(pd.DataFrame):
         )
         return self._wrap(pd.DataFrame(self).join(new_cols, how="outer"))
 
-    def add_track_status(self):
+    def add_track_status(self, drop_existing: bool = True):
+        """Add ``TrackStatus``: the session's track status at each sample (fastf1 parity).
+
+        Each sample takes the status of the last ``session.track_status`` row
+        at or before its ``SessionTime`` (``Time`` when there is no session
+        clock). Without a session or a status table every sample is ``"1"``.
+        """
+        if "TrackStatus" in self.columns and not drop_existing:
+            return self
         tel = self._owned_copy()
-        if "TrackStatus" not in tel.columns:
-            tel["TrackStatus"] = "1"
+        tel["TrackStatus"] = self._track_status_values()
         return self._wrap(tel)
+
+    def _track_status_values(self) -> np.ndarray:
+        statuses = np.full(len(self), "1", dtype=object)
+        session = self.session
+        table = getattr(session, "track_status", None) if session is not None else None
+        ref = self._time_reference_column()
+        if (
+            ref is None
+            or not isinstance(table, pd.DataFrame)
+            or table.empty
+            or not {"Time", "Status"}.issubset(table.columns)
+        ):
+            return statuses
+        times = _timedelta_ns(cast(pd.Series, table["Time"]))
+        order = np.argsort(times, kind="stable")
+        times = times[order]
+        values = table["Status"].astype(str).to_numpy()[order]
+        ref_ns = _timedelta_ns(self[ref])
+        positions = np.searchsorted(times, ref_ns, side="right") - 1
+        known = positions >= 0
+        statuses[known] = values[positions[known]]
+        return statuses
 
     def slice_by_mask(self, mask, pad: int | float = 0, pad_side: str = "both"):
         mask_array = np.asarray(mask, dtype=bool)
@@ -1422,7 +2447,17 @@ class Telemetry(pd.DataFrame):
         pad_side: str = "both",
         interpolate_edges: bool = False,
     ):
-        _ = interpolate_edges
+        """Samples between ``start_time`` and ``end_time`` (inclusive; fastf1 parity).
+
+        ``SessionTime`` is the reference (``Time`` without it); the result's
+        ``Time`` restarts at ``start_time``. Numbers are seconds. ``pad``
+        adds that many samples on ``pad_side``. ``interpolate_edges`` adds one
+        sample exactly at ``start_time`` and one at ``end_time`` (unless a
+        sample is already there): continuous channels interpolated linearly
+        between the neighbouring samples, the clocks advanced to the edge,
+        discrete channels and text the value in force, ``Source``
+        ``"interpolation"``. The rest of the frame is unchanged.
+        """
         time_ref_col = "SessionTime" if "SessionTime" in self.columns else "Time"
         if time_ref_col not in self.columns:
             return self._wrap(self.copy())
@@ -1432,11 +2467,16 @@ class Telemetry(pd.DataFrame):
         if pd.isna(start) or pd.isna(end):
             return self._wrap(self.iloc[0:0].copy())
 
-        ref_time = self._coerce_timedelta_series(self[time_ref_col]).to_numpy()
-        start_ns = np.timedelta64(start.to_timedelta64())
-        end_ns = np.timedelta64(end.to_timedelta64())
-        selection_mask = (ref_time >= start_ns) & (ref_time <= end_ns)
-        data_slice = self.slice_by_mask(selection_mask, pad, pad_side)
+        if interpolate_edges and not self.empty:
+            data_slice = self._slice_with_edges(
+                time_ref_col, int(start.value), int(end.value), int(pad), pad_side
+            )
+        else:
+            ref_time = self._coerce_timedelta_series(self[time_ref_col]).to_numpy()
+            start_ns = np.timedelta64(start.to_timedelta64())
+            end_ns = np.timedelta64(end.to_timedelta64())
+            selection_mask = (ref_time >= start_ns) & (ref_time <= end_ns)
+            data_slice = self.slice_by_mask(selection_mask, pad, pad_side)
 
         if not data_slice.empty:
             # Keep Time zero-based relative to the start of this slice, matching FastF1.
@@ -1447,6 +2487,105 @@ class Telemetry(pd.DataFrame):
                 data_slice["Time"] = slice_ref_time - start
 
         return data_slice
+
+    def _slice_with_edges(self, ref: str, start_ns: int, end_ns: int, pad: int, pad_side: str):
+        """``slice_by_time(interpolate_edges=True)`` before ``Time`` is re-based.
+
+        fastf1 merges the two edge samples into the whole frame and fills
+        every gap; here the frame is read in ``ref`` order (sorted only when
+        it is not), the window and its padding are sliced, and the edge
+        samples, computed from their two neighbours, are inserted: no other
+        sample changes. The polars class computes the same rows.
+        """
+        if start_ns > end_ns:
+            return self._wrap(self.iloc[0:0].copy())
+        ref_ns = _clock_ns_values(self[ref])
+        frame = self
+        order = _clock_order(ref_ns)
+        if order is not None:
+            frame = self.take(order)
+            ref_ns = ref_ns[order]
+        clock = ref_ns[: int(np.count_nonzero(ref_ns != _NAT_NS))]
+        n_valid = len(clock)
+        lo = int(np.searchsorted(clock, start_ns, side="left"))
+        hi = int(np.searchsorted(clock, end_ns, side="right"))
+        first, last = lo, hi
+        if pad and pad_side in ("both", "before"):
+            first = max(0, lo - pad)
+        if pad and pad_side in ("both", "after"):
+            last = min(n_valid, hi + pad)
+        need_start = n_valid > 0 and not (lo < n_valid and clock[lo] == start_ns)
+        need_end = n_valid > 0 and end_ns != start_ns and not (hi > 0 and clock[hi - 1] == end_ns)
+        edges = [(lo, start_ns)] if need_start else []
+        if need_end:
+            edges.append((hi, end_ns))
+        if not edges:
+            return self._wrap(frame.iloc[first:last].copy())
+        samples = self._edge_samples(frame, clock, ref, [t for _, t in edges])
+        pieces = []
+        cursor = first
+        for k, (position, _) in enumerate(edges):
+            pieces.extend((frame.iloc[cursor:position], samples.iloc[k : k + 1]))
+            cursor = position
+        pieces.append(frame.iloc[cursor:last])
+        return self._wrap(pd.concat([p for p in pieces if len(p)], ignore_index=True))
+
+    def _edge_samples(self, frame: pd.DataFrame, clock: np.ndarray, ref: str, times: list[int]):
+        """Samples of ``frame`` at ``times`` ns on ``ref`` (none of them a sampled instant).
+
+        Continuous channels: linear between the samples before and after
+        (the one present beyond the data). Other clocks: the held sample's
+        value advanced by the edge minus its ``ref``. ``Source``:
+        ``"interpolation"``. Everything else: the held sample's value (the
+        sample before the edge, else the one after). The polars class
+        computes the same values (``models_polars._edge_samples``).
+        """
+        n = len(clock)
+        after = [int(np.searchsorted(clock, t, side="right")) for t in times]
+        prevs = [a - 1 if a > 0 else -1 for a in after]
+        nexts = [a if a < n else -1 for a in after]
+        held = [p if p >= 0 else q for p, q in zip(prevs, nexts, strict=True)]
+        columns: dict[int, Any] = {}
+        for i, (col, dtype) in enumerate(zip(frame.columns, frame.dtypes, strict=True)):
+            values = cast(Any, frame)._ixs(i, axis=1)._values
+            is_date = isinstance(dtype, np.dtype) and dtype.kind == "M"
+            is_delta = isinstance(dtype, np.dtype) and dtype.kind == "m"
+            if col == ref and not is_delta:  # a clock in numeric seconds
+                columns[i] = pd.array([t / 1e9 for t in times], dtype=dtype)
+            elif is_date or is_delta:
+                if col == ref:
+                    ns = list(times)
+                else:
+                    base = _clock_ns_values(pd.Series(values.take(held)))
+                    ns = [
+                        _NAT_NS if b == _NAT_NS else int(b) + t - int(clock[h])
+                        for b, t, h in zip(base, times, held, strict=True)
+                    ]
+                exact = np.array(ns, dtype="int64").view("M8[ns]" if is_date else "m8[ns]")
+                columns[i] = exact.astype(dtype)
+            elif col == "Source":
+                columns[i] = np.array(["interpolation"] * len(times), dtype=object)
+            elif self._is_continuous_column(col, dtype):
+                interpolated = [
+                    _edge_linear(
+                        t,
+                        int(clock[p]) if p >= 0 else None,
+                        _float_at(values, p),
+                        int(clock[q]) if q >= 0 else None,
+                        _float_at(values, q),
+                    )
+                    for t, p, q in zip(times, prevs, nexts, strict=True)
+                ]
+                if pd.api.types.is_integer_dtype(dtype):
+                    rounded = [None if math.isnan(v) else round(v) for v in interpolated]
+                    columns[i] = pd.array(rounded, dtype=dtype)
+                else:
+                    columns[i] = pd.array(interpolated, dtype=dtype)
+            else:
+                columns[i] = values.take(held)
+        samples = pd.DataFrame(columns)
+        samples.columns = frame.columns
+        return samples
 
     @staticmethod
     def _extract_lap_time_window(ref_laps: Any) -> tuple[Any, Any]:
@@ -1543,11 +2682,11 @@ class Telemetry(pd.DataFrame):
                     "Cannot slice telemetry because 'ref_laps' contains Laps of multiple drivers!"
                 )
 
-        # tif1 telemetry keeps ``Time`` lap-relative (zero at the lap start)
-        # and carries no ``SessionTime``, so a lap's session-time window
-        # (LapStartTime..Time) can never select its samples. Without a
-        # session-time axis, match on LapNumber (and Driver when both sides
-        # carry it); the time window stays the path for FastF1-style frames.
+        # ``Time`` is lap-relative (zero at each lap start), so a lap's
+        # session-time window (LapStartTime..Time) selects samples only on the
+        # ``SessionTime`` axis every built frame carries; that is the fastf1
+        # path below. A frame without ``SessionTime`` (hand-built, or columns
+        # dropped) is matched on LapNumber (and Driver when both sides carry it).
         if "SessionTime" not in self.columns and "LapNumber" in self.columns:
             lap_numbers = self._extract_lap_numbers(ref_laps)
             if lap_numbers:
@@ -1577,74 +2716,224 @@ class Telemetry(pd.DataFrame):
         lap_mask = self["LapNumber"].isin(lap_numbers).to_numpy(copy=False)
         return self.slice_by_mask(lap_mask, pad=pad, pad_side=pad_side)
 
-    @staticmethod
-    def _is_lone_timedelta_column(frame: pd.DataFrame, col: str) -> bool:
-        """True when ``col`` is a numpy timedelta column alone in its block.
+    def merge_channels(self, other, frequency: int | Literal["original"] | None = None):
+        """Merge the channels of ``other`` into this frame, nearest sample in time.
 
-        ``pd.to_timedelta`` returns such a column unchanged, and re-assigning
-        it only moves its block to the end of the manager, so the
-        ``frame[col] = pd.to_timedelta(frame[col])`` normalization can be
-        skipped without changing the values, dtypes or block count.
+        The frames are matched on the session clock: ``Date`` when both
+        carry it, else ``SessionTime``, else ``Time`` (numbers are seconds).
+        Every row of this frame is kept and takes ``other``'s sample nearest
+        in time (the earlier one on a tie, the last of equal timestamps on
+        an exact match); a row whose clock is missing gets nulls for
+        ``other``'s columns. The result is sorted by that clock (missing
+        last) with a fresh index. Columns in both frames keep this frame's
+        values; ``other``'s copies get an ``_other`` suffix. Without a
+        shared clock the frames are put side by side. The polars class
+        matches the same rows.
+
+        Args:
+            other: Telemetry (or DataFrame) to merge.
+            frequency: Resample the merged frame to this rate in Hz;
+                ``"original"`` keeps the merged samples, ``None`` uses
+                :attr:`TELEMETRY_FREQUENCY`.
         """
-        columns = frame.columns
-        if not columns.is_unique:
-            return False
-        mgr = frame._mgr
-        block = mgr.blocks[mgr.blknos[columns.get_loc(col)]]
-        dtype = block.dtype
-        return isinstance(dtype, np.dtype) and dtype.kind == "m" and len(block.mgr_locs) == 1
+        return _apply_telemetry_frequency(self._merge_channels(other), frequency)
 
-    def merge_channels(self, other, **kwargs):
-        _ = kwargs
-        if "Time" in self.columns and "Time" in other.columns:
-            left = self._owned_copy()
-            right = pd.DataFrame(other)  # shallow: a new manager, safe to assign into
-            if not right._mgr.is_consolidated():
-                right = right.copy()  # keep the consolidating deep copy's layout
-            if not self._is_lone_timedelta_column(left, "Time"):
-                left["Time"] = pd.to_timedelta(left["Time"], errors="coerce")
-            if not self._is_lone_timedelta_column(right, "Time"):
-                right["Time"] = pd.to_timedelta(right["Time"], errors="coerce")
-            merged = pd.merge_asof(
-                left.sort_values("Time"),
-                right.sort_values("Time"),
-                on="Time",
-                suffixes=("", "_other"),
-                direction="nearest",
-            )
-        else:
-            merged = pd.concat([self.reset_index(drop=True), pd.DataFrame(other)], axis=1)
-        return self._wrap(merged)
+    def _merge_channels(self, other):
+        right = pd.DataFrame(other)
+        key = next(
+            (c for c in _RESAMPLE_AXIS_COLUMNS if c in self.columns and c in right.columns), None
+        )
+        if key is None:
+            return self._wrap(pd.concat([self.reset_index(drop=True), right], axis=1))
+        left_ns = _clock_ns_values(self[key])
+        order = _clock_order(left_ns)
+        if order is not None:
+            left_ns = left_ns[order]
+        right_ns = _clock_ns_values(right[key])
+        right_order = _clock_order(right_ns, drop_missing=True)
+        if right_order is not None:
+            right_ns = right_ns[right_order]
+        hits = _nearest_positions(left_ns, right_ns)
+        if right_order is not None:
+            hits = np.where(hits >= 0, right_order[np.maximum(hits, 0)], -1)
+        columns = [col for col in right.columns if col != key]
+        part = right[columns]
+        part.columns = pd.Index(
+            [f"{col}_other" if col in self.columns else col for col in columns], dtype=object
+        )
+        part.index = pd.RangeIndex(len(part))
+        taken = part.reindex(hits) if (hits < 0).any() else part.take(hits)
+        taken.index = pd.RangeIndex(len(taken))
+        left = (self if order is None else self.take(order)).reset_index(drop=True)
+        return self._wrap(pd.concat([left, taken], axis=1))
 
-    def resample_channels(self, rule: str = "1s", **kwargs):
+    def resample_channels(
+        self,
+        rule: str | None = None,
+        new_date_ref: pd.Series | None = None,
+        **kwargs: Any,
+    ):
+        """Resample the telemetry (fastf1 parity; the polars class gives the same rows).
+
+        Either ``rule`` (a pandas offset alias such as ``"100ms"``; tif1
+        defaults to ``"1s"`` when neither argument is given) or
+        ``new_date_ref`` (timestamps to resample onto, matched against
+        ``Date``).
+
+        With ``rule`` the samples are binned every ``rule`` from the first
+        sample on the session clock (``Date``, else ``SessionTime``, else
+        ``Time``), as fastf1's ``merge_channels(frequency=)`` does:
+        continuous channels are the bin mean, interpolated across empty bins;
+        discrete channels (gear, DRS, brake, driver ahead, status, lap
+        number) and text columns take the value in force at each bin start;
+        ``Date``/``SessionTime`` advance with the bins and ``Time`` restarts
+        at zero. With ``new_date_ref`` the continuous channels and the clock
+        columns are interpolated at each (unique, sorted) timestamp and the
+        rest is held.
+        """
+        if rule is not None and new_date_ref is not None:
+            raise ValueError("You can only specify one of 'rule' or 'new_date_ref'")
+        if new_date_ref is not None:
+            return self._resample_onto_dates(new_date_ref)
         _ = kwargs
-        rule = _modern_offset_alias(rule)
-        if "Time" not in self.columns or self.empty:
+        rule = _modern_offset_alias("1s" if rule is None else rule)
+        if self.empty:
             return self._wrap(self._owned_copy())
         if not self.columns.is_unique:
+            if "Time" not in self.columns:
+                return self._wrap(self._owned_copy())
             frame = self.copy()
             frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
             frame = frame.dropna(subset=["Time"]).set_index("Time").sort_index()
             numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
             frame = frame[numeric_cols]
+            resampled = frame.resample(rule).mean().interpolate(limit_direction="both")
+            return self._wrap(resampled.reset_index())
+        step = int(pd.Timedelta(rule).value)
+        if step <= 0:
+            raise ValueError(f"Resampling rule {rule!r} must be a positive duration")
+        axis = next((col for col in _RESAMPLE_AXIS_COLUMNS if col in self.columns), None)
+        if axis is None:
+            return self._wrap(self._owned_copy())
+        axis_ns = self._clock_ns(axis)
+        positions = np.flatnonzero(axis_ns != _NAT_NS)
+        positions = positions[np.argsort(axis_ns[positions], kind="stable")]
+        if not len(positions):
+            return self._wrap(self.iloc[0:0].copy())
+        x = axis_ns[positions]
+        bins = (x - x[0]) // step
+        n_bins = int(bins[-1]) + 1
+        offsets = np.arange(n_bins, dtype="int64") * step
+        held = np.searchsorted(x, x[0] + offsets, side="right") - 1
+        out: dict[str, Any] = {}
+        for col, dtype in zip(self.columns, self.dtypes, strict=True):
+            if col in _RESAMPLE_AXIS_COLUMNS:
+                out[col] = self._resampled_clock(col, dtype, positions[0], offsets)
+            elif self._is_continuous_column(col, dtype):
+                values = self._float_values(col)[positions]
+                valid = ~np.isnan(values)
+                counts = np.bincount(bins[valid], minlength=n_bins)
+                sums = np.bincount(bins[valid], weights=values[valid], minlength=n_bins)
+                filled = counts > 0
+                means = np.full(n_bins, np.nan)
+                if filled.any():
+                    means[filled] = sums[filled] / counts[filled]
+                    means = np.interp(np.arange(n_bins), np.flatnonzero(filled), means[filled])
+                out[col] = means
+            else:
+                in_force = self[col].iloc[positions].reset_index(drop=True).ffill()
+                out[col] = in_force.iloc[held].reset_index(drop=True).bfill()
+        return self._wrap(pd.DataFrame(out, columns=self.columns))
+
+    def _clock_ns(self, col: str) -> np.ndarray:
+        """``col`` (timedelta, datetime or numeric seconds) as int64 ns; NaT is int64 min."""
+        values = self[col]
+        if pd.api.types.is_datetime64_any_dtype(values.dtype):
+            dates = pd.to_datetime(values, errors="coerce")
+            if getattr(dates.dt, "tz", None) is not None:
+                dates = dates.dt.tz_localize(None)
+            return dates.astype("datetime64[ns]").to_numpy().view("i8")
+        return _timedelta_ns(values)
+
+    def _resampled_clock(
+        self, col: str, dtype: Any, first_position: int, offsets: np.ndarray
+    ) -> np.ndarray:
+        """A clock column on the new bins: ``Time`` from zero, the others from the first sample."""
+        is_date = pd.api.types.is_datetime64_any_dtype(dtype)
+        if col == "Time":
+            values = offsets
         else:
-            # Only ``Time`` and the numeric channels reach the resampler: take
-            # them first so the text/object columns are not carried through
-            # the NaT filter, ``set_index`` and ``sort_index``.
-            numeric_cols = [
-                col
-                for col, dtype in zip(self.columns, self.dtypes, strict=True)
-                if col != "Time" and pd.api.types.is_numeric_dtype(dtype)
-            ]
-            frame = self[["Time", *numeric_cols]]
-            if not self._is_lone_timedelta_column(frame, "Time"):
-                frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
-            if frame["Time"].isna().any():
-                frame = frame.dropna(subset=["Time"])
-            frame = frame.set_index("Time").sort_index()
-        resampled = frame.resample(rule).mean().interpolate(limit_direction="both")
-        resampled = resampled.reset_index()
-        return self._wrap(resampled)
+            first = int(self._clock_ns(col)[first_position])
+            values = np.full(len(offsets), _NAT_NS) if first == _NAT_NS else first + offsets
+        return values.view("M8[ns]" if is_date else "m8[ns]")
+
+    def _is_continuous_column(self, col: str, dtype: Any) -> bool:
+        """Numeric, not boolean, not a discrete/excluded channel, not ``LapNumber``."""
+        kind = self._CHANNELS.get(col, {}).get("type")
+        if col in _TELEMETRY_META_COLUMNS or kind in ("discrete", "excluded"):
+            return False
+        return pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
+
+    def _float_values(self, col: str) -> np.ndarray:
+        return pd.to_numeric(self[col], errors="coerce").to_numpy(dtype="float64", na_value=np.nan)
+
+    def _resample_onto_dates(self, new_date_ref: pd.Series):
+        """Resample every channel onto ``new_date_ref`` timestamps (needs ``Date``).
+
+        One row per unique timestamp, sorted. Continuous channels and the
+        other clock columns are interpolated on ``Date`` (constant beyond the
+        first/last sample); everything else takes the value in force.
+        """
+        if "Date" not in self.columns:
+            raise ValueError("'Date' is required to resample onto 'new_date_ref'")
+        targets = pd.to_datetime(pd.Series(new_date_ref), errors="coerce").dropna()
+        if getattr(targets.dt, "tz", None) is not None:
+            targets = targets.dt.tz_localize(None)
+        new = np.unique(targets.astype("datetime64[ns]").to_numpy().view("i8"))
+        base_all = self._clock_ns("Date")
+        positions = np.flatnonzero(base_all != _NAT_NS)
+        if self.empty or not len(positions) or not len(new):
+            return self._wrap(self.iloc[0:0].copy())
+        positions = positions[np.argsort(base_all[positions], kind="stable")]
+        base = base_all[positions]
+        held = np.searchsorted(base, new, side="right") - 1
+        # Interpolate on offsets from the first sample: epoch nanoseconds
+        # exceed float64's exact integer range (~200 ns of error otherwise).
+        new_t = (new - base[0]).astype("float64")
+        base_t = (base - base[0]).astype("float64")
+        out: dict[str, Any] = {}
+        for col, dtype in zip(self.columns, self.dtypes, strict=True):
+            if col == "Date":
+                out[col] = new.view("M8[ns]")
+            elif col in _RESAMPLE_AXIS_COLUMNS:
+                clock = self._clock_ns(col)[positions]
+                valid = clock != _NAT_NS
+                if not valid.any():
+                    out[col] = np.full(len(new), _NAT_NS).view("m8[ns]")
+                    continue
+                anchor = int(clock[valid].min())
+                offsets = np.interp(new_t, base_t[valid], (clock[valid] - anchor).astype("float64"))
+                values = np.round(offsets).astype("int64") + anchor
+                is_date = pd.api.types.is_datetime64_any_dtype(dtype)
+                out[col] = values.view("M8[ns]" if is_date else "m8[ns]")
+            elif self._is_continuous_column(col, dtype):
+                values = self._float_values(col)[positions]
+                valid = ~np.isnan(values)
+                if not valid.any():
+                    out[col] = np.full(len(new), np.nan)
+                    continue
+                interpolated = np.interp(new_t, base_t[valid], values[valid])
+                if pd.api.types.is_integer_dtype(dtype):
+                    out[col] = pd.array(np.round(interpolated), dtype=dtype)
+                else:
+                    out[col] = interpolated
+            else:
+                in_force = self[col].iloc[positions].reset_index(drop=True).ffill()
+                out[col] = in_force.iloc[np.maximum(held, 0)].reset_index(drop=True).bfill()
+                if (held < 0).any():
+                    first = in_force.bfill().iloc[0] if len(in_force) else None
+                    out[col] = out[col].where(held >= 0, first)
+        return self._wrap(pd.DataFrame(out, columns=self.columns))
 
     def join(self, *args, **kwargs):
         return self._wrap(cast(Any, super()).join(*args, **kwargs))
@@ -1677,6 +2966,11 @@ class SessionResults(pd.DataFrame):
     @property
     def _constructor(self):
         return SessionResults
+
+    @property
+    def base_class_view(self):
+        """The same data as a plain :class:`pandas.DataFrame` (fastf1 parity)."""
+        return pd.DataFrame(self)
 
     @property
     def _constructor_sliced(self):
@@ -1740,9 +3034,113 @@ def _empty_driver_laps(session: TelemetryProvider) -> DataFrame:
     return laps
 
 
-class Driver(pd.Series):
+def _load_driver_lap_payload(
+    session: Any, driver: str, prefetched: dict[str, Any] | None = None
+) -> dict:
+    """One driver's laptime payload (``Driver.laps`` on either backend).
+
+    The prefetched payload when :meth:`Session.get_driver` already holds it,
+    else the memoised (or session-table-derived) payload, else one fetch.
+
+    Raises:
+        DataNotFoundError: If lap data doesn't exist
+        NetworkError: If network request fails
+        InvalidDataError: If data is corrupted
     """
-    Represents a driver in a session as a pandas Series.
+    path = f"{driver}/laptimes.json"
+    if isinstance(prefetched, dict):
+        session._remember_local_payload(path, prefetched)
+        return prefetched
+
+    ultra_cold_enabled = session._resolve_ultra_cold_mode(None)
+    if not ultra_cold_enabled:
+        # Q19: a payload already memoized (or derivable from the memoized
+        # session table) is what _fetch_laptime_payloads returns too; that
+        # call also re-derived every other driver's payload (~1-2 ms), work
+        # only an ultra-cold backfill consumes.
+        local_payload = session._get_or_derive_driver_laptime_payload(driver)
+        if isinstance(local_payload, dict):
+            return local_payload
+    payloads, cacheable_payloads = session._fetch_laptime_payloads(
+        [(session._get_driver_info(driver), path)],
+        operation="driver_laps",
+        ultra_cold=ultra_cold_enabled,
+    )
+    lap_data = payloads[0] if payloads else None
+    if cacheable_payloads and session._should_backfill_ultra_cold_cache(ultra_cold_enabled):
+        session._schedule_background_cache_fill(json_payloads=cacheable_payloads)
+    if isinstance(lap_data, dict):
+        return lap_data
+
+    raise DataNotFoundError(
+        driver=driver,
+        year=session.year,
+        event=session.gp,
+        session=session.session,
+    )
+
+
+def _empty_result_row() -> dict[str, Any]:
+    """fastf1's result columns (then tif1's extras) with empty values, in order."""
+    from .core_utils import ergast_results as _er
+
+    row: dict[str, Any] = {}
+    for column in _er.RESULTS_COLUMN_ORDER:
+        if column in _er._FLOAT_COLUMNS:
+            row[column] = math.nan
+        elif column in _er._TIMEDELTA_COLUMNS or column in _er._DATETIME_COLUMNS:
+            row[column] = pd.NaT
+        elif column in _er._NO_FILL_STR:
+            row[column] = None
+        else:
+            row[column] = ""
+    return row
+
+
+def _results_row_data(
+    session: Any, driver: str, driver_number: str
+) -> tuple[Any, dict[str, Any]] | None:
+    """``(results label, row as a dict)`` of the driver (fastf1's ``DriverResult`` data).
+
+    ``driver_number`` decides between rows sharing the abbreviation (a driver
+    in two cars before the 1960s) and stands in when the code is unknown.
+
+    Always the ``results`` row, so the object does not depend on whether
+    ``results`` was read first (a practice session builds it from the laps).
+    """
+    try:
+        results = session.results
+    except (TIF1Error, AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(results, pd.DataFrame) or results.empty:
+        return None
+    if "Abbreviation" in results.columns:
+        mask = (results["Abbreviation"] == driver).to_numpy()
+    else:
+        mask = np.zeros(len(results), dtype=bool)
+    if "DriverNumber" in results.columns:
+        numbers = results["DriverNumber"].astype(str).to_numpy() == driver_number
+        if mask.sum() > 1:  # a shared car: the number names the driver
+            # ``to_numpy()`` of a pandas 3 (copy-on-write) Series is a
+            # read-only view: combine into a new array, never in place.
+            mask = mask & numbers
+        elif not mask.any() and driver_number:
+            mask = numbers
+    if not mask.any():
+        return None
+    row = cast(pd.Series, results[mask].iloc[0])
+    return row.name, {str(key): value for key, value in row.items()}
+
+
+class Driver(DriverResult):
+    """
+    A driver of the session: fastf1's ``DriverResult`` row plus tif1's helpers.
+
+    The Series holds the driver's :attr:`Session.results` row (fastf1's 22
+    columns first, then tif1's extras) and keeps the identity fields from
+    ``drivers.json`` when the session has no classification. ``.dnf`` comes
+    from :class:`DriverResult`; ``.laps``, ``.get_lap``, ``.get_fastest_lap``
+    and ``.get_fastest_lap_tel`` are tif1's.
 
     Args:
         session: Parent Session object
@@ -1757,25 +3155,30 @@ class Driver(pd.Series):
     # Only identity/configuration fields propagate through pandas' finalize
     # hook. Derived lookup caches must remain local to each reconstructed object.
     _metadata: ClassVar[list[str]] = ["_name", "session", "driver", "_prefetched_lap_data"]
+    session: TelemetryProvider
+    driver: str
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow Series-style subclass construction without re-implementing __new__."""
-        return cast(Self, super().__new__(cls))
+        return cast(Self, pd.Series.__new__(cls))
 
     def __init__(
         self,
         session: TelemetryProvider,
         driver: str,
         prefetched_lap_data: dict[str, Any] | None = None,
+        *,
+        _car_number: str | None = None,
     ):
-        # Build driver metadata as Series data
+        # Build driver metadata as Series data. ``_car_number`` is the car the
+        # identifier named ("8", "8/FAG"): it picks the row of a shared car.
         info = session._get_driver_info(driver)
         first_name = info.get("fn", "")
         last_name = info.get("ln", "")
         full_name = f"{first_name} {last_name}".strip()
-        driver_number = str(info.get("dn", ""))
+        driver_number = str(_car_number or info.get("dn", ""))
 
-        data = {
+        identity = {
             "DriverNumber": driver_number,
             "Abbreviation": driver,
             "TeamName": info.get("team", ""),
@@ -1789,10 +3192,27 @@ class Driver(pd.Series):
         # classification: ids, nationality, permanent number, date of birth.
         ergast_identity = getattr(session, "_ergast_identity", None)
         if callable(ergast_identity):
-            data.update(ergast_identity(driver_number, driver))
+            identity.update(ergast_identity(driver_number, driver))
+
+        # The results row (fastf1's DriverResult) when the session has one;
+        # identity values fill whatever the row leaves empty. Without a
+        # classification the row keeps fastf1's columns with empty values.
+        found = _results_row_data(session, driver, driver_number)
+        label: Any = driver_number if driver_number else driver
+        if found is None:
+            data = _empty_result_row()
+            data.update(identity)
+        else:
+            label, data = found
+            for key, value in identity.items():
+                current = data.get(key)
+                if key not in data or current is None or (isinstance(current, str) and not current):
+                    data[key] = value
+            if not driver_number:
+                driver_number = str(data.get("DriverNumber") or "")
 
         # Initialize Series with driver data and name
-        cast(Any, super()).__init__(data, name=driver_number if driver_number else driver)
+        cast(Any, pd.Series).__init__(self, data, name=label)
 
         # Set custom attributes
         self.session = session
@@ -1993,41 +3413,12 @@ class Driver(pd.Series):
             NetworkError: If network request fails
             InvalidDataError: If data is corrupted
         """
-        path = f"{self.driver}/laptimes.json"
-        if isinstance(self._prefetched_lap_data, dict):
-            prefetched = self._prefetched_lap_data
+        prefetched = self._prefetched_lap_data
+        if isinstance(prefetched, dict):
             self._prefetched_lap_data = None
-            self.session._remember_local_payload(path, prefetched)
-            return prefetched
-
-        ultra_cold_enabled = self.session._resolve_ultra_cold_mode(None)
-        if not ultra_cold_enabled:
-            # Q19: a payload already memoized (or derivable from the memoized
-            # session table) is what _fetch_laptime_payloads returns too; that
-            # call also re-derived every other driver's payload (~1-2 ms), work
-            # only an ultra-cold backfill consumes.
-            local_payload = self.session._get_or_derive_driver_laptime_payload(self.driver)
-            if isinstance(local_payload, dict):
-                return local_payload
-        payloads, cacheable_payloads = self.session._fetch_laptime_payloads(
-            [(self.session._get_driver_info(self.driver), path)],
-            operation="driver_laps",
-            ultra_cold=ultra_cold_enabled,
-        )
-        lap_data = payloads[0] if payloads else None
-        if cacheable_payloads and self.session._should_backfill_ultra_cold_cache(
-            ultra_cold_enabled
-        ):
-            self.session._schedule_background_cache_fill(json_payloads=cacheable_payloads)
-        if isinstance(lap_data, dict):
-            return lap_data
-
-        raise DataNotFoundError(
-            driver=self.driver,
-            year=self.session.year,
-            event=self.session.gp,
-            session=self.session.session,
-        )
+        else:
+            prefetched = None
+        return _load_driver_lap_payload(self.session, self.driver, prefetched)
 
     def get_lap(self, lap_number: int) -> "Lap":
         """Get specific lap (raises LapNotFoundError if not found)."""

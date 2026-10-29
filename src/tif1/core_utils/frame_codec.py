@@ -165,15 +165,25 @@ def encode_frame(frame: pd.DataFrame) -> bytes | None:
                 chunks.append(raw)
                 offset += len(raw)
                 continue
-            # Extension block: values is the 1-D (or 2-D wrapped) array itself.
-            ea = values[0] if getattr(values, "ndim", 1) == 2 else values
-            if isinstance(ea, pd.arrays.TimedeltaArray | pd.arrays.DatetimeArray):
-                nd = np.asarray(ea)
+            if isinstance(values, pd.arrays.TimedeltaArray | pd.arrays.DatetimeArray):
+                # Every row of the block: a consolidated block holds several
+                # columns (``SessionTime`` and ``Time`` share one).
+                nd = values._ndarray
+                if nd.ndim != 2:
+                    nd = nd.reshape(1, n)
+                if (
+                    nd.dtype.kind not in "mM"
+                    or nd.shape[0] != len(placement)
+                    or getattr(values, "tz", None) is not None
+                ):
+                    return None
                 raw = np.ascontiguousarray(nd).tobytes()
-                specs.append(("np", nd.dtype.str, 1, placement, offset, len(raw)))
+                specs.append(("np", nd.dtype.str, nd.shape[0], placement, offset, len(raw)))
                 chunks.append(raw)
                 offset += len(raw)
                 continue
+            # Extension block: values is the 1-D (or 2-D wrapped) array itself.
+            ea = values[0] if getattr(values, "ndim", 1) == 2 else values
             if isinstance(ea, pd.arrays.IntegerArray) and str(ea.dtype) == "Int64":
                 data = ea._data
                 mask = ea._mask
@@ -243,6 +253,8 @@ def _decode_blocks(body: memoryview, n: int, specs: list[tuple[Any, ...]]) -> tu
         kind = spec[0]
         if kind == "np":
             _, dtype_str, ncols, placement, offset, _nbytes = spec
+            if ncols != len(placement):  # rows of the 0.11 development cache
+                raise ValueError("np block rows do not match its placement")
             arr = frombuffer(body, dtype=dtype_str, count=ncols * n, offset=offset)
             blocks.append(_numpy_block(arr.reshape(ncols, n), _placement(placement)))
         elif kind == "obj":
@@ -374,9 +386,17 @@ def _frame_parts(
             if isinstance(values, pd.arrays.TimedeltaArray | pd.arrays.DatetimeArray):
                 # The block's backing ndarray directly: ``values[0]`` on the
                 # 2-D array goes through the datetimelike ``__getitem__``
-                # (~10 us). The first row only, exactly as before.
+                # (~10 us). Every row: a consolidated block holds several
+                # columns (``SessionTime`` and ``Time`` share one).
                 nd = values._ndarray
-                nd = nd[:1] if nd.ndim == 2 else nd.reshape(1, n)
+                if nd.ndim != 2:
+                    nd = nd.reshape(1, n)
+                if (
+                    nd.dtype.kind not in "mM"
+                    or nd.shape[0] != len(placement)
+                    or getattr(values, "tz", None) is not None
+                ):
+                    return None
                 parts.append(("np", placement, nd.dtype.str, nd))
                 continue
             ea = values[0] if getattr(values, "ndim", 1) == 2 else values
@@ -607,6 +627,8 @@ def _group_parts(
         kind = spec[0]
         if kind == "np":
             _, dtype_str, ncols, placement, offset, _nbytes = spec
+            if ncols != len(placement):  # rows of the 0.11 development cache
+                raise ValueError("np block rows do not match its placement")
             arr = frombuffer(body, dtype=dtype_str, count=ncols * total, offset=offset)
             parts.append(("np", _block_placement(_placement(placement)), arr.reshape(ncols, total)))
         elif kind == "obj":
@@ -658,7 +680,11 @@ def _writable_body(
 
 
 def decode_driver_merged(
-    blob: bytes | bytearray | memoryview, laps: list[int], frame_class: Any = None
+    blob: bytes | bytearray | memoryview,
+    laps: list[int],
+    frame_class: Any = None,
+    *,
+    drop_repeats: bool = False,
 ) -> pd.DataFrame | None:
     """One frame holding ``laps`` back to back, straight from the group arrays.
 
@@ -669,6 +695,11 @@ def decode_driver_merged(
     several runs are concatenated (a handful of pieces instead of one per
     lap, with the same dtype promotion ``pd.concat`` of the lap frames
     gives). Returns None when a lap is not stored in the blob.
+
+    ``drop_repeats`` leaves out a lap's first row when its ``Date`` equals
+    the row before it (each lap frame repeats the sample at its boundary):
+    the kept stretches are joined with one ``np.concatenate`` per block
+    instead of a row gather over the whole frame afterwards.
     """
     if not laps:
         return None
@@ -696,6 +727,7 @@ def decode_driver_merged(
                 runs.append((g, position, 1))
         parts_by_group: dict[int, list[tuple[Any, ...]]] = {}
         pieces: list[pd.DataFrame] = []
+        previous_clock: int | None = None  # Date of the last row taken so far
         for g, first, k in runs:
             columns, group_laps, lengths, specs, starts = groups[g]
             total = int(starts[-1])
@@ -703,33 +735,102 @@ def decode_driver_merged(
             if parts is None:
                 parts = parts_by_group[g] = _group_parts(body, group_laps, total, specs)
             start, end = int(starts[first]), int(starts[first + k])
-            n = end - start
+            # Row stretches to keep and each lap's kept length.
+            spans = [(start, end)]
+            kept = [int(length) for length in lengths[first : first + k]]
+            clock = _date_values(parts, columns) if drop_repeats else None
+            if clock is not None and end > start:
+                spans = []
+                stretch = start
+                for j in range(k):
+                    row = int(starts[first + j])
+                    before = previous_clock if j == 0 else int(clock[row - 1])
+                    if (
+                        kept[j]
+                        and before is not None
+                        and before != _NAT_NS
+                        and clock[row] == before
+                    ):
+                        if row > stretch:
+                            spans.append((stretch, row))
+                        stretch = row + 1
+                        kept[j] -= 1
+                if end > stretch:
+                    spans.append((stretch, end))
+                previous_clock = int(clock[end - 1])
+            n = sum(stop - begin for begin, stop in spans)
             blocks: list[Any] = []
             for part in parts:
                 kind = part[0]
                 if kind == "np":
-                    blocks.append(_numpy_block_placed(part[2][:, start:end], part[1]))
+                    blocks.append(_numpy_block_placed(_take_spans(part[2], spans), part[1]))
                 elif kind == "Int64":
-                    blocks.append(
-                        _extension_block_placed(
-                            _int64_array(part[2][start:end], part[3][start:end]), part[1]
-                        )
-                    )
+                    data = _take_spans(part[2], spans)
+                    mask = _take_spans(part[3], spans)
+                    blocks.append(_extension_block_placed(_int64_array(data, mask), part[1]))
                 elif kind == "Int64c":
                     data = np.repeat(
                         np.asarray(part[2][first : first + k], dtype="int64"),
-                        np.asarray(lengths[first : first + k], dtype="int64"),
+                        np.asarray(kept, dtype="int64"),
                     )
                     ea = _int64_array(data, np.zeros(n, dtype=bool))
                     blocks.append(_extension_block_placed(ea, part[1]))
                 else:  # str
-                    blocks.append(_extension_block_placed(part[2][start:end], part[1]))
+                    ea = part[2]
+                    pieces_ea = [ea[begin:stop] for begin, stop in spans]
+                    joined = (
+                        pieces_ea[0]
+                        if len(pieces_ea) == 1
+                        else type(ea)._concat_same_type(pieces_ea)
+                    )
+                    blocks.append(_extension_block_placed(joined, part[1]))
             pieces.append(_frame_from_blocks(tuple(blocks), columns, n, frame_class))
     except (AttributeError, IndexError, TypeError, ValueError) as e:
         raise ValueError(f"corrupt driver blob body: {e}") from e
     if len(pieces) == 1:
         return pieces[0]
     return pd.concat(pieces, ignore_index=True)
+
+
+_NAT_NS = np.iinfo("int64").min
+
+
+def _take_spans(values: np.ndarray, spans: list[tuple[int, int]]) -> np.ndarray:
+    """The ``spans`` of ``values`` (last axis) back to back, a view of ``values``.
+
+    The stretches are moved down to the start of the first one in place:
+    ``values`` is a view of this decode's own buffer and the spans of one run
+    lie inside that run's rows, so nothing else reads them. Moving the data
+    touches no fresh memory, where a new ~7 MB array costs its page faults
+    (a race driver: 6 -> ~1.5 ms). A read-only array is concatenated instead.
+    """
+    begin = spans[0][0]
+    if len(spans) == 1:
+        return values[..., begin : spans[0][1]]
+    if not values.flags.writeable:
+        return np.concatenate([values[..., start:stop] for start, stop in spans], axis=-1)
+    end = begin
+    for start, stop in spans:
+        length = stop - start
+        if start != end:
+            values[..., end : end + length] = values[..., start:stop]
+        end += length
+    return values[..., begin:end]
+
+
+def _date_values(parts: list[tuple[Any, ...]], columns: list[str]) -> np.ndarray | None:
+    """The group's ``Date`` column as int64 nanoseconds (None without one)."""
+    if "Date" not in columns:
+        return None
+    position = columns.index("Date")
+    for part in parts:
+        if part[0] != "np":
+            continue
+        rows = list(part[1].as_array) if hasattr(part[1], "as_array") else list(part[1])
+        if position in rows:
+            values = part[2][rows.index(position)]
+            return values.view("int64") if values.dtype.kind == "M" else None
+    return None
 
 
 class DriverFrameSource:

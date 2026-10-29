@@ -18,6 +18,7 @@ keywords:
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
 | **Data Source** | F1 live-timing API + jolpica-f1 (Ergast-compatible) API | TracingInsights static files (CDN); Ergast tables from the TracingInsights Stats repository, jolpica-f1 only as fallback |
+| **Account** | Timing data needs a Formula 1 account with an active F1TV subscription (fastf1 3.9 and later) | None |
 | **Loading** | Session-wide `session.load()` | **Lazy, per file**; multi-file loads run in parallel |
 | **Lib** | Pandas only | **Pandas + Polars** |
 | **Caching** | SQLite HTTP cache + pickle files of parsed data | **SQLite + Memory LRU** |
@@ -54,7 +55,7 @@ keywords:
     </CodeGroup>
   </Step>
   <Step title="Check Filters">
-    `tif1.Laps` has every `pick_` method of `fastf1.core.Laps`, with the same names. `pick_driver` accepts a 3-letter code or a driver number. `Session` adds direct accessors.
+    `tif1.Laps` has every `pick_` method of `fastf1.core.Laps`, with the same names and the same rules. For example, `pick_drivers` upper-cases the codes, `pick_quicklaps` keeps the laps strictly below the threshold, and `pick_fastest` takes the `IsPersonalBest` laps. `pick_driver` accepts a 3-letter code or a driver number. `Session` adds direct accessors. `session.get_fastest_laps()` skips only the deleted laps, so it can pick a lap that is not a personal best.
 
     | fastf1 | tif1 |
     | :--- | :--- |
@@ -87,12 +88,13 @@ laps = session.laps  # Automatically fetches on first access
 </CodeGroup>
 
 ### 2. Telemetry Access
-Both libraries have the `lap.telemetry` property and the `lap.get_telemetry()` method. Telemetry code needs no change. The fastf1 method accepts a `frequency` keyword argument. The tif1 method takes no arguments.
+Both libraries have the `lap.telemetry` property and the `lap.get_telemetry()` method. Telemetry code needs no change. `get_telemetry(frequency=...)` accepts fastf1's values: `"original"`, or a sampling rate in Hz.
 
 ```python tif1
 lap = session.laps.pick_fastest()
-telemetry = lap.telemetry
-telemetry = lap.get_telemetry()
+telemetry = lap.telemetry  # Already holds DriverAhead and DistanceToDriverAhead
+telemetry = lap.get_telemetry()  # The same columns, as fastf1's get_telemetry() gives
+telemetry_10hz = lap.get_telemetry(frequency=10)  # Resampled to 10 Hz
 ```
 
 ### 3. Driver Information
@@ -108,20 +110,47 @@ drivers_df = session.drivers_df
 print(drivers_df[["Driver", "Team", "DriverNumber", "TeamColor"]])
 ```
 
-### 4. Enriched Data
-tif1 adds columns that fastf1 does not have:
+`session.get_driver()` returns the `results` row of the driver, as in fastf1. The row holds `Position`, `GridPosition`, `Points`, `Status`, and the other result columns, and `dnf` is a property. tif1 adds `laps`, `get_lap()`, `get_fastest_lap()`, and `get_fastest_lap_tel()`. The identifier can be the abbreviation, the car number, or the full name. An unknown identifier raises `DriverNotFoundError`, which is a `ValueError` too, so a fastf1 `except ValueError` handler still catches it.
 
-- Every lap row carries the weather columns (`AirTemp`, `TrackTemp`, `Rainfall`, and others)
-- `LapTimeSeconds` holds the lap time as float seconds next to `LapTime`
-- `ms1`, `ms2`, and `ms3` hold mini-sector color codes for each lap
-- Telemetry includes `AccelerationX`, `AccelerationY`, and `AccelerationZ`
+```python
+ver = session.get_driver("VER")
+print(ver["FullName"], ver["Position"], ver["Points"], ver.dnf)
+print(session.get_driver("Max Verstappen")["Abbreviation"])  # VER
+```
+
+### 4. Lap Columns
+tif1 laps have the 31 fastf1 columns in fastf1's order, and some extra columns:
+
+- On pandas, an `index` column comes first. `drv` and `team` repeat the driver and the team from the source file.
+- Every lap row carries a weather sample that the source data matched to the lap (`WeatherTime`, `AirTemp`, `TrackTemp`, `Rainfall`, and others). That match is misaligned for many laps. `laps.get_weather_data()` does not read these columns: it picks the sample of each lap from `session.weather_data` with the fastf1 rule. Its `Time` column is the session time of the sample. Its rows keep the laps index, where fastf1 uses the index of the weather samples.
+- `LapTimeSeconds` holds the lap time as float seconds. It comes after the weather columns, near the end of the table.
+- `ms1`, `ms2`, and `ms3` hold mini-sector color codes for each lap.
+
+On pandas, `Driver`, `Team`, `Compound`, and `TrackStatus` are categorical columns, and `Deleted` is a nullable boolean. Some pandas operations treat categoricals differently from strings.
 
 ### 5. Telemetry Differences
-Some telemetry columns differ from fastf1:
+Telemetry frames have the fastf1 columns in fastf1's order. tif1 adds `AccelerationX`, `AccelerationY`, `AccelerationZ`, `Driver`, and `LapNumber` at the end. Some values differ from fastf1:
 
-- `DRS` is a 0/1 flag. fastf1 keeps the raw values, where 10, 12, and 14 mean open.
-- `Time` starts at zero on every lap, as in fastf1 lap telemetry. There is no `SessionTime` or `Date` column.
-- `DriverAhead` holds driver numbers. `DistanceToDriverAhead` is in meters and is NaN when nobody is ahead.
+- `DRS` is a 0/1 flag. fastf1 keeps the raw values, where 10, 12, and 14 mean open. The fastf1 filter `tel["DRS"] >= 10` never matches in tif1. Use `tel["DRS"] == 1`.
+- `RPM`, `Speed`, and `Throttle` are floats, because the source values are interpolated. `nGear` and `DRS` are nullable integers (`Int64`).
+- `Source` is `"merged"`, and `Status` is always `"OnTrack"`. The source data is already the merge of car data and position data, and it has no on-track channel. The edge samples of `interpolate_edges` and the gaps that `fill_missing()` fills have the `Source` `"interpolation"`, as in fastf1.
+- `Time` starts at zero on a single lap. The telemetry of several laps counts from the start of the first lap, as in fastf1. The sample that two laps share at their boundary appears once. `SessionTime` holds the session time and `Date` the wall-clock time of each sample.
+- `DriverAhead` holds driver numbers. `DistanceToDriverAhead` is in meters. When nobody is ahead, it is NaN on pandas and null on polars.
+- `session.car_data` and `session.pos_data` are dicts keyed by driver number, as in fastf1. Both hold the same merged frame. Its `Time` is the session clock, equal to `SessionTime`, as in fastf1. The first read of a key fetches the telemetry of that driver.
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+tel = session.laps.pick_driver("VER").pick_fastest().get_telemetry()
+
+drs_open = tel[tel["DRS"] == 1]  # fastf1: tel[tel["DRS"] >= 10]
+print(f"DRS open for {len(drs_open)} of {len(tel)} samples")
+print(tel[["Date", "SessionTime", "Source", "Status"]].head(2))
+
+ver_session_tel = session.car_data["1"]  # Every lap of VER, in session order
+print(len(ver_session_tel), session.pos_data["VER"] is ver_session_tel)  # ... True
+```
 
 `tif1.utils.delta_time(ref_lap, comp_lap)` uses the fastf1 algorithm. It returns `(delta, ref_tel, comp_tel)`. A positive delta means the comparison lap is slower at that point. The delta is an estimate from the distance samples, so it can differ from the real lap time gap.
 
@@ -138,7 +167,60 @@ print(f"Estimated delta at the line: {delta.iloc[-1]:+.3f}s (positive = LEC slow
 print(f"Real lap time gap: {comp['LapTimeSeconds'] - ref['LapTimeSeconds']:+.3f}s")
 ```
 
-### 6. Async Code
+### 6. Derived Session State
+fastf1 reads the track status, the session status, and the session information from live-timing streams. Those streams need a Formula 1 account with an active F1TV subscription. tif1 derives the five session-state attributes from the race control messages, the laps, and the schedule. The shapes, the status codes, and the messages are the fastf1 ones. The values are an approximation of the live streams.
+
+| Attribute | tif1 source |
+| :--- | :--- |
+| `t0_date` | `LapStartDate - LapStartTime` of the laps, to the millisecond. `NaT` for a session without laps |
+| `session_start_time` | Races and sprints: the scheduled start minus `t0_date`. Other sessions: the first `GREEN LIGHT - PIT EXIT OPEN` message |
+| `track_status` | `Time`, `Status`, `Message` rows from the flag and safety car messages. Without messages, the `TrackStatus` codes of the laps |
+| `session_status` | `Time`, `Status` rows: `Started`, `Aborted` at a red flag, `Started` at the restart, `Finished` at the chequered flag. `Finalised` and `Ends` never occur |
+| `session_info` | The fastf1 nested dict, filled from the schedule. `Key`, `Meeting.Key`, `Path`, and `ArchiveStatus` are `None` |
+
+`laps.pick_track_status()` filters on the `TrackStatus` codes of each lap, as in fastf1. It does not read `session.track_status`.
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+print(session.t0_date)  # 2025-04-13 14:08:14.267000
+print(session.track_status.head(3))  # 1 AllClear, 4 SCDeployed, 1 AllClear
+print(session.session_status)  # Started, Finished
+print(session.session_info["Meeting"]["Circuit"])  # {'Key': 63, 'ShortName': 'Sakhir'}
+```
+
+### 7. No Live Timing
+tif1 reads historical files only. `session.load(livedata=...)` raises `NotImplementedError` for any value other than `None`. `fastf1.livetiming`, `fastf1.set_auth_method()`, and `F1AuthError` have no tif1 equivalent.
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+try:
+    session.load(livedata="saved_live_timing.txt")
+except NotImplementedError as exc:
+    print(exc)
+```
+
+### 8. Polars Backend
+With `lib="polars"`, the session returns polars classes with the fastf1 methods: `PolarsLaps`, `PolarsLap`, `PolarsTelemetry`, `PolarsSessionResults`, and `PolarsDriver`. Time columns are `Duration("ns")`, and `LapStartDate` and `Date` are `Datetime("ns")`. A polars `filter()`, `select()`, `sort()`, or `with_columns()` returns a plain `polars.DataFrame`. The `df.f1` namespace gives the tif1 methods back.
+
+```python
+import polars as pl
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race", lib="polars")
+laps = session.laps  # PolarsLaps
+print(laps.pick_driver("VER").pick_fastest()["LapTime"])  # A timedelta
+
+soft = laps.filter(pl.col("Compound") == "SOFT")  # A plain polars.DataFrame
+print(soft.f1.pick_fastest()["Driver"])
+```
+
+Refer to [Models](/api-reference/models) for the polars classes and the `df.f1` namespace.
+
+### 9. Async Code
 `session.laps` already fetches the lap data in parallel. In code that already runs an event loop, await `laps_async()`:
 
 ```python
@@ -152,7 +234,7 @@ async def main():
 laps = asyncio.run(main())
 ```
 
-### 7. Ergast Data
+### 10. Ergast Data
 
 `fastf1.ergast` code works with an import change. The answers come from the TracingInsights Stats repository (one file per table and round, no rate limit). jolpica-f1 is asked only when that repository cannot answer. By default a Stats-backed query returns every row instead of fastf1's first 30; pass `limit` to page.
 
@@ -163,7 +245,7 @@ results = Ergast().get_race_results(season=2024)
 print(results.content[0][["driverId", "points", "totalRaceTime"]].head())
 ```
 
-`session.results` also carries the official classification (grid, points, status, total race time, Q1 to Q3), so the `GridPosition` and `Points` columns are no longer empty. Refer to [Ergast](/api-reference/ergast).
+`session.results` also carries the official classification (grid, points, status, total race time, Q1 to Q3), so the `GridPosition` and `Points` columns of races and sprints are filled. Refer to [Ergast](/api-reference/ergast).
 
 ---
 
@@ -174,10 +256,10 @@ print(results.content[0][["driverId", "points", "totalRaceTime"]].head())
     `tif1` focuses on historical data: timing and telemetry from 2018, Ergast results, lap times and standings from 1950. It does not support Live Timing.
   </Card>
   <Card title="Track Maps" icon="map">
-    `session.get_circuit_info()` returns the corners and the rotation. Marshal lights and marshal sectors are empty. Six track-map charts, such as `plot_track_speed_map` and `plot_gear_shifts`, draw the layout.
+    `session.get_circuit_info()` returns the corners, the marshal lights, the marshal sectors, and the rotation. For seasons with an old `corners.json`, the marshal data comes from the MultiViewer API, as in fastf1. Six track-map charts, such as `plot_track_speed_map` and `plot_gear_shifts`, draw the layout.
   </Card>
   <Card title="Weather Data" icon="cloud">
-    `session.weather` holds the raw samples. Every lap row also carries the weather columns (`AirTemp`, `TrackTemp`, `Rainfall`, ...).
+    `session.weather` holds the raw samples. `laps.get_weather_data()` returns the sample of each lap from them, with the fastf1 rule. Every lap row also carries weather columns from the source data (`AirTemp`, `TrackTemp`, `Rainfall`, ...), but that match is misaligned for many laps.
   </Card>
   <Card title="Categorical Optimization" icon="database">
     On the pandas backend, `Driver`, `Team`, `Compound`, and `TrackStatus` are categorical columns. Some pandas operations treat categoricals differently from strings.

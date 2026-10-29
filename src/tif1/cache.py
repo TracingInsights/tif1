@@ -222,15 +222,34 @@ _LEGACY_UPGRADE_MIN_FRAMES = 32
 _LEGACY_UPGRADE_DELAY_S = 0.25
 
 
+#: pyarrow's system allocator for the decompressed rows and the IPC reads.
+#: The default pool (mimalloc) warms up a heap per thread on first use (~40 ms
+#: in a fresh process) and, on the multi-MB buffers of a frame-tier read,
+#: stalls for hundreds of ms: the 20 polars IPC rows of a race took 0.5-4.6 s
+#: serially (53 ms-1.2 s on 8 threads) against 66-142 ms (22-35 ms).
+_PA_LZ4_POOL: list[Any] = [None]
+
+
+def _pa_system_pool() -> Any:
+    """pyarrow's system memory pool (see :data:`_PA_LZ4_POOL`), resolved once."""
+    if _PA_LZ4_POOL[0] is None:
+        _PA_LZ4_POOL[0] = importlib.import_module("pyarrow").system_memory_pool()
+    return _PA_LZ4_POOL[0]
+
+
 def _pa_lz4_codec() -> Any:
     global _PA_LZ4_CODEC, _PA_LZ4_PROBED
     if not _PA_LZ4_PROBED:
-        _PA_LZ4_PROBED = True
         try:
             pa = importlib.import_module("pyarrow")
-            _PA_LZ4_CODEC = pa.Codec("lz4")
+            codec = pa.Codec("lz4")
+            _pa_system_pool()
+            _PA_LZ4_CODEC = codec
         except Exception:  # pragma: no cover - pyarrow without lz4 support
             _PA_LZ4_CODEC = None
+        # Marked only once the codec and pool exist: a concurrent first caller
+        # never sees "probed" with the codec still unset.
+        _PA_LZ4_PROBED = True
     return _PA_LZ4_CODEC
 
 
@@ -306,7 +325,10 @@ def _decompress_row(row: tuple[Any, ...], codec: Any) -> tuple[Any, ...] | None:
         if size >= 0:
             # pyarrow's decoder is ~2x python-lz4's even serially
             # (0.9 vs 1.9 ms on a 1.2 MB driver row) and copies nothing.
-            return (*row[:-1], codec.decompress(blob, decompressed_size=size))
+            return (
+                *row[:-1],
+                codec.decompress(blob, decompressed_size=size, memory_pool=_PA_LZ4_POOL[0]),
+            )
         return (*row[:-1], _decompress_frame_blob(blob))
     except (*_ZSTD_ERRORS, RuntimeError, TypeError, ValueError, _arrow_error()):
         return None
@@ -537,7 +559,7 @@ def _read_polars_ipc(blob: bytes) -> Any:
     import pyarrow as pa
     import pyarrow.ipc as pa_ipc
 
-    table = pa_ipc.open_file(pa.BufferReader(blob)).read_all()
+    table = pa_ipc.open_file(pa.BufferReader(blob), memory_pool=_pa_system_pool()).read_all()
     return pl.from_arrow(table, rechunk=True)
 
 
@@ -547,7 +569,20 @@ def _read_polars_ipc(blob: bytes) -> Any:
 # payload tier (which is untouched). History:
 #   1 — telemetry "None" sentinels re-typed (DistanceToDriverAhead float, not
 #       str); frames written before that hold the stringified column.
-_FRAME_TIER_SCHEMA_VERSION = 1
+#   2 — fastf1 parity (0.11.0): telemetry in fastf1's column order with
+#       Source/Status, polars Duration/Datetime/Boolean channels; the laps
+#       frame tables are dropped too.
+#   3, 4 — 0.11.0 development steps (a 0.10 cache goes straight to 4):
+#       polars laps flags (IsPersonalBest, FreshTyre, ...) Boolean with a
+#       missing flag read as False, and all-null polars laps columns typed
+#       (String/Int64/Float64) instead of Null, as on pandas.
+#   5 — 0.11.0 development: pandas rows written while ``SessionTime`` and
+#       ``Time`` shared one block stored only the first of the two columns.
+_FRAME_TIER_SCHEMA_VERSION = 5
+
+# SQLite maps at most this much of the file (its compile-time ceiling,
+# SQLITE_MAX_MMAP_SIZE, caps a larger request anyway).
+_SQLITE_MMAP_BYTES = 2**31 - 2**16
 
 # Laps frame tier (Kroton KR-1/KR-10): one processed laps DataFrame per
 # (year, gp, session) per backend, mirroring the telemetry frame tier's
@@ -753,7 +788,10 @@ class SessionMemo:
         # (through ``frame_adopter`` when the owner set one) into
         # ``_telemetry_dfs`` and drops the pending entry.
         self._telemetry_sources: dict[tuple[str, int], Any] = {}
-        self.frame_adopter: Callable[[Any, str], None] | None = None
+        # Drivers that had one lap built on its own from the payload tier; their
+        # next single lap decodes the whole driver row instead.
+        self.single_lap_drivers: set[str] = set()
+        self.frame_adopter: Callable[[Any, str], Any] | None = None
         self.fastest_lap_ref: tuple[str, int] | None = None
         self.fastest_lap_ref_laps_source_id: int | None = None
         self.fastest_lap_ref_driver_source_id: int | None = None
@@ -825,7 +863,9 @@ class SessionMemo:
         frame = source.frame(key[1])
         adopt = self.frame_adopter
         if adopt is not None:
-            adopt(frame, key[0])
+            adopted = adopt(frame, key[0])
+            if adopted is not None:
+                frame = adopted
         self._telemetry_dfs[key] = frame
         return frame
 
@@ -839,7 +879,9 @@ class SessionMemo:
         for (driver, lap), source in pending.items():
             frame = source.frame(lap)
             if adopt is not None:
-                adopt(frame, driver)
+                adopted = adopt(frame, driver)
+                if adopted is not None:
+                    frame = adopted
             frames[(driver, lap)] = frame
         pending.clear()
 
@@ -1067,6 +1109,11 @@ class Cache:
             )
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            if not IS_EMSCRIPTEN and sys.maxsize > 2**32:
+                # Frame rows are multi-MB blobs over 4 KB overflow pages: reading
+                # them through the memory map instead of one read() per page
+                # takes ~25% off a warm session read (33 -> 25 ms for 83 MB).
+                conn.execute(f"PRAGMA mmap_size={_SQLITE_MMAP_BYTES}")
 
             cursor = conn.execute("PRAGMA user_version")
             version_row = cursor.fetchone() if cursor is not None else None
@@ -1077,6 +1124,8 @@ class Cache:
                 conn.execute("DROP TABLE IF EXISTS telemetry_frames_pl")
                 conn.execute(f"DROP TABLE IF EXISTS {_POLARS_IPC_TABLE}")
                 conn.execute(f"DROP TABLE IF EXISTS {_PANDAS_DRIVER_TABLE}")
+                for laps_table in _LAPS_FRAME_TABLES.values():
+                    conn.execute(f"DROP TABLE IF EXISTS {laps_table}")
                 conn.execute(f"PRAGMA user_version = {_FRAME_TIER_SCHEMA_VERSION}")
 
             conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, data TEXT)")
@@ -2063,8 +2112,13 @@ class Cache:
         driver: str,
         laps: list[int],
         frame_class: Any = None,
+        *,
+        drop_repeats: bool = False,
     ) -> Any | None:
         """One frame of ``laps`` back to back from the driver's row, or None.
+
+        ``drop_repeats``: leave out the sample each lap repeats at its boundary
+        (see :func:`~tif1.core_utils.frame_codec.decode_driver_merged`).
 
         Pergamon P10: serves ``Laps.telemetry`` for a driver without building
         and concatenating per-lap frames. None when the tier has no row for
@@ -2091,7 +2145,9 @@ class Cache:
         try:
             for chunk in _decompress_frame_rows([(driver, row[0])], min_parallel=2):
                 for _driver, raw in chunk:
-                    return decode_driver_merged(raw, [int(lap) for lap in laps], frame_class)
+                    return decode_driver_merged(
+                        raw, [int(lap) for lap in laps], frame_class, drop_repeats=drop_repeats
+                    )
         except (AttributeError, TypeError, ValueError) as e:
             logger.debug("Corrupt driver frame row skipped: %s: %s", driver, e)
         return None
@@ -2162,11 +2218,18 @@ class Cache:
                     if blob is None:
                         continue
                     stored_laps = [lap for lap in merged if lap not in unsupported_laps]
-                    compressed: Any = (
-                        _compress_frame_blob(blob)
-                        if pool is None
-                        else pool.submit(_compress_frame_blob, blob)
-                    )
+                    compressed: Any = None
+                    if pool is not None:
+                        try:
+                            compressed = pool.submit(_compress_frame_blob, blob)
+                        except RuntimeError:
+                            # Interpreter shutdown: concurrent.futures refuses new
+                            # work before the exit hook joins this writer, so a
+                            # script that ends right after a load would lose its
+                            # frames. Compressing inline still completes the write.
+                            compressed = None
+                    if compressed is None:
+                        compressed = _compress_frame_blob(blob)
                     rows.append(
                         [
                             year,
@@ -2181,7 +2244,8 @@ class Cache:
                     written += sum(1 for lap in lap_frames if lap in stored_laps)
             if pool is not None:
                 for row in rows:
-                    row[5] = row[5].result()
+                    if not isinstance(row[5], bytes | bytearray):  # a pending Future
+                        row[5] = row[5].result()
         finally:
             if pool is not None:
                 pool.shutdown(wait=True, cancel_futures=True)
@@ -2236,11 +2300,14 @@ class Cache:
         # oversubscribes (and is spun up cold on the first warm read).
         parallel = THREADS_AVAILABLE and len(wanted) >= 4 and (os.cpu_count() or 1) > 1
         read_options = pa_ipc.IpcReadOptions(use_threads=not parallel)
+        arrow_pool = _pa_system_pool()
 
         def _read(row: tuple[Any, ...]) -> tuple[Any, ...]:
             driver, laps_json, blob = row
             try:
-                reader = pa_ipc.open_file(pa.BufferReader(bytes(blob)), options=read_options)
+                reader = pa_ipc.open_file(
+                    pa.BufferReader(bytes(blob)), options=read_options, memory_pool=arrow_pool
+                )
                 return driver, json_loads(laps_json), reader.read_all(), None
             except (TypeError, ValueError, OSError, _arrow_error()) as e:
                 return driver, None, None, e

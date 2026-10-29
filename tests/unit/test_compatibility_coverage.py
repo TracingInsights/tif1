@@ -122,8 +122,8 @@ def test_laps_methods_coverage():
     assert index == 0
     assert lap["Driver"] == "VER"
 
-    with pytest.raises(KeyError, match="required column 'Missing'"):
-        next(laps.iterlaps(require=["Missing"]))
+    # fastf1: a required column the frame lacks yields no lap (no error).
+    assert list(laps.iterlaps(require=["Missing"])) == []
 
 
 def test_driver_result_dnf():
@@ -193,7 +193,19 @@ def test_lap_properties():
     lap.session = None
     assert lap.telemetry.empty
     assert lap.get_telemetry().empty
-    assert lap.get_weather_data().empty
+    # fastf1: no sample is a Series of NaN over Time and the seven channels.
+    weather = lap.get_weather_data()
+    assert list(weather.index) == [
+        "Time",
+        "AirTemp",
+        "Humidity",
+        "Pressure",
+        "Rainfall",
+        "TrackTemp",
+        "WindDirection",
+        "WindSpeed",
+    ]
+    assert weather.isna().all()
 
 
 def test_circuit_info():
@@ -256,13 +268,20 @@ def test_laps_pick_edge_cases():
 
 
 def test_laps_pick_driver_int():
-    laps = Laps(pd.DataFrame({"Driver": ["1", "2"], "LapNumber": [1, 2]}))
-    assert len(laps.pick_driver(1)) == 1
+    # fastf1: a number matches DriverNumber, never the Driver code column.
+    laps = Laps(pd.DataFrame({"Driver": ["1", "VER"], "DriverNumber": ["44", "1"]}))
+    assert laps.pick_driver(1)["Driver"].tolist() == ["VER"]
 
 
 def test_laps_pick_track_status_other():
-    laps = Laps(pd.DataFrame({"TrackStatus": ["1"], "Driver": ["VER"]}))
-    assert len(laps.pick_track_status(1, how="invalid")) == 1
+    laps = Laps(pd.DataFrame({"TrackStatus": ["1", "267", "27"], "Driver": ["VER"] * 3}))
+    # fastf1's ``how`` vocabulary on the lap's status code string.
+    assert laps.pick_track_status("2", how="contains")["TrackStatus"].tolist() == ["267", "27"]
+    assert laps.pick_track_status("26", how="excludes")["TrackStatus"].tolist() == ["1", "27"]
+    assert laps.pick_track_status("26", how="any")["TrackStatus"].tolist() == ["267", "27"]
+    assert laps.pick_track_status("26", how="none")["TrackStatus"].tolist() == ["1"]
+    with pytest.raises(ValueError, match="Invalid value 'invalid'"):
+        laps.pick_track_status(1, how="invalid")
 
 
 def test_session_get_fastest_laps_empty():

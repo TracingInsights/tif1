@@ -1,10 +1,10 @@
 """Contract tests for Pergamon Q7: per-row ``Lap`` construction.
 
 ``Laps.iterlaps`` builds each ``Lap`` through the Series constructor's own
-steps with the column Index shared per null pattern, and ``Laps._ixs``
-(``laps.iloc[i]``) runs ``fast_xs`` with the interleaved dtype memoized. Both
-must return exactly what the public pandas paths return: same values and
-element types, index, name, dtype, session and copy-on-write isolation.
+steps on the frame's shared column Index, and ``Laps._ixs`` (``laps.iloc[i]``)
+runs ``fast_xs`` with the interleaved dtype memoized. Both must return
+exactly what the public pandas paths return: same values and element types,
+index, name, dtype, session and copy-on-write isolation.
 """
 
 from __future__ import annotations
@@ -18,24 +18,21 @@ from tif1.models import Lap, Laps
 
 
 def _reference_iterlaps(laps: Laps, require=None):
-    """The pre-Q7 algorithm (Argos A5): public ``Lap(...)`` constructor per row."""
-    required_columns = ["LapTime", "Driver"] if require is None else list(require)
+    """fastf1's ``iterlaps`` through the public ``Lap(...)`` constructor per row.
+
+    Every lap holds every column (``iterrows``' rows); ``require`` only
+    filters (``None``/empty: every lap; a missing column: none).
+    """
+    required = [] if require is None else list(require)
     columns = laps.columns
-    null_mask = laps.isna().to_numpy(dtype=bool)
-    required_positions = np.concatenate(
-        [np.flatnonzero(columns == column) for column in required_columns]
-    )
+    if any(column not in columns for column in required):
+        return
     row_values = laps.to_numpy(dtype=object)
     for position in range(len(laps)):
-        null_row = null_mask[position]
-        if null_row[required_positions].any():
-            continue
-        if null_row.any():
-            keep = ~null_row
-            lap = Lap(row_values[position][keep], index=columns[keep], name=laps.index[position])
-        else:
-            lap = Lap(row_values[position], index=columns, name=laps.index[position])
+        lap = Lap(row_values[position], index=columns, name=laps.index[position])
         lap.session = laps.session
+        if required and lap[required].isna().any():
+            continue
         yield laps.index[position], lap
 
 
@@ -86,7 +83,7 @@ def _laps_frame(session=None) -> Laps:
     return laps
 
 
-@pytest.mark.parametrize("require", [None, ["LapTime"], ["Driver", "Sector1Time"]])
+@pytest.mark.parametrize("require", [None, [], ["LapTime"], ["Driver", "Sector1Time"]])
 def test_iterlaps_matches_the_public_constructor_per_row(require):
     session = object()
     laps = _laps_frame(session)
@@ -114,25 +111,33 @@ def test_iterlaps_keeps_the_constructors_dtype_inference():
             _assert_same_lap(lap, expected_lap)
 
 
-def test_iterlaps_shares_one_index_per_null_pattern_and_isolates_rows():
+def test_iterlaps_shares_the_column_index_and_isolates_rows():
     laps = _laps_frame()
     got = [lap for _, lap in laps.iterlaps(["Time"])]
-    by_columns: dict[tuple, set[int]] = {}
-    for lap in got:
-        by_columns.setdefault(tuple(lap.index), set()).add(id(lap.index))
-    assert all(len(ids) == 1 for ids in by_columns.values())
+    assert len({id(lap.index) for lap in got}) == 1
+    assert all(list(lap.index) == list(laps.columns) for lap in got)
     first = got[0]
     first.iloc[0] = pd.Timedelta(-1)
     assert got[3].iloc[0] != pd.Timedelta(-1)
     assert laps.iloc[0]["Time"] == pd.Timedelta(0)
 
 
-def test_iterlaps_with_an_empty_requirement_raises_like_before():
+def test_iterlaps_rows_are_the_iterrows_rows():
+    """fastf1's ``iterlaps`` wraps ``iterrows``: same labels, columns and values."""
+    laps = _laps_frame(object())
+    got = list(laps.iterlaps())
+    expected = list(pd.DataFrame(laps).iterrows())
+    assert [index for index, _ in got] == [index for index, _ in expected]
+    for (_, lap), (_, row) in zip(got, expected, strict=True):
+        assert list(lap.index) == list(row.index)
+        for value, other in zip(lap.array, row.array, strict=True):
+            assert value is other or value == other or (pd.isna(value) and pd.isna(other))
+
+
+def test_iterlaps_with_a_missing_required_column_yields_nothing():
     laps = _laps_frame()
-    with pytest.raises(ValueError, match="at least one array"):
-        list(laps.iterlaps([]))
-    with pytest.raises(ValueError, match="at least one array"):
-        list(_reference_iterlaps(laps, []))
+    assert list(laps.iterlaps(["NoSuchColumn"])) == []
+    assert len(list(laps.iterlaps([]))) == len(laps)
 
 
 def test_iloc_rows_match_pandas_fast_xs_path():

@@ -7,6 +7,317 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Summary
+
+fastf1 API parity (`FASTF1_PARITY_PLAN.md`): the session-state surfaces
+fastf1 reads from the live-timing streams are derived from the files tif1
+serves, every fastf1 keyword is accepted, `get_driver` returns the results
+row, telemetry carries the session clock, `get_circuit_info()` returns the
+marshal lights and sectors (from `corners.json`, else MultiViewer, which
+knows 32 circuits and answers a season before its first layout with that
+layout), and the polars backend gets polars-native
+`Laps`/`Lap`/`Telemetry`/`SessionResults`/`DriverResult`/`Driver` classes
+with the whole fastf1 method set. Verified against fastf1 3.9.0 by a
+surface-compliance test.
+
+### Breaking
+
+- `Session.track_status` is a `Time`/`Status`/`Message` table (fastf1's
+  shape and vocabulary: `1` AllClear, `2` Yellow, `4` SCDeployed, `5` Red,
+  `6` VSCDeployed, `7` VSCEnding) derived from the race-control messages
+  (laps' codes as fallback); it was the laps' `TrackStatus` column.
+- `Session.session_status` is a `Time`/`Status` table (`Started`,
+  `Aborted`, `Finished`); it returned the race-control messages.
+- `Session.session_info` is fastf1's nested dict (`Meeting`, `Type`,
+  `Name`, `StartDate`, `EndDate`, `GmtOffset`, ...); it was
+  `{Year, EventName, SessionName}`.
+- `Session.car_data` / `Session.pos_data` are a lazy dict keyed by driver
+  number (abbreviations accepted) holding each driver's session-long
+  telemetry; they were one frame of every lap of every driver.
+- `Laps.get_weather_data()` returns one weather row per lap aligned with
+  the laps index, chosen from `session.weather_data` by fastf1's rule (the
+  first sample within the lap, else the last before its end); it returned
+  the session's weather table. The laps table's own `WeatherTime` sample is
+  misaligned upstream (435 of 1,128 laps of the 2025 Bahrain race, a sample
+  an hour before the lap in qualifying) and is read only when the session has
+  no weather table; the first call loads `weather.json` if it is not loaded.
+  `Lap.get_weather_data()` gives a NaN Series (polars: a dict of `None`)
+  when no sample exists, as fastf1 does.
+- `Session.get_driver()` returns the driver's `results` row (fastf1's 22
+  columns, `.dnf`) plus tif1's extras and helpers, whatever was read before;
+  a practice session classifies its `results` from the laps (fastf1's
+  best-lap `Position` and `Time`), so `get_driver` there reads the laps.
+- Telemetry frames carry `Date`, `SessionTime`, `Source` (`"merged"`) and
+  `Status` (`"OnTrack"`) and follow fastf1's column order; the SQLite frame
+  tier is rebuilt once (`_FRAME_TIER_SCHEMA_VERSION` 5, the laps frame
+  tables included).
+- `Telemetry.resample_channels(rule)` (and so `get_telemetry(frequency=)`,
+  `merge_channels(frequency=)`) bins from the first sample on the session
+  clock (`Date`, else `SessionTime`, else `Time`) as fastf1's
+  `merge_channels(frequency=)` does: continuous channels are bin means,
+  discrete channels (gear, DRS, brake, driver ahead, status, lap number) and
+  text columns take the value in force at each bin start, `Time` restarts at
+  zero. It binned the lap-relative `Time`, which folded a multi-lap frame
+  (`car_data[n]`) onto itself, and dropped multi-valued text columns.
+  `new_date_ref` gives one row per unique, sorted timestamp. The pandas and
+  polars classes return the same rows.
+- `Telemetry.slice_by_time(start, end)` reads `start`/`end` as session
+  times: built frames carry `SessionTime`, which the slice prefers over the
+  lap-relative `Time`, as fastf1 does. `tel.slice_by_time(0, 10)` on a lap's
+  telemetry now selects nothing; pass `tel["SessionTime"].iloc[0]` plus the
+  offset. `slice_by_lap` follows the laps' `LapStartTime`..`Time` window on
+  the same axis.
+- An event name below the fuzzy score floor raises `FuzzyMatchError` (fastf1's
+  name), a subclass of the `EventNotFoundError` it raised, so existing
+  handlers still catch it.
+- `Laps.pick_track_status(how="invalid")` raises `ValueError` (fastf1); it
+  returned the frame unchanged.
+- `Laps.split_qualifying_sessions()` returns `None` for a segment without
+  laps and, without a `QualifyingSession` marker, splits on the session
+  status with fastf1's algorithm (a `Finished` ends a red-flag suspension,
+  laps go by their `LapStartTime`, early out-laps move to the next segment;
+  the two longest gaps over five minutes only when there is no status); it
+  returned three copies. A session that is not Qualifying, Sprint Qualifying
+  or Sprint Shootout raises `ValueError("Session is not a qualifying
+  session!")` as in fastf1. Both backends give the same segments.
+- `Laps.iterlaps()` (and `iterlaps([])`) yields every lap, as fastf1 does; it
+  required `LapTime` and `Driver` by default (164 of 277 qualifying laps). A
+  missing required column yields nothing instead of raising `KeyError`, and
+  the pandas rows keep their null-valued columns (`lap["PitInTime"]` raised
+  `KeyError` on most laps).
+- `Laps.pick_*` selectors follow fastf1: they accept any iterable (a pandas
+  or polars Series, a numpy array, a generator: these gave 0 rows);
+  `pick_drivers` upper-cases codes and matches digits against
+  `DriverNumber` only; `pick_driver`/`pick_team(s)` match exactly;
+  `pick_compounds`/`pick_tyre` upper-case; `pick_laps` accepts whole floats
+  and rejects fractional ones; `pick_quicklaps` keeps laps strictly below
+  the threshold.
+- Telemetry of several laps (`Laps.telemetry`, `Laps.get_telemetry()`,
+  `get_car_data()`, `get_pos_data()`) is a multi-lap slice as fastf1's:
+  `Time` runs from the first lap's start (`SessionTime - LapStartTime` of
+  that lap) instead of restarting at each lap, one driver's laps are in
+  session order, and the sample each lap repeats at its boundary appears
+  once (it was duplicated, ~56 rows per race driver). A single lap is
+  unchanged. `session.car_data[n]` / `pos_data[n]` carry fastf1's
+  session-long clock: `Time` equals `SessionTime`.
+- `Telemetry.merge_channels()` matches samples on the session clock (`Date`,
+  else `SessionTime`, else `Time`), nearest sample, ties to the earlier one,
+  and returns the rows in clock order; it matched on the lap-relative `Time`,
+  so on a multi-lap frame most rows took a sample from another lap. A row
+  without a clock is kept (with nulls) on both backends; pandas raised and
+  polars dropped it.
+- `Telemetry.add_distance()` re-integrates `Distance` over the whole frame
+  by default (`drop_existing=True`, fastf1); it kept the per-lap source
+  channel, which runs backwards across a lap boundary. `drop_existing=False`
+  keeps an existing column. `add_relative_distance()` divides by the last
+  `Distance` (fastf1) instead of the maximum.
+- `slice_by_time(..., interpolate_edges=True)` (and `slice_by_lap`,
+  `get_car_data(pad=, interpolate_edges=)`) adds one interpolated sample at
+  each edge, as fastf1 does (continuous channels linear between the two
+  neighbours, discrete channels the value in force, `Source`
+  `"interpolation"`); pandas ignored the flag and polars filled every null
+  of the frame.
+- `Telemetry.fill_missing()` forward-/back-fills discrete channels and
+  integer or boolean columns keeping their dtype (pandas interpolated `nGear`
+  to 2.5 and made it float), fills `DriverAhead` gaps, and marks filled
+  `Source` values `"interpolation"`.
+- `Telemetry.register_new_channel()` takes fastf1's arguments and validation
+  (`"excluded"` is accepted, a continuous channel needs its interpolation
+  method) and stores it under `"method"`.
+- Padded `get_car_data(pad=...)` / `get_pos_data(pad=...)` return a frame
+  indexed 0..n-1 as fastf1's do.
+- `Laps.pick_fastest()` picks among the `IsPersonalBest` laps unless
+  `only_by_time=True` (fastf1); it took the fastest lap that was not deleted
+  (2025 Bahrain qualifying, HUL: lap 13, which is not in the classification,
+  instead of fastf1's lap 5). Frames without `IsPersonalBest` keep the
+  not-deleted rule; `Session.get_fastest_laps` and `Driver.get_fastest_lap`
+  keep it too.
+- polars sessions: `laps`, telemetry, `results` and `get_driver()` return
+  `PolarsLaps`/`PolarsTelemetry`/`PolarsSessionResults`/`PolarsDriver`; time columns are `Duration("ns")`, `LapStartDate`/`Date`
+  `Datetime("ns")`, `Brake` `Boolean` (they were float seconds, strings and
+  ints). `drivers_df` is a polars frame (every column `String`). The laps
+  flags (`IsPersonalBest`, `FreshTyre`, `FastF1Generated`, `IsAccurate`,
+  `Rainfall`) are `Boolean` with a missing flag read as False, and columns
+  no lap fills (pre-2018 speeds, tyres, track status) carry their dtype
+  instead of `Null`, as on pandas.
+
+### Added
+
+- `Session.t0_date` (`LapStartDate - LapStartTime`, to the millisecond) and
+  `Session.session_start_time` (scheduled start for races, first green
+  light otherwise); `Session.f1_api_support`, `Session.api_path`;
+  `load(livedata=)` accepted and rejected explicitly.
+- `Laps.get_telemetry(frequency=)`, `Lap.get_telemetry(frequency=)`,
+  `pick_quicklaps(None)`, `pick_laps(lap_numbers=)`, `pick_track_status`'s
+  `excludes`/`any`/`none`, `get_car_data`/`get_pos_data` `pad`/`pad_side`/
+  `interpolate_edges`, `Lap.get_weather_data()`, `base_class_view` on
+  `Laps`/`SessionResults`/`EventSchedule`.
+- `Telemetry(drop_unknown_channels=)`, `merge_channels(frequency=)`,
+  `resample_channels(rule=None, new_date_ref=)` with discrete channels held
+  and the clock columns following the new axis, `add_differential_distance`
+  / `add_track_status(drop_existing=)`; `add_track_status` maps the
+  session's track status onto `SessionTime`.
+- `EventSchedule.get_event_by_name(exact_match=)`, `get_event_by_round(round=)`,
+  `Event.get_session(identifier)`; `Cache.configure`, `Cache.disabled` /
+  `set_disabled(disable_http_cache=, disable_func_cache=)`.
+- `tif1.get_session(year, gp, identifier=, exact_match=)` (`identifier` is
+  fastf1's name of `session`; `exact_match` refuses aliases and fuzzy
+  matches) and `Session.get_driver(identifier)` (`driver=` stays an alias),
+  which also accepts the driver's full name.
+- `tif1.legacy.inject_driver_ahead(session)` (fastf1's legacy module) and
+  `base_class_view` on the Ergast result frames.
+- `tif1.logger` (`LoggingManager`, `get_logger`, `set_log_level`,
+  `soft_exceptions`) and the exceptions `DataNotLoadedError`
+  (`SessionNotLoadedError`), `NoLapDataError`, `FuzzyMatchError`,
+  `FastF1CriticalError` (`RateLimitExceededError` is one).
+- `tif1.mvapi` (`get_circuit`, `get_circuit_info`, `get_circuits_index`):
+  the MultiViewer circuit API, cached permanently in the SQLite `json`
+  tier. `get_circuit_info()` reads the new-schema `corners.json` (letters,
+  marshal lights and sectors, pit loss, track outline, sections, circuit
+  metadata) and fills old-schema seasons (2021-2024) from MultiViewer; the
+  circuit key comes from the vendored `data/circuits/mv_circuits.json`
+  (`tools/vendor_mv_circuits.py`). `CircuitInfo` gains `circuit_key`,
+  `circuit_name`, `location`, `country`, `country_code`, `country_key`,
+  `pit_loss`, `track`, `sections`, `mini_sector_index`, `source`.
+- `tif1.models_polars`: `PolarsLaps`, `PolarsLap`, `PolarsTelemetry`,
+  `PolarsSessionResults`, `PolarsDriverResult`, `PolarsDriver` and the
+  `.f1` DataFrame namespace; a polars-native Ergast results merge.
+- `tests/unit/test_fastf1_surface_compliance.py`: members, parameters and
+  column tables checked against fastf1 3.9.0 whenever it is importable.
+
+### Performance
+
+- A cold `car_data[n]` (and `Laps.telemetry` of many laps) fetches the
+  laps no cache tier holds in one parallel network wave instead of one
+  request after another: 11-20 s became 0.4-0.8 s for a driver's
+  qualifying, sprint or practice session, on both backends.
+- The SQLite frame tier is written by scripts that exit right after a load:
+  the background writer compressed through a thread pool that
+  `concurrent.futures` closes before the exit hook joins the writer, so the
+  frames were dropped ("cannot schedule new futures after interpreter
+  shutdown") and every later run re-parsed the payloads. A warm
+  `fetch_all_laps_telemetry()` of a race went from 1.9 s (0.10.1) to 0.2 s.
+- The first frame-tier read of a process no longer pays ~40 ms for
+  pyarrow's mimalloc warm-up (rows decompress into the system allocator).
+- Telemetry frames get `Date`/`SessionTime` at construction (no per-frame
+  insert, 1.1 ms -> 0 per lap), and polars frames are built from ready
+  numpy arrays instead of a chain of expressions (polars 2 runs each as a
+  query plan): 2.0 -> 0.73 ms per lap.
+- A lone lap (`get_fastest_lap_tel()`, `get_driver(...).get_fastest_lap_tel()`,
+  the first `Lap.telemetry` of a driver) is built from its cached payload
+  instead of decoding the driver's whole frame-tier row (~6 MB for one
+  ~100 KB lap); a second lap of the same driver still decodes the row once.
+  Warm `get_fastest_lap_tel()` in a fresh process: pandas 19 -> 11 ms,
+  polars 22 -> 18 ms.
+- `results` (pandas) is assembled column by column from the result rows
+  instead of ~80 frame-wide assignments: 20 -> 1.5 ms per build (`results`
+  in a fresh process 28 -> 12 ms, `get_driver()` 46 -> 22 ms with its
+  fastest-lap telemetry).
+- Frame-tier reads decode into pyarrow's system allocator: the default one
+  (mimalloc) stalled for hundreds of milliseconds on the multi-MB rows, so a
+  warm polars `fetch_all_laps_telemetry()` of a race took 0.2-0.9 s; it is
+  ~0.12 s.
+- Driver telemetry of many laps drops the repeated boundary samples while it
+  decodes the driver's frame-tier row (compacting the decoded buffer in
+  place) instead of copying the whole frame afterwards.
+- The SQLite cache reads through the memory map (`PRAGMA mmap_size`,
+  native 64-bit builds): ~25% off reading the multi-MB frame rows (33 ->
+  25 ms for a race).
+
+### Fixed
+
+- pandas: a telemetry frame read back from the SQLite frame tier raised
+  `IndexError` on `tel["Time"]` (and `to_numpy()` returned `SessionTime` in
+  its place): the frame codecs stored only the first column of a 2-D
+  datetime block, and `SessionTime` and `Time` share one. Both codecs keep
+  every column, a stored block whose rows do not match its columns is read
+  as a miss, and `_FRAME_TIER_SCHEMA_VERSION` 5 drops the rows written by
+  0.11 development builds.
+- `get_driver("8")` / `get_driver("8/fagioli")` (a car two drivers shared,
+  1950s; the label uses Ergast's driver id where no code exists) returned
+  another row of the same driver; the car number the
+  identifier names now picks the row, and the pandas `Driver` is named after
+  its `results` label.
+- `get_driver()` on a practice session returned empty result columns until
+  `results` had been read, then the classified row; it is always the
+  `results` row. Practice `results` carry fastf1's `Time` (the driver's best
+  non-deleted lap).
+- `DriverNotFoundError` is also a `ValueError`: fastf1's `get_driver` raises
+  `ValueError` for an unknown identifier.
+- 2024 races whose `drivers.json` has no car numbers or names (Belgian,
+  Miami, Hungarian, ...) lost `FirstName`/`LastName`/`FullName`/
+  `BroadcastName` and `get_driver("Lewis Hamilton")`; the names come from
+  Ergast. The backfilled numbers and names were written into the shared
+  payload dicts, so `car_data` keys were codes until `drivers` had been read
+  (and another session of the process saw the numbers); every session now
+  keeps its own copies and `car_data` resolves the numbers first. A shared
+  car's later drivers are keyed `number/Abbreviation`, as in `results`.
+- `get_circuit_info()` fits the marker distances on polars sessions too (they
+  were NaN) and keeps the corner distances `corners.json` gives (pandas
+  refitted them); seasons before 2018 skip the fit (no telemetry) instead of
+  warning on every call.
+- pandas `get_fastest_laps_tels()` on a warm cache had no `Date`/`SessionTime`
+  (the laps frame it read was not kept for the session clock).
+- `track_status`, `session_status`, `t0_date` and `session_start_time` of a
+  season before 2018 no longer load the laps table (Ergast laps carry no
+  clock; the first access took ~3 s of requests).
+- A cold pandas `get_fastest_laps()` returned a plain `DataFrame`; it is a
+  session-bound `Laps` as on the warm path and on polars.
+- `plot_track_temperature` plots each lap's sample from
+  `Laps.get_weather_data()` instead of the laps' own `TrackTemp` column (the
+  misaligned upstream sample; 9 of VER's 50 laps in the 2025 Bahrain race).
+- A Sprint Qualifying / Sprint Shootout (and a Qualifying without Ergast
+  results) is classified from its laps as fastf1 does: each driver's best
+  accurate lap per segment fills `Q1`-`Q3`, the order is by Q3, then Q2,
+  then Q1, and a Q1 exit outside 107% is `ClassifiedPosition` `"N"`. It was
+  the `drivers.json` order or the best lap of the session (2024 Chinese
+  Sprint Qualifying gave STR, PIA, VER; the result is NOR, HAM, ALO).
+  `drivers`/`drivers_df` follow the same order. On 2025 Bahrain qualifying
+  without Ergast this reproduces the official top ten.
+- Laps of seasons before 2018 (built from Ergast timings) flag
+  `IsPersonalBest` on each lap faster than every earlier lap of the driver;
+  every flag was False, so `pick_fastest()` found nothing.
+- polars `weather_data["Time"]` is `Duration("ns")` rounded as on pandas; a
+  millisecond cast truncated it (`02:19:15.335` read `.334`).
+- polars: `df.f1` laps or telemetry calls on a frame without a session (and
+  laps derived from one) raise `ValueError` naming `session=`, as does
+  `.f1.add_track_status()`; `pick_fastest().get_telemetry()` returned an
+  empty frame and `add_track_status` assumed green. Result rows are named by
+  their pandas label (`"1"`, `"2/MOS"`) instead of their row position, and
+  `row_for("")` raises `DriverNotFoundError` instead of matching a blank name.
+
+- `Lap.get_weather_data()` returned an empty Series.
+- A `drivers.json` without car numbers (2024 Belgian Grand Prix) gave
+  `results`/`drivers` 40 rows: the Ergast classification was matched on car
+  numbers only, so every classified driver was synthesized and the session's
+  rows appended again, and `get_driver()` then raised `ValueError: output
+  array is read-only` (an in-place `&=` on a pandas 3 read-only array).
+  Number-less rows are now matched on the driver code and take the car number
+  from Ergast; the mask is combined into a new array.
+- `Telemetry.base_class_view` (pandas) is a property, as on `Laps`,
+  `SessionResults`, `EventSchedule` and the polars classes; it was a method.
+- `df.f1.telemetry`/`get_telemetry()`/`get_car_data()`/`get_pos_data()` on a
+  plain polars frame with laps but no session raise `ValueError` naming the
+  `session=` keyword; they returned an empty frame, indistinguishable from a
+  session without telemetry.
+- Jupyter: `PolarsDriver` and `PolarsLap` get the driver and lap cards
+  (whichever of `tif1.jupyter`/`tif1.models_polars` loads second attaches
+  them, so enabling the display never imports polars).
+- polars sessions: a telemetry frame read from the SQLite frame tier lost
+  its `SessionTime`/`Date` (the adopted frame was discarded); the bulk
+  telemetry prefetch memoised pandas frames on a polars session; the cold
+  `get_fastest_laps()` path reported `LapTimeSeconds` in nanoseconds; ties
+  between equal fastest laps came out in random order; `get_fastest_laps()`
+  moved `Driver` to the first column.
+- Seasons before 2018 (Ergast only): `car_data`, `fetch_all_laps_telemetry`,
+  `get_fastest_lap_tel` and `Driver.get_fastest_lap_tel` no longer request
+  telemetry files that cannot exist (a driver's fastest-lap telemetry made
+  network requests; the session's raised `DataNotFoundError`); they return
+  an empty frame with fastf1's telemetry columns. `get_driver` no longer
+  asks the CDN for timing files either.
+- Telemetry, weather and qualifying-split helpers read `timedelta64[ms]` /
+  `[us]` columns (pandas 3 keeps those resolutions) as nanoseconds.
+
 ## [0.10.1] - 2026-10-28
 
 ### Summary

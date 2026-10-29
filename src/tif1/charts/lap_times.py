@@ -774,9 +774,13 @@ def plot_track_temperature(
     single = len(drivers) == 1
     for driver in drivers:
         driver_laps = laps[laps["Driver"] == driver]
+        # Each lap's sample by fastf1's rule: the laps' own ``TrackTemp``
+        # column is the upstream per-lap sample, which is often misaligned.
+        weather = getattr(driver_laps, "get_weather_data", None)
+        track_temp = weather()["TrackTemp"] if callable(weather) else driver_laps["TrackTemp"]
         ax.plot(
             driver_laps["LapNumber"],
-            driver_laps["TrackTemp"],
+            track_temp,
             # One shared color would make a multi-driver legend unreadable.
             color="#ff4444" if single else _driver_color(sess, driver),
             linewidth=2.5,

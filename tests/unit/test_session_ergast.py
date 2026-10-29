@@ -168,7 +168,19 @@ class TestRaceMerge:
         session = _session(lib="polars")
         assert isinstance(session.pit_stops, pl.DataFrame)
         assert isinstance(session.driver_standings, pl.DataFrame)
-        assert isinstance(session.results, pd.DataFrame)  # results stay pandas
+        results = session.results
+        assert type(results).__name__ == "PolarsSessionResults"
+        assert results.session is session
+
+    @pytest.mark.parametrize("name", ["Race", "Qualifying", "Sprint"])
+    def test_polars_results_equal_the_pandas_merge(self, name):
+        """The polars-native merge gives the pandas rows, columns and values (through Arrow)."""
+        pl = pytest.importorskip("polars")
+        expected = pl.from_pandas(_session(name).results.reset_index(drop=True))
+        actual = _session(name, lib="polars").results
+        assert actual.columns == expected.columns
+        assert actual.schema == expected.schema
+        assert actual.base_class_view.equals(expected)
 
     def test_qualifying_segments(self):
         results = _session("Qualifying").results
@@ -371,6 +383,51 @@ class TestHelpers:
         assert ordered[2]["_ergast_only"]
         assert ordered[2]["tc"] == "ABCDEF"
         assert ordered[3]["_ergast_only"]  # shared car: second row synthesized
+
+    def test_order_driver_rows_matches_numberless_rows_by_code(self):
+        # 2024 Belgian GP: drivers.json carries no car numbers; matching on
+        # the number alone synthesized every classified driver and appended
+        # the session's rows again (40 results rows).
+        rows = [{"driver": "HAM", "team": "Mercedes"}, {"driver": "RUS", "team": "Mercedes"}]
+        classification = [
+            {"number": "63", "position": "2", "Driver": {"code": "RUS"}, "Constructor": {}},
+            {"number": "44", "position": "1", "Driver": {"code": "HAM"}, "Constructor": {}},
+        ]
+        ordered = order_driver_rows(rows, classification, {})
+        assert [r["driver"] for r in ordered] == ["HAM", "RUS"]
+        assert ordered[0] is rows[0]  # the session's dict, not a synthesized one
+        assert [r["dn"] for r in ordered] == ["44", "63"]  # numbers taken from Ergast
+        assert not any(r.get("_ergast_only") for r in ordered)
+
+    def test_order_driver_rows_never_code_matches_a_numbered_row(self):
+        rows = [{"driver": "AAA", "dn": "5"}]
+        classification = [
+            {"number": "6", "position": "1", "Driver": {"code": "AAA"}, "Constructor": {}}
+        ]
+        ordered = order_driver_rows(rows, classification, {})
+        assert ordered[0]["_ergast_only"]
+        assert ordered[1] is rows[0]
+        assert rows[0]["dn"] == "5"
+
+    def test_results_row_data_with_a_repeated_abbreviation(self):
+        from types import SimpleNamespace
+
+        from tif1.models import _results_row_data
+
+        # pandas 3 hands out read-only arrays from Series.to_numpy(): the
+        # shared-car narrowing must not combine masks in place.
+        frame = finalize_results_frame(
+            [
+                {"DriverNumber": "10", "Abbreviation": "fry", "Position": 3.0},
+                {"DriverNumber": "12", "Abbreviation": "fry", "Position": 7.0},
+            ]
+        )
+        session = SimpleNamespace(_results=frame, results=frame)
+        found = _results_row_data(session, "fry", "12")
+        assert found is not None
+        label, row = found
+        assert row["Position"] == 7.0
+        assert label == frame.index[1]
 
     def test_unique_driver_labels(self):
         assert unique_driver_labels([("1", "A"), ("2", "B")]) == ["1", "2"]

@@ -23,6 +23,7 @@ import math
 from collections import defaultdict, deque
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 
 from tif1.core_utils.constants import (
@@ -72,6 +73,10 @@ _FLOAT_COLUMNS = (
 _TIMEDELTA_COLUMNS = ("Q1", "Q2", "Q3", "Time", "TimeGap", "FastestLapTime")
 _DATETIME_COLUMNS = ("DateOfBirth",)
 _NO_FILL_STR = frozenset({"Status"})  # keeps NaN when nothing is known (no laps, no Ergast)
+_STR_SET = frozenset(_STR_COLUMNS)
+_FLOAT_SET = frozenset(_FLOAT_COLUMNS)
+_TIMEDELTA_SET = frozenset(_TIMEDELTA_COLUMNS)
+_NAT_NS = np.iinfo("int64").min
 
 
 def session_kind(session_name: str) -> SessionKind:
@@ -175,24 +180,61 @@ def order_driver_rows(
 
     Each Ergast row (sorted by ``position``, ties in Ergast order) takes the
     session's driver dict with the same car number, or a synthesized dict
-    when the session's drivers do not list that car (did not start). Drivers
-    the classification does not mention keep their place at the end, in
-    their original order.
+    when the session's drivers do not list that car (did not start). A
+    ``drivers.json`` without car numbers (some seasons before 2025) is
+    matched on the driver code instead. A matched dict takes the car number
+    and names it lacks from Ergast (it is the session's own copy, the one its
+    lookup indices hold, as the lap-summary backfill does). Drivers the
+    classification does not mention keep their place at the end, in their
+    original order.
     """
     by_number: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
+    numberless_by_code: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
     for row in rows:
-        by_number[str(row.get("dn", "")).strip()].append(row)
+        number = str(row.get("dn") or "").strip()
+        by_number[number].append(row)
+        if not number:
+            numberless_by_code[str(row.get("driver") or "").strip().upper()].append(row)
+    used: set[int] = set()
     ordered: list[dict[str, Any]] = []
     for erow in sorted(classification, key=_position_key):
         number = _number(erow)
-        queue = by_number.get(number)
-        if queue:
-            ordered.append(queue.popleft())
-        else:
+        match = _first_unused(by_number.get(number) if number else None, used)
+        if match is None:
+            code = driver_code(erow).strip().upper()
+            match = _first_unused(numberless_by_code.get(code) if code else None, used)
+        if match is None:
             ordered.append(synthesize_driver_row(erow, team_colors))
-    for queue in by_number.values():
-        ordered.extend(queue)
+            continue
+        _fill_missing_identity(match, erow, number)
+        used.add(id(match))
+        ordered.append(match)
+    ordered.extend(row for row in rows if id(row) not in used)
     return ordered
+
+
+def _fill_missing_identity(match: dict[str, Any], erow: dict[str, Any], number: str) -> None:
+    """Fill the car number and names a ``drivers.json`` row lacks from its Ergast row.
+
+    Some 2024 payloads carry only the code and team; without this the results
+    have no names and ``get_driver("Lewis Hamilton")`` finds nobody. Values
+    the row already has are kept.
+    """
+    driver = erow.get("Driver", {}) if isinstance(erow.get("Driver"), dict) else {}
+    for key, value in (
+        ("dn", number),
+        ("fn", str(driver.get("givenName", ""))),
+        ("ln", str(driver.get("familyName", ""))),
+    ):
+        if value and not str(match.get(key) or "").strip():
+            match[key] = value
+
+
+def _first_unused(queue: deque[dict[str, Any]] | None, used: set[int]) -> dict[str, Any] | None:
+    """The first dict of ``queue`` not taken yet (``None`` when there is none)."""
+    if not queue:
+        return None
+    return next((row for row in queue if id(row) not in used), None)
 
 
 def _identity_fields(row: dict[str, Any]) -> dict[str, Any]:
@@ -337,7 +379,9 @@ def finalize_results_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     unknown positions last (stable), and the index is ``DriverNumber``, made
     unique for shared cars by :func:`unique_driver_labels`.
     """
-    frame = pd.DataFrame(rows) if rows else pd.DataFrame(columns=list(RESULTS_COLUMN_ORDER))
+    if rows:
+        return _results_frame_from_rows(rows)
+    frame = pd.DataFrame(columns=list(RESULTS_COLUMN_ORDER))
     for column in _STR_COLUMNS:
         if column not in frame.columns:
             frame[column] = pd.NA if column in _NO_FILL_STR else ""
@@ -366,6 +410,173 @@ def finalize_results_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
         numbers = frame["DriverNumber"].astype(str).tolist()
         codes = frame["Abbreviation"].astype(str).tolist()
         frame.index = pd.Index(unique_driver_labels(list(zip(numbers, codes))), name=None)
+    return frame
+
+
+def _is_missing(value: Any) -> bool:
+    return value is None or value is pd.NaT or value is pd.NA or value != value  # noqa: PLR0124
+
+
+def _str_values(values: list[Any], column: str) -> np.ndarray:
+    """An object column: the values as given, missing ones ``""`` (``Status`` keeps them)."""
+    if column in _NO_FILL_STR and not all(type(value) is str for value in values):
+        # pandas' own inference decides how a missing Status reads (NaN or None).
+        return pd.Series(values).astype(object).to_numpy()
+    out = np.empty(len(values), dtype=object)
+    out[:] = [value if type(value) is str or not _is_missing(value) else "" for value in values]
+    return out
+
+
+def _float_values(values: list[Any]) -> np.ndarray:
+    if all(type(value) is float for value in values):
+        return np.array(values, dtype="float64")
+    return pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(
+        dtype="float64", na_value=np.nan
+    )
+
+
+def _ns_values(values: list[Any], scalar: type, dtype: str) -> np.ndarray | None:
+    """``Timedelta``/``Timestamp`` (naive) values and ``NaT`` as ``dtype``; ``None`` for others."""
+    out = np.empty(len(values), dtype="int64")
+    for i, value in enumerate(values):
+        if value is pd.NaT:
+            out[i] = _NAT_NS
+        elif type(value) is scalar and getattr(value, "tz", None) is None:
+            out[i] = value.value
+        else:
+            return None
+    return out.view(dtype)
+
+
+def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """:func:`finalize_results_frame` for a non-empty ``rows``, built column by column.
+
+    The rows are a handful of dicts with known value types (``str``, ``float``,
+    ``Timedelta``/``Timestamp``/``NaT``), so every column becomes one typed
+    array in Python and the frame is assembled once; a column holding any other
+    type goes through the pandas conversion of the general path.
+    """
+    present: set[str] = set()
+    for row in rows:
+        present.update(row)
+    missing = math.nan
+    columns: dict[str, Any] = {}
+    for column in RESULTS_COLUMN_ORDER:
+        if column not in present:
+            columns[column] = None
+            continue
+        values = [row.get(column, missing) for row in rows]
+        if column in _STR_SET:
+            columns[column] = _str_values(values, column)
+        elif column in _FLOAT_SET:
+            columns[column] = _float_values(values)
+        elif column in _TIMEDELTA_SET:
+            if all(_is_missing(value) for value in values):
+                columns[column] = None
+                continue
+            array = _ns_values(values, pd.Timedelta, "timedelta64[ns]")
+            if array is None:
+                array = pd.to_timedelta(pd.Series(values), errors="coerce").to_numpy(
+                    dtype="timedelta64[ns]"
+                )
+            columns[column] = array
+        else:
+            if all(_is_missing(value) for value in values):
+                columns[column] = None
+                continue
+            array = _ns_values(values, pd.Timestamp, "datetime64[ns]")
+            if array is None:
+                array = pd.to_datetime(pd.Series(values), errors="coerce").to_numpy(
+                    dtype="datetime64[ns]"
+                )
+            columns[column] = array
+    count = len(rows)
+    for column in [name for name, values in columns.items() if values is None]:
+        if column in _STR_SET:
+            fill = pd.NA if column in _NO_FILL_STR else ""
+            filled = np.empty(count, dtype=object)
+            filled[:] = [fill] * count
+        elif column in _FLOAT_SET:
+            filled = np.full(count, np.nan)
+        elif column in _TIMEDELTA_SET:
+            filled = np.full(count, _NAT_NS, dtype="int64").view("timedelta64[ns]")
+        else:
+            filled = np.full(count, _NAT_NS, dtype="int64").view("datetime64[ns]")
+        columns[column] = filled
+    order = np.argsort(columns["Position"], kind="stable")  # NaN sorts last
+    labels = unique_driver_labels(
+        [(str(columns["DriverNumber"][i]), str(columns["Abbreviation"][i])) for i in order.tolist()]
+    )
+    index = pd.Index(labels, name=None)
+    # Object arrays go in as object Series: pandas 3 would infer ``str`` from them.
+    return pd.DataFrame(
+        {
+            column: (
+                pd.Series(array[order], index=index, dtype=object, copy=False)
+                if column in _STR_SET
+                else pd.Series(array[order], index=index, copy=False)
+            )
+            for column, array in columns.items()
+        },
+        index=index,
+        copy=False,
+    )
+
+
+def _polars_cell(value: Any) -> Any:
+    """A results value as polars accepts it (pandas ``NaT``/``NaN`` become null)."""
+    if value is None:
+        return None
+    if value is pd.NaT:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, pd.Timedelta):
+        return value.to_pytimedelta()
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    return value
+
+
+def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
+    """polars twin of :func:`finalize_results_frame` (no pandas frame is built).
+
+    Same columns in the same order with polars' dtype families (``String``,
+    ``Float64``, ``Duration("ns")``, ``Datetime("ns")``), same sort
+    (``Position``, unknown last, stable). polars has no index, so
+    ``DriverNumber`` stays a column; a shared car's drivers are told apart by
+    ``Abbreviation``.
+    """
+    import polars as pl
+
+    columns: dict[str, list[Any]] = {column: [] for column in RESULTS_COLUMN_ORDER}
+    for row in rows:
+        for column in RESULTS_COLUMN_ORDER:
+            value = _polars_cell(row.get(column))
+            if column in _STR_COLUMNS:
+                if value is None:
+                    value = None if column in _NO_FILL_STR else ""
+                else:
+                    value = str(value)
+            elif column in _FLOAT_COLUMNS and value is not None:
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    value = None
+            columns[column].append(value)
+    schema: dict[str, Any] = {}
+    for column in RESULTS_COLUMN_ORDER:
+        if column in _FLOAT_COLUMNS:
+            schema[column] = pl.Float64
+        elif column in _TIMEDELTA_COLUMNS:
+            schema[column] = pl.Duration("ns")
+        elif column in _DATETIME_COLUMNS:
+            schema[column] = pl.Datetime("ns")
+        else:
+            schema[column] = pl.String
+    frame = pl.DataFrame(columns, schema=schema, strict=False)
+    if frame.height:
+        frame = frame.sort("Position", nulls_last=True, maintain_order=True)
     return frame
 
 
@@ -542,7 +753,6 @@ _EMPTY_LAP_KEYS = (
     "lSD",
     "status",
     "delR",
-    "pb",
 )
 
 
@@ -557,9 +767,11 @@ def build_laps_payloads(
     (session time at the end of the lap) and ``lST`` (lap start) are the
     cumulative race time, ``stint`` is derived from the pit-stop laps (a stop
     on lap ``L`` starts a new stint on ``L + 1``), ``dNum`` and the team come
-    from the race results. Channels Ergast does not know (sectors, tyres,
-    speeds, pit times) are ``None``. Returns ``(payload, driver_code, team)``
-    tuples for :func:`tif1.core._merge_lap_payloads`.
+    from the race results. ``pb`` marks a lap faster than every earlier lap
+    of the driver (fastf1's ``IsPersonalBest``, which ``pick_fastest`` reads).
+    Channels Ergast does not know (sectors, tyres, speeds, pit times) are
+    ``None``. Returns ``(payload, driver_code, team)`` tuples for
+    :func:`tif1.core._merge_lap_payloads`.
     """
     identity: dict[str, tuple[str, str, str]] = {}
     for row in classification:
@@ -603,8 +815,12 @@ def build_laps_payloads(
         code, number, team = identity.get(driver_id, (driver_id, "", ""))
         stops_before = sorted(stop_laps.get(driver_id, []))
         elapsed = 0.0
+        best: float | None = None
         payload: dict[str, list[Any]] = defaultdict(list)
         for lap_number, seconds, position in entries:
+            personal_best = seconds is not None and (best is None or seconds < best)
+            if personal_best:
+                best = seconds
             start = elapsed
             if seconds is not None:
                 elapsed += seconds
@@ -619,6 +835,7 @@ def build_laps_payloads(
             payload["iacc"].append(True)
             payload["ff1G"].append(False)
             payload["del"].append(False)
+            payload["pb"].append(personal_best)
             for key in _EMPTY_LAP_KEYS:
                 payload[key].append(None)
         payloads.append((dict(payload), code, team))

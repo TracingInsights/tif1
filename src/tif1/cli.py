@@ -104,7 +104,9 @@ def drivers(
 
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
-        sess = tif1.get_session(year, event, session)
+        # The table reads pandas rows (a polars default backend would hand
+        # back a polars drivers_df): tables always load the pandas view.
+        sess = tif1.get_session(year, event, session, lib="pandas")
         progress.update(task, advance=1)
 
     from rich.table import Table
@@ -253,7 +255,7 @@ def results(
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
         gp: int | str = int(event) if event.isdigit() else event
-        sess = tif1.get_session(year, gp, session, ergast=not no_ergast)
+        sess = tif1.get_session(year, gp, session, lib="pandas", ergast=not no_ergast)
         frame = sess.results
         progress.update(task, advance=1)
 

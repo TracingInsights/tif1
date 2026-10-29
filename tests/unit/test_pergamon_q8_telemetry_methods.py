@@ -90,10 +90,36 @@ def _ref_wrap(self: Telemetry, frame: pd.DataFrame) -> Telemetry:
 
 
 def _ref_fill_missing(self: Telemetry) -> Telemetry:
+    """fastf1's ``fill_missing`` rule spelled out (the contract since the parity fixes).
+
+    Discrete channels, ``Driver``/``LapNumber`` and integer/boolean columns
+    are held (forward then backward fill, dtype kept), other floats
+    interpolated linearly, ``Source`` gaps marked ``"interpolation"``,
+    excluded channels (the clocks) and anything else left alone.
+    """
     filled = self.copy()
-    for col in filled.columns:
-        if pd.api.types.is_numeric_dtype(filled[col]):
-            filled[col] = filled[col].interpolate(limit_direction="both")
+    for i, col in enumerate(self.columns):
+        values = self.iloc[:, i]
+        if not values.isna().any():
+            continue
+        kind = Telemetry._CHANNELS.get(col, {}).get("type")
+        dtype = values.dtype
+        if col == "Source":
+            new = values.fillna("interpolation")
+        elif kind == "excluded":
+            continue
+        elif (
+            kind == "discrete"
+            or col in ("Driver", "LapNumber")
+            or pd.api.types.is_bool_dtype(dtype)
+            or pd.api.types.is_integer_dtype(dtype)
+        ):
+            new = values.ffill().bfill()
+        elif pd.api.types.is_float_dtype(dtype):
+            new = values.interpolate(limit_direction="both")
+        else:
+            continue
+        filled.isetitem(i, new)
     return _ref_wrap(self, filled)
 
 
@@ -126,29 +152,113 @@ def _ref_add_track_status(self: Telemetry) -> Telemetry:
     return _ref_wrap(self, tel)
 
 
+def _clock_keys(series: pd.Series) -> list[int | None]:
+    """A clock column as integer nanoseconds (None when missing; numbers are seconds)."""
+    if pd.api.types.is_datetime64_any_dtype(series.dtype):
+        values = series.astype("datetime64[ns]")
+    else:
+        values = Telemetry._coerce_timedelta_series(series).astype("timedelta64[ns]")
+    return [None if pd.isna(v) else int(v.value) for v in values]
+
+
 def _ref_merge_channels(self: Telemetry, other) -> Telemetry:
-    left = self.copy()
-    right = pd.DataFrame(other).copy()
-    left["Time"] = pd.to_timedelta(left["Time"], errors="coerce")
-    right["Time"] = pd.to_timedelta(right["Time"], errors="coerce")
-    merged = pd.merge_asof(
-        left.sort_values("Time"),
-        right.sort_values("Time"),
-        on="Time",
-        suffixes=("", "_other"),
-        direction="nearest",
-    )
-    return _ref_wrap(self, merged)
+    """The nearest-sample merge spelled out (the contract since the parity fixes).
+
+    Keyed on the first of ``Date``/``SessionTime``/``Time`` both frames
+    carry; this frame sorted on it (stable, missing last); each row takes
+    the ``other`` row nearest in time, the earlier one on a tie and the last
+    of equal timestamps on an exact match, nothing for a missing key.
+    """
+    right = pd.DataFrame(other)
+    key = next(c for c in ("Date", "SessionTime", "Time") if c in self.columns and c in right)
+    left_keys = _clock_keys(self[key])
+    order = sorted(range(len(self)), key=lambda i: (left_keys[i] is None, left_keys[i] or 0))
+    candidates = sorted((k, j) for j, k in enumerate(_clock_keys(right[key])) if k is not None)
+    matches = []
+    for i in order:
+        x = left_keys[i]
+        best: tuple[int, int, int] | None = None
+        if x is not None:
+            for k, j in candidates:
+                gap = abs(k - x)
+                if best is None or gap < best[0] or (gap == best[0] and k == best[1]):
+                    best = (gap, k, j)
+        matches.append(-1 if best is None else best[2])
+    columns = [col for col in right.columns if col != key]
+    part = right[columns].reset_index(drop=True)
+    part.columns = [f"{col}_other" if col in self.columns else col for col in columns]
+    taken = part.reindex(matches).reset_index(drop=True)
+    left = self.iloc[order].reset_index(drop=True)
+    return _ref_wrap(self, pd.concat([left, taken], axis=1))
 
 
 def _ref_resample_channels(self: Telemetry, rule: str) -> Telemetry:
+    """The fastf1-parity contract spelled out plainly, one bin at a time.
+
+    Bins every ``rule`` from the first sample on the session clock (``Date``,
+    else ``SessionTime``, else ``Time``); continuous channels are the bin mean
+    interpolated across empty bins, everything else the value in force at
+    each bin start; ``Date``/``SessionTime`` advance with the bins and
+    ``Time`` restarts at zero.
+    """
     rule = _modern_offset_alias(rule)
-    frame = self.copy()
-    frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
-    frame = frame.dropna(subset=["Time"]).set_index("Time").sort_index()
-    numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
-    resampled = frame[numeric_cols].resample(rule).mean().interpolate(limit_direction="both")
-    return _ref_wrap(self, resampled.reset_index())
+    if not self.columns.is_unique:
+        frame = self.copy()
+        frame["Time"] = pd.to_timedelta(frame["Time"], errors="coerce")
+        frame = frame.dropna(subset=["Time"]).set_index("Time").sort_index()
+        numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
+        resampled = frame[numeric_cols].resample(rule).mean().interpolate(limit_direction="both")
+        return _ref_wrap(self, resampled.reset_index())
+    axis = next(c for c in ("Date", "SessionTime", "Time") if c in self.columns)
+    # Numeric clocks are seconds (tif1's convention, as everywhere in Telemetry).
+    if axis == "Date":
+        clock = pd.to_datetime(self[axis], errors="coerce").astype("datetime64[ns]")
+    else:
+        clock = Telemetry._coerce_timedelta_series(self[axis]).astype("timedelta64[ns]")
+    kept = np.flatnonzero(clock.notna().to_numpy())
+    positions = kept[np.argsort(clock.iloc[kept].to_numpy(), kind="stable")]
+    t = clock.iloc[positions].reset_index(drop=True)
+    step = pd.Timedelta(rule)
+    n_bins = int((t.iloc[-1] - t.iloc[0]) // step) + 1
+    labels = [t.iloc[0] + k * step for k in range(n_bins)]
+    offsets = np.arange(n_bins, dtype="int64") * step.value
+    out = {}
+    for col in self.columns:
+        series = self[col].iloc[positions].reset_index(drop=True)
+        dtype = self[col].dtype
+        if col in ("Date", "SessionTime", "Time"):
+            if col == "Time":
+                values = offsets
+            else:
+                if col == "Date":
+                    first = pd.to_datetime(series).iloc[0]
+                else:
+                    first = Telemetry._coerce_timedelta_series(series).iloc[0]
+                values = pd.Timedelta(first).value if col != "Date" else first.value
+                values = values + offsets
+            out[col] = values.view("M8[ns]" if col == "Date" else "m8[ns]")
+        elif (
+            pd.api.types.is_numeric_dtype(dtype)
+            and not pd.api.types.is_bool_dtype(dtype)
+            and Telemetry._CHANNELS.get(col, {}).get("type") != "discrete"
+            and col not in ("Driver", "LapNumber")
+        ):
+            values = pd.to_numeric(series, errors="coerce")
+            means = []
+            for label in labels:
+                # Summed left to right in time order, then divided by the count
+                # (a loop: Python's sum() of floats is compensated since 3.12).
+                in_bin = values[(t >= label) & (t < label + step)].dropna().tolist()
+                total = 0.0
+                for value in in_bin:
+                    total += value
+                means.append(total / len(in_bin) if in_bin else np.nan)
+            out[col] = pd.Series(means, dtype=float).interpolate(limit_direction="both").to_numpy()
+        else:
+            in_force = series.ffill()
+            held = [int((t <= label).sum()) - 1 for label in labels]
+            out[col] = in_force.iloc[held].reset_index(drop=True).bfill()
+    return _ref_wrap(self, pd.DataFrame(out, columns=self.columns))
 
 
 def _outcome(fn):

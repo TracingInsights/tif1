@@ -208,8 +208,26 @@ def display_dataframe_summary(df: Union["pd.DataFrame", "pl.DataFrame"]) -> str:
     return html
 
 
+#: Set once :func:`enable_jupyter_display` attached the cards; ``tif1.models_polars``
+#: reads it when it is imported later (see :func:`register_polars_display`).
+_display_enabled = False
+
+
+def register_polars_display(module: Any) -> None:
+    """Attach the driver and lap cards to the polars row classes of ``module``.
+
+    ``module`` is ``tif1.models_polars``. Called by :func:`enable_jupyter_display`
+    when that module is already imported, else by the module itself at import
+    time, so enabling the display never imports polars and the polars models
+    never import this (pandas-importing) module.
+    """
+    module.PolarsDriver._repr_html_ = lambda self: display_driver_info(self)
+    module.PolarsLap._repr_html_ = lambda self: display_lap_info(self)
+
+
 def enable_jupyter_display():
-    """Enable rich Jupyter display for tif1 objects."""
+    """Enable rich Jupyter display for tif1 objects (pandas and polars classes)."""
+    global _display_enabled
     if not _is_notebook():
         logger.info("Not in Jupyter environment, skipping display setup")
         return
@@ -221,6 +239,10 @@ def enable_jupyter_display():
         Session._repr_html_ = lambda self: display_session_info(self)  # type: ignore[ty:unresolved-attribute]
         Driver._repr_html_ = lambda self: display_driver_info(self)  # type: ignore[ty:unresolved-attribute]
         Lap._repr_html_ = lambda self: display_lap_info(self)  # type: ignore[ty:unresolved-attribute]
+        _display_enabled = True
+        polars_models = sys.modules.get("tif1.models_polars")
+        if polars_models is not None:
+            register_polars_display(polars_models)
 
         logger.info("Jupyter display enabled")
     except Exception as e:

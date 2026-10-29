@@ -43,7 +43,9 @@ def test_laps_selection_and_compat_methods():
     assert len(laps.pick_team("Red Bull")) == 2
     assert len(laps.pick_teams(["Mercedes"])) == 1
     assert laps.pick_fastest() is not None
-    assert len(laps.pick_quicklaps(1.0)) == 1
+    # fastf1: strictly faster than threshold x best, so 1.0 keeps no lap.
+    assert len(laps.pick_quicklaps(1.0)) == 0
+    assert len(laps.pick_quicklaps(1.001)) == 1
     assert len(laps.pick_tyre("SOFT")) == 2
     assert len(laps.pick_compounds(["MEDIUM"])) == 1
     assert len(laps.pick_track_status("1", how="equals")) == 2
@@ -55,7 +57,11 @@ def test_laps_selection_and_compat_methods():
     assert len(laps.pick_accurate()) == 2
     assert isinstance(laps.get_weather_data(), pd.DataFrame)
     q1, q2, q3 = laps.split_qualifying_sessions()
-    assert len(q1) == len(q2) == len(q3) == len(laps)
+    # fastf1 semantics: without markers or session status every lap is Q1,
+    # and a segment with no laps is None.
+    assert len(q1) == len(laps)
+    assert q2 is None
+    assert q3 is None
     assert len(list(laps.iterlaps())) == len(laps)
     first_iter_lap = next(laps.iterlaps())
     assert first_iter_lap["Driver"] == "VER"
@@ -245,7 +251,7 @@ def test_telemetry_methods_cover_surface():
     resampled = tel.resample_channels("1s")
     assert isinstance(resampled, core.Telemetry)
     assert not resampled.empty
-    assert isinstance(tel.base_class_view(), pd.DataFrame)
+    assert type(tel.base_class_view) is pd.DataFrame
     assert isinstance(tel.join(pd.DataFrame({"x": [1, 2, 3]})), core.Telemetry)
     assert isinstance(
         tel.merge(pd.DataFrame({"Time": ["0s", "1s", "2s"]}), on="Time"), core.Telemetry

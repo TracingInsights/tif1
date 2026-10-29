@@ -40,7 +40,7 @@ ham_lap = session.laps.pick_drivers('HAM').pick_fastest()
 
 ## Getting Telemetry with Distance
 
-Telemetry data includes speed, throttle, brake, and more. The telemetry from `get_car_data()` already holds a cumulative `Distance` column. `add_distance()` keeps that column and computes it only when it is missing. Use `Distance` to align the laps for comparison.
+Telemetry data includes speed, throttle, brake, and more. The telemetry from `get_car_data()` already holds a cumulative `Distance` column. `add_distance()` integrates that column again from the speed, as fastf1 does, so both laps share one method. Use `Distance` to align the laps for comparison.
 
 ```python
 ver_tel = ver_lap.get_car_data().add_distance()

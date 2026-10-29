@@ -27,6 +27,9 @@ from .constants import (
     LAP_RENAME_MAP,
     NUMERIC_TELEMETRY_CHANNELS,
     TELEMETRY_RENAME_MAP,
+    TELEMETRY_SOURCE_VALUE,
+    TELEMETRY_STATUS_VALUE,
+    ordered_telemetry_columns,
 )
 
 if TYPE_CHECKING:
@@ -167,9 +170,13 @@ def _filter_valid_laptimes(laps, lib: str, *, exclude_deleted: bool = False):
         keep = pl.col(COL_LAP_TIME_SECONDS).is_not_null()
         if exclude_deleted and COL_DELETED in laps.columns:
             keep = keep & ~pl.col(COL_DELETED).cast(pl.Boolean, strict=False).fill_null(False)
-        return laps.with_columns(
-            pl.col(COL_LAP_TIME).cast(pl.Float64, strict=False).alias(COL_LAP_TIME_SECONDS)
-        ).filter(keep)
+        lap_time = pl.col(COL_LAP_TIME)
+        if isinstance(laps.schema[COL_LAP_TIME], pl.Duration):
+            # A Duration cast to Float64 is nanoseconds, not seconds.
+            seconds = lap_time.dt.total_nanoseconds().cast(pl.Float64) / 1_000_000_000
+        else:
+            seconds = lap_time.cast(pl.Float64, strict=False)
+        return laps.with_columns(seconds.alias(COL_LAP_TIME_SECONDS)).filter(keep)
 
     # For pandas: check if already timedeltas (any resolution, e.g. timedelta64[us]
     # with pandas 3.0 unit inference)
@@ -272,9 +279,23 @@ def _get_lap_number(row: dict | pd.Series) -> int:
 
 
 def _create_telemetry_df(
-    tel_data: dict | None, driver: str, lap_num: int, lib: str
+    tel_data: dict | None,
+    driver: str,
+    lap_num: int,
+    lib: str,
+    clock: tuple[int, int] | None = None,
 ) -> DataFrame | None:
     """Create telemetry DataFrame with driver and lap metadata (zero-copy optimized).
+
+    Args:
+        tel_data: The ``tel`` part of a ``{driver}/{lap}_tel.json`` payload.
+        driver: Driver code.
+        lap_num: Lap number.
+        lib: ``"pandas"`` or ``"polars"``.
+        clock: ``(LapStartTime, LapStartDate)`` of the lap as int64 nanoseconds
+            (``LapStartDate`` may be the int64 minimum when unknown). When
+            given, ``SessionTime`` and ``Date`` are built with the frame
+            (fastf1's first two columns) instead of being inserted later.
 
     Returns:
         DataFrame or None if data is empty or invalid
@@ -306,31 +327,13 @@ def _create_telemetry_df(
                 col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(
                     col_data[_DRIVER_AHEAD_CHANNEL]
                 )
-            # A natively decoded sentinel is NaN in a float array; polars
-            # must see null there (the list path casts "None" to null).
-            nan_channels = [
-                k
-                for k, v in col_data.items()
-                if isinstance(v, np.ndarray) and v.dtype.kind == "f" and np.isnan(v).any()
-            ]
+            typed = _polars_typed_telemetry_frame(col_data, driver, lap_num, clock)
+            if typed is not None:
+                return typed
             telemetry_df = pl.DataFrame(col_data, strict=False)
             if telemetry_df.is_empty():
                 return None
-            if nan_channels:
-                telemetry_df = telemetry_df.with_columns(
-                    [pl.col(k).fill_nan(None) for k in nan_channels]
-                )
-            telemetry_df = _coerce_polars_telemetry_sentinels(telemetry_df)
-            for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
-                if col not in telemetry_df.columns:
-                    telemetry_df = telemetry_df.with_columns(pl.lit(None).alias(col))
-            telemetry_df = telemetry_df.with_columns(
-                [
-                    pl.lit(driver).alias("Driver"),
-                    pl.lit(lap_num).alias("LapNumber"),
-                ]
-            )
-            return telemetry_df
+            return _polars_telemetry_frame(telemetry_df, driver, lap_num, clock)
 
         # Normalize mismatched lengths by padding with NaN
         max_len = max(len(v) for v in col_data.values())
@@ -344,7 +347,9 @@ def _create_telemetry_df(
             else:
                 normalized_data[k] = v
 
-        telemetry_df = _typed_telemetry_frame(normalized_data, max_len, driver, lap_num)
+        telemetry_df = _typed_telemetry_frame(
+            normalized_data, max_len, driver, lap_num, clock=clock
+        )
         if telemetry_df is not None:
             if telemetry_df.empty:
                 return None
@@ -365,8 +370,212 @@ def _create_telemetry_df(
         return None
 
 
+def _polars_typed_channel(name: str, values: Any) -> Any:
+    """One channel as a ready polars Series, or None when only the generic path types it.
+
+    Mirrors polars' inference plus the contract casts for the clean cases:
+    ints stay ``Int64``, floats are ``Float64`` with NaN as null (a ``"None"``
+    sentinel too), ``Brake`` is ``Boolean``, ``nGear``/``DRS`` ``Int64``.
+    """
+    if isinstance(values, np.ndarray):
+        arr: np.ndarray | None = values
+    elif name == "Brake":
+        arr = np.asarray(values)
+    elif name == _DRIVER_AHEAD_CHANNEL:
+        cleaned = _without_null_tokens(values)
+        if not all(x is None or type(x) is str for x in cleaned):
+            return None
+        return pl.Series(name, cleaned, dtype=pl.String)
+    else:
+        arr = _numeric_channel_array(values)
+        if arr is None and name in _NUMERIC_TELEMETRY_CHANNELS:
+            if name not in ("nGear", "DRS") and all(x is None for x in values):
+                # No sample at all (a race leader has nobody ahead).
+                return pl.Series(name, [None] * len(values), dtype=pl.Float64)
+            arr = _numeric_channel_with_sentinels(values)
+    if arr is None:
+        return None
+    kind = arr.dtype.kind
+    if name == "Brake":
+        return pl.Series(name, arr.astype(bool)) if kind in "biu" else None
+    if name in ("nGear", "DRS"):
+        return pl.Series(name, arr.astype("int64", copy=False)) if kind in "iu" else None
+    if name not in _NUMERIC_TELEMETRY_CHANNELS:
+        return None
+    if kind in "iu":
+        return pl.Series(name, arr.astype("int64", copy=False))
+    if kind == "f":
+        return pl.Series(name, arr, nan_to_null=True)
+    return None
+
+
+def _polars_typed_telemetry_frame(
+    col_data: dict[str, Any], driver: str, lap_num: int, clock: tuple[int, int] | None
+):
+    """The polars telemetry frame built from ready numpy arrays (no query plan).
+
+    The result is the generic path's (:func:`_polars_telemetry_frame`) for
+    clean payloads; every column becomes a ``Series`` directly and the frame
+    is assembled once, because polars 2 runs each frame expression or
+    ``Series`` operation as a lazy plan (~0.1-0.3 ms each, more than the whole
+    build). Returns None for anything it does not type exactly (non-finite
+    times, float gears, unexpected strings, unknown channels, ragged
+    lengths), and the caller takes the generic path.
+    """
+    lengths = {len(values) for values in col_data.values()}
+    if len(lengths) != 1:
+        return None
+    n = lengths.pop()
+    series: dict[str, Any] = {}
+    time_ns: np.ndarray | None = None
+    for name, values in col_data.items():
+        if name == "Time":
+            if isinstance(values, np.ndarray):
+                seconds = values.astype("float64", copy=False)
+            else:
+                seconds = _float_channel_array(values)
+            if seconds is None or not np.isfinite(seconds).all():
+                return None
+            time_ns = np.round(seconds * 1_000_000_000).astype("int64")
+            series[name] = pl.Series(name, time_ns.view("m8[ns]"))
+            continue
+        column = _polars_typed_channel(name, values)
+        if column is None:
+            return None
+        series[name] = column
+    for name in ("Speed", "nGear", "X", "Y", "Z"):
+        if name not in series:
+            dtype = pl.Int64 if name == "nGear" else pl.Float64
+            series[name] = pl.Series(name, [None] * n, dtype=dtype)
+    if time_ns is None:
+        series["Time"] = pl.Series("Time", [None] * n, dtype=pl.Duration("ns"))
+    series["Driver"] = pl.Series("Driver", [driver] * n, dtype=pl.String)
+    series["LapNumber"] = pl.Series("LapNumber", np.full(n, lap_num, dtype="int64"))
+    for name, value in (("Source", TELEMETRY_SOURCE_VALUE), ("Status", TELEMETRY_STATUS_VALUE)):
+        if name not in series:
+            series[name] = pl.Series(name, [value] * n, dtype=pl.Categorical)
+    if clock is not None and time_ns is not None:
+        start_ns, date_ns = clock
+        series["SessionTime"] = pl.Series("SessionTime", (time_ns + start_ns).view("m8[ns]"))
+        if date_ns == _NS_MIN:
+            series["Date"] = pl.Series("Date", [None] * n, dtype=pl.Datetime("ns"))
+        else:
+            series["Date"] = pl.Series("Date", (time_ns + date_ns).view("M8[ns]"))
+    return pl.DataFrame([series[name] for name in ordered_telemetry_columns(list(series))])
+
+
+def _polars_telemetry_frame(frame, driver: str, lap_num: int, clock: tuple[int, int] | None):
+    """A freshly built polars telemetry frame in tif1's contract, in one ``select``.
+
+    The same result as :func:`_coerce_polars_telemetry_sentinels`, the
+    missing-channel/``Driver``/``LapNumber`` additions,
+    :func:`_polars_telemetry_contract` and the session clock applied in
+    turn. polars 2 runs every eager frame or ``Series`` operation as a lazy
+    plan (~0.1-0.2 ms each); one ``select`` holding every expression is one
+    plan per lap instead of a dozen.
+    """
+    schema = frame.schema
+    exprs: dict[str, Any] = {}
+    for name, dtype in schema.items():
+        expr = pl.col(name)
+        if name in _NUMERIC_TELEMETRY_CHANNELS and dtype in (pl.String, pl.Null):
+            # A channel that is a sentinel on every sample ("None" or null).
+            expr = expr.cast(pl.Float64, strict=False)
+        elif name == _DRIVER_AHEAD_CHANNEL and dtype == pl.Null:
+            expr = expr.cast(pl.String)
+        elif dtype == pl.Float64:
+            # A natively decoded sentinel is NaN in a float array.
+            expr = expr.fill_nan(None)
+        exprs[name] = expr
+    for name in ("Speed", "nGear", "X", "Y", "Z"):
+        if name not in exprs:
+            exprs[name] = pl.lit(None, dtype=pl.Int64 if name == "nGear" else pl.Float64)
+    exprs["Driver"] = pl.lit(driver, dtype=pl.String)
+    exprs["LapNumber"] = pl.lit(lap_num, dtype=pl.Int64)
+    time_dtype = schema.get("Time")
+    if time_dtype is None:
+        exprs["Time"] = pl.lit(None, dtype=pl.Duration("ns"))
+    elif time_dtype not in (pl.Duration, pl.Null):
+        exprs["Time"] = (
+            (exprs["Time"].cast(pl.Float64, strict=False) * 1_000_000_000)
+            .round()
+            .cast(pl.Int64)
+            .cast(pl.Duration("ns"))
+        )
+    brake_dtype = schema.get("Brake")
+    if brake_dtype is not None and brake_dtype != pl.Boolean:
+        exprs["Brake"] = exprs["Brake"].cast(pl.Int64, strict=False).cast(pl.Boolean)
+    for name in ("nGear", "DRS"):
+        dtype = schema.get(name)
+        if dtype is not None and dtype != pl.Int64:
+            exprs[name] = exprs[name].cast(pl.Int64, strict=False)
+    for name, value in (("Source", TELEMETRY_SOURCE_VALUE), ("Status", TELEMETRY_STATUS_VALUE)):
+        if name not in exprs:
+            exprs[name] = pl.lit(value, dtype=pl.String).cast(pl.Categorical)
+    time_is_ns = time_dtype is not None and (
+        time_dtype == pl.Duration("ns") or time_dtype not in (pl.Duration, pl.Null)
+    )
+    if clock is not None and time_is_ns:
+        start_ns, date_ns = clock
+        time_ns = exprs["Time"].cast(pl.Int64)
+        exprs["SessionTime"] = (time_ns + start_ns).cast(pl.Duration("ns"))
+        exprs["Date"] = (
+            pl.lit(None, dtype=pl.Datetime("ns"))
+            if date_ns == _NS_MIN
+            else (time_ns + date_ns).cast(pl.Datetime("ns"))
+        )
+    return frame.select(
+        [exprs[name].alias(name) for name in ordered_telemetry_columns(list(exprs))]
+    )
+
+
+def _polars_telemetry_contract(frame):
+    """fastf1's dtypes, constant channels and column order on a polars telemetry frame.
+
+    ``Time`` (float seconds) becomes ``Duration("ns")``, ``Brake`` ``Boolean``,
+    ``nGear``/``DRS``/``LapNumber`` ``Int64``; ``Source``/``Status`` are the
+    constant categorical channels; columns follow fastf1's order.
+    """
+    schema = frame.schema
+    exprs = []
+    time_dtype = schema.get("Time")
+    if time_dtype is not None and time_dtype not in (pl.Duration, pl.Null):
+        exprs.append(
+            (pl.col("Time").cast(pl.Float64, strict=False) * 1_000_000_000)
+            .round()
+            .cast(pl.Int64)
+            .cast(pl.Duration("ns"))
+            .alias("Time")
+        )
+    brake_dtype = schema.get("Brake")
+    if brake_dtype is not None and brake_dtype != pl.Boolean:
+        exprs.append(pl.col("Brake").cast(pl.Int64, strict=False).cast(pl.Boolean).alias("Brake"))
+    for col in ("nGear", "DRS", "LapNumber"):
+        dtype = schema.get(col)
+        if dtype is not None and dtype != pl.Int64:
+            exprs.append(pl.col(col).cast(pl.Int64, strict=False).alias(col))
+    if "Source" not in schema:
+        exprs.append(pl.lit(TELEMETRY_SOURCE_VALUE).cast(pl.Categorical).alias("Source"))
+    if "Status" not in schema:
+        exprs.append(pl.lit(TELEMETRY_STATUS_VALUE).cast(pl.Categorical).alias("Status"))
+    if exprs:
+        frame = frame.with_columns(exprs)
+    ordered = ordered_telemetry_columns(list(frame.columns))
+    if ordered != list(frame.columns):
+        frame = frame.select(ordered)
+    return frame
+
+
+#: NaT as int64 (the session-clock arithmetic works on int64 nanoseconds).
+_NS_MIN = np.iinfo("int64").min
+
+
 def _typed_telemetry_frame(
-    normalized_data: dict[str, Any], max_len: int, driver: str, lap_num: int
+    normalized_data: dict[str, Any],
+    max_len: int,
+    driver: str,
+    lap_num: int,
+    clock: tuple[int, int] | None = None,
 ) -> pd.DataFrame | None:
     """Build a telemetry DataFrame with canonical dtypes applied in the constructor.
 
@@ -455,6 +664,14 @@ def _typed_telemetry_frame(
             columns.append(k)
         # pandas 3 infers str dtype from object arrays at construction; the
         # FastF1-compatible Driver contract is object (no inference here).
+        # Source/Status are fastf1's stream channels as constants (one
+        # Python object each, like Driver).
+        if "Source" not in columns:
+            arrays.append(np.full(max_len, TELEMETRY_SOURCE_VALUE, dtype=object))
+            columns.append("Source")
+        if "Status" not in columns:
+            arrays.append(np.full(max_len, TELEMETRY_STATUS_VALUE, dtype=object))
+            columns.append("Status")
         arrays.append(np.full(max_len, driver, dtype=object))
         columns.append("Driver")
         arrays.append(
@@ -463,6 +680,24 @@ def _typed_telemetry_frame(
             )
         )
         columns.append("LapNumber")
+        if clock is not None and "Time" in columns:
+            time_column = arrays[columns.index("Time")]
+            if isinstance(time_column, np.ndarray) and time_column.dtype == "m8[ns]":
+                # The session clock as two more ready arrays (an insert after
+                # construction cost ~0.45 ms per frame).
+                time_ns = time_column.view("i8")
+                known = time_ns != _NS_MIN
+                start_ns, date_ns = clock
+                arrays.append(np.where(known, time_ns + start_ns, _NS_MIN).view("m8[ns]"))
+                columns.append("SessionTime")
+                dates = np.where(known & (date_ns != _NS_MIN), time_ns + date_ns, _NS_MIN)
+                arrays.append(dates.view("M8[ns]"))
+                columns.append("Date")
+        ordered = ordered_telemetry_columns(columns)
+        if ordered != columns:
+            by_name = dict(zip(columns, arrays, strict=True))
+            columns = ordered
+            arrays = [by_name[name] for name in ordered]
         frame = _frame_from_columns(arrays, columns, max_len)
     except (AttributeError, TypeError, ValueError):
         return None
@@ -859,6 +1094,14 @@ def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
     for col in ["Time", "Speed", "nGear", "X", "Y", "Z"]:
         if col not in telemetry_df.columns:
             telemetry_df[col] = pd.NA
+    n_rows = len(telemetry_df)
+    if "Source" not in telemetry_df.columns:
+        telemetry_df["Source"] = np.full(n_rows, TELEMETRY_SOURCE_VALUE, dtype=object)
+    if "Status" not in telemetry_df.columns:
+        telemetry_df["Status"] = np.full(n_rows, TELEMETRY_STATUS_VALUE, dtype=object)
+    ordered = ordered_telemetry_columns(list(telemetry_df.columns))
+    if ordered != list(telemetry_df.columns):
+        telemetry_df = telemetry_df[ordered]
     return telemetry_df
 
 
@@ -1292,8 +1535,7 @@ def _apply_laps_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     # ------------------------------------------------------------------
     # Bool columns (JSON booleans, but None is possible for Deleted)
     # ------------------------------------------------------------------
-    _BOOL_COLS = ("IsPersonalBest", "FreshTyre", "FastF1Generated", "IsAccurate", "Rainfall")
-    for col in _BOOL_COLS:
+    for col in _LAPS_BOOL_COLS:
         if col in df.columns and df[col].dtype != bool:
             df[col] = df[col].fillna(False).astype(bool)
 
@@ -1381,6 +1623,111 @@ def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFram
     return lap_df
 
 
+#: Laps columns that arrive as float seconds and become ``Duration("ns")`` on polars
+#: (fastf1's ``timedelta64`` columns).
+_POLARS_LAPS_DURATION_COLS = (
+    "Time",
+    "LapTime",
+    "PitOutTime",
+    "PitInTime",
+    "Sector1Time",
+    "Sector2Time",
+    "Sector3Time",
+    "Sector1SessionTime",
+    "Sector2SessionTime",
+    "Sector3SessionTime",
+    "LapStartTime",
+    "WeatherTime",
+)
+
+
+#: polars dtypes of the laps columns a session can leave entirely empty (all
+#: null): pre-2018 Ergast laps have no speeds, tyres or track status.
+_POLARS_LAPS_NULL_DTYPES: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "Driver",
+            "DriverNumber",
+            "Compound",
+            "Team",
+            "TrackStatus",
+            "DeletedReason",
+            "QualifyingSession",
+            "ms1",
+            "ms2",
+            "ms3",
+            "drv",
+            "team",
+        ),
+        "String",
+    ),
+    **dict.fromkeys(("LapNumber", "Stint", "TyreLife", "Position", "WindDirection"), "Int64"),
+    **dict.fromkeys(
+        (
+            "SpeedI1",
+            "SpeedI2",
+            "SpeedFL",
+            "SpeedST",
+            "AirTemp",
+            "Humidity",
+            "Pressure",
+            "TrackTemp",
+            "WindSpeed",
+            "LapTimeSeconds",
+        ),
+        "Float64",
+    ),
+}
+
+#: Lap flags fastf1 types as bool (a missing flag reads False on both backends).
+_LAPS_BOOL_COLS = ("IsPersonalBest", "FreshTyre", "FastF1Generated", "IsAccurate", "Rainfall")
+
+
+def _polars_laps_contract(lap_df):
+    """fastf1's dtype families on a polars laps frame.
+
+    Time columns become ``Duration("ns")``, ``LapStartDate`` ``Datetime("ns")``;
+    ``LapTimeSeconds`` (already computed from the float seconds) stays Float64.
+    The flag columns follow the pandas contract: ``Boolean`` with a missing
+    flag read as False (``Deleted`` stays nullable).
+    """
+    schema = lap_df.schema
+    # A column no lap fills arrives as polars' Null dtype: give it the dtype a
+    # populated session has (pandas keeps float64/object there).
+    exprs = [
+        pl.col(col).cast(getattr(pl, dtype)).alias(col)
+        for col, dtype in _POLARS_LAPS_NULL_DTYPES.items()
+        if schema.get(col) == pl.Null
+    ]
+    exprs += [
+        pl.col(col).cast(pl.Boolean, strict=False).fill_null(False).alias(col)
+        for col in _LAPS_BOOL_COLS
+        if col in schema and (schema[col] != pl.Boolean or lap_df[col].null_count())
+    ]
+    if "Deleted" in schema and schema["Deleted"] != pl.Boolean:
+        exprs.append(pl.col("Deleted").cast(pl.Boolean, strict=False).alias("Deleted"))
+    for col in _POLARS_LAPS_DURATION_COLS:
+        dtype = schema.get(col)
+        if dtype is None or dtype == pl.Duration:
+            continue
+        exprs.append(
+            (pl.col(col).cast(pl.Float64, strict=False) * 1_000_000_000)
+            .round()
+            .cast(pl.Int64)
+            .cast(pl.Duration("ns"))
+            .alias(col)
+        )
+    date_dtype = schema.get("LapStartDate")
+    if date_dtype is not None and date_dtype != pl.Datetime:
+        exprs.append(
+            pl.col("LapStartDate")
+            .cast(pl.String, strict=False)
+            .str.to_datetime(strict=False, time_unit="ns")
+            .alias("LapStartDate")
+        )
+    return lap_df.with_columns(exprs) if exprs else lap_df
+
+
 def _process_lap_df(lap_df, lib: str) -> DataFrame:
     """Apply column renaming, dtype coercions, and categorical types."""
     if lib == "polars":
@@ -1428,6 +1775,8 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
         lap_df = lap_df_pl.with_columns(
             pl.col(COL_LAP_TIME).cast(pl.Float64, strict=False).alias(COL_LAP_TIME_SECONDS)
         )
+    if lib == "polars":
+        lap_df = _polars_laps_contract(lap_df)
     if lib == "polars" and not bool(config.get("polars_lap_categorical", False)):
         lap_df = _reorder_laps_columns(lap_df, lib)
         return lap_df

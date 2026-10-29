@@ -529,7 +529,7 @@ class TestDecodedNames:
         assert sess.event_name == "São Paulo Grand Prix"
         assert sess.session_name == "Practice 1"
         assert sess.name == "Practice 1"
-        assert sess.session_info["EventName"] == "São Paulo Grand Prix"
+        assert sess.session_info["Meeting"]["Name"] == "São Paulo Grand Prix"
 
     def test_driver_not_found_context_is_decoded(self):
         sess = _session_with([{"driver": "HAM", "dn": "44"}], None)

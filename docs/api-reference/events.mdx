@@ -732,7 +732,7 @@ An exact (case-insensitive) name match comes first, then the alias table for cir
 
 **Raises:**
 
-- `EventNotFoundError`: If no event matches the name. With `exact_match=False`, the message is `No event matching '<name>' in <year>`. With `exact_match=True`, the message is `No exact match found for event '<name>' in <year>`. This class is a `ValueError` subclass, exported as `tif1.EventNotFoundError`, so `except ValueError` also catches it.
+- `EventNotFoundError`: If no event matches the name. With `exact_match=False`, the error is the subclass `FuzzyMatchError` and the message is `No event matching '<name>' in <year>`. With `exact_match=True`, the message is `No exact match found for event '<name>' in <year>`. This class is a `ValueError` subclass, exported as `tif1.EventNotFoundError`, so `except ValueError` also catches it.
 - `EventNotInSeasonError`: If an alias names an event that is not on the calendar of that year, for example `'Suzuka' refers to the Japanese Grand Prix, which is not on the 2021 calendar`. This class is a subclass of `EventNotFoundError`, exported as `tif1.EventNotInSeasonError`.
 - `ValueError`: If the season has no events (`No events found for <year>`).
 - `InvalidDataError`: If the schedule data is malformed or cannot be parsed
@@ -1163,25 +1163,30 @@ print(event.year)                # 2021 (property)
 
 ### Methods
 
-#### `get_session(session_name)`
+#### `get_session(identifier)`
 
 ```python
-def get_session(session_name: int | str) -> Session
+def get_session(
+    identifier: int | str | None = None,
+    *,
+    session_name: int | str | None = None,
+) -> Session
 ```
 
 Get a Session object for a specific session within this event.
 
 **Parameters:**
-- `session_name`: Session identifier - can be:
+- `identifier`: Session identifier (the fastf1 argument name; positional use is unchanged) - can be:
   - Session name (for example, "Qualifying", "Race")
   - Session abbreviation (for example, "Q", "R", "FP1")
   - Session number (1-5, the position in the session list of the event)
+- `session_name`: The earlier tif1 keyword for `identifier`. Give one of the two
 
 **Returns:**
 - `Session` object ready to load data
 
 **Raises:**
-- `ValueError`: If the session identifier is invalid or does not exist for this event
+- `ValueError`: If the session identifier is invalid or does not exist for this event, or if both `identifier` and `session_name` (or neither) are given
 
 **Example:**
 ```python
@@ -1198,6 +1203,9 @@ fp1 = event.get_session("FP1")
 
 # Get by number
 practice_1 = event.get_session(1)
+
+# The fastf1 keyword
+race = event.get_session(identifier="Race")
 
 # Load data (laps only; session.drivers holds driver numbers)
 race.load(laps=True, telemetry=False)
@@ -1332,44 +1340,50 @@ The `EventSchedule` class is a pandas DataFrame subclass containing all events f
   The season year.
 </ResponseField>
 
+<ResponseField name="base_class_view" type="pandas.DataFrame">
+  The schedule as a plain `pandas.DataFrame` (fastf1 parity). Some debuggers and IDEs show a plain frame better than a subclass.
+</ResponseField>
+
 ### Methods
 
 #### `get_event_by_round(round_number)`
 
 ```python
-def get_event_by_round(round_number: int) -> Event
+def get_event_by_round(round_number: int | None = None, *, round: int | None = None) -> Event
 ```
 
 Return an Event for a specific championship round.
 
 **Parameters:**
 - `round_number`: The round number (1-indexed)
+- `round`: The fastf1 keyword for the same value (deprecated in fastf1 3.9.0). Give one of the two
 
 **Returns:**
 - `Event` object
 
 **Raises:**
-- `ValueError`: If the round number is invalid
+- `ValueError`: If the round number is invalid, if it is 0 (testing events have no round), or if both keywords (or neither) are given
 
-#### `get_event_by_name(name, strict_search=False)`
+#### `get_event_by_name(name, strict_search=False, *, exact_match=False)`
 
 ```python
-def get_event_by_name(name: str, strict_search: bool = False) -> Event | None
+def get_event_by_name(name: str, strict_search: bool = False, *, exact_match: bool = False) -> Event | None
 ```
 
 Return an Event by name with optional fuzzy matching.
 
 **Parameters:**
-- `name`: Event name
-- `strict_search`: If `True`, requires exact match
+- `name`: Event name, location, or country
+- `strict_search`: If `True`, requires an exact (case-insensitive) event name match
+- `exact_match`: The fastf1 name of `strict_search`. Either keyword turns on the exact match
 
 **Returns:**
 - `Event` object or `None` if not found. A name with a fuzzy score below 70 also gives `None`; this method does not raise `EventNotFoundError`.
 
-#### `get_event(identifier, strict_search=False)`
+#### `get_event(identifier, strict_search=False, *, exact_match=False)`
 
 ```python
-def get_event(identifier: int | str, strict_search: bool = False) -> Event | None
+def get_event(identifier: int | str, strict_search: bool = False, *, exact_match: bool = False) -> Event | None
 ```
 
 Return an Event by round number or name.
@@ -1377,6 +1391,7 @@ Return an Event by round number or name.
 **Parameters:**
 - `identifier`: Round number (int) or event name (str)
 - `strict_search`: If `True`, requires exact name match
+- `exact_match`: The fastf1 name of `strict_search`
 
 **Returns:**
 - `Event` object or `None` if not found
@@ -1396,6 +1411,13 @@ belgian_gp = schedule.get_event_by_name("Belgian Grand Prix")
 # Get by either
 belgian_gp = schedule.get_event(12)
 belgian_gp = schedule.get_event("Belgian")
+
+# The fastf1 keywords
+belgian_gp = schedule.get_event_by_round(round=12)
+belgian_gp = schedule.get_event_by_name("Belgian Grand Prix", exact_match=True)
+
+# A plain pandas.DataFrame view of the schedule
+print(type(schedule.base_class_view).__name__)  # DataFrame
 ```
 
 ---

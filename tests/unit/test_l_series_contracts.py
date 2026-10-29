@@ -224,9 +224,9 @@ class TestL3MemoizedFrameReuse:
         build_calls: list[tuple[str, int]] = []
         real_create = core._create_telemetry_df
 
-        def counting_create(tel_data, driver, lap_num, lib):
+        def counting_create(tel_data, driver, lap_num, lib, clock=None):
             build_calls.append((driver, lap_num))
-            return real_create(tel_data, driver, lap_num, lib)
+            return real_create(tel_data, driver, lap_num, lib, clock=clock)
 
         monkeypatch.setattr(core, "_create_telemetry_df", counting_create)
 

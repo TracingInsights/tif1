@@ -204,7 +204,7 @@ lap_10_pl = laps_pl.filter(pl.col("LapNumber") == 10)
 
 ### Why does `laps["LapTime"] < 90` fail?
 
-`LapTime` is a `timedelta64[ns]` column on pandas and a `Float64` column of seconds on polars. Compare `LapTimeSeconds`, which is a float on both backends:
+`LapTime` is a `timedelta64[ns]` column on pandas and a `Duration` column on polars. On polars, `pl.col("LapTime") < 90` compares nanoseconds, so it selects no lap. Compare `LapTimeSeconds`, which is a float on both backends:
 
 ```python
 # pandas
@@ -214,7 +214,7 @@ fast = laps[laps["LapTimeSeconds"] < 90]
 fast_pl = laps_pl.filter(pl.col("LapTimeSeconds") < 90)
 ```
 
-On pandas, `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` also works. See [Column types by backend](/concepts/backends#column-types-by-backend).
+On pandas, `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` also works. On polars, `laps_pl.filter(pl.col("LapTime") < pl.duration(seconds=90))` does. See [Column types by backend](/concepts/backends#column-types-by-backend).
 
 ### How do I get weather data?
 
@@ -231,7 +231,7 @@ Or access it directly:
 weather = session.weather
 ```
 
-`Time` is `timedelta64[ns]` on pandas and `Duration("ms")` on polars. `Rainfall` is a nullable boolean on both backends. When the weather payload cannot be converted, tif1 logs a warning and returns an empty DataFrame. See [Empty Weather or Race Control Table](/reference/troubleshooting#empty-weather-or-race-control-table).
+`Time` is `timedelta64[ns]` on pandas and `Duration("ns")` on polars. `Rainfall` is a nullable boolean on both backends. When the weather payload cannot be converted, tif1 logs a warning and returns an empty DataFrame. See [Empty Weather or Race Control Table](/reference/troubleshooting#empty-weather-or-race-control-table).
 
 ---
 
@@ -465,7 +465,7 @@ sprint_quali = tif1.get_session(2025, "Chinese Grand Prix", "Sprint Qualifying")
 
 ### How do I handle missing data?
 
-Missing lap times are `NaT` (pandas) or `null` (polars). Missing telemetry gives an empty DataFrame, not an exception. A driver code that is not in the session raises `DriverNotFoundError`, a subclass of `DataNotFoundError`:
+Missing lap times are `NaT` (pandas) or `null` (polars). Missing telemetry gives an empty DataFrame, not an exception. A driver code that is not in the session raises `DriverNotFoundError`, a subclass of `DataNotFoundError` and of `ValueError` (the fastf1 exception):
 
 ```python
 import tif1

@@ -100,7 +100,7 @@ for driver in session.drivers_df["Driver"]:
 
 ### Choose the right lib
 
-Use polars for large datasets and performance-critical code. `lib="polars"` returns polars DataFrames from `session.laps`, `session.weather`, and the telemetry accessors. `session.drivers_df` stays a pandas DataFrame. Without polars, the session falls back to pandas.
+Use polars for large datasets and performance-critical code. `lib="polars"` returns polars DataFrames from `session.laps`, `session.weather`, `session.results`, `session.drivers_df`, and the telemetry accessors. Without polars, the session falls back to pandas.
 
 ```python
 import tif1

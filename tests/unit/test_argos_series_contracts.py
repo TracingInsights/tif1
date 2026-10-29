@@ -191,16 +191,16 @@ class TestA4A5LapsModel:
         assert fastest["LapNumber"] == expected["LapNumber"]
         assert fastest.name == expected.name
 
-    def test_iterlaps_drops_null_columns_and_skips_missing_required(self):
+    def test_iterlaps_keeps_every_column_and_filters_on_require(self):
         laps = self._laps()
         rows = list(laps.iterlaps())
-        assert len(rows) == 11  # the NaT lap is skipped (LapTime required)
+        assert len(rows) == 12  # fastf1: every lap without a requirement
         for index, lap in rows:
-            assert not lap.isna().any()
+            assert list(lap.index) == list(laps.columns)  # nulls kept, as iterrows
             assert lap.name == index
             assert lap["Driver"] == "VER"
-        with pytest.raises(KeyError):
-            list(laps.iterlaps(require=["NoSuchColumn"]))
+        assert len(list(laps.iterlaps(require=["LapTime"]))) == 11  # the NaT lap
+        assert list(laps.iterlaps(require=["NoSuchColumn"])) == []
 
 
 class TestA6TelemetryHelpers:

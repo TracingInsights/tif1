@@ -77,15 +77,19 @@ def _forbid_async(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "laps_tier"),
     [
-        lambda s: s.get_fastest_lap_tel(),
-        lambda s: s.get_fastest_laps_tels(by_driver=False),
-        lambda s: s.get_driver("VER").get_fastest_lap_tel(),
+        (lambda s: s.get_fastest_lap_tel(), False),
+        (lambda s: s.get_fastest_laps_tels(by_driver=False), False),
+        # ``get_driver`` builds the results row; without an official
+        # classification that reads the laps, from the frame tier when warm.
+        (lambda s: s.get_driver("VER").get_fastest_lap_tel(), True),
     ],
 )
-def test_warm_fastest_lap_tel_is_asyncio_free_and_skips_deleted_laps(monkeypatch, call):
+def test_warm_fastest_lap_tel_is_asyncio_free_and_skips_deleted_laps(monkeypatch, call, laps_tier):
     session = _session(warm=True)
+    if laps_tier:
+        _store_laps_frame()
     _forbid_async(monkeypatch)
     tel = call(session)
     assert "asyncio" not in sys.modules
@@ -110,6 +114,7 @@ def test_warm_fastest_laps_tels_by_driver_is_asyncio_free(monkeypatch):
 
 def test_warm_driver_lookup_reads_cached_payloads_synchronously(monkeypatch):
     session = _session(warm=True)
+    _store_laps_frame()  # the results row reads the laps (no official classification)
     _forbid_async(monkeypatch)
     driver = session.get_driver("LEC")
     assert "asyncio" not in sys.modules

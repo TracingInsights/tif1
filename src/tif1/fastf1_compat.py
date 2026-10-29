@@ -15,13 +15,32 @@ logger = logging.getLogger(__name__)
 
 
 class _NoCacheContext(AbstractContextManager[None]):
-    """Context manager that temporarily disables caching."""
+    """Context manager that temporarily disables caching.
+
+    ``disable_http_cache``/``disable_func_cache`` are fastf1's two cache
+    stages. tif1 has one cache toggle, so either flag disables it; with both
+    ``False`` the context is a no-op, and its exit never re-enables a cache
+    its entry did not disable (an enclosing ``disabled()`` block keeps its
+    state).
+    """
+
+    def __init__(self, *, disable_http_cache: bool = True, disable_func_cache: bool = True) -> None:
+        self.disable_http_cache = disable_http_cache
+        self.disable_func_cache = disable_func_cache
+        self._disabled = False
 
     def __enter__(self) -> None:
-        Cache.set_disabled()
+        self._disabled = self.disable_http_cache or self.disable_func_cache
+        if self._disabled:
+            Cache.set_disabled(
+                disable_http_cache=self.disable_http_cache,
+                disable_func_cache=self.disable_func_cache,
+            )
 
     def __exit__(self, *exc_info: object) -> None:
-        Cache.set_enabled()
+        if self._disabled:
+            self._disabled = False
+            Cache.set_enabled()
 
 
 class Cache:
@@ -86,6 +105,37 @@ class Cache:
         return cache_instance
 
     @classmethod
+    def configure(
+        cls,
+        *,
+        cache_dir: str | Path | None = None,
+        force_renew: bool = False,
+        ignore_version: bool = False,
+        use_requests_cache: bool = True,
+    ) -> None:
+        """Configure the cache with fastf1's ``Cache.configure`` keywords.
+
+        Maps onto :meth:`enable_cache`: the directory is created when it does
+        not exist (fastf1 requires a custom directory to exist already),
+        ``force_renew`` clears the cache, and ``ignore_version``/
+        ``use_requests_cache`` are accepted for compatibility (tif1 caches
+        every payload in its own SQLite tiers; there is no separate HTTP
+        cache to switch off).
+
+        Args:
+            cache_dir: Cache directory; the configured directory when omitted.
+            force_renew: Clear the cache after enabling it.
+            ignore_version: Accepted for API compatibility.
+            use_requests_cache: Accepted for API compatibility.
+        """
+        cls.enable_cache(
+            cache_dir=cache_dir,
+            ignore_version=ignore_version,
+            force_renew=force_renew,
+            use_requests_cache=use_requests_cache,
+        )
+
+    @classmethod
     def clear_cache(cls, cache_dir: str | Path | None = None, deep: bool = False) -> None:
         """Clear cached data.
 
@@ -138,13 +188,40 @@ class Cache:
                     logger.warning("Failed to remove legacy cache file %s: %s", file_path, exc)
 
     @classmethod
-    def disabled(cls) -> _NoCacheContext:
-        """Temporarily disable caching in a context manager."""
-        return _NoCacheContext()
+    def disabled(
+        cls, *, disable_http_cache: bool = True, disable_func_cache: bool = True
+    ) -> _NoCacheContext:
+        """Return a context manager that disables caching inside its block.
+
+        fastf1 has two cache stages (HTTP responses and computed results);
+        tif1 has one toggle, which either flag switches off. With both
+        ``False`` the block runs with caching untouched. Contexts nest: the
+        cache comes back when the outermost block exits.
+
+        Args:
+            disable_http_cache: Disable the HTTP cache (fastf1's stage 1).
+            disable_func_cache: Disable the function/compute cache (stage 2).
+        """
+        return _NoCacheContext(
+            disable_http_cache=disable_http_cache, disable_func_cache=disable_func_cache
+        )
 
     @classmethod
-    def set_disabled(cls) -> None:
-        """Disable caching globally until `set_enabled` is called."""
+    def set_disabled(
+        cls, *, disable_http_cache: bool = True, disable_func_cache: bool = True
+    ) -> None:
+        """Disable caching until :meth:`set_enabled` is called as many times.
+
+        Calls nest (a depth counter), so a ``set_disabled`` inside a disabled
+        region needs its own ``set_enabled``. With both keywords ``False``
+        nothing changes and no ``set_enabled`` is owed.
+
+        Args:
+            disable_http_cache: Disable the HTTP cache (fastf1's stage 1).
+            disable_func_cache: Disable the function/compute cache (stage 2).
+        """
+        if not (disable_http_cache or disable_func_cache):
+            return
         config = get_config()
         if cls._disable_depth == 0:
             cls._enable_cache_before_disable = bool(config.get("enable_cache", True))
@@ -273,6 +350,15 @@ class Cache:
             cache_module._cache = None
 
 
-def set_log_level(level: int = logging.WARNING) -> None:
-    """FastF1-compatible logger configuration."""
-    logging.getLogger("tif1").setLevel(level)
+def set_log_level(level: str | int = logging.WARNING) -> None:
+    """FastF1-compatible logger configuration.
+
+    Delegates to :func:`tif1.logger.set_log_level`: level names
+    (``"WARNING"``) and :mod:`logging` constants are both accepted, and the
+    ``tif1`` logger plus its console handler move to the level. Imported
+    lazily so this module stays free of the console handler until the level
+    is actually set.
+    """
+    from .logger import set_log_level as _set_log_level
+
+    _set_log_level(level)

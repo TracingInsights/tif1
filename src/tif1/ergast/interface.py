@@ -183,6 +183,11 @@ class ErgastResultFrame(pd.DataFrame):
     def _constructor_sliced(self):
         return ErgastResultSeries
 
+    @property
+    def base_class_view(self) -> pd.DataFrame:
+        """The same data as a plain :class:`pandas.DataFrame` (fastf1 parity)."""
+        return pd.DataFrame(self)
+
 
 class ErgastResultSeries(pd.Series):
     """A pandas ``Series`` row/column of an :class:`ErgastResultFrame`."""

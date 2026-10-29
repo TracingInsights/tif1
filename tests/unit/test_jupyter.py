@@ -241,3 +241,39 @@ class TestEnableJupyterDisplay:
             patch.dict("sys.modules", {"tif1.core": None}),
         ):
             enable_jupyter_display()
+
+
+class TestPolarsDisplay:
+    def test_enable_registers_an_imported_polars_module(self):
+        polars_models = SimpleNamespace(PolarsDriver=MagicMock(), PolarsLap=MagicMock())
+        core = MagicMock(Session=MagicMock(), Driver=MagicMock(), Lap=MagicMock())
+        with (
+            patch("tif1.jupyter._is_notebook", return_value=True),
+            patch("tif1.jupyter._display_enabled", False),
+            patch.dict("sys.modules", {"tif1.core": core, "tif1.models_polars": polars_models}),
+        ):
+            enable_jupyter_display()
+        assert hasattr(polars_models.PolarsDriver, "_repr_html_")
+        assert hasattr(polars_models.PolarsLap, "_repr_html_")
+
+    def test_cards_render_for_the_polars_row_classes(self):
+        import polars as pl
+
+        from tif1.jupyter import register_polars_display
+        from tif1.models_polars import PolarsDriver, PolarsLap
+
+        session = SimpleNamespace(year=2025, gp="Bahrain%20Grand%20Prix", session="Race")
+        driver = PolarsDriver(pl.DataFrame({"Abbreviation": ["VER"]}), session=session)
+        lap = PolarsLap(pl.DataFrame({"Driver": ["VER"], "LapNumber": [29]}), session=session)
+        polars_models = SimpleNamespace(
+            PolarsDriver=type("D", (PolarsDriver,), {}), PolarsLap=type("L", (PolarsLap,), {})
+        )
+        register_polars_display(polars_models)
+        driver.__class__ = polars_models.PolarsDriver
+        lap.__class__ = polars_models.PolarsLap
+        driver_card = driver._repr_html_()
+        lap_card = lap._repr_html_()
+        assert "Driver: VER" in driver_card
+        assert "Bahrain Grand Prix" in driver_card
+        assert "Lap 29" in lap_card
+        assert "Telemetry loaded:</strong></td>" in lap_card

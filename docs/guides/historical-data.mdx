@@ -57,13 +57,13 @@ print(tif1.get_driver_standings(2024, 10).head(3))
 print(tif1.get_constructor_standings(2023).head(3))
 ```
 
-The frames follow the session's `lib`: pandas by default, polars with `lib="polars"`. `session.results` stays pandas.
+The frames follow the session's `lib`: pandas by default, polars with `lib="polars"`. `session.results` follows it too: a `PolarsSessionResults` on a polars session.
 
 ## Seasons before 2018
 
-Schedules and sessions reach back to 1950. The schedule of those years lists all five sessions, as fastf1's Ergast backend does, but only `Qualifying`, `Sprint` and `Race` can be loaded. `get_session(1995, "Monaco", "Practice 1")` raises `DataNotFoundError` because Ergast carries no practice data. Results come from the classification, laps from the Ergast lap timings (1996 onward), pit stops from 2011 onward. Telemetry, weather and race control messages do not exist for those years and raise `DataNotFoundError`.
+Schedules and sessions reach back to 1950. The schedule of those years lists all five sessions, as fastf1's Ergast backend does, but only `Qualifying`, `Sprint` and `Race` can be loaded. `get_session(1995, "Monaco", "Practice 1")` raises `DataNotFoundError` because Ergast carries no practice data. Results come from the classification, laps from the Ergast lap timings (1996 onward), pit stops from 2011 onward. Each lap that is faster than every earlier lap of the driver has `IsPersonalBest` set, so `laps.pick_fastest()` works as in later seasons. Telemetry, weather and race control messages do not exist for those years and raise `DataNotFoundError`. `get_circuit_info()` reads the earliest MultiViewer layout of the circuit, and returns empty frames for a circuit that MultiViewer does not know.
 
-Before the 1960s a car was sometimes shared by two drivers, who then appear as two rows of the classification under one number. `session.results` keeps the plain number as the label of the first driver. The other drivers of that car are labelled `number/Abbreviation`, for example `"10/shawe-taylor"`, so every label names one row. The `DriverNumber` column keeps the car number for both drivers. `session.drivers` lists the same labels, and `session.get_driver()` accepts a label, a number or an abbreviation.
+Before the 1960s a car was sometimes shared by two drivers, who then appear as two rows of the classification under one number. `session.results` keeps the plain number as the label of the first driver. The other drivers of that car are labelled `number/Abbreviation`, for example `"10/shawe-taylor"`, so every label names one row. The `DriverNumber` column keeps the car number for both drivers. `session.drivers` and the keys of `session.car_data` list the same labels. `session.get_driver()` accepts a label, a number or an abbreviation: in the 1951 French Grand Prix, `get_driver("8")` returns Fangio and `get_driver("8/fagioli")` returns Fagioli, the second driver of car 8.
 
 ```python
 session = tif1.get_session(2010, "Abu Dhabi Grand Prix", "Race")

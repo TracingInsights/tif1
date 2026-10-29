@@ -1,0 +1,163 @@
+---
+title: "MultiViewer API"
+icon: "map-location-dot"
+description: "Circuit layouts from the MultiViewer API: corners, marshal lights, marshal sectors and rotation, kept in the SQLite cache without expiry"
+keywords:
+  - "MultiViewer"
+  - "mvapi"
+  - "circuit info"
+  - "marshal lights"
+  - "marshal sectors"
+  - "corners"
+  - "fastf1.mvapi"
+---
+
+<Note>
+  `tif1.mvapi` is the tif1 version of `fastf1.mvapi`. It reads circuit layouts from the [MultiViewer API](https://api.multiviewer.app), the source that fastf1 uses for `get_circuit_info()`. The API needs no account.
+</Note>
+
+## Overview
+
+The MultiViewer API holds one layout per circuit and season. A layout has the corners, the marshal lights and sectors, the track map rotation, the track outline, and the pit lane time loss. tif1 uses it in two ways:
+
+- **Directly**, through the `tif1.mvapi` functions on this page.
+- **Inside `Session`**, as the backup source of `session.get_circuit_info()` when the `corners.json` file of the session cannot supply the marshal data.
+
+Requests go through the shared tif1 transport, with the `User-Agent: tif1/{version} (+https://github.com/TracingInsights/tif1)` header. They also work in Pyodide. A failed request never raises: the functions return `None`. `get_circuit` and `get_circuits_index` log the failure at INFO level. `get_circuit_info` also logs a warning when it gets no layout.
+
+MultiViewer knows 32 circuits and has no layout before 2018. For a year before the first layout of a circuit, it answers with its earliest layout: a 2016 Sakhir request gives the 2019 layout.
+
+### How `session.get_circuit_info()` uses it
+
+`session.get_circuit_info()` builds the `CircuitInfo` in these steps:
+
+1. It fetches the `corners.json` file of the session. The new schema holds the corners with their letters, the marshal lights and sectors, and the pit lane time loss. It also holds the track outline, the track sections, the mini-sector index, and the circuit keys. Such a file needs no MultiViewer request.
+2. It asks MultiViewer once when the file is missing, is invalid, or uses the old schema (the 2021 to 2024 seasons, corners and rotation only). A new-schema file without corners or marshal lights also causes a request. Seasons before 2018 have no file, so their layout is the earliest MultiViewer layout of the circuit. A circuit that MultiViewer does not know, such as Aida (1995 Pacific Grand Prix), gets empty frames.
+3. It finds the circuit key in this order: the `CircuitKey` of a new-schema file, the packaged circuit table, and the live circuit index. The live index is matched by circuit name and country.
+4. It merges the two sources. Corners and rotation from `corners.json` always win. MultiViewer fills the marshal frames, the corner letters, and the empty extras. `CircuitInfo.source` names the sources, for example `"corners.json+multiviewer"`, or is `""` when neither source answered.
+5. It fits the missing marker distances on the fastest lap of the session, on pandas and polars sessions. The distances from `corners.json` are kept. Seasons before 2018 have no telemetry, so their markers keep a missing `Distance`.
+
+Mugello is circuit key 149 in the F1 live-timing data, but key 146 at MultiViewer (where 149 is Jeddah). `session.get_circuit_info()` sends 146 for Mugello, as fastf1 does. The functions on this page send the key as given.
+
+In `offline_mode`, `session.get_circuit_info()` does not ask MultiViewer. A failed MultiViewer request leaves the marshal frames empty, and `get_circuit_info()` still returns the corners from the file. Refer to [`get_circuit_info()`](/api-reference/core#get_circuit_info) and [CircuitInfo](/api-reference/models#circuitinfo).
+
+```python
+import tif1
+
+session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
+circuit = session.get_circuit_info()
+print(circuit.source)  # corners.json+multiviewer: the 2024 file uses the old schema
+print(len(circuit.corners), len(circuit.marshal_lights), len(circuit.marshal_sectors))
+```
+
+### Caching
+
+The answers are kept in the `json` tier of the SQLite cache (`cache.sqlite`).
+
+| Payload | SQLite key | Expiry |
+| :--- | :--- | :--- |
+| Circuit layout | `mvapi/circuits/{circuit_key}/{year}.json` | None: a layout does not change after its season |
+| Circuit index | `mvapi/circuits/index.json` | `schedule_ttl_hours` (default 6). A stale index is used when the refresh fails or in `offline_mode` |
+
+The layout also stays in memory on the session after the first `get_circuit_info()` call. In `offline_mode`, the functions read the cache only.
+
+### The packaged circuit table
+
+`tif1` ships `data/circuits/mv_circuits.json`, a table keyed by the Ergast `CircuitId` of each event. Each entry holds the MultiViewer circuit key, the country key, the IOC country code, the circuit name, and the country. The schedule already carries the `CircuitId`, so the circuit key needs no request. `session.session_info` reads the same table for its `Meeting.Circuit.Key` and `Meeting.Country` values. `tools/vendor_mv_circuits.py` generates the table from the circuit index.
+
+---
+
+## `get_circuit_info`
+
+```python
+def get_circuit_info(*, year: int, circuit_key: int, lib: str = "pandas") -> CircuitInfo | None
+```
+
+Load the circuit information of a season from the MultiViewer API, with the fastf1 parser. `tif1.get_circuit_info` is the same function. It is not the `session.get_circuit_info()` method.
+
+**Parameters:**
+
+<ParamField path="year" type="int" required>
+  The championship year. MultiViewer answers with its most recent layout at or before that year. For a year before its first layout of the circuit, it answers with its earliest layout (2016 gives the 2019 layout of Sakhir).
+</ParamField>
+
+<ParamField path="circuit_key" type="int" required>
+  The circuit key of the F1 live-timing data (the MultiViewer `circuitKey`), for example 63 for Sakhir or 22 for Monaco.
+</ParamField>
+
+<ParamField path="lib" type='"pandas" | "polars"' default='"pandas"'>
+  The frame library of the marker frames, `track`, and `sections`.
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="CircuitInfo | None" type="CircuitInfo">
+  - `corners`, `marshal_lights`, `marshal_sectors`: frames with the columns `X`, `Y`, `Number`, `Letter`, `Angle`, `Distance`. `Distance` is empty until `add_marker_distance()` fits it
+  - `rotation`: the track map rotation in degrees
+  - The extras from the same answer: `circuit_key`, `circuit_name`, `location`, `country`, `country_code`, `country_key`, `pit_loss`, `track`, and `mini_sector_index`
+  - `source`: `"multiviewer"`
+
+  `None` when the API did not answer. tif1 then logs a warning.
+</ResponseField>
+
+```python
+from tif1 import mvapi
+
+info = mvapi.get_circuit_info(year=2024, circuit_key=22)  # Monaco
+print(info.source, info.circuit_name, info.rotation)  # multiviewer Monte Carlo 315.0
+print(info.marshal_lights[["Number", "X", "Y"]].head(3))
+```
+
+---
+
+## `get_circuit`
+
+```python
+def get_circuit(*, year: int, circuit_key: int) -> dict[str, Any] | None
+```
+
+The raw MultiViewer layout of a circuit for a season (`/api/v1/circuits/{circuit_key}/{year}`). The first answer is kept in the SQLite cache without expiry.
+
+**Returns:**
+- The JSON object (`circuitKey`, `circuitName`, `corners`, `marshalLights`, `marshalSectors`, `rotation`, `pitLoss`, `x`, `y`, and others)
+- `None` when the request failed, when the circuit is unknown, or when the cache has no answer in `offline_mode`
+
+```python
+from tif1 import mvapi
+
+raw = mvapi.get_circuit(year=2024, circuit_key=22)
+print(raw["circuitName"], raw["rotation"], len(raw["marshalLights"]))
+```
+
+---
+
+## `get_circuits_index`
+
+```python
+def get_circuits_index() -> dict[str, Any] | None
+```
+
+The MultiViewer circuit index (`/api/v1/circuits`): every circuit that MultiViewer knows, keyed by the circuit key as a string. Each entry holds `name`, `country`, `years`, `circuitKey`, `countryKey`, `iocCountryCode`, and `pitLoss`. The index stays in the cache for `schedule_ttl_hours`.
+
+**Returns:**
+- The index, or `None` when neither the network nor the cache has it
+
+```python
+from tif1 import mvapi
+
+index = mvapi.get_circuits_index()
+print(index["63"]["name"], index["63"]["iocCountryCode"])  # Sakhir BRN
+```
+
+---
+
+## `CircuitInfo`
+
+`tif1.mvapi.CircuitInfo` is the same class as `tif1.models.CircuitInfo`. Refer to [CircuitInfo](/api-reference/models#circuitinfo) for its attributes and `add_marker_distance()`.
+
+## Related pages
+
+- [Core API](/api-reference/core): `session.get_circuit_info()` and `session.session_info`
+- [Models](/api-reference/models): the `CircuitInfo` class
+- [Cache](/api-reference/cache): the SQLite `json` tier
+- [Migration from fastf1](/migration-from-fastf1): what still differs from fastf1

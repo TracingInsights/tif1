@@ -25,6 +25,7 @@ from .exceptions import (
     DataNotFoundError,
     EventNotFoundError,
     EventNotInSeasonError,
+    FuzzyMatchError,
     InvalidDataError,
     NetworkError,
 )
@@ -1048,7 +1049,9 @@ def _resolve_event_name(
             raise ValueError(f"No events found for {year}")
         if exact_match:
             raise EventNotFoundError(f"No exact match found for event '{name}' in {year}")
-        raise EventNotFoundError(f"No event matching '{name}' in {year}")
+        # fastf1's name for a fuzzy search below the score floor; an
+        # EventNotFoundError (and ValueError), so existing handlers still catch it.
+        raise FuzzyMatchError(f"No event matching '{name}' in {year}")
     return event
 
 

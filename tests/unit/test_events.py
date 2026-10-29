@@ -434,6 +434,20 @@ class TestFuzzyMatchQuality:
         with pytest.raises(EventNotFoundError, match="2025"):
             get_event_by_name(2025, query)
 
+    def test_fuzzy_failure_is_fastf1s_fuzzy_match_error(self):
+        from tif1 import get_session
+        from tif1.exceptions import EventNotFoundError, FuzzyMatchError
+
+        # fastf1 code catches FuzzyMatchError; tif1 code catches its parent.
+        with pytest.raises(FuzzyMatchError, match="No event matching 'Moon GP' in 2025"):
+            get_event_by_name(2025, "Moon GP")
+        with pytest.raises(FuzzyMatchError):
+            get_session(2025, "Moon GP", "Race")
+        # An exact-match miss is not a fuzzy failure.
+        with pytest.raises(EventNotFoundError) as excinfo:
+            get_event_by_name(2025, "Bahrain", exact_match=True)
+        assert type(excinfo.value) is EventNotFoundError
+
     def test_get_session_rejects_an_unrelated_name(self):
         from tif1 import get_session
         from tif1.exceptions import EventNotFoundError

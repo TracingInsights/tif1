@@ -122,8 +122,16 @@ class SessionNotLoadedError(TIF1Error):
         super().__init__(message, attribute=attribute, **context)
 
 
-class DriverNotFoundError(DataNotFoundError):
-    """Raised when driver is not found in session."""
+DataNotLoadedError = SessionNotLoadedError
+"""fastf1's name for :class:`SessionNotLoadedError` (the same class object)."""
+
+
+class DriverNotFoundError(DataNotFoundError, ValueError):
+    """Raised when driver is not found in session.
+
+    Also a ``ValueError``: fastf1's ``Session.get_driver`` raises ``ValueError``
+    for an unknown identifier, so code written for it keeps catching this.
+    """
 
     def __init__(self, driver: str, **context: Any) -> None:
         message = f"Driver '{driver}' not found in session"
@@ -151,6 +159,14 @@ class EventNotInSeasonError(EventNotFoundError):
     """
 
 
+class FuzzyMatchError(EventNotFoundError):
+    """Raised when no fuzzy event-name match reaches the confidence threshold.
+
+    fastf1's name for the failure ``get_event_by_name`` reports as
+    :class:`EventNotFoundError`; it stays a ``ValueError`` like its parent.
+    """
+
+
 class LapNotFoundError(DataNotFoundError):
     """Raised when lap is not found."""
 
@@ -169,6 +185,22 @@ class LapNotFoundError(DataNotFoundError):
         )
 
 
+class NoLapDataError(LapNotFoundError):
+    """Raised when the session loaded but the lap payload held no usable laps.
+
+    fastf1's exception for a successful API request that yields no data
+    after processing; the message is fastf1's. A :class:`LapNotFoundError`,
+    so handlers for missing laps catch it too.
+    """
+
+    def __init__(self, *_args: Any, **context: Any) -> None:
+        TIF1Error.__init__(
+            self,
+            "Failed to load session because the API did not provide any usable data.",
+            **_plain_names(context),
+        )
+
+
 class ErgastError(TIF1Error):
     """Base class for errors raised by the Ergast data layer (``tif1.ergast``)."""
 
@@ -181,11 +213,22 @@ class ErgastInvalidRequestError(ErgastError):
     """Raised when the Ergast/Jolpica API rejects a request (non-200 answer)."""
 
 
-class RateLimitExceededError(NetworkError):
+class FastF1CriticalError(TIF1Error):
+    """Base class for errors that must break through catch-all error handling.
+
+    fastf1 wraps its data-loading steps in :func:`tif1.logger.soft_exceptions`,
+    which logs and swallows every exception except these: they are always
+    raised to the user and loading stops (an exceeded API rate limit, for
+    example). A ``TIF1Error`` like every other tif1 exception.
+    """
+
+
+class RateLimitExceededError(NetworkError, FastF1CriticalError):
     """Raised when the Jolpica API keeps answering 429 after the configured retries.
 
     A ``NetworkError`` so callers that handle transport failures handle this
-    one too; the message names the limit that was hit.
+    one too, and a :class:`FastF1CriticalError` so ``soft_exceptions`` never
+    swallows it; the message names the limit that was hit.
     """
 
     def __init__(

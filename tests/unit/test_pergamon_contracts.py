@@ -884,19 +884,24 @@ def test_q13_encoder_body_layout_is_the_concatenation_of_the_group_blocks():
     assert len(header) == 1
     body = bytes(blob[body_start:])
     specs = {tuple(s[3] if s[0] == "np" else s[1]): s for s in header[0][3]}
-    float_spec = specs[(1, 2, 4)]
+    columns = list(frames[0][1].columns)
+    loc = columns.index
+    float_spec = specs[(loc("RPM"), loc("Speed"), loc("Throttle"))]
     expected = np.concatenate(
         [f[["RPM", "Speed", "Throttle"]].to_numpy().T for _, f in frames], axis=1
     )
     assert body[float_spec[4] : float_spec[4] + float_spec[5]] == expected.tobytes()
-    gear = specs[(3,)]
+    gear = specs[(loc("nGear"),)]
     assert gear[0] == "Int64"
     data = np.concatenate([f["nGear"].array._data for _, f in frames])
     mask = np.concatenate([f["nGear"].array._mask for _, f in frames])
     assert body[gear[2] : gear[3]] == data.tobytes()
     assert body[gear[3] : gear[3] + mask.nbytes] == mask.tobytes()
-    assert specs[(9,)] == ("Int64c", [9], [1, 2, 3])  # LapNumber: one constant per frame
-    assert specs[(8,)][2] == [("const", "VER")]
+    # LapNumber: one constant per frame
+    assert specs[(loc("LapNumber"),)] == ("Int64c", [loc("LapNumber")], [1, 2, 3])
+    # Source, Status and Driver: one object group of per-column constants.
+    constants = specs[(loc("Source"), loc("Status"), loc("Driver"))]
+    assert constants[2] == [("const", "merged"), ("const", "OnTrack"), ("const", "VER")]
 
 
 def test_q13_column_memo_never_mixes_indexes_or_hides_duplicates():

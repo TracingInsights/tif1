@@ -322,13 +322,15 @@ The polars backend gives additional export options.
 
 ```python
 import polars as pl
+import polars.selectors as cs
 
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race", lib="polars")
 laps = session.laps
 
 # Polars writes Parquet natively (zstd by default)
 laps.write_parquet("monaco_polars.parquet")
-laps.write_csv("monaco_polars.csv")
+# CSV has no duration type: write the Duration columns as float seconds
+laps.with_columns(cs.duration().dt.total_milliseconds() / 1000).write_csv("monaco_polars.csv")
 laps.write_json("monaco_polars.json")
 laps.write_ipc("monaco_polars.arrow")  # Apache Arrow format
 

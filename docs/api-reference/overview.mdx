@@ -228,7 +228,7 @@ print(f"Fastest lap: {fastest['LapTimeSeconds']:.3f}s by {fastest['Driver']}")  
 7. **DataFrame Construction**
    - Converts parsed JSON into pandas or Polars DataFrames based on config
    - Applies column renaming to match `fastf1` conventions
-   - Sets data types: on pandas, times are `timedelta64[ns]` and `LapNumber` is float64; on Polars, times are float seconds
+   - Sets data types: on pandas, times are `timedelta64[ns]` and `LapNumber` is float64; on Polars, times are `Duration("ns")`
    - Uses the `category` dtype on pandas for `Driver`, `Team`, `Compound`, and `TrackStatus`
    - Reorders columns to standard layout
    - Adds computed columns (`LapTimeSeconds`, per-lap weather columns, etc.)
@@ -280,7 +280,7 @@ Use this performance profile to optimize workflows:
   - Disable with `config.set("ultra_cold_start", False)`
 
 - **Polars Backend**: Columnar DataFrames
-  - Time columns hold float seconds instead of timedeltas
+  - Time columns are `Duration` instead of `timedelta64`; the frames are `PolarsLaps` and `PolarsTelemetry`
   - Enable with `config.set("lib", "polars")`, or `lib="polars"` for one session
 
 ---
@@ -517,7 +517,7 @@ session.race_control_messages   # DataFrame: Race control messages
 session.results                 # SessionResults: Classification, one row per driver
 session.drivers                 # list[str]: Driver numbers in finishing order ['33', '63', '44', ...]
 session.drivers_df              # DataFrame: Driver codes, teams, numbers
-session.session_info            # dict: {'Year', 'EventName', 'SessionName'}
+session.session_info            # dict: fastf1's layout ('Meeting', 'Type', 'Name', 'StartDate', ...)
 session.event                   # Event: Schedule row (name, location, country, dates)
 session.date                    # pd.Timestamp: Session start date and time
 session.name                    # str: Session name ("Race")
@@ -945,7 +945,9 @@ The `Session` object represents an entire Formula 1 session (Practice, Qualifyin
 - `session.results` - Classification table, one row per driver in finishing order
 - `session.drivers` - List of driver numbers in finishing order (for example, ['33', '63', '44'])
 - `session.drivers_df` - DataFrame with driver codes, teams, and numbers
-- `session.session_info` - Session metadata (`Year`, `EventName`, `SessionName`)
+- `session.session_info` - Session metadata in the fastf1 layout (`Meeting`, `Type`, `Name`, `StartDate`, `EndDate`, `GmtOffset`)
+- `session.track_status`, `session.session_status` - Track and session status changes, derived from the race control messages
+- `session.car_data`, `session.pos_data` - Lazy dict of each driver's telemetry for the whole session, keyed by driver number
 - `session.event_name`, `session.session_name` - Plain event and session names (`session.gp` and `session.session` are URL-encoded)
 - `session.event` - Schedule row for the event (location, country, dates)
 - `session.date` - Session start as a `pd.Timestamp`
@@ -953,7 +955,7 @@ The `Session` object represents an entire Formula 1 session (Practice, Qualifyin
 **Key Methods:**
 - `get_driver(code)` - Get a Driver object for a specific driver
 - `get_fastest_laps(by_driver=True)` - Fastest lap per driver, or the overall fastest lap
-- `get_circuit_info()` - Corner positions and the track rotation
+- `get_circuit_info()` - Corner positions, marshal lights and sectors, and the track rotation
 - `laps.pick_driver(code)` - All laps for a specific driver
 - `load()` - Explicitly load data (usually called automatically)
 
@@ -962,7 +964,7 @@ The `Session` object represents an entire Formula 1 session (Practice, Qualifyin
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 
 # Access session-level data
-print(f"Session: {session.session_info['SessionName']}")
+print(f"Session: {session.session_info['Name']}")
 print(f"Event: {session.event['EventName']}")
 print(f"Date: {session.date}")
 circuit = session.get_circuit_info()
@@ -1044,9 +1046,9 @@ The `Lap` object represents a single lap by a driver and provides access to high
 
 **Key Methods:**
 - `get_telemetry()` - Load telemetry data for this lap
-- `get_car_data()`, `get_pos_data()` - `fastf1`-compatible aliases; both return the full telemetry frame
+- `get_car_data()`, `get_pos_data()` - `fastf1`-compatible aliases; both return the full telemetry frame. `pad` adds samples of the neighbouring laps
 
-The lap row also carries the weather at the time of the lap (`lap['AirTemp']`, `lap['TrackTemp']`, `lap['Rainfall']`, ...).
+The lap row also carries a weather sample that the source data matched to the lap (`lap['AirTemp']`, `lap['TrackTemp']`, `lap['Rainfall']`, ...). That match is misaligned for many laps. `lap.get_weather_data()` picks the sample from `session.weather_data` with the fastf1 rule.
 
 **Example:**
 ```python
@@ -1092,7 +1094,7 @@ A DataFrame containing lap timing data with rich filtering and analysis methods.
 **Columns:**
 - `Driver` - Driver code
 - `LapNumber` - Sequential lap number
-- `LapTime` - Total lap time (`timedelta64[ns]` on pandas, float seconds on polars)
+- `LapTime` - Total lap time (`timedelta64[ns]` on pandas, `Duration` on polars)
 - `LapTimeSeconds` - Total lap time as float seconds on both backends
 - `Sector1Time`, `Sector2Time`, `Sector3Time` - Sector times (same dtype as `LapTime`)
 - `Compound` - Tire compound (SOFT, MEDIUM, HARD, INTERMEDIATE, WET)
@@ -1106,7 +1108,7 @@ A DataFrame containing lap timing data with rich filtering and analysis methods.
 - `pick_driver(code)` - Filter to specific driver
 - `pick_fastest()` - Get fastest lap
 - `pick_compounds(compounds)` - Filter by tire compound
-- `pick_track_status(status)` - Filter by track status
+- `pick_track_status(status, how="equals")` - Filter by the lap's track status codes (`how` is `equals`, `contains`, `excludes`, `any`, or `none`)
 
 See [Laps Model](/api-reference/models#laps) for complete documentation.
 
@@ -1115,11 +1117,12 @@ See [Laps Model](/api-reference/models#laps) for complete documentation.
 A DataFrame of telemetry samples, at about 7-9 Hz. `Time` is relative to the lap start.
 
 **Columns:**
+- `Date`, `SessionTime` - Wall-clock date and session time of the sample
 - `Distance` - Distance along track (meters)
 - `Speed` - Speed (km/h)
 - `RPM` - Engine RPM
 - `Throttle` - Throttle position (0-100%)
-- `Brake` - Brake applied (boolean on pandas, 0/1 on polars)
+- `Brake` - Brake applied (boolean on both backends)
 - `DRS` - DRS status (0=closed, 1=open)
 - `nGear` - Current gear (1-8)
 - `X`, `Y`, `Z` - 3D position coordinates
@@ -1145,7 +1148,7 @@ See [Telemetry Model](/api-reference/models#telemetry) for complete documentatio
 
 #### SessionResults
 
-The session classification from `session.results`: a pandas DataFrame (on both backends) with one row per driver, in finishing order.
+The session classification from `session.results`, one row per driver in finishing order. On pandas it is a `SessionResults` indexed by driver number. On polars it is a `PolarsSessionResults`, with `DriverNumber` as a column.
 
 **Columns:**
 - `DriverNumber`, `Abbreviation` - Racing number (string) and three-letter code
@@ -1153,12 +1156,13 @@ The session classification from `session.results`: a pandas DataFrame (on both b
 - `TeamName`, `TeamColor` - Team name and hex color without `#` (for example, "3671C6")
 - `HeadshotUrl` - Driver photo URL
 - `Position` (float, 1 to N) and `ClassifiedPosition` (string, "1" to "N") - Finishing position
-- `Status` - "Finished", "+1 Lap", "+N Laps", or "Did not start" for races and sprints; "Finished" for other sessions
+- `Status` - The official status (for example "Finished", "Retired") for races and sprints; "Finished" for practice and qualifying
 - `Laps` - Laps completed (float)
-- `GridPosition`, `Points` - Always `NaN`: the data source has no grid or points data
+- `GridPosition`, `Points` - From the official Ergast classification of races and sprints. NaN in every other session
+- `Q1` to `Q3`, `Time` - From the official Ergast classification (Race, Sprint, and Qualifying). Practice is classified from the laps, as in fastf1: `Time` is the best lap that is not deleted. Sprint Qualifying and Sprint Shootout fill `Q1` to `Q3` from the best accurate lap of each segment
 
 <Note>
-Where the upstream driver list is only sorted by car number, `tif1` rebuilds the order from the laps. The rebuilt order uses laps completed, then the position on the last lap.
+Where the upstream driver list is only sorted by car number, `tif1` rebuilds the order from the laps. The rebuilt order of a race or sprint uses laps completed, then the position on the last lap. Practice uses the best lap. Sprint Qualifying and Sprint Shootout always rank by `Q3`, then `Q2`, then `Q1`.
 A post-race penalty does not show in lap data, so this order can differ from the official result.
 </Note>
 
@@ -1170,7 +1174,7 @@ Track markers and orientation, from `session.get_circuit_info()`.
 
 **Attributes:**
 - `corners` - DataFrame of corner markers (`X`, `Y`, `Number`, `Letter`, `Angle`, `Distance`)
-- `marshal_lights`, `marshal_sectors` - DataFrames with the same columns, always empty (the data source has no marshal markers)
+- `marshal_lights`, `marshal_sectors` - DataFrames with the same columns (from `corners.json`, or from the MultiViewer API for older seasons)
 - `rotation` - Track map rotation in degrees (float)
 - `add_marker_distance(reference_lap)` - Fill the `Distance` column of the markers from a lap's telemetry
 

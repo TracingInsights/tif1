@@ -414,7 +414,11 @@ class TestBackendLapCacheIsolation:
             _global_lap_cache_polars.set(cache_key, polars_laps)
 
             assert pandas_session.laps is pandas_laps
-            assert polars_session.laps is polars_laps
+            # The polars session binds the plain cached frame as PolarsLaps.
+            bound = polars_session.laps
+            assert type(bound).__name__ == "PolarsLaps"
+            assert bound.session is polars_session
+            assert bound.equals(polars_laps)
         finally:
             clear_lap_cache()
 
@@ -1369,7 +1373,16 @@ class TestCoreHighYieldCoverage:
         assert session.session_start_time is pd.NaT
         assert session.t0_date is pd.NaT
         info = session.session_info
-        assert info["Year"] == 2025
+        assert info["Name"] == "Race"
+        assert info["Type"] == "Race"
+        assert set(info["Meeting"]) == {
+            "Key",
+            "Name",
+            "OfficialName",
+            "Location",
+            "Country",
+            "Circuit",
+        }
         assert session.name == "Race"
 
         dirty = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
@@ -1396,7 +1409,11 @@ class TestCoreHighYieldCoverage:
         assert isinstance(rcm, pd.DataFrame)
         assert not rcm.empty
         assert rcm["Time"].dtype == "datetime64[ns]"
-        assert session.session_status is rcm
+        # No laps: no session clock, so the derived status table is empty but typed.
+        session._laps = pd.DataFrame()
+        status = session.session_status
+        assert list(status.columns) == ["Time", "Status"]
+        assert status.empty
 
         weather_session = Session(2025, "Test GP", "Race", enable_cache=False, lib="pandas")
         weather_session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
@@ -1420,12 +1437,24 @@ class TestCoreHighYieldCoverage:
         assert isinstance(err_weather, pd.DataFrame)
         assert err_weather.empty
 
-        session._laps = pd.DataFrame({"Driver": ["VER"], "TrackStatus": ["14"], "LapNumber": [1]})
-        assert list(session.track_status) == ["14"]
+        # Without race-control flags the laps' codes at each lap start build the table.
+        session._laps = pd.DataFrame(
+            {
+                "Driver": ["VER"],
+                "TrackStatus": ["14"],
+                "LapNumber": [1],
+                "LapStartTime": [pd.Timedelta(seconds=5)],
+            }
+        )
+        track = session.track_status
+        assert list(track.columns) == ["Time", "Status", "Message"]
+        assert track["Status"].tolist() == ["1", "4"]
+        assert track["Message"].tolist() == ["AllClear", "SCDeployed"]
+        assert track["Time"].tolist() == [pd.Timedelta(0), pd.Timedelta(seconds=5)]
         session._laps = pd.DataFrame({"Driver": ["VER"], "LapNumber": [1]})
-        assert session.track_status.empty
+        assert session.track_status["Status"].tolist() == ["1"]
         session._laps = pd.DataFrame()
-        assert session.track_status.empty
+        assert session.track_status["Status"].tolist() == ["1"]
         assert session.get_circuit_info() is not None
 
     @pytest.mark.parametrize(
@@ -1493,7 +1522,8 @@ class TestCoreHighYieldCoverage:
         session._fetch_json = lambda path: payload  # noqa: ARG005  # type: ignore[ty:invalid-assignment]
         weather = session.weather
         assert isinstance(weather, pl.DataFrame)
-        assert weather.schema["Time"] == pl.Duration("ms")
+        # Nanoseconds like every polars time column, rounded as pandas does.
+        assert weather.schema["Time"] == pl.Duration("ns")
         assert weather["Time"].dt.total_milliseconds().to_list() == [14500, None]
         assert weather["AirTemp"].to_list() == [None, 24.5]
         assert weather["Rainfall"].to_list() == [True, None]

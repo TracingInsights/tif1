@@ -590,7 +590,10 @@ def _get_session_year(session: Any) -> int | None:
                         pass
 
     if hasattr(session, "session_info") and isinstance(session.session_info, dict):
-        year = session.session_info.get("year")
+        info = session.session_info
+        # fastf1's dict carries the session's StartDate; older shapes a year.
+        start = info.get("StartDate")
+        year = getattr(start, "year", None) if start is not None else info.get("year")
         if year is not None:
             try:
                 return int(year)

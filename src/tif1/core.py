@@ -27,6 +27,7 @@ from .cache import (
 from .cdn import get_cdn_manager
 from .config import get_config
 from .core_utils import ergast_results as _er
+from .core_utils import session_state as _ss
 
 # Import from core utilities modules
 from .core_utils.constants import (
@@ -78,6 +79,7 @@ from .core_utils.runtime import (
     run_sync_in_browser,
 )
 from .exceptions import (
+    AsyncRequiredError,
     DataNotFoundError,
     DriverNotFoundError,
     EventNotFoundError,
@@ -87,17 +89,20 @@ from .exceptions import (
     TIF1Error,
 )
 from .models import (
-    _CORNERS_DF_COLUMNS,
     CircuitInfo,
     Driver,
     DriverResult,  # noqa: F401  # re-exported for backward compatibility
     Lap,  # noqa: F401  # re-exported for backward compatibility
     Laps,
-    LazyTelemetryDict,  # noqa: F401  # re-exported for backward compatibility
+    LazyTelemetryDict,
     SessionResults,
     Telemetry,
+    _empty_driver_laps,
+    _empty_telemetry,
     _IterLapResult,  # noqa: F401  # re-exported for backward compatibility
     _LapInternal,  # noqa: F401  # re-exported for backward compatibility
+    _load_driver_lap_payload,
+    _timedelta_ns,
 )
 from .payload_loader import PayloadLoader
 from .types import ScheduleBackend
@@ -121,6 +126,13 @@ def _ensure_polars_available() -> bool:
     pl = import_supported_polars()
     POLARS_AVAILABLE = pl is not None
     return POLARS_AVAILABLE
+
+
+def _polars_models() -> Any:
+    """:mod:`tif1.models_polars` (imports polars; only polars sessions call it)."""
+    from . import models_polars
+
+    return models_polars
 
 
 def _polars_error_types() -> tuple[type[Exception], ...]:
@@ -204,6 +216,43 @@ def _run_coroutine_sync(factory: Any, operation: str, *, alternative: str | None
     return asyncio.run(factory())
 
 
+def _is_nan(value: Any) -> bool:
+    """True for a float NaN (never raises for non-numeric values)."""
+    return isinstance(value, float) and math.isnan(value)
+
+
+def _float_marker_distances(frame: Any) -> np.ndarray:
+    """A circuit marker frame's ``Distance`` as float64 (NaN where unknown), either backend."""
+    column = frame["Distance"]
+    if isinstance(column, pd.Series):
+        return column.to_numpy(dtype=float, na_value=np.nan)
+    return column.cast(float).to_numpy().astype(float, copy=False)
+
+
+def _identifier_car_number(identifier: Any) -> str | None:
+    """The car number a ``get_driver`` identifier names (``1``, ``"8"``, ``"8/FAG"``), else None."""
+    if isinstance(identifier, bool) or not isinstance(identifier, str | int):
+        return None
+    number = str(identifier).strip().partition("/")[0].strip()
+    return number if number.isdigit() else None
+
+
+def _polars_result_position(results: Any, driver: str, number: str) -> int | None:
+    """Row of ``driver`` in a polars results table (pandas ``Driver`` rule).
+
+    The abbreviation names the driver; the car number decides between two
+    rows with one abbreviation and stands in when the code is unknown.
+    """
+    codes = results["Abbreviation"].cast(pl.String).to_list()
+    numbers = results["DriverNumber"].cast(pl.String).to_list()
+    matches = [i for i, code in enumerate(codes) if code == driver]
+    if len(matches) > 1:
+        matches = [i for i in matches if numbers[i] == number] or matches[:1]
+    if not matches and number:
+        matches = [i for i, value in enumerate(numbers) if value == number]
+    return matches[0] if matches else None
+
+
 def _extract_driver_codes(drivers: list[dict] | None) -> set[str]:
     """Extract valid driver codes from drivers payload."""
     if not drivers:
@@ -266,6 +315,30 @@ def _clean_scalar(value: Any) -> Any:
     except (TypeError, ValueError):
         pass
     return value
+
+
+def _session_driver_rows(drivers: Any) -> list[Any]:
+    """The session's own copies of the ``drivers.json`` rows.
+
+    The payload is shared through the JSON memo; car numbers and names are
+    backfilled into these dicts in place, which must not reach other sessions.
+    """
+    if not isinstance(drivers, list):
+        return []
+    return [dict(row) if isinstance(row, dict) else row for row in drivers]
+
+
+_PRACTICE_SESSIONS = frozenset({"Practice 1", "Practice 2", "Practice 3"})
+
+
+def _best_lap_timedelta(info: dict[str, Any] | None) -> Any:
+    """A lap summary's best lap (seconds) as a ``Timedelta``, ``NaT`` without one."""
+    best = info.get("best") if info is not None else None
+    if best is None:
+        return pd.NaT
+    # LapTimeSeconds is total_seconds() of the LapTime: rounding to the
+    # nanosecond recovers the exact Timedelta.
+    return pd.Timedelta(round(best * 1e9), unit="ns")
 
 
 def _summarize_laps_for_classification(laps: Any, lib: str) -> dict[str, dict[str, Any]]:
@@ -403,6 +476,70 @@ def _summarize_pandas_laps_vectorized(laps: pd.DataFrame) -> dict[str, dict[str,
             entry["best"] = float(best[group])
         summary[key] = entry
     return summary
+
+
+_QUALI_LIKE_SESSION_NAMES = frozenset({"Qualifying", "Sprint Qualifying", "Sprint Shootout"})
+
+
+def _segment_lap_times(segment: Any, lib: str) -> list[tuple[str, int]]:
+    """``(driver code, lap time ns)`` of a qualifying segment's timed, not-deleted laps."""
+    if "Driver" not in segment.columns or "LapTime" not in segment.columns:
+        return []
+    if lib == "polars":
+        codes = segment["Driver"].cast(pl.String).to_list()
+        times = segment["LapTime"].dt.total_nanoseconds().to_list()
+        deleted = (
+            segment["Deleted"].cast(pl.Boolean, strict=False).fill_null(False).to_list()
+            if "Deleted" in segment.columns
+            else [False] * len(codes)
+        )
+    else:
+        codes = segment["Driver"].astype(object).tolist()
+        raw = _ss._timedelta_ns(segment["LapTime"].tolist())
+        times = [None if value == _ss._NS_MIN else int(value) for value in raw]
+        deleted = (
+            [value is True for value in segment["Deleted"].tolist()]
+            if "Deleted" in segment.columns
+            else [False] * len(codes)
+        )
+    return [
+        (str(code), lap_ns)
+        for code, lap_ns, gone in zip(codes, times, deleted, strict=True)
+        if code is not None and lap_ns is not None and not gone
+    ]
+
+
+def _quali_sort(rows: list[dict], bests: dict[str, list[int | None]]) -> list[dict]:
+    """Driver rows in fastf1's qualifying order: by Q3, then Q2, then Q1 (missing times last)."""
+
+    def key(item: tuple[int, dict]) -> tuple[Any, ...]:
+        index, row = item
+        times = bests.get(str(row.get("driver", "")), [None, None, None])
+        parts: list[Any] = []
+        for value in (times[2], times[1], times[0]):
+            parts.extend((value is None, value if value is not None else 0))
+        return (*parts, index)
+
+    return [row for _, row in sorted(enumerate(rows), key=key)]
+
+
+def _quali_q1_floor(bests: dict[str, list[int | None]]) -> int | None:
+    """107% of the fastest Q1 lap in ns (fastf1's not-classified rule), or None."""
+    q1 = [times[0] for times in bests.values() if times[0] is not None]
+    return int(min(q1) * 1.07) if q1 else None
+
+
+def _quali_row_fields(times: list[int | None] | None, q1_floor: int | None) -> dict[str, Any]:
+    """``Q1``-``Q3`` of a driver's results row, plus ``"N"`` for a Q1 exit outside 107%."""
+    if times is None:
+        return {}
+    fields: dict[str, Any] = {
+        name: pd.Timedelta(value, unit="ns") if value is not None else pd.NaT
+        for name, value in zip(("Q1", "Q2", "Q3"), times, strict=True)
+    }
+    if q1_floor is not None and times[1] is None and times[0] is not None and times[0] > q1_floor:
+        fields["ClassifiedPosition"] = "N"
+    return fields
 
 
 def _classification_sort(
@@ -677,9 +814,18 @@ class Session:
         self._fastest_lap_tel_df: DataFrame | None = None
         self._race_control_messages: DataFrame | None = None
         self._weather: DataFrame | None = None
-        self._car_data: DataFrame | None = None
+        self._car_data: LazyTelemetryDict | None = None
         self._results = None
         self._circuit_info: CircuitInfo | None = None
+        # Derived session state (track_status, session_status, session_info,
+        # t0_date, session_start_time), memoised per attribute.
+        self._session_state: dict[str, Any] = {}
+        # Per-driver lap start lookup (LapStartTime/LapStartDate by lap
+        # number) used to give telemetry its SessionTime/Date columns.
+        self._lap_start_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
+        self._lap_start_cache_source: int | None = None
+        # (laps table, per-driver Q1/Q2/Q3 best ns): fastf1's quali results from laps.
+        self._quali_bests_cache: tuple[Any, dict[str, list[int | None]]] | None = None
         # Ergast classification (tif1.ergast): the Stats repository file of
         # this round (Jolpica fallback) merged into results/drivers. Seasons
         # before the timing data (F1_API_FIRST_YEAR) are Ergast-only.
@@ -802,7 +948,16 @@ class Session:
             cache.set(cache_key, data)
             self._mark_session_cache_populated()
 
-    def load(self, laps=True, telemetry=True, weather=True, messages=True):
+    @staticmethod
+    def _reject_livedata(livedata: Any) -> None:
+        """fastf1's ``livedata`` keyword names a live-timing recording tif1 cannot read."""
+        if livedata is not None:
+            raise NotImplementedError(
+                "tif1 serves historical data only; live timing recordings "
+                "(fastf1's livedata=) are not supported"
+            )
+
+    def load(self, laps=True, telemetry=True, weather=True, messages=True, *, livedata=None):
         """Load session data based on requested data types.
 
         This method fetches only the data that is required based on the boolean parameters.
@@ -814,6 +969,9 @@ class Session:
             telemetry: If True, fetch telemetry data for all laps
             weather: If True, fetch weather data
             messages: If True, fetch race control messages
+            livedata: fastf1's live-timing recording; tif1 serves historical
+                data only, so any value other than ``None`` raises
+                ``NotImplementedError``.
 
         Returns:
             self: The Session object for method chaining
@@ -825,6 +983,7 @@ class Session:
             >>> # Fetch everything (default)
             >>> session.load()
         """
+        self._reject_livedata(livedata)
         # Telemetry requires laps data, so ensure laps is True if telemetry is requested
         if telemetry and not laps:
             laps = True
@@ -847,7 +1006,9 @@ class Session:
             self._load_all_laps_telemetry()
         return self
 
-    async def load_async(self, laps=True, telemetry=True, weather=True, messages=True):
+    async def load_async(
+        self, laps=True, telemetry=True, weather=True, messages=True, *, livedata=None
+    ):
         """Load session data without blocking: the async twin of :meth:`load`.
 
         Fetches the same tables as :meth:`load`, through the async pipeline
@@ -862,6 +1023,7 @@ class Session:
             telemetry: Fetch telemetry for all laps.
             weather: Fetch weather data.
             messages: Fetch race control messages.
+            livedata: Not supported (see :meth:`load`).
 
         Returns:
             self: The Session object for method chaining.
@@ -871,6 +1033,7 @@ class Session:
             >>> await session.load_async(telemetry=False)
             >>> session.laps.head()
         """
+        self._reject_livedata(livedata)
         if telemetry and not laps:
             laps = True
 
@@ -1277,7 +1440,7 @@ class Session:
             return self._drivers if self._drivers is not None else [], []
 
         drivers = drivers_payload.get("drivers") if isinstance(drivers_payload, dict) else None
-        self._drivers = drivers if isinstance(drivers, list) else []
+        self._drivers = _session_driver_rows(drivers)
         self._refresh_driver_indices()
         if not self._drivers:
             logger.info(f"No drivers in session: {self.year}/{self.event_name}/{self.session_name}")
@@ -1455,7 +1618,11 @@ class Session:
         needs_numbers = not all(numbers)
         number_sorted = not needs_numbers and _is_number_sorted(numbers)
         classified = not number_sorted and not needs_numbers
-        if needs_numbers or number_sorted:
+        # A qualifying without official results is classified from its laps as
+        # fastf1 does, whatever order drivers.json lists (2024 Chinese Sprint
+        # Qualifying lists STR, PIA, VER; the result is NOR, HAM, ALO).
+        quali_like = self._is_quali_like()
+        if needs_numbers or number_sorted or quali_like:
             summary = self._lap_summary()
             if summary:
                 if needs_numbers:
@@ -1466,9 +1633,13 @@ class Session:
                                 d["dn"] = info["number"]  # same dict the lookup indices hold
                     numbers = [str(d.get("dn") or "") for d in rows]
                     number_sorted = all(numbers) and _is_number_sorted(numbers)
-                if number_sorted or needs_numbers:
+                bests = self._quali_segment_bests() if quali_like else {}
+                if bests:
+                    rows = _quali_sort(rows, bests)
+                    classified = True
+                elif number_sorted or needs_numbers:
                     rows = _classification_sort(rows, summary, race=self._is_race_like())
-                classified = True
+                    classified = True
         self._driver_rows_cache = (self._driver_rows_token(), rows, classified)
         return rows, classified
 
@@ -1481,6 +1652,39 @@ class Session:
 
     def _is_race_like(self) -> bool:
         return self.session_name in _RACE_LIKE_SESSION_NAMES
+
+    def _is_quali_like(self) -> bool:
+        return self.session_name in _QUALI_LIKE_SESSION_NAMES
+
+    def _quali_segment_bests(self) -> dict[str, list[int | None]]:
+        """Per driver code, the best Q1/Q2/Q3 lap in ns (``None`` where none), fastf1's rule.
+
+        ``laps.pick_accurate().split_qualifying_sessions()``, then each
+        segment's fastest lap with a time that is not deleted. Memoized on the
+        laps table; ``{}`` without laps or when the split fails.
+        """
+        laps = self._loaded_laps_or_none()
+        if laps is None:
+            return {}
+        cached = self._quali_bests_cache
+        if cached is not None and cached[0] is laps:
+            return cached[1]
+        bests: dict[str, list[int | None]] = {}
+        try:
+            segments = cast(Any, laps).pick_accurate().split_qualifying_sessions()
+        except (KeyError, TypeError, ValueError) as e:
+            logger.info("Qualifying segments unavailable for %s: %s", self.api_path, e)
+            segments = []
+        for slot, segment in enumerate(segments[:3]):
+            if segment is None or not len(segment):
+                continue
+            for code, lap_ns in _segment_lap_times(segment, self.lib):
+                entry = bests.setdefault(code, [None, None, None])
+                current = entry[slot]
+                if current is None or lap_ns < current:
+                    entry[slot] = lap_ns
+        self._quali_bests_cache = (laps, bests)
+        return bests
 
     def _lap_summary(self) -> dict[str, dict[str, Any]]:
         """Per-driver lap facts: number, laps completed, last-lap position, best clean lap.
@@ -1538,7 +1742,7 @@ class Session:
                     self._schedule_background_cache_fill(json_payloads=[("drivers.json", data)])
             else:
                 data = self._fetch_json("drivers.json")
-            self._drivers = data.get("drivers", [])
+            self._drivers = _session_driver_rows(data.get("drivers"))
             if not self._drivers:
                 logger.info(
                     f"No drivers in session: {self.year}/{self.event_name}/{self.session_name}"
@@ -1552,25 +1756,20 @@ class Session:
         return self.drivers
 
     @property
-    def drivers_df(self) -> pd.DataFrame:
-        """Get drivers as a pandas DataFrame, one row per driver in classification order.
+    def drivers_df(self) -> DataFrame:
+        """Get drivers as a DataFrame, one row per driver in classification order.
+
+        A pandas frame, or a polars frame (every column ``String``) on a
+        polars session.
 
         Returns:
             DataFrame with columns: Driver, Team, DriverNumber, FirstName, LastName, TeamColor, HeadshotUrl
         """
         drivers_list = self._driver_rows()
+        if self.lib == "polars" and _ensure_polars_available():
+            return self._drivers_df_polars(drivers_list)
         if not drivers_list:
-            return pd.DataFrame(
-                columns=[
-                    "Driver",
-                    "Team",
-                    "DriverNumber",
-                    "FirstName",
-                    "LastName",
-                    "TeamColor",
-                    "HeadshotUrl",
-                ]
-            )
+            return pd.DataFrame(columns=list(_DRIVERS_DF_COLUMNS))
 
         rows = [
             {
@@ -1587,6 +1786,22 @@ class Session:
         ]
 
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def _drivers_df_polars(drivers_list: list[dict]) -> DataFrame:
+        """:attr:`drivers_df` built natively in polars (same rows and values as pandas)."""
+        rows = [d for d in drivers_list if isinstance(d, dict)]
+        data = {
+            "Driver": [d.get("driver", "") for d in rows],
+            "Team": [d.get("team", "") for d in rows],
+            "DriverNumber": [str(d.get("dn", "")) for d in rows],
+            "FirstName": [d.get("fn", "") for d in rows],
+            "LastName": [d.get("ln", "") for d in rows],
+            "TeamColor": [d.get("tc", "") for d in rows],
+            "HeadshotUrl": [d.get("url", "") for d in rows],
+        }
+        schema = dict.fromkeys(_DRIVERS_DF_COLUMNS, pl.String)
+        return pl.DataFrame(data, schema=schema, strict=False)
 
     def _load_session_table(self, path: str, rename_map: dict[str, str]) -> DataFrame:
         """Load and normalize a session-level table payload."""
@@ -1606,83 +1821,29 @@ class Session:
         return _create_session_df(data, rename_map, self.lib)
 
     @property
-    def car_data(self) -> DataFrame:
-        """Get complete telemetry data for all drivers as a DataFrame.
+    def car_data(self) -> "LazyTelemetryDict":
+        """Per-driver session-long telemetry, keyed by driver number (fastf1 parity).
 
-        Returns the same data as pos_data - complete telemetry including position,
-        speed, and car data for all drivers across all laps.
-
-        Returns:
-            DataFrame with complete telemetry data including:
-            - Time/SessionTime: timestamp
-            - Driver: driver code
-            - Speed: km/h
-            - RPM: engine RPM
-            - nGear: gear number
-            - Throttle: 0-100
-            - Brake: boolean or 0-100
-            - DRS: DRS status
-            - X, Y, Z: position coordinates
-            - Distance: distance along track
+        A lazy dict: nothing is fetched until a key is read; the value is the
+        driver's laps concatenated in session order as one :class:`Telemetry`
+        (``PolarsTelemetry`` on a polars session), memoised per driver.
+        Abbreviations are accepted as keys too. ``car_data[n]`` and
+        ``pos_data[n]`` hold the same merged frame: tif1's telemetry already
+        carries the car channels (``RPM``, ``Speed``, ``nGear``, ``Throttle``,
+        ``Brake``, ``DRS``) and the position channels (``X``, ``Y``, ``Z``).
 
         Example:
             >>> session = get_session(2024, "Monaco", "Race")
-            >>> session.load()
-            >>> car_data = session.car_data
-            >>> print(car_data[["Driver", "Speed", "X", "Y"]].head())
+            >>> ver = session.car_data["1"]
+            >>> ver[["SessionTime", "Speed", "X", "Y"]].head()
         """
-        car_data = self._car_data
-        if car_data is None:
-            # Fetch telemetry for all drivers
-            laps = self.laps
-            if _is_empty_df(laps, self.lib):
-                car_data = _create_empty_df(self.lib)
-            else:
-                # Collect telemetry from all laps
-                all_telemetry = []
-                for driver in laps["Driver"].unique():
-                    driver_laps = laps[laps["Driver"] == driver]  # type: ignore[ty:invalid-argument-type]
-                    tel = driver_laps.telemetry
-                    if not _is_empty_df(tel, self.lib):
-                        all_telemetry.append(tel)
-
-                if all_telemetry:
-                    if self.lib == "polars":
-                        car_data = pl.concat(all_telemetry, how="vertical")
-                    else:
-                        car_data = cast(DataFrame, pd.concat(all_telemetry, ignore_index=True))
-                else:
-                    car_data = _create_empty_df(self.lib)
-            self._car_data = car_data
-        return cast(DataFrame, car_data)
+        if self._car_data is None:
+            self._car_data = LazyTelemetryDict(self)
+        return self._car_data
 
     @property
-    def pos_data(self) -> DataFrame:
-        """Get complete telemetry data for all drivers as a DataFrame.
-
-        Returns the same data as car_data - complete telemetry including position,
-        speed, and car data for all drivers across all laps.
-
-        Returns:
-            DataFrame with complete telemetry data including:
-            - Time/SessionTime: timestamp
-            - Driver: driver code
-            - Speed: km/h
-            - RPM: engine RPM
-            - nGear: gear number
-            - Throttle: 0-100
-            - Brake: boolean or 0-100
-            - DRS: DRS status
-            - X, Y, Z: position coordinates
-            - Distance: distance along track
-
-        Example:
-            >>> session = get_session(2024, "Monaco", "Race")
-            >>> session.load()
-            >>> pos_data = session.pos_data
-            >>> print(pos_data[["Driver", "X", "Y", "Speed"]].head())
-        """
-        # Both car_data and pos_data return the same complete telemetry
+    def pos_data(self) -> "LazyTelemetryDict":
+        """Per-driver session-long telemetry keyed by driver number (see :attr:`car_data`)."""
         return self.car_data
 
     @property
@@ -1706,14 +1867,16 @@ class Session:
         from the laps table; ``Status`` is derived from lap counts for races and
         sprints (``"Finished"`` on the leader's lap count, ``"+N Lap(s)"``
         otherwise, ``"Did not start"`` with no laps) and ``"Finished"`` for
-        other sessions. The data source publishes no official classification,
-        so ``GridPosition`` and ``Points`` are NaN, and a session without a laps
-        payload has NaN ``Position``/``Laps`` and ``None`` ``Status``.
+        other sessions. In practice sessions ``Time`` is the driver's best
+        non-deleted lap, the order fastf1 ranks them by. The data source
+        publishes no official classification, so ``GridPosition`` and
+        ``Points`` are NaN, and a session without a laps payload has NaN
+        ``Position``/``Laps`` and ``None`` ``Status``.
         """
         if self._results is None:
             driver_rows, classified = self._driver_rows_info()
             if not driver_rows:
-                return SessionResults()
+                return self._finalize_results([])
             kind = _er.session_kind(self.session_name)
             race = self._ergast_race() if self._ergast_enabled else None
             classification = _er.ergast_rows(race, self._ergast_endpoint())
@@ -1722,6 +1885,11 @@ class Session:
             # for Position/Status/Laps; practice keeps the lap-derived view.
             summary = {} if official else self._lap_summary()
             race_like = self._is_race_like()
+            practice = self.session_name in _PRACTICE_SESSIONS
+            # fastf1 classifies a qualifying without results from the laps:
+            # best accurate lap per segment, "N" outside 107% of the best Q1.
+            bests = self._quali_segment_bests() if not official and self._is_quali_like() else {}
+            q1_floor = _quali_q1_floor(bests)
             leader_laps = max((info["laps"] for info in summary.values()), default=0)
 
             rows = []
@@ -1758,6 +1926,9 @@ class Session:
                         "Status": status,
                         "Points": math.nan,
                         "Laps": float(laps_done) if summary else math.nan,
+                        # fastf1: a practice ``Time`` is the best lap.
+                        "Time": _best_lap_timedelta(info) if practice else pd.NaT,
+                        **_quali_row_fields(bests.get(str(d.get("driver", ""))), q1_floor),
                         # Did-not-start rows (only Ergast knows the driver) keep
                         # NaN positions, except in Ergast-only seasons where
                         # every driver comes from the classification.
@@ -1770,9 +1941,21 @@ class Session:
                 for row in rows:
                     row.pop("_ergast_only", None)
 
-            self._results = SessionResults(_er.finalize_results_frame(rows))
-            self._results.session = self
+            self._results = self._finalize_results(rows)
         return self._results
+
+    def _finalize_results(self, rows: list[dict[str, Any]]) -> Any:
+        """The results table of ``rows``: ``SessionResults`` or ``PolarsSessionResults``.
+
+        The polars table is built natively (no pandas frame); polars has no
+        index, so ``DriverNumber`` stays a column.
+        """
+        if self.lib == "polars" and _ensure_polars_available():
+            frame = _er.finalize_results_frame_polars(rows)
+            return _polars_models().PolarsSessionResults._from_frame(frame, self)
+        results = SessionResults(_er.finalize_results_frame(rows))
+        results.session = self
+        return results
 
     @property
     def race_control_messages(self) -> DataFrame:
@@ -1893,42 +2076,203 @@ class Session:
                 self._race_control_messages = _create_empty_df(self.lib)
         return self._race_control_messages
 
+    # -- derived session state (fastf1's live-timing stream surfaces) ------------
+
+    def _state(self, key: str, build: Any) -> Any:
+        """Memoised derived session state (``None`` results are memoised too).
+
+        The memo is keyed on the identity of the laps table: every derivation
+        starts from ``t0_date`` (and the laps' codes), so swapping the table
+        rebuilds it.
+        """
+        laps_id = id(self._laps) if self._laps is not None else None
+        entry = self._session_state.get(key)
+        if entry is None or entry[0] != laps_id:
+            entry = (laps_id, build())
+            self._session_state[key] = entry
+        return entry[1]
+
+    def _t0_date_ns(self) -> int | None:
+        return self._state("t0_ns", lambda: _ss.t0_date_ns(self._loaded_laps_or_none()))
+
+    def _loaded_laps_or_none(self) -> DataFrame | None:
+        """The laps table, loaded on demand (``None`` when the session has none).
+
+        ``None`` before 2018 too: laps built from Ergast timings carry no
+        ``LapStartDate`` or ``TrackStatus``, so loading them answers nothing.
+        """
+        if self._ergast_only:
+            return None
+        try:
+            laps = self.laps
+        except (DataNotFoundError, NetworkError, InvalidDataError):
+            return None
+        return None if _is_empty_df(laps, self.lib) else laps
+
+    def _scheduled_start_utc_ns(self) -> int | None:
+        try:
+            scheduled = self.event.get_session_date(self.session_name, utc=True)
+        except (ValueError, KeyError, TypeError, EventNotFoundError):
+            return None
+        if scheduled is None or pd.isna(scheduled):
+            return None
+        return int(pd.Timestamp(scheduled).tz_localize(None).value)
+
+    def _session_start_time_ns(self) -> int | None:
+        return self._state(
+            "start_ns",
+            lambda: _ss.session_start_time_ns(
+                self.race_control_messages,
+                self._t0_date_ns(),
+                self._scheduled_start_utc_ns(),
+                race_like=self._is_race_like(),
+            ),
+        )
+
+    @property
+    def t0_date(self) -> Any:
+        """The date at ``SessionTime`` zero (fastf1 parity).
+
+        ``LapStartDate - LapStartTime`` of the laps table, constant to the
+        millisecond across every lap; ``NaT`` for a session without laps.
+        """
+        t0_ns = self._t0_date_ns()
+        return pd.NaT if t0_ns is None else pd.Timestamp(t0_ns)
+
+    @property
+    def session_start_time(self) -> Any:
+        """``SessionTime`` of the session start (fastf1 parity).
+
+        Races and sprints: the scheduled UTC start (the formation lap) minus
+        :attr:`t0_date`; other sessions: the first ``GREEN LIGHT - PIT EXIT
+        OPEN`` race-control message. ``NaT`` when neither is known.
+        """
+        start_ns = self._session_start_time_ns()
+        return pd.NaT if start_ns is None else pd.Timedelta(start_ns)
+
+    @property
+    def track_status(self) -> DataFrame:
+        """Track status changes: ``Time`` (session time), ``Status`` code, ``Message``.
+
+        fastf1's shape and vocabulary (``1`` AllClear, ``2`` Yellow, ``4``
+        SCDeployed, ``5`` Red, ``6`` VSCDeployed, ``7`` VSCEnding) derived
+        from the race-control messages (exact timestamps, inferred codes:
+        sector yellows are tracked as a set so the status returns to ``1``
+        only when every sector is clear). Without race-control messages the
+        laps' ``TrackStatus`` codes at each lap start are used instead. The
+        first row is ``AllClear`` at time zero as in the live stream.
+        """
+
+        def build() -> DataFrame:
+            t0_ns = self._t0_date_ns()
+            rows: list[tuple[int, str]] = [(0, "1")]
+            if t0_ns is not None:
+                rcm = self.race_control_messages
+                if not _is_empty_df(rcm, self.lib):
+                    rows = _ss.track_status_rows(rcm, t0_ns)
+            if len(rows) <= 1:
+                laps = self._loaded_laps_or_none()
+                if laps is not None:
+                    rows = _ss.track_status_rows_from_laps(laps)
+            return _ss.status_frame(rows, self.lib, with_message=True)
+
+        return self._state("track_status", build)
+
+    @property
+    def session_status(self) -> DataFrame:
+        """Session status changes: ``Time`` (session time) and ``Status`` (fastf1 parity).
+
+        ``Started`` at :attr:`session_start_time`, ``Aborted`` at each red
+        flag, ``Started`` again on the following green light and
+        ``Finished`` at the chequered flag, from the race-control messages.
+        ``Finalised``/``Ends`` are not derivable and are not emitted.
+        """
+
+        def build() -> DataFrame:
+            t0_ns = self._t0_date_ns()
+            rows: list[tuple[int, str]] = []
+            if t0_ns is not None:
+                rows = _ss.session_status_rows(
+                    self.race_control_messages, t0_ns, self._session_start_time_ns()
+                )
+            return _ss.status_frame(rows, self.lib, with_message=False)
+
+        return self._state("session_status", build)
+
     @property
     def session_info(self) -> dict[str, Any]:
+        """fastf1's ``session_info`` dict derived from the schedule row.
+
+        ``Meeting`` (name, official name, location, country, circuit),
+        ``Type``, ``Name``, ``StartDate``, ``EndDate`` (nominal duration) and
+        ``GmtOffset`` are filled; ``Key``, ``Meeting.Key``, ``Path`` and
+        ``ArchiveStatus`` are ``None`` (not derivable). The circuit and
+        country keys come from the vendored circuit table or, when it was
+        already built, :meth:`get_circuit_info`; reading this dict never
+        starts a request beyond the schedule.
+        """
+
+        def build() -> dict[str, Any]:
+            try:
+                event = self.event
+            except (EventNotFoundError, ValueError):
+                event = pd.Series(dtype=object)
+            from .events import _parse_gmt_offset
+
+            gmt_raw = event.get("GmtOffset") if hasattr(event, "get") else None
+            parsed_offset = _parse_gmt_offset(gmt_raw) if gmt_raw is not None else None
+            gmt_offset: Any = None if parsed_offset is None else pd.Timedelta(parsed_offset)
+            start = self.date
+            start_date = None if start is None or pd.isna(start) else pd.Timestamp(start)
+            keys = self._circuit_keys()
+            return _ss.session_info_dict(
+                event,
+                self.session_name,
+                start_date=start_date,
+                gmt_offset=gmt_offset,
+                circuit_key=keys.get("circuit_key"),
+                country_key=keys.get("country_key"),
+                country_code=keys.get("country_code") or "",
+                circuit_short_name=keys.get("circuit_name") or "",
+            )
+
+        return self._state("session_info", build)
+
+    def _circuit_keys(self) -> dict[str, Any]:
+        """Circuit/country keys without a request: memoised circuit info, else the vendored table."""
+        info = self._circuit_info
+        if info is not None and info.circuit_key is not None:
+            return {
+                "circuit_key": info.circuit_key,
+                "country_key": info.country_key,
+                "country_code": info.country_code,
+                "circuit_name": info.circuit_name,
+            }
+        try:
+            from .core_utils.circuit_info import load_vendored_circuits
+
+            (circuit_id,) = self._event_texts("CircuitId")
+            entry = load_vendored_circuits().get(circuit_id) if circuit_id else None
+        except (ImportError, ValueError, KeyError, TypeError, OSError):
+            entry = None
+        if not entry:
+            return {}
         return {
-            "Year": self.year,
-            "EventName": self.event_name,
-            "SessionName": self.session_name,
+            "circuit_key": entry.get("circuitKey"),
+            "country_key": entry.get("countryKey"),
+            "country_code": entry.get("iocCountryCode") or "",
+            "circuit_name": entry.get("name") or "",
         }
 
     @property
-    def session_start_time(self):
-        return pd.NaT
+    def f1_api_support(self) -> bool:
+        """Whether the session has timing/telemetry data (seasons from 2018)."""
+        return self.year >= F1_API_FIRST_YEAR
 
     @property
-    def t0_date(self):
-        return self.session_start_time
-
-    @property
-    def session_status(self):
-        if not _is_empty_df(self.race_control_messages, self.lib):
-            return self.race_control_messages
-        return pd.DataFrame(columns=["Time", "Status"])
-
-    @property
-    def track_status(self):
-        laps = self.laps
-        if _is_empty_df(laps, self.lib):
-            return pd.Series(dtype=object)
-        if self.lib == "polars":
-            laps_pl = cast(Any, laps)
-            if "TrackStatus" not in laps_pl.columns:
-                return pd.Series(dtype=object)
-            return laps_pl.select("TrackStatus").to_pandas()["TrackStatus"]
-        laps_pd = cast(pd.DataFrame, laps)
-        if "TrackStatus" not in laps_pd.columns:
-            return pd.Series(dtype=object)
-        return laps_pd["TrackStatus"]
+    def api_path(self) -> str:
+        """The session's path on the data repositories (``"{year}/{gp}/{session}/"``)."""
+        return f"{self.year}/{self.gp}/{self.session}/"
 
     @property
     def name(self) -> str:
@@ -2002,13 +2346,17 @@ class Session:
                         exprs = []
                         # Casts are non-strict like the pandas branch's
                         # to_numeric(errors="coerce"): unparseable → null.
-                        # Time: seconds float → Duration
+                        # Time: seconds float → Duration("ns") through the pandas
+                        # branch's conversion (a ms cast truncated .335 to .334).
                         if "Time" in cols:
+                            seconds = weather_pl["Time"].cast(pl.Float64, strict=False)
                             exprs.append(
-                                pl.col("Time")
-                                .cast(pl.Float64, strict=False)
-                                .mul(1000)
-                                .cast(pl.Duration("ms"))
+                                pl.Series(
+                                    "Time",
+                                    _numeric_seconds_to_timedelta(
+                                        pd.Series(seconds.to_numpy())
+                                    ).to_numpy(),
+                                )
                             )
                         # Float columns
                         float_cols = [
@@ -2095,40 +2443,76 @@ class Session:
         return self.weather
 
     def get_circuit_info(self) -> "CircuitInfo":
-        """Return FastF1-compatible circuit info from corners.json.
+        """Circuit markers and layout (fastf1 parity plus tif1 extras).
 
-        Returns a :class:`CircuitInfo` dataclass with the same attributes as
-        ``fastf1.mvapi.CircuitInfo``:
-
-        * ``corners`` - DataFrame with columns
-          ``X, Y, Number, Letter, Angle, Distance``.
-        * ``marshal_lights`` - always an empty DataFrame (not in source data).
-        * ``marshal_sectors`` - always an empty DataFrame (not in source data).
-        * ``rotation`` - circuit rotation in degrees.
-
-        Results are cached on the session object after the first call.
+        Built from the session's ``corners.json`` (both the old schema, corners
+        only, and the new one with marshal lights/sectors, letters, pit loss,
+        track outline and sections). When the file is missing or old-schema the
+        MultiViewer API fills the marshal data and letters (cached permanently);
+        corners and rotation from the file always win. Marker distances that
+        MultiViewer left empty are fitted on the fastest lap's telemetry as
+        fastf1 does. The result is memoised on the session.
 
         Returns:
             :class:`CircuitInfo` instance.
         """
         if self._circuit_info is None:
-            self._circuit_info = self._build_circuit_info()
+            info = self._build_circuit_info()
+            self._circuit_info = info
+            self._fit_marker_distances(info)
         return self._circuit_info
 
-    def _build_circuit_info(self) -> "CircuitInfo":
-        """Fetch corners.json and build a :class:`CircuitInfo` dataclass."""
-        _empty = pd.DataFrame(columns=_CORNERS_DF_COLUMNS)
+    def _fit_marker_distances(self, info: "CircuitInfo") -> None:
+        """Fit the markers without a ``Distance`` on the fastest lap (either backend).
 
+        Distances the circuit file gives are kept (fastf1's
+        ``add_marker_distance`` overwrites every marker; tif1 only fills the
+        gaps). Seasons before 2018 have no telemetry to fit on.
+        """
+        if self._ergast_only:
+            return
+        frames = (info.corners, info.marshal_lights, info.marshal_sectors)
+        if not any(
+            len(frame) and bool(np.isnan(_float_marker_distances(frame)).any()) for frame in frames
+        ):
+            return
+        try:
+            laps = cast(Any, self.laps)
+            fastest = laps.pick_fastest() if len(laps) else None
+        except (DataNotFoundError, NetworkError, InvalidDataError):
+            fastest = None
+        if fastest is None:
+            return
+        try:
+            info._fit_marker_distances(fastest, only_missing=True)
+        except (DataNotFoundError, NetworkError, InvalidDataError, TypeError, ValueError) as e:
+            logger.info("Marker distances not fitted for %s: %s", self.api_path, e)
+
+    def _event_texts(self, *keys: str) -> list[str]:
+        """Text fields of the schedule row (``""`` when unknown), read from one lookup."""
+        try:
+            event = self.event
+        except (EventNotFoundError, ValueError):
+            return [""] * len(keys)
+        if not hasattr(event, "get"):
+            return [""] * len(keys)
+        texts = []
+        for key in keys:
+            value = event.get(key)
+            texts.append("" if value is None or _is_nan(value) else str(value))
+        return texts
+
+    def _build_circuit_info(self) -> "CircuitInfo":
+        """Fetch ``corners.json`` and build the :class:`CircuitInfo` (MultiViewer backup)."""
+        from .core_utils.circuit_info import build_circuit_info
+
+        payload: dict[str, Any] | None
         try:
             data = self._fetch_json("corners.json")
+            payload = data if isinstance(data, dict) else None
         except DataNotFoundError:
             logger.info("No corners.json for %s/%s/%s", self.year, self.gp, self.session)
-            return CircuitInfo(
-                corners=_empty.copy(),
-                marshal_lights=_empty.copy(),
-                marshal_sectors=_empty.copy(),
-                rotation=0.0,
-            )
+            payload = None
         except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
             logger.warning(
                 "Failed to load circuit info for %s/%s/%s: %s",
@@ -2137,79 +2521,19 @@ class Session:
                 self.session,
                 e,
             )
-            return CircuitInfo(
-                corners=_empty.copy(),
-                marshal_lights=_empty.copy(),
-                marshal_sectors=_empty.copy(),
-                rotation=0.0,
-            )
-
-        if not isinstance(data, dict):
-            return CircuitInfo(
-                corners=_empty.copy(),
-                marshal_lights=_empty.copy(),
-                marshal_sectors=_empty.copy(),
-                rotation=0.0,
-            )
-
-        # Top-level scalar – Rotation is NOT a list, unlike the other fields.
-        _rot_raw = data.get("Rotation", 0.0)
-        rotation: float = 0.0
-        try:
-            if _rot_raw not in (None, "None"):
-                rotation = float(_rot_raw)
-        except (TypeError, ValueError):
-            pass
-
-        corner_nums = data.get("CornerNumber", []) or []
-        xs = data.get("X", []) or []
-        ys = data.get("Y", []) or []
-        angles = data.get("Angle", []) or []
-        distances = data.get("Distance", []) or []
-
-        def _to_float(raw) -> float:
-            if raw is None or raw == "None":
-                return float("nan")
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                return float("nan")
-
-        def _to_int(raw) -> int:
-            if raw is None or raw == "None":
-                return 0
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                return 0
-
-        n = len(corner_nums)
-        rows = [
-            {
-                "X": _to_float(xs[i] if i < len(xs) else None),
-                "Y": _to_float(ys[i] if i < len(ys) else None),
-                "Number": _to_int(corner_nums[i]),
-                "Letter": "",  # not present in corners.json
-                "Angle": _to_float(angles[i] if i < len(angles) else None),
-                "Distance": _to_float(distances[i] if i < len(distances) else None),
-            }
-            for i in range(n)
-        ]
-
-        if rows:
-            corners_df = pd.DataFrame(rows, columns=_CORNERS_DF_COLUMNS)
-            corners_df["Number"] = corners_df["Number"].astype("int64")
-            corners_df["Letter"] = corners_df["Letter"].astype(object)
-            for _col in ("X", "Y", "Angle", "Distance"):
-                corners_df[_col] = corners_df[_col].astype("float64")
-        else:
-            corners_df = _empty.copy()
-
-        return CircuitInfo(
-            corners=corners_df,
-            marshal_lights=_empty.copy(),
-            marshal_sectors=_empty.copy(),
-            rotation=rotation,
+            payload = None
+        circuit_id, circuit_name, country, location = self._event_texts(
+            "CircuitId", "CircuitName", "Country", "Location"
+        )
+        return build_circuit_info(
+            payload,
+            year=self.year,
+            circuit_id=circuit_id or None,
+            circuit_name=circuit_name,
+            country=country,
+            location=location,
+            lib=self.lib,
+            allow_multiviewer=not bool(config.get("offline_mode", False)),
         )
 
     def _refresh_driver_indices(self) -> None:
@@ -2229,8 +2553,12 @@ class Session:
         self._driver_index_source_id = driver_index_source_id
 
     def _prefetch_driver_lookup_and_laps(self, driver: str) -> dict[str, Any] | None:
-        """Fetch drivers and target driver laps concurrently on first driver lookup."""
-        if self._drivers is not None:
+        """Fetch drivers and target driver laps concurrently on first driver lookup.
+
+        Nothing to fetch in a season served from Ergast alone: it has no
+        timing files, and the drivers come from the classification.
+        """
+        if self._drivers is not None or self._ergast_only:
             return None
         if not bool(config.get("prefetch_driver_laps_on_get_driver", True)):
             return None
@@ -2282,7 +2610,7 @@ class Session:
             self._remember_local_payload("drivers.json", results[0])
             drivers_payload = results[0].get("drivers")
             if isinstance(drivers_payload, list):
-                self._drivers = drivers_payload
+                self._drivers = _session_driver_rows(drivers_payload)
                 self._refresh_driver_indices()
 
         if len(results) > 1 and isinstance(results[1], dict):
@@ -3521,6 +3849,10 @@ class Session:
         frame = get_cache().get_laps_frame(self.year, self.gp, self.session, lib="pandas")
         if frame is None:
             return None
+        if self._laps is None:
+            # The frame ``laps`` would load from the same tier: keep it, so the
+            # telemetry built next gets its session clock (``_lap_start_lookup``).
+            self._laps = self._as_session_laps(frame)
         try:
             lap_time = frame[COL_LAP_TIME]
             if not pd.api.types.is_timedelta64_dtype(lap_time.dtype):
@@ -3950,6 +4282,8 @@ class Session:
             unbound = laps.copy(deep=False)
             unbound.session = None
             return unbound
+        if getattr(laps, "session", None) is not None and hasattr(laps, "base_class_view"):
+            return cast(Any, laps).base_class_view  # PolarsLaps: a plain polars frame
         return laps
 
     def _bind_cached_laps(self, cached: DataFrame) -> DataFrame:
@@ -3958,15 +4292,54 @@ class Session:
             bound = cached.copy(deep=False)
             bound.session = self
             return bound
+        if self.lib == "polars":
+            return self._as_session_laps(cached)
         return cached
 
     def _as_session_laps(self, frame: DataFrame) -> DataFrame:
-        """Expose pandas laps as :class:`Laps` bound to this session; polars stays plain."""
+        """Laps bound to this session: :class:`Laps` (pandas) or ``PolarsLaps`` (polars)."""
         if self.lib == "pandas" and isinstance(frame, pd.DataFrame):
             if not isinstance(frame, Laps):
                 frame = Laps(frame)
             frame.session = self
+        elif self.lib == "polars" and frame is not None and hasattr(frame, "height"):
+            polars_laps = _polars_models().PolarsLaps
+            if not (isinstance(frame, polars_laps) and frame.session is self):
+                frame = polars_laps._from_frame(frame, self)
         return frame
+
+    def _driver_laps_frame(
+        self, driver: str, prefetched_lap_data: dict[str, Any] | None = None
+    ) -> DataFrame:
+        """One driver's session-bound laps without loading every driver (polars ``Driver.laps``).
+
+        The same sources, in the same order, as the pandas :attr:`Driver.laps`:
+        nothing for a driver only the classification lists, the loaded
+        session table, else the driver's own laptime payload (prefetched by
+        :meth:`get_driver`, memoised, cached, fetched). Never raises for a
+        missing or broken payload: the laps are empty, with their columns.
+        """
+        if not self._driver_has_timing_data(driver):
+            return self._as_session_laps(_empty_driver_laps(self))
+        if self._ergast_only and self._laps is None:
+            _ = self.laps
+        if self._laps is not None and not _is_empty_df(self._laps, self.lib):
+            driver_laps = cast(Any, self._as_session_laps(self._laps)).pick_driver(driver)
+            if not _is_empty_df(driver_laps, self.lib):
+                return driver_laps
+        if self._ergast_only:
+            return self._as_session_laps(_empty_driver_laps(self))
+        try:
+            lap_data = _load_driver_lap_payload(self, driver, prefetched_lap_data)
+            team = self._get_driver_info(driver)["team"]
+            frame = _process_lap_df(_create_lap_df(lap_data, driver, team, self.lib), self.lib)
+        except DataNotFoundError:
+            logger.info(f"No lap data: {driver}")
+            return self._as_session_laps(_empty_driver_laps(self))
+        except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+            logger.warning(f"Failed to load laps for {driver}: {e}")
+            return self._as_session_laps(_empty_driver_laps(self))
+        return self._as_session_laps(frame)
 
     def _laps_from_frame_tier(self, ultra_cold_enabled: bool | None = None) -> DataFrame | None:
         """Session-bound laps from the laps frame tier, or None on a miss.
@@ -4228,6 +4601,14 @@ class Session:
                     code = info.get("driver")
                     if str(number) == value and isinstance(code, str) and code.strip():
                         return code.strip()
+            elif " " in value:
+                # A full name ("Max Verstappen"), matched without regard to case.
+                wanted = " ".join(value.split()).casefold()
+                for info in self._driver_rows():
+                    full_name = f"{info.get('fn', '')} {info.get('ln', '')}".strip()
+                    code = info.get("driver")
+                    if full_name.casefold() == wanted and isinstance(code, str) and code.strip():
+                        return code.strip()
             return value
 
         if hasattr(driver, "driver") and isinstance(driver.driver, str):
@@ -4244,22 +4625,33 @@ class Session:
             f"driver must be a string or FastF1 driver-like object, got {type(driver).__name__}"
         )
 
-    def get_driver(self, driver: Any) -> "Driver":
+    def get_driver(self, identifier: Any = None, *, driver: Any = None) -> "Driver":
         """
-        Get driver-specific data.
+        Get a driver of the session: the driver's ``results`` row plus tif1's helpers.
 
         Args:
-            driver: Driver code (e.g., "VER", "HAM")
+            identifier: Abbreviation (``"VER"``), car number (``1`` or ``"1"``),
+                a shared car's ``"number/Abbreviation"`` label or the full name
+                (fastf1's keyword).
+            driver: tif1's earlier name of ``identifier`` (an alias).
 
         Returns:
-            Driver object
+            :class:`Driver` (a :class:`DriverResult`), or ``PolarsDriver`` on a
+            polars session.
 
         Raises:
-            TypeError: If driver is not a string
-            ValueError: If driver is empty
+            TypeError: If the identifier is not a string, a number or driver-like
+            ValueError: If the identifier is empty
             DriverNotFoundError: If driver not found in session
         """
-        driver_code = self._coerce_driver_code(driver)
+        if identifier is not None and driver is not None:
+            raise ValueError("Cannot pass both 'identifier' and 'driver'")
+        if identifier is None:
+            identifier = driver
+        if identifier is None:
+            raise TypeError("get_driver() missing 1 required argument: 'identifier'")
+        driver_code = self._coerce_driver_code(identifier)
+        car_number = _identifier_car_number(identifier)
         prefetched_laps = self._prefetch_driver_lookup_and_laps(driver_code)
         # Enforce API contract by validating against the session driver list.
         # This may trigger one network fetch when drivers are not loaded yet.
@@ -4271,7 +4663,66 @@ class Session:
                 session=self.session_name,
             )
 
-        return Driver(self, driver_code, prefetched_lap_data=prefetched_laps)
+        if self.lib == "polars" and _ensure_polars_available():
+            return self._polars_driver(driver_code, prefetched_laps, car_number)
+        return Driver(
+            self, driver_code, prefetched_lap_data=prefetched_laps, _car_number=car_number
+        )
+
+    def _polars_driver(
+        self,
+        driver: str,
+        prefetched_lap_data: dict[str, Any] | None,
+        car_number: str | None = None,
+    ) -> Any:
+        """``PolarsDriver``: the driver's results row plus the identity, as on pandas.
+
+        The same rules as :class:`Driver`: the ``results`` row, identity
+        values from ``drivers.json`` and Ergast filling whatever the row leaves
+        empty, fastf1's columns with empty values when there is no row.
+        """
+        info = self._get_driver_info(driver)
+        first_name = info.get("fn", "")
+        last_name = info.get("ln", "")
+        number = str(car_number or info.get("dn", ""))
+        identity: dict[str, Any] = {
+            "DriverNumber": number,
+            "Abbreviation": driver,
+            "TeamName": info.get("team", ""),
+            "TeamColor": info.get("tc", ""),
+            "FirstName": first_name,
+            "LastName": last_name,
+            "FullName": f"{first_name} {last_name}".strip(),
+            "HeadshotUrl": info.get("headshot_url", info.get("url", "")),
+        }
+        identity.update(self._ergast_identity(number, driver))
+        row: dict[str, Any] = {}
+        label: str | int | None = None
+        try:
+            results: Any = self.results
+        except (TIF1Error, AttributeError, KeyError, TypeError, ValueError):
+            results = None
+        if results is not None and getattr(results, "height", 0):
+            position = _polars_result_position(results, driver, number)
+            if position is not None:
+                row = results.row(position, named=True)
+                # The pandas index label ("1", "8/FAG"), as fastf1 names a row.
+                label_for = getattr(results, "_label_for", None)
+                label = label_for(position) if callable(label_for) else None
+                if label is None:
+                    label = position
+        for key, value in identity.items():
+            current = row.get(key)
+            if current is None or (isinstance(current, str) and not current):
+                row[key] = value
+        frame = _er.finalize_results_frame_polars([row])
+        return _polars_models().PolarsDriver(
+            frame,
+            session=self,
+            name=label,
+            driver=driver,
+            prefetched_lap_data=prefetched_lap_data,
+        )
 
     def _raise_if_cdns_failed(self, failures_before: dict[str, int]) -> None:
         """Raise ``NetworkError`` when a load produced no laps because the CDNs failed.
@@ -4323,10 +4774,15 @@ class Session:
 
         sort_col = self._lap_time_sort_column(valid)
         if self.lib == "polars":
+            # Ordered group and stable sort: ties (equal lap times) keep the
+            # laps' driver order, as the pandas stable sort does.
             return (
-                valid.group_by(COL_DRIVER).agg(pl.all().sort_by(sort_col).first()).sort(sort_col)
+                valid.group_by(COL_DRIVER, maintain_order=True)
+                .agg(pl.all().sort_by(sort_col, maintain_order=True).first())
+                .sort(sort_col, maintain_order=True)
+                .select(valid.columns)
                 if by_driver
-                else valid.sort(sort_col).head(1)
+                else valid.sort(sort_col, maintain_order=True).head(1)
             )
 
         valid_pd = cast(pd.DataFrame, valid)
@@ -4382,10 +4838,12 @@ class Session:
                 ultra_cold=ultra_cold_enabled,
             )
             if not _is_empty_df(fastest_from_raw, self.lib):
-                return fastest_from_raw
+                return self._fastest_laps_result(fastest_from_raw)
 
         laps = self.laps
-        return self._select_fastest_laps(laps, by_driver=by_driver, drivers=drivers)
+        return self._fastest_laps_result(
+            self._select_fastest_laps(laps, by_driver=by_driver, drivers=drivers)
+        )
 
     async def get_fastest_laps_async(
         self, by_driver: bool = True, drivers: list[str] | None = None
@@ -4410,10 +4868,20 @@ class Session:
                 ultra_cold=ultra_cold_enabled,
             )
             if not _is_empty_df(fastest_from_raw, self.lib):
-                return fastest_from_raw
+                return self._fastest_laps_result(fastest_from_raw)
 
         laps = await self.laps_async()
-        return self._select_fastest_laps(laps, by_driver=by_driver, drivers=drivers)
+        return self._fastest_laps_result(
+            self._select_fastest_laps(laps, by_driver=by_driver, drivers=drivers)
+        )
+
+    def _fastest_laps_result(self, frame: DataFrame) -> DataFrame:
+        """A ``get_fastest_laps`` result as session-bound laps (``Laps``/``PolarsLaps``).
+
+        The cold path scans raw payloads into a plain frame; fastf1 code chains
+        ``pick_*``/``get_telemetry`` on it, as on the warm path's ``Laps``.
+        """
+        return self._as_session_laps(frame)
 
     def _fetch_telemetry_batch_from_refs(
         self,
@@ -4590,6 +5058,8 @@ class Session:
 
     def _prefetch_all_loaded_laps_telemetry(self, *, ultra_cold: bool) -> None:
         """Bulk-fetch telemetry for all loaded laps on first per-lap telemetry request."""
+        if self._ergast_only:
+            return
         if not bool(config.get("prefetch_all_telemetry_on_first_lap_request", True)):
             return
         if self._telemetry_bulk_prefetch_done:
@@ -4641,8 +5111,12 @@ class Session:
         self._telemetry_bulk_prefetch_done = True
 
     def _precompute_telemetry_dfs(self) -> None:
-        """Pre-create all telemetry DataFrames from memoized payloads in a single batch."""
-        if self._memo.kind_size("telemetry_payload") == 0:
+        """Pre-create all telemetry DataFrames from memoized payloads in a single batch.
+
+        pandas only: the batch is one pandas frame sliced per lap. A polars
+        session builds each lap's frame from its memoised payload on access.
+        """
+        if self.lib != "pandas" or self._memo.kind_size("telemetry_payload") == 0:
             return
 
         merged_cols: dict[str, list] = {}
@@ -4699,13 +5173,10 @@ class Session:
 
         for key, start, end in key_ranges:
             frame = big_df.iloc[start:end]
-            if self.lib == "pandas":
-                telemetry = Telemetry(frame, copy=False)
-                telemetry.session = self
-                telemetry.driver = key[0]
-                self._memo.set("telemetry_df", key, telemetry)
-            else:
-                self._memo.set("telemetry_df", key, frame)
+            telemetry = Telemetry(frame, copy=False)
+            telemetry.session = self
+            telemetry.driver = key[0]
+            self._memo.set("telemetry_df", key, self._attach_session_clock(telemetry, key[0]))
 
     def _maybe_start_background_telemetry_prefetch(self) -> None:
         """Kick off all-laps telemetry prefetch after laps are available."""
@@ -4830,7 +5301,14 @@ class Session:
                 continue
             try:
                 if _coerce_lap_number(entry_lap) == lap_num:
-                    return _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
+                    frame = _create_telemetry_df(
+                        tel_payload,
+                        driver,
+                        lap_num,
+                        self.lib,
+                        clock=self._lap_clock(driver, lap_num),
+                    )
+                    return None if frame is None else self._session_telemetry(frame, driver)
             except ValueError:
                 continue
         return None
@@ -4907,7 +5385,9 @@ class Session:
                         frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
-            return pl.concat(frames, how="vertical_relaxed", rechunk=False)
+            return self._bind_telemetry(
+                pl.concat(frames, how="vertical_relaxed", rechunk=False), None
+            )
 
         try:
             with _suspend_gc():
@@ -4925,8 +5405,10 @@ class Session:
             if not frames:
                 return _create_empty_df(self.lib)
             frames_pd = [cast(pd.DataFrame, frame) for frame in frames]
-            return pd.concat(frames_pd, ignore_index=True)
-        return merged_df if not merged_df.empty else _create_empty_df(self.lib)
+            return self._bind_telemetry(pd.concat(frames_pd, ignore_index=True), None)
+        if merged_df.empty:
+            return _create_empty_df(self.lib)
+        return self._bind_telemetry(merged_df, None)
 
     def get_fastest_laps_tels(
         self, by_driver: bool = True, drivers: list[str] | None = None
@@ -4976,6 +5458,8 @@ class Session:
             1  0.124s   299.1      0.87
             ...
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return self._empty_session_telemetry()
         _validate_drivers_list(drivers)
         requested_ultra_cold = self._resolve_ultra_cold_mode(None)
         auto_ultra_cold = (
@@ -5076,6 +5560,8 @@ class Session:
         Returns:
             DataFrame with telemetry from fastest lap(s).
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return self._empty_session_telemetry()
         _validate_drivers_list(drivers)
         requested_ultra_cold = self._resolve_ultra_cold_mode(None)
         auto_ultra_cold = (
@@ -5169,6 +5655,8 @@ class Session:
         Returns None when no telemetry is available and raises the same
         exceptions as the DataFrame path on network failure.
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return None
         memoized_tel = self._get_telemetry_payload(driver, lap_num)
         if memoized_tel is not None:
             return memoized_tel
@@ -5215,30 +5703,221 @@ class Session:
         """DataFrame subclass the frame tier builds for this backend (pandas: Telemetry)."""
         return Telemetry if self.lib == "pandas" else None
 
-    def _adopt_telemetry_frame(self, frame: Any, driver: str) -> None:
-        """Attach this session to a tier-built ``Telemetry`` frame (no-op otherwise)."""
+    def _adopt_telemetry_frame(self, frame: Any, driver: str) -> Any:
+        """Attach this session (and the session clock) to a tier-built telemetry frame.
+
+        pandas frames are adopted in place and returned; a polars frame comes
+        back as a new ``PolarsTelemetry`` (polars never mutates), which the
+        caller stores.
+        """
         if isinstance(frame, Telemetry):
             object.__setattr__(frame, "session", self)
             object.__setattr__(frame, "driver", driver)
+        return self._bind_telemetry(frame, driver)
+
+    def _empty_session_telemetry(self, driver: str | None = None) -> Any:
+        """No samples, fastf1's telemetry columns and dtypes, bound to this session."""
+        if self.lib == "polars" and _ensure_polars_available():
+            return _polars_models().PolarsTelemetry._empty(self, driver)
+        return _empty_telemetry(self, driver)
+
+    def _session_telemetry(self, frame: Any, driver: str) -> Any:
+        """One lap's frame as this session's telemetry: ``Telemetry``/``PolarsTelemetry``.
+
+        Session, driver and the session clock are attached; pandas frames are
+        wrapped without copying their data.
+        """
+        if self.lib != "pandas":
+            return self._bind_telemetry(frame, driver)
+        # object.__setattr__: both names are Telemetry._metadata, and
+        # pandas' __setattr__ costs ~15 us per assignment on this path.
+        if not isinstance(frame, Telemetry):
+            frame = Telemetry(cast(pd.DataFrame, frame), copy=False)
+        object.__setattr__(frame, "session", self)
+        object.__setattr__(frame, "driver", driver)
+        return self._attach_session_clock(frame, driver)
+
+    def _bind_telemetry(self, frame: Any, driver: str | None) -> Any:
+        """A built telemetry frame with the session clock; ``PolarsTelemetry`` on polars."""
+        frame = self._attach_session_clock(frame, driver)
+        if self.lib != "polars" or frame is None or not hasattr(frame, "height"):
+            return frame
+        polars_telemetry = _polars_models().PolarsTelemetry
+        if (
+            isinstance(frame, polars_telemetry)
+            and frame.session is self
+            and (driver is None or frame.driver == driver)
+        ):
+            return frame
+        return polars_telemetry._from_frame(frame, self, driver)
+
+    def _lap_start_lookup(self, driver: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """``(LapStartTime, LapStartDate)`` as int64-ns arrays indexed by lap number.
+
+        From the loaded laps table, else from the driver's memoised laptime
+        payload (``lap``/``lST``/``lSD``); never fetches. Int64 min marks an
+        unknown lap; ``None`` when nothing is known for the driver.
+        """
+        laps = self._laps
+        source_id = id(laps) if laps is not None else None
+        if source_id != self._lap_start_cache_source:
+            self._lap_start_cache.clear()
+            self._lap_start_cache_source = source_id
+        if driver in self._lap_start_cache:
+            return self._lap_start_cache[driver]
+        numbers: Any = None
+        starts: np.ndarray | None = None
+        dates: np.ndarray | None = None
+        if laps is not None and not _is_empty_df(laps, self.lib):
+            columns = list(laps.columns)
+            if {"Driver", "LapNumber", "LapStartTime", "LapStartDate"}.issubset(columns):
+                if self.lib == "polars":
+                    sub = cast(Any, laps).filter(pl.col("Driver") == driver)
+                    numbers = sub["LapNumber"].to_list()
+                    starts = _ss._timedelta_ns(sub["LapStartTime"].to_list())
+                    dates = _ss._datetime_ns(sub["LapStartDate"].to_list())
+                else:
+                    laps_pd = cast(pd.DataFrame, laps)
+                    mask = (laps_pd["Driver"].astype(object) == driver).to_numpy()
+                    sub = laps_pd.loc[mask]
+                    numbers = sub["LapNumber"].tolist()
+                    starts = _ss._timedelta_ns(sub["LapStartTime"].tolist())
+                    dates = _ss._datetime_ns(sub["LapStartDate"].tolist())
+        else:
+            payload = self._get_or_derive_driver_laptime_payload(driver)
+            if isinstance(payload, dict) and isinstance(payload.get("lap"), list):
+                numbers = payload.get("lap")
+                starts = _ss._timedelta_ns(payload.get("lST"))
+                dates = _ss._datetime_ns(payload.get("lSD"))
+        lookup: tuple[np.ndarray, np.ndarray] | None = None
+        if numbers is not None and starts is not None and dates is not None:
+            laps_known: list[int] = []
+            for value in numbers:
+                try:
+                    laps_known.append(-1 if value is None or _is_nan(value) else int(value))
+                except (TypeError, ValueError):
+                    laps_known.append(-1)
+            size = max(laps_known, default=-1) + 1
+            if size > 0 and len(laps_known) == len(starts) == len(dates):
+                start_arr = np.full(size, _ss._NS_MIN, dtype="int64")
+                date_arr = np.full(size, _ss._NS_MIN, dtype="int64")
+                for position, lap in enumerate(laps_known):
+                    if lap >= 0 and start_arr[lap] == _ss._NS_MIN:
+                        start_arr[lap] = starts[position]
+                        date_arr[lap] = dates[position]
+                lookup = (start_arr, date_arr)
+        self._lap_start_cache[driver] = lookup
+        return lookup
+
+    def _lap_clock(self, driver: str, lap_num: Any) -> tuple[int, int] | None:
+        """``(LapStartTime, LapStartDate)`` of one lap as int64 ns (None when unknown)."""
+        lookup = self._lap_start_lookup(str(driver))
+        if lookup is None:
+            return None
+        starts, dates = lookup
+        try:
+            lap = int(lap_num)
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= lap < len(starts) or starts[lap] == _ss._NS_MIN:
+            return None
+        return int(starts[lap]), int(dates[lap])
+
+    def _attach_session_clock(self, frame: Any, driver: str | None = None) -> Any:
+        """Add ``Date`` and ``SessionTime`` (lap start plus ``Time``) to a telemetry frame.
+
+        The two columns lead the frame as in fastf1. pandas frames gain them
+        in place (the same object is returned); polars frames come back as a
+        new frame. No-op when the columns exist, the frame is empty or the
+        lap starts are unknown (no laps loaded for the driver).
+        """
+        if frame is None:
+            return frame
+        columns = list(frame.columns)
+        if "SessionTime" in columns or "Time" not in columns or "LapNumber" not in columns:
+            return frame
+        is_polars = not isinstance(frame, pd.DataFrame)
+        n = frame.height if is_polars else len(frame)
+        if n == 0:
+            return frame
+        if is_polars:
+            drivers = (
+                [driver]
+                if driver
+                else [d for d in frame["Driver"].unique().to_list() if d is not None]
+                if "Driver" in columns
+                else []
+            )
+            lap_numbers = frame["LapNumber"].fill_null(-1).cast(pl.Int64).to_numpy()
+            time_col = frame["Time"]
+            if time_col.dtype == pl.Duration:
+                time_ns = time_col.cast(pl.Int64).fill_null(_ss._NS_MIN).to_numpy()
+            else:
+                time_ns = _ss._timedelta_ns(time_col.to_list())
+            driver_col = frame["Driver"].to_list() if "Driver" in columns else None
+        else:
+            if driver:
+                drivers = [driver]
+            elif "Driver" in columns:
+                drivers = list(frame["Driver"].dropna().unique().tolist())
+            else:
+                drivers = []
+            lap_numbers = pd.to_numeric(frame["LapNumber"], errors="coerce").to_numpy(
+                dtype="float64", na_value=-1.0
+            )
+            lap_numbers = lap_numbers.astype("int64")
+            time_ns = _timedelta_ns(cast(pd.Series, frame["Time"]))
+            driver_col = frame["Driver"].to_numpy() if "Driver" in columns else None
+        if not drivers:
+            return frame
+        starts = np.full(n, _ss._NS_MIN, dtype="int64")
+        dates = np.full(n, _ss._NS_MIN, dtype="int64")
+        for code in drivers:
+            lookup = self._lap_start_lookup(str(code))
+            if lookup is None:
+                continue
+            start_arr, date_arr = lookup
+            if len(drivers) == 1 or driver_col is None:
+                rows = np.arange(n)
+            else:
+                rows = np.flatnonzero(np.asarray(driver_col, dtype=object) == code)
+            laps_of_rows = lap_numbers[rows]
+            valid = (laps_of_rows >= 0) & (laps_of_rows < len(start_arr))
+            rows = rows[valid]
+            laps_of_rows = laps_of_rows[valid]
+            starts[rows] = start_arr[laps_of_rows]
+            dates[rows] = date_arr[laps_of_rows]
+        known = (starts != _ss._NS_MIN) & (time_ns != _ss._NS_MIN)
+        if not known.any():
+            return frame
+        session_time = np.where(known, time_ns + starts, _ss._NS_MIN)
+        date = np.where(known & (dates != _ss._NS_MIN), time_ns + dates, _ss._NS_MIN)
+        if is_polars:
+            new = frame.with_columns(
+                pl.Series("Date", date, dtype=pl.Int64).cast(pl.Datetime("ns")),
+                pl.Series("SessionTime", session_time, dtype=pl.Int64).cast(pl.Duration("ns")),
+            ).select(["Date", "SessionTime", *columns])
+            from_frame = getattr(type(frame), "_from_frame", None)
+            if callable(from_frame):
+                return from_frame(
+                    new,
+                    session=getattr(frame, "session", self),
+                    driver=getattr(frame, "driver", driver),
+                )
+            return new
+        frame.insert(0, "Date", date.view("M8[ns]"))
+        frame.insert(1, "SessionTime", session_time.view("m8[ns]"))
+        return frame
 
     def _get_telemetry_df_for_ref(
         self, driver: str, lap_num: int, *, ultra_cold: bool, allow_prefetch: bool = True
     ) -> DataFrame:
         """Get telemetry DataFrame for a specific (driver, lap) reference."""
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return self._empty_session_telemetry(driver)
 
         def _as_pandas_telemetry(frame: DataFrame) -> DataFrame:
-            if self.lib != "pandas":
-                return frame
-            # object.__setattr__: both names are Telemetry._metadata, and
-            # pandas' __setattr__ costs ~15 us per assignment on this path.
-            if isinstance(frame, Telemetry):
-                object.__setattr__(frame, "session", self)
-                object.__setattr__(frame, "driver", driver)
-                return frame
-            telemetry = Telemetry(cast(pd.DataFrame, frame), copy=False)
-            object.__setattr__(telemetry, "session", self)
-            object.__setattr__(telemetry, "driver", driver)
-            return telemetry
+            return self._session_telemetry(frame, driver)
 
         cached_df = self._memo.get("telemetry_df", (driver, lap_num))
         if cached_df is not None:
@@ -5259,6 +5938,16 @@ class Session:
             else None
         )
         whole_driver = True
+        if callable(tier_read) and driver not in self._memo.single_lap_drivers:
+            # A driver's first lone lap is built from its cached payload: a
+            # race driver row is ~6 MB to decode for one ~100 KB lap (pandas 5
+            # vs 14 ms in a fresh process; polars reads the whole IPC row). A
+            # second lap of the driver decodes the row below, so a loop over
+            # its laps still pays it once.
+            self._memo.single_lap_drivers.add(driver)
+            tel_df = self._cached_payload_telemetry_df(driver, lap_num)
+            if tel_df is not None:
+                return tel_df
         if callable(tier_read) and self.lib == "pandas":
             # Pergamon Q1: the driver's row is decoded once and held; only
             # the touched lap's frame is built now, the others on access.
@@ -5292,8 +5981,8 @@ class Session:
             )
             for ref, frame in tier_hits.items():
                 if self._memo.get("telemetry_df", ref) is None:
-                    self._adopt_telemetry_frame(frame, ref[0])
-                    self._memo.set("telemetry_df", ref, frame)
+                    tier_hits[ref] = self._adopt_telemetry_frame(frame, ref[0])
+                    self._memo.set("telemetry_df", ref, tier_hits[ref])
             tier_frame = tier_hits.get((driver, lap_num))
             if tier_frame is not None:
                 return _as_pandas_telemetry(tier_frame)
@@ -5309,12 +5998,31 @@ class Session:
                 return _as_pandas_telemetry(_create_empty_df(self.lib))
             return _create_empty_df(self.lib)
 
-        tel_df = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
+        tel_df = _create_telemetry_df(
+            tel_payload, driver, lap_num, self.lib, clock=self._lap_clock(driver, lap_num)
+        )
         if tel_df is not None:
             wrapped_df = _as_pandas_telemetry(tel_df)
             self._memo.set("telemetry_df", (driver, lap_num), wrapped_df)
             return wrapped_df
         return _create_empty_df(self.lib)
+
+    def _cached_payload_telemetry_df(self, driver: str, lap_num: int) -> DataFrame | None:
+        """The lap's frame built from a memoized or SQLite-cached payload (no request)."""
+        payload = self._get_telemetry_payload(driver, lap_num)
+        if payload is None:
+            cached = get_cache().get_telemetry(self.year, self.gp, self.session, driver, lap_num)
+            if not isinstance(cached, dict) or not cached:
+                return None
+            payload = cached
+        tel_df = _create_telemetry_df(
+            payload, driver, lap_num, self.lib, clock=self._lap_clock(driver, lap_num)
+        )
+        if tel_df is None:
+            return None
+        wrapped = self._session_telemetry(tel_df, driver)
+        self._memo.set("telemetry_df", (driver, lap_num), wrapped)
+        return wrapped
 
     def get_fastest_lap_tel(self, ultra_cold: bool | None = None) -> DataFrame:
         """Get telemetry from overall fastest lap.
@@ -5336,6 +6044,8 @@ class Session:
             >>> f"Max speed: {fastest_tel['Speed'].max()} km/h"
             'Max speed: 298.5 km/h'
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return self._empty_session_telemetry()
         requested_ultra_cold = self._resolve_ultra_cold_mode(ultra_cold)
         auto_ultra_cold = (
             ultra_cold is None
@@ -5375,6 +6085,8 @@ class Session:
         Returns:
             DataFrame with telemetry from the overall fastest lap.
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return self._empty_session_telemetry()
         requested_ultra_cold = self._resolve_ultra_cold_mode(ultra_cold)
         auto_ultra_cold = (
             ultra_cold is None
@@ -5501,10 +6213,11 @@ class Session:
                 lib=self.lib,
                 frame_class=self._telemetry_frame_class(),
             )
-            for ref, frame in frame_hits.items():
-                self._adopt_telemetry_frame(frame, ref[0])
-                self._memo.set("telemetry_df", ref, frame)
-                telemetry_map[ref] = frame
+            for ref, tier_frame in frame_hits.items():
+                # polars frames come back as new objects: keep the adopted one.
+                adopted = self._adopt_telemetry_frame(tier_frame, ref[0])
+                self._memo.set("telemetry_df", ref, adopted)
+                telemetry_map[ref] = adopted
             pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
         return telemetry_map, pending_refs
 
@@ -5529,6 +6242,8 @@ class Session:
             >>> telemetry_map = await session.fetch_all_laps_telemetry_async()
             >>> ver_lap_1 = telemetry_map.get(("VER", 1))
         """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return {}
         ultra_cold_enabled = self._resolve_telemetry_ultra_cold_mode(ultra_cold)
 
         # Get all laps first
@@ -5572,8 +6287,15 @@ class Session:
                         tel_data = result.get("tel", {})
                         if tel_data:
                             self._remember_telemetry_payload(driver, lap_num, tel_data)
-                            tel_df = _create_telemetry_df(tel_data, driver, lap_num, self.lib)
+                            tel_df = _create_telemetry_df(
+                                tel_data,
+                                driver,
+                                lap_num,
+                                self.lib,
+                                clock=self._lap_clock(driver, lap_num),
+                            )
                             if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                                tel_df = self._bind_telemetry(tel_df, driver)
                                 self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                                 telemetry_map[(driver, lap_num)] = tel_df
                                 if self.enable_cache:
@@ -5605,8 +6327,11 @@ class Session:
         materialized_frames: list[tuple[str, int, DataFrame]] = []
         with _suspend_gc():
             for driver, lap_num, tel_payload in cached_tels:
-                tel_df = _create_telemetry_df(tel_payload, driver, lap_num, self.lib)
+                tel_df = _create_telemetry_df(
+                    tel_payload, driver, lap_num, self.lib, clock=self._lap_clock(driver, lap_num)
+                )
                 if tel_df is not None and not _is_empty_df(tel_df, self.lib):
+                    tel_df = self._bind_telemetry(tel_df, driver)
                     self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                     telemetry_map[(str(driver), int(lap_num))] = tel_df
                     materialized_frames.append((driver, lap_num, tel_df))
@@ -5665,6 +6390,8 @@ class Session:
         """
         # Pergamon P5: a warm load (every frame memoized or in the frame
         # tier) is served synchronously — no event loop, no asyncio import.
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return {}
         ultra_cold_enabled = self._resolve_telemetry_ultra_cold_mode(ultra_cold)
         laps = self.laps
         if _is_empty_df(laps, self.lib):
@@ -5697,6 +6424,83 @@ class Session:
             "fetch_all_laps_telemetry",
         )
 
+    def _prefetch_telemetry_payloads(
+        self, refs: list[tuple[str, int]], *, ultra_cold: bool
+    ) -> list[tuple[str, int, Any]]:
+        """Memoise the raw telemetry payloads of ``refs`` in one batch.
+
+        Memoised payloads first, then one SQLite payload-tier read, then one
+        parallel network wave for the rest (the per-lap path would fetch them
+        one after another). Returns the ``(driver, lap, payload)`` entries
+        found; a lap missing from every source is simply absent, and a
+        runtime that cannot block on the event loop (Pyodide without JSPI)
+        skips the network wave, leaving those laps to the per-lap path.
+        """
+        if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
+            return []
+        requests, lap_info, found = self._fetch_telemetry_batch_from_refs(
+            refs, skip_cache=ultra_cold
+        )
+        pending = [
+            (request, ref)
+            for request, ref in zip(requests, lap_info, strict=True)
+            if not self._should_skip_telemetry_fetch(ref[0])
+        ]
+        if not pending or self._all_known_missing([ref for _, ref in pending]):
+            return found
+        try:
+            results = _run_coroutine_sync(
+                lambda: fetch_multiple_async(
+                    [request for request, _ in pending],
+                    use_cache=not ultra_cold,
+                    write_cache=self.enable_cache,
+                    validate_payload=not ultra_cold,
+                    defer_telemetry_writes=True,
+                ),
+                "telemetry batch",
+            )
+        except AsyncRequiredError:
+            return found
+        for (_, (driver, lap_num)), result in zip(pending, results, strict=True):
+            tel_data = result.get("tel") if isinstance(result, dict) else None
+            if isinstance(tel_data, dict) and tel_data:
+                self._remember_telemetry_payload(driver, lap_num, tel_data)
+                found.append((driver, lap_num, tel_data))
+        return found
+
+    def _telemetry_frames_for_refs(
+        self, refs: list[tuple[str, int]]
+    ) -> dict[tuple[str, int], DataFrame]:
+        """Session-bound telemetry frames of ``refs`` (laps without telemetry are absent).
+
+        The batch twin of :meth:`_get_telemetry_df_for_ref`: memoised and
+        frame-tier frames, then payloads (memo, SQLite, one parallel network
+        wave), built and memoised once; a lap still missing afterwards goes
+        through the per-lap path, which records its failure.
+        """
+        if not refs or self._ergast_only:
+            return {}
+        ultra_cold = self._resolve_telemetry_ultra_cold_mode(None)
+        frames, pending = self._memoized_telemetry(refs, ultra_cold)
+        frames = {ref: self._session_telemetry(frame, ref[0]) for ref, frame in frames.items()}
+        if not pending:
+            return frames
+        found = self._prefetch_telemetry_payloads(pending, ultra_cold=ultra_cold)
+        self._schedule_frame_materialization(self._frames_from_payloads(found, frames))
+        for driver, lap_num in pending:
+            if (driver, lap_num) in frames or self._should_skip_telemetry_fetch(driver):
+                continue
+            try:
+                frame = self._get_telemetry_df_for_ref(
+                    driver, lap_num, ultra_cold=ultra_cold, allow_prefetch=False
+                )
+            except (DataNotFoundError, InvalidDataError, NetworkError, TypeError, ValueError) as e:
+                self._record_telemetry_failure(driver, lap_num, e)
+                continue
+            if frame is not None and not _is_empty_df(frame, self.lib):
+                frames[(driver, lap_num)] = frame
+        return frames
+
     def _all_known_missing(self, refs: list[tuple[str, int]]) -> bool:
         """True when every ref is a payload the negative-result cache knows is missing.
 
@@ -5716,6 +6520,17 @@ class Session:
         except Exception:
             return False
 
+
+#: Columns of :attr:`Session.drivers_df`, in order.
+_DRIVERS_DF_COLUMNS = (
+    "Driver",
+    "Team",
+    "DriverNumber",
+    "FirstName",
+    "LastName",
+    "TeamColor",
+    "HeadshotUrl",
+)
 
 SESSION_MAPPING = {
     "FP1": "Practice 1",
@@ -5765,7 +6580,9 @@ def _normalize_session_name(session: str) -> str:
     return _CANONICAL_SESSION_NAMES.get(" ".join(key.lower().split()), session)
 
 
-def _resolve_gp_name(year: int, gp: str | int, *, backend: ScheduleBackend | None = None) -> str:
+def _resolve_gp_name(
+    year: int, gp: str | int, *, backend: ScheduleBackend | None = None, exact_match: bool = False
+) -> str:
     if isinstance(gp, int):
         from .events import get_event
 
@@ -5791,9 +6608,9 @@ def _resolve_gp_name(year: int, gp: str | int, *, backend: ScheduleBackend | Non
     # Use get_event_by_name which has fuzzy matching to resolve abbreviated names
     try:
         event = (
-            get_event_by_name(year, gp_str, exact_match=False)
+            get_event_by_name(year, gp_str, exact_match=exact_match)
             if backend is None
-            else get_event_by_name(year, gp_str, exact_match=False, backend=backend)
+            else get_event_by_name(year, gp_str, exact_match=exact_match, backend=backend)
         )
         return str(event.EventName)
     except EventNotFoundError:
@@ -5826,10 +6643,12 @@ def _resolve_session_name(
 def get_session(
     year: int,
     gp: str | int,
-    session: str | int,
+    session: str | int | None = None,
     enable_cache: bool | None = None,
     lib: Literal["pandas", "polars"] | None = None,
     *,
+    identifier: str | int | None = None,
+    exact_match: bool = False,
     ergast: bool | None = None,
     backend: ScheduleBackend | None = None,
     force_ergast: bool = False,
@@ -5840,7 +6659,8 @@ def get_session(
     Args:
         year: Year (2018-current)
         gp: Grand Prix name or round number (e.g., "Abu Dhabi Grand Prix" or 1)
-        session: Session name (e.g., "Practice 1", "Qualifying", "Race")
+        session: Session name (e.g., "Practice 1", "Qualifying", "Race") or
+            number (``1``-``5``).
         enable_cache: Enable caching. If None, uses configured default.
         lib: Data lib choice - 'pandas' or 'polars'. If None, uses configured default.
         ergast: Merge the official Ergast classification into ``results`` and
@@ -5850,6 +6670,9 @@ def get_session(
             ``"ergast"`` the Ergast race table). Default: f1schedule from
             2018, Ergast before.
         force_ergast: Deprecated alias of ``backend="ergast"``.
+        identifier: fastf1's name of ``session`` (pass one of the two).
+        exact_match: Match ``gp`` against the event names exactly (no alias
+            table, no fuzzy matching), as fastf1's ``exact_match``.
 
     Returns:
         Session object with lap and telemetry data
@@ -5875,13 +6698,21 @@ def get_session(
             stacklevel=2,
         )
         backend = "ergast"
-    # The backend keyword is only passed when set, so test doubles of the
-    # event helpers with the original two-argument signature keep working.
-    gp_name = (
-        _resolve_gp_name(year, gp)
-        if backend is None
-        else _resolve_gp_name(year, gp, backend=backend)
-    )
+    if session is not None and identifier is not None and session != identifier:
+        raise ValueError("Cannot pass both 'session' and 'identifier'")
+    if session is None:
+        session = identifier
+    if session is None:
+        raise TypeError("get_session() missing 1 required argument: 'identifier'")
+    # The backend/exact_match keywords are only passed when set, so test
+    # doubles of the event helpers with the original two-argument signature
+    # keep working.
+    resolve_kwargs: dict[str, Any] = {}
+    if backend is not None:
+        resolve_kwargs["backend"] = backend
+    if exact_match:
+        resolve_kwargs["exact_match"] = True
+    gp_name = _resolve_gp_name(year, gp, **resolve_kwargs)
     session_name = (
         _resolve_session_name(year, gp_name, session)
         if backend is None
