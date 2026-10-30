@@ -21,10 +21,10 @@ keywords:
 
 ## ⏱️ Lap Data (`session.laps`)
 
-The `laps` DataFrame contains one row for every lap completed by every driver in the session. The dtype of a column depends on the backend. On pandas, time columns are `timedelta64[ns]`. On polars, the same columns hold float seconds.
+The `laps` DataFrame contains one row for every lap completed by every driver in the session. The dtype of a column depends on the backend. On pandas, time columns are `timedelta64[ns]`. On polars, the same columns are `Duration("ns")`.
 
 <Note>
-  Compare pandas time columns with `pd.Timedelta`, or use `LapTimeSeconds`, which is a float on both backends. `laps[laps["LapTime"] < 90]` raises `TypeError` on pandas.
+  Compare pandas time columns with `pd.Timedelta`, or use `LapTimeSeconds`, which is a float on both backends. `laps[laps["LapTime"] < 90]` raises `TypeError` on pandas. On polars, `pl.col("LapTime") < 90` compares nanoseconds and selects no lap.
 </Note>
 
 ### Core Timing
@@ -32,22 +32,22 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | :--- | :--- | :--- | :--- | :--- |
 | `index` | `int64` | not present | - | Row index from the source data, kept as a leading column. `to_csv(index=False)` still writes it. |
 | `LapNumber` | `float64` | `Int64` | - | Which lap this is (starts at 1). |
-| `LapTime` | `timedelta64[ns]` | `Float64` | Seconds | The total time to complete the lap. |
+| `LapTime` | `timedelta64[ns]` | `Duration("ns")` | - | The total time to complete the lap. |
 | `LapTimeSeconds` | `float64` | `Float64` | Seconds | The lap time as a float on both backends. |
-| `Time` | `timedelta64[ns]` | `Float64` | Seconds | Session time when the lap ended. |
-| `LapStartTime` | `timedelta64[ns]` | `Float64` | Seconds | Session time when the lap started. |
-| `LapStartDate` | `datetime64[ns]` | `String` | ISO 8601 | Absolute calendar timestamp when the lap started. |
-| `WeatherTime` | `timedelta64[ns]` | `Float64` | Seconds | Session time of the weather sample matched to the lap. |
+| `Time` | `timedelta64[ns]` | `Duration("ns")` | - | Session time when the lap ended. |
+| `LapStartTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time when the lap started. |
+| `LapStartDate` | `datetime64[ns]` | `Datetime("ns")` | - | Absolute calendar timestamp when the lap started. |
+| `WeatherTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time of the weather sample that the source data matched to the lap. The match is not always the right one: refer to Per-Lap Weather. |
 
 ### Sectors & Speed Traps
 | Column | pandas dtype | polars dtype | Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `Sector1Time` | `timedelta64[ns]` | `Float64` | Seconds | Time taken to complete Sector 1. |
-| `Sector2Time` | `timedelta64[ns]` | `Float64` | Seconds | Time taken to complete Sector 2. |
-| `Sector3Time` | `timedelta64[ns]` | `Float64` | Seconds | Time taken to complete Sector 3. |
-| `Sector1SessionTime` | `timedelta64[ns]` | `Float64` | Seconds | Session time when Sector 1 was completed. |
-| `Sector2SessionTime` | `timedelta64[ns]` | `Float64` | Seconds | Session time when Sector 2 was completed. |
-| `Sector3SessionTime` | `timedelta64[ns]` | `Float64` | Seconds | Session time when Sector 3 was completed. |
+| `Sector1Time` | `timedelta64[ns]` | `Duration("ns")` | - | Time taken to complete Sector 1. |
+| `Sector2Time` | `timedelta64[ns]` | `Duration("ns")` | - | Time taken to complete Sector 2. |
+| `Sector3Time` | `timedelta64[ns]` | `Duration("ns")` | - | Time taken to complete Sector 3. |
+| `Sector1SessionTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time when Sector 1 was completed. |
+| `Sector2SessionTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time when Sector 2 was completed. |
+| `Sector3SessionTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time when Sector 3 was completed. |
 | `SpeedI1` | `float64` | `Float64` | km/h | Speed at intermediate point 1 (Sector 1 trap). |
 | `SpeedI2` | `float64` | `Float64` | km/h | Speed at intermediate point 2 (Sector 2 trap). |
 | `SpeedFL` | `float64` | `Float64` | km/h | Speed at the finish line. |
@@ -61,8 +61,8 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | `TyreLife` | `float64` | `Int64` | Number of laps driven on this set of tires. |
 | `FreshTyre` | `bool` | `Boolean` | `True` if the set was new when fitted. |
 | `Stint` | `float64` | `Int64` | The stint number (starts at 1). |
-| `PitInTime` | `timedelta64[ns]` | `Float64` | Session time of pit entry. Set on the in-lap only. |
-| `PitOutTime` | `timedelta64[ns]` | `Float64` | Session time of pit exit. Set on the out-lap only. |
+| `PitInTime` | `timedelta64[ns]` | `Duration("ns")` | Session time of pit entry. Set on the in-lap only. |
+| `PitOutTime` | `timedelta64[ns]` | `Duration("ns")` | Session time of pit exit. Set on the out-lap only. |
 
 ### Status & Metadata
 | Column | pandas dtype | polars dtype | Description |
@@ -81,7 +81,7 @@ The `laps` DataFrame contains one row for every lap completed by every driver in
 | `QualifyingSession` | `object` | `String` | `Q1`, `Q2`, `Q3` (or `SQ1` to `SQ3`). Qualifying sessions only. |
 
 ### Per-Lap Weather
-Every lap carries one weather sample that the data pipeline matched to the lap. `WeatherTime` gives the session time of that sample. `session.weather` has no `LapNumber` column, so use these columns to relate weather to laps.
+Every lap carries one weather sample that the source data matched to the lap. `WeatherTime` gives the session time of that sample. These columns are misaligned in the source data. In the 2025 Bahrain race, 435 of the 1,128 laps carry a sample other than the one that the fastf1 rule picks. To relate weather to laps, use `laps.get_weather_data()`. It picks the sample of each lap from `session.weather` with the fastf1 rule. The rule takes the first sample within the lap, else the last one before the lap ended.
 
 | Column | pandas dtype | polars dtype | Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -97,18 +97,21 @@ Every lap carries one weather sample that the data pipeline matched to the lap. 
 
 ## 🎯 Telemetry Data (`lap.telemetry`)
 
-Samples recorded throughout a lap, about 0.13 s apart in the 2024 Monaco Race data. `Time` is lap-relative and starts at 0 at the lap start. There is no session-time column.
+Samples recorded throughout a lap, about 0.13 s apart in the 2024 Monaco Race data. `Time` is lap-relative and starts at 0 at the lap start. The telemetry of several laps (`laps.telemetry`) counts `Time` from the start of the first lap, and `session.car_data[n]` holds the session time in `Time`, as fastf1 does. `SessionTime` and `Date` give the session time and the wall-clock date of each sample. The columns follow the fastf1 order, then the tif1 extras.
 
 ### Car Metrics
 | Column | pandas dtype | polars dtype | Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `Time` | `timedelta64[ns]` | `Float64` | Seconds | Time from the start of the lap. |
+| `Date` | `datetime64[ns]` | `Datetime("ns")` | - | Wall-clock date of the sample: `LapStartDate + Time`. |
+| `SessionTime` | `timedelta64[ns]` | `Duration("ns")` | - | Session time of the sample: `LapStartTime + Time`. |
+| `Time` | `timedelta64[ns]` | `Duration("ns")` | - | Time from the start of the lap (of the first lap for several laps; the session time in `session.car_data`). |
 | `Speed` | `float64` | `Float64` | km/h | Current speed of the car. |
 | `RPM` | `float64` | `Float64` | RPM | Engine revolutions per minute. |
 | `nGear` | `Int64` | `Int64` | - | Current gear (1-8, 0 for Neutral). |
 | `Throttle` | `float64` | `Float64` | % | Throttle pedal position (0-100). Some samples hold values above 100. |
-| `Brake` | `bool` | `Int64` | - | `True` (pandas) or `1` (polars) while the brake pedal is pressed. |
+| `Brake` | `bool` | `Boolean` | - | `True` while the brake pedal is pressed. |
 | `DRS` | `Int64` | `Int64` | - | DRS flag: `0` = closed, `1` = open. The source data maps the raw FastF1 values `10`, `12`, and `14` to `1`. The column never holds a value of 10 or more. |
+| `Source`, `Status` | `object` | `Categorical` | - | `Source` is `"merged"`, and `"interpolation"` on the edge samples that `interpolate_edges` adds and the gaps that `fill_missing()` fills. `Status` is always `"OnTrack"`. |
 
 ### Spatial Data
 | Column | pandas dtype | polars dtype | Unit | Description |
@@ -127,7 +130,7 @@ Samples recorded throughout a lap, about 0.13 s apart in the 2024 Monaco Race da
 | Column | pandas dtype | polars dtype | Description |
 | :--- | :--- | :--- | :--- |
 | `Driver` | `object` | `String` | 3-letter driver identifier of the lap. |
-| `LapNumber` | `Int64` | `Int32` | Lap number of the sample. |
+| `LapNumber` | `Int64` | `Int64` | Lap number of the sample. |
 
 ### Acceleration (G-Forces)
 These are mathematically derived and smoothed from position and speed data. All three columns are `float64` (pandas) or `Float64` (polars) in m/s².
@@ -146,11 +149,11 @@ These are mathematically derived and smoothed from position and speed data. All 
 
 ## 🌡️ Weather Data (`session.weather`)
 
-Environmental conditions recorded once per minute. The table has no `LapNumber` column. The per-lap weather columns on `session.laps` already hold the matched sample for every lap.
+Environmental conditions recorded once per minute. The table has no `LapNumber` column. `laps.get_weather_data()` returns the sample of each lap.
 
 | Column | pandas dtype | polars dtype | Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `Time` | `timedelta64[ns]` | `Duration(ms)` | - | Time since session start. |
+| `Time` | `timedelta64[ns]` | `Duration("ns")` | - | Time since session start. |
 | `AirTemp` | `float64` | `Float64` | °C | Ambient air temperature. |
 | `TrackTemp` | `float64` | `Float64` | °C | Asphalt surface temperature. |
 | `Humidity` | `float64` | `Float64` | % | Relative humidity. |
@@ -181,10 +184,10 @@ Official messages issued during the session.
 
 ## 🏁 Session Results (`session.results`)
 
-One row per driver, in classification order. `session.results` is a pandas `SessionResults` frame on both backends. tif1 builds it from `drivers.json` and the laps table: the data source publishes no official classification.
+One row per driver, in classification order. On pandas, `session.results` is a `SessionResults` frame indexed by driver number. On polars, it is a `PolarsSessionResults` frame with `DriverNumber` as a column. Race, Sprint, and Qualifying sessions take the official Ergast classification: grid, points, status, and times.
 
 <Note>
-  The order is the one `drivers.json` lists when that is already a classification (most sessions). Otherwise tif1 rebuilds it from the laps. Races and sprints rank by laps completed, then by position on the last lap. Other sessions rank by best non-deleted lap time. Post-session penalties are not visible in lap data. A rebuilt order can differ from the official result by a place or two. `GridPosition` and `Points` are not available and hold NaN. `session.drivers` and `session.drivers_df` share this order.
+  Without an official classification (practice, the sprint qualifying formats, or `ergast=False`), tif1 classifies the session from the laps, as fastf1 does. Sprint Qualifying, Sprint Shootout, and Qualifying with `ergast=False` take the best accurate lap of each segment into `Q1` to `Q3` and rank by `Q3`, then `Q2`, then `Q1`. Other sessions keep the order that `drivers.json` lists when that is already a classification. Otherwise tif1 rebuilds it. Races and sprints rank by laps completed, then by position on the last lap. Practice ranks by the best lap that is not deleted. Post-session penalties are not visible in lap data. A rebuilt order can differ from the official result by a place or two. `session.drivers` and `session.drivers_df` share this order.
 </Note>
 
 | Column | dtype | Description |
@@ -196,8 +199,9 @@ One row per driver, in classification order. `session.results` is a pandas `Sess
 | `FirstName`, `LastName`, `FullName` | `str` | Driver names. |
 | `HeadshotUrl` | `str` | Link to the driver headshot. |
 | `Position` | `float64` | Classification position, `1.0` for the winner. NaN when tif1 cannot set a classification order: `drivers.json` is in car-number order and the session has no laps payload. |
-| `ClassifiedPosition` | `str` | `Position` as text (`"1"`). Empty when the position is unknown. |
-| `GridPosition` | `float64` | Not available: always NaN. |
-| `Status` | `str` | Races and sprints: `"Finished"`, `"+1 Lap"`, `"+2 Laps"`, ... or `"Did not start"`. Other sessions: `"Finished"`. `None` without a laps payload. |
-| `Points` | `float64` | Not available: always NaN. |
-| `Laps` | `float64` | Laps completed. |
+| `ClassifiedPosition` | `str` | `Position` as text (`"1"`), or the Ergast code (`"R"`, `"D"`, ...). `"N"` for a driver out in Q1 outside 107% when tif1 classifies a qualifying session from the laps. Empty when the position is unknown. |
+| `GridPosition` | `float64` | Grid position from the Ergast classification. NaN (polars: null) outside races and sprints, and with `ergast=False`. |
+| `Status` | `str` | Races and sprints: the official status, for example `"Finished"`, `"Retired"`, `"Disqualified"`. With `ergast=False`: `"Finished"`, `"+1 Lap"`, ... or `"Did not start"` from the lap count. Practice and qualifying: `"Finished"`. `None` without a laps payload. |
+| `Points` | `float64` | Points from the Ergast classification. NaN (polars: null) outside races and sprints, and with `ergast=False`. |
+| `Laps` | `float64` | Laps completed. NaN for qualifying with Ergast results. |
+| `BroadcastName`, `DriverId`, `TeamId`, `CountryCode`, `Q1` to `Q3`, `Time` | mixed | The other fastf1 columns. `Time` is the total race time, and in practice the best lap that is not deleted, as in fastf1. Practice and the sprint qualifying formats take `DriverId` and `TeamId` from the Ergast race results. tif1 extras such as `TimeGap` follow them. Refer to the [Core API](/api-reference/core). |

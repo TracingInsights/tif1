@@ -29,6 +29,7 @@ graph TD
 
     ValueError[ValueError<br/>Python built-in]
     ValueError --> EventNotFoundError
+    ValueError --> DriverNotFoundError
     EventNotFoundError --> EventNotInSeasonError
 
     style TIF1Error fill:#339af0
@@ -77,7 +78,7 @@ if "Monaco Grand Prix" in events["EventName"].values:
 
 ### DriverNotFoundError
 
-Raised when code accesses a driver that does not exist in the session.
+Raised when code accesses a driver that does not exist in the session. It is a `DataNotFoundError` and also a `ValueError`, the exception that fastf1 raises for an unknown driver.
 
 ```python
 from tif1 import DriverNotFoundError

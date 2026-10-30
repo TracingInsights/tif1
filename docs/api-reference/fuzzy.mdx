@@ -174,7 +174,7 @@ ratio = fuzz.ratio(query, feature)
 - Returns event with highest-scoring feature
 - Typical execution: about 0.07-0.09ms for 24 events
 
-**Score floor:** Event resolution (`_find_event_by_name` in `tif1/events.py`) rejects a best score below 70. Then `get_event_by_name()` and `get_session()` raise `EventNotFoundError` with the message `No event matching '<name>' in <year>`. The floor is not part of `fuzzy_matcher`, which always returns the best index. Typos of real events score 75-97 ("Sao Paolo" 75, "Monacco" 92). Names that resemble no event score 67 or less ("Moon GP", "Paris", "Invalid GP").
+**Score floor:** Event resolution (`_find_event_by_name` in `tif1/events.py`) rejects a best score below 70. Then `get_event_by_name()` and `get_session()` raise `FuzzyMatchError`, an `EventNotFoundError` subclass, with the message `No event matching '<name>' in <year>`. The floor is not part of `fuzzy_matcher`, which always returns the best index. Typos of real events score 75-97 ("Sao Paolo" 75, "Monacco" 92). Names that resemble no event score 67 or less ("Moon GP", "Paris", "Invalid GP").
 
 #### Stage 4: Disambiguation (Tie-Breaking)
 When multiple events achieve the same maximum similarity score, the system uses a disambiguation strategy:
@@ -3707,7 +3707,7 @@ RapidFuzz runs compiled C++ code, which is much faster than Python. `fuzz.ratio(
 
 #### Schedule Memo Implementation
 
-The season memo is a plain dictionary keyed by year. A lock guards the writes. `_load_schedule_payload()` reads the vendored schedule files once and keeps them with `@lru_cache(maxsize=1)`:
+The season memo is a plain dictionary keyed by year. A lock guards the writes. A lookup reads only the vendored file of the requested season (`_load_vendored_f1schedule_year()`), and each season record memoizes its name resolutions per query:
 
 ```python
 def _get_events_cached(year: int) -> tuple[str, ...]:

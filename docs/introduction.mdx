@@ -46,7 +46,7 @@ keywords:
 2. **No API rate limits.** fastf1 raises `RateLimitExceededError` after **500 uncached requests in one hour**. The jolpica-f1 API behind it documents the same limit for unauthenticated use. `tif1` reads static CDN files, the Ergast tables included, and keeps no request quota; jolpica-f1 is asked only for what the static files cannot answer.
 3. **Charts included.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
 4. **Public CDN access.** `tif1` needs no API key, cookie, or account. Any network that can reach jsDelivr, Hugging Face, or StaticDelivr can load the data.
-5. **More data.** Mini-sector color codes, weather columns on every lap row, and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
+5. **More data.** Mini-sector color codes on every lap row and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
 
 <Card title="Full comparison" icon="scale" href="/why-tif1">
   Read the "Why tif1 instead of fastf1?" page. It includes the verified 500 requests/hour rate-limit sources.
@@ -91,12 +91,12 @@ graph TD
 
 ## Data Available
 
-- Lap times and sectors (S1, S2, S3). `LapTime` is a Timedelta on pandas and float seconds on polars. `LapTimeSeconds` is float seconds on both.
+- Lap times and sectors (S1, S2, S3). `LapTime` is a Timedelta on pandas and a `Duration` on polars. `LapTimeSeconds` is float seconds on both.
 - Tire compounds and stint information
 - Telemetry: speed, throttle, brake, RPM, gear, and DRS as a 0/1 flag
 - Position data (X, Y, Z coordinates)
 - Acceleration data (X, Y, Z axes)
-- Weather data automatically included in laps
+- Each lap's weather sample in one call (`laps.get_weather_data()`)
 - Driver metadata with team colors and headshots
 - Race control messages
 

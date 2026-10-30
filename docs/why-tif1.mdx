@@ -43,14 +43,7 @@ keywords:
 
 ### The fastf1 approach
 
-`fastf1` is session-oriented by design. `session.load()` fetches the entire session up front:
-
-```python fastf1
-import fastf1
-
-session = fastf1.get_session(2025, "Monaco", "R")
-session.load()  # Laps, telemetry, weather, and messages of all drivers
-```
+`fastf1` is session-oriented by design. `session.load()` fetches the entire session up front: the laps, telemetry, weather, and messages of all drivers.
 
 fastf1 reads session-wide files from the F1 live-timing API. The car data and the position data each arrive as one file for all drivers. `session.load(telemetry=False)` skips them. There is no option to load one driver or one lap. That volume is reasonable for a full-session analysis. Most of it goes unused when the analysis needs only a few laps.
 
@@ -212,7 +205,7 @@ print(laps[["Driver", "LapNumber", "ms1", "ms2", "ms3"]].head())
 
 | Capability | Details |
 | :--- | :--- |
-| **Per-lap weather** | Air/track temperature, humidity, rainfall, wind merged into every lap row — no joins needed |
+| **Per-lap weather** | `laps.get_weather_data()` picks each lap's sample from the session weather table by fastf1's rule in about 1 ms (fastf1 takes about 0.9 s for a race) |
 | **Acceleration channels** | `AccelerationX`, `AccelerationY`, and `AccelerationZ` (longitudinal, lateral, and vertical, in m/s²), computed from speed and position data |
 | **Polars backend** | The same data as `polars.DataFrame` objects |
 | **SQLite + LRU cache** | Persistent cache survives restarts; repeat reads in one process come from memory |

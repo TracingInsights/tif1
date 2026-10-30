@@ -1573,22 +1573,17 @@ The schedule validation system is a foundational component that enables reliable
 
 ```python
 # Internal flow (simplified)
-def _load_schedule_payload():
-    """Internal function that loads and validates schedule data."""
-    # 1. Load vendored schedule files
-    vendored_years = _load_vendored_f1schedule_years()
+def _load_vendored_f1schedule_year(year):
+    """Load, convert and validate one packaged season (only the requested one)."""
+    # 1. Read schedule_{year}.json with orjson
+    raw_year = orjson.loads(read_packaged_file(f"schedule_{year}.json"))
 
-    # 2. Construct payload
-    payload = {
-        "schema_version": 1,
-        "years": vendored_years
-    }
+    # 2. Convert to the schedule payload shape
+    converted = _convert_f1schedule_year(raw_year, year)
 
-    # 3. Validate before caching
-    validated = validate_schedule_payload(payload)
-
-    # 4. Cache and return
-    return validated
+    # 3. Validate before the season is memoized
+    validate_schedule_payload({"schema_version": 1, "years": {str(year): converted}})
+    return converted
 ```
 
 ### Public APIs That Use Validation
@@ -1611,7 +1606,7 @@ print(events["EventName"].tolist())
 **Internal Flow:**
 ```text
 get_events(2021)
-  → _load_schedule_payload()  # Validates here
+  → _load_vendored_f1schedule_year(2021)  # Validates here, this season only
     → validate_schedule_payload(payload)
   → Extract events for 2021
   → Return EventSchedule (race weekends first, then testing rows)
@@ -1633,7 +1628,7 @@ print(sessions)
 **Internal Flow:**
 ```text
 get_sessions(2021, "Belgian Grand Prix")
-  → _load_schedule_payload()  # Validates here
+  → _load_vendored_f1schedule_year(2021)  # Validates here, this season only
     → validate_schedule_payload(payload)
   → Extract sessions for event
   → Return session list
@@ -1654,7 +1649,7 @@ print(schedule[['RoundNumber', 'EventName', 'Location']])
 **Internal Flow:**
 ```text
 get_event_schedule(2021)
-  → _load_schedule_payload()  # Validates here
+  → _load_vendored_f1schedule_year(2021)  # Validates here, this season only
     → validate_schedule_payload(payload)
   → Build Event objects with metadata
   → Construct EventSchedule DataFrame
@@ -1677,9 +1672,9 @@ print(f"{event['EventName']} at {event['Location']}")
 **Internal Flow:**
 ```text
 get_event(2021, "Belgian Grand Prix")
-  → _load_schedule_payload()  # Validates here
+  → _load_vendored_f1schedule_year(2021)  # Validates here, this season only
     → validate_schedule_payload(payload)
-  → Find event by name (exact name, then aliases, then fuzzy matching)
+  → Find event by name (exact name, then aliases, then fuzzy matching; memoized per query)
   → Fuzzy score below 70: return None (get_event_by_name raises EventNotFoundError)
   → Create Event object with metadata
   → Return event

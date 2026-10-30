@@ -24,7 +24,7 @@ The integration lives in the `tif1.jupyter` module. `import tif1` alone does not
 - **One import**: `import tif1.jupyter` in a notebook turns the cards on
 - **Kernel detection**: `tif1` checks for a Jupyter kernel (`IPKernelApp`). Plain Python and terminal IPython skip the setup
 - **Light footprint**: The HTML is a few lines of inline CSS and does not slow data processing
-- **Backend independent**: The cards and the DataFrame summary work with pandas and polars sessions
+- **Backend independent**: The cards and the DataFrame summary work with pandas and polars sessions. The driver and lap cards attach to `Driver` and `Lap`, and to `PolarsDriver` and `PolarsLap`
 
 <Note>
 The examples on this page run in a Jupyter kernel. Install a notebook front end with `pip install jupyterlab`, which includes IPython. The widget examples also need `pip install ipywidgets`.

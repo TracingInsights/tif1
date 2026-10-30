@@ -87,7 +87,7 @@ Literal types are a key Python type system feature. They restrict values to a sp
 
 ### `BackendType`
 
-The `BackendType` literal specifies which DataFrame library backend to use for data operations. `tif1` is designed to be backend-agnostic: pandas and polars sessions have the same entry points. Column dtypes differ; for example, polars time columns hold float seconds.
+The `BackendType` literal specifies which DataFrame library backend to use for data operations. `tif1` is designed to be backend-agnostic: pandas and polars sessions have the same entry points. Column dtypes differ; for example, polars time columns are `Duration` instead of `timedelta64`.
 
 ```python
 from typing import Literal
@@ -154,7 +154,7 @@ config.set("lib", backend)
 
 # All subsequent sessions use polars automatically
 session = tif1.get_session(2021, "Dutch Grand Prix", "Race")
-print(type(session.laps))  # <class 'polars.dataframe.frame.DataFrame'>
+print(type(session.laps))  # <class 'tif1.models_polars.PolarsLaps'> (a polars DataFrame)
 
 # Verify backend
 current_backend: BackendType = config.get("lib")
@@ -1296,7 +1296,7 @@ class LapDataDict(TypedDict):
 ```
 
 <Note>
-  The annotations describe pandas rows. On pandas, the time fields are `timedelta64[ns]` columns, and `Driver`, `Team`, `Compound`, and `TrackStatus` are `category` columns. On polars, the time fields (`LapTime`, `Time`, `Sector1Time`, ...) are Float64 seconds. `LapNumber`, `Stint`, `TyreLife`, and `Position` are Int64, and `LapStartDate` is a string.
+  The annotations describe pandas rows. On pandas, the time fields are `timedelta64[ns]` columns, and `Driver`, `Team`, `Compound`, and `TrackStatus` are `category` columns. On polars, the time fields (`LapTime`, `Time`, `Sector1Time`, ...) are `Duration("ns")`. `LapNumber`, `Stint`, `TyreLife`, and `Position` are Int64, and `LapStartDate` is a `Datetime("ns")`.
 </Note>
 
 #### Field Categories Explained
@@ -1589,12 +1589,12 @@ Structure of telemetry data. All fields except Time are optional.
 from typing import NotRequired, TypedDict
 
 class TelemetryDataDict(TypedDict):
-    Time: float                                    # Time from lap start (frames: timedelta64 on pandas, Float64 seconds on polars)
+    Time: float                                    # Time from lap start (frames: timedelta64 on pandas, Duration on polars)
     RPM: NotRequired[int | None]                   # Engine RPM (float64 in session frames)
     Speed: NotRequired[float | None]               # Speed (km/h)
     nGear: NotRequired[int | None]                 # Gear number (1-8)
     Throttle: NotRequired[float | None]            # Throttle position (0-100%)
-    Brake: NotRequired[int | None]                 # Brake applied (bool on pandas, 0/1 Int64 on polars)
+    Brake: NotRequired[int | None]                 # Brake applied (bool on pandas, Boolean on polars)
     DRS: NotRequired[int | None]                   # DRS flag (0=closed, 1=open)
     Distance: NotRequired[float | None]            # Distance from lap start (meters)
     RelativeDistance: NotRequired[float | None]    # Distance as a fraction of the lap (0-1)
@@ -1610,7 +1610,7 @@ class TelemetryDataDict(TypedDict):
 ```
 
 <Note>
-  `Time` is declared as `float`, so a type checker sees `float`. In the frames, `Time` is a lap-relative timedelta on pandas and float seconds on polars. Session telemetry frames also carry `Driver` and `LapNumber` columns that the TypedDict does not declare.
+  `Time` is declared as `float`, so a type checker sees `float`. In the frames, `Time` is a lap-relative timedelta on pandas and a `Duration` on polars. Session telemetry frames also carry `Date`, `SessionTime`, `Source`, `Status`, `Driver`, and `LapNumber` columns that the TypedDict does not declare.
 </Note>
 
 **Usage:**
@@ -1642,7 +1642,7 @@ import datetime
 from typing import NotRequired, TypedDict
 
 class WeatherDataDict(TypedDict):
-    Time: datetime.timedelta                       # Session time (timedelta64 on pandas, Duration(ms) on polars)
+    Time: datetime.timedelta                       # Session time (timedelta64 on pandas, Duration(ns) on polars)
     AirTemp: NotRequired[float | None]             # Air temperature (°C)
     Humidity: NotRequired[float | None]            # Relative humidity (%)
     Pressure: NotRequired[float | None]            # Atmospheric pressure (mbar)
@@ -1776,10 +1776,10 @@ import tif1
 # lib="polars" selects the backend for this session only
 session = tif1.get_session(2021, "Dutch Grand Prix", "Race", lib="polars")
 
-# Type hint for laps DataFrame
+# Type hint for laps DataFrame (session.laps is a PolarsLaps, a pl.DataFrame subclass)
 laps: pl.DataFrame = session.laps
 
-# Type hint for telemetry
+# Type hint for telemetry (a PolarsTelemetry, also a pl.DataFrame subclass)
 tel: pl.DataFrame = session.get_fastest_lap_tel()
 ```
 
@@ -1795,7 +1795,7 @@ DataFrame = Union[pd.DataFrame, pl.DataFrame]
 
 def analyze_laps(laps: DataFrame) -> dict:
     """Works with both pandas and polars."""
-    # LapTime is a timedelta on pandas but float seconds on polars;
+    # LapTime is a timedelta on pandas but a Duration on polars;
     # LapTimeSeconds is float seconds on both backends.
     if isinstance(laps, pd.DataFrame):
         return {"count": len(laps), "fastest": laps["LapTimeSeconds"].min()}

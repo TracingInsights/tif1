@@ -150,7 +150,7 @@ A session with no cached data skips the cache reads (`ultra_cold_start`, on by d
 **Type Optimizer (`core_utils/helpers.py`)**
 - Applies the dtype contract of each backend (see [Column types by backend](/concepts/backends#column-types-by-backend))
 - pandas: converts time columns to `timedelta64[ns]` and `Driver`, `Team`, `Compound`, `TrackStatus` to `category`
-- polars: keeps time columns as `Float64` seconds and text columns as `String`
+- polars: converts time columns to `Duration("ns")`, `LapStartDate` to `Datetime("ns")`, and keeps text columns as `String`
 - Replaces sentinel strings such as `"None"` with missing values; numeric columns stay 64-bit (no `float32` downcast)
 
 ## Complete Data Loading Pipeline
@@ -1210,8 +1210,11 @@ import polars as pl
 def apply_laps_dtypes_polars(df):
     """Apply the polars dtype contract to a renamed laps DataFrame (simplified)."""
 
-    # Time columns stay Float64 seconds; LapTimeSeconds is a copy of LapTime
+    # LapTimeSeconds keeps the float seconds of the payload
     df = df.with_columns(pl.col("LapTime").cast(pl.Float64, strict=False).alias("LapTimeSeconds"))
+
+    # Time columns become Duration("ns"), LapStartDate a Datetime("ns")
+    df = df.with_columns((pl.col("LapTime") * 1_000_000_000).cast(pl.Int64).cast(pl.Duration("ns")))
 
     # Counters stay Int64, flags Boolean, text String
     # Categorical text columns only with TIF1_POLARS_LAP_CATEGORICAL=true
@@ -1491,7 +1494,7 @@ def enrich_performance_flags(df):
 
 #### Weather Data Integration
 
-`session.laps` already carries the weather sample of each lap (`WeatherTime`, `AirTemp`, ..., `WindSpeed`). To attach the nearest sample of `session.weather` to a time column, use `pd.merge_asof`. Both `LapStartTime` and the weather `Time` are timedeltas from the session start on pandas:
+`session.laps` carries a weather sample that the source data matched to each lap (`WeatherTime`, `AirTemp`, ..., `WindSpeed`), but that match is misaligned for many laps. `laps.get_weather_data()` returns the sample of each lap with the fastf1 rule. To attach the nearest sample of `session.weather` to another time column, use `pd.merge_asof`. Both `LapStartTime` and the weather `Time` are timedeltas from the session start on pandas:
 
 ```python
 import pandas as pd
@@ -1532,7 +1535,7 @@ def merge_weather_data(lap_df, weather_df):
 def enrich_telemetry_acceleration(tel_df):
     """Calculate acceleration from speed data (pandas telemetry)."""
 
-    # Time is a timedelta from the lap start on pandas (float seconds on polars)
+    # Time is a timedelta from the lap start on pandas (a Duration on polars)
     tel_df["TimeDelta"] = tel_df["Time"].dt.total_seconds().diff()
 
     # Speed delta, converted from km/h to m/s
@@ -1775,7 +1778,7 @@ Call `tif1.setup_logging(logging.DEBUG)` to see which tier answered each lookup.
 
 #### Final Data Return
 
-On pandas, the `laps` property wraps the frame in the `Laps` class and links it to its session. tif1 does not set `DataFrame.attrs`. On polars, `session.laps` is a plain `pl.DataFrame`.
+On pandas, the `laps` property wraps the frame in the `Laps` class and links it to its session. tif1 does not set `DataFrame.attrs`. On polars, `session.laps` is a `PolarsLaps`: a `pl.DataFrame` subclass with the same methods, linked to its session.
 
 ```python
 laps = session.laps  # pandas backend
@@ -1783,7 +1786,7 @@ laps = session.laps  # pandas backend
 print(type(laps).__name__)     # Laps (a pd.DataFrame subclass)
 print(laps.session is session)  # True: laps.pick_driver(...).get_telemetry() uses it
 print(laps.attrs)               # {} (no metadata attributes)
-print(session.session_info)     # {'Year': 2025, 'EventName': ..., 'SessionName': 'Race'}
+print(sorted(session.session_info))  # fastf1's keys: ['ArchiveStatus', 'EndDate', 'GmtOffset', 'Key', 'Meeting', ...]
 ```
 
 #### Complete Pipeline Timing
@@ -1941,18 +1944,18 @@ tif1 applies a dtype contract per backend after construction. The table lists th
 
 | Column | pandas | polars |
 | :--- | :--- | :--- |
-| `LapTime`, `Sector1Time` to `Sector3Time`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time` | `timedelta64[ns]` | `Float64` (seconds) |
+| `LapTime`, `Sector1Time` to `Sector3Time`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time` | `timedelta64[ns]` | `Duration("ns")` |
 | `LapTimeSeconds` | `float64` | `Float64` |
 | `LapNumber`, `Stint`, `TyreLife`, `Position` | `float64` | `Int64` |
 | `Driver`, `Team`, `Compound`, `TrackStatus` | `category` | `String` |
 | `IsPersonalBest`, `FreshTyre`, `IsAccurate`, `FastF1Generated`, `Rainfall` | `bool` | `Boolean` |
 | `Deleted` | `boolean` (nullable) | `Boolean` |
-| `LapStartDate` | `datetime64[ns]` | `String` (ISO 8601) |
+| `LapStartDate` | `datetime64[ns]` | `Datetime("ns")` |
 | `WindDirection` | `Int64` (nullable) | `Int64` |
 | `index` | `int64` (FastF1 compatibility column) | not present |
 
 **Key Differences:**
-- Time columns: pandas converts the upstream float seconds to `timedelta64[ns]`; polars keeps the float. `LapTimeSeconds` is a float on both backends.
+- Time columns: pandas converts the upstream float seconds to `timedelta64[ns]`; polars converts them to `Duration("ns")`. `LapTimeSeconds` is a float on both backends.
 - String columns: pandas uses `category`; polars uses `String`. Set `TIF1_POLARS_LAP_CATEGORICAL=true` to get `Categorical` on polars.
 - Missing values: polars uses `null` for every type; pandas uses `NaN`, `NaT`, or `<NA>`, depending on the column type.
 - Integer columns with no missing values are `Int64` on polars and `float64` on pandas (FastF1 convention).
@@ -2009,9 +2012,11 @@ http = get_session()  # Shared niquests.Session
 # - niquests.Session(multiplexed=True): HTTP/2 when the CDN offers it,
 #   HTTP/1.1 otherwise; HTTP/3 is off unless TIF1_HTTP_DISABLE_HTTP3=false
 #   (the switch is passed to the mounted adapter as well, which owns negotiation)
-# - tif1.get_session() warms this connection once per process in a daemon
-#   thread (TIF1_CDN_PRECONNECT) when the session is not cached yet, so the
-#   first payload request of a cold load skips DNS and TLS
+# - tif1.get_session() warms two connections once per process in daemon
+#   threads (TIF1_CDN_PRECONNECT) when the session is not cached yet, before
+#   it imports pandas or polars, so the first payload requests of a cold load
+#   skip DNS and TLS
+# - certificate revocation (OCSP) checks stay on; TIF1_HTTP_REVOCATION_CHECK=false skips them
 # - DNS: the system resolver; DNS over HTTPS (Cloudflare, then Google) only
 #   when a session with the system resolver cannot be created (TIF1_HTTP_RESOLVERS)
 # - HTTPAdapter(pool_connections=256, pool_maxsize=1024, pool_block=False)
@@ -2045,7 +2050,7 @@ class Session:
         self._laps = None
         self._weather = None
         self._race_control_messages = None
-        self._car_data = None  # Telemetry of every lap
+        self._car_data = None  # Lazy per-driver telemetry dict
 
     @property
     def laps(self):
@@ -2178,7 +2183,7 @@ laps_pandas = session_pandas.laps  # pandas DataFrame (tif1 Laps)
 
 # Load with polars
 session_polars = tif1.get_session(2025, "Monaco", "Race", lib="polars")
-laps_polars = session_polars.laps  # polars DataFrame
+laps_polars = session_polars.laps  # polars DataFrame (tif1 PolarsLaps)
 
 # Convert between backends (both directions use pyarrow, a tif1 dependency)
 import polars as pl
@@ -2574,7 +2579,7 @@ def load_with_degradation(year, event, session_type):
         logger.warning(f"Failed to load weather: {e}")
         data["weather"] = None  # Continue without weather
 
-    # Telemetry (optional): the fastest lap only; session.car_data loads every lap
+    # Telemetry (optional): the fastest lap only; session.car_data[driver] loads every lap of a driver
     try:
         data["telemetry"] = session.get_fastest_lap_tel()
     except Exception as e:
@@ -3425,7 +3430,7 @@ tif1.get_config().set("timeout", int(adaptive_timeout.get_timeout()))
 Load only the required data.
 
 ```python
-# Bad: Load everything. session.car_data fetches one telemetry file per lap
+# Bad: Load everything. telemetry=True fetches one telemetry file per lap
 # of every driver (more than a thousand files for a race):
 #   session.load()  # laps, telemetry of every lap, weather, messages
 
@@ -3537,7 +3542,7 @@ result_polars = (
     .agg([
         pl.col("LapTime").mean().alias("mean_lap_time"),
         pl.col("LapTime").min().alias("fastest_lap"),
-        pl.col("LapTime").std().alias("std_lap_time"),
+        pl.col("LapTimeSeconds").std().alias("std_lap_time"),  # no std() for a Duration
         pl.col("Position").last().alias("final_position")
     ])
 )
@@ -3767,7 +3772,7 @@ The tif1 data flow architecture targets maximum performance, reliability, and de
 
 **3. Type Optimization**
 - Categorical encoding for string columns (pandas)
-- Time columns as `timedelta64[ns]` (pandas) or `Float64` seconds (polars)
+- Time columns as `timedelta64[ns]` (pandas) or `Duration("ns")` (polars)
 - Boolean flags as `bool`/`Boolean`; numeric columns stay 64-bit
 - The pandas laps frame shrinks by about a third (718 KB to 462 KB for a full race)
 
@@ -3875,7 +3880,7 @@ for i in range(10):
 session = tif1.get_session(2025, "Monaco", "Race")
 laps = session.laps
 weather = session.weather  # Not needed
-# telemetry = session.car_data  # Not needed: one telemetry file per lap, more than a thousand
+# telemetry = session.car_data["1"]  # Not needed: one telemetry file per lap of the driver
 
 # Good: Load only laps
 session = tif1.get_session(2025, "Monaco", "Race")

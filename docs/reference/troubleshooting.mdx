@@ -162,19 +162,18 @@ tif1.get_cache().clear()
 | `laps["time"]` | `laps["LapTime"]` |
 | `telemetry["rpm"]` | `telemetry["RPM"]` |
 | `laps["Speed"]` | `laps["SpeedST"]` |
-| `telemetry["SessionTime"]` | `telemetry["Time"]` (lap-relative) |
 
 ### TypeError When Comparing LapTime
 
-**Error:** `TypeError` from `laps[laps["LapTime"] < 90]` on pandas. On polars, the same expression raises `ValueError`, because polars reads a boolean mask inside `laps[...]` as a column selector.
+**Error:** `TypeError` from `laps[laps["LapTime"] < 90]` on pandas. On polars, `LapTime` is `Duration("ns")`, and `laps["LapTime"] < 90` raises `NotImplementedError` (a `Duration` Series cannot compare with an integer). Inside an expression, `laps.filter(pl.col("LapTime") < 90)` raises nothing: polars reads `90` as 90 nanoseconds, so the filter silently returns no rows.
 
 **Solution:**
-`LapTime` is `timedelta64[ns]` on pandas and `Float64` seconds on polars. Compare `LapTimeSeconds`, which is a float on both backends, or compare `LapTime` with a `Timedelta`:
+`LapTime` is `timedelta64[ns]` on pandas and `Duration` on polars. Compare `LapTimeSeconds`, which is a float on both backends, or compare `LapTime` with a duration:
 
 | Backend | Works |
 | :--- | :--- |
 | pandas | `laps[laps["LapTimeSeconds"] < 90]` or `laps[laps["LapTime"] < pd.Timedelta(seconds=90)]` |
-| polars | `laps.filter(pl.col("LapTimeSeconds") < 90)` |
+| polars | `laps.filter(pl.col("LapTimeSeconds") < 90)` or `laps.filter(pl.col("LapTime") < pl.duration(seconds=90))` |
 
 On polars, select rows with `filter`. See [Column types by backend](/concepts/backends#column-types-by-backend).
 

@@ -283,9 +283,21 @@ export TIF1_HTTP_DISABLE_HTTP3=false
   Type: `bool`. Default: `true`
 </Info>
 
+### TIF1_HTTP_REVOCATION_CHECK
+
+Check whether the CDN's TLS certificate has been revoked (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check imports an extra module and makes a request to the certificate authority before the first data request, which costs 120-240 ms on every cold load. Set to `false` to skip it.
+
+```bash
+export TIF1_HTTP_REVOCATION_CHECK=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`
+</Info>
+
 ### TIF1_CDN_PRECONNECT
 
-Warm the shared CDN connection (DNS and TLS) in a background thread while `get_session()` returns. The first payload request of a cold load then rides an open connection. Set to `false` to keep `get_session()` free of network activity.
+Warm the shared CDN connections (DNS and TLS) in background threads during `get_session()`, when the session is not cached yet. `get_session()` imports the HTTP client and starts the connections before it imports pandas or polars, so the handshakes run while those libraries load. The first payload requests of a cold load then ride open connections. A cached session never imports the HTTP client or starts a thread. Set to `false` to keep `get_session()` free of network activity.
 
 ```bash
 export TIF1_CDN_PRECONNECT=false

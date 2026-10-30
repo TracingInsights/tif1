@@ -33,7 +33,7 @@ In a race, lap times can be skewed by:
 - Pit stops (very slow laps)
 - Lap 1 (standing start)
 
-Filter these laps out to get a "true" race pace. On the polars backend, `LapTime` holds float seconds, so the comparison below works directly.
+Filter these laps out to get a "true" race pace. On the polars backend, `LapTime` is a `Duration`, and `to_pandas()` turns it into `timedelta64[ns]`. The code below uses the float `LapTimeSeconds` column, which compares and plots in seconds.
 
 ```python
 # Convert to pandas for easier plotting
@@ -42,7 +42,7 @@ df = laps.to_pandas()
 # Filter out very slow laps and pit laps
 # Typically, race laps are within a certain range
 clean_laps = df[
-    (df["LapTime"] < df["LapTime"].min() * 1.07) & # Within 7% of fastest lap
+    (df["LapTimeSeconds"] < df["LapTimeSeconds"].min() * 1.07) & # Within 7% of fastest lap
     (df["PitInTime"].isna()) &
     (df["PitOutTime"].isna()) &
     (df["LapNumber"] > 1)
@@ -61,7 +61,7 @@ comparison_df = clean_laps[clean_laps["Driver"].isin(drivers)]
 # Create a boxplot to see distribution of lap times
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.boxplot(
-    [comparison_df.loc[comparison_df["Driver"] == d, "LapTime"] for d in drivers],
+    [comparison_df.loc[comparison_df["Driver"] == d, "LapTimeSeconds"] for d in drivers],
     tick_labels=drivers,
     patch_artist=True,
 )
@@ -83,7 +83,7 @@ Plot lap times against lap numbers to see how the pace evolved (tire degradation
 plt.figure(figsize=(12, 6))
 for driver in drivers:
     driver_laps = comparison_df[comparison_df["Driver"] == driver]
-    plt.plot(driver_laps["LapNumber"], driver_laps["LapTime"], label=driver)
+    plt.plot(driver_laps["LapNumber"], driver_laps["LapTimeSeconds"], label=driver)
 
 plt.title("Lap Times Evolution")
 plt.xlabel("Lap Number")

@@ -177,6 +177,35 @@ Two defaults differ. In fastf1, `cache_dir` is required and `ignore_version` def
 
 ---
 
+### `Cache.configure`
+
+```python
+@classmethod
+def configure(
+    cls,
+    *,
+    cache_dir: str | Path | None = None,
+    force_renew: bool = False,
+    ignore_version: bool = False,
+    use_requests_cache: bool = True,
+) -> None
+```
+
+The fastf1 `Cache.configure()` keywords, mapped onto `enable_cache()`. All arguments are keyword-only.
+
+- `cache_dir`: The cache directory. tif1 creates it when it does not exist (fastf1 requires an existing directory). Without it, tif1 uses the configured directory
+- `force_renew`: Clear the cache after enabling it
+- `ignore_version`, `use_requests_cache`: Accepted for compatibility. tif1 keeps every payload in its SQLite tiers and has no separate HTTP cache
+
+```python
+import tif1
+
+tif1.Cache.configure(cache_dir="./f1_cache")
+print(tif1.Cache.get_cache_info()[0])  # .../f1_cache
+```
+
+---
+
 ### `Cache.clear_cache`
 
 ```python
@@ -315,8 +344,8 @@ Consider clearing the cache in these scenarios:
 
 | Method | Behavior |
 | :--- | :--- |
-| `Cache.disabled()` | Context manager: caching is off inside the `with` block |
-| `Cache.set_disabled()` | Sets the `enable_cache` option to `False`. Calls nest |
+| `Cache.disabled(*, disable_http_cache=True, disable_func_cache=True)` | Context manager: caching is off inside the `with` block. The two keywords are the fastf1 cache stages. tif1 has one cache switch, which either keyword turns off. With both `False`, the block runs with caching unchanged. Blocks nest: caching comes back when the outermost block exits |
+| `Cache.set_disabled(*, disable_http_cache=True, disable_func_cache=True)` | Sets the `enable_cache` option to `False`, with the same keywords. Calls nest. With both keywords `False`, nothing changes and no `set_enabled()` call is necessary |
 | `Cache.set_enabled()` | Undoes one `set_disabled()` call. The last one restores the earlier `enable_cache` value |
 | `Cache.offline_mode(enabled)` | Sets the `offline_mode` option. While it is on, `requests_get()` and `requests_post()` raise `NetworkError` |
 | `Cache.ci_mode(enabled)` | Sets the `ci_mode` option |
@@ -325,6 +354,13 @@ Consider clearing the cache in these scenarios:
 | `Cache.requests_post(url, data=None, **kwargs)` | HTTP POST through the shared tif1 session |
 | `Cache.delete_response(url)` | Does nothing: tif1 has no FastF1-style HTTP response cache |
 
+```python
+import tif1
+
+with tif1.Cache.disabled(disable_http_cache=False, disable_func_cache=True):
+    print(tif1.get_config().get("enable_cache"))  # False
+```
+
 ---
 
 ## Logging Functions
@@ -332,13 +368,15 @@ Consider clearing the cache in these scenarios:
 ### `set_log_level`
 
 ```python
-def set_log_level(level: int = logging.WARNING) -> None
+def set_log_level(level: str | int = logging.WARNING) -> None
 ```
 
-Set the logging level for tif1 logger.
+Set the logging level for tif1 logger. `tif1.set_log_level` is `tif1.logger.set_log_level`. `tif1.fastf1_compat.set_log_level` is a separate wrapper that imports `tif1.logger` on its first call and passes `level` to it, so all three have the same effect.
 
 **Parameters:**
-- `level`: Python logging level (for example, `logging.DEBUG`, `logging.INFO`, `logging.WARNING`)
+- `level`: Python logging level (for example, `logging.DEBUG`, `logging.INFO`, `logging.WARNING`) or its name in any case (`"DEBUG"`, `"info"`). An unknown name raises `ValueError`
+
+The `tif1` logger and its console handler both move to `level`.
 
 **Example:**
 ```python
@@ -367,32 +405,58 @@ tif1.set_log_level(logging.DEBUG)
 ```
 </CodeGroup>
 
+### `tif1.logger`
+
+The fastf1 `fastf1.logger` module, with tif1 logger names. Every logger is `tif1` or a `tif1.<name>` child, never `fastf1`. Importing the module adds a console handler with the fastf1 line format to the `tif1` logger and sets that logger to `INFO`.
+
+| Name | Behavior |
+| :--- | :--- |
+| `LoggingManager` | The fastf1 logging configuration class. `LoggingManager.set_level(level)` moves the console handler and the `tif1` logger. `LoggingManager.get_child(name)` returns `tif1.<name>`. `LoggingManager.debug` is `True` when the environment sets `TIF1_DEBUG=1` |
+| `get_logger(name)` | Returns the logger `tif1.<name>` |
+| `set_log_level(level)` | The function above |
+| `soft_exceptions(descr_name, msg, logger)` | A decorator for data-loading functions. An exception in the wrapped function is logged (`msg` as a warning, the traceback at DEBUG level), and the call returns `None`. A `FastF1CriticalError` is always raised again. With `LoggingManager.debug`, nothing is caught |
+
+```python
+from tif1.logger import get_logger, soft_exceptions
+
+logger = get_logger("my_analysis")  # The logger "tif1.my_analysis"
+
+
+@soft_exceptions("weather summary", "Weather summary failed", logger)
+def weather_summary(session):
+    return session.weather["AirTemp"].mean()
+
+
+print(logger.name)
+print(weather_summary(None))  # Logs "Weather summary failed" and prints None
+```
+
+---
+
+## `tif1.legacy`
+
+### `inject_driver_ahead`
+
+```python
+def inject_driver_ahead(session) -> dict[str, Telemetry]
+```
+
+The fastf1 `fastf1.legacy.inject_driver_ahead()` function. It returns a dict keyed by driver number (the labels of `session.drivers`). Each value is the session-long `session.pos_data` telemetry of the driver. tif1 telemetry already carries `DriverAhead` and `DistanceToDriverAhead`, so the function only collects the frames. It reads the telemetry of every driver, which is slow on a cold cache. When no driver has telemetry, it raises `ValueError`, as fastf1 does.
+
+```python
+import tif1
+from tif1.legacy import inject_driver_ahead
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+by_driver = inject_driver_ahead(session)
+print(by_driver["1"][["SessionTime", "DriverAhead", "DistanceToDriverAhead"]].head())
+```
+
 ---
 
 ## Complete migration example
 
-This complete example shows how to migrate a fastf1 script to tif1:
-
-**Original fastf1 code:**
-```python fastf1
-import fastf1
-import logging
-
-# Setup
-fastf1.Cache.enable_cache("./cache")
-fastf1.set_log_level(logging.INFO)
-
-# Load session
-session = fastf1.get_session(2024, "Monaco", "Q")
-session.load()
-
-# Get the fastest lap of one driver
-fastest = session.laps.pick_drivers("VER").pick_fastest()
-
-# Get telemetry
-tel = fastest.get_telemetry()
-print(f"Max speed: {tel['Speed'].max()}")
-```
+This complete example shows a fastf1 script migrated to tif1. The fastf1 original is the same script with `fastf1` in place of `tif1`; only the import and the module prefix change.
 
 **Migrated tif1 code (minimal changes):**
 ```python
@@ -428,10 +492,13 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 | `Cache.enable_cache()` | ✅ | ✅ | Same call; `cache_dir` is optional in tif1 |
 | `Cache.clear_cache()` | ✅ | ✅ | Same signature |
 | `set_log_level()` | ✅ | ✅ | Same call |
-| `get_session()` | ✅ | ✅ | Same call; tif1 adds `enable_cache` and `lib` |
-| `Session.load()` | ✅ | ✅ | `laps`, `telemetry`, `weather`, `messages` flags |
+| `get_session()` | ✅ | ✅ | Same call, with the fastf1 `identifier=`, `exact_match=`, and `backend=` keywords; tif1 adds `enable_cache`, `lib`, `ergast`, and `force_ergast` (a deprecated tif1 alias of `backend="ergast"`) |
+| `Session.load()` | ✅ | ✅ | `laps`, `telemetry`, `weather`, `messages` flags. `livedata` raises `NotImplementedError` |
 | `Session.laps` | ✅ | ✅ | Same call |
-| `Session.get_driver()` | ✅ | ✅ | Same call |
+| `Session.get_driver()` | ✅ | ✅ | Same call; returns the `results` row of the driver. An unknown identifier raises `DriverNotFoundError`, a `ValueError` as in fastf1 |
+| `Session.track_status`, `session_status`, `session_info` | ✅ | ✅ | Derived from race control messages and the schedule |
+| `Cache.configure()`, `Cache.disabled(...)` | ✅ | ✅ | Same keywords |
+| `fastf1.logger`, `fastf1.legacy`, `fastf1.mvapi` | ✅ | ✅ | `tif1.logger`, `tif1.legacy`, `tif1.mvapi` |
 | `Driver.laps` | ✅ | ✅ | Same call |
 | `Lap.get_telemetry()` | ✅ | ✅ | Same call |
 
@@ -439,8 +506,8 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 
 Some fastf1 parameters are ignored in tif1 because they are handled automatically:
 
-- `Cache.enable_cache(ignore_version)`: tif1 handles versioning automatically
-- `Cache.enable_cache(use_requests_cache)`: tif1 uses SQLite cache
+- `Cache.enable_cache(ignore_version)` and `Cache.configure(ignore_version=...)`: tif1 handles versioning automatically
+- `Cache.enable_cache(use_requests_cache)` and `Cache.configure(use_requests_cache=...)`: tif1 uses SQLite cache
 
 `Cache.enable_cache(force_renew=True)` is not ignored: it clears the cache after enabling it.
 
@@ -477,7 +544,9 @@ When migrating from fastf1 to tif1:
 
 The following fastf1 features are not supported in tif1:
 
-- **Live timing**: tif1 focuses on historical data
+- **Live timing**: tif1 focuses on historical data. `session.load(livedata=...)` raises `NotImplementedError` for any value other than `None`
+- **F1 account sign-in**: `set_auth_method()` and `F1AuthError` do not exist, because tif1 needs no account
+- **Internal modules**: `fastf1.livetiming`, `fastf1.req`, `fastf1.api`, and `fastf1.internals` have no tif1 equivalent
 - **Custom data sources**: the `cdns` setting can point at a mirror, but the mirror must use the same file layout as the TracingInsights repositories
 
 When these features are needed, continue using fastf1 or open an issue on the tif1 GitHub repository.

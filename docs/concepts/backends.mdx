@@ -23,7 +23,7 @@ The backend system is integrated into the tif1 core architecture. When tif1 load
 
 The Formula 1 data analysis landscape presents unique challenges:
 
-- **Volume**: A race session has more than 1,000 laps (1,128 for the 2025 Bahrain Grand Prix race). One lap of telemetry holds 700-800 samples of 19 columns, so the telemetry of a race holds millions of values.
+- **Volume**: A race session has more than 1,000 laps (1,128 for the 2025 Bahrain Grand Prix race). One lap of telemetry holds 700-800 samples of 23 columns, so the telemetry of a race holds millions of values.
 - **Variety**: Different analysis tasks have different requirements. Exploratory analysis benefits from the pandas ecosystem, while large pipelines can use the polars query engine.
 - **Compatibility**: Many existing tools and libraries in the Python ecosystem expect pandas DataFrames
 
@@ -244,17 +244,18 @@ session = tif1.get_session(
     "Race",
     lib="polars"
 )
-laps = session.laps  # Returns polars DataFrame (LapTime is Float64 seconds)
+laps = session.laps  # PolarsLaps, a polars DataFrame (LapTime is a Duration)
 
 # Polars operations (similar but more explicit than pandas)
 fastest = laps.sort("LapTime").head(5)
 by_driver = laps.group_by("Driver").agg(pl.col("LapTime").mean())
 
-# Polars expression API (powerful and composable)
+# Polars expression API (powerful and composable). polars has no std() for
+# a Duration, so the spread uses the float LapTimeSeconds column
 verstappen = laps.filter(pl.col("Driver") == "VER")
 verstappen_stats = verstappen.select([
     pl.col("LapTime").mean().alias("avg_time"),
-    pl.col("LapTime").std().alias("std_time"),
+    pl.col("LapTimeSeconds").std().alias("std_time"),
     pl.col("LapTime").min().alias("min_time"),
     pl.col("LapTime").max().alias("max_time"),
 ])
@@ -266,7 +267,7 @@ result = (
     .group_by("Driver")
     .agg([
         pl.col("LapTime").mean().alias("mean_time"),
-        pl.col("LapTime").std().alias("std_time"),
+        pl.col("LapTimeSeconds").std().alias("std_time"),
         pl.col("LapTime").count().alias("lap_count"),
         (pl.col("LapTime") < pl.col("LapTime").quantile(0.25)).sum().alias("fast_laps")
     ])
@@ -287,7 +288,7 @@ tif1 requires polars 2.x. tif1 returns eager `DataFrame` objects. Most polars 2.
 | Change in polars 2.0 | Effect on code that uses tif1 frames |
 | :--- | :--- |
 | `LazyFrame.collect()` runs on the streaming engine by default | Row order after `group_by`, joins, and `unpivot` is not guaranteed in lazy queries. Add `.sort(...)` or pass `maintain_order`. Eager frames are not affected. |
-| String to `Date`, `Datetime`, and `Time` casts are removed | Use `pl.col("LapStartDate").str.to_datetime()` instead of `.cast(pl.Datetime)`. |
+| String to `Date`, `Datetime`, and `Time` casts are removed | Use `.str.to_datetime()` on a `String` column instead of `.cast(pl.Datetime)`. tif1 returns `LapStartDate` as a `Datetime` already. |
 | `pl.concat(..., how="horizontal")` requires equal heights | Use `how="horizontal_extend"` to pad a shorter frame with nulls. |
 | `is_in()` no longer coerces types with loss | Cast both sides to one type first. `pl.col("LapNumber").is_in([1.0, 2.0])` raises because `LapNumber` is `Int64`; use `[1, 2]`. |
 | Removed APIs: `melt`, `with_row_count`, `GroupBy.count()`, `collect(streaming=True)`, `join(how="outer")`, `pl.NUMERIC_DTYPES` | Use `unpivot`, `with_row_index`, `len()`, `collect(engine="streaming")`, `join(how="full")`, and `pl.selectors.numeric()`. The error message names the replacement. |
@@ -304,6 +305,7 @@ With the polars backend, code can use these polars capabilities on the returned 
 - **Expression API**: Complex calculations can be expressed as optimized expressions
 - **Efficient string operations**: Driver name filtering and compound matching are faster
 - **Native Arrow**: Zero-copy interop with other Arrow-based tools
+- **fastf1 methods**: `session.laps` is a `PolarsLaps` and telemetry is a `PolarsTelemetry`. Both are `pl.DataFrame` subclasses with the `pick_*` and telemetry methods. A `filter`, `select`, `sort`, or `with_columns` returns a plain `pl.DataFrame`. Call the methods on it through the `df.f1` namespace, for example `laps.filter(...).f1.pick_fastest()`. Refer to the [Models API](/api-reference/models).
 
 ---
 
@@ -399,13 +401,13 @@ The tables list the types as loaded for the 2025 Bahrain Grand Prix race. Column
 
 | Column | pandas | polars |
 | :--- | :--- | :--- |
-| `LapTime`, `Sector1Time` to `Sector3Time`, `Sector1SessionTime` to `Sector3SessionTime`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time`, `WeatherTime` | `timedelta64[ns]` | `Float64` (seconds) |
+| `LapTime`, `Sector1Time` to `Sector3Time`, `Sector1SessionTime` to `Sector3SessionTime`, `PitInTime`, `PitOutTime`, `LapStartTime`, `Time`, `WeatherTime` | `timedelta64[ns]` | `Duration("ns")` |
 | `LapTimeSeconds` | `float64` | `Float64` |
 | `LapNumber`, `Stint`, `TyreLife`, `Position` | `float64` | `Int64` |
 | `Driver`, `Team`, `Compound`, `TrackStatus` | `category` | `String` |
 | `IsPersonalBest`, `FreshTyre`, `IsAccurate`, `FastF1Generated`, `Rainfall` | `bool` | `Boolean` |
 | `Deleted` | `boolean` (nullable) | `Boolean` |
-| `LapStartDate` | `datetime64[ns]` | `String` (ISO 8601) |
+| `LapStartDate` | `datetime64[ns]` | `Datetime("ns")` |
 | `WindDirection` | `Int64` (nullable) | `Int64` |
 | `index` | `int64`, first column (FastF1 compatibility) | not present |
 
@@ -415,7 +417,7 @@ Set `TIF1_POLARS_LAP_CATEGORICAL=true` to get `Categorical` for the text columns
 
 | Column | pandas | polars |
 | :--- | :--- | :--- |
-| `Time` | `timedelta64[ns]` | `Duration("ms")` |
+| `Time` | `timedelta64[ns]` | `Duration("ns")` |
 | `AirTemp`, `Humidity`, `Pressure`, `TrackTemp`, `WindSpeed` | `float64` | `Float64` |
 | `WindDirection` | `Int64` (nullable) | `Int64` |
 | `Rainfall` | `boolean` (nullable) | `Boolean` |
@@ -433,10 +435,12 @@ Set `TIF1_POLARS_LAP_CATEGORICAL=true` to get `Categorical` for the text columns
 
 | Column | pandas | polars |
 | :--- | :--- | :--- |
-| `Time` | `timedelta64[ns]` | `Float64` (seconds) |
-| `Brake` | `bool` | `Int64` (`0` or `1`) |
+| `Date` | `datetime64[ns]` | `Datetime("ns")` |
+| `SessionTime`, `Time` | `timedelta64[ns]` | `Duration("ns")` |
+| `Brake` | `bool` | `Boolean` |
 | `nGear`, `DRS` (`DRS` is a `0` or `1` flag) | `Int64` (nullable) | `Int64` |
-| `LapNumber` | `Int64` | `Int32` |
+| `Source` (`"merged"`), `Status` (always `"OnTrack"`) | `object` | `Categorical` |
+| `LapNumber` | `Int64` | `Int64` |
 | `Speed`, `RPM`, `Throttle`, `Distance`, `RelativeDistance`, `AccelerationX` to `AccelerationZ`, `X`, `Y`, `Z` | `float64` | `Float64` |
 | `DistanceToDriverAhead` | `float64` (`NaN` when nobody is ahead) | `Float64` (`null` when nobody is ahead) |
 | `DriverAhead` | `str` with driver numbers, missing when nobody is ahead (`object` when every sample is missing) | `String` (`null` when nobody is ahead) |
@@ -539,8 +543,8 @@ first_10 = laps.iloc[:10]
 ```
 
 ```python Polars
-# Filter method (primary approach). LapTime is already Float64 seconds on
-# polars; LapTimeSeconds works on both backends
+# Filter method (primary approach). LapTime is a Duration on polars;
+# LapTimeSeconds works on both backends
 fast_laps = laps.filter(pl.col("LapTimeSeconds") < 100)
 
 # Multiple conditions with & and |
@@ -606,10 +610,10 @@ subset = laps.select(["Driver", "LapTime", "Compound"])
 # Select by type
 numeric_cols = laps.select(pl.selectors.numeric())
 
-# Add new columns (with_columns is preferred). The polars backend stores
-# LapTime as Float64 seconds, so build a Duration from it rather than the reverse
+# Add new columns (with_columns is preferred). LapTime is a Duration, so
+# convert it to float seconds (dt.total_seconds() would drop the fraction)
 laps = laps.with_columns([
-    (pl.col("LapTime") * 1000).cast(pl.Duration("ms")).alias("LapTime_duration"),
+    (pl.col("LapTime").dt.total_milliseconds() / 1000).alias("LapTime_seconds"),
     (pl.col("SpeedST") / 1.60934).alias("SpeedST_mph")
 ])
 
@@ -671,7 +675,7 @@ stats = laps.group_by("Driver").agg([
     pl.col("LapTime").mean().alias("mean_time"),
     pl.col("LapTime").min().alias("min_time"),
     pl.col("LapTime").max().alias("max_time"),
-    pl.col("LapTime").std().alias("std_time"),
+    pl.col("LapTimeSeconds").std().alias("std_time"),  # no std() for a Duration
     pl.col("LapTime").count().alias("lap_count")
 ])
 
@@ -691,7 +695,7 @@ def lap_time_range(s: pl.Series) -> float:
     return s.max() - s.min()
 
 ranges = laps.group_by("Driver").agg(
-    pl.col("LapTime")
+    pl.col("LapTimeSeconds")
     .map_batches(lap_time_range, return_dtype=pl.Float64, returns_scalar=True)
     .alias("time_range")
 )
@@ -768,7 +772,7 @@ ranks = laps[["LapTimeSeconds"]].rank().rename(columns={"LapTimeSeconds": "LapTi
 merged = laps.merge(ranks, left_index=True, right_index=True)
 
 # Nearest-time join: weather has no LapNumber column, so match on session time.
-# The laps already carry per-lap weather columns; this shows the technique.
+# laps.get_weather_data() applies the fastf1 rule; this shows the technique.
 merged = pd.merge_asof(
     laps.sort_values("Time"),
     weather.sort_values("Time").rename(columns={"Time": "WeatherSampleTime"}),
@@ -794,18 +798,17 @@ merged = laps.join(best, on="Driver", how="inner")
 # Left join
 merged = laps.join(best, on="Driver", how="left")
 
-# Join on different column names (results is always a pandas frame)
+# Join on different column names (results is a polars frame on a polars session)
 merged = laps.join(
-    pl.from_pandas(session.results[["Abbreviation", "FullName"]]),
+    session.results.select(["Abbreviation", "FullName"]),
     left_on="Driver",
     right_on="Abbreviation",
     how="left"
 )
 
-# Nearest-time join: weather.Time is Duration(ms), laps.Time is Float64 seconds
-weather_s = weather.with_columns((pl.col("Time").dt.total_milliseconds() / 1000).alias("Time"))
+# Nearest-time join: weather.Time and laps.Time are both Duration("ns")
 merged = laps.sort("Time").join_asof(
-    weather_s.sort("Time").rename({"Time": "WeatherSampleTime"}),
+    weather.sort("Time").rename({"Time": "WeatherSampleTime"}),
     left_on="Time",
     right_on="WeatherSampleTime",
     suffix="_weather",
@@ -857,8 +860,8 @@ null_count = laps["LapTime"].null_count()
 # everything, because most laps have a null PitInTime or PitOutTime)
 clean_laps = laps.drop_nulls(subset=["LapTime"])
 
-# Fill missing values (LapTime is Float64 seconds in the polars backend)
-filled = laps.with_columns(pl.col("LapTime").fill_null(0.0))
+# Fill missing values (LapTime is a Duration in the polars backend)
+filled = laps.with_columns(pl.col("LapTime").fill_null(pl.duration(seconds=0)))
 filled = laps.with_columns(pl.col("LapTime").forward_fill())  # Forward fill
 filled = laps.with_columns(pl.col("LapTime").fill_null(pl.col("LapTime").mean()))
 
@@ -977,12 +980,13 @@ laps["SpeedST"] = pd.to_numeric(laps["SpeedST"], errors="coerce")
 ```
 
 ```python Polars
-# Convert types. LapTime is Float64 seconds in the polars backend: build a
-# Duration from it; a String → Datetime cast is not supported in polars 2.
+# Convert types. LapTime is a Duration in the polars backend: convert it
+# with dt.total_milliseconds(); pl.duration() builds a Duration from numbers.
 laps = laps.with_columns([
     pl.col("LapNumber").cast(pl.Int32),
     pl.col("Driver").cast(pl.Categorical),
-    (pl.col("LapTime") * 1000).cast(pl.Duration("ms")).alias("LapTimeDuration"),
+    (pl.col("LapTime").dt.total_milliseconds() / 1000).alias("Seconds"),  # Duration → float seconds
+    pl.duration(milliseconds=(pl.col("LapTimeSeconds") * 1000).cast(pl.Int64)).alias("AsDuration"),
 ])
 
 # Strict casting (raises on failure)
@@ -991,8 +995,10 @@ laps = laps.with_columns(pl.col("SpeedST").cast(pl.Float64, strict=True))
 # Non-strict casting (nulls on failure)
 laps = laps.with_columns(pl.col("SpeedST").cast(pl.Float64, strict=False))
 
-# Parse an ISO 8601 string column (LapStartDate stays a String on polars)
-laps = laps.with_columns(pl.col("LapStartDate").str.to_datetime().alias("LapStart"))
+# LapStartDate is already a Datetime on polars. Parse an ISO 8601 String column
+# with str.to_datetime(): polars 2 has no String → Datetime cast
+iso = laps.select(pl.col("LapStartDate").dt.to_string("%Y-%m-%dT%H:%M:%S%.f").alias("Iso"))
+parsed = iso.with_columns(pl.col("Iso").str.to_datetime().alias("LapStart"))
 ```
 </CodeGroup>
 
@@ -1017,9 +1023,10 @@ laps_polars = session.laps
 # Convert to pandas for compatibility
 laps_pandas = laps_polars.to_pandas()
 
-# pandas-only libraries work on the converted frame (LapTime stays float seconds)
+# pandas-only libraries work on the converted frame. LapTime becomes
+# timedelta64[ns], so plot the float LapTimeSeconds column
 import seaborn as sns
-sns.violinplot(data=laps_pandas, x="Driver", y="LapTime")
+sns.violinplot(data=laps_pandas, x="Driver", y="LapTimeSeconds")
 ```
 
 ```python Pandas to Polars
@@ -1031,8 +1038,8 @@ laps_pandas = session.laps
 import polars as pl
 laps_polars = pl.from_pandas(laps_pandas)
 
-# Polars operations on the converted frame. LapTime arrives as Duration(ns)
-# here (unlike a native tif1 polars frame, where it is Float64 seconds), so
+# Polars operations on the converted frame. LapTime arrives as Duration(ns),
+# as in a native tif1 polars frame. polars has no std() for a Duration, so
 # aggregate the float LapTimeSeconds column and give each output a name
 result = laps_polars.group_by("Driver").agg([
     pl.col("LapTimeSeconds").mean().alias("mean_time"),
@@ -1095,7 +1102,7 @@ driver_stats = (
     .group_by("Driver")
     .agg([
         pl.col("LapTime").mean().alias("avg_time"),
-        pl.col("LapTime").std().alias("std_time"),
+        pl.col("LapTimeSeconds").std().alias("std_time"),
         pl.col("LapTime").count().alias("lap_count")
     ])
     .sort("avg_time")
@@ -1121,7 +1128,7 @@ Some data types do not convert exactly between backends:
 | Strings | str | String | ✅ Perfect |
 | Categoricals | category | Categorical | ✅ Perfect |
 | Datetimes | datetime64[ns] | Datetime | ✅ Perfect |
-| Timedeltas | timedelta64[ns] | Duration | ✅ Perfect (native tif1 polars frames use Float64 seconds instead) |
+| Timedeltas | timedelta64[ns] | Duration | ✅ Perfect (native tif1 polars frames use `Duration("ns")` too) |
 | Nullable ints | Int64 | Int64 | ✅ Perfect |
 | Mixed types | object | ⚠️ Varies | May need explicit casting |
 
@@ -1163,7 +1170,7 @@ import tif1
 
 # Uses polars automatically
 session = tif1.get_session(2025, "Monaco", "Race")
-print(type(session.laps))  # <class 'polars.dataframe.frame.DataFrame'>
+print(type(session.laps))  # <class 'tif1.models_polars.PolarsLaps'> (a polars DataFrame)
 ```
 
 ### Via Environment Variable
@@ -1804,7 +1811,7 @@ driver_stats = (
     .group_by(["Driver", "Compound"])
     .agg([
         pl.col("LapTime").mean().alias("avg_time"),
-        pl.col("LapTime").std().alias("std_time"),
+        pl.col("LapTimeSeconds").std().alias("std_time"),
         pl.col("LapTime").count().alias("lap_count")
     ])
     .sort("avg_time")
@@ -1961,7 +1968,7 @@ def process_season_incrementally(year: int, output_dir: Path):
             .agg([
                 pl.col("LapTime").mean().alias("avg_time"),
                 pl.col("LapTime").min().alias("best_time"),
-                pl.col("LapTime").std().alias("consistency"),
+                pl.col("LapTimeSeconds").std().alias("consistency"),
                 pl.col("LapTime").count().alias("laps_completed")
             ])
             .with_columns(pl.lit(event).alias("event"))
@@ -2006,7 +2013,7 @@ stats = pd.DataFrame({
 # Single pass through data
 stats = laps.group_by("Driver").agg([
     pl.col("LapTime").mean().alias("avg_time"),
-    pl.col("LapTime").std().alias("std_time"),
+    pl.col("LapTimeSeconds").std().alias("std_time"),
     pl.col("LapTime").count().alias("lap_count")
 ])
 
@@ -2023,13 +2030,13 @@ import polars as pl
 # ❌ Inefficient: Multiple filters create intermediate DataFrames
 result = laps.filter(pl.col("Driver") == "VER")
 result = result.filter(pl.col("Compound") == "SOFT")
-result = result.filter(pl.col("LapTime") < 85)
+result = result.filter(pl.col("LapTimeSeconds") < 97)
 
 # ✅ Efficient: Single filter with combined condition
 result = laps.filter(
     (pl.col("Driver") == "VER") &
     (pl.col("Compound") == "SOFT") &
-    (pl.col("LapTime") < 85)
+    (pl.col("LapTimeSeconds") < 97)
 )
 
 # ✅ Also efficient: Chained filters on a lazy frame. The query optimizer
@@ -2039,7 +2046,7 @@ result = (
     .lazy()
     .filter(pl.col("Driver") == "VER")
     .filter(pl.col("Compound") == "SOFT")
-    .filter(pl.col("LapTime") < 85)
+    .filter(pl.col("LapTimeSeconds") < 97)
     .collect()
 )
 ```
@@ -2063,7 +2070,7 @@ def get_driver_statistics(year: int, event: str, driver: str):
         driver_obj.laps
         .select([
             pl.col("LapTime").mean().alias("avg_time"),
-            pl.col("LapTime").std().alias("std_time"),
+            pl.col("LapTimeSeconds").std().alias("std_time"),
             pl.col("LapTime").min().alias("best_time"),
             pl.col("LapTime").count().alias("lap_count")
         ])
@@ -2157,6 +2164,9 @@ result = laps[laps["Driver"] == "VER"]
 # ❌ Polars-specific (fails with pandas)
 result = laps.filter(pl.col("Driver") == "VER")
 
+# ✅ Portable: the tif1 pick_* methods exist on both backends
+result = laps.pick_driver("VER")
+
 # ✅ Backend-agnostic wrapper; session.lib names the active backend
 def filter_driver(laps, driver, lib="pandas"):
     if lib == "polars":
@@ -2205,7 +2215,7 @@ import polars as pl
 laps_pl = tif1.get_session(2024, "Monaco", "Race", lib="polars").laps
 stats = laps_pl.group_by("Driver").agg([
     pl.col("LapTime").mean().alias("mean"),
-    pl.col("LapTime").std().alias("std"),
+    pl.col("LapTimeSeconds").std().alias("std"),
     pl.col("LapTime").min().alias("min"),
     pl.col("LapTime").max().alias("max"),
     pl.col("LapTime").count().alias("count")
@@ -2330,7 +2340,7 @@ print(f"Speedup: {pandas_time/polars_time:.2f}x")
 
 ### Issue 10: Type Inference Differences
 
-**Symptom**: The same column has a different type on each backend. `LapTime` is `timedelta64[ns]` on pandas and `Float64` seconds on polars; `Driver` is `category` on pandas and `String` on polars. See [Column types by backend](#column-types-by-backend) for the full table.
+**Symptom**: The same column has a different type on each backend. `LapTime` is `timedelta64[ns]` on pandas and `Duration("ns")` on polars; `Driver` is `category` on pandas and `String` on polars. See [Column types by backend](#column-types-by-backend) for the full table.
 
 **Solution**: Use the columns that have the same type on both backends; `LapTimeSeconds` is a float on both. Alternatively, normalise once after loading:
 
@@ -2340,7 +2350,7 @@ if session.lib == "polars":
         pl.col("LapNumber").cast(pl.Int32),
         pl.col("Driver").cast(pl.Categorical),
     ])
-    seconds = laps["LapTime"]  # already Float64 seconds
+    seconds = laps["LapTime"].dt.total_milliseconds() / 1000  # Duration → float seconds
 else:  # pandas
     laps["LapNumber"] = laps["LapNumber"].astype("Int32")
     laps["Driver"] = laps["Driver"].astype("category")
