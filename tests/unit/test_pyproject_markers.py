@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TARGET = json.loads((ROOT / "tools" / "pyodide_target.json").read_text(encoding="utf-8"))
 
 # No WebAssembly wheel exists: these must never apply under Pyodide.
-NATIVE_ONLY = {"niquests", "polars", "rapidfuzz", "nest-asyncio2"}
+NATIVE_ONLY = {"niquests", "polars", "rapidfuzz", "nest-asyncio2", "tif1-native"}
 # Pure-Python wheels micropip fetches from PyPI; no Pyodide twin is needed.
 PURE_PYTHON = {"typer", "rich", "typing-extensions", "seaborn", "timple"}
 
@@ -88,6 +88,34 @@ def test_pyodide_requirement_accepts_the_shipped_build(requirement: Requirement)
         f"{requirement} rejects the Pyodide {TARGET['pyodide']} build ({shipped}); "
         "the browser install would fail"
     )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, True),
+        ({"platform_machine": "aarch64"}, True),
+        (
+            {"sys_platform": "darwin", "platform_system": "Darwin", "platform_machine": "arm64"},
+            True,
+        ),
+        (
+            {"sys_platform": "win32", "platform_system": "Windows", "platform_machine": "AMD64"},
+            True,
+        ),
+        (
+            {"sys_platform": "win32", "platform_system": "Windows", "platform_machine": "ARM64"},
+            True,
+        ),
+        ({"platform_machine": "ppc64le"}, False),
+        ({"sys_platform": "freebsd14", "platform_system": "FreeBSD"}, False),
+        ({"platform_python_implementation": "PyPy", "implementation_name": "pypy"}, False),
+    ],
+)
+def test_native_decoder_follows_the_wheel_matrix(overrides: dict[str, str], expected: bool) -> None:
+    """tif1-native applies exactly where .github/workflows/native.yml publishes wheels."""
+    (requirement,) = [r for r in _requirements() if canonicalize_name(r.name) == "tif1-native"]
+    assert _applies(requirement, {**NATIVE_ENV, **overrides}) is expected
 
 
 def test_pyodide_transport_dependency_is_declared() -> None:

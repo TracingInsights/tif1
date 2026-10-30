@@ -130,7 +130,13 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
-### v0.11.0 (fastf1 parity, Olympia performance round, native decoder dependency)
+### v0.11.1 (native decoder dependency)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.11.1"`
+- [ ] Confirm `tif1-native` 0.2.x is on PyPI with abi3 wheels for Linux glibc/musl x86_64/aarch64, macOS universal2 and Windows x64/arm64
+- [ ] Confirm `pip install tif1` on Linux, macOS and Windows installs `tif1-native` from a wheel and `python -c "import tif1_native"` works
+- [ ] Confirm `NATIVE_TELEMETRY_DECODER_AVAILABLE` is True after a plain install and `TIF1_DISABLE_NATIVE=1` turns it off
+
+### v0.11.0 (fastf1 parity, Olympia performance round)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.11.0"`
 - [ ] Confirm `import tif1` works without the optional `tif1-native` decoder (it becomes a dependency in the follow-up release once its wheels are on PyPI)
 - [ ] Confirm `get_session(2025, "Bahrain", "Race", lib="polars")` never imports pandas (`"pandas" not in sys.modules` after `.laps`)

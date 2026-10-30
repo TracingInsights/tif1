@@ -1,6 +1,6 @@
 [project]
 name = "tif1"
-version = "0.11.0"
+version = "0.11.1"
 description = "A faster alternative to fastf1 with the same bindings. Formula 1 timing and telemetry data from the TracingInsights GitHub cache (2018-current) and Ergast results, standings and lap times (1950-current)"
 readme = "README.md"
 authors = [
@@ -73,6 +73,12 @@ dependencies = [
     # zstd. Drop the marker once lz4 ships 3.15 wheels.
     "lz4>=4.4.5,<5; python_version < '3.15' and sys_platform != 'emscripten'",
     "lz4>=4,<5; python_version < '3.15' and sys_platform == 'emscripten'",
+    # Rust telemetry decoder (native/, .github/workflows/native.yml). The marker
+    # is the wheel matrix: CPython on Linux (glibc and musl), macOS and Windows,
+    # x86_64 and arm64 (one abi3 wheel per platform for every GIL CPython >= 3.11;
+    # no free-threaded wheels yet). Pyodide, PyPy and other platforms keep the
+    # pure-Python decoder; TIF1_DISABLE_NATIVE=1 turns it off at runtime.
+    "tif1-native>=0.2,<0.3; platform_python_implementation == 'CPython' and (sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32') and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ARM64')",
 ]
 
 [project.urls]

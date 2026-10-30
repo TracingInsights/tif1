@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
+## [0.11.1] - 2026-10-30
+
+### Summary
+
+`0.11.1` makes the Rust telemetry decoder a dependency now that its wheels
+are on PyPI; the library code is that of 0.11.0.
+
+### Added
+
+- `tif1-native` 0.2 (the Rust telemetry decoder, `native/`) is a dependency
+  on CPython for Linux (glibc and musl), macOS and Windows, x86_64 and
+  arm64: one abi3 wheel per platform for every GIL CPython from 3.11 on,
+  installed with `pip install tif1`. Pyodide, PyPy and other platforms keep
+  the pure-Python decoder, and `TIF1_DISABLE_NATIVE=1` turns the native one
+  off at runtime. The payload tier decodes a race's telemetry about twice
+  as fast with it (numbers under 0.11.0, Performance).
+
 ## [0.11.0] - 2026-10-30
 
 ### Summary

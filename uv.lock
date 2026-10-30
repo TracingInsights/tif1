@@ -2453,7 +2453,7 @@ wheels = [
 
 [[package]]
 name = "tif1"
-version = "0.11.0"
+version = "0.11.1"
 source = { editable = "." }
 dependencies = [
     { name = "lz4", marker = "python_full_version < '3.15'" },
@@ -2470,6 +2470,7 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "seaborn" },
+    { name = "tif1-native", marker = "(platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
     { name = "timple" },
     { name = "typer" },
     { name = "typing-extensions" },
@@ -2530,6 +2531,7 @@ requires-dist = [
     { name = "scipy", marker = "python_full_version < '3.15' and sys_platform != 'emscripten'", specifier = ">=1.17.1,<2" },
     { name = "scipy", marker = "python_full_version >= '3.15' and sys_platform != 'emscripten'", specifier = ">=1.18.1,<2" },
     { name = "seaborn", specifier = ">=0.13.2,<1" },
+    { name = "tif1-native", marker = "(platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')", specifier = ">=0.2,<0.3" },
     { name = "timple", specifier = "==0.1.8" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.78,<0.1.0" },
     { name = "typer", specifier = ">=0.27.2,<0.28.0" },
@@ -2541,6 +2543,25 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pip-audit", specifier = ">=2.10.1,<3" }]
+
+[[package]]
+name = "tif1-native"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/20/ea1c5114c74e5f48657c4e3e9e39c9adba61dca1fcd5612a27f7a2960c97/tif1_native-0.2.0.tar.gz", hash = "sha256:e576ecdf2e3fb842415d9d796ebd3ef7118647a11670ca2fa6c74c55817b4912", size = 10671, upload-time = "2026-10-30T06:44:55.277Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/48/6ab095a23b0abd93dd7462becb6bdb8d210fa449b8aa79001f27f09ccb48/tif1_native-0.2.0-cp311-abi3-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:138fa74668c3becc67f2e1c1c6b2678487fc87af5230e1ab759ed3af35939888", size = 484043, upload-time = "2026-10-30T06:44:47.865Z" },
+    { url = "https://files.pythonhosted.org/packages/78/60/943b5b92eb802cb0e3c7b4e80a91ea7060a2741b567112329eee15a7b771/tif1_native-0.2.0-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0f4b57876336cc0fcb2b6370ac7f97ed07f38a2b5419a07ffad8c173c6773a78", size = 258820, upload-time = "2026-10-30T06:44:48.968Z" },
+    { url = "https://files.pythonhosted.org/packages/14/d8/0eeee9b083c942678105bf4912390da54d7393ee4699db48744c138b6d77/tif1_native-0.2.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3a2f00f04cf45145dcdc5df1f2c517a7adda004942a24257caeaebaefa6a3683", size = 261279, upload-time = "2026-10-30T06:44:49.806Z" },
+    { url = "https://files.pythonhosted.org/packages/23/0c/b763f764b6b40fc879286199c1cde65cb312c621e00ff3219d53208cfb51/tif1_native-0.2.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:73873a33e36758f802ff909e698e2e308888629e0be34fe8c42aeb1438585e3d", size = 437581, upload-time = "2026-10-30T06:44:51.05Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/a3/0c89bcd4c8e0de30d39075e972a4bf8b6f5d9fbda7788c4ed7347c7ce842/tif1_native-0.2.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f82a987449dec4a303a8910826dbd85d84b04519d2367e121e7373fae6f55d96", size = 472886, upload-time = "2026-10-30T06:44:52.167Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/91/59e8a8bacd26c2727c20e608e6bb139ec7f7b2213303f1aeff6c2cbc1b62/tif1_native-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:4d99650956e96ca9bd704e15a0ffebf8900780b888d5d7316cc525f3293d6a43", size = 151665, upload-time = "2026-10-30T06:44:53.589Z" },
+    { url = "https://files.pythonhosted.org/packages/19/b0/e0890a0e86755fb81094e3dc330c226fa7494033c8b91f9b2d44365c8e79/tif1_native-0.2.0-cp311-abi3-win_arm64.whl", hash = "sha256:0692b62fb7806210062202a2cbc25352c28817b71a00f3bfa0a23e0494b3b06f", size = 147477, upload-time = "2026-10-30T06:44:54.477Z" },
+]
 
 [[package]]
 name = "timple"
