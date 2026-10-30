@@ -130,6 +130,14 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.11.0 (fastf1 parity, Olympia performance round, native decoder dependency)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.11.0"`
+- [ ] Confirm `import tif1` works without the optional `tif1-native` decoder (it becomes a dependency in the follow-up release once its wheels are on PyPI)
+- [ ] Confirm `get_session(2025, "Bahrain", "Race", lib="polars")` never imports pandas (`"pandas" not in sys.modules` after `.laps`)
+- [ ] Confirm `track_status`, `session_status`, `weather_data` and `race_control_messages` match the 0.10.1 values on a cached session (both backends)
+- [ ] Confirm a cold `get_session()` warms the CDN connections (`TIF1_CDN_PRECONNECT`) and the OCSP revocation check is still on by default (`TIF1_HTTP_REVOCATION_CHECK`)
+- [ ] Confirm the SQLite frame tier written by 0.11.0 (narrowed rows, magic `TF1\x03`) still reads rows written by 0.10.1
+
 ### v0.10.1 (CodeQL fixes, Windows test suite)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.10.1"`
 - [ ] Confirm the code-scanning tab shows 0 open CodeQL alerts after the release commit

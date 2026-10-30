@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
-## [Unreleased]
+## [0.11.0] - 2026-10-30
 
 ### Summary
 
@@ -19,6 +19,20 @@ layout), and the polars backend gets polars-native
 `Laps`/`Lap`/`Telemetry`/`SessionResults`/`DriverResult`/`Driver` classes
 with the whole fastf1 method set. Verified against fastf1 3.9.0 by a
 surface-compliance test.
+
+Performance round "Olympia": ten of twelve measured experiments kept
+(each benchmarked against the previous release with an interleaved
+fresh-process A/B and compared surface by surface for identical output on
+both backends). Polars sessions no longer import pandas (startup 490 ->
+248 ms, a notebook script 530 -> 273 ms), the session-state tables are
+built from whole columns (34 -> 7.5 ms pandas, 27.5 -> 4.4 ms polars),
+`results` halves, the first laps load of a session is 3-5x faster, warm
+`fetch_all_laps_telemetry()` is ~20% faster on both backends, polars
+`pick_*`/telemetry methods leave the query engine, cold loads start their
+HTTP stack during `get_session()` (whole-process wall time -6..-26%), and
+the Rust telemetry decoder `tif1-native` 0.2 gets a wheel-building workflow
+(it becomes a dependency in a follow-up release once its wheels are on
+PyPI; until then it stays optional).
 
 ### Breaking
 

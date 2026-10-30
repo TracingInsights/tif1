@@ -113,9 +113,12 @@ jobs:
       - name: Build and install tif1-native
         # After the sync (uv sync prunes packages outside the lock); the tests
         # then run with --no-sync. The runner image ships a Rust toolchain.
+        # ``--python .venv/bin/python``: run as ``python -m uv``, ``uv pip`` would
+        # otherwise install into the interpreter running uv (the hosted
+        # toolcache Python), not the project venv ``uv run`` uses.
         run: |
           python -m uv tool run maturin build --release -m native/Cargo.toml -i .venv/bin/python -o native-dist
-          python -m uv pip install --no-deps native-dist/*.whl
+          python -m uv pip install --python .venv/bin/python --no-deps native-dist/*.whl
 
       - name: Check the native decoder is active
         run: |
