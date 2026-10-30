@@ -31,8 +31,8 @@ The Ergast database (continued by Jolpica) is the reference for Formula 1 result
 
 | Source | What it serves | Limits |
 | :--- | :--- | :--- |
-| Stats repository (`TracingInsights-Archive/Stats`) | Every table for a `(season, round)`: results, qualifying, sprint, lap times, pit stops, driver and constructor standings, and the season schedule. One JSON file per table, all pages merged. Served through the same CDN chain as the timing data. | None. Updated a day or two after each round. |
-| Jolpica API | Seasons list, drivers list, finishing status counts, any query without a season, any `status=` filter, the `current`/`last` selectors, and any round the repository does not hold yet. | 4 requests per second, 500 per hour unauthenticated. `tif1` paces requests and honours `Retry-After`. |
+| Stats repository (`TracingInsights-Archive/Stats`) | Every table for a `(season, round)`: results, qualifying, sprint, lap times, pit stops, driver and constructor standings, and the season schedule. One JSON file per table, all pages merged. Served through the same CDN chain as the timing data. | None. Updated a few hours after jolpica-f1 has each round. |
+| Jolpica API | Seasons list, drivers list, finishing status counts, any query without a season, any `status=` filter, the `current`/`last` selectors, and any round the repository does not hold yet. | 4 requests per second, 500 per hour unauthenticated. `tif1` sends at most 4 requests in any second and 200 in any hour (fastf1's Jolpica limit), and honours `Retry-After`. |
 
 A query that Stats can answer never touches Jolpica. A Stats file that is missing on every mirror or empty (`total` of `0`) falls through to Jolpica for that round only. The answer is cached either way.
 
@@ -196,7 +196,7 @@ Rows without a value for a column hold `NaN` (or `NaT` for times), which is what
 | `ergast_ttl_hours` | `TIF1_ERGAST_TTL_HOURS` | `6.0` | Lifetime of current-season Stats files and of every Jolpica answer |
 | `ergast_timeout` | `TIF1_ERGAST_TIMEOUT` | `5.0` | Jolpica request timeout in seconds |
 | `ergast_rate_limit_burst` | `TIF1_ERGAST_RATE_LIMIT_BURST` | `4` | Jolpica requests per second |
-| `ergast_rate_limit_hourly` | `TIF1_ERGAST_RATE_LIMIT_HOURLY` | `500` | Jolpica requests per hour |
+| `ergast_rate_limit_hourly` | `TIF1_ERGAST_RATE_LIMIT_HOURLY` | `200` | Jolpica requests per hour |
 | `stats_repo` | `TIF1_STATS_REPO` | `TracingInsights-Archive/Stats` | GitHub repository holding the Stats files |
 | `stats_branch` | `TIF1_STATS_BRANCH` | `main` | Branch of that repository |
 
