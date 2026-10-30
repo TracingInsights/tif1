@@ -18,6 +18,10 @@ A transient jsDelivr 403 ("package size exceeded", seen right after a
 branch update) or a cold-edge 404 on one mirror is never persisted: the
 missing verdict needs a 404 from every mirror, and a 403 from the last mirror
 is retried once after a short pause.
+
+:func:`cache_only` runs a lookup against the memo and SQLite tiers alone: a
+lookup that would fetch raises :class:`ErgastFetchNeeded` instead, so a caller
+can answer a warm session inline and keep a background thread for real fetches.
 """
 
 from __future__ import annotations
@@ -25,7 +29,9 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -50,6 +56,29 @@ _TRANSIENT_MISS_SECONDS = 60.0
 
 _memo = LRUCache(maxsize=512)
 _MISS: Any = object()
+#: Set by :func:`cache_only` for the current thread (or task) only.
+_CACHE_ONLY: ContextVar[bool] = ContextVar("tif1_ergast_cache_only", default=False)
+
+
+class ErgastFetchNeeded(Exception):  # noqa: N818 - a signal, not an error condition
+    """A :func:`cache_only` lookup reached a payload that only a fetch can provide."""
+
+
+@contextmanager
+def cache_only() -> Iterator[None]:
+    """Answer lookups from the memo and SQLite tiers only, in this thread or task.
+
+    Inside the block a lookup that would go to the network (a missing or
+    expired entry, Stats file or Jolpica answer) raises
+    :class:`ErgastFetchNeeded` before any request is made; everything else
+    (fresh entries, offline mode, a remembered transient miss) behaves as
+    usual.
+    """
+    token = _CACHE_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _CACHE_ONLY.reset(token)
 
 
 def current_season() -> int:
@@ -249,6 +278,8 @@ class ErgastPayloadLoader:
             if entry is not None:
                 return entry[1]
             raise NetworkError(url=cache_key, status_code=None)
+        if _CACHE_ONLY.get():
+            raise ErgastFetchNeeded(cache_key)
 
         path = stats_path(year, slug, file_name)
         try:
@@ -269,6 +300,14 @@ class ErgastPayloadLoader:
             _memo.pop(cache_key, None)
             self._transient_misses[cache_key] = now + _TRANSIENT_MISS_SECONDS
         return payload
+
+    def is_fresh(self, year: int, slug: str, file_name: str) -> bool:
+        """True when a Stats file is answered from the memo/SQLite tiers without a fetch.
+
+        A fresh "missing" verdict counts: it is an answer too.
+        """
+        cache_key = stats_cache_key(year, slug, file_name)
+        return self._fresh_entry(cache_key, year, self._clock()) is not _MISS
 
     def _fresh_entry(self, cache_key: str, year: int | None, now: float) -> Any:
         """The cached payload when its entry is still fresh, else :data:`_MISS`."""
@@ -342,7 +381,8 @@ class ErgastPayloadLoader:
         if not pending:
             return results
         max_workers = max(1, int(get_config().get("max_concurrent_requests", 20) or 20))
-        if not THREADS_AVAILABLE or len(pending) == 1 or max_workers == 1:
+        # A cache-only lookup stays on this thread: the first fetch it needs raises.
+        if not THREADS_AVAILABLE or len(pending) == 1 or max_workers == 1 or _CACHE_ONLY.get():
             for index in pending:
                 results[index] = self._stats_payload_or_error(refs[index])
             return results
@@ -390,6 +430,8 @@ class ErgastPayloadLoader:
             if entry is not None and entry[1] is not None:
                 return entry[1]
             raise NetworkError(url=key, status_code=None)
+        if _CACHE_ONLY.get():
+            raise ErgastFetchNeeded(key)
         try:
             payload = fetch()
         except NetworkError:
@@ -420,9 +462,11 @@ def reset_ergast_loader() -> None:
 
 
 __all__ = [
+    "ErgastFetchNeeded",
     "ErgastPayloadLoader",
     "JOLPICA_CACHE_PREFIX",
     "STATS_CACHE_PREFIX",
+    "cache_only",
     "clear_memo",
     "current_season",
     "ergast_ttl_seconds",

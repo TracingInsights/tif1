@@ -36,7 +36,7 @@ from .json_utils import json_loads
 from .runtime import import_supported_polars
 
 if TYPE_CHECKING:
-    from tif1.models import CircuitInfo
+    from tif1.models_shared import CircuitInfo
 
 logger = logging.getLogger(__name__)
 
@@ -492,7 +492,7 @@ def _frame(
 
 
 def _assemble(parsed: _Parsed, *, source: str, lib: str) -> CircuitInfo:
-    from tif1.models import CircuitInfo
+    from tif1.models_shared import CircuitInfo
 
     backend, pl = _resolve_lib(lib)
     extras = parsed.extras

@@ -263,7 +263,9 @@ def test_get_fastest_laps_tels_auto_cold_start_skips_cache_and_validation(monkey
     assert tels["Driver"].iloc[0] == "VER"
     assert set(tels["Driver"]) == {"VER", "HAM"}
     assert cache.telemetry_get_calls == 0
-    assert len(fetch_kwargs) == 2
+    # drivers.json + session laptimes in one wave (Olympia H9; this fake serves
+    # neither), the per-driver laptimes fallback, then the telemetry.
+    assert len(fetch_kwargs) == 3
     for kwargs in fetch_kwargs:
         assert kwargs.get("use_cache") is False
         # K-series write-back: ultra-cold skips cache READS, writes persist.

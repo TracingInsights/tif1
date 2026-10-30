@@ -49,7 +49,7 @@ keywords:
     </CodeGroup>
   </Step>
   <Step title="Optional: build the native telemetry decoder">
-    `tif1-native` is a small Rust extension in the `native/` directory of the repository. When it is importable, `tif1` decodes telemetry payloads with it. The JSON scan runs without the GIL and produces typed numpy arrays. This makes cold loads, and the first warm load after a cold load, faster on multi-core machines. `tif1` works without it. It needs a Rust toolchain and `maturin`:
+    `tif1-native` is a small Rust extension in the `native/` directory of the repository. When it is importable, `tif1` decodes telemetry payloads with it. The JSON scan runs without the GIL and produces typed numpy arrays, and the `DriverAhead` channel comes back as codes into a short list of driver numbers instead of one Python string per sample. A session whose telemetry frames have to be rebuilt from the cached payloads (the first load after a cold load, or after an upgrade that changes the frame format) loads about twice as fast on multi-core machines. The frames are identical with and without it, and `tif1` works without it. It needs a Rust toolchain and `maturin`:
     ```bash
     git clone https://github.com/TracingInsights/tif1
     cd tif1/native
@@ -60,6 +60,7 @@ keywords:
     from tif1.core_utils.json_utils import NATIVE_TELEMETRY_DECODER_AVAILABLE
     print(NATIVE_TELEMETRY_DECODER_AVAILABLE)
     ```
+    Set `TIF1_DISABLE_NATIVE=1` before starting Python to use the pure-Python decoder even when the extension is installed.
   </Step>
   <Step title="Optional: install in the browser">
     Pyodide installs `tif1` with micropip. The Pyodide distribution provides the native packages; the `polars` backend is not available there.

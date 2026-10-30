@@ -1,17 +1,28 @@
-"""Core functionality for tif1."""
+"""Core functionality for tif1.
 
+pandas and the pandas model family (:mod:`tif1.models`) are bound lazily: a
+polars session never imports either (~250 ms). ``pd``/``_models`` become the
+modules themselves on their first attribute read, so a pandas session pays
+one proxy call per name, never one per access. ``tif1.core.Laps`` and the
+other re-exported model names resolve through the module ``__getattr__``.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import decimal
 import logging
 import math
 import numbers
 import re
+import sys
 import threading
 import warnings
 from collections.abc import Iterable
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import unquote
 
 import numpy as np
-import pandas as pd
 
 from .async_fetch import _validate_json_payload as _validate_json_impl
 from .async_fetch import fetch_multiple_async
@@ -50,7 +61,9 @@ from .core_utils.constants import (
     telemetry_ref_from_path,
 )
 from .core_utils.helpers import (
+    _TELEMETRY_CHANNEL_TYPES,
     DataFrame,
+    _channel_list,
     _coerce_lap_number,
     _coerce_null_like_payload,
     _create_empty_df,
@@ -60,19 +73,23 @@ from .core_utils.helpers import (
     _filter_valid_laptimes,
     _get_lap_column,
     _is_empty_df,
+    _load_pandas_blocks,
     _merge_telemetry_payloads,
     _normalize_lap_payload,
     _normalize_lap_payload_polars,
     _not_deleted_mask,
     _numeric_seconds_to_timedelta,
     _process_lap_df,
+    _process_polars_laps,
     _rename_columns,
     _replace_null_like_strings,
+    _seconds_array_to_td64ns,
     _telemetry_frame_from_merged,
     _validate_drivers_list,
     _validate_string_param,
     _validate_year,
 )
+from .core_utils.lazy_import import is_pandas_frame, is_pandas_series, lazy_module
 from .core_utils.runtime import (
     IS_EMSCRIPTEN,
     THREADS_AVAILABLE,
@@ -89,24 +106,62 @@ from .exceptions import (
     NetworkError,
     TIF1Error,
 )
-from .models import (
+from .models_shared import (
     CircuitInfo,
-    Driver,
-    DriverResult,  # noqa: F401  # re-exported for backward compatibility
-    Lap,  # noqa: F401  # re-exported for backward compatibility
-    Laps,
     LazyTelemetryDict,
-    SessionResults,
-    Telemetry,
-    _empty_driver_laps,
-    _empty_telemetry,
-    _IterLapResult,  # noqa: F401  # re-exported for backward compatibility
-    _LapInternal,  # noqa: F401  # re-exported for backward compatibility
+    _empty_polars_driver_laps,
     _load_driver_lap_payload,
-    _timedelta_ns,
 )
 from .payload_loader import PayloadLoader
 from .types import ScheduleBackend
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from . import models as _models
+
+    # Re-exported for backward compatibility; ``__getattr__`` resolves them at runtime.
+    from .models import (  # noqa: F401
+        Driver,
+        DriverResult,
+        Lap,
+        Laps,
+        SessionResults,
+        Telemetry,
+        _empty_driver_laps,
+        _empty_telemetry,
+        _IterLapResult,
+        _LapInternal,
+        _timedelta_ns,
+    )
+else:
+    pd = lazy_module("pandas", globals(), "pd")
+    _models = lazy_module("tif1.models", globals(), "_models")
+
+#: The pandas model names ``tif1.core`` re-exports (resolved by ``__getattr__``).
+_MODEL_EXPORTS = frozenset(
+    {
+        "Driver",
+        "DriverResult",
+        "Lap",
+        "Laps",
+        "SessionResults",
+        "Telemetry",
+        "_IterLapResult",
+        "_LapInternal",
+        "_empty_driver_laps",
+        "_empty_telemetry",
+        "_timedelta_ns",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """The pandas model family re-exported from :mod:`tif1.models` (imported on first read)."""
+    if name in _MODEL_EXPORTS:
+        return getattr(_models, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 pl: Any = None
 POLARS_AVAILABLE: bool | None = None
@@ -134,6 +189,27 @@ def _polars_models() -> Any:
     from . import models_polars
 
     return models_polars
+
+
+def _load_pandas_models() -> None:
+    """Import pandas, :mod:`tif1.models` and the block assembly now (pandas sessions).
+
+    Everything a pandas session builds frames with, imported (and the block
+    assembly probed) up front as the eager imports did, so no data access
+    pays for it. Idempotent: two attribute reads once loaded.
+    """
+    _models.Laps  # noqa: B018 - the attribute read imports and rebinds ``_models``
+    _load_pandas_blocks()
+
+
+def _is_pandas_laps(obj: Any) -> TypeGuard[Laps]:
+    """``isinstance(obj, tif1.models.Laps)`` without importing :mod:`tif1.models`.
+
+    No object can be an instance of a class that was never imported, so a
+    polars session answers ``False`` without loading pandas.
+    """
+    models = sys.modules.get("tif1.models")
+    return models is not None and isinstance(obj, models.Laps)
 
 
 def _polars_error_types() -> tuple[type[Exception], ...]:
@@ -225,7 +301,7 @@ def _is_nan(value: Any) -> bool:
 def _float_marker_distances(frame: Any) -> np.ndarray:
     """A circuit marker frame's ``Distance`` as float64 (NaN where unknown), either backend."""
     column = frame["Distance"]
-    if isinstance(column, pd.Series):
+    if is_pandas_series(column):
         return column.to_numpy(dtype=float, na_value=np.nan)
     return column.cast(float).to_numpy().astype(float, copy=False)
 
@@ -376,6 +452,11 @@ def _extract_driver_info_map(drivers: list[dict] | None) -> dict[str, dict]:
 
 
 _RACE_LIKE_SESSION_NAMES = frozenset({"Race", "Sprint"})
+
+#: A naive ``YYYY-MM-DDTHH:MM:SS`` schedule stamp (parsed without pandas).
+_ISO_SECONDS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001 - naive UTC, as pandas' Timestamp.value
+_MICROSECOND = dt.timedelta(microseconds=1)
 _UNSET: Any = object()
 _ERGAST_TABLE_ENDPOINTS = ("results", "qualifying", "sprint", "laps", "pitstops")
 # Serializes background frame-tier materialization writes (Pergamon Q15).
@@ -402,12 +483,26 @@ def _clean_scalar(value: Any) -> Any:
         return None
     if isinstance(value, str):
         return None if value in ("", "None", "nan", "NaN") else value
+    if "pandas" not in sys.modules:
+        # A polars table's values: pandas.isna's scalar rules, without pandas.
+        return None if _native_isna(value) else value
     try:
         if pd.isna(value):
             return None
     except (TypeError, ValueError):
         pass
     return value
+
+
+def _native_isna(value: Any) -> bool:
+    """``pandas.isna`` of a scalar that is not a pandas object (pandas is never imported)."""
+    if isinstance(value, np.datetime64 | np.timedelta64):
+        return bool(np.isnat(value))
+    if isinstance(value, float | complex | np.floating | np.complexfloating):
+        return bool(value != value)  # noqa: PLR0124 - NaN
+    if isinstance(value, decimal.Decimal):
+        return value.is_nan()
+    return False
 
 
 def _session_driver_rows(drivers: Any) -> list[Any]:
@@ -424,13 +519,18 @@ def _session_driver_rows(drivers: Any) -> list[Any]:
 _PRACTICE_SESSIONS = frozenset({"Practice 1", "Practice 2", "Practice 3"})
 
 
-def _best_lap_timedelta(info: dict[str, Any] | None) -> Any:
-    """A lap summary's best lap (seconds) as a ``Timedelta``, ``NaT`` without one."""
+def _best_lap_timedelta(info: dict[str, Any] | None, native: bool = False) -> Any:
+    """A lap summary's best lap (seconds) as a ``Timedelta``, ``NaT`` without one.
+
+    ``native`` (polars sessions): a ``numpy.timedelta64`` in ns, ``None`` without one.
+    """
     best = info.get("best") if info is not None else None
     if best is None:
-        return pd.NaT
+        return None if native else pd.NaT
     # LapTimeSeconds is total_seconds() of the LapTime: rounding to the
     # nanosecond recovers the exact Timedelta.
+    if native:
+        return np.timedelta64(round(best * 1e9), "ns")
     return pd.Timedelta(round(best * 1e9), unit="ns")
 
 
@@ -644,14 +744,26 @@ def _quali_q1_floor(bests: dict[str, list[int | None]]) -> int | None:
     return int(min(q1) * 1.07) if q1 else None
 
 
-def _quali_row_fields(times: list[int | None] | None, q1_floor: int | None) -> dict[str, Any]:
-    """``Q1``-``Q3`` of a driver's results row, plus ``"N"`` for a Q1 exit outside 107%."""
+def _quali_row_fields(
+    times: list[int | None] | None, q1_floor: int | None, native: bool = False
+) -> dict[str, Any]:
+    """``Q1``-``Q3`` of a driver's results row, plus ``"N"`` for a Q1 exit outside 107%.
+
+    ``native`` (polars sessions): ``numpy.timedelta64`` values, ``None`` when missing.
+    """
     if times is None:
         return {}
-    fields: dict[str, Any] = {
-        name: pd.Timedelta(value, unit="ns") if value is not None else pd.NaT
-        for name, value in zip(("Q1", "Q2", "Q3"), times, strict=True)
-    }
+    fields: dict[str, Any]
+    if native:
+        fields = {
+            name: np.timedelta64(value, "ns") if value is not None else None
+            for name, value in zip(("Q1", "Q2", "Q3"), times, strict=True)
+        }
+    else:
+        fields = {
+            name: pd.Timedelta(value, unit="ns") if value is not None else pd.NaT
+            for name, value in zip(("Q1", "Q2", "Q3"), times, strict=True)
+        }
     if q1_floor is not None and times[1] is None and times[0] is not None and times[0] > q1_floor:
         fields["ClassifiedPosition"] = "N"
     return fields
@@ -703,7 +815,7 @@ def _extract_lap_numbers(laps, lib: str) -> set[int]:
         laps_pl = cast(Any, laps)
         lap_values = laps_pl.get_column(lap_col).to_list()
     else:
-        laps_pd = cast(pd.DataFrame, laps)
+        laps_pd = cast("pd.DataFrame", laps)
         lap_values = laps_pd[lap_col].to_numpy(copy=False)
 
     lap_numbers: set[int] = set()
@@ -784,6 +896,34 @@ def _merge_lap_payloads(
     return merged
 
 
+def _pandas_laps_from_merged(merged: dict) -> pd.DataFrame:
+    """``_process_lap_df(pd.DataFrame(merged), "pandas")``, built column by column when possible.
+
+    Olympia H8: the frame-wide pipeline costs ~35-45 ms on a 1,128-lap race
+    (per-column ``isin``/``mask``/``astype`` round trips and the ``str``
+    arrays the constructor infers); :func:`build_laps_frame` converts each
+    merged list straight to its final dtype with the same values. Anything its
+    rules do not cover (or an error it raises) runs the pipeline, which then
+    behaves exactly as it always did.
+    """
+    # Imported here: driver_laps imports pandas, and polars sessions never do.
+    from .core_utils.driver_laps import build_laps_frame
+
+    try:
+        frame = build_laps_frame(merged)
+    except (OverflowError, TypeError, ValueError) as e:
+        logger.debug("Fast laps build fell back to the pipeline: %s", e)
+        frame = None
+    if frame is not None:
+        return frame
+    frame = pd.DataFrame(merged, copy=False)
+    # Remove duplicate columns if they exist (can happen if upstream data has Driver/Team)
+    if isinstance(frame.columns, pd.Index) and frame.columns.duplicated().any():
+        # Keep only the first occurrence of each column name
+        frame = frame.loc[:, ~frame.columns.duplicated()]
+    return cast(pd.DataFrame, _process_lap_df(frame, "pandas"))
+
+
 def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
     """True if a telemetry payload carries at least one non-empty list channel.
 
@@ -794,7 +934,7 @@ def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
         return False
     expected_len: int | None = None
     for value in tel_payload.values():
-        if isinstance(value, list | np.ndarray):
+        if isinstance(value, _TELEMETRY_CHANNEL_TYPES):
             expected_len = len(value)
             break
     return expected_len is not None and expected_len > 0
@@ -817,13 +957,16 @@ def _create_session_df(data: dict[str, Any], rename_map: dict[str, str], lib: st
     return _rename_columns(frame, rename_map, lib)
 
 
-def _resolve_session_options(
-    enable_cache: bool | None,
-    lib: Literal["pandas", "polars"] | None,
-    *,
-    log_warnings: bool = True,
-) -> tuple[bool, Literal["pandas", "polars"]]:
-    """Resolve and normalize session options."""
+# Session tables built typed straight from the payload lists (numpy, no polars
+# query plan); a builder returns None for a payload the generic build must take.
+_TYPED_SESSION_TABLES: dict[str, Any] = {
+    "weather.json": _ss.weather_frame,
+    "rcm.json": _ss.race_control_frame,
+}
+
+
+def _resolve_enable_cache(enable_cache: bool | None, *, log_warnings: bool = True) -> bool:
+    """A session's ``enable_cache`` flag (config default, CI mode turns it off)."""
     resolved_enable_cache = (
         config.get("enable_cache", True) if enable_cache is None else enable_cache
     )
@@ -835,6 +978,17 @@ def _resolve_session_options(
     # cache off gates every tier at once (payloads, laps/telemetry frames).
     if config.get("ci_mode", False):
         resolved_enable_cache = False
+    return resolved_enable_cache
+
+
+def _resolve_session_options(
+    enable_cache: bool | None,
+    lib: Literal["pandas", "polars"] | None,
+    *,
+    log_warnings: bool = True,
+) -> tuple[bool, Literal["pandas", "polars"]]:
+    """Resolve and normalize session options."""
+    resolved_enable_cache = _resolve_enable_cache(enable_cache, log_warnings=log_warnings)
 
     resolved_lib = config.get("lib", "pandas") if lib is None else lib
     if resolved_lib not in {"pandas", "polars"}:
@@ -908,6 +1062,10 @@ class Session:
         _validate_string_param(session, "session")
 
         resolved_enable_cache, resolved_lib = _resolve_session_options(enable_cache, lib)
+        if resolved_lib == "pandas":
+            # A pandas session needs pandas and the model family: import both
+            # here (the session, not its first data access, pays for them).
+            _load_pandas_models()
 
         self.year = year
         self.gp = _encode_url_component(gp_name)
@@ -940,6 +1098,9 @@ class Session:
         # Derived session state (track_status, session_status, session_info,
         # t0_date, session_start_time), memoised per attribute.
         self._session_state: dict[str, Any] = {}
+        # Session tables _load_session_table built already typed, by path
+        # (the property skips its casts for exactly that frame).
+        self._typed_session_tables: dict[str, DataFrame] = {}
         # Per-driver lap start lookup (LapStartTime/LapStartDate by lap
         # number) used to give telemetry its SessionTime/Date columns.
         self._lap_start_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
@@ -1432,18 +1593,7 @@ class Session:
         """
         if self._ergast_only:
             return
-        paths: list[str] = []
-        if self._drivers is None and self._get_local_payload("drivers.json") is None:
-            paths.append("drivers.json")
-        if self._get_local_payload(SESSION_LAPTIMES_PATH) is None:
-            paths.append(SESSION_LAPTIMES_PATH)
-        for table, attr in (("weather.json", "_weather"), ("rcm.json", "_race_control_messages")):
-            if (
-                table in self._requested_session_tables
-                and self._get_local_payload(table) is None
-                and getattr(self, attr) is None
-            ):
-                paths.append(table)
+        paths = self._laps_wave_paths()
         if len(paths) < 2:
             return
         if config.get("offline_mode", False):
@@ -1470,7 +1620,28 @@ class Session:
         except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
             logger.debug("Laps-wave prefetch skipped: %s", e)
             return
+        self._remember_laps_wave(paths, results, write_cache=write_cache)
 
+    def _laps_wave_paths(self) -> list[str]:
+        """The laps-path session tables still missing from the memo (the laps wave)."""
+        paths: list[str] = []
+        if self._drivers is None and self._get_local_payload("drivers.json") is None:
+            paths.append("drivers.json")
+        if self._get_local_payload(SESSION_LAPTIMES_PATH) is None:
+            paths.append(SESSION_LAPTIMES_PATH)
+        for table, attr in (("weather.json", "_weather"), ("rcm.json", "_race_control_messages")):
+            if (
+                table in self._requested_session_tables
+                and self._get_local_payload(table) is None
+                and getattr(self, attr) is None
+            ):
+                paths.append(table)
+        return paths
+
+    def _remember_laps_wave(
+        self, paths: list[str], results: list[Any], *, write_cache: bool
+    ) -> None:
+        """Memoize the laps-wave tables that arrived."""
         fetched_any = False
         for path, result in zip(paths, results):
             if not isinstance(result, dict) or not result:
@@ -1484,6 +1655,54 @@ class Session:
             self._session_tables_prefetched = True
             if write_cache:
                 self._mark_session_cache_populated()
+
+    def _cold_tables_wave_pending(self) -> bool:
+        """Whether a raw fastest-lap lookup must still fetch drivers.json and the laptimes.
+
+        True only on a session the cache does not hold (the warm readers need
+        no network and no event loop) with neither file in the memo yet.
+        """
+        return (
+            self._laps is None
+            and self._drivers is None
+            and not self._ergast_only
+            and not self._session_cache_available()
+            and self._get_local_payload(SESSION_LAPTIMES_PATH) is None
+        )
+
+    def _prefetch_cold_tables_wave(self, ultra_cold: bool, operation: str) -> None:
+        """drivers.json and the session laptimes in one wave for the raw fastest-lap paths.
+
+        Olympia H9: the cold fastest-lap lookups fetched ``drivers.json``, then
+        the laptimes after it, then the telemetry: three round trips. The
+        laps wave (Thebes TH6) brings both tables at once and leaves them in
+        the memo, so the lookups below only read them: one round trip less
+        before the telemetry request goes out.
+        """
+        if not self._cold_tables_wave_pending():
+            return
+        try:
+            _run_coroutine_sync(lambda: self._prefetch_laps_wave_async(ultra_cold), operation)
+        except AsyncRequiredError:
+            return  # Pyodide without JSPI: the per-table loaders fetch them
+
+    def _start_ergast_prefetch_for_cold_wave(self) -> None:
+        """Start the Ergast prefetch beside the cold driver-lookup wave.
+
+        The classification rides alongside ``drivers.json`` (see
+        :meth:`_driver_rows_info`), but :meth:`get_driver` fetches that file
+        in its own wave, so the Driver row then fetched the Stats files
+        afterwards: two requests in a row on the critical path. Only callers
+        that always read the classification use this (a speculative start
+        costs ~35-55 ms of GIL time); warm sessions never start it here.
+        """
+        if (
+            self._ergast_enabled
+            and self._drivers is None
+            and self._get_local_payload("drivers.json") is None
+            and not self._session_cache_available()
+        ):
+            self._start_ergast_prefetch()
 
     def _resolve_telemetry_ultra_cold_mode(self, ultra_cold: bool | None) -> bool:
         """Resolve telemetry-specific ultra-cold mode.
@@ -1941,10 +2160,16 @@ class Session:
         if not isinstance(data, dict) or not data:
             return _create_empty_df(self.lib)
 
+        typed_builder = _TYPED_SESSION_TABLES.get(path)
+        if typed_builder is not None:
+            typed = typed_builder(data, rename_map, self.lib)
+            if typed is not None:
+                self._typed_session_tables[path] = typed
+                return typed
         return _create_session_df(data, rename_map, self.lib)
 
     @property
-    def car_data(self) -> "LazyTelemetryDict":
+    def car_data(self) -> LazyTelemetryDict:
         """Per-driver session-long telemetry, keyed by driver number (fastf1 parity).
 
         A lazy dict: nothing is fetched until a key is read; the value is the
@@ -1965,7 +2190,7 @@ class Session:
         return self._car_data
 
     @property
-    def pos_data(self) -> "LazyTelemetryDict":
+    def pos_data(self) -> LazyTelemetryDict:
         """Per-driver session-long telemetry keyed by driver number (see :attr:`car_data`)."""
         return self.car_data
 
@@ -1982,7 +2207,7 @@ class Session:
         )
 
     @property
-    def results(self) -> "SessionResults":
+    def results(self) -> SessionResults:
         """Session classification with driver information, one row per driver.
 
         Rows are in classification order (see :attr:`drivers`). ``Position`` and
@@ -2014,6 +2239,9 @@ class Session:
             bests = self._quali_segment_bests() if not official and self._is_quali_like() else {}
             q1_floor = _quali_q1_floor(bests)
             leader_laps = max((info["laps"] for info in summary.values()), default=0)
+            # polars rows carry datetime/numpy scalars (no pandas import).
+            native = self.lib == "polars"
+            missing_time = None if native else pd.NaT
 
             rows = []
             for index, d in enumerate(driver_rows, start=1):
@@ -2050,8 +2278,8 @@ class Session:
                         "Points": math.nan,
                         "Laps": float(laps_done) if summary else math.nan,
                         # fastf1: a practice ``Time`` is the best lap.
-                        "Time": _best_lap_timedelta(info) if practice else pd.NaT,
-                        **_quali_row_fields(bests.get(str(d.get("driver", ""))), q1_floor),
+                        "Time": _best_lap_timedelta(info, native) if practice else missing_time,
+                        **_quali_row_fields(bests.get(str(d.get("driver", ""))), q1_floor, native),
                         # Did-not-start rows (only Ergast knows the driver) keep
                         # NaN positions, except in Ergast-only seasons where
                         # every driver comes from the classification.
@@ -2059,7 +2287,7 @@ class Session:
                     }
                 )
             if classification:
-                rows = _er.merge_ergast_rows(rows, classification, kind)
+                rows = _er.merge_ergast_rows(rows, classification, kind, native=native)
             else:
                 for row in rows:
                     row.pop("_ergast_only", None)
@@ -2076,7 +2304,7 @@ class Session:
         if self.lib == "polars" and _ensure_polars_available():
             frame = _er.finalize_results_frame_polars(rows)
             return _polars_models().PolarsSessionResults._from_frame(frame, self)
-        results = SessionResults(_er.finalize_results_frame(rows))
+        results = _models.SessionResults(_er.finalize_results_frame(rows))
         results.session = self
         return results
 
@@ -2091,7 +2319,10 @@ class Session:
                 self._race_control_messages = self._load_session_table(
                     "rcm.json", RACE_CONTROL_RENAME_MAP
                 )
-                if not _is_empty_df(self._race_control_messages, self.lib):
+                typed = self._typed_session_tables.pop("rcm.json", None)
+                if self._race_control_messages is not typed and not _is_empty_df(
+                    self._race_control_messages, self.lib
+                ):
                     if self.lib == "polars":
                         import polars as pl
 
@@ -2138,7 +2369,7 @@ class Session:
                         if exprs:
                             self._race_control_messages = rcm_pl.with_columns(exprs)
                     else:
-                        rcm_pd = cast(pd.DataFrame, self._race_control_messages)
+                        rcm_pd = cast("pd.DataFrame", self._race_control_messages)
                         # Time: ISO string → datetime64[ns]
                         if "Time" in rcm_pd.columns:
                             rcm_pd["Time"] = pd.to_datetime(
@@ -2232,7 +2463,51 @@ class Session:
             return None
         return None if _is_empty_df(laps, self.lib) else laps
 
+    def _event_row(self) -> tuple[str, dict[str, Any]]:
+        """``(event name, schedule row)``: the values :attr:`event` is built from, no pandas.
+
+        Resolved and raising exactly as :attr:`event` (``events._event_row``);
+        the date fields stay the schedule's ISO strings. polars sessions read
+        their round, circuit texts and scheduled start from it.
+        """
+        from .events import _event_row, _resolve_event_name
+
+        backend = getattr(self, "_schedule_backend", None)
+        name = _resolve_event_name(self.year, self.event_name, backend=backend)
+        return name, _event_row(self.year, name, backend)
+
+    def _scheduled_start_utc_ns_native(self) -> int | None:
+        """:meth:`_scheduled_start_utc_ns` from the schedule row (``Event.get_session_date``)."""
+        from .events import _event_session_name
+
+        try:
+            name, row = self._event_row()
+            session_name = _event_session_name(
+                self.year, name, self.session_name, getattr(self, "_schedule_backend", None)
+            )
+            # Event.get_session_date: all five session columns, the first
+            # match, then both of its date columns must exist.
+            columns = [row[f"Session{i}"] for i in range(1, 6)]
+            if session_name not in columns:
+                return None
+            index = columns.index(session_name) + 1
+            date_utc = row[f"Session{index}DateUtc"]
+            row[f"Session{index}Date"]  # a KeyError when missing, as the Event raises
+        except (ValueError, KeyError, TypeError, EventNotFoundError):
+            return None
+        if date_utc is None or date_utc == "":
+            return None  # Event keeps a missing UTC date as NaT
+        if isinstance(date_utc, str) and _ISO_SECONDS.fullmatch(date_utc):
+            # Exactly pandas' Timestamp of a naive ISO stamp, in ns.
+            return (dt.datetime.fromisoformat(date_utc) - _EPOCH) // _MICROSECOND * 1000
+        return self._scheduled_start_utc_ns_pandas()
+
     def _scheduled_start_utc_ns(self) -> int | None:
+        if self.lib == "polars":
+            return self._scheduled_start_utc_ns_native()
+        return self._scheduled_start_utc_ns_pandas()
+
+    def _scheduled_start_utc_ns_pandas(self) -> int | None:
         try:
             scheduled = self.event.get_session_date(self.session_name, utc=True)
         except (ValueError, KeyError, TypeError, EventNotFoundError):
@@ -2336,8 +2611,10 @@ class Session:
         """
 
         def build() -> dict[str, Any]:
+            # One schedule row for every field (each ``self.event`` builds it anew).
+            found: Any = None
             try:
-                event = self.event
+                event = found = self.event
             except (EventNotFoundError, ValueError):
                 event = pd.Series(dtype=object)
             from .events import _parse_gmt_offset
@@ -2345,9 +2622,9 @@ class Session:
             gmt_raw = event.get("GmtOffset") if hasattr(event, "get") else None
             parsed_offset = _parse_gmt_offset(gmt_raw) if gmt_raw is not None else None
             gmt_offset: Any = None if parsed_offset is None else pd.Timedelta(parsed_offset)
-            start = self.date
+            start = self.date if found is None else self._event_session_date(found)
             start_date = None if start is None or pd.isna(start) else pd.Timestamp(start)
-            keys = self._circuit_keys()
+            keys = self._circuit_keys(found)
             return _ss.session_info_dict(
                 event,
                 self.session_name,
@@ -2361,8 +2638,11 @@ class Session:
 
         return self._state("session_info", build)
 
-    def _circuit_keys(self) -> dict[str, Any]:
-        """Circuit/country keys without a request: memoised circuit info, else the vendored table."""
+    def _circuit_keys(self, event: Any = None) -> dict[str, Any]:
+        """Circuit/country keys without a request: memoised circuit info, else the vendored table.
+
+        ``event`` is the schedule row when the caller already holds it.
+        """
         info = self._circuit_info
         if info is not None and info.circuit_key is not None:
             return {
@@ -2374,7 +2654,7 @@ class Session:
         try:
             from .core_utils.circuit_info import load_vendored_circuits
 
-            (circuit_id,) = self._event_texts("CircuitId")
+            (circuit_id,) = self._event_texts("CircuitId", event=event)
             entry = load_vendored_circuits().get(circuit_id) if circuit_id else None
         except (ImportError, ValueError, KeyError, TypeError, OSError):
             entry = None
@@ -2423,7 +2703,10 @@ class Session:
         Returns:
             Session date as pandas Timestamp, or pd.NaT if not available
         """
-        event = self.event
+        return self._event_session_date(self.event)
+
+    def _event_session_date(self, event: Any) -> Any:
+        """:attr:`date` read from the schedule row ``event``."""
         session_name = self.name
 
         for i in range(1, 6):
@@ -2460,7 +2743,8 @@ class Session:
             self._prefetch_session_tables()
             try:
                 self._weather = self._load_session_table("weather.json", WEATHER_RENAME_MAP)
-                if not _is_empty_df(self._weather, self.lib):
+                typed = self._typed_session_tables.pop("weather.json", None)
+                if self._weather is not typed and not _is_empty_df(self._weather, self.lib):
                     if self.lib == "polars":
                         import polars as pl
 
@@ -2470,16 +2754,12 @@ class Session:
                         # Casts are non-strict like the pandas branch's
                         # to_numeric(errors="coerce"): unparseable → null.
                         # Time: seconds float → Duration("ns") through the pandas
-                        # branch's conversion (a ms cast truncated .335 to .334).
+                        # branch's conversion (a ms cast truncated .335 to .334),
+                        # on the numpy array (no pandas Series).
                         if "Time" in cols:
                             seconds = weather_pl["Time"].cast(pl.Float64, strict=False)
                             exprs.append(
-                                pl.Series(
-                                    "Time",
-                                    _numeric_seconds_to_timedelta(
-                                        pd.Series(seconds.to_numpy())
-                                    ).to_numpy(),
-                                )
+                                pl.Series("Time", _seconds_array_to_td64ns(seconds.to_numpy()))
                             )
                         # Float columns
                         float_cols = [
@@ -2512,7 +2792,7 @@ class Session:
                     else:
                         # "None" sentinels first: astype("boolean") below rejects
                         # the string, which used to empty the whole table.
-                        weather_pd = _replace_null_like_strings(cast(pd.DataFrame, self._weather))
+                        weather_pd = _replace_null_like_strings(cast("pd.DataFrame", self._weather))
                         # Time: seconds float → timedelta
                         if "Time" in weather_pd.columns:
                             weather_pd["Time"] = _numeric_seconds_to_timedelta(weather_pd["Time"])
@@ -2565,7 +2845,7 @@ class Session:
         """
         return self.weather
 
-    def get_circuit_info(self) -> "CircuitInfo":
+    def get_circuit_info(self) -> CircuitInfo:
         """Circuit markers and layout (fastf1 parity plus tif1 extras).
 
         Built from the session's ``corners.json`` (both the old schema, corners
@@ -2585,7 +2865,7 @@ class Session:
             self._fit_marker_distances(info)
         return self._circuit_info
 
-    def _fit_marker_distances(self, info: "CircuitInfo") -> None:
+    def _fit_marker_distances(self, info: CircuitInfo) -> None:
         """Fit the markers without a ``Distance`` on the fastest lap (either backend).
 
         Distances the circuit file gives are kept (fastf1's
@@ -2611,12 +2891,16 @@ class Session:
         except (DataNotFoundError, NetworkError, InvalidDataError, TypeError, ValueError) as e:
             logger.info("Marker distances not fitted for %s: %s", self.api_path, e)
 
-    def _event_texts(self, *keys: str) -> list[str]:
-        """Text fields of the schedule row (``""`` when unknown), read from one lookup."""
-        try:
-            event = self.event
-        except (EventNotFoundError, ValueError):
-            return [""] * len(keys)
+    def _event_texts(self, *keys: str, event: Any = None) -> list[str]:
+        """Text fields of the schedule row (``""`` when unknown), read from one lookup.
+
+        ``event`` is the schedule row when the caller already holds it.
+        """
+        if event is None:
+            try:
+                event = self._event_row()[1] if self.lib == "polars" else self.event
+            except (EventNotFoundError, ValueError):
+                return [""] * len(keys)
         if not hasattr(event, "get"):
             return [""] * len(keys)
         texts = []
@@ -2625,7 +2909,7 @@ class Session:
             texts.append("" if value is None or _is_nan(value) else str(value))
         return texts
 
-    def _build_circuit_info(self) -> "CircuitInfo":
+    def _build_circuit_info(self) -> CircuitInfo:
         """Fetch ``corners.json`` and build the :class:`CircuitInfo` (MultiViewer backup)."""
         from .core_utils.circuit_info import build_circuit_info
 
@@ -2703,6 +2987,9 @@ class Session:
         cached_results = (
             self._cached_payloads_sync([request[3] for request in requests]) if use_cache else None
         )
+        if cached_results is None:
+            # The Driver row below needs the classification: fetch it during this wave.
+            self._start_ergast_prefetch_for_cold_wave()
         try:
             results = (
                 cached_results
@@ -2846,11 +3133,14 @@ class Session:
         """This event's championship round (None for testing or unresolved events)."""
         if self._ergast_round is not _UNSET:
             return self._ergast_round
+        from .events import _event_round_number
+
         number = 0
         try:
-            event = self.event
-            if "RoundNumber" in event.index:
-                number = int(event["RoundNumber"])
+            # The value ``self.event["RoundNumber"]`` holds, without building
+            # the pandas Event (its schedule joins cost 1.5-4 ms per lookup).
+            backend = getattr(self, "_schedule_backend", None)
+            number = int(_event_round_number(self.year, self.event_name, backend))
         except (EventNotFoundError, ValueError, TypeError, KeyError) as exc:
             logger.debug("No round number for %s/%s: %s", self.year, self.event_name, exc)
         self._ergast_round = number if number > 0 else None
@@ -2908,7 +3198,9 @@ class Session:
         error of a failed fetch and re-raises it on every later call instead
         of walking the mirrors again (the background prefetch fails exactly
         as the main thread would); a merge session keeps ``None`` because
-        :meth:`_ergast_table_race` already degraded and logged.
+        :meth:`_ergast_table_race` already degraded and logged. Inside
+        :func:`tif1.ergast.payloads.cache_only` a lookup that needs a fetch
+        raises ``ErgastFetchNeeded`` and nothing is memoized.
         """
         with self._ergast_lock:
             if self._ergast_loaded:
@@ -2917,8 +3209,12 @@ class Session:
                 return self._ergast_payload
             payload = None
             if self._ergast_enabled:
+                from .ergast.payloads import ErgastFetchNeeded
+
                 try:
                     payload = self._ergast_table_race(self._ergast_endpoint())
+                except ErgastFetchNeeded:
+                    raise
                 except Exception as exc:
                     if self._ergast_only:
                         self._ergast_error = exc
@@ -2949,12 +3245,15 @@ class Session:
         joined when the interpreter exits, so a fetch still retrying against
         slow mirrors would hold up a script that is already done. The thread
         only fills the memo; :meth:`_load_ergast_payload` hands the outcome
-        (or the stored error) to whoever asks next.
+        (or the stored error) to whoever asks next. A warm cache needs no
+        thread: :meth:`_resolve_cached_ergast_payload` answers it here.
         """
         if not self._ergast_enabled or self._ergast_loaded or self._ergast_prefetch_started:
             return
         self._ergast_prefetch_started = True
         if not THREADS_AVAILABLE:
+            return
+        if self._resolve_cached_ergast_payload():
             return
         try:
             threading.Thread(
@@ -2962,6 +3261,39 @@ class Session:
             ).start()
         except RuntimeError:  # interpreter shutting down
             self._ergast_prefetch_started = False
+
+    def _resolve_cached_ergast_payload(self) -> bool:
+        """Memoize the classification from the cache tiers alone, on this thread.
+
+        A thread costs a warm session more than the lookup it would run (GIL
+        handoffs on top of a few cache reads), so the payload is resolved
+        here whenever the memo/SQLite tiers hold everything it needs and
+        are fresh (the same TTL rules as any lookup). The season index is
+        checked first so a cold cache starts the fetch without delay.
+
+        Returns:
+            True when the outcome (payload, ``None`` or the stored error of an
+            Ergast-only season) is memoized; False when a fetch is needed.
+        """
+        from .ergast.payloads import ErgastFetchNeeded, cache_only
+        from .ergast.stats import get_stats_source
+
+        try:
+            if not get_stats_source().season_index_cached(self.year):
+                return False
+            with cache_only():
+                self._load_ergast_payload()
+        except ErgastFetchNeeded:
+            return False
+        except Exception as exc:  # an Ergast-only failure is memoized for the reader
+            logger.debug(
+                "Ergast classification failed for %s/%s/%s: %s",
+                self.year,
+                self.event_name,
+                self.session_name,
+                exc,
+            )
+        return self._ergast_loaded
 
     def _prefetch_ergast_payload(self) -> None:
         """Thread target of :meth:`_start_ergast_prefetch`: never lets an error escape."""
@@ -3005,14 +3337,12 @@ class Session:
                 (_normalize_lap_payload_polars(payload), driver, team)
                 for payload, driver, team in payloads
             ]
-            frame: DataFrame = pl.DataFrame(_merge_lap_payloads(merged), strict=False)
-        else:
-            merged = [
-                (_normalize_lap_payload(payload), driver, team)
-                for payload, driver, team in payloads
-            ]
-            frame = pd.DataFrame(_merge_lap_payloads(merged), copy=False)
-        return _process_lap_df(frame, self.lib)
+            columns = _merge_lap_payloads(merged)
+            return _process_polars_laps(pl.DataFrame(columns, strict=False), columns)
+        merged = [
+            (_normalize_lap_payload(payload), driver, team) for payload, driver, team in payloads
+        ]
+        return _pandas_laps_from_merged(_merge_lap_payloads(merged))
 
     def _as_session_lib(self, frame: pd.DataFrame) -> DataFrame:
         """A pandas frame in the session's backend (Arrow conversion for polars)."""
@@ -3097,8 +3427,14 @@ class Session:
         session_payload: dict[str, Any],
         *,
         drivers_filter: list[str] | None = None,
+        derived: dict[str, dict[str, Any]] | None = None,
     ) -> list[tuple[str, dict[str, Any]]]:
-        """Derive per-driver laptime payloads from a session-wide laptime table."""
+        """Derive per-driver laptime payloads from a session-wide laptime table.
+
+        ``derived`` maps paths to payloads this table yielded moments ago
+        (:meth:`_derive_requested_laptime_payloads`); those are returned
+        as they are instead of being sliced again (the same values).
+        """
         if not isinstance(session_payload, dict):
             return []
 
@@ -3119,6 +3455,10 @@ class Session:
 
         derived_payloads: list[tuple[str, dict[str, Any]]] = []
         for driver_code, positions in positions_by_driver.items():
+            known = derived.get(f"{driver_code}/laptimes.json") if derived else None
+            if known is not None:
+                derived_payloads.append((f"{driver_code}/laptimes.json", known))
+                continue
             payload: dict[str, Any] = {}
             # Q10: a driver's rows are one contiguous run in the session table,
             # so each column is a single slice instead of a per-row gather
@@ -3145,6 +3485,35 @@ class Session:
             derived_payloads.append((path, payload))
 
         return derived_payloads
+
+    def _derive_requested_laptime_payloads(
+        self, driver_requests: list[tuple[dict[str, Any], str]]
+    ) -> dict[str, dict[str, Any]]:
+        """Memoize every requested driver's payload from the session table in one pass.
+
+        Olympia H8: deriving them one driver at a time (as
+        :meth:`_get_or_derive_driver_laptime_payload` does) scanned the whole
+        session table once per driver (~2.5 ms on a 20-driver race). Same
+        payloads, same memo entries; drivers already memoized are left alone.
+
+        Returns:
+            The payloads derived here, by path.
+        """
+        session_payload = self._get_local_payload(SESSION_LAPTIMES_PATH)
+        if session_payload is None:
+            return {}
+        pending = [
+            code
+            for code in dict.fromkeys(path.split("/", 1)[0] for _info, path in driver_requests)
+            if self._get_local_payload(f"{code}/laptimes.json") is None
+        ]
+        if not pending:  # an empty filter would mean every driver
+            return {}
+        return dict(
+            self._derive_driver_laptime_payloads_from_session(
+                session_payload, drivers_filter=pending
+            )
+        )
 
     def _get_or_derive_driver_laptime_payload(self, driver: str) -> dict[str, Any] | None:
         """Return a memoized per-driver laptime payload, deriving it from session data if needed."""
@@ -3331,6 +3700,7 @@ class Session:
         fetched_any_payload = False
 
         missing_drivers: list[str] = []
+        derived_now = self._derive_requested_laptime_payloads(driver_requests)
         for idx, (_driver_info, path) in enumerate(driver_requests):
             driver_code = path.split("/", 1)[0]
             local_payload = self._get_or_derive_driver_laptime_payload(driver_code)
@@ -3377,6 +3747,7 @@ class Session:
                 self._derive_driver_laptime_payloads_from_session(
                     session_payload,
                     drivers_filter=missing_drivers or None,
+                    derived=derived_now,
                 )
             )
             for idx, (_driver_info, path) in enumerate(driver_requests):
@@ -3529,6 +3900,7 @@ class Session:
         fetched_any_payload = False
 
         missing_drivers: list[str] = []
+        derived_now = self._derive_requested_laptime_payloads(driver_requests)
         for idx, (_driver_info, path) in enumerate(driver_requests):
             driver_code = path.split("/", 1)[0]
             local_payload = self._get_or_derive_driver_laptime_payload(driver_code)
@@ -3577,6 +3949,7 @@ class Session:
                 self._derive_driver_laptime_payloads_from_session(
                     session_payload,
                     drivers_filter=missing_drivers or None,
+                    derived=derived_now,
                 )
             )
             for idx, (_driver_info, path) in enumerate(driver_requests):
@@ -3869,6 +4242,7 @@ class Session:
         ultra_cold: bool = False,
     ) -> DataFrame:
         """Compute fastest lap rows directly from raw per-driver payloads."""
+        self._prefetch_cold_tables_wave(ultra_cold, "get_fastest_laps")
         driver_pool: list[dict[str, Any]] | None = None
         if ultra_cold:
             driver_pool, _ = self._load_drivers_for_fastest_lap_reference(ultra_cold=True)
@@ -3915,6 +4289,8 @@ class Session:
         ultra_cold: bool = False,
     ) -> DataFrame:
         """Async variant of fastest-lap scan directly from raw per-driver payloads."""
+        if self._cold_tables_wave_pending():
+            await self._prefetch_laps_wave_async(ultra_cold)
         driver_pool: list[dict[str, Any]] | None = None
         if ultra_cold:
             driver_pool, _ = self._load_drivers_for_fastest_lap_reference(ultra_cold=True)
@@ -4017,6 +4393,7 @@ class Session:
         ultra_cold: bool = False,
     ) -> list[tuple[str, int]]:
         """Resolve per-driver fastest lap references directly from raw payloads."""
+        self._prefetch_cold_tables_wave(ultra_cold, "get_fastest_laps_tels")
         drivers_pool, driver_payloads = self._load_drivers_for_fastest_lap_reference(
             ultra_cold=ultra_cold
         )
@@ -4112,6 +4489,8 @@ class Session:
         ultra_cold: bool = False,
     ) -> list[tuple[str, int]]:
         """Async variant of per-driver fastest lap reference resolution."""
+        if self._cold_tables_wave_pending():
+            await self._prefetch_laps_wave_async(ultra_cold)
         drivers_pool, driver_payloads = self._load_drivers_for_fastest_lap_reference(
             ultra_cold=ultra_cold
         )
@@ -4159,7 +4538,7 @@ class Session:
                 return None
             driver, lap_value = fastest_laps_pl.select([COL_DRIVER, lap_col]).row(0)
         else:
-            fastest_laps_pd = cast(pd.DataFrame, fastest_laps)
+            fastest_laps_pd = cast("pd.DataFrame", fastest_laps)
             lap_col = _get_lap_column(fastest_laps_pd, self.lib)
             if COL_DRIVER not in fastest_laps_pd.columns or lap_col not in fastest_laps_pd.columns:
                 return None
@@ -4271,6 +4650,7 @@ class Session:
             )
             return fastest_lap_ref
 
+        self._prefetch_cold_tables_wave(ultra_cold, "get_fastest_lap_tel")
         drivers, driver_payloads = self._load_drivers_for_fastest_lap_reference(
             ultra_cold=ultra_cold
         )
@@ -4304,6 +4684,8 @@ class Session:
             )
             return fastest_lap_ref
 
+        if self._cold_tables_wave_pending():
+            await self._prefetch_laps_wave_async(ultra_cold)
         drivers, driver_payloads = self._load_drivers_for_fastest_lap_reference(
             ultra_cold=ultra_cold
         )
@@ -4374,10 +4756,14 @@ class Session:
                     return self._laps
 
             # Pergamon P5: a laps frame-tier hit needs no event loop (and no
-            # asyncio import) — only loads that must fetch go async.
+            # asyncio import) — only loads that must fetch go async. Olympia
+            # H8: neither does a first load the payload cache serves.
             tier_frame = self._laps_from_frame_tier()
+            cached_build = None if tier_frame is not None else self._laps_from_cached_payloads()
             if tier_frame is not None:
                 self._laps = tier_frame
+            elif cached_build is not None:
+                self._laps = self._as_session_laps(cached_build)
             else:
                 logger.info(f"Loading laps async ({self.lib}): {cache_key}")
                 self._laps = self._as_session_laps(
@@ -4401,7 +4787,7 @@ class Session:
         copy (copy-on-write: no data copied) without the back-reference keeps
         the laps reusable and lets dropped sessions be freed.
         """
-        if isinstance(laps, Laps) and laps.session is not None:
+        if _is_pandas_laps(laps) and laps.session is not None:
             unbound = laps.copy(deep=False)
             unbound.session = None
             return unbound
@@ -4411,7 +4797,7 @@ class Session:
 
     def _bind_cached_laps(self, cached: DataFrame) -> DataFrame:
         """Bind an unbound global-cache :class:`Laps` to this session (shallow copy)."""
-        if isinstance(cached, Laps) and cached.session is None:
+        if _is_pandas_laps(cached) and cached.session is None:
             bound = cached.copy(deep=False)
             bound.session = self
             return bound
@@ -4422,14 +4808,20 @@ class Session:
     def _as_session_laps(self, frame: DataFrame) -> DataFrame:
         """Laps bound to this session: :class:`Laps` (pandas) or ``PolarsLaps`` (polars)."""
         if self.lib == "pandas" and isinstance(frame, pd.DataFrame):
-            if not isinstance(frame, Laps):
-                frame = Laps(frame)
+            if not isinstance(frame, _models.Laps):
+                frame = _models.Laps(frame)
             frame.session = self
         elif self.lib == "polars" and frame is not None and hasattr(frame, "height"):
             polars_laps = _polars_models().PolarsLaps
             if not (isinstance(frame, polars_laps) and frame.session is self):
                 frame = polars_laps._from_frame(frame, self)
         return frame
+
+    def _empty_laps_frame(self) -> DataFrame:
+        """Empty laps with the laps columns: ``models._empty_driver_laps`` (polars: no pandas)."""
+        if self.lib == "polars":
+            return _empty_polars_driver_laps(self)
+        return _models._empty_driver_laps(self)
 
     def _driver_laps_frame(
         self, driver: str, prefetched_lap_data: dict[str, Any] | None = None
@@ -4443,7 +4835,7 @@ class Session:
         missing or broken payload: the laps are empty, with their columns.
         """
         if not self._driver_has_timing_data(driver):
-            return self._as_session_laps(_empty_driver_laps(self))
+            return self._as_session_laps(self._empty_laps_frame())
         if self._ergast_only and self._laps is None:
             _ = self.laps
         if self._laps is not None and not _is_empty_df(self._laps, self.lib):
@@ -4451,17 +4843,17 @@ class Session:
             if not _is_empty_df(driver_laps, self.lib):
                 return driver_laps
         if self._ergast_only:
-            return self._as_session_laps(_empty_driver_laps(self))
+            return self._as_session_laps(self._empty_laps_frame())
         try:
             lap_data = _load_driver_lap_payload(self, driver, prefetched_lap_data)
             team = self._get_driver_info(driver)["team"]
             frame = _process_lap_df(_create_lap_df(lap_data, driver, team, self.lib), self.lib)
         except DataNotFoundError:
             logger.info(f"No lap data: {driver}")
-            return self._as_session_laps(_empty_driver_laps(self))
+            return self._as_session_laps(self._empty_laps_frame())
         except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
             logger.warning(f"Failed to load laps for {driver}: {e}")
-            return self._as_session_laps(_empty_driver_laps(self))
+            return self._as_session_laps(self._empty_laps_frame())
         return self._as_session_laps(frame)
 
     def _laps_from_frame_tier(self, ultra_cold_enabled: bool | None = None) -> DataFrame | None:
@@ -4515,17 +4907,13 @@ class Session:
         # session laptimes, and weather/rcm when requested) is fetched in ONE
         # concurrent wave through the async pipeline. The laptimes file does
         # not depend on the driver list, so the cold laps phase costs one CDN
-        # round trip instead of two (drivers first, laptimes after).
+        # round trip instead of two (drivers first, laptimes after). The Ergast
+        # prefetch does not ride this wave: its ~35-55 ms of GIL time slowed a
+        # cold laps load 7-13% (Olympia H9) for callers that never read results.
         await self._prefetch_laps_wave_async(ultra_cold_enabled)
 
-        drivers = self._drivers_data
-        if not drivers:
-            logger.info(f"No drivers, returning empty: {self.year}/{self.event_name}")
-            return _create_empty_df(self.lib)
-
-        driver_requests = self._build_driver_laptime_requests(driver_pool=drivers)
-        if not driver_requests:
-            logger.info(f"No valid driver requests, returning empty: {self.year}/{self.event_name}")
+        driver_requests = self._laps_driver_requests()
+        if driver_requests is None:
             return _create_empty_df(self.lib)
 
         cdn_failures_before = dict(get_cdn_manager()._failure_counts)
@@ -4534,7 +4922,64 @@ class Session:
             operation="laps_async",
             ultra_cold=ultra_cold_enabled,
         )
+        return self._build_session_laps(
+            driver_requests, payloads, ultra_cold_payloads, ultra_cold_enabled, cdn_failures_before
+        )
 
+    def _laps_from_cached_payloads(self) -> DataFrame | None:
+        """The first laps load without an event loop when the cache holds every payload.
+
+        Olympia H8: :meth:`laps_async` reads a warm session's tables through
+        ``fetch_multiple_async`` (asyncio import ~15 ms, event loop, executor
+        hops). Its laps wave comes from the cache here instead (the same tier
+        reads, :meth:`_cached_payloads_sync`), and the rest runs the same steps
+        through their synchronous twins. Returns None, having changed nothing,
+        when a wave table is not cached or the session reads no cache; the
+        caller then runs :meth:`laps_async`.
+        """
+        ultra_cold_enabled = self._resolve_ultra_cold_mode(None)
+        if ultra_cold_enabled or not self._session_cache_available():
+            return None
+        paths = self._laps_wave_paths()
+        if len(paths) >= 2 and not config.get("offline_mode", False):
+            results = self._cached_payloads_sync(paths)
+            if results is None:
+                return None  # something to fetch: the async wave does it
+            self._remember_laps_wave(paths, results, write_cache=self.enable_cache)
+
+        driver_requests = self._laps_driver_requests()
+        if driver_requests is None:
+            return _create_empty_df(self.lib)
+        cdn_failures_before = dict(get_cdn_manager()._failure_counts)
+        payloads, ultra_cold_payloads = self._fetch_laptime_payloads(
+            driver_requests, operation="laps", ultra_cold=ultra_cold_enabled
+        )
+        return self._build_session_laps(
+            driver_requests, payloads, ultra_cold_payloads, ultra_cold_enabled, cdn_failures_before
+        )
+
+    def _laps_driver_requests(self) -> list[tuple[dict[str, Any], str]] | None:
+        """The per-driver laptime requests of a laps load, or None for an empty session."""
+        drivers = self._drivers_data
+        if not drivers:
+            logger.info(f"No drivers, returning empty: {self.year}/{self.event_name}")
+            return None
+
+        driver_requests = self._build_driver_laptime_requests(driver_pool=drivers)
+        if not driver_requests:
+            logger.info(f"No valid driver requests, returning empty: {self.year}/{self.event_name}")
+            return None
+        return driver_requests
+
+    def _build_session_laps(
+        self,
+        driver_requests: list[tuple[dict[str, Any], str]],
+        payloads: list[dict[str, Any] | None],
+        ultra_cold_payloads: list[tuple[str, dict[str, Any]]],
+        ultra_cold_enabled: bool,
+        cdn_failures_before: dict[str, int],
+    ) -> DataFrame:
+        """Session laps from the fetched per-driver payloads (shared by both laps loads)."""
         if self.lib == "polars":
             # Ithome U6: build ONE polars frame from a merged dict-of-lists
             # instead of a per-driver frame + pl.concat (the pandas single-shot
@@ -4559,14 +5004,16 @@ class Session:
                 logger.info(f"No valid lap data: {self.year}/{self.event_name}")
                 return _create_empty_df(self.lib)
 
-            self._laps = pl.DataFrame(_merge_lap_payloads(merged_laps), strict=False)
+            merged = _merge_lap_payloads(merged_laps)
+            self._laps = _process_polars_laps(pl.DataFrame(merged, strict=False), merged)
         else:
             # Build one DataFrame from a single merged dict-of-lists instead of
             # pd.concat of per-driver frames: concat regressed ~2x in pandas 3.0
             # for many small frames, while the merged-dict path is much faster
             # and produces identical rows (None-padding replaces concat's NaN
-            # fill for columns absent from some drivers; _process_lap_df below
-            # coerces canonical dtypes either way).
+            # fill for columns absent from some drivers; the dtype contract
+            # coerces canonical dtypes either way). Olympia H8: the merged
+            # lists go straight to their final dtypes (_pandas_laps_from_merged).
             merged_payloads: list[tuple[dict, str, str]] = []
             for (driver_info, _path), lap_data in zip(driver_requests, payloads):
                 if not isinstance(lap_data, dict) or not lap_data:
@@ -4583,13 +5030,7 @@ class Session:
                 self._raise_if_cdns_failed(cdn_failures_before)
                 logger.info(f"No valid lap data: {self.year}/{self.event_name}")
                 return _create_empty_df(self.lib)
-            self._laps = pd.DataFrame(_merge_lap_payloads(merged_payloads), copy=False)
-            # Remove duplicate columns if they exist (can happen if upstream data has Driver/Team)
-            if isinstance(self._laps.columns, pd.Index) and self._laps.columns.duplicated().any():
-                # Keep only the first occurrence of each column name
-                self._laps = self._laps.loc[:, ~self._laps.columns.duplicated()]
-
-        self._laps = _process_lap_df(self._laps, self.lib)
+            self._laps = _pandas_laps_from_merged(_merge_lap_payloads(merged_payloads))
 
         if self.enable_cache and not _is_empty_df(self._laps, self.lib):
             if self.lib == "pandas" and isinstance(self._laps, pd.DataFrame):
@@ -4748,7 +5189,7 @@ class Session:
             f"driver must be a string or FastF1 driver-like object, got {type(driver).__name__}"
         )
 
-    def get_driver(self, identifier: Any = None, *, driver: Any = None) -> "Driver":
+    def get_driver(self, identifier: Any = None, *, driver: Any = None) -> Driver:
         """
         Get a driver of the session: the driver's ``results`` row plus tif1's helpers.
 
@@ -4788,7 +5229,7 @@ class Session:
 
         if self.lib == "polars" and _ensure_polars_available():
             return self._polars_driver(driver_code, prefetched_laps, car_number)
-        return Driver(
+        return _models.Driver(
             self, driver_code, prefetched_lap_data=prefetched_laps, _car_number=car_number
         )
 
@@ -4890,7 +5331,7 @@ class Session:
                 laps_pl = cast(Any, laps)
                 laps = laps_pl.filter(pl.col(COL_DRIVER).is_in(drivers))
             else:
-                laps_pd = cast(pd.DataFrame, laps)
+                laps_pd = cast("pd.DataFrame", laps)
                 driver_list_str = ", ".join(f"'{d}'" for d in drivers)
                 laps = laps_pd.query(f"{COL_DRIVER} in [{driver_list_str}]", engine="python")
             if _is_empty_df(laps, self.lib):
@@ -4913,7 +5354,7 @@ class Session:
                 else valid.sort(sort_col, maintain_order=True).head(1)
             )
 
-        valid_pd = cast(pd.DataFrame, valid)
+        valid_pd = cast("pd.DataFrame", valid)
         if by_driver:
             # sort + drop_duplicates is measurably faster than
             # groupby(...).idxmin() on both pandas 2.x and 3.x and selects the
@@ -5133,7 +5574,7 @@ class Session:
                 return []
             rows = laps_pl.select([COL_DRIVER, COL_LAP_NUMBER]).iter_rows()
         else:
-            laps_pd = cast(pd.DataFrame, self._laps)
+            laps_pd = cast("pd.DataFrame", self._laps)
             if COL_DRIVER not in laps_pd.columns or COL_LAP_NUMBER not in laps_pd.columns:
                 return []
             rows = zip(
@@ -5260,15 +5701,19 @@ class Session:
                 continue
 
             list_lengths = [
-                len(values) for values in tel_payload.values() if isinstance(values, list)
+                len(values)
+                for values in tel_payload.values()
+                if isinstance(values, _TELEMETRY_CHANNEL_TYPES)
             ]
             n_rows = max(list_lengths) if list_lengths else 0
             if n_rows == 0:
                 continue
 
             payload_list_keys: set[str] = set()
-            for k, v in tel_payload.items():
-                if isinstance(v, list):
+            for k, channel in tel_payload.items():
+                if isinstance(channel, _TELEMETRY_CHANNEL_TYPES):
+                    # Native payloads (arrays, dictionary channels) as lists.
+                    v = _channel_list(channel)
                     mapped_key = TELEMETRY_RENAME_MAP.get(k, k)
                     payload_list_keys.add(mapped_key)
                     if mapped_key not in merged_cols:
@@ -5301,7 +5746,7 @@ class Session:
 
         for key, start, end in key_ranges:
             frame = big_df.iloc[start:end]
-            telemetry = Telemetry(frame, copy=False)
+            telemetry = _models.Telemetry(frame, copy=False)
             telemetry.session = self
             telemetry.driver = key[0]
             self._memo.set("telemetry_df", key, self._attach_session_clock(telemetry, key[0]))
@@ -5340,7 +5785,7 @@ class Session:
             lap_col = _get_lap_column(fastest_laps_pl, self.lib)
             rows = fastest_laps_pl.select([COL_DRIVER, lap_col]).iter_rows()
         else:
-            fastest_laps_pd = cast(pd.DataFrame, fastest_laps)
+            fastest_laps_pd = cast("pd.DataFrame", fastest_laps)
             lap_col = _get_lap_column(fastest_laps_pd, self.lib)
             rows = zip(
                 fastest_laps_pd[COL_DRIVER].to_numpy(copy=False),
@@ -5366,7 +5811,7 @@ class Session:
             lap_col = _get_lap_column(fastest_laps_pl, self.lib)
             rows = fastest_laps_pl.select([COL_DRIVER, lap_col]).iter_rows()
         else:
-            fastest_laps_pd = cast(pd.DataFrame, fastest_laps)
+            fastest_laps_pd = cast("pd.DataFrame", fastest_laps)
             lap_col = _get_lap_column(fastest_laps_pd, self.lib)
             rows = zip(
                 fastest_laps_pd[COL_DRIVER].to_numpy(copy=False),
@@ -5397,7 +5842,7 @@ class Session:
                 return None
             driver, lap_value = fastest_laps_pl.select([COL_DRIVER, lap_col]).row(0)
         else:
-            fastest_laps_pd = cast(pd.DataFrame, fastest_laps)
+            fastest_laps_pd = cast("pd.DataFrame", fastest_laps)
             lap_col = _get_lap_column(fastest_laps_pd, self.lib)
             if COL_DRIVER not in fastest_laps_pd.columns or lap_col not in fastest_laps_pd.columns:
                 return None
@@ -5532,7 +5977,7 @@ class Session:
                         frames.append(frame)
             if not frames:
                 return _create_empty_df(self.lib)
-            frames_pd = [cast(pd.DataFrame, frame) for frame in frames]
+            frames_pd = [cast("pd.DataFrame", frame) for frame in frames]
             return self._bind_telemetry(pd.concat(frames_pd, ignore_index=True), None)
         if merged_df.empty:
             return _create_empty_df(self.lib)
@@ -5829,25 +6274,36 @@ class Session:
 
     def _telemetry_frame_class(self) -> Any:
         """DataFrame subclass the frame tier builds for this backend (pandas: Telemetry)."""
-        return Telemetry if self.lib == "pandas" else None
+        return _models.Telemetry if self.lib == "pandas" else None
 
     def _adopt_telemetry_frame(self, frame: Any, driver: str) -> Any:
         """Attach this session (and the session clock) to a tier-built telemetry frame.
 
         pandas frames are adopted in place and returned; a polars frame comes
         back as a new ``PolarsTelemetry`` (polars never mutates), which the
-        caller stores.
+        caller stores. The caller hands ``frame`` over (a fresh tier hit it
+        drops): a polars frame's columns are wrapped as they are, not cloned.
         """
-        if isinstance(frame, Telemetry):
+        if self.lib == "pandas" and isinstance(frame, _models.Telemetry):
             object.__setattr__(frame, "session", self)
             object.__setattr__(frame, "driver", driver)
+            if "SessionTime" in frame.columns:  # the clock is stored: nothing to attach
+                return frame
+        elif (
+            self.lib == "polars"
+            and pl is not None
+            and type(frame) is pl.DataFrame
+            and "SessionTime" in frame.columns
+        ):
+            # What _bind_telemetry returns for it, minus the column clone.
+            return _polars_models().PolarsTelemetry._from_owned_frame(frame, self, driver)
         return self._bind_telemetry(frame, driver)
 
     def _empty_session_telemetry(self, driver: str | None = None) -> Any:
         """No samples, fastf1's telemetry columns and dtypes, bound to this session."""
         if self.lib == "polars" and _ensure_polars_available():
             return _polars_models().PolarsTelemetry._empty(self, driver)
-        return _empty_telemetry(self, driver)
+        return _models._empty_telemetry(self, driver)
 
     def _session_telemetry(self, frame: Any, driver: str) -> Any:
         """One lap's frame as this session's telemetry: ``Telemetry``/``PolarsTelemetry``.
@@ -5859,8 +6315,8 @@ class Session:
             return self._bind_telemetry(frame, driver)
         # object.__setattr__: both names are Telemetry._metadata, and
         # pandas' __setattr__ costs ~15 us per assignment on this path.
-        if not isinstance(frame, Telemetry):
-            frame = Telemetry(cast(pd.DataFrame, frame), copy=False)
+        if not isinstance(frame, _models.Telemetry):
+            frame = _models.Telemetry(cast("pd.DataFrame", frame), copy=False)
         object.__setattr__(frame, "session", self)
         object.__setattr__(frame, "driver", driver)
         return self._attach_session_clock(frame, driver)
@@ -5908,7 +6364,7 @@ class Session:
                     starts = _polars_ns_values(frame["LapStartTime"], mask, timedelta=True)
                     dates = _polars_ns_values(frame["LapStartDate"], mask, timedelta=False)
                 else:
-                    laps_pd = cast(pd.DataFrame, laps)
+                    laps_pd = cast("pd.DataFrame", laps)
                     mask = laps_pd["Driver"].to_numpy(dtype=object) == driver
                     numbers = laps_pd["LapNumber"].to_numpy()[mask].tolist()
                     starts = _pandas_ns_values(laps_pd["LapStartTime"], mask, timedelta=True)
@@ -5963,10 +6419,13 @@ class Session:
         """
         if frame is None:
             return frame
-        columns = list(frame.columns)
+        # pandas: membership on the column Index itself (a hash lookup);
+        # ``list()`` of a ``str`` Index walks its Arrow array label by label
+        # (~18 us per lap frame, most of a warm ``fetch_all`` adoption).
+        columns = frame.columns
         if "SessionTime" in columns or "Time" not in columns or "LapNumber" not in columns:
             return frame
-        is_polars = not isinstance(frame, pd.DataFrame)
+        is_polars = not is_pandas_frame(frame)
         n = frame.height if is_polars else len(frame)
         if n == 0:
             return frame
@@ -5996,7 +6455,7 @@ class Session:
                 dtype="float64", na_value=-1.0
             )
             lap_numbers = lap_numbers.astype("int64")
-            time_ns = _timedelta_ns(cast(pd.Series, frame["Time"]))
+            time_ns = _models._timedelta_ns(cast("pd.Series", frame["Time"]))
             driver_col = frame["Driver"].to_numpy() if "Driver" in columns else None
         if not drivers:
             return frame
@@ -6100,11 +6559,19 @@ class Session:
                         if cached_df is not None:
                             return _as_pandas_telemetry(cached_df)
         if callable(tier_read):
+            refs = [(driver, lap_num)]
+            if whole_driver and self.lib == "polars" and driver not in self._memo.whole_row_drivers:
+                # A polars row is read whole too, but ``whole_driver`` is a
+                # pandas-tier option: ask once for the driver's other loaded
+                # laps so this read adopts and memoizes them all (a loop over
+                # the laps read the row once per lap, ~9 ms each, otherwise).
+                self._memo.whole_row_drivers.add(driver)
+                refs.extend(self._unmemoized_driver_lap_refs(driver, lap_num))
             tier_hits = tier_read(
                 self.year,
                 self.gp,
                 self.session,
-                [(driver, lap_num)],
+                refs,
                 lib=self.lib,
                 whole_driver=whole_driver,
                 frame_class=self._telemetry_frame_class(),
@@ -6287,22 +6754,46 @@ class Session:
         """``(driver, lap_number)`` references of every lap row, in row order."""
         lap_refs: list[tuple[str, int]] = []
         if self.lib == "polars":
+            # Two column lists: ``iter_rows(named=True)`` builds a dict per
+            # row (~10 ms for a race's 1128 laps vs ~0.1 ms).
             laps_pl = cast(Any, laps)
-            for row in laps_pl.iter_rows(named=True):
-                driver = row.get("Driver")
-                lap_num = row.get("LapNumber")
+            columns = laps_pl.columns
+            if "Driver" not in columns or "LapNumber" not in columns:
+                return lap_refs
+            for driver, lap_num in zip(
+                laps_pl.get_column("Driver").to_list(),
+                laps_pl.get_column("LapNumber").to_list(),
+                strict=True,
+            ):
                 if driver and lap_num is not None:
                     lap_refs.append((str(driver), int(lap_num)))
         else:
             # Vectorized extraction: iterrows over ~1500 rows costs ~200 ms.
-            refs_frame = cast(pd.DataFrame, laps)[[COL_DRIVER, COL_LAP_NUMBER]].dropna()
-            lap_refs.extend(
-                zip(
-                    refs_frame[COL_DRIVER].astype(str),
-                    refs_frame[COL_LAP_NUMBER].astype(int),
-                )
-            )
+            # A categorical ``Driver`` maps its codes through the category
+            # labels (``astype(str)`` materializes one Arrow string per row).
+            frame = cast("pd.DataFrame", laps)
+            drivers = frame[COL_DRIVER]
+            numbers = frame[COL_LAP_NUMBER]
+            keep = (drivers.notna() & numbers.notna()).to_numpy()
+            if isinstance(drivers.dtype, pd.CategoricalDtype):
+                labels = [str(label) for label in drivers.cat.categories]
+                names = [labels[code] for code in drivers.cat.codes.to_numpy()[keep].tolist()]
+            else:
+                names = drivers[keep].astype(str).tolist()
+            lap_refs.extend(zip(names, numbers.to_numpy()[keep].astype("int64").tolist()))
         return lap_refs
+
+    def _unmemoized_driver_lap_refs(self, driver: str, lap_num: int) -> list[tuple[str, int]]:
+        """``driver``'s loaded laps other than ``lap_num`` with no memoized frame yet."""
+        laps = self._laps
+        if laps is None or _is_empty_df(laps, self.lib):
+            return []
+        memo = self._memo
+        return [
+            ref
+            for ref in self._telemetry_lap_refs(laps)
+            if ref[0] == driver and ref[1] != lap_num and not memo.contains("telemetry_df", ref)
+        ]
 
     def _memoized_telemetry(
         self, lap_refs: list[tuple[str, int]], ultra_cold_enabled: bool
@@ -6894,63 +7385,109 @@ def get_session(
             ),
         )
 
+    # Olympia H11: decide cold or warm and start the CDN warm-up before the
+    # session imports pandas or polars, so the HTTP-stack import, DNS and TLS
+    # overlap that import instead of delaying the first payload request.
+    cache_probe = _preconnect_cdn(year, gp_name, session_name, enable_cache)
+    if (lib if lib is not None else config.get("lib", "pandas")) != "polars":
+        # A pandas session imports pandas and the model family here, where
+        # importing tif1.core used to (a polars session never imports them).
+        _load_pandas_models()
     # gp_name is resolved already: the constructor must not resolve it again.
     new_session = Session(
         year, gp_name, session_name, enable_cache, lib, ergast, backend, _event_resolved=True
     )
-    _preconnect_cdn(new_session)
+    if (
+        cache_probe is not None
+        and new_session.enable_cache
+        and new_session._memo.has_session_data is None
+    ):
+        # The probe ran on this session's keys a moment ago; nothing has
+        # written to the cache since, so the session reuses the answer.
+        new_session._memo.has_session_data = cache_probe
     return new_session
 
 
 _preconnect_started = False
 _preconnect_lock = threading.Lock()
+#: The first wave of a cold load (TH6) requests these at once from two pool
+#: workers, and a pooled connection serves one thread at a time: the
+#: pre-connect opens one connection per path (Olympia H11).
+_FIRST_WAVE_PATHS = ("drivers.json", "session_laptimes.json")
 
 
-def _preconnect_cdn(session: Session) -> None:
-    """Warm the shared CDN connection in the background (Argos A8).
+def _preconnect_cdn(
+    year: int, gp_name: str, session_name: str, enable_cache: bool | None
+) -> bool | None:
+    """Warm the shared CDN connections for an uncached session (Argos A8, Olympia H11).
 
-    The first request of a cold load pays DNS + TLS (160-800 ms measured
-    against jsDelivr); opening the connection from a daemon thread while the
-    caller is still between ``get_session()`` and its first ``laps`` access
-    hides most of it. One attempt per process; any failure is swallowed (the
-    real fetch path reports its own errors) and the hook is skipped in
-    offline/CI mode or when ``cdn_preconnect`` is off.
+    The first request of a cold load pays the HTTP-stack import (~0.1 s of
+    CPU), DNS and TLS (160-800 ms measured against jsDelivr). ``get_session``
+    calls this before the session imports pandas or polars: the import runs
+    here, on the calling thread (in a thread it would only share the GIL
+    with the pandas import and reach the network as late as before), then
+    daemon threads open the connections while pandas or polars loads. One
+    attempt per process; any failure is swallowed (the real fetch path
+    reports its own errors) and the hook is skipped in offline/CI mode or
+    when ``cdn_preconnect`` is off. A cached session returns after the probe:
+    no HTTP-stack import, no thread. An Ergast-only season counts as cached
+    when the Stats tier holds its classification; the session's own probe
+    (handed back) only covers the timing-data tier.
+
+    Returns:
+        The persistent-cache probe of the session when this call ran it
+        (``get_session`` hands it to the new session), else ``None``.
     """
     global _preconnect_started
     if not THREADS_AVAILABLE:
-        return
+        return None
     if (
         _preconnect_started
         or not bool(config.get("cdn_preconnect", True))
         or bool(config.get("offline_mode", False))
         or bool(config.get("ci_mode", False))
     ):
-        return
-    try:
-        # A cached session loads without the network; the warm-up thread
-        # would only steal GIL time from the cache reads (measured +0.1-0.2 s
-        # on warm loads).
-        if session.enable_cache and session._session_cache_available():
-            return
-    except Exception:  # cache probe failures never block the hook
-        return
+        return None
+    gp = _encode_url_component(gp_name)
+    session = _encode_url_component(session_name)
+    cache_probe: bool | None = None
+    if _resolve_enable_cache(enable_cache, log_warnings=False):
+        try:
+            # A cached session loads without the network; the warm-up thread
+            # would only steal GIL time from the cache reads (measured
+            # +0.1-0.2 s on warm loads) and import an HTTP stack it never uses.
+            cache = get_cache()
+            cache_probe = bool(cache.has_session_data(year, gp, session))
+            warm = cache_probe or (
+                year < F1_API_FIRST_YEAR
+                and _ergast_session_cached(cache, year, gp_name, session_name)
+            )
+        except Exception:  # cache probe failures never block the hook
+            return None
+        if warm:
+            return cache_probe
     with _preconnect_lock:
         if _preconnect_started:
-            return
+            return cache_probe
         _preconnect_started = True
-    year, gp, session_name = session.year, session.gp, session.session
+    try:
+        from .http_session import warm_connections
 
-    def _warm() -> None:
-        try:
-            from .http_session import get_session as get_http_session
+        sources = get_cdn_manager().get_sources()
+        if sources:
+            warm_connections(
+                [sources[0].format_url(year, gp, session, path) for path in _FIRST_WAVE_PATHS],
+                timeout=max(1, config.get("timeout", 10)),
+            )
+    except Exception as e:  # best effort, never surfaces
+        logger.debug("CDN pre-connect skipped: %s", e)
+    return cache_probe
 
-            sources = get_cdn_manager().get_sources()
-            if not sources:
-                return
-            url = sources[0].format_url(year, gp, session_name, "drivers.json")
-            http = get_http_session()
-            http.head(url, timeout=max(1, config.get("timeout", 10)))
-        except Exception as e:  # best effort, never surfaces
-            logger.debug("CDN pre-connect skipped: %s", e)
 
-    threading.Thread(target=_warm, name="tif1-cdn-preconnect", daemon=True).start()
+def _ergast_session_cached(cache: Any, year: int, gp_name: str, session_name: str) -> bool:
+    """Whether the Stats tier holds the classification of an Ergast-only session."""
+    from .ergast.payloads import stats_cache_key
+    from .ergast.stats import STATS_FILES, race_slug
+
+    file_name = STATS_FILES[_er.ergast_endpoint(session_name)]
+    return bool(cache.has_json_entry(stats_cache_key(year, race_slug(gp_name), file_name)))

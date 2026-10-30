@@ -1,4 +1,4 @@
-"""Fast exact per-driver laps frame build (Pergamon Q19).
+"""Fast exact laps frame builds: one driver (Pergamon Q19), a whole session (Olympia H8).
 
 ``Driver.laps`` on a session whose laps are not loaded builds the driver's
 frame from its laptime payload with
@@ -15,15 +15,23 @@ strip/lower match), the ``_apply_laps_dtypes`` contract (the shared
 ``object``), pandas' ``str`` inference for string columns and the same
 ``astype("category")`` call for the categoricals. Whatever the fast rules do
 not cover — values of an unexpected type, numeric strings, ``LapStartDate``
-(``pd.to_datetime`` infers resolution and timezone from the strings) and
-non-string columns outside the contract — goes through the real
-``_apply_laps_dtypes`` on just those columns, or (for contract columns with
+spellings other than canonical nanosecond ISO-8601 (``pd.to_datetime``
+infers resolution and timezone from the strings) and non-string columns
+outside the contract — goes through the real ``_apply_laps_dtypes`` (or
+``pd.to_datetime``) on just those columns, or (for contract columns with
 unexpected values) makes the function return None so the caller runs the
 full pipeline.
+
+:func:`build_laps_frame` applies the same rules to the merged dict-of-lists
+of a session's first laps load (every driver, ``Driver``/``Team`` per row).
+The column rules read each list's value types once at C level
+(``set(map(type, values))``), so a clean float/int/bool column converts in
+one numpy call.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, cast
 
 import numpy as np
@@ -44,15 +52,24 @@ from .helpers import (
     _apply_laps_dtypes,
     _fastf1_laps_column_order,
     _normalize_lap_payload,
-    _rename_columns,
+    _rename_plan,
     _seconds_to_td64ns,
     _td_cast_is_safe,
 )
 
 _NAN = float("nan")
+_NONE_TYPE = type(None)
+# Value-type sets of the C-level fast paths (``set(map(type, values))``).
+_FLOAT_KIND = frozenset((float,))
+_INT_KIND = frozenset((int,))
+_SECONDS_KINDS = frozenset((float, int, _NONE_TYPE, str))
+_FLAG_KINDS = frozenset((bool, _NONE_TYPE))
+_STRING_KINDS = frozenset((str, _NONE_TYPE))
 _NULL_LIKE = frozenset(_NULL_LIKE_STRINGS)
 _EXACT_TOKENS = frozenset(_NULL_LIKE_TOKEN_PROBE)
 _INT64_BOUND = 2**63
+_INT64_MIN = -(2**63)
+_ISO_NS_LENGTH = len("2025-04-13T15:03:49.174000000")
 _STR = pd.StringDtype(na_value=np.nan)
 
 # ``_numeric_seconds_to_timedelta`` columns. LapTime/Time/WeatherTime are
@@ -117,8 +134,9 @@ _PLAN_CACHE_MAX = 64
 def _column_plan(keys: tuple[str, ...]) -> tuple[list[str], list[str]] | None:
     """(renamed payload columns, final column order) of the pipeline build, or None.
 
-    Runs the real ``_rename_columns`` on an empty frame holding the pipeline's
-    pre-rename columns (payload keys, then ``Driver``/``Team``), then adds
+    Applies the real ``_rename_columns`` plan (``_rename_plan``: its drops
+    and renames, computed from the labels) to the pipeline's pre-rename
+    columns (payload keys, then ``Driver``/``Team``), then adds
     ``LapTimeSeconds`` and ``index`` and applies the FastF1 order exactly as
     ``_process_lap_df`` does.
     """
@@ -127,10 +145,9 @@ def _column_plan(keys: tuple[str, ...]) -> tuple[list[str], list[str]] | None:
     plan: tuple[list[str], list[str]] | None = None
     if "index" not in keys and "level_0" not in keys:
         names = [*keys, COL_DRIVER, COL_TEAM]
-        renamed = [
-            str(c)
-            for c in _rename_columns(pd.DataFrame(columns=names), LAP_RENAME_MAP, "pandas").columns
-        ]
+        cols_to_drop, final_rename = _rename_plan(names, LAP_RENAME_MAP)
+        dropped = set(cols_to_drop)
+        renamed = [str(final_rename.get(c, c)) for c in names if c not in dropped]
         if (
             len(renamed) == len(names)
             and len(set(renamed)) == len(renamed)
@@ -148,27 +165,42 @@ def _column_plan(keys: tuple[str, ...]) -> tuple[list[str], list[str]] | None:
     return plan
 
 
+def _ints_in_bounds(values: Any) -> bool:
+    """Whether every int of ``values`` fits int64 (the pipeline's numeric range)."""
+    ints = [value for value in values if type(value) is int]
+    return not ints or (min(ints) > -_INT64_BOUND and max(ints) < _INT64_BOUND)
+
+
 def _seconds(values: Any) -> np.ndarray | None:
     """float64 seconds as ``pd.to_numeric(errors="coerce")`` gives them, or None.
 
     Accepts ints (not bools), floats, None and null-like strings (NaN either
-    way); any other value is left to the pipeline.
+    way); any other value is left to the pipeline. The value types are read
+    once at C level (Olympia H8): a float column converts in one call, and
+    only columns holding missing values build a replaced list.
     """
-    out: list[float] = []
-    append = out.append
-    for value in values:
-        kind = type(value)
-        if kind is float:
-            append(value)
-        elif kind is int:
-            if not -_INT64_BOUND < value < _INT64_BOUND:
-                return None
-            append(float(value))
-        elif value is None or (kind is str and value.strip().lower() in _NULL_LIKE):
-            append(_NAN)
-        else:
+    kinds = set(map(type, values))
+    if kinds <= _FLOAT_KIND:
+        return np.array(values, dtype=np.float64)
+    if kinds == _INT_KIND:
+        try:
+            ints = np.array(values, dtype=np.int64)
+        except OverflowError:
             return None
-    return np.array(out, dtype=np.float64)
+        if (ints == _INT64_MIN).any():
+            return None  # outside the open int64 bound the pipeline accepts
+        return ints.astype(np.float64)  # the same rounding as float(value)
+    if not kinds <= _SECONDS_KINDS:
+        return None
+    if int in kinds and not _ints_in_bounds(values):
+        return None
+    if str in kinds:
+        strings = {value for value in values if type(value) is str}
+        if not all(value.strip().lower() in _NULL_LIKE for value in strings):
+            return None
+    if str in kinds or _NONE_TYPE in kinds:
+        values = [_NAN if value is None or type(value) is str else value for value in values]
+    return np.array(values, dtype=np.float64)
 
 
 def _has_exact_token(values: Any) -> bool:
@@ -182,6 +214,8 @@ def _masked(value: Any) -> bool:
 
 def _flags(values: Any) -> list[Any] | None:
     """Bool/None values with masked null-like strings as None, or None for anything else."""
+    if set(map(type, values)) <= _FLAG_KINDS:
+        return list(values)  # nothing to mask
     exact = _has_exact_token(values)
     out: list[Any] = []
     append = out.append
@@ -197,6 +231,8 @@ def _flags(values: Any) -> list[Any] | None:
 
 def _ints(values: Any) -> list[Any] | None:
     """Int/None values (null-like strings as None) for ``to_numeric().astype("Int64")``."""
+    if set(map(type, values)) <= _INT_KIND and _ints_in_bounds(values):
+        return list(values)
     out: list[Any] = []
     append = out.append
     for value in values:
@@ -217,20 +253,43 @@ def _strings(values: Any) -> tuple[list[Any], bool] | None:
     masking then turns null-like strings into NaN); an all-None column stays
     ``object`` holding None.
     """
-    has_str = False
-    exact = False
-    for value in values:
-        if type(value) is str:
-            has_str = True
-            if value in _EXACT_TOKENS:
-                exact = True
-        elif value is not None:
-            return None
-    if not has_str:
+    kinds = set(map(type, values))
+    if not kinds <= _STRING_KINDS:
+        return None
+    if str not in kinds:
         return list(values), False
-    if exact:
-        return [None if _masked(value) else value for value in values], True
-    return list(values), True
+    if _EXACT_TOKENS.isdisjoint(values):
+        return list(values), True
+    masked = {value for value in set(values) if _masked(value)}
+    return [None if value in masked else value for value in values], True
+
+
+def _iso_ns_dates(values: list[Any]) -> np.ndarray | None:
+    """``datetime64[ns]`` of canonical nanosecond ISO-8601 strings (None as NaT), or None.
+
+    ``pd.to_datetime(format="ISO8601")`` infers the nanosecond unit from
+    ``YYYY-MM-DDTHH:MM:SS.fffffffff`` strings and parses them to the instants
+    numpy's C parser gives (~1.5 ms vs ~0.1 ms for a race, Olympia H8). A
+    column is taken only when numpy renders every value back to the exact
+    input string; any other spelling (an offset, fewer digits, an invalid
+    date) is left to pandas.
+    """
+    present = [value for value in values if value is not None]
+    if not present or set(map(len, present)) != {_ISO_NS_LENGTH}:
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # numpy warns on a timezone suffix
+            parsed = np.array(present, dtype="datetime64[ns]")
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if np.datetime_as_string(parsed, unit="ns").tolist() != present:
+        return None
+    if len(present) == len(values):
+        return parsed
+    dates = np.full(len(values), np.datetime64("NaT", "ns"))
+    dates[[i for i, value in enumerate(values) if value is not None]] = parsed
+    return dates
 
 
 def _object_column(values: list[Any], str_inferred: bool) -> np.ndarray:
@@ -250,12 +309,14 @@ def _categorical(values: list[Any], str_inferred: bool) -> Any:
     built directly here; an all-missing column (empty categories, whose dtype
     pandas infers from the missing values) still goes through ``astype``.
     """
-    present = {value for value in values if value is not None}
+    present = set(values)
+    present.discard(None)
     if not present:
         return pd.Series(_object_column(values, str_inferred), dtype=object).astype("category")
     categories = sorted(present)
-    lookup = {category: code for code, category in enumerate(categories)}
-    codes = np.array([-1 if value is None else lookup[value] for value in values], dtype=np.int64)
+    lookup: dict[Any, int] = {category: code for code, category in enumerate(categories)}
+    lookup[None] = -1
+    codes = np.fromiter(map(lookup.__getitem__, values), dtype=np.int64, count=len(values))
     return pd.Categorical.from_codes(
         codes, dtype=pd.CategoricalDtype(pd.Index(categories, dtype=_STR)), validate=False
     )
@@ -296,7 +357,50 @@ def build_driver_laps_frame(lap_data: dict, driver: str, team: str) -> pd.DataFr
         return None
     raw_by_name[COL_DRIVER] = [driver] * n_rows
     raw_by_name[COL_TEAM] = [team] * n_rows
+    return _build_frame(raw_by_name, order, n_rows)
 
+
+def build_laps_frame(merged: dict[str, Any]) -> pd.DataFrame | None:
+    """Return ``_process_lap_df(pd.DataFrame(merged, copy=False), "pandas")``.
+
+    The session-wide twin of :func:`build_driver_laps_frame` (Olympia H8):
+    ``merged`` is the dict-of-lists :func:`tif1.core._merge_lap_payloads`
+    builds from every driver's normalized payload (payload columns, then
+    ``Driver`` and ``Team``), so the first laps load of a session skips the
+    frame-wide pipeline (~35-45 ms on a 1,128-lap race). Returns None when a
+    column holds values the fast rules cannot convert exactly; the caller then
+    runs the pipeline.
+
+    Args:
+        merged: Equal-length column lists, ``Driver`` and ``Team`` last.
+
+    Returns:
+        The processed laps frame (plain DataFrame), or None.
+    """
+    keys = tuple(merged)
+    if len(keys) < 3 or keys[-2:] != (COL_DRIVER, COL_TEAM):
+        return None
+    plan = _column_plan(keys[:-2])
+    if plan is None:
+        return None
+    renamed, order = plan
+    raw_by_name: dict[str, Any] = {}
+    for name, key in zip([*renamed, COL_DRIVER, COL_TEAM], keys, strict=True):
+        values = merged[key]
+        if not isinstance(values, list | tuple):
+            return None
+        raw_by_name[name] = values
+    lengths = {len(values) for values in raw_by_name.values()}
+    if len(lengths) != 1:
+        return None  # the DataFrame constructor raises: leave that to the pipeline
+    n_rows = lengths.pop()
+    if n_rows == 0:
+        return None
+    return _build_frame(raw_by_name, order, n_rows)
+
+
+def _build_frame(raw_by_name: dict[str, Any], order: list[str], n_rows: int) -> pd.DataFrame | None:
+    """The processed frame from the renamed raw columns (see the module docstring), or None."""
     columns: dict[str, Any] = {}
     pipeline: dict[str, Any] = {}
     for name in order:
@@ -321,7 +425,8 @@ def build_driver_laps_frame(lap_data: dict, driver: str, team: str) -> pd.DataFr
             flags = _flags(raw)
             if flags is None:
                 return None
-            columns[name] = np.array([value is True for value in flags], dtype=bool)
+            # True/False/None only: None reads False, as fillna(False) does.
+            columns[name] = np.array(flags, dtype=bool)
         elif name == _BOOLEAN_COL:
             flags = _flags(raw)
             if flags is None:
@@ -345,7 +450,18 @@ def build_driver_laps_frame(lap_data: dict, driver: str, team: str) -> pd.DataFr
             # pipeline, as masking it to None would change the inferred dtype.
             strings = _strings(raw)
             if strings is not None and strings[1] and any(v is not None for v in strings[0]):
-                raw = strings[0]
+                # The pipeline's conversion of a masked str column (its probe
+                # finds no token): the same pd.to_datetime call, without the
+                # one-column frame and its probe.
+                dates = _iso_ns_dates(strings[0])
+                columns[name] = (
+                    dates
+                    if dates is not None
+                    else pd.to_datetime(
+                        pd.Series(strings[0]), errors="coerce", utc=False, format="ISO8601"
+                    )._values
+                )
+                continue
             pipeline[name] = raw
             columns[name] = None
         elif name in _CONTRACT_COLS:

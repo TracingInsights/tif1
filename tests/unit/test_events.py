@@ -288,6 +288,23 @@ class TestGetEventByRound:
 class TestGetEventByName:
     """Test get_event_by_name function."""
 
+    @pytest.mark.parametrize(
+        ("year", "name", "backend"),
+        [
+            (2025, "Bahrain Grand Prix", None),
+            (2025, "silverstone", None),
+            (2024, "Pre-Season Testing", None),
+            (2021, "Belgian Grand Prix", "ergast"),
+            (2016, "Monaco Grand Prix", None),
+            (1951, "French Grand Prix", None),
+        ],
+    )
+    def test_round_number_without_an_event_frame(self, year, name, backend):
+        from tif1.events import _event_round_number
+
+        event = get_event_by_name(year, name, backend=backend)
+        assert int(_event_round_number(year, name, backend)) == int(event["RoundNumber"])
+
     def test_exact_match(self):
         event = get_event_by_name(2021, "British Grand Prix", exact_match=True)
         assert event["EventName"] == "British Grand Prix"

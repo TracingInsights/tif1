@@ -108,6 +108,16 @@ def _create_session() -> Any:
     config = get_config()
     multiplexed = bool(config.get("http_multiplexed", False))
     disable_http3 = bool(config.get("http_disable_http3", False))
+    # Olympia H11: niquests checks certificate revocation (OCSP) on the first
+    # connection to every certificate: it imports qh3 and posts to the CA's
+    # responder before the first request may go out, 120-240 ms on every
+    # cold process. The check stays on by default; ``http_revocation_check``
+    # False skips it (the chain is still verified; the check is soft-fail).
+    revocation: dict[str, Any] = (
+        {}
+        if bool(config.get("http_revocation_check", True))
+        else {"revocation_configuration": None}
+    )
 
     # Dynamic pool sizing based on concurrency.
     target_concurrency = max(
@@ -156,12 +166,14 @@ def _create_session() -> Any:
                     multiplexed=multiplexed,
                     resolver=resolver,
                     disable_http3=disable_http3,
+                    **revocation,
                 )
                 logger.debug(f"HTTP session initialized with {resolver}")
             else:
                 session = niquests.Session(
                     multiplexed=multiplexed,
                     disable_http3=disable_http3,
+                    **revocation,
                 )
                 logger.debug("HTTP session initialized with standard DNS")
             # Skip env/netrc resolution on every request; this is costly at telemetry scale.
@@ -189,6 +201,7 @@ def _create_session() -> Any:
                     pool_block=False,
                     resolver=resolver,
                     disable_http3=disable_http3,
+                    **revocation,
                 ),
             )
             # Enable connection keep-alive with timeout and max requests
@@ -230,6 +243,58 @@ def get_session() -> Any:
         _shared_session = _create_session()
         _track_connection_created()
         return _shared_session
+
+
+#: Connection warm-ups in flight (:func:`warm_connections`, Olympia H11). The
+#: first requests of a cold load wait for them instead of opening their own
+#: connections next to half-open warm ones (a pooled connection serves one
+#: thread at a time).
+_warmups: list[threading.Event] = []
+
+#: Seconds after its start a warm-up is still waited for. A healthy connect
+#: takes well under that; one that has not connected by then is likely stuck,
+#: and a request is better off opening its own connection.
+WARMUP_WAIT_LIMIT = 1.0
+_warmup_deadline = 0.0
+
+
+def warm_connections(urls: list[str], timeout: float) -> None:
+    """Open one pooled connection per URL in daemon threads (a HEAD each).
+
+    The shared session is built on the calling thread first, so the threads
+    spend their time in DNS, TCP and TLS rather than in the HTTP-stack
+    import (under the GIL that import would only slow the caller down).
+    Failures are logged at debug level and never surface: the real fetch
+    path reports its own errors.
+    """
+    global _warmup_deadline
+    session = get_session()
+    _warmup_deadline = time.monotonic() + WARMUP_WAIT_LIMIT
+    for url in urls:
+        done = threading.Event()
+        _warmups.append(done)
+
+        def _head(url: str = url, done: threading.Event = done) -> None:
+            try:
+                # Multiplexed: returns once the request is sent on an open
+                # connection, which goes back to the pool for the next caller.
+                session.head(url, timeout=timeout)
+            except Exception as e:  # best effort, never surfaces
+                logger.debug("CDN pre-connect skipped: %s", e)
+            finally:
+                done.set()
+
+        threading.Thread(target=_head, name="tif1-cdn-preconnect", daemon=True).start()
+
+
+def wait_for_warm_connections() -> None:
+    """Wait for in-flight warm-ups to connect (up to :data:`WARMUP_WAIT_LIMIT` after they began)."""
+    if not _warmups:
+        return
+    for done in tuple(_warmups):
+        if not done.wait(max(0.0, _warmup_deadline - time.monotonic())):
+            break
+    _warmups.clear()
 
 
 def _track_connection_created() -> None:

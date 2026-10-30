@@ -43,6 +43,7 @@ _time_string_matcher = re.compile(
 )
 # matches [hh:][mm:]ss[.micros][Z | +-hh:mm] timestring
 _INT_MATCHER = re.compile(r"^[+-]?\d+$")
+_ISO_DATE_MATCHER = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _FLOAT_MATCHER = re.compile(r"^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$")
 
 
@@ -51,6 +52,11 @@ def date_from_ergast(d_str: Any) -> datetime.datetime | None:
     if not isinstance(d_str, str) or not d_str:
         return None
     try:
+        if _ISO_DATE_MATCHER.fullmatch(d_str):
+            # strptime's answer for this shape, without its per-call parsing or
+            # the first-call import of ``_strptime`` (~1 ms; a polars session has
+            # no pandas import that already paid it).
+            return datetime.datetime.fromisoformat(d_str)
         return datetime.datetime.strptime(d_str, "%Y-%m-%d")  # noqa: DTZ007
     except (ValueError, TypeError):
         # Never log the value: the callers pass drivers' dates of birth.

@@ -1,4 +1,13 @@
-"""Helper functions for tif1 core."""
+"""Helper functions for tif1 core.
+
+pandas is bound lazily (:func:`~tif1.core_utils.lazy_import.lazy_module`): a
+polars session runs these helpers without importing it. The pandas block
+assembly lives in :mod:`tif1.core_utils.pandas_blocks`; its names stay
+readable here (``helpers._frame_from_columns`` and friends) through the module
+``__getattr__`` at the end.
+"""
+
+from __future__ import annotations
 
 import array
 import importlib
@@ -8,9 +17,9 @@ from typing import TYPE_CHECKING, Any, Union, cast
 from urllib.parse import quote
 
 import numpy as np
-import pandas as pd
 
 from tif1.config import get_config
+from tif1.core_utils.lazy_import import is_pandas_frame, lazy_module
 from tif1.core_utils.runtime import import_supported_polars
 from tif1.exceptions import _NULL_LIKE_STRINGS, _coerce_null_like_string_list
 
@@ -31,14 +40,22 @@ from .constants import (
     TELEMETRY_STATUS_VALUE,
     ordered_telemetry_columns,
 )
+from .json_utils import DictionaryChannel
 
 if TYPE_CHECKING:
+    import pandas as pd
     import polars as pl
+
+    from . import pandas_blocks as _pb
 else:
     # Polars is optional: importing it eagerly costs ~260 ms on every cold
     # start for pandas-only users. It loads lazily via
     # _ensure_polars_available() on the first polars backend use.
     pl = None
+    # pandas (~250 ms) loads on the first ``pd.X`` a pandas frame needs; the
+    # global is then the module itself (no per-access indirection).
+    pd = lazy_module("pandas", globals(), "pd")
+    _pb = lazy_module("tif1.core_utils.pandas_blocks", globals(), "_pb")
 
 POLARS_AVAILABLE = False
 
@@ -48,9 +65,9 @@ logger = logging.getLogger(__name__)
 # Shared global configuration singleton (same instance as tif1.core.config).
 config = get_config()
 
-# Type alias for DataFrame (polars resolved lazily; string ref keeps the
-# annotation meaningful without importing polars at module load).
-DataFrame = Union[pd.DataFrame, "pl.DataFrame"]
+# Type alias for DataFrame (both libraries resolved lazily; string refs keep
+# the annotation meaningful without importing either at module load).
+DataFrame = Union["pd.DataFrame", "pl.DataFrame"]
 
 
 def _ensure_polars_available() -> bool:
@@ -109,7 +126,7 @@ def _is_empty_df(df, lib: str) -> bool:
     Prefer the concrete object type over the lib flag because some code paths
     can surface pandas DataFrames even when the configured lib is "polars".
     """
-    if isinstance(df, pd.DataFrame):
+    if is_pandas_frame(df):
         return df.empty
 
     if _ensure_polars_available() and isinstance(df, pl.DataFrame):
@@ -184,7 +201,7 @@ def _filter_valid_laptimes(laps, lib: str, *, exclude_deleted: bool = False):
     # copy-on-write, so the explicit ``.copy()`` that followed it doubled the
     # per-block copies on every pick_fastest/get_fastest_lap call. A shallow
     # copy keeps the all-valid case free of a block copy too.
-    lap_time = cast(pd.Series, laps[COL_LAP_TIME])
+    lap_time = cast("pd.Series", laps[COL_LAP_TIME])
     not_deleted = _not_deleted_mask(laps) if exclude_deleted else None
     if pd.api.types.is_timedelta64_dtype(lap_time):
         mask = lap_time.notna().to_numpy()
@@ -192,7 +209,7 @@ def _filter_valid_laptimes(laps, lib: str, *, exclude_deleted: bool = False):
             mask = mask & not_deleted
         valid = laps[mask] if not mask.all() else laps.copy(deep=False)
         valid[COL_LAP_TIME_SECONDS] = (
-            cast(pd.Series, valid[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
+            cast("pd.Series", valid[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
         )
         return valid
 
@@ -211,22 +228,17 @@ def _filter_valid_laptimes(laps, lib: str, *, exclude_deleted: bool = False):
     return valid
 
 
-def _rename_columns(df, rename_map: dict, lib: str):
-    """Rename DataFrame columns based on lib, avoiding duplicates."""
-    cols_to_rename = {k: v for k, v in rename_map.items() if k in df.columns and v is not None}
-    cols_to_drop = [k for k, v in rename_map.items() if k in df.columns and v is None]
-
-    # Drop columns marked with None
-    if cols_to_drop:
-        if lib == "polars" and _ensure_polars_available() and isinstance(df, pl.DataFrame):
-            df = df.drop(cols_to_drop)
-        else:
-            df = df.drop(columns=cols_to_drop)
+def _rename_plan(columns: Any, rename_map: dict) -> tuple[list[str], dict[str, str]]:
+    """(columns to drop, renames) of :func:`_rename_columns`, from the labels alone."""
+    # One set of the labels: polars builds a new list on every ``df.columns``.
+    present = set(columns)
+    cols_to_rename = {k: v for k, v in rename_map.items() if k in present and v is not None}
+    cols_to_drop = [k for k, v in rename_map.items() if k in present and v is None]
 
     # Check for duplicate target names and skip them to avoid column name conflicts
     target_names = {}
     final_rename = {}
-    existing_columns = set(df.columns)
+    existing_columns = present.difference(cols_to_drop)
     for source, target in cols_to_rename.items():
         if source == target:
             continue
@@ -240,6 +252,19 @@ def _rename_columns(df, rename_map: dict, lib: str):
             # Skip this rename to avoid duplicate column names
             # Keep the first occurrence
             pass
+    return cols_to_drop, final_rename
+
+
+def _rename_columns(df, rename_map: dict, lib: str):
+    """Rename DataFrame columns based on lib, avoiding duplicates."""
+    cols_to_drop, final_rename = _rename_plan(df.columns, rename_map)
+
+    # Drop columns marked with None
+    if cols_to_drop:
+        if lib == "polars" and _ensure_polars_available() and isinstance(df, pl.DataFrame):
+            df = df.drop(cols_to_drop)
+        else:
+            df = df.drop(columns=cols_to_drop)
 
     if lib == "polars" and _ensure_polars_available() and isinstance(df, pl.DataFrame):
         return df.rename(final_rename) if final_rename else df
@@ -310,8 +335,9 @@ def _create_telemetry_df(
 
     for k, v in tel_data.items():
         # Native-decoded payloads (Thebes TH4) carry numpy arrays for the
-        # numeric channels; the typed builder consumes them directly.
-        if not isinstance(v, list | np.ndarray):
+        # numeric channels and a DictionaryChannel for DriverAhead (Olympia
+        # H6); the typed builders consume them directly.
+        if not isinstance(v, _TELEMETRY_CHANNEL_TYPES):
             continue
         renamed_key = TELEMETRY_RENAME_MAP.get(k, k)
         col_data[renamed_key] = v
@@ -323,14 +349,15 @@ def _create_telemetry_df(
 
     try:
         if lib == "polars" and _ensure_polars_available():
-            if _DRIVER_AHEAD_CHANNEL in col_data:
-                col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(
-                    col_data[_DRIVER_AHEAD_CHANNEL]
-                )
+            ahead = col_data.get(_DRIVER_AHEAD_CHANNEL)
+            if ahead is not None and not isinstance(ahead, DictionaryChannel):
+                col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(ahead)
             typed = _polars_typed_telemetry_frame(col_data, driver, lap_num, clock)
             if typed is not None:
                 return typed
-            telemetry_df = pl.DataFrame(col_data, strict=False)
+            telemetry_df = pl.DataFrame(
+                _decoded_channels(col_data, clean_driver_ahead=True), strict=False
+            )
             if telemetry_df.is_empty():
                 return None
             return _polars_telemetry_frame(telemetry_df, driver, lap_num, clock)
@@ -342,7 +369,7 @@ def _create_telemetry_df(
             if len(v) < max_len:
                 # Pad with None (becomes NaN in pandas); arrays go back to
                 # lists for this (never seen in real payloads) path.
-                values = v.tolist() if isinstance(v, np.ndarray) else v
+                values = v.tolist() if isinstance(v, np.ndarray | DictionaryChannel) else v
                 normalized_data[k] = values + [None] * (max_len - len(values))
             else:
                 normalized_data[k] = v
@@ -358,7 +385,7 @@ def _create_telemetry_df(
         # Canonical conversion failed on this payload: build from raw lists
         # and run the legacy per-column conversion (bad payloads still drop
         # to None via the surrounding error contract).
-        telemetry_df = pd.DataFrame(normalized_data, copy=False)
+        telemetry_df = pd.DataFrame(_decoded_channels(normalized_data), copy=False)
         if telemetry_df.empty:
             return None
 
@@ -379,6 +406,13 @@ def _polars_typed_channel(name: str, values: Any) -> Any:
     """
     if isinstance(values, np.ndarray):
         arr: np.ndarray | None = values
+    elif isinstance(values, DictionaryChannel):
+        if name != _DRIVER_AHEAD_CHANNEL:
+            return None
+        codes, categories = _without_null_categories(values)
+        if not categories:  # no driver ahead on any sample
+            return pl.Series(name, [None] * len(codes), dtype=pl.String)
+        return pl.Series(name, _arrow_strings_from_codes(categories, codes))
     elif name == "Brake":
         arr = np.asarray(values)
     elif name == _DRIVER_AHEAD_CHANNEL:
@@ -407,6 +441,17 @@ def _polars_typed_channel(name: str, values: Any) -> Any:
     if kind == "f":
         return pl.Series(name, arr, nan_to_null=True)
     return None
+
+
+def _polars_constant_categorical(name: str, value: str, n: int) -> Any:
+    """``pl.Series(name, [value] * n, dtype=pl.Categorical)`` without the ``n``-item list.
+
+    A one-row Series repeated: the same Series (values, chunks, flags) for
+    ~9 instead of ~50 us on a race lap. Not for ``String`` columns: there
+    ``new_from_index`` flags the result sorted, and the Arrow route costs
+    a ~0.2 s first call in a process that has not converted Arrow yet.
+    """
+    return pl.Series(name, [value], dtype=pl.Categorical).new_from_index(0, n)
 
 
 def _polars_typed_telemetry_frame(
@@ -453,7 +498,7 @@ def _polars_typed_telemetry_frame(
     series["LapNumber"] = pl.Series("LapNumber", np.full(n, lap_num, dtype="int64"))
     for name, value in (("Source", TELEMETRY_SOURCE_VALUE), ("Status", TELEMETRY_STATUS_VALUE)):
         if name not in series:
-            series[name] = pl.Series(name, [value] * n, dtype=pl.Categorical)
+            series[name] = _polars_constant_categorical(name, value, n)
     if clock is not None and time_ns is not None:
         start_ns, date_ns = clock
         series["SessionTime"] = pl.Series("SessionTime", (time_ns + start_ns).view("m8[ns]"))
@@ -605,6 +650,17 @@ def _typed_telemetry_frame(
                 arrays.append(column)
                 columns.append(k)
                 continue
+            if isinstance(v, DictionaryChannel):
+                # Olympia H6: the string column straight from the codes (no
+                # per-sample str objects); the same array the list branch
+                # below infers.
+                arrays.append(
+                    _driver_ahead_from_codes(v)
+                    if k == _DRIVER_AHEAD_CHANNEL
+                    else pd.Series(v.tolist()).array
+                )
+                columns.append(k)
+                continue
             if k == "Time":
                 # Bit-exact vectorized replica of pandas' base/frac cast
                 # (A2 / KR-2); the exact pd.to_timedelta call stays the path
@@ -698,7 +754,7 @@ def _typed_telemetry_frame(
             by_name = dict(zip(columns, arrays, strict=True))
             columns = ordered
             arrays = [by_name[name] for name in ordered]
-        frame = _frame_from_columns(arrays, columns, max_len)
+        frame = _pb._frame_from_columns(arrays, columns, max_len)
     except (AttributeError, TypeError, ValueError):
         return None
     return frame
@@ -733,309 +789,6 @@ def _typed_channel_from_array(name: str, values: np.ndarray) -> Any | None:
     return None
 
 
-def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
-    """One-shot DataFrame from ready column arrays (no sanitize, consolidated).
-
-    ``DataFrame._from_arrays`` is the constructor pandas' own readers use for
-    pre-typed columns; it is private but stable across pandas 1.x-3.x. Should
-    it ever disappear, the public constructor (slower, unconsolidated) is the
-    fallback, so behaviour never depends on it.
-    """
-    from_arrays: Any = getattr(pd.DataFrame, "_from_arrays", None)
-    if from_arrays is None:  # pragma: no cover - pandas internals changed
-        return pd.DataFrame(dict(zip(columns, arrays)), copy=False)
-    return cast(
-        pd.DataFrame,
-        from_arrays(arrays, columns=columns, index=pd.RangeIndex(n_rows), verify_integrity=False),
-    )
-
-
-# -- direct block assembly (Thebes TH2) ---------------------------------------
-#
-# ``DataFrame._from_arrays`` still runs pandas' generic column pipeline
-# (sanitize every array, form blocks, consolidate, build a fresh column
-# Index) - ~250 us per telemetry frame, i.e. ~40 % of the cold assembly.
-# The typed builder already knows every column's dtype, so it can lay the
-# blocks out itself: numpy columns of one dtype become one 2-D block (the
-# same consolidated layout ``_from_arrays`` produces), extension arrays
-# become one block each, and the column Index is shared between frames with
-# identical columns. The private pandas API involved (``BlockManager``,
-# ``new_block``, ``DataFrame._from_mgr``) is probed once at import with a
-# round-trip against the public constructor; if anything drifted, or a
-# build raises, ``_frame_from_arrays`` is used instead.
-try:  # pragma: no cover - import-time probe of pandas internals
-    # importlib keeps the static checker out of pandas' private modules (the
-    # stubs do not describe them); any ImportError/AttributeError disables
-    # the direct path and ``_from_arrays`` is used instead.
-    _BlockPlacement = importlib.import_module("pandas._libs.internals").BlockPlacement
-    _wrap_name = "ensure_wrapped_if_datetimelike"  # absent from the pandas stubs
-    _ensure_wrapped_if_datetimelike = getattr(
-        importlib.import_module("pandas.core.construction"), _wrap_name
-    )
-    _BlockManager = importlib.import_module("pandas.core.internals").BlockManager
-    _new_block = importlib.import_module("pandas.core.internals.blocks").new_block
-    _dataframe_from_mgr: Any = getattr(pd.DataFrame, "_from_mgr", None)
-    _DIRECT_BLOCKS_AVAILABLE = callable(_dataframe_from_mgr)
-except (ImportError, AttributeError):  # pragma: no cover - pandas internals changed
-    _DIRECT_BLOCKS_AVAILABLE = False
-
-# Column ``Index`` objects shared between frames with identical columns
-# (an Index is immutable; building one costs ~100 us per frame otherwise).
-_COLUMN_INDEX_CACHE: dict[tuple[str, ...], pd.Index] = {}
-_COLUMN_INDEX_CACHE_MAX = 64
-
-
-def _shared_column_index(columns: list[str]) -> pd.Index:
-    key = tuple(columns)
-    index = _COLUMN_INDEX_CACHE.get(key)
-    if index is None:
-        if len(_COLUMN_INDEX_CACHE) >= _COLUMN_INDEX_CACHE_MAX:
-            _COLUMN_INDEX_CACHE.clear()
-        index = pd.Index(list(columns))
-        _COLUMN_INDEX_CACHE[key] = index
-    return index
-
-
-# Pergamon P1: the per-frame skeleton is built from parts pandas would
-# otherwise re-derive on every call. ``RangeIndex`` and ``BlockPlacement``
-# objects are immutable and shared between frames (pandas itself shares an
-# index between a frame and its column slices); block classes are resolved
-# once from ``new_block`` so construction skips the dtype dispatch, the ndim
-# check and ``maybe_coerce_values`` — the values handed in are already the
-# coerced kinds ``new_block`` would produce (float/bool/object ndarrays,
-# ``TimedeltaArray``/``DatetimeArray`` for datetime-likes, extension arrays
-# for the rest). ``_probe_direct_blocks`` verifies the whole route against
-# the public constructor at import; any drift disables it.
-_RANGE_INDEX_CACHE: dict[int, pd.RangeIndex] = {}
-_RANGE_INDEX_CACHE_MAX = 4096
-_PLACEMENT_CACHE: dict[Any, Any] = {}
-_PLACEMENT_CACHE_MAX = 4096
-
-
-def _range_index(n_rows: int) -> pd.RangeIndex:
-    index = _RANGE_INDEX_CACHE.get(n_rows)
-    if index is None:
-        if len(_RANGE_INDEX_CACHE) >= _RANGE_INDEX_CACHE_MAX:
-            _RANGE_INDEX_CACHE.clear()
-        index = pd.RangeIndex(n_rows)
-        _RANGE_INDEX_CACHE[n_rows] = index
-    return index
-
-
-def _placement_for(positions: Any) -> Any:
-    """Shared ``BlockPlacement`` for an int position or a tuple of positions."""
-    key = positions if isinstance(positions, int | tuple) else tuple(int(p) for p in positions)
-    placement = _PLACEMENT_CACHE.get(key)
-    if placement is None:
-        if len(_PLACEMENT_CACHE) >= _PLACEMENT_CACHE_MAX:
-            _PLACEMENT_CACHE.clear()
-        placement = _BlockPlacement(key if isinstance(key, int) else np.asarray(key, dtype="int64"))
-        _PLACEMENT_CACHE[key] = placement
-    return placement
-
-
-try:  # pragma: no cover - import-time resolution of pandas block classes
-    _probe_placement = _BlockPlacement(0)
-    _NUMPY_BLOCK_CLASS: Any = type(_new_block(np.zeros((1, 1)), placement=_probe_placement, ndim=2))
-    _DATETIMELIKE_BLOCK_CLASS: Any = type(
-        _new_block(
-            _ensure_wrapped_if_datetimelike(np.zeros((1, 1), dtype="m8[ns]")),
-            placement=_probe_placement,
-            ndim=2,
-        )
-    )
-    _EXTENSION_BLOCK_CLASS: Any = type(
-        _new_block(
-            pd.arrays.IntegerArray(np.zeros(1, dtype="int64"), np.zeros(1, dtype=bool)),
-            placement=_probe_placement,
-            ndim=2,
-        )
-    )
-    _TimedeltaArray: Any = pd.arrays.TimedeltaArray
-    _DatetimeArray: Any = pd.arrays.DatetimeArray
-    _IntegerArray: Any = pd.arrays.IntegerArray
-    _INTEGER_ARRAY_SIMPLE_NEW: Any = getattr(_IntegerArray, "_simple_new", None)
-    _DIRECT_BLOCK_CLASSES_OK = (
-        _NUMPY_BLOCK_CLASS is not _EXTENSION_BLOCK_CLASS
-        and callable(getattr(_TimedeltaArray, "_simple_new", None))
-        and callable(_INTEGER_ARRAY_SIMPLE_NEW)
-    )
-except Exception:  # pragma: no cover - pandas internals changed
-    _DIRECT_BLOCK_CLASSES_OK = False
-    _INTEGER_ARRAY_SIMPLE_NEW = None
-
-
-def _frame_from_blocks(
-    blocks: tuple[Any, ...], columns: list[str], n_rows: int, frame_class: Any = None
-) -> pd.DataFrame:
-    """DataFrame over ready 2-D blocks (``(ncols, n_rows)`` values + placements).
-
-    ``frame_class`` (a DataFrame subclass such as ``Telemetry``) builds that
-    class directly: wrapping a finished frame afterwards costs a shallow
-    manager copy (~70 us per frame), building it here costs nothing. Its
-    ``_metadata`` attributes start as None.
-    """
-    mgr = _BlockManager(
-        blocks, [_shared_column_index(columns), _range_index(n_rows)], verify_integrity=False
-    )
-    if frame_class is None or frame_class is pd.DataFrame:
-        return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
-    frame = frame_class._from_mgr(mgr, axes=mgr.axes)
-    for name in getattr(frame_class, "_metadata", ()):
-        object.__setattr__(frame, name, None)
-    return cast(pd.DataFrame, frame)
-
-
-def _wrap_datetimelike(values: np.ndarray) -> Any:
-    """``TimedeltaArray``/``DatetimeArray`` over a datetime-like ndarray (no re-validation)."""
-    kind = values.dtype.kind
-    try:
-        if kind == "m":
-            return _TimedeltaArray._simple_new(values, dtype=values.dtype)
-        if kind == "M":
-            return _DatetimeArray._simple_new(values, dtype=values.dtype)
-    except (AssertionError, AttributeError, TypeError, ValueError):
-        pass
-    return _ensure_wrapped_if_datetimelike(values)
-
-
-def _numpy_block(values: np.ndarray, placement: Any) -> Any:
-    """A 2-D numpy block; datetime-like values are wrapped the way pandas does."""
-    if values.dtype.kind in "mM":
-        wrapped = _wrap_datetimelike(values)
-        if _DIRECT_BLOCK_CLASSES_OK:
-            return _DATETIMELIKE_BLOCK_CLASS(wrapped, placement=_placement_for(placement), ndim=2)
-        return _new_block(wrapped, placement=_BlockPlacement(placement), ndim=2)
-    if _DIRECT_BLOCK_CLASSES_OK:
-        return _NUMPY_BLOCK_CLASS(values, placement=_placement_for(placement), ndim=2)
-    return _new_block(values, placement=_BlockPlacement(placement), ndim=2)
-
-
-def _block_placement(placement: Any) -> Any:
-    """A (shared) ``BlockPlacement`` the ``*_placed`` builders accept as-is."""
-    if _DIRECT_BLOCK_CLASSES_OK:
-        return _placement_for(placement)
-    return _BlockPlacement(placement)
-
-
-def _numpy_block_placed(values: np.ndarray, placement: Any) -> Any:
-    """``_numpy_block`` over a ready ``BlockPlacement`` (hot loops resolve it once)."""
-    if values.dtype.kind in "mM":
-        wrapped = _wrap_datetimelike(values)
-        if _DIRECT_BLOCK_CLASSES_OK:
-            return _DATETIMELIKE_BLOCK_CLASS(wrapped, placement=placement, ndim=2)
-        return _new_block(wrapped, placement=placement, ndim=2)
-    if _DIRECT_BLOCK_CLASSES_OK:
-        return _NUMPY_BLOCK_CLASS(values, placement=placement, ndim=2)
-    return _new_block(values, placement=placement, ndim=2)
-
-
-def _extension_block(values: Any, placement: Any) -> Any:
-    """A 2-D block over a 1-D extension array at one column position."""
-    if _DIRECT_BLOCK_CLASSES_OK:
-        return _EXTENSION_BLOCK_CLASS(values, placement=_placement_for(placement), ndim=2)
-    return _new_block(values, placement=_BlockPlacement(placement), ndim=2)
-
-
-def _extension_block_placed(values: Any, placement: Any) -> Any:
-    """``_extension_block`` over a ready ``BlockPlacement``."""
-    if _DIRECT_BLOCK_CLASSES_OK:
-        return _EXTENSION_BLOCK_CLASS(values, placement=placement, ndim=2)
-    return _new_block(values, placement=placement, ndim=2)
-
-
-def _int64_array(data: np.ndarray, mask: np.ndarray) -> Any:
-    """``Int64`` extension array over ready int64 data + bool mask ndarrays."""
-    if _INTEGER_ARRAY_SIMPLE_NEW is not None:
-        return _INTEGER_ARRAY_SIMPLE_NEW(data, mask)
-    return pd.arrays.IntegerArray(data, mask)
-
-
-def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
-    """Assemble ready 1-D columns into a consolidated frame without sanitizing."""
-    numpy_groups: dict[np.dtype, list[tuple[int, np.ndarray]]] = {}
-    ea_columns: list[tuple[int, Any]] = []
-    for position, column in enumerate(arrays):
-        if isinstance(column, np.ndarray):
-            arr = column
-        elif type(column).__name__ == "NumpyExtensionArray":
-            arr = np.asarray(column)
-        else:
-            if len(column) != n_rows:
-                raise ValueError("column length mismatch")
-            ea_columns.append((position, column))
-            continue
-        if arr.ndim != 1 or arr.shape[0] != n_rows:
-            raise ValueError("column shape mismatch")
-        numpy_groups.setdefault(arr.dtype, []).append((position, arr))
-    blocks: list[Any] = []
-    for dtype, items in numpy_groups.items():
-        if len(items) == 1:
-            position, arr = items[0]
-            blocks.append(_numpy_block(arr.reshape(1, n_rows), position))
-        else:
-            values = np.vstack([arr for _, arr in items])
-            blocks.append(_numpy_block(values, tuple(pos for pos, _ in items)))
-        del dtype
-    for position, column in ea_columns:
-        blocks.append(_extension_block(column, position))
-    return _frame_from_blocks(tuple(blocks), columns, n_rows)
-
-
-def _probe_direct_blocks() -> bool:
-    """Round-trip a small typed frame through the direct path and the public one."""
-    if not _DIRECT_BLOCKS_AVAILABLE:
-        return False
-    try:
-        columns = ["Time", "RPM", "Speed", "nGear", "Brake", "DriverAhead", "Driver", "LapNumber"]
-        arrays: list[Any] = [
-            np.array([0, 16_000_000, 256_000_000], dtype="m8[ns]"),
-            np.array([10000.0, 10500.0, np.nan]),
-            np.array([250.0, 251.5, 252.0]),
-            pd.arrays.IntegerArray(np.array([7, 8, 8]), np.zeros(3, dtype=bool)),
-            np.array([False, True, False]),
-            pd.Series(["1", None, "44"]).array,
-            np.full(3, "VER", dtype=object),
-            pd.arrays.IntegerArray(np.full(3, 5), np.zeros(3, dtype=bool)),
-        ]
-        direct = _direct_frame_from_columns(arrays, columns, 3)
-        public = _frame_from_arrays(arrays, columns, 3)
-        # Block classes and value types must match too (a NumpyBlock over a
-        # raw m8 ndarray would compare equal yet misbehave on arithmetic).
-        direct_kinds = sorted(
-            (type(b).__name__, type(b.values).__name__) for b in direct._mgr.blocks
-        )
-        public_kinds = sorted(
-            (type(b).__name__, type(b.values).__name__) for b in public._mgr.blocks
-        )
-        mutated = direct.copy()
-        mutated.iloc[0, 1] = 1.5
-        return bool(
-            list(direct.columns) == list(public.columns)
-            and direct.dtypes.equals(public.dtypes)
-            and direct.equals(public)
-            and len(direct._mgr.blocks) == len(public._mgr.blocks)
-            and direct_kinds == public_kinds
-            and mutated.iloc[0, 1] == 1.5
-            and direct.iloc[0, 1] == 10000.0
-        )
-    except Exception:
-        return False
-
-
-_DIRECT_BLOCKS_OK = _probe_direct_blocks()
-
-
-def _frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
-    """Consolidated DataFrame from ready 1-D columns (direct blocks, else ``_from_arrays``)."""
-    if _DIRECT_BLOCKS_OK:
-        try:
-            return _direct_frame_from_columns(arrays, columns, n_rows)
-        except (AttributeError, TypeError, ValueError):
-            pass
-    return _frame_from_arrays(arrays, columns, n_rows)
-
-
 def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
     """Apply the canonical telemetry dtype conversions in a single pass.
 
@@ -1055,7 +808,7 @@ def _apply_telemetry_dtypes(telemetry_df: DataFrame) -> DataFrame:
     This helper is pandas-only: it is called from the pandas construction paths
     in :func:`_create_telemetry_df` and the merged-dict assembly.
     """
-    telemetry_df = cast(pd.DataFrame, telemetry_df)
+    telemetry_df = cast("pd.DataFrame", telemetry_df)
 
     # Time: float seconds → timedelta64[ns]
     if "Time" in telemetry_df.columns:
@@ -1249,6 +1002,18 @@ def _numeric_seconds_to_timedelta(values: pd.Series) -> pd.Series:
     return pd.Series(_seconds_to_td64ns(seconds), index=numeric_values.index, name=values.name)
 
 
+def _seconds_array_to_td64ns(seconds: np.ndarray) -> np.ndarray:
+    """:func:`_numeric_seconds_to_timedelta` of a float64 array, as an array (no pandas).
+
+    pandas is only imported for what the vectorized cast cannot take (inf,
+    values beyond the nanosecond range, an empty array): the same
+    ``pd.to_timedelta`` the Series path falls back to.
+    """
+    if not _td_cast_is_safe(seconds):
+        return np.asarray(pd.to_timedelta(seconds, unit="s"))
+    return _seconds_to_td64ns(seconds)
+
+
 _NULL_LIKE_TOKEN_PROBE = _NULL_LIKE_STRINGS | {"None"}
 _NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
 
@@ -1391,6 +1156,96 @@ def _without_null_tokens(values: list[Any]) -> list[Any]:
     if clean:
         return values
     return [None if isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE else x for x in values]
+
+
+# Payload channel shapes: orjson lists, native numpy arrays (Thebes TH4) and
+# native dictionary-encoded string channels (Olympia H6).
+_TELEMETRY_CHANNEL_TYPES = (list, np.ndarray, DictionaryChannel)
+
+
+def _channel_list(values: Any) -> Any:
+    """A payload channel as the list a generic JSON parser returns (lists pass through)."""
+    return values.tolist() if isinstance(values, np.ndarray | DictionaryChannel) else values
+
+
+def _decoded_channels(
+    col_data: dict[str, Any], *, clean_driver_ahead: bool = False
+) -> dict[str, Any]:
+    """``col_data`` with dictionary-encoded channels as lists (for the generic builders).
+
+    ``clean_driver_ahead`` also swaps a decoded ``DriverAhead``'s null-like
+    tokens for None, as the polars builder does to its list before inference.
+    """
+    if not any(isinstance(v, DictionaryChannel) for v in col_data.values()):
+        return col_data
+    decoded: dict[str, Any] = {}
+    for name, channel in col_data.items():
+        values = channel
+        if isinstance(channel, DictionaryChannel):
+            values = channel.tolist()
+            if clean_driver_ahead and name == _DRIVER_AHEAD_CHANNEL:
+                values = _without_null_tokens(values)
+        decoded[name] = values
+    return decoded
+
+
+def _without_null_categories(channel: DictionaryChannel) -> tuple[np.ndarray, list[str]]:
+    """The codes and categories of ``channel`` with null-like tokens as missing (-1).
+
+    The dictionary twin of :func:`_without_null_tokens`: the check runs over
+    the few categories, and a token category (``"None"``: nobody ahead) is
+    dropped by remapping the codes once.
+    """
+    categories = channel.categories
+    codes = channel.codes
+    if _NULL_LIKE_TOKEN_PROBE.isdisjoint(categories):
+        return codes, categories
+    remap = np.full(len(categories) + 1, -1, dtype=np.int32)  # last slot: code -1
+    kept: list[str] = []
+    for i, category in enumerate(categories):
+        if category not in _NULL_LIKE_TOKEN_PROBE:
+            remap[i] = len(kept)
+            kept.append(category)
+    return remap[codes], kept
+
+
+_ARROW_STR_DTYPE: Any = None  # pd.StringDtype("pyarrow", na_value=nan), resolved lazily
+
+
+def _arrow_strings_from_codes(categories: list[str], codes: np.ndarray) -> Any:
+    """A pyarrow ``large_string`` array of ``categories[codes]`` (code -1: null)."""
+    import pyarrow as pa
+
+    missing = codes < 0
+    indices = (
+        pa.array(codes, type=pa.int32(), mask=missing)
+        if missing.any()
+        else pa.array(codes, type=pa.int32())
+    )
+    return pa.array(categories, type=pa.large_string()).take(indices)
+
+
+def _driver_ahead_from_codes(channel: DictionaryChannel) -> Any:
+    """The pandas ``DriverAhead`` column of a dictionary-encoded channel.
+
+    Identical to ``pd.Series(_without_null_tokens(channel.tolist())).array``:
+    the ``str`` (pyarrow) array with NaN for missing samples, or the object
+    array of None that pandas infers when no sample has a driver ahead, built
+    with one ``take`` instead of ~770 ``str`` objects and pandas' inference.
+    """
+    codes, categories = _without_null_categories(channel)
+    if not categories:
+        return pd.Series([None] * len(codes)).array
+    return _arrow_string_column(categories, codes)
+
+
+def _arrow_string_column(categories: list[str], codes: np.ndarray) -> Any:
+    """pandas' default ``str`` array (pyarrow, NaN missing) of ``categories[codes]``."""
+    global _ARROW_STR_DTYPE
+    if _ARROW_STR_DTYPE is None:
+        _ARROW_STR_DTYPE = pd.StringDtype("pyarrow", na_value=np.nan)
+    string_array: Any = pd.arrays.ArrowStringArray
+    return string_array(_arrow_strings_from_codes(categories, codes), dtype=_ARROW_STR_DTYPE)
 
 
 def _coerce_polars_telemetry_sentinels(frame):
@@ -1584,16 +1439,50 @@ def _coerce_null_like_payload(data: dict) -> dict:
     clean payloads skip the strip/lowercase pass entirely (no string
     allocation on the hot path) and are returned as the same object.
     """
-    if data and any(
-        isinstance(v, list | tuple)
-        and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
-        for v in data.values()
-    ):
+    if not data:
+        return data
+    try:
+        # Olympia H8: C-level hashing probe (a set holds only strings, so a
+        # non-string value never matches); a list holding an unhashable value
+        # takes the per-item probe below.
+        dirty = any(
+            isinstance(v, list | tuple) and not _NULL_LIKE_TOKEN_PROBE.isdisjoint(v)
+            for v in data.values()
+        )
+    except TypeError:
+        dirty = any(
+            isinstance(v, list | tuple)
+            and any(isinstance(x, str) and x in _NULL_LIKE_TOKEN_PROBE for x in v)
+            for v in data.values()
+        )
+    if dirty:
         return {
-            k: _coerce_null_like_string_list(list(v)) if isinstance(v, list | tuple) else v
+            k: _coerce_null_like_values(v) if isinstance(v, list | tuple) else v
             for k, v in data.items()
         }
     return data
+
+
+def _coerce_null_like_values(values: list[Any] | tuple[Any, ...]) -> list[Any]:
+    """``_coerce_null_like_string_list(list(values))``, skipping lists without strings.
+
+    The value types are read at C level; a list holding strings matches the
+    strip/lower rule once per distinct string, then swaps the matching items.
+    """
+    if not any(issubclass(kind, str) for kind in set(map(type, values))):
+        return list(values)
+    try:
+        distinct = set(values)
+    except TypeError:  # unhashable item: the per-item rule
+        return _coerce_null_like_string_list(list(values))
+    null_like = {
+        value
+        for value in distinct
+        if isinstance(value, str) and value.strip().lower() in _NULL_LIKE_STRINGS
+    }
+    if not null_like:
+        return list(values)
+    return [None if value in null_like and isinstance(value, str) else value for value in values]
 
 
 def _create_lap_df(lap_data: dict, driver: str, team: str, lib: str) -> DataFrame:
@@ -1728,8 +1617,121 @@ def _polars_laps_contract(lap_df):
     return lap_df.with_columns(exprs) if exprs else lap_df
 
 
+_STR_OR_NONE_KINDS = frozenset((str, type(None)))
+
+
+def _polars_contract_expr(name: str, expr: Any, dtype: Any, null_count: int) -> Any:
+    """``expr`` (laps column ``name`` of ``dtype``) under :func:`_polars_laps_contract`."""
+    if dtype == pl.Null and name in _POLARS_LAPS_NULL_DTYPES:
+        return expr.cast(getattr(pl, _POLARS_LAPS_NULL_DTYPES[name]))
+    if name in _LAPS_BOOL_COLS:
+        if dtype != pl.Boolean or null_count:
+            return expr.cast(pl.Boolean, strict=False).fill_null(False)
+        return expr
+    if name == "Deleted":
+        return expr.cast(pl.Boolean, strict=False) if dtype != pl.Boolean else expr
+    if name in _POLARS_LAPS_DURATION_COLS:
+        if dtype == pl.Duration:
+            return expr
+        return (
+            (expr.cast(pl.Float64, strict=False) * 1_000_000_000)
+            .round()
+            .cast(pl.Int64)
+            .cast(pl.Duration("ns"))
+        )
+    if name == "LapStartDate" and dtype != pl.Datetime:
+        return expr.cast(pl.String, strict=False).str.to_datetime(strict=False, time_unit="ns")
+    return expr
+
+
+def _process_polars_laps(lap_df, source_lists: dict[str, Any] | None = None):
+    """The polars branch of :func:`_process_lap_df` as one ``select``.
+
+    Olympia H8: rename, the null-like masking, ``LapTimeSeconds``, the dtype
+    contract, the optional categoricals and the FastF1 column order ran as
+    five query plans (~0.5 ms each on a race). Every step is column-wise, so
+    each output column is the composition of its steps on the input column,
+    computed in one plan; only the masking probe (which columns hold an exact
+    null-like token) still reads the data first, exactly as
+    :func:`_replace_null_like_strings_pl` does. ``source_lists`` (the lists
+    the frame was built from, by input column) lets that probe read a
+    string column's list instead of running a query plan.
+    """
+    _ensure_polars_available()
+    frame = cast(Any, lap_df)
+    columns = frame.columns
+    schema = frame.schema
+    cols_to_drop, final_rename = _rename_plan(columns, LAP_RENAME_MAP)
+    dropped = set(cols_to_drop)
+    source = {final_rename.get(c, c): c for c in columns if c not in dropped}
+    if len(source) != len(columns) - len(dropped):
+        # Two columns would share a name: the stepwise path raises as before.
+        return _process_lap_df_stepwise(lap_df, "polars")
+
+    string_cols = [c for c in source.values() if schema[c] == pl.String]
+    dirty: set[str] = set()
+    probed: list[str] = []
+    for column in string_cols:
+        values = None if source_lists is None else source_lists.get(column)
+        if (
+            values is not None
+            and len(values) == frame.height
+            and set(map(type, values)) <= _STR_OR_NONE_KINDS
+        ):
+            # The probe on the list the column was built from (str/None only:
+            # the column holds exactly these strings), with no query plan.
+            if not _NULL_LIKE_TOKEN_PROBE.isdisjoint(values):
+                dirty.add(column)
+        else:
+            probed.append(column)
+    if probed:
+        hits = frame.select(
+            [pl.col(c).is_in(_NULL_LIKE_TOKEN_PROBE).any().alias(c) for c in probed]
+        ).row(0)
+        dirty.update(c for c, hit in zip(probed, hits) if hit)
+
+    def masked(name: str) -> Any:
+        column = source[name]
+        expr = pl.col(column)
+        if column in dirty:
+            expr = (
+                pl.when(expr.str.strip_chars().str.to_lowercase().is_in(_NULL_LIKE_STRINGS))
+                .then(None)
+                .otherwise(expr)
+            )
+        return expr
+
+    exprs: dict[str, Any] = {name: masked(name) for name in source}
+    dtypes = {name: schema[column] for name, column in source.items()}
+    if COL_LAP_TIME in exprs:
+        exprs[COL_LAP_TIME_SECONDS] = exprs[COL_LAP_TIME].cast(pl.Float64, strict=False)
+        dtypes[COL_LAP_TIME_SECONDS] = pl.Float64
+    categorical = bool(config.get("polars_lap_categorical", False))
+    for name, column_expr in list(exprs.items()):
+        null_count = (
+            frame[source[name]].null_count()
+            if name in _LAPS_BOOL_COLS and dtypes[name] == pl.Boolean
+            else 0
+        )
+        expr = _polars_contract_expr(name, column_expr, dtypes[name], null_count)
+        if categorical and name in CATEGORICAL_COLS:
+            expr = expr.cast(pl.Categorical)
+        exprs[name] = expr.alias(name)
+    order = list(exprs) if frame.height == 0 else _fastf1_laps_column_order(list(exprs))
+    return frame.select([exprs[name] for name in order])
+
+
 def _process_lap_df(lap_df, lib: str) -> DataFrame:
     """Apply column renaming, dtype coercions, and categorical types."""
+    if lib == "polars":
+        _ensure_polars_available()
+        if isinstance(lap_df, pl.DataFrame):
+            return _process_polars_laps(lap_df)
+    return _process_lap_df_stepwise(lap_df, lib)
+
+
+def _process_lap_df_stepwise(lap_df, lib: str) -> DataFrame:
+    """:func:`_process_lap_df` one step at a time (pandas; polars fallback)."""
     if lib == "polars":
         _ensure_polars_available()
     # Remove duplicate columns if they exist (pandas only) - must be done FIRST
@@ -1739,7 +1741,7 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
 
     lap_df = _rename_columns(lap_df, LAP_RENAME_MAP, lib)
     if lib == "pandas" and COL_LAP_TIME in lap_df.columns:
-        lap_time_series = cast(pd.Series, lap_df[COL_LAP_TIME])
+        lap_time_series = cast("pd.Series", lap_df[COL_LAP_TIME])
         if not pd.api.types.is_timedelta64_dtype(lap_time_series):
             numeric_lap_times = pd.to_numeric(lap_time_series, errors="coerce")
             numeric_lap_timedeltas = _numeric_seconds_to_timedelta(numeric_lap_times)
@@ -1752,16 +1754,16 @@ def _process_lap_df(lap_df, lib: str) -> DataFrame:
                 numeric_lap_timedeltas[missing_mask] = parsed_subset
             lap_df[COL_LAP_TIME] = numeric_lap_timedeltas
         lap_df[COL_LAP_TIME_SECONDS] = (
-            cast(pd.Series, lap_df[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
+            cast("pd.Series", lap_df[COL_LAP_TIME]).dt.total_seconds().to_numpy(copy=False)
         )
     if lib == "pandas" and "Time" in lap_df.columns:
-        time_series = cast(pd.Series, lap_df["Time"])
+        time_series = cast("pd.Series", lap_df["Time"])
         if not pd.api.types.is_timedelta64_dtype(time_series):
             # Only convert if it's actually a Series (not already converted)
             if isinstance(time_series, pd.Series):
                 lap_df["Time"] = _numeric_seconds_to_timedelta(time_series)
     if lib == "pandas" and "WeatherTime" in lap_df.columns:
-        weather_time_series = cast(pd.Series, lap_df["WeatherTime"])
+        weather_time_series = cast("pd.Series", lap_df["WeatherTime"])
         if not pd.api.types.is_timedelta64_dtype(weather_time_series):
             if isinstance(weather_time_series, pd.Series):
                 lap_df["WeatherTime"] = _numeric_seconds_to_timedelta(weather_time_series)
@@ -1810,8 +1812,13 @@ def _merge_telemetry_payloads(
             like :func:`_create_telemetry_df`).
 
     Returns:
-        A dict mapping renamed column names to concatenated lists, with
-        ``Driver`` and ``LapNumber`` columns appended in payload order.
+        A dict mapping renamed column names to concatenated values, with
+        ``Driver`` and ``LapNumber`` columns appended in payload order. A
+        column is a list, except where every payload carries it natively at
+        full length (Olympia H6): numeric arrays are concatenated
+        (``int64``/``float64``, the dtype pandas infers from the lists), and
+        dictionary-encoded ``DriverAhead`` channels become the string array
+        pandas infers from the lists, null-like tokens already missing.
     """
     # Collect column order by first appearance (dict preserves insertion order).
     all_columns: dict[str, None] = {}
@@ -1820,9 +1827,9 @@ def _merge_telemetry_payloads(
         if not isinstance(tel_payload, dict) or not tel_payload:
             continue
         col_data = {
-            TELEMETRY_RENAME_MAP.get(k, k): (v.tolist() if isinstance(v, np.ndarray) else v)
+            TELEMETRY_RENAME_MAP.get(k, k): v
             for k, v in tel_payload.items()
-            if isinstance(v, list | np.ndarray)
+            if isinstance(v, _TELEMETRY_CHANNEL_TYPES)
         }
         if not col_data:
             continue
@@ -1830,28 +1837,99 @@ def _merge_telemetry_payloads(
         if max_len == 0:
             continue
         normalized = {
-            k: (v + [None] * (max_len - len(v))) if len(v) < max_len else v
+            k: (_channel_list(v) + [None] * (max_len - len(v))) if len(v) < max_len else v
             for k, v in col_data.items()
         }
         for col in normalized:
             all_columns.setdefault(col, None)
         normalized_entries.append((normalized, max_len, driver, lap_num))
 
-    merged: dict[str, list] = {}
+    merged: dict[str, Any] = {}
+    for col in all_columns:
+        parts = [normalized.get(col) for normalized, _, _, _ in normalized_entries]
+        typed = _merged_native_column(col, parts)
+        if typed is not None:
+            merged[col] = typed
+            continue
+        values: list[Any] = []
+        for part, (_, n_rows, _, _) in zip(parts, normalized_entries, strict=True):
+            if part is None:
+                values.extend([None] * n_rows)
+            else:
+                values.extend(_channel_list(part))
+        merged[col] = values
     driver_col: list[str] = []
     lap_col: list[int] = []
-    for normalized, n_rows, driver, lap_num in normalized_entries:
+    for _, n_rows, driver, lap_num in normalized_entries:
         driver_col.extend([driver] * n_rows)
         lap_col.extend([lap_num] * n_rows)
-        for col in all_columns:
-            values = normalized.get(col)
-            if values is None:
-                merged.setdefault(col, []).extend([None] * n_rows)
-            else:
-                merged.setdefault(col, []).extend(values)
     merged[COL_DRIVER] = driver_col
     merged[COL_LAP_NUMBER] = lap_col
     return merged
+
+
+def _dictionary_from_list(values: Any) -> DictionaryChannel | None:
+    """A list of ``str``/None as a DictionaryChannel; None for anything else."""
+    if not isinstance(values, list):
+        return None
+    positions: dict[str, int] = {}
+    codes: list[int] = []
+    for value in values:
+        if value is None:
+            codes.append(-1)
+        elif type(value) is str:
+            codes.append(positions.setdefault(value, len(positions)))
+        else:
+            return None
+    return DictionaryChannel(np.array(codes, dtype=np.int32), list(positions))
+
+
+def _merged_native_column(name: str, parts: list[Any]) -> Any | None:
+    """One merged column built from native channels, or None for the list path.
+
+    Only for a column some payload carries natively (an orjson-only merge
+    keeps the list path) and every payload carries at full length: int64/
+    float64 arrays concatenate to the dtype pandas infers from the
+    equivalent int/float lists (a NaN sentinel is the float the list path
+    coerces ``"None"`` to; a clean int/float list joins as its array);
+    ``DriverAhead`` codes are remapped onto one category list and built as
+    the string array pandas infers from the string list, with the null-like
+    tokens :func:`_apply_telemetry_dtypes` would mask already missing.
+    Padding, sentinel lists and other dtypes keep the list path.
+    """
+    if not any(isinstance(p, np.ndarray | DictionaryChannel) for p in parts):
+        return None
+    if name != _DRIVER_AHEAD_CHANNEL:
+        arrays = [
+            p
+            if isinstance(p, np.ndarray)
+            else (_numeric_channel_array(p) if isinstance(p, list) else None)
+            for p in parts
+        ]
+        if any(a is None or a.dtype.kind not in "if" for a in arrays):
+            return None
+        return np.concatenate(cast(list[np.ndarray], arrays))
+    channels = [p if isinstance(p, DictionaryChannel) else _dictionary_from_list(p) for p in parts]
+    if any(channel is None for channel in channels):
+        return None
+    categories: list[str] = []
+    positions: dict[str, int] = {}
+    code_parts: list[np.ndarray] = []
+    for part in cast(list[DictionaryChannel], channels):
+        remap = np.full(len(part.categories) + 1, -1, dtype=np.int32)  # last slot: code -1
+        for i, category in enumerate(part.categories):
+            position = positions.get(category)
+            if position is None:
+                position = positions[category] = len(categories)
+                categories.append(category)
+            remap[i] = position
+        code_parts.append(remap[part.codes])
+    if not categories:
+        return None  # JSON nulls only: pandas infers object from the list
+    codes, kept = _without_null_categories(
+        DictionaryChannel(np.concatenate(code_parts), categories)
+    )
+    return _arrow_string_column(kept, codes)
 
 
 def _telemetry_frame_from_merged(merged: dict) -> pd.DataFrame:
@@ -1864,4 +1942,56 @@ def _telemetry_frame_from_merged(merged: dict) -> pd.DataFrame:
     """
     if not merged:
         return pd.DataFrame()
-    return cast(pd.DataFrame, _apply_telemetry_dtypes(pd.DataFrame(merged, copy=False)))
+    return cast("pd.DataFrame", _apply_telemetry_dtypes(pd.DataFrame(merged, copy=False)))
+
+
+#: Names that moved to :mod:`tif1.core_utils.pandas_blocks` (imported on first read).
+_PANDAS_BLOCK_NAMES = frozenset(
+    {
+        "_BlockManager",
+        "_BlockPlacement",
+        "_COLUMN_INDEX_CACHE",
+        "_DATETIMELIKE_BLOCK_CLASS",
+        "_DIRECT_BLOCKS_AVAILABLE",
+        "_DIRECT_BLOCKS_OK",
+        "_DIRECT_BLOCK_CLASSES_OK",
+        "_DatetimeArray",
+        "_EXTENSION_BLOCK_CLASS",
+        "_INTEGER_ARRAY_SIMPLE_NEW",
+        "_IntegerArray",
+        "_NUMPY_BLOCK_CLASS",
+        "_PLACEMENT_CACHE",
+        "_RANGE_INDEX_CACHE",
+        "_TimedeltaArray",
+        "_block_placement",
+        "_dataframe_from_mgr",
+        "_direct_frame_from_columns",
+        "_ensure_wrapped_if_datetimelike",
+        "_extension_block",
+        "_extension_block_placed",
+        "_frame_from_arrays",
+        "_frame_from_blocks",
+        "_frame_from_columns",
+        "_int64_array",
+        "_new_block",
+        "_numpy_block",
+        "_numpy_block_placed",
+        "_placement_for",
+        "_probe_direct_blocks",
+        "_range_index",
+        "_shared_column_index",
+        "_wrap_datetimelike",
+    }
+)
+
+
+def _load_pandas_blocks() -> None:
+    """Import (and probe) :mod:`tif1.core_utils.pandas_blocks` now; a pandas session does."""
+    _pb._DIRECT_BLOCKS_OK  # noqa: B018 - the attribute read imports and rebinds ``_pb``
+
+
+def __getattr__(name: str) -> Any:
+    """The pandas block-assembly names (:mod:`tif1.core_utils.pandas_blocks`), imported lazily."""
+    if name in _PANDAS_BLOCK_NAMES:
+        return getattr(importlib.import_module("tif1.core_utils.pandas_blocks"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -7,7 +7,9 @@ import pytest
 from tif1.cdn import CDNManager, CDNSource
 from tif1.ergast import payloads as payloads_module
 from tif1.ergast.payloads import (
+    ErgastFetchNeeded,
     ErgastPayloadLoader,
+    cache_only,
     is_current_season,
     is_empty_payload,
     stats_cache_key,
@@ -312,6 +314,48 @@ class TestStatsPayload:
         assert (
             loader.jolpica_payload("x.json", fetch, ttl=100)["MRData"]["total"] == "2"
         )  # stale on failure
+
+    def test_cache_only_answers_fresh_entries_and_never_fetches(self, monkeypatch):
+        clock = [0.0]
+        transport = InMemoryTransport({"a/results.json": FULL, "b/results.json": FULL})
+        loader = ErgastPayloadLoader(
+            transport=transport,
+            cdn_manager=_manager("A"),
+            enable_cache=False,
+            clock=lambda: clock[0],
+        )
+
+        def no_fetch(*_args, **_kwargs):
+            raise AssertionError("a cache-only lookup must not fetch")
+
+        assert not loader.is_fresh(2024, "a", "results.json")
+        with cache_only():
+            with pytest.raises(ErgastFetchNeeded):
+                loader.stats_payload(2024, "a", "results.json")
+            with pytest.raises(ErgastFetchNeeded):
+                loader.jolpica_payload("x.json", no_fetch, ttl=100)
+        assert transport.calls == []
+
+        assert loader.stats_payload(2024, "a", "results.json") == FULL
+        assert loader.jolpica_payload("x.json", lambda: FULL, ttl=100) == FULL
+        assert loader.is_fresh(2024, "a", "results.json")
+        monkeypatch.setattr("concurrent.futures.ThreadPoolExecutor", no_fetch)
+        with cache_only():
+            assert loader.stats_payload(2024, "a", "results.json") == FULL
+            assert loader.jolpica_payload("x.json", no_fetch, ttl=100) == FULL
+            with pytest.raises(ErgastFetchNeeded):  # two refs to fetch: no pool either
+                loader.stats_payloads(
+                    [
+                        (2024, "a", "results.json"),
+                        (2024, "b", "results.json"),
+                        (2024, "c", "results.json"),
+                    ]
+                )
+            clock[0] += 101  # the Jolpica answer expired: refreshing it needs a fetch
+            with pytest.raises(ErgastFetchNeeded):
+                loader.jolpica_payload("x.json", no_fetch, ttl=100)
+        assert len(transport.calls) == 1
+        assert loader.stats_payload(2024, "b", "results.json") == FULL  # the mode is scoped
 
 
 class TestCdnRepoLayout:

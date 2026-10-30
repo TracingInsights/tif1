@@ -1,0 +1,241 @@
+name: tif1-native wheels
+
+# Builds the optional Rust decoder (native/, distribution "tif1-native") for
+# every platform tif1 supports, tests each wheel on a bare interpreter, and
+# uploads to (Test)PyPI only from a manual dispatch.
+#
+# Wheel matrix:
+# - one abi3 wheel per platform (cp311-abi3): every GIL CPython >= 3.11,
+#   3.15 and later included, without a rebuild per minor version;
+# - version-specific free-threaded wheels (cp313t, cp314t): the stable ABI
+#   does not cover free-threaded builds, maturin builds those per version;
+# - Linux: manylinux2014 and musllinux_1_2, x86_64 and aarch64;
+#   macOS: universal2 (arm64 + x86_64); Windows: x64 and arm64;
+# - an sdist, so an uncovered platform can still build with a Rust toolchain.
+# Pyodide is not built: tif1 never requires tif1-native there and falls back
+# to orjson.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Upload the built distributions (none = build and test only)"
+        required: true
+        default: "none"
+        type: choice
+        options:
+          - none
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+env:
+  MATURIN_ARGS: --release --out dist -m native/Cargo.toml
+
+jobs:
+  linux:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64, libc: "2014" }
+          - { runner: ubuntu-24.04-arm, target: aarch64, libc: "2014" }
+          - { runner: ubuntu-latest, target: x86_64, libc: musllinux_1_2 }
+          - { runner: ubuntu-24.04-arm, target: aarch64, libc: musllinux_1_2 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.libc }}
+          args: ${{ env.MATURIN_ARGS }}
+
+      - name: Build the free-threaded wheels
+        # The manylinux images ship cp313t/cp314t interpreters.
+        if: matrix.libc == '2014'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.libc }}
+          args: ${{ env.MATURIN_ARGS }} -i python3.13t python3.14t
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-linux-${{ matrix.target }}-${{ matrix.libc }}
+          path: dist
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: |
+            3.13t
+            3.14t
+            3.11
+
+      - name: Build the abi3 wheel (universal2)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: universal2-apple-darwin
+          args: ${{ env.MATURIN_ARGS }}
+
+      - name: Build the free-threaded wheels (universal2)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: universal2-apple-darwin
+          args: ${{ env.MATURIN_ARGS }} -i python3.13t python3.14t
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-macos-universal2
+          path: dist
+
+  windows:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, target: x64 }
+          - { runner: windows-11-arm, target: aarch64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: |
+            3.13t
+            3.14t
+            3.11
+          architecture: ${{ matrix.target == 'x64' && 'x64' || 'arm64' }}
+
+      - name: Build the abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: ${{ env.MATURIN_ARGS }}
+
+      - name: Build the free-threaded wheels
+        # Free-threaded CPython for Windows arm64 is newer than the rest of the
+        # matrix: a missing interpreter there must not block the release.
+        continue-on-error: ${{ matrix.target == 'aarch64' }}
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: ${{ env.MATURIN_ARGS }} -i python3.13t python3.14t
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist -m native/Cargo.toml
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-sdist
+          path: dist
+
+  test:
+    # Every wheel on a bare interpreter (numpy only): oldest and newest GIL
+    # CPython against the one abi3 wheel, plus a free-threaded interpreter.
+    needs: [linux, macos, windows]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    continue-on-error: ${{ matrix.os == 'windows-11-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
+        python-version: ["3.11", "3.15", "3.14t"]
+        exclude:
+          # numpy publishes no free-threaded Windows arm64 wheel yet.
+          - os: windows-11-arm
+            python-version: "3.14t"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - name: Install the wheel
+        run: |
+          python -m pip install --disable-pip-version-check numpy
+          python -m pip install --disable-pip-version-check --no-index --find-links dist --only-binary :all: tif1-native
+
+      - name: Run the smoke test
+        run: python native/tests/smoke.py
+
+  publish:
+    name: Upload to ${{ github.event.inputs.environment }}
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment != 'none'
+    needs: [test, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      # PyPI trusted publishing: the tif1-native project needs its own
+      # publisher entry for this workflow and environment.
+      name: ${{ github.event.inputs.environment }}-native
+      url: ${{ github.event.inputs.environment == 'pypi' && 'https://pypi.org/p/tif1-native' || 'https://test.pypi.org/p/tif1-native' }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Upload
+        # --check-url keeps re-runs idempotent (files already on the index are skipped).
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "pypi" ]]; then
+            uv publish --trusted-publishing always --check-url https://pypi.org/simple/tif1-native/ dist/*
+          else
+            uv publish --trusted-publishing always --publish-url https://test.pypi.org/legacy/ \
+              --check-url https://test.pypi.org/simple/tif1-native/ dist/*
+          fi

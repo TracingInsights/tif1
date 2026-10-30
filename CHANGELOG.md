@@ -208,6 +208,121 @@ surface-compliance test.
 
 ### Performance
 
+- `lib="polars"` sessions never import pandas (~250 ms of their startup):
+  `core.py` and the shared helpers bind `pd` through a lazy module proxy
+  (`core_utils/lazy_import.py`) that rebinds the global on first use, the
+  pandas block assembly lives in `core_utils/pandas_blocks.py`, and the
+  backend-neutral `CircuitInfo`/`LazyTelemetryDict` moved to
+  `models_shared.py` (re-exported from `tif1.models`). Warm polars, fresh
+  process, 2025 Bahrain race: import plus `get_session` 521 -> 270 ms, the
+  script to `laps` 515 -> 267 ms, the notebook flow 571 -> 322 ms, a
+  driver's `Laps.telemetry` end to end 561 -> 367 ms,
+  `fetch_all_laps_telemetry()` end to end 653 -> 456 ms. pandas sessions
+  import pandas up front as before. pyarrow is now imported by the first
+  polars telemetry read instead of at startup, so that read alone is slower
+  in isolation while every script that reaches it finishes sooner.
+- The pandas frame tier stores driver rows narrowed (`core_utils/frame_narrow.py`,
+  row magic `TF1\x03`): the three nanosecond clocks become `int32`
+  milliseconds or deltas from `SessionTime`, `Int64` channels and the
+  `DriverAhead` dictionary codes become `int8`, each encoding verified by a
+  round trip before it is stored and widened in place in the decompression
+  worker, so every reader of driver blobs is unchanged. Floats are left
+  alone (no channel narrows exactly; a byte shuffle costs more than it
+  saves). Rows of the 2025 Bahrain race 83.2 -> 70.6 MB (-15%), qualifying
+  31.5 -> 25.1 MB (-20%); warm pandas `fetch_all_laps_telemetry()` 168 ->
+  152 ms, `car_data[n]` 25 -> 24 ms, cold `Laps.telemetry` of a driver
+  1.31 -> 1.19 s. Old rows still read.
+- `weather_data`, `race_control_messages`, `track_status`, `session_status`
+  and `t0_date`/`session_start_time` are built from whole columns (numpy
+  `to_numpy()` on either backend, never a per-value cast or a polars query
+  plan; `session_state.py`). Warm, fresh process: the four tables together
+  pandas 34 -> 7 ms, polars 31 -> 6 ms; `track_status` 25 -> 4 ms and 23 ->
+  2.5 ms; `session_status` 30 -> 6 ms and 30 -> 5 ms; `race_control_messages`
+  6 -> 2 ms and 11 -> 2 ms; `weather_data` 4 -> 1.4 ms and 10 -> 1.4 ms.
+- The first laps load of a session (payload tier warm, laps frame tier
+  empty, or a cold network load) builds the pandas laps frame column by
+  column straight to its final dtypes from the merged per-driver lists
+  (`core_utils/driver_laps.build_laps_frame`, falling back to the generic
+  pipeline when a column is not exactly reproducible), processes polars laps
+  in one plan, derives every driver's laptime payload from the session-wide
+  table in one pass and skips the event loop when the payload cache serves
+  every file. pandas 76 -> 21 ms (race), 66 -> 13 ms (qualifying), 83 -> 22 ms
+  (2024 Monaco); polars 49 -> 27 ms, 39 -> 18 ms, 50 -> 28 ms; a cold pandas
+  `laps` 515 -> 428 ms; the first script to `laps` 511 -> 447 ms (pandas).
+  Warm loads (laps frame tier present) are unchanged.
+- A warm session reads the cached Ergast classification on the calling
+  thread instead of starting the `tif1-ergast` daemon thread (whose GIL
+  handoffs cost more than the lookup); the thread starts only when the
+  Stats payload must be fetched. The round number comes from the schedule
+  payload (`events._event_round_number`) instead of the pandas `Event` row.
+  Warm, fresh process: `results` pandas 16 -> 11 ms, polars 11 -> 8 ms;
+  `get_driver(...).get_fastest_lap_tel()` 21 -> 20 ms and 18 -> 16 ms;
+  cold loads unchanged.
+- Cold `get_fastest_lap_tel()` and `get_driver(...).get_fastest_lap_tel()`
+  fetch `drivers.json` and the session laptimes in one network wave (they
+  were two round trips in a row), so the telemetry request leaves one RTT
+  sooner; the Ergast prefetch rides the cold driver wave only (a speculative
+  thread cost a cold laps-only load 7-13%). Replayed network (80 ms RTT):
+  cold fastest-lap telemetry 426 -> 377 ms, the driver's 491 -> 423 ms, both
+  backends; live CDN 3-7%.
+- polars `Laps`/`Telemetry` methods run on numpy masks and column gathers
+  instead of query plans (`models_polars.py`: every `pick_*`, the slices,
+  `Laps.telemetry`, `merge_channels`, `add_distance`, `fill_missing`,
+  `get_weather_data`, `split_qualifying_sessions`, the results frame). Warm
+  calls: `pick_*` 1.5-2.4 -> 0.15-0.25 ms, `split_qualifying_sessions`
+  3.3 -> 0.6 ms, `get_weather_data` 2.5 -> 0.16 ms, `Laps.telemetry` 9.1 ->
+  3.0 ms, `get_car_data(pad=)` 7.1 -> 1.2 ms, `merge_channels` 4.4 -> 0.55 ms,
+  `slice_by_time` 4.7 -> 0.7 ms, `add_distance` 1.7 -> 0.06 ms. Fresh
+  process: a driver's `Laps.telemetry` 77 -> 49 ms, `car_data[n]` 78 -> 51 ms,
+  the polars notebook flow 459 -> 379 ms. Rare inputs (non-ASCII qualifying
+  labels, fractional lap numbers, tied status times) keep the expressions.
+- Telemetry frames read from the frame tier are adopted by the session
+  without a rewrap: a pandas tier frame whose `SessionTime` is stored is
+  returned bound as it is (`_attach_session_clock` tests the Index instead
+  of listing every label, ~18 us x 1128 frames), a polars tier frame is
+  wrapped without cloning its columns (`PolarsTelemetry._from_owned_frame`),
+  lap references come from column arrays instead of row dicts (polars
+  `iter_rows` ~10 -> 0.1 ms; pandas categorical codes instead of
+  `astype(str)`), and a polars lap-by-lap loop asks the tier once for all of
+  a driver's laps instead of re-reading the driver's row per lap. Warm,
+  fresh process, 2025 Bahrain race: `fetch_all_laps_telemetry()` pandas
+  161 -> 129 ms, polars 127 -> 98 ms; a per-lap `get_car_data()` loop over
+  a driver's laps pandas 35 -> 29 ms, polars 570 -> 29 ms. Stored rows are
+  byte-identical to before.
+- A cold load starts its HTTP stack earlier: `get_session()` probes the
+  cache before pandas or polars load, imports niquests on the caller's
+  thread and opens one connection per first-wave CDN path in daemon
+  threads (`http_session.warm_connections`) while the DataFrame library
+  imports; the first requests wait for those connections at most 1 s. The
+  certificate revocation (OCSP) check stays on; `http_revocation_check=False`
+  (`TIF1_HTTP_REVOCATION_CHECK=false`) turns it off for a further 120-240 ms
+  per cold process (the qh3 import plus a CA round trip), the chain and host
+  name being verified either way. A warm
+  Ergast-only (pre-2018) session whose Stats file is cached imports no HTTP
+  stack and starts no thread (2010 Monaco 690-829 -> 530-648 ms). Whole
+  process (interpreter start to exit), empty cache, live CDN, median of 5,
+  revocation check on: pandas `laps` 1160 -> 1019 ms, fastest-lap telemetry
+  1627 -> 1337 ms, a driver's `Laps.telemetry` 1975 -> 1864 ms, the notebook
+  flow 1853 -> 1619 ms; polars 1285 -> 954, 1299 -> 994, 1991 -> 1781,
+  1600 -> 1246 ms. Warm loads unchanged; skipped on Pyodide, offline and CI.
+- Native telemetry decoder (`tif1-native` 0.2, `native/`): `DriverAhead`
+  comes back dictionary-encoded (int32 codes into the few driver numbers of
+  a lap) instead of ~860k Python strings per race, and the frame builders
+  build the string column from the codes with one Arrow `take`. pandas
+  `Laps.telemetry` merges native payloads as concatenated arrays instead of
+  converting every channel back to Python lists (the merge was slower with
+  the decoder than without it), and the payload tier decodes in worker
+  threads from 16 rows instead of 64 when the native parse runs there.
+  Rebuilding a race's telemetry from the payload tier (2025 Bahrain, 1127
+  laps, frame tiers empty), without -> with the decoder:
+  `fetch_all_laps_telemetry()` 2.28 -> 0.98 s (pandas), 2.16 -> 1.05 s
+  (polars); one driver's `Laps.telemetry` 189 -> 94 ms (pandas, +8% with
+  the 0.1 decoder), 166 -> 111 ms (polars). Frames are identical with and
+  without the decoder.
+  `TIF1_DISABLE_NATIVE=1` turns it off. `.github/workflows/native.yml`
+  builds abi3 wheels (CPython 3.11+), free-threaded cp313t/cp314t wheels,
+  Linux glibc/musl x86_64/aarch64, macOS universal2, Windows x64/arm64 and
+  an sdist, tests each wheel, and uploads only from a manual dispatch.
 - A cold `car_data[n]` (and `Laps.telemetry` of many laps) fetches the
   laps no cache tier holds in one parallel network wave instead of one
   request after another: 11-20 s became 0.4-0.8 s for a driver's

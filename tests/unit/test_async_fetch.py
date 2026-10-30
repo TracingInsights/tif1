@@ -900,7 +900,33 @@ class TestHttpCreateSession:
 
         session = _create_session()
         assert session is mock_session
+        # Certificate revocation (OCSP) checks stay on unless http_revocation_check=False.
         mock_niquests.Session.assert_called_once_with(multiplexed=True, disable_http3=False)
+        assert "revocation_configuration" not in mock_niquests.adapters.HTTPAdapter.call_args.kwargs
+
+    def test_revocation_check_off_skips_ocsp(self, monkeypatch):
+        """http_revocation_check=False turns niquests' OCSP check off."""
+        mock_niquests = MagicMock()
+        mock_session = MagicMock()
+        mock_niquests.Session.return_value = mock_session
+        monkeypatch.setattr(http_mod, "_niquests", mock_niquests)
+        monkeypatch.setattr(
+            "tif1.config.get_config",
+            lambda: {
+                "http_resolvers": ["standard"],
+                "http_multiplexed": True,
+                "http_disable_http3": True,
+                "http_revocation_check": False,
+            },
+        )
+
+        assert _create_session() is mock_session
+        mock_niquests.Session.assert_called_once_with(
+            multiplexed=True, disable_http3=True, revocation_configuration=None
+        )
+        assert (
+            mock_niquests.adapters.HTTPAdapter.call_args.kwargs["revocation_configuration"] is None
+        )
 
     def test_with_doh_resolver(self, monkeypatch):
         """Session created with DoH resolver."""
@@ -928,7 +954,9 @@ class TestHttpCreateSession:
         assert session is mock_session
         # The legacy ``doh://<provider>`` spelling is translated to niquests' form.
         mock_niquests.Session.assert_called_once_with(
-            multiplexed=True, resolver="doh+cloudflare://", disable_http3=False
+            multiplexed=True,
+            resolver="doh+cloudflare://",
+            disable_http3=False,
         )
 
     def test_all_resolvers_fail_raises_network_error(self, monkeypatch):
@@ -979,4 +1007,7 @@ class TestHttpCreateSession:
         assert session is mock_session
         # First call should use standard DNS (None resolver)
         first_call = mock_niquests.Session.call_args_list[0]
-        assert first_call == ((), {"multiplexed": True, "disable_http3": False})
+        assert first_call == (
+            (),
+            {"multiplexed": True, "disable_http3": False},
+        )

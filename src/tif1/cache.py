@@ -189,15 +189,63 @@ def _frame_compress_pool(n_blobs: int) -> Any:
     )
 
 
-def _decompress_frame_blob(blob: bytes) -> bytes | bytearray:
+def _compress_driver_row(prefix: bytes | None, content: bytes | bytearray | memoryview) -> bytes:
+    """Stored form of a driver row: the narrowing plan (if any) + the compressed content."""
+    compressed = _compress_frame_blob(content)
+    return compressed if prefix is None else prefix + compressed
+
+
+# Olympia H1: a narrowed driver row starts with this magic, outside the
+# compressed content (``frame_codec.encode_driver_row``; the bytes are
+# ``frame_narrow.NARROW_MAGIC``, repeated so the check imports nothing).
+_NARROW_ROW_MAGIC = b"TF1\x03"
+
+
+def _expand_narrow_row(blob: Any, codec: Any) -> Any:
+    """Decompress a narrowed driver row and widen it into a writable driver blob.
+
+    The content is decompressed straight into a buffer of the expanded length
+    (pyarrow fills the front and leaves the slack for the widened columns), so
+    the untouched columns are written once, by the decompressor. Raises
+    ``ValueError`` on a malformed row.
+    """
+    from .core_utils import frame_narrow
+
+    plan, inner = frame_narrow.split_row(blob)
+    size = plan[0]
+    buffer: Any = None
+    if codec is not None and bytes(inner[:4]) == _LZ4_MAGIC:
+        try:
+            buffer = codec.decompress(inner, decompressed_size=size, memory_pool=_PA_LZ4_POOL[0])
+        except (OSError, RuntimeError, TypeError, ValueError, _arrow_error()):
+            # A corrupt frame (pyarrow raises OSError), or a pyarrow that
+            # insists on the exact size: the serial path below decides.
+            buffer = None
+    if buffer is None:
+        try:
+            raw = _decompress_frame_blob(inner)
+        except (*_ZSTD_ERRORS, OSError, RuntimeError) as e:
+            raise ValueError(f"corrupt narrowed driver row: {e}") from e
+        if len(raw) > size:
+            raise ValueError("narrowed driver row content exceeds its plan")
+        buffer = bytearray(size)
+        buffer[: len(raw)] = raw
+    frame_narrow.expand(plan, buffer)
+    return buffer
+
+
+def _decompress_frame_blob(blob: Any) -> Any:
     """Decompress a frame-tier blob; both lz4 and legacy zstd rows read.
 
     lz4 rows come back as a writable ``bytearray`` so the typed-columnar
-    decoder can view them in place instead of copying. Raises ``ValueError``
-    when no importable codec can read the row (for example a legacy zstd row
-    on an interpreter with lz4 but no zstd binding), so the batch reader
-    treats it as a corrupt-row miss instead of aborting.
+    decoder can view them in place instead of copying; a narrowed driver row
+    (Olympia H1) comes back widened into its driver blob. Raises
+    ``ValueError`` when no importable codec can read the row (for example a
+    legacy zstd row on an interpreter with lz4 but no zstd binding), so the
+    batch reader treats it as a corrupt-row miss instead of aborting.
     """
+    if blob[:4] == _NARROW_ROW_MAGIC:
+        return _expand_narrow_row(blob, None)
     if _lz4_frame is not None and blob[:4] == _LZ4_MAGIC:
         return _lz4_frame.decompress(blob, return_bytearray=True)
     if _zstd_decompress is None or _zstd_decompress_mt is None:
@@ -320,8 +368,12 @@ def _can_decompress_in_parallel(codec: Any) -> bool:
 def _decompress_row(row: tuple[Any, ...], codec: Any) -> tuple[Any, ...] | None:
     """``(*key, buffer)`` for one frame-tier row, or None when no codec reads it."""
     blob = row[-1]
-    size = _lz4_frame_content_size(blob) if codec is not None else -1
     try:
+        if blob[:4] == _NARROW_ROW_MAGIC:
+            # Olympia H1: the widening runs here, in the decompression worker,
+            # once per row (numpy's casts and adds release the GIL).
+            return (*row[:-1], _expand_narrow_row(blob, codec))
+        size = _lz4_frame_content_size(blob) if codec is not None else -1
         if size >= 0:
             # pyarrow's decoder is ~2x python-lz4's even serially
             # (0.9 vs 1.9 ms on a 1.2 MB driver row) and copies nothing.
@@ -413,6 +465,10 @@ def _completed_frame_rows(pending: list[Any]) -> Iterator[tuple[Any, ...]]:
 # consumes finished ones. Without ``tif1-native`` the workers only
 # decompress and the caller parses with orjson (which holds the GIL).
 _PARALLEL_PAYLOAD_MIN_ROWS = 64
+# Olympia H6: with the native parse in the workers a row is ~0.5 ms of
+# GIL-free work on full-size laps (2025 Bahrain), so a driver's ~57 laps
+# (``Laps.telemetry`` on a payload-tier load) already pays for the pool.
+_PARALLEL_NATIVE_PAYLOAD_MIN_ROWS = 16
 _PARALLEL_PAYLOAD_MAX_WORKERS = 6
 _PARALLEL_PAYLOAD_CHUNKS_PER_WORKER = 4
 
@@ -430,16 +486,23 @@ def _usable_cpu_count() -> int:
 def _decode_payload_rows(
     rows: list[tuple[Any, Any, Any]],
     workers: int | None = None,
-    min_parallel: int = _PARALLEL_PAYLOAD_MIN_ROWS,
+    min_parallel: int | None = None,
 ) -> Iterator[list[tuple[Any, Any, Any, Any]]]:
     """Yield payload-tier ``(driver, lap, data)`` rows as ``(driver, lap, raw, parsed)`` chunks.
 
     ``raw`` is the decompressed JSON blob, ``parsed`` the decoded payload.
     Chunks come in completion order. A row that fails to decompress or
     parse raises ``ValueError`` from the consuming iteration, like the
-    serial reader.
+    serial reader. ``min_parallel`` defaults to the native or orjson
+    threshold.
     """
     n_rows = len(rows)
+    if min_parallel is None:
+        min_parallel = (
+            _PARALLEL_NATIVE_PAYLOAD_MIN_ROWS
+            if NATIVE_TELEMETRY_DECODER_AVAILABLE
+            else _PARALLEL_PAYLOAD_MIN_ROWS
+        )
     if workers is None:
         workers = min(_PARALLEL_PAYLOAD_MAX_WORKERS, _usable_cpu_count())
     if workers < 2 or n_rows < min_parallel:
@@ -502,6 +565,9 @@ _POLARS_IPC_TABLE = "telemetry_frames_pl_ipc"
 # The per-frame ``telemetry_frames`` table stays readable (rows written by
 # earlier releases, frames whose blocks the codec does not know); a session
 # served from it is re-materialized into driver rows in the background.
+# Olympia H1: rows are written narrowed (``frame_narrow``: small-integer
+# clocks, channels and codes, widened once per row after decompression);
+# plain lz4 driver rows from earlier releases read unchanged.
 _PANDAS_DRIVER_TABLE = "telemetry_frames_drv"
 _ALL_FRAME_TABLES: tuple[str, ...] = (
     *_FRAME_TABLES.values(),
@@ -791,6 +857,9 @@ class SessionMemo:
         # Drivers that had one lap built on its own from the payload tier; their
         # next single lap decodes the whole driver row instead.
         self.single_lap_drivers: set[str] = set()
+        # polars drivers whose tier row was asked once for all their loaded
+        # laps; a lap that row did not hold is asked for on its own after.
+        self.whole_row_drivers: set[str] = set()
         self.frame_adopter: Callable[[Any, str], Any] | None = None
         self.fastest_lap_ref: tuple[str, int] | None = None
         self.fastest_lap_ref_laps_source_id: int | None = None
@@ -2163,10 +2232,7 @@ class Cache:
         covered by a driver row are deleted (they were either the legacy
         copy of the same frame or superseded by this batch).
         """
-        from .core_utils.frame_codec import (
-            decode_driver_frames,
-            encode_driver_frames,
-        )
+        from .core_utils.frame_codec import decode_driver_frames, encode_driver_row
 
         by_driver: dict[str, dict[int, Any]] = {}
         for driver, lap, frame in frames:
@@ -2207,7 +2273,7 @@ class Cache:
                             stored = {}  # unreadable row: rewrite it from this batch
                         for lap, frame in stored.items():
                             merged.setdefault(int(lap), frame)
-                    blob, unsupported = encode_driver_frames(list(merged.items()))
+                    prefix, blob, unsupported = encode_driver_row(list(merged.items()))
                     unsupported_laps = {lap for lap, _ in unsupported}
                     if unsupported:
                         leftovers.extend(
@@ -2221,7 +2287,7 @@ class Cache:
                     compressed: Any = None
                     if pool is not None:
                         try:
-                            compressed = pool.submit(_compress_frame_blob, blob)
+                            compressed = pool.submit(_compress_driver_row, prefix, blob)
                         except RuntimeError:
                             # Interpreter shutdown: concurrent.futures refuses new
                             # work before the exit hook joins this writer, so a
@@ -2229,7 +2295,7 @@ class Cache:
                             # frames. Compressing inline still completes the write.
                             compressed = None
                     if compressed is None:
-                        compressed = _compress_frame_blob(blob)
+                        compressed = _compress_driver_row(prefix, blob)
                     rows.append(
                         [
                             year,
@@ -2617,6 +2683,20 @@ class Cache:
             )
             # Default to True on probe failures to preserve cache-read behavior.
             return True
+
+    def has_json_entry(self, key: str) -> bool:
+        """Return True when the JSON tier holds ``key`` (a primary-key probe, nothing decoded)."""
+        if self.conn is None:
+            return False
+        if key in self._parsed_cache or key in self._memory_cache:
+            return True
+        try:
+            with self._sqlite_lock:
+                row = self.conn.execute("SELECT 1 FROM cache WHERE key = ?", (key,)).fetchone()
+        except (RuntimeError, sqlite3.Error) as e:
+            logger.debug("Cache key probe failed for %s: %s", key, e)
+            return False
+        return row is not None
 
     def clear(self) -> None:
         """Clear all cached data."""

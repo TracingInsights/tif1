@@ -2012,9 +2012,11 @@ http = get_session()  # Shared niquests.Session
 # - niquests.Session(multiplexed=True): HTTP/2 when the CDN offers it,
 #   HTTP/1.1 otherwise; HTTP/3 is off unless TIF1_HTTP_DISABLE_HTTP3=false
 #   (the switch is passed to the mounted adapter as well, which owns negotiation)
-# - tif1.get_session() warms this connection once per process in a daemon
-#   thread (TIF1_CDN_PRECONNECT) when the session is not cached yet, so the
-#   first payload request of a cold load skips DNS and TLS
+# - tif1.get_session() warms two connections once per process in daemon
+#   threads (TIF1_CDN_PRECONNECT) when the session is not cached yet, before
+#   it imports pandas or polars, so the first payload requests of a cold load
+#   skip DNS and TLS
+# - certificate revocation (OCSP) checks stay on; TIF1_HTTP_REVOCATION_CHECK=false skips them
 # - DNS: the system resolver; DNS over HTTPS (Cloudflare, then Google) only
 #   when a session with the system resolver cannot be created (TIF1_HTTP_RESOLVERS)
 # - HTTPAdapter(pool_connections=256, pool_maxsize=1024, pool_block=False)

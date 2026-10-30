@@ -25,8 +25,16 @@ from tif1.models_polars import (
     PolarsLaps,
     PolarsSessionResults,
     PolarsTelemetry,
+    _held,
+    _isin_values,
+    _mask_values,
+    _present_values,
     _rule_to_ns,
+    _segment_marks,
+    _shift_down,
+    _stable_order,
     _to_ns,
+    _valid_values,
 )
 
 NS = pl.Duration("ns")
@@ -1387,6 +1395,205 @@ class TestHelpers:
     )
     def test_rule_to_ns(self, rule, expected):
         assert _rule_to_ns(rule) == expected
+
+
+# --------------------------------------------------------------------------- #
+# Off the query engine: the kernels and the methods that use them
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def plan_count(monkeypatch) -> list[int]:
+    """Number of polars query plans run (``LazyFrame.collect`` and its eager twin)."""
+    count = [0]
+    for name in ("collect", "_collect_eager"):
+        original = getattr(pl.LazyFrame, name, None)
+        if original is None:
+            continue
+
+        def counted(self, *args, _original=original, **kwargs):
+            count[0] += 1
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(pl.LazyFrame, name, counted)
+    return count
+
+
+def _quali_laps(laps, session):
+    labels = pl.Series("QualifyingSession", ["Q1", "Q1", "q2 ", "Q2", None, "Q3"])
+    return PolarsLaps._from_frame(laps.hstack([labels]), session)
+
+
+class TestQueryEngineFree:
+    """The notebook-path methods run no polars query plan (each costs ~0.5 ms,
+    the first of a process ~5-7 ms while polars starts its thread pools)."""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda laps: laps.pick_drivers(["VER", "44"]),
+            lambda laps: laps.pick_drivers(["VER", "HAM", "LEC", "NOR", "PIA"]),
+            lambda laps: laps.pick_driver("VER"),
+            lambda laps: laps.pick_driver(44),
+            lambda laps: laps.pick_teams(["Mercedes"]),
+            lambda laps: laps.pick_team("Mercedes"),
+            lambda laps: laps.pick_fastest(),
+            lambda laps: laps.pick_fastest(only_by_time=True),
+            lambda laps: laps.pick_quicklaps(),
+            lambda laps: laps.pick_quicklaps(1.02),
+            lambda laps: laps.pick_wo_box(),
+            lambda laps: laps.pick_box_laps("both"),
+            lambda laps: laps.pick_track_status("1"),
+            lambda laps: laps.pick_track_status("12", how="any"),
+            lambda laps: laps.pick_track_status("2", how="excludes"),
+            lambda laps: laps.pick_lap(2),
+            lambda laps: laps.pick_laps([1, 3]),
+            lambda laps: laps.pick_laps(slice(2, 3)),
+            lambda laps: laps.pick_compounds(["soft", "hard"]),
+            lambda laps: laps.pick_tyre("medium"),
+            lambda laps: laps.pick_accurate(),
+            lambda laps: laps.pick_not_deleted(),
+            lambda laps: list(laps.iterlaps(require=["LapTime", "PitInTime"])),
+            lambda laps: laps.pick_drivers("VER").telemetry,
+            lambda laps: laps.pick_drivers("VER").get_telemetry(),
+            lambda laps: laps.get_weather_data(),
+            lambda laps: _quali_laps(laps, laps.session).split_qualifying_sessions(),
+            lambda laps: laps.session.results.row_for("max verstappen"),
+            lambda laps: PolarsDriver.from_session(laps.session, "HAM").get_lap(2),
+        ],
+    )
+    def test_laps_methods(self, laps, plan_count, call):
+        call(laps)
+        assert plan_count[0] == 0
+
+    @pytest.mark.parametrize(
+        ("method", "args", "kwargs"),
+        [
+            ("add_distance", (), {}),
+            ("add_relative_distance", (), {}),
+            ("add_differential_distance", (), {}),
+            ("add_driver_ahead", (), {}),
+            ("add_track_status", (), {}),
+            ("merge_channels", ("other",), {}),
+            ("slice_by_lap", ("lap",), {}),
+            ("slice_by_time", (seconds(3605.15), seconds(3605.55)), {"pad": 1}),
+            ("slice_by_time", (seconds(3605.15), seconds(3605.55)), {"interpolate_edges": True}),
+            ("_session_time_as_time", (), {}),
+            ("get_first_non_zero_time_index", (), {}),
+        ],
+    )
+    def test_telemetry_methods(self, tel, laps, plan_count, method, args, kwargs):
+        named = {
+            "other": PolarsTelemetry._from_frame(
+                build_telemetry_frame("HAM", 1), laps.session, "HAM"
+            ),
+            "lap": laps.pick_drivers("VER").pick_lap(1),
+        }
+        resolved = [named.get(arg, arg) if isinstance(arg, str) else arg for arg in args]
+        plan_count[0] = 0
+        getattr(tel, method)(*resolved, **kwargs)
+        assert plan_count[0] == 0
+
+    def test_fill_missing_holds_without_a_plan(self, tel, plan_count):
+        # Held channels (text, integers, booleans, Source) are filled by
+        # gathers; only interpolated float channels take an expression.
+        gappy = PolarsTelemetry._from_frame(
+            tel.with_columns(
+                pl.lit(0.0).alias("DistanceToDriverAhead"),
+                pl.Series("nGear", [None, 7, None, 8, 8, None, 6, 6, 6, None]),
+                pl.Series("Source", ["car", None] * 5, dtype=pl.Categorical),
+            ),
+            tel.session,
+            "VER",
+        )
+        plan_count[0] = 0
+        filled = gappy.fill_missing()
+        assert plan_count[0] == 0
+        assert filled["nGear"].to_list() == [7, 7, 7, 8, 8, 8, 6, 6, 6, 6]
+        assert filled["Source"].to_list() == ["car", "interpolation"] * 5
+        assert filled["DriverAhead"].null_count() == filled.height  # nothing to hold
+
+
+class TestKernels:
+    """Each kernel equals the polars expression it replaces, nulls and NaN included."""
+
+    NAN = float("nan")
+
+    def test_mask_values(self):
+        mask = pl.Series([True, None, False, True])
+        assert _mask_values(mask).tolist() == mask.fill_null(False).to_list()
+        assert _mask_values(mask, null=True).tolist() == mask.fill_null(True).to_list()
+
+    @pytest.mark.parametrize(
+        "series",
+        [
+            pl.Series([1.0, None, NAN, 4.0]),
+            pl.Series(["a", None, "b", None]),
+            pl.Series([1, None, 3], dtype=pl.Int64).cast(NS),
+            pl.Series([None, None], dtype=pl.Float64),
+            pl.Series([True, False]),
+        ],
+    )
+    def test_present_and_valid(self, series):
+        frame = series.alias("x").to_frame()
+        expected_valid = frame.select(pl.col("x").is_not_null()).to_series()
+        if series.dtype.is_float():
+            expected_valid = frame.select(
+                pl.col("x").is_not_null() & pl.col("x").is_not_nan()
+            ).to_series()
+        assert _present_values(series).tolist() == series.is_not_null().to_list()
+        assert _valid_values(series).tolist() == expected_valid.to_list()
+
+    def test_shift_down(self):
+        series = pl.Series("s", ["a", None, "c"], dtype=pl.Categorical)
+        assert _shift_down(series).to_list() == series.shift(1).to_list()
+        assert _shift_down(series).dtype == series.dtype
+        assert _shift_down(series.head(0)).len() == 0
+
+    @pytest.mark.parametrize("count", [0, 1, 4, 6])
+    def test_isin_values(self, count):
+        series = pl.Series(["VER", None, "HAM", "LEC", "VER"])
+        values = ["VER", "HAM", "NOR", "PIA", "ALO", "SAI"][:count]
+        expected = series.is_in(values).fill_null(False).to_list()
+        assert _isin_values(series, values).tolist() == expected
+
+    def test_stable_order_nulls_last(self):
+        values = pl.Series("v", [3, None, 1, 3, None, 2], dtype=pl.Int64)
+        expected = (
+            pl.DataFrame({"v": values})
+            .with_row_index("i")
+            .sort("v", nulls_last=True, maintain_order=True)
+            .get_column("i")
+            .to_list()
+        )
+        assert _stable_order(values).tolist() == expected
+
+    @pytest.mark.parametrize(
+        ("values", "has_nan"),
+        [
+            ([None, 1.0, NAN, None, 4.0, None], True),
+            ([None, NAN, None], True),
+            ([None, None], False),
+            (["a", None, None, "b", None], False),
+        ],
+    )
+    def test_held(self, values, has_nan):
+        series = pl.Series("x", values)
+        expr = pl.col("x")
+        if has_nan:
+            expr = expr.fill_nan(None)
+        expr = expr.forward_fill().backward_fill()
+        if has_nan:
+            expr = expr.fill_null(self.NAN)
+        expected = series.to_frame().select(expr).to_series()
+        result = _held(series, has_nan)
+        assert result.dtype == expected.dtype
+        assert result.to_frame().equals(expected.to_frame())
+
+    def test_segment_marks(self):
+        labels = ["Q1", " q2\t", "SQ3", "Q4", None, "", "x3 "]
+        assert _segment_marks(labels) == ["1", "2", "3", None, None, None, "3"]
+        assert _segment_marks(["Qualifié 1"]) is None  # polars' Unicode rules decide
 
 
 def test_module_never_imports_pandas():

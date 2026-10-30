@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from tif1.core_utils.circuit_info import circuit_info_from_multiviewer
-from tif1.models import CircuitInfo
+from tif1.models_shared import CircuitInfo
 
 from .api import get_circuit
 

@@ -146,6 +146,12 @@ class Config:
             # regime observed (143 s, 614 s, hours) ran over h3. Set
             # TIF1_HTTP_DISABLE_HTTP3=false to negotiate QUIC again.
             "http_disable_http3": True,
+            # Olympia H11: niquests' certificate revocation (OCSP) check costs
+            # 120-240 ms before the first request of every process (qh3 import
+            # plus a round trip to the CA's responder). It stays on by default;
+            # TIF1_HTTP_REVOCATION_CHECK=false skips it (the chain is verified
+            # either way).
+            "http_revocation_check": True,
             # Argos A8: warm the shared CDN connection (DNS + TLS) in a daemon
             # thread while get_session() returns, so the first payload request
             # of a cold load rides an already-open connection.
@@ -260,6 +266,7 @@ class Config:
             "TIF1_POOL_EXHAUSTION_BACKOFF_JITTER": ("pool_exhaustion_backoff_jitter", float),
             "TIF1_HTTP_MULTIPLEXED": ("http_multiplexed", _to_bool),
             "TIF1_HTTP_DISABLE_HTTP3": ("http_disable_http3", _to_bool),
+            "TIF1_HTTP_REVOCATION_CHECK": ("http_revocation_check", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),

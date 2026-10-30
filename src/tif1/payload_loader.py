@@ -102,12 +102,18 @@ class NiquestsTransport:
     def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
         """Fetch ``url`` with the pooled niquests session and parse the JSON body."""
         from .config import get_config
-        from .http_session import _response_reused_connection, _track_request, get_session
+        from .http_session import (
+            _response_reused_connection,
+            _track_request,
+            get_session,
+            wait_for_warm_connections,
+        )
 
         niquests = _import_niquests()
         if timeout is None:
             timeout = get_config().get("timeout", 30)
 
+        wait_for_warm_connections()
         try:
             response = get_session().get(url, timeout=timeout)
         except niquests.RequestException as e:

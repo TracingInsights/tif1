@@ -3,14 +3,14 @@
 import datetime
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, Union
 
-import pandas as pd
-
 if TYPE_CHECKING:
+    import pandas as pd
     import polars as pl
 
-# Polars is optional and imported lazily; the string ref keeps the annotation
-# meaningful without paying the import cost at module load.
-DataFrame = Union[pd.DataFrame, "pl.DataFrame"]
+# Both frame libraries are imported lazily (a polars session never imports
+# pandas); the string refs keep the annotation meaningful without paying
+# either import at module load.
+DataFrame = Union["pd.DataFrame", "pl.DataFrame"]
 
 
 # Lap data column types

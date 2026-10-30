@@ -799,3 +799,149 @@ class TestSessionSurfaces:
         assert info["Meeting"]["Country"]["Code"] == "BRN"
         assert info["Key"] is None
         assert info["Path"] is None
+
+
+# -- typed weather / race-control tables -------------------------------------------
+
+_WEATHER_PAYLOAD: dict[str, Any] = {
+    "wT": [14.542, 74.57, 134],
+    "wAT": [27.9, 27.8, 28],
+    "wH": [45.0, 45, 46.5],
+    "wP": [1007.9, 1007.9, 1008.0],
+    "wR": [False, True, False],
+    "wTT": [34.5, 34.4, 34.6],
+    "wWD": [29, 9, 359],
+    "wWS": [2.9, 2.9, 2.7],
+}
+_RCM_PAYLOAD: dict[str, Any] = {
+    "time": ["2025-04-13T14:20:01.000000000", "2025-04-13T14:30:01.5", "2025-04-13T15:03:00"],
+    "cat": ["Flag", "Other", "Flag"],
+    "msg": ["GREEN LIGHT - PIT EXIT OPEN", "PIT EXIT CLOSED", "YELLOW IN TRACK SECTOR 7"],
+    "status": ["None", "None", "None"],
+    "flag": ["GREEN", "None", "YELLOW"],
+    "scope": ["Track", "None", "Sector"],
+    "sector": ["None", "None", 7.0],
+    "dNum": ["None", "None", "1"],
+    "lap": [1, 1, 3],
+}
+
+
+def _with(payload: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    return {**payload, **changes}
+
+
+#: (path, payload, typed on pandas, typed on polars): the typed build takes the
+#: common shapes; anything else must be left to the generic build.
+_TABLE_CASES = [
+    ("weather.json", _WEATHER_PAYLOAD, True, True),
+    ("weather.json", _with(_WEATHER_PAYLOAD, wAT=["None", 24.5, 25.0]), False, False),
+    ("weather.json", _with(_WEATHER_PAYLOAD, wWD=[29.0, 9.5, 359.0]), False, False),
+    ("weather.json", _with(_WEATHER_PAYLOAD, wR=[1, 0, 1]), False, False),
+    ("weather.json", _with(_WEATHER_PAYLOAD, extra=[1, 2, 3]), False, False),
+    ("rcm.json", _RCM_PAYLOAD, True, True),
+    # Non-race sessions: sentinel laps and sectors only.
+    ("rcm.json", _with(_RCM_PAYLOAD, lap=["None"] * 3, sector=["None"] * 3), True, True),
+    ("rcm.json", _with(_RCM_PAYLOAD, sector=["None", "3", "12"], lap=[2, "None", 4]), True, True),
+    ("rcm.json", _with(_RCM_PAYLOAD, sector=["None", "3", 7.0]), False, False),
+    ("rcm.json", _with(_RCM_PAYLOAD, msg=["", "PIT EXIT CLOSED", "nan"]), True, True),
+    # polars parses timestamps to microseconds; pandas keeps nanoseconds.
+    ("rcm.json", _with(_RCM_PAYLOAD, time=["2025-04-13T14:20:01.000000001"] * 3), True, False),
+    ("rcm.json", _with(_RCM_PAYLOAD, time=["2025-04-13T14:20:01Z"] * 3), False, False),
+    ("rcm.json", _with(_RCM_PAYLOAD, lap=[1, "2", 3]), False, False),
+]
+
+
+def _session_table(
+    monkeypatch: pytest.MonkeyPatch, path: str, payload: dict[str, Any], lib: str, *, typed: bool
+) -> Any:
+    """The session's weather or race-control table from ``payload`` (no network)."""
+    if not typed:
+        monkeypatch.setattr(core, "_TYPED_SESSION_TABLES", {})
+    session = core.Session(2025, "Pre-Season Testing", "Race", enable_cache=False, lib=lib)
+    session._prefetch_session_tables = lambda: None  # type: ignore[ty:invalid-assignment]
+    session._resolve_ultra_cold_mode = lambda _value: False  # type: ignore[ty:invalid-assignment]
+    session._fetch_json = lambda _path: payload  # type: ignore[ty:invalid-assignment]
+    table = session.weather if path == "weather.json" else session.race_control_messages
+    monkeypatch.undo()
+    return table
+
+
+class TestTypedSessionTables:
+    @pytest.mark.parametrize("lib", BACKENDS)
+    @pytest.mark.parametrize(("path", "payload", "typed_pandas", "typed_polars"), _TABLE_CASES)
+    def test_typed_build_is_the_generic_build(
+        self, monkeypatch, lib, path, payload, typed_pandas, typed_polars
+    ):
+        if lib == "polars":
+            pytest.importorskip("polars")
+        builder, rename_map = (
+            (ss.weather_frame, core.WEATHER_RENAME_MAP)
+            if path == "weather.json"
+            else (ss.race_control_frame, core.RACE_CONTROL_RENAME_MAP)
+        )
+        expected_typed = typed_pandas if lib == "pandas" else typed_polars
+        assert (builder(payload, rename_map, lib) is not None) is expected_typed
+        typed = _session_table(monkeypatch, path, payload, lib, typed=True)
+        generic = _session_table(monkeypatch, path, payload, lib, typed=False)
+        if expected_typed:
+            assert len(typed) == 3
+        if lib == "pandas":
+            pd.testing.assert_frame_equal(typed, generic, check_exact=True)
+            assert typed.columns.dtype == generic.columns.dtype
+            for column in typed.columns:
+                if typed[column].dtype == object:
+                    assert [type(v) for v in typed[column]] == [type(v) for v in generic[column]]
+        else:
+            assert typed.schema == generic.schema
+            assert typed.equals(generic, null_equal=True)
+
+
+class TestClockColumns:
+    @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+    def test_pandas_units_match_the_per_value_path(self, unit):
+        frame = pd.DataFrame(
+            {
+                "date": pd.Series(
+                    [pd.Timestamp("2025-04-13 14:20:01.123"), pd.NaT], dtype=f"datetime64[{unit}]"
+                ),
+                "start": pd.Series(
+                    [pd.Timedelta(seconds=-1.5), pd.NaT], dtype=f"timedelta64[{unit}]"
+                ),
+            }
+        )
+        np.testing.assert_array_equal(
+            ss._column_ns(frame, "date", timedelta=False),
+            ss._datetime_ns(frame["date"].tolist()),
+        )
+        np.testing.assert_array_equal(
+            ss._column_ns(frame, "start", timedelta=True),
+            ss._timedelta_ns(frame["start"].tolist()),
+        )
+
+    def test_polars_keeps_the_microseconds_of_its_python_objects(self):
+        pl = pytest.importorskip("polars")
+        raw = [1999, -1999, -1500, -1, 1, 0, None, -86_400_000_000_001, 1_744_554_001_123_456_789]
+        ints = pl.Series(raw, dtype=pl.Int64)
+        frame = pl.DataFrame(
+            {"start": ints.cast(pl.Duration("ns")), "date": ints.cast(pl.Datetime("ns"))}
+        )
+        np.testing.assert_array_equal(
+            ss._column_ns(frame, "start", timedelta=True),
+            ss._timedelta_ns(frame["start"].to_list()),
+        )
+        np.testing.assert_array_equal(
+            ss._column_ns(frame, "date", timedelta=False),
+            ss._datetime_ns(frame["date"].to_list()),
+        )
+
+    def test_other_dtypes_go_value_by_value(self):
+        frame = pd.DataFrame({"start": [1.5, None], "date": ["2025-04-13T14:20:01", None]})
+        assert ss._column_ns(frame, "start", timedelta=True).tolist() == [
+            1_500_000_000,
+            ss._NS_MIN,
+        ]
+        assert ss._column_ns(frame, "date", timedelta=False).tolist() == [
+            int(pd.Timestamp("2025-04-13T14:20:01").value),
+            ss._NS_MIN,
+        ]
+        assert ss._column_ns(frame, "missing", timedelta=True).size == 0

@@ -15,23 +15,37 @@ functions to:
   (:func:`build_laps_payloads`).
 
 Nothing here touches the network; everything is a function of the payloads.
+
+The results rows of a pandas session carry pandas scalars (``Timedelta``,
+``Timestamp``, ``NaT``); a polars session passes ``native=True`` and its rows
+carry ``datetime``/``numpy`` scalars and ``None`` instead, which
+:func:`finalize_results_frame_polars` converts without pandas (pandas is
+bound lazily here and only imported for a value no native rule covers).
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import math
+import re
+import sys
 from collections import defaultdict, deque
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import pandas as pd
 
 from tif1.core_utils.constants import (
     FASTF1_RESULTS_COLUMNS,
     RESULTS_COLUMN_ORDER,
     TIF1_RESULTS_EXTRA_COLUMNS,
 )
+from tif1.core_utils.lazy_import import lazy_module
 from tif1.ergast.structure import date_from_ergast, timedelta_from_ergast
+
+if TYPE_CHECKING:
+    import pandas as pd
+else:
+    pd = lazy_module("pandas", globals(), "pd")
 
 SessionKind = Literal["race", "qualifying", "identity"]
 
@@ -77,6 +91,9 @@ _STR_SET = frozenset(_STR_COLUMNS)
 _FLOAT_SET = frozenset(_FLOAT_COLUMNS)
 _TIMEDELTA_SET = frozenset(_TIMEDELTA_COLUMNS)
 _NAT_NS = np.iinfo("int64").min
+_EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001 - naive, as the datetime64[ns] columns
+_MICROSECOND = dt.timedelta(microseconds=1)
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def session_kind(session_name: str) -> SessionKind:
@@ -115,9 +132,14 @@ def _as_float(value: Any) -> float:
         return math.nan
 
 
-def _timedelta(value: Any) -> Any:
-    """``pd.Timedelta`` from an Ergast time string, ``pd.NaT`` when missing/invalid."""
+def _timedelta(value: Any, native: bool = False) -> Any:
+    """``pd.Timedelta`` from an Ergast time string, ``pd.NaT`` when missing/invalid.
+
+    ``native``: the ``datetime.timedelta`` itself, ``None`` when missing (no pandas).
+    """
     parsed = timedelta_from_ergast(value)
+    if native:
+        return parsed
     return pd.NaT if parsed is None else pd.Timedelta(parsed)
 
 
@@ -237,39 +259,43 @@ def _first_unused(queue: deque[dict[str, Any]] | None, used: set[int]) -> dict[s
     return next((row for row in queue if id(row) not in used), None)
 
 
-def _identity_fields(row: dict[str, Any]) -> dict[str, Any]:
+def _identity_fields(row: dict[str, Any], native: bool = False) -> dict[str, Any]:
     driver = row.get("Driver", {}) if isinstance(row.get("Driver"), dict) else {}
     constructor = row.get("Constructor", {}) if isinstance(row.get("Constructor"), dict) else {}
     date_of_birth = date_from_ergast(driver.get("dateOfBirth"))
+    if native:
+        birth: Any = date_of_birth
+    else:
+        birth = pd.Timestamp(date_of_birth) if date_of_birth is not None else pd.NaT
     return {
         "DriverId": str(driver.get("driverId", "")),
         "TeamId": str(constructor.get("constructorId", "")),
         "PermanentNumber": str(driver.get("permanentNumber", "")),
         "DriverNationality": str(driver.get("nationality", "")),
         "TeamNationality": str(constructor.get("nationality", "")),
-        "DateOfBirth": pd.Timestamp(date_of_birth) if date_of_birth is not None else pd.NaT,
+        "DateOfBirth": birth,
         "DriverUrl": str(driver.get("url", "")),
         "TeamUrl": str(constructor.get("url", "")),
     }
 
 
-def _race_fields(row: dict[str, Any]) -> dict[str, Any]:
+def _race_fields(row: dict[str, Any], native: bool = False) -> dict[str, Any]:
     position = _as_int(row.get("position"))
     time_block = row.get("Time", {}) if isinstance(row.get("Time"), dict) else {}
     millis = _as_int(time_block.get("millis"))
     raw_time = time_block.get("time")
     if millis is not None and millis >= 0:
-        total = pd.Timedelta(milliseconds=millis)
+        total = dt.timedelta(milliseconds=millis) if native else pd.Timedelta(milliseconds=millis)
     elif isinstance(raw_time, str) and not raw_time.startswith("+"):
-        total = _timedelta(raw_time)
+        total = _timedelta(raw_time, native)
     else:
-        total = pd.NaT
+        total = None if native else pd.NaT
     if isinstance(raw_time, str) and raw_time.startswith("+"):
-        gap = _timedelta(raw_time)
+        gap = _timedelta(raw_time, native)
     elif isinstance(raw_time, str) and raw_time:
-        gap = pd.Timedelta(0)
+        gap = dt.timedelta(0) if native else pd.Timedelta(0)
     else:
-        gap = pd.NaT
+        gap = None if native else pd.NaT
     fastest = row.get("FastestLap", {}) if isinstance(row.get("FastestLap"), dict) else {}
     fastest_time = fastest.get("Time", {}) if isinstance(fastest.get("Time"), dict) else {}
     speed = fastest.get("AverageSpeed", {}) if isinstance(fastest.get("AverageSpeed"), dict) else {}
@@ -284,19 +310,19 @@ def _race_fields(row: dict[str, Any]) -> dict[str, Any]:
         "Laps": _as_float(row.get("laps")),
         "FastestLapRank": _as_float(fastest.get("rank")),
         "FastestLapNumber": _as_float(fastest.get("lap")),
-        "FastestLapTime": _timedelta(fastest_time.get("time")),
+        "FastestLapTime": _timedelta(fastest_time.get("time"), native),
         "FastestLapAvgSpeed": _as_float(speed.get("speed")),
     }
 
 
-def _qualifying_fields(row: dict[str, Any]) -> dict[str, Any]:
+def _qualifying_fields(row: dict[str, Any], native: bool = False) -> dict[str, Any]:
     position = _as_int(row.get("position"))
     return {
         "Position": float(position) if position is not None else math.nan,
         "ClassifiedPosition": str(position) if position is not None else "",
-        "Q1": _timedelta(row.get("Q1")),
-        "Q2": _timedelta(row.get("Q2")),
-        "Q3": _timedelta(row.get("Q3")),
+        "Q1": _timedelta(row.get("Q1"), native),
+        "Q2": _timedelta(row.get("Q2"), native),
+        "Q3": _timedelta(row.get("Q3"), native),
     }
 
 
@@ -314,6 +340,8 @@ def merge_ergast_rows(
     rows: list[dict[str, Any]],
     classification: list[dict[str, Any]],
     kind: SessionKind,
+    *,
+    native: bool = False,
 ) -> list[dict[str, Any]]:
     """Fill the Ergast columns of result rows (matched by ``DriverNumber``).
 
@@ -322,6 +350,8 @@ def merge_ergast_rows(
     qualifying segments, or identity only (practice and the quali-like sprint
     formats, which borrow the race results for ``DriverId``/``TeamId``).
     Drivers only Ergast knows keep NaN ``Position``/``GridPosition`` (fastf1).
+    ``native`` (polars sessions): times are ``datetime`` scalars, ``None``
+    when missing, so building the rows never imports pandas.
     """
     by_number: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
     for erow in classification:
@@ -332,11 +362,11 @@ def merge_ergast_rows(
         erow = queue.popleft() if queue else None
         out = dict(row)
         if erow is not None:
-            out.update(_identity_fields(erow))
+            out.update(_identity_fields(erow, native))
             if kind == "race":
-                out.update(_race_fields(erow))
+                out.update(_race_fields(erow, native))
             elif kind == "qualifying":
-                out.update(_qualifying_fields(erow))
+                out.update(_qualifying_fields(erow, native))
             if out.get("_ergast_only"):
                 out["Position"] = math.nan
                 out["GridPosition"] = math.nan
@@ -414,25 +444,78 @@ def finalize_results_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _is_missing(value: Any) -> bool:
-    return value is None or value is pd.NaT or value is pd.NA or value != value  # noqa: PLR0124
+    if value is None:
+        return True
+    # pandas' NaT/NA can only exist once pandas is imported (never looked up before).
+    pandas = sys.modules.get("pandas")
+    if pandas is not None and (value is pandas.NaT or value is pandas.NA):
+        return True
+    return value != value  # noqa: PLR0124
 
 
-def _str_values(values: list[Any], column: str) -> np.ndarray:
-    """An object column: the values as given, missing ones ``""`` (``Status`` keeps them)."""
+def _str_values(values: list[Any], column: str, native: bool = False) -> np.ndarray:
+    """An object column: the values as given, missing ones ``""`` (``Status`` keeps them).
+
+    ``native`` (the polars builder, which reads every missing value as null):
+    a ``Status`` of strings and missing values skips pandas' inference.
+    """
     if column in _NO_FILL_STR and not all(type(value) is str for value in values):
-        # pandas' own inference decides how a missing Status reads (NaN or None).
-        return pd.Series(values).astype(object).to_numpy()
+        if not (native and all(type(value) is str or _is_missing(value) for value in values)):
+            # pandas' own inference decides how a missing Status reads (NaN or None).
+            return pd.Series(values).astype(object).to_numpy()
+        out = np.empty(len(values), dtype=object)
+        out[:] = values
+        return out
     out = np.empty(len(values), dtype=object)
     out[:] = [value if type(value) is str or not _is_missing(value) else "" for value in values]
     return out
 
 
-def _float_values(values: list[Any]) -> np.ndarray:
+def _float_values(values: list[Any], native: bool = False) -> np.ndarray:
     if all(type(value) is float for value in values):
         return np.array(values, dtype="float64")
+    if native and all(
+        value is None or (isinstance(value, float | int) and not isinstance(value, bool))
+        for value in values
+    ):
+        # pandas' to_numeric of floats, ints and None: float64 with NaN for None.
+        return np.array([math.nan if value is None else value for value in values], "float64")
     return pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(
         dtype="float64", na_value=np.nan
     )
+
+
+def _native_ns_values(values: list[Any], kind: str) -> np.ndarray | None:
+    """pandas-free ``to_timedelta``/``to_datetime`` of the values a polars session's rows hold.
+
+    ``kind`` is ``"m"`` (``timedelta64[ns]``) or ``"M"`` (``datetime64[ns]``).
+    ``datetime`` scalars (and polars' row values), numpy scalars, ``None``/NaN
+    and ``YYYY-MM-DD`` strings convert exactly as pandas converts them;
+    ``None`` is returned for any other value (the caller then uses pandas).
+    """
+    out = np.empty(len(values), dtype="int64")
+    for i, value in enumerate(values):
+        kind_of = type(value)
+        if value is None or (kind_of is float and value != value):  # noqa: PLR0124
+            out[i] = _NAT_NS
+        elif kind == "m" and kind_of is dt.timedelta:
+            out[i] = (value // _MICROSECOND) * 1000
+        elif kind == "m" and kind_of is np.timedelta64:
+            out[i] = value.astype("m8[ns]").astype("int64")
+        elif kind == "M" and kind_of is dt.datetime and value.tzinfo is None:
+            out[i] = ((value - _EPOCH) // _MICROSECOND) * 1000
+        elif kind == "M" and kind_of is np.datetime64:
+            out[i] = value.astype("M8[ns]").astype("int64")
+        elif kind == "M" and kind_of is str and not value:
+            out[i] = _NAT_NS
+        elif kind == "M" and kind_of is str and _ISO_DATE.fullmatch(value):
+            try:
+                out[i] = np.datetime64(value, "ns").astype("int64")
+            except ValueError:  # not a calendar date: pandas decides
+                return None
+        else:
+            return None
+    return out.view("m8[ns]" if kind == "m" else "M8[ns]")
 
 
 def _ns_values(values: list[Any], scalar: type, dtype: str) -> np.ndarray | None:
@@ -448,14 +531,18 @@ def _ns_values(values: list[Any], scalar: type, dtype: str) -> np.ndarray | None
     return out.view(dtype)
 
 
-def _result_columns(rows: list[dict[str, Any]]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+def _result_columns(
+    rows: list[dict[str, Any]], native: bool = False
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """``(typed array per results column, row order by Position)`` of non-empty ``rows``.
 
     The rows are a handful of dicts with known value types (``str``, ``float``,
     ``Timedelta``/``Timestamp``/``NaT``), so every column becomes one typed
     array in Python; a column holding any other type goes through the pandas
     conversion of the general path. The order is ``Position``, unknown last,
-    stable. Shared by the pandas and the polars results builders.
+    stable. Shared by the pandas and the polars results builders; ``native``
+    (polars) reads ``datetime``/numpy scalars and ``None`` without pandas, and
+    leaves a missing ``Status`` as ``None`` (the polars builder's null).
     """
     present: set[str] = set()
     for row in rows:
@@ -468,14 +555,17 @@ def _result_columns(rows: list[dict[str, Any]]) -> tuple[dict[str, np.ndarray], 
             continue
         values = [row.get(column, missing) for row in rows]
         if column in _STR_SET:
-            columns[column] = _str_values(values, column)
+            columns[column] = _str_values(values, column, native)
         elif column in _FLOAT_SET:
-            columns[column] = _float_values(values)
+            columns[column] = _float_values(values, native)
         elif column in _TIMEDELTA_SET:
             if all(_is_missing(value) for value in values):
                 columns[column] = None
                 continue
-            array = _ns_values(values, pd.Timedelta, "timedelta64[ns]")
+            if native:
+                array = _native_ns_values(values, "m")
+            else:
+                array = _ns_values(values, pd.Timedelta, "timedelta64[ns]")
             if array is None:
                 array = pd.to_timedelta(pd.Series(values), errors="coerce").to_numpy(
                     dtype="timedelta64[ns]"
@@ -485,7 +575,10 @@ def _result_columns(rows: list[dict[str, Any]]) -> tuple[dict[str, np.ndarray], 
             if all(_is_missing(value) for value in values):
                 columns[column] = None
                 continue
-            array = _ns_values(values, pd.Timestamp, "datetime64[ns]")
+            if native:
+                array = _native_ns_values(values, "M")
+            else:
+                array = _ns_values(values, pd.Timestamp, "datetime64[ns]")
             if array is None:
                 array = pd.to_datetime(pd.Series(values), errors="coerce").to_numpy(
                     dtype="datetime64[ns]"
@@ -494,7 +587,7 @@ def _result_columns(rows: list[dict[str, Any]]) -> tuple[dict[str, np.ndarray], 
     count = len(rows)
     for column in [name for name, values in columns.items() if values is None]:
         if column in _STR_SET:
-            fill = pd.NA if column in _NO_FILL_STR else ""
+            fill = (None if native else pd.NA) if column in _NO_FILL_STR else ""
             filled = np.empty(count, dtype=object)
             filled[:] = [fill] * count
         elif column in _FLOAT_SET:
@@ -543,7 +636,7 @@ def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
     if rows:
         # The pandas builder's typed arrays: one ``pl.Series`` per column, no
         # non-strict cast of Python values (each ran a query plan).
-        columns, order = _result_columns(rows)
+        columns, order = _result_columns(rows, native=True)
         series = []
         for column, array in columns.items():
             values = array[order]

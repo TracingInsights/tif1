@@ -845,6 +845,16 @@ def get_sessions(year: int, event: str, *, backend: ScheduleBackend | None = Non
     return list(_get_sessions_cached(year, event, backend))
 
 
+def _event_round_number(year: int, name: str, backend: ScheduleBackend | None = None) -> Any:
+    """``RoundNumber`` of the event ``name`` resolves to, as its :class:`Event` reports it.
+
+    Pandas-free (no ``Event`` is built); raises like :func:`get_event_by_name`.
+    """
+    event_name = _resolve_event_name(year, name, backend=backend)
+    metadata = _record_metadata(_get_year_schedule(year, backend)).get(event_name)
+    return metadata.get("RoundNumber", 0) if isinstance(metadata, dict) else 0
+
+
 def _get_event_for_year(
     year: int, event_name: str, backend: ScheduleBackend | None = None
 ) -> Event:
@@ -854,12 +864,10 @@ def _get_event_for_year(
     return _create_event(year, event_name, metadata, backend)
 
 
-def _create_event(
-    year: int, event_name: str, metadata: Any, backend: ScheduleBackend | None = None
-) -> Event:
-    from .event_frames import Event
-
-    event_factory = cast(Any, Event)
+def _event_metadata(
+    year: int, metadata: Any, backend: ScheduleBackend | None = None
+) -> dict[str, Any] | None:
+    """A copy of an event's schedule metadata with the circuit columns joined (f1schedule)."""
     event_metadata = dict(metadata) if isinstance(metadata, dict) else None
     if event_metadata is not None and _effective_backend(year, backend) == "f1schedule":
         # Circuit columns (id, name, coordinates, URLs) from the packaged
@@ -869,7 +877,103 @@ def _create_event(
         extras.update(_ergast_circuit_extras(year, event_metadata.get("RoundNumber")))
         for key, value in extras.items():
             event_metadata.setdefault(key, value)
+    return event_metadata
+
+
+def _create_event(
+    year: int, event_name: str, metadata: Any, backend: ScheduleBackend | None = None
+) -> Event:
+    from .event_frames import Event
+
+    event_factory = cast(Any, Event)
+    event_metadata = _event_metadata(year, metadata, backend)
     return cast(Event, event_factory(year, event_name, event_metadata, backend=backend))
+
+
+def _derive_location(name: Any) -> str:
+    """An event's default ``Location``: its name without "Grand Prix"."""
+    if not isinstance(name, str):
+        return ""
+    stripped = name.replace("Grand Prix", "").strip()
+    return stripped if stripped else name
+
+
+def _event_row(
+    year: int, event_name: str, backend: ScheduleBackend | None = None
+) -> dict[str, Any]:
+    """The values an :class:`Event` is built from, without pandas.
+
+    The same keys, defaults and precedence as ``Event`` (defaults, then the
+    session names, then the schedule metadata), but the date fields keep the
+    schedule's ISO strings (``None`` where ``Event`` puts ``NaT``): the
+    session reads its round, circuit texts and scheduled start from this row,
+    so a polars session never builds the pandas ``Event``.
+    """
+    year_payload = _resolve_year_payload(year, backend)
+    metadata_dict = year_payload.get("metadata", {})
+    metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
+    event_metadata = _event_metadata(year, metadata, backend)
+    sessions = get_sessions(year, event_name, backend=backend)
+    row: dict[str, Any] = {
+        "RoundNumber": 0,
+        "Country": "",
+        "Location": _derive_location(event_name),
+        "OfficialEventName": event_name,
+        "EventDate": None,
+        "EventName": event_name,
+        "EventFormat": "conventional",
+    }
+    for i, session in enumerate(sessions, 1):
+        row[f"Session{i}"] = session
+        row[f"Session{i}Date"] = None
+        row[f"Session{i}DateUtc"] = None
+    row["F1ApiSupport"] = True
+    if event_metadata:
+        row.update(event_metadata)
+    return row
+
+
+def _event_session_name(
+    year: int, event_name: str, identifier: Any, backend: ScheduleBackend | None = None
+) -> str:
+    """Full session name of ``identifier`` at an event (:meth:`Event.get_session_name`).
+
+    Raises:
+        ValueError: If the identifier is invalid or the resolved session does
+            not exist for this event.
+    """
+    available_sessions = get_sessions(year, event_name, backend=backend)
+
+    try:
+        session_num = float(identifier)
+    except (TypeError, ValueError):
+        if not isinstance(identifier, str):
+            raise ValueError(f"Invalid session type '{identifier}'") from None
+
+        session_name = _SESSION_TYPES_BY_CASEFOLD.get(identifier.casefold())
+        if session_name is None:
+            try:
+                session_name = _SESSION_TYPE_ABBREVIATIONS[identifier.upper()]
+            except KeyError:
+                raise ValueError(f"Invalid session type '{identifier}'") from None
+
+        # Backward compatibility for older sprint weekends.
+        if session_name == "Sprint Qualifying" and year in (2021, 2022):
+            session_name = "Sprint"
+
+        if session_name not in available_sessions:
+            raise ValueError(f"Session type '{identifier}' does not exist for this event")
+
+        return session_name
+
+    if not session_num.is_integer() or int(session_num) not in (1, 2, 3, 4, 5):
+        raise ValueError(f"Invalid session type '{session_num}'")
+
+    session_index = int(session_num) - 1
+    if session_index >= len(available_sessions):
+        raise ValueError(f"Session number {int(session_num)} does not exist for this event")
+
+    return available_sessions[session_index]
 
 
 # Lowest fuzzy score (rapidfuzz ratio, 0-100) that still counts as a match.

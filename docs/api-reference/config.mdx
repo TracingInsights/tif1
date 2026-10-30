@@ -404,6 +404,7 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 # HTTP Session Settings
 export TIF1_HTTP_MULTIPLEXED=true
 export TIF1_HTTP_DISABLE_HTTP3=true
+export TIF1_HTTP_REVOCATION_CHECK=true
 export TIF1_CDN_PRECONNECT=true
 # export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
 # export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
@@ -999,8 +1000,16 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="http_revocation_check" type="bool" default="True">
+  Check the CDN certificate for revocation (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check costs 120-240 ms before the first request of every cold load; set it to `False` to skip it.
+
+  ```python
+  config.set("http_revocation_check", False)  # skip the OCSP check
+  ```
+</ResponseField>
+
 <ResponseField name="cdn_preconnect" type="bool" default="True">
-  Warm the shared CDN connection in a daemon thread during `get_session()`, so the first request of a cold load skips the DNS and TLS handshake. Skipped in offline and CI mode.
+  Warm the shared CDN connections in daemon threads during `get_session()`, so the first requests of a cold load skip the DNS and TLS handshake. The warm-up starts before pandas or polars is imported, and only for a session that is not cached yet. Skipped in offline and CI mode.
 
   ```python
   config.set("cdn_preconnect", False)  # keep get_session() network-free

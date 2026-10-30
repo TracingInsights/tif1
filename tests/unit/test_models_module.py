@@ -15,16 +15,18 @@ import pytest
 
 
 def test_models_module_defines_model_family() -> None:
-    """All moved model classes are defined in tif1.models, not re-exported from core."""
-    from tif1 import models
+    """All moved model classes are defined in tif1.models, not re-exported from core.
+
+    The backend-neutral classes live in the pandas-free ``tif1.models_shared``
+    (a polars session never imports pandas) and are the same objects here.
+    """
+    from tif1 import models, models_shared
 
     for name in (
-        "CircuitInfo",
         "Driver",
         "DriverResult",
         "Lap",
         "Laps",
-        "LazyTelemetryDict",
         "SessionResults",
         "Telemetry",
         "TelemetryProvider",
@@ -32,6 +34,9 @@ def test_models_module_defines_model_family() -> None:
         "_LapInternal",
     ):
         assert getattr(models, name).__module__ == "tif1.models", name
+    for name in ("CircuitInfo", "LazyTelemetryDict"):
+        assert getattr(models, name) is getattr(models_shared, name), name
+        assert getattr(models, name).__module__ == "tif1.models_shared", name
 
 
 def test_core_reexports_model_identity() -> None:
@@ -82,11 +87,12 @@ def test_models_module_does_not_import_core() -> None:
 
 
 def test_circuit_info_lazy_export_targets_models() -> None:
-    """The package lazy-export map must point CircuitInfo at tif1.models."""
+    """``tif1.CircuitInfo`` is the models class, exported from the pandas-free module."""
     import tif1
+    from tif1 import models
 
-    assert tif1._LAZY_EXPORTS["CircuitInfo"] == ("tif1.models", "CircuitInfo")
-    assert tif1.CircuitInfo.__module__ == "tif1.models"
+    assert tif1._LAZY_EXPORTS["CircuitInfo"] == ("tif1.models_shared", "CircuitInfo")
+    assert tif1.CircuitInfo is models.CircuitInfo
 
 
 def test_session_satisfies_telemetry_provider_protocol() -> None:

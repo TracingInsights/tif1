@@ -16,6 +16,7 @@ from .core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .http_session import close_session as close_http_session
 from .http_session import get_session as get_http_session
+from .http_session import wait_for_warm_connections
 
 if TYPE_CHECKING:
     import asyncio
@@ -191,7 +192,10 @@ def _get_resolved(session_client: Any, url: str, timeout: Any) -> Any:
     event-loop thread, so every in-flight response was waited for serially
     on the loop (instrumented: 1461 resolutions, 9.7 s of a 10.2 s batch).
     Touching ``status_code`` here moves the wait into the worker thread.
+    The first requests of a cold load wait for the pre-connect's warm
+    connections (bounded) rather than opening their own.
     """
+    wait_for_warm_connections()
     response = session_client.get(url, timeout=timeout)
     _ = getattr(response, "status_code", None)
     return response

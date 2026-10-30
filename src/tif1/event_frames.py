@@ -91,10 +91,7 @@ class Event(pd.Series):
 
     @staticmethod
     def _derive_location(name: str) -> str:
-        if not isinstance(name, str):
-            return ""
-        stripped = name.replace("Grand Prix", "").strip()
-        return stripped if stripped else name
+        return _events._derive_location(name)
 
     @property
     def year(self):
@@ -118,40 +115,9 @@ class Event(pd.Series):
             ValueError: If the identifier is invalid or the resolved session
                 does not exist for this event.
         """
-        available_sessions = _events.get_sessions(
-            self._year, self._event_name, backend=getattr(self, "_backend", None)
+        return _events._event_session_name(
+            self._year, self._event_name, identifier, getattr(self, "_backend", None)
         )
-
-        try:
-            session_num = float(identifier)
-        except (TypeError, ValueError):
-            if not isinstance(identifier, str):
-                raise ValueError(f"Invalid session type '{identifier}'") from None
-
-            session_name = _events._SESSION_TYPES_BY_CASEFOLD.get(identifier.casefold())
-            if session_name is None:
-                try:
-                    session_name = _events._SESSION_TYPE_ABBREVIATIONS[identifier.upper()]
-                except KeyError:
-                    raise ValueError(f"Invalid session type '{identifier}'") from None
-
-            # Backward compatibility for older sprint weekends.
-            if session_name == "Sprint Qualifying" and self.year in (2021, 2022):
-                session_name = "Sprint"
-
-            if session_name not in available_sessions:
-                raise ValueError(f"Session type '{identifier}' does not exist for this event")
-
-            return session_name
-
-        if not session_num.is_integer() or int(session_num) not in (1, 2, 3, 4, 5):
-            raise ValueError(f"Invalid session type '{session_num}'")
-
-        session_index = int(session_num) - 1
-        if session_index >= len(available_sessions):
-            raise ValueError(f"Session number {int(session_num)} does not exist for this event")
-
-        return available_sessions[session_index]
 
     def get_session_date(self, identifier: int | str, utc: bool = False) -> pd.Timestamp:
         """Return date and time of a specific session from this event.
@@ -165,13 +131,19 @@ class Event(pd.Series):
                 or local timestamp is unavailable.
         """
         session_name = self.get_session_name(identifier)
-        relevant_columns = self.loc[["Session1", "Session2", "Session3", "Session4", "Session5"]]
-        mask = relevant_columns == session_name
+        labels = ["Session1", "Session2", "Session3", "Session4", "Session5"]
+        index = self.index
+        if all(label in index for label in labels):
+            # The first label holding the session, as the mask + idxmax below,
+            # read as scalars (the mask built two Series, ~1 ms).
+            name = next((label for label in labels if self[label] == session_name), None)
+        else:
+            mask = self.loc[labels] == session_name  # KeyError: a label is missing
+            name = mask.idxmax() if mask.any() else None
 
-        if not mask.any():
+        if name is None:
             raise ValueError(f"Session type '{identifier}' does not exist for this event")
 
-        name = mask.idxmax()
         date_utc = self[f"{name}DateUtc"]
         date = self[f"{name}Date"]
 

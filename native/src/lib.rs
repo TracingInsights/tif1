@@ -17,18 +17,31 @@
 //! - anything else (nested arrays, booleans, ...) -> ValueError; the caller
 //!   falls back to orjson for the whole payload.
 //!
+//! String channels named in `dict_channels` (``DriverAhead``: ~770 samples
+//! per lap, a handful of distinct driver numbers) are dictionary-encoded
+//! instead of materialized as one Python `str` per sample: the scan interns
+//! each token into a category list and records an int32 code per sample
+//! (`-1` for a JSON null; the literal `"None"` stays a category, so the
+//! encoding is lossless). The interpreter then only builds the code array
+//! (one memcpy) and the few category strings, and `dict_factory(codes,
+//! categories)` wraps them (a `(codes, categories)` tuple without a factory).
+//!
 //! Nested objects (the `tel` wrapper) recurse; scalar values (`dataKey`) are
 //! returned as Python objects.
+
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 
 use numpy::IntoPyArray;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyList, PyTuple};
 
 enum Channel {
     Ints(Vec<i64>),
     Floats(Vec<f64>),
     Strings(Vec<Option<String>>),
+    Dict { codes: Vec<i32>, categories: Vec<String> },
     Empty,
 }
 
@@ -40,6 +53,110 @@ enum Value {
     Float(f64),
     Bool(bool),
     Null,
+}
+
+/// Categories looked up by linear scan up to this many; beyond it a hash index
+/// keeps a high-cardinality channel linear in its length.
+const DICT_LINEAR_MAX: usize = 32;
+
+/// Collects the string samples of one channel: plain owned strings, or
+/// dictionary codes into first-appearance categories.
+enum StrSink {
+    Plain(Vec<Option<String>>),
+    Dict {
+        codes: Vec<i32>,
+        categories: Vec<String>,
+        // Code of the previous sample: consecutive samples mostly repeat.
+        last: i32,
+        index: Option<HashMap<Vec<u8>, i32>>,
+    },
+}
+
+impl StrSink {
+    fn new(encode: bool, capacity: usize) -> Self {
+        if encode {
+            StrSink::Dict {
+                codes: Vec::with_capacity(capacity),
+                categories: Vec::new(),
+                last: -1,
+                index: None,
+            }
+        } else {
+            StrSink::Plain(Vec::with_capacity(capacity))
+        }
+    }
+
+    #[inline]
+    fn push_null(&mut self) {
+        match self {
+            StrSink::Plain(values) => values.push(None),
+            StrSink::Dict { codes, .. } => codes.push(-1),
+        }
+    }
+
+    /// Push one string sample given as its unescaped bytes.
+    fn push_bytes(&mut self, raw: &[u8]) -> ParseResult<()> {
+        match self {
+            StrSink::Plain(values) => {
+                let text = std::str::from_utf8(raw).map_err(|_| "invalid utf-8 in string")?;
+                values.push(Some(text.to_owned()));
+            }
+            StrSink::Dict {
+                codes,
+                categories,
+                last,
+                index,
+            } => {
+                if *last >= 0 && categories[*last as usize].as_bytes() == raw {
+                    codes.push(*last);
+                    return Ok(());
+                }
+                let found = match index {
+                    Some(map) => map.get(raw).copied(),
+                    None => categories
+                        .iter()
+                        .position(|c| c.as_bytes() == raw)
+                        .map(|i| i as i32),
+                };
+                let code = match found {
+                    Some(code) => code,
+                    None => {
+                        // Equal bytes are equally valid: UTF-8 is checked once
+                        // per category, not per sample.
+                        let text =
+                            std::str::from_utf8(raw).map_err(|_| "invalid utf-8 in string")?;
+                        let code = i32::try_from(categories.len())
+                            .map_err(|_| "too many categories".to_string())?;
+                        categories.push(text.to_owned());
+                        if let Some(map) = index {
+                            map.insert(raw.to_vec(), code);
+                        } else if categories.len() > DICT_LINEAR_MAX {
+                            *index = Some(
+                                categories
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| (c.as_bytes().to_vec(), i as i32))
+                                    .collect(),
+                            );
+                        }
+                        code
+                    }
+                };
+                *last = code;
+                codes.push(code);
+            }
+        }
+        Ok(())
+    }
+
+    fn into_channel(self) -> Channel {
+        match self {
+            StrSink::Plain(values) => Channel::Strings(values),
+            StrSink::Dict {
+                codes, categories, ..
+            } => Channel::Dict { codes, categories },
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -86,6 +203,19 @@ impl<'a> Parser<'a> {
 
     fn parse_string(&mut self) -> ParseResult<String> {
         // Called with the opening quote already consumed.
+        match self.parse_string_bytes()? {
+            Cow::Borrowed(raw) => std::str::from_utf8(raw)
+                .map(str::to_owned)
+                .map_err(|_| "invalid utf-8 in string".to_string()),
+            Cow::Owned(out) => {
+                String::from_utf8(out).map_err(|_| "invalid utf-8 in string".to_string())
+            }
+        }
+    }
+
+    /// The unescaped bytes of a string (opening quote consumed); borrowed from
+    /// the payload unless the string has escapes. UTF-8 is not validated here.
+    fn parse_string_bytes(&mut self) -> ParseResult<Cow<'a, [u8]>> {
         let start = self.pos;
         loop {
             match self.peek() {
@@ -93,24 +223,22 @@ impl<'a> Parser<'a> {
                 Some(b'"') => {
                     let raw = &self.bytes[start..self.pos];
                     self.pos += 1;
-                    return std::str::from_utf8(raw)
-                        .map(str::to_owned)
-                        .map_err(|_| "invalid utf-8 in string".to_string());
+                    return Ok(Cow::Borrowed(raw));
                 }
-                Some(b'\\') => return self.parse_escaped_string(start),
+                Some(b'\\') => return self.parse_escaped_string(start).map(Cow::Owned),
                 Some(_) => self.pos += 1,
             }
         }
     }
 
-    fn parse_escaped_string(&mut self, start: usize) -> ParseResult<String> {
+    fn parse_escaped_string(&mut self, start: usize) -> ParseResult<Vec<u8>> {
         let mut out: Vec<u8> = self.bytes[start..self.pos].to_vec();
         loop {
             match self.peek() {
                 None => return Err("unterminated string".into()),
                 Some(b'"') => {
                     self.pos += 1;
-                    return String::from_utf8(out).map_err(|_| "invalid utf-8 in string".to_string());
+                    return Ok(out);
                 }
                 Some(b'\\') => {
                     self.pos += 1;
@@ -192,12 +320,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_array(&mut self, numeric_hint: bool) -> ParseResult<Channel> {
+    /// The sentinel-only prefix (first `count` samples) as string samples:
+    /// `"None"` tokens stay the literal, JSON nulls become None.
+    fn sentinel_strings(&self, count: usize, encode: bool, capacity: usize) -> ParseResult<StrSink> {
+        let mut sink = StrSink::new(encode, capacity);
+        for i in 0..count {
+            if self.null_marks.get(i).copied().unwrap_or(false) {
+                sink.push_null();
+            } else {
+                sink.push_bytes(b"None")?;
+            }
+        }
+        Ok(sink)
+    }
+
+    fn parse_array(&mut self, numeric_hint: bool, encode: bool) -> ParseResult<Channel> {
         // Opening bracket consumed. Elements are typed as we go; the
         // representation widens ints -> floats -> strings, never narrows.
         let mut ints: Vec<i64> = Vec::with_capacity(512);
         let mut floats: Vec<f64> = Vec::new();
-        let mut strings: Vec<Option<String>> = Vec::new();
+        let mut strings = StrSink::new(false, 0);
         // 0 = ints, 1 = floats, 2 = strings
         let mut mode = 0u8;
         let mut count = 0usize;
@@ -216,9 +358,9 @@ impl<'a> Parser<'a> {
             match self.peek() {
                 Some(b'"') => {
                     self.pos += 1;
-                    let text = self.parse_string()?;
+                    let raw = self.parse_string_bytes()?;
                     self.null_marks.push(false);
-                    if text == "None" {
+                    if *raw == *b"None" {
                         match mode {
                             0 => {
                                 floats = ints.iter().map(|&v| v as f64).collect();
@@ -227,7 +369,7 @@ impl<'a> Parser<'a> {
                                 mode = 1;
                             }
                             1 => floats.push(f64::NAN),
-                            _ => strings.push(Some(text)),
+                            _ => strings.push_bytes(&raw)?,
                         }
                     } else {
                         if mode != 2 {
@@ -238,19 +380,12 @@ impl<'a> Parser<'a> {
                             }
                             // Only sentinels so far: they were "None" tokens
                             // (null is reported as None).
-                            strings = Vec::with_capacity(count + 16);
-                            for i in 0..count {
-                                strings.push(if self.null_marks.get(i).copied().unwrap_or(false) {
-                                    None
-                                } else {
-                                    Some("None".to_string())
-                                });
-                            }
+                            strings = self.sentinel_strings(count, encode, count + 512)?;
                             ints = Vec::new();
                             floats = Vec::new();
                             mode = 2;
                         }
-                        strings.push(Some(text));
+                        strings.push_bytes(&raw)?;
                     }
                 }
                 Some(b'n') => {
@@ -266,7 +401,7 @@ impl<'a> Parser<'a> {
                             mode = 1;
                         }
                         1 => floats.push(f64::NAN),
-                        _ => strings.push(None),
+                        _ => strings.push_null(),
                     }
                 }
                 Some(b'-') | Some(b'0'..=b'9') => {
@@ -313,33 +448,25 @@ impl<'a> Parser<'a> {
             // Every sample was a sentinel in a channel that is not numeric by
             // contract (DriverAhead on a lap with nobody ahead): hand the
             // literal tokens to Python exactly as a generic parser would.
-            let mut tokens: Vec<Option<String>> = Vec::with_capacity(count);
-            for i in 0..count {
-                tokens.push(if self.null_marks.get(i).copied().unwrap_or(false) {
-                    None
-                } else {
-                    Some("None".to_string())
-                });
-            }
-            return Ok(Channel::Strings(tokens));
+            return Ok(self.sentinel_strings(count, encode, count)?.into_channel());
         }
         Ok(match mode {
             0 => Channel::Ints(ints),
             1 => Channel::Floats(floats),
-            _ => Channel::Strings(strings),
+            _ => strings.into_channel(),
         })
     }
 
-    fn parse_value(&mut self, numeric: &dyn Fn(&str) -> bool) -> ParseResult<Value> {
+    fn parse_value(&mut self, keys: &ChannelKeys) -> ParseResult<Value> {
         self.skip_ws();
         match self.peek() {
             Some(b'{') => {
                 self.pos += 1;
-                self.parse_object(numeric)
+                self.parse_object(keys)
             }
             Some(b'[') => {
                 self.pos += 1;
-                Ok(Value::Channel(self.parse_array(false)?))
+                Ok(Value::Channel(self.parse_array(false, false)?))
             }
             Some(b'"') => {
                 self.pos += 1;
@@ -381,7 +508,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_object(&mut self, numeric: &dyn Fn(&str) -> bool) -> ParseResult<Value> {
+    fn parse_object(&mut self, keys: &ChannelKeys) -> ParseResult<Value> {
         // Opening brace consumed.
         let mut items: Vec<(String, Value)> = Vec::with_capacity(20);
         self.skip_ws();
@@ -396,9 +523,11 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let value = if self.peek() == Some(b'[') {
                 self.pos += 1;
-                Value::Channel(self.parse_array(numeric(&key))?)
+                Value::Channel(
+                    self.parse_array(keys.numeric.contains(&key), keys.dict.contains(&key))?,
+                )
             } else {
-                self.parse_value(numeric)?
+                self.parse_value(keys)?
             };
             items.push((key, value));
             self.skip_ws();
@@ -414,8 +543,8 @@ impl<'a> Parser<'a> {
         Ok(Value::Object(items))
     }
 
-    fn parse_document(&mut self, numeric: &dyn Fn(&str) -> bool) -> ParseResult<Value> {
-        let value = self.parse_value(numeric)?;
+    fn parse_document(&mut self, keys: &ChannelKeys) -> ParseResult<Value> {
+        let value = self.parse_value(keys)?;
         self.skip_ws();
         if self.pos != self.bytes.len() {
             return Err("trailing data".into());
@@ -424,12 +553,19 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn to_py(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
+/// Channel names with a contract: numeric by contract (an all-sentinel
+/// channel is a NaN array) and dictionary-encoded string channels.
+struct ChannelKeys {
+    numeric: HashSet<String>,
+    dict: HashSet<String>,
+}
+
+fn to_py(py: Python<'_>, value: Value, dict_factory: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
     Ok(match value {
         Value::Object(items) => {
             let dict = PyDict::new(py);
             for (key, item) in items {
-                dict.set_item(key, to_py(py, item)?)?;
+                dict.set_item(key, to_py(py, item, dict_factory)?)?;
             }
             dict.into_any().unbind()
         }
@@ -445,6 +581,14 @@ fn to_py(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
             }
             list.into_any().unbind()
         }
+        Value::Channel(Channel::Dict { codes, categories }) => {
+            let codes = codes.into_pyarray(py).into_any();
+            let categories = PyList::new(py, categories)?.into_any();
+            match dict_factory {
+                Some(factory) => factory.call1((codes, categories))?.unbind(),
+                None => PyTuple::new(py, [codes, categories])?.into_any().unbind(),
+            }
+        }
         Value::Channel(Channel::Empty) => PyList::empty(py).into_any().unbind(),
         Value::Str(text) => text.into_pyobject(py)?.into_any().unbind(),
         Value::Int(v) => v.into_pyobject(py)?.into_any().unbind(),
@@ -455,32 +599,38 @@ fn to_py(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
 }
 
 /// Decode a telemetry payload into a dict whose list-valued channels are
-/// numpy arrays (numeric) or Python lists (strings). Raises ``ValueError``
-/// for anything the fast scanner does not handle; callers fall back to a
-/// generic JSON parser.
+/// numpy arrays (numeric) or Python lists (strings). String channels named in
+/// ``dict_channels`` come back dictionary-encoded as
+/// ``dict_factory(codes, categories)`` (int32 codes, ``-1`` for a JSON null,
+/// into a first-appearance list of ``str``), or as the ``(codes, categories)``
+/// tuple without a factory. Raises ``ValueError`` for anything the fast
+/// scanner does not handle; callers fall back to a generic JSON parser.
 #[pyfunction]
-#[pyo3(signature = (payload, numeric_channels=None))]
+#[pyo3(signature = (payload, numeric_channels=None, dict_channels=None, dict_factory=None))]
 fn decode_telemetry(
     py: Python<'_>,
     payload: &Bound<'_, PyBytes>,
     numeric_channels: Option<Vec<String>>,
+    dict_channels: Option<Vec<String>>,
+    dict_factory: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let bytes = payload.as_bytes();
-    let numeric_set: std::collections::HashSet<String> =
-        numeric_channels.unwrap_or_default().into_iter().collect();
+    let keys = ChannelKeys {
+        numeric: numeric_channels.unwrap_or_default().into_iter().collect(),
+        dict: dict_channels.unwrap_or_default().into_iter().collect(),
+    };
     let parsed = py
-        .detach(|| {
-            let is_numeric = |key: &str| numeric_set.contains(key);
-            Parser::new(bytes).parse_document(&is_numeric)
-        })
+        .detach(|| Parser::new(bytes).parse_document(&keys))
         .map_err(PyValueError::new_err)?;
     if !matches!(parsed, Value::Object(_)) {
         return Err(PyValueError::new_err("telemetry payload is not an object"));
     }
-    to_py(py, parsed)
+    to_py(py, parsed, dict_factory)
 }
 
-#[pymodule]
+// The decoder keeps no state between calls, so free-threaded interpreters
+// (3.13t+) can run it without re-enabling the GIL on import.
+#[pymodule(gil_used = false)]
 fn tif1_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_telemetry, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

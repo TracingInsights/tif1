@@ -46,7 +46,8 @@ class TestCoreGates:
     def test_preconnect_is_skipped(self, monkeypatch):
         monkeypatch.setattr(core, "THREADS_AVAILABLE", False)
         monkeypatch.setattr(core, "_preconnect_started", False)
-        core._preconnect_cdn(None)  # never touches the session
+        # Never probes the cache or starts the warm-up thread.
+        assert core._preconnect_cdn(2025, "Monaco Grand Prix", "Race", None) is None
         assert core._preconnect_started is False
 
     def test_background_telemetry_prefetch_is_skipped(self, monkeypatch):

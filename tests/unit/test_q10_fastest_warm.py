@@ -175,26 +175,122 @@ def test_laps_frame_tier_is_skipped_for_cold_or_polars_sessions():
     assert polars_session._fastest_lap_candidates_from_laps_tier([({"driver": "VER"}, "x")]) is None
 
 
+def _fake_tables_fetch(calls: list[list[str]]):
+    async def _fake_fetch(requests, **_kwargs):
+        calls.append([request[3] for request in requests])
+        tables = {"drivers.json": DRIVERS, "session_laptimes.json": SESSION_LAPTIMES}
+        return [tables.get(path) for *_, path in requests]
+
+    return _fake_fetch
+
+
 def test_cold_session_keeps_the_async_fetch_pipeline(monkeypatch):
     session = _session(warm=False)
     calls: list[list[str]] = []
+    monkeypatch.setattr(core, "fetch_multiple_async", _fake_tables_fetch(calls))
 
-    async def _fake_fetch(requests, **_kwargs):
-        calls.append([request[3] for request in requests])
-        return [
-            SESSION_LAPTIMES if path.endswith("laptimes.json") else None for *_, path in requests
-        ]
+    def _no_sync_fetch(path):
+        raise AssertionError(f"{path} must come from the wave")
 
-    monkeypatch.setattr(core, "fetch_multiple_async", _fake_fetch)
-    monkeypatch.setattr(session, "_fetch_json_unvalidated", lambda _path: DRIVERS)
+    monkeypatch.setattr(session._payload_loader, "_fetch", lambda path, **_kw: _no_sync_fetch(path))
     monkeypatch.setattr(
         session,
         "_get_telemetry_df_for_ref",
         lambda driver, lap, **_kw: pd.DataFrame({"Driver": [driver], "LapNumber": [lap]}),
     )
     tel = session.get_fastest_lap_tel()
-    assert calls == [["session_laptimes.json"]]
+    # Olympia H9: drivers.json and the laptimes in ONE wave (they were two
+    # round trips in a row), so the telemetry request goes out one RTT sooner.
+    assert calls == [["drivers.json", "session_laptimes.json"]]
     assert (tel["Driver"].iloc[0], tel["LapNumber"].iloc[0]) == ("VER", 3)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda s: s.get_fastest_laps_tels(by_driver=True),
+        lambda s: s.get_fastest_laps(by_driver=True),
+    ],
+)
+def test_cold_raw_fastest_paths_fetch_the_tables_in_one_wave(monkeypatch, call):
+    session = _session(warm=False)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(core, "fetch_multiple_async", _fake_tables_fetch(calls))
+    monkeypatch.setattr(
+        session._payload_loader,
+        "_fetch",
+        lambda path, **_kw: (_ for _ in ()).throw(AssertionError(path)),
+    )
+    call(session)
+    assert calls[0] == ["drivers.json", "session_laptimes.json"]
+    assert not any("laptimes.json" in path for batch in calls[1:] for path in batch)
+
+
+def test_async_fastest_lap_tel_fetches_the_tables_in_one_wave(monkeypatch):
+    import asyncio
+
+    session = _session(warm=False)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(core, "fetch_multiple_async", _fake_tables_fetch(calls))
+    tel = asyncio.run(session.get_fastest_lap_tel_async())
+    assert calls[0] == ["drivers.json", "session_laptimes.json"]
+    assert [path for batch in calls[1:] for path in batch] == ["VER/3_tel.json"]
+    assert tel.empty  # the fake has no telemetry file
+
+
+def test_warm_session_never_runs_the_cold_tables_wave(monkeypatch):
+    session = _session(warm=True)
+    _forbid_async(monkeypatch)
+    session._prefetch_cold_tables_wave(False, "test")
+    assert session._get_local_payload("drivers.json") is None
+
+
+@pytest.mark.parametrize(("warm", "expected"), [(False, 1), (True, 0)])
+def test_ergast_prefetch_rides_cold_waves_only(monkeypatch, warm, expected):
+    session = _session(warm=warm)
+    session._ergast_enabled = True
+    started: list[bool] = []
+    monkeypatch.setattr(session, "_start_ergast_prefetch", lambda: started.append(True))
+    session._start_ergast_prefetch_for_cold_wave()
+    assert len(started) == expected
+
+
+def test_cold_driver_wave_starts_the_ergast_prefetch(monkeypatch):
+    session = _session(warm=False)
+    session._ergast_enabled = True
+    started: list[str] = []
+    calls: list[list[str]] = []
+    monkeypatch.setattr(core, "fetch_multiple_async", _fake_tables_fetch(calls))
+    monkeypatch.setattr(
+        session,
+        "_start_ergast_prefetch",
+        lambda: started.append(calls[-1][0] if calls else "before-wave"),
+    )
+    session._prefetch_driver_lookup_and_laps("VER")
+    assert started == ["before-wave"]  # the thread starts with the wave, not after it
+
+
+def test_cold_laps_load_leaves_the_ergast_prefetch_alone(monkeypatch):
+    import asyncio
+
+    class _StopAfterWaveError(Exception):
+        pass
+
+    session = _session(warm=False)
+    session._ergast_enabled = True
+    order: list[str] = []
+
+    async def _wave(_ultra_cold):
+        order.append("wave")
+        raise _StopAfterWaveError
+
+    monkeypatch.setattr(session, "_start_ergast_prefetch", lambda: order.append("ergast"))
+    monkeypatch.setattr(session, "_prefetch_laps_wave_async", _wave)
+    with pytest.raises(_StopAfterWaveError):
+        asyncio.run(session.laps_async())
+    # A laps-only load never reads the classification: a speculative Ergast
+    # thread cost cold laps 7-13% (its GIL time lands on the wave and build).
+    assert order == ["wave"]
 
 
 def test_partial_cache_hit_falls_back_to_the_async_fetch(monkeypatch):

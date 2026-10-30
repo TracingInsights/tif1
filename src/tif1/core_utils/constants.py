@@ -392,6 +392,14 @@ NUMERIC_TELEMETRY_PAYLOAD_KEYS = frozenset(
     | NUMERIC_TELEMETRY_CHANNELS
 )
 
+# String channels the native decoder dictionary-encodes (raw and canonical
+# keys): ``DriverAhead`` holds a few distinct driver numbers over ~770
+# samples per lap.
+DICTIONARY_TELEMETRY_PAYLOAD_KEYS = frozenset(
+    {raw for raw, canonical in TELEMETRY_RENAME_MAP.items() if canonical == "DriverAhead"}
+    | {"DriverAhead"}
+)
+
 
 # Session name -> Stats repository file holding its Ergast classification.
 # Practice and the quali-like sprint formats borrow the race results file for

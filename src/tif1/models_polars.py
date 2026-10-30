@@ -4,9 +4,10 @@
 subclass :class:`polars.DataFrame` and carry a ``session`` (telemetry also a
 ``driver``) attribute through every tif1 method; :class:`PolarsLap`,
 :class:`PolarsDriverResult` and :class:`PolarsDriver` wrap one row of those
-frames with scalar access. Every method is written with native polars
-expressions and re-wraps its result, so fastf1-style chains keep the class
-(``laps.pick_driver("VER").pick_fastest().get_telemetry()``).
+frames with scalar access. Every method re-wraps its result, so fastf1-style
+chains keep the class (``laps.pick_driver("VER").pick_fastest().get_telemetry()``).
+The selection, telemetry and lookup paths run on Series kernels and numpy
+rather than the polars query engine (see "Kernels off the query engine").
 
 polars returns a *plain* ``DataFrame`` from ``filter``/``select``/``sort``/
 ``with_columns``; the ``df.f1`` namespace (:class:`F1Namespace`) exposes the
@@ -26,6 +27,7 @@ import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, ClassVar, NamedTuple, Self, cast
 
+import numpy as np
 import polars as pl
 
 from .exceptions import (
@@ -243,15 +245,190 @@ def _ns_expr(frame: pl.DataFrame, column: str) -> pl.Expr:
 
 
 def _ns_series(frame: pl.DataFrame, column: str) -> pl.Series:
+    native = _ns_native(frame.get_column(column))
+    if native is not None:
+        return native.alias(column)
     return frame.select(_ns_expr(frame, column).alias(column)).to_series()
 
 
-def _valid_expr(frame: pl.DataFrame, column: str) -> pl.Expr:
-    """Non-missing mask of ``column`` (null, and NaN for float columns)."""
-    expr = pl.col(column).is_not_null()
-    if frame.schema[column].is_float():
-        expr = expr & pl.col(column).is_not_nan()
-    return expr
+# --------------------------------------------------------------------------- #
+# Kernels off the query engine
+#
+# Every ``DataFrame.filter``/``select``/``with_columns`` with expressions, and
+# many Series methods (``fill_null``, ``is_null``, ``is_in``, ``shift``,
+# ``diff``, ``gather``, ``arg_true``, ``str.*``, ``dt.*`` ...), build and run a
+# query plan: ~0.5 ms each, ~5-7 ms for the first of a process while polars
+# starts its thread pools. The helpers below use only kernels that do not
+# (Series comparisons and arithmetic, ``cast``, ``filter``, ``zip_with``,
+# indexing, ``to_numpy``) plus numpy, and give the same values, dtypes, null
+# handling and row order as the expressions they replace.
+# --------------------------------------------------------------------------- #
+
+
+def _ns_native(series: pl.Series) -> pl.Series | None:
+    """A ``Duration``/``Datetime("ns")`` clock as Int64 nanoseconds (``None``: no native route).
+
+    ``dt.total_nanoseconds()``/``dt.epoch("ns")`` without the query engine:
+    the physical value of a nanosecond clock is its nanosecond count (UTC
+    for a zoned datetime).
+    """
+    dtype = series.dtype
+    if isinstance(dtype, pl.Duration):
+        if dtype.time_unit != "ns":
+            series = series.cast(_DURATION_NS)
+        return series.cast(pl.Int64)
+    if isinstance(dtype, pl.Datetime) and dtype.time_unit == "ns":
+        return series.cast(pl.Int64)
+    return None
+
+
+def _mask_values(mask: pl.Series, null: bool = False) -> np.ndarray:
+    """A Boolean Series as a numpy ``bool`` array, nulls read as ``null`` (``fill_null``)."""
+    if not mask.null_count():
+        return mask.to_numpy()
+    values = mask.cast(pl.Int8).to_numpy()  # nulls come out as NaN
+    return values != 0 if null else values == 1
+
+
+_NESTED_DTYPES = (pl.List, pl.Array, pl.Struct, pl.Object)
+
+
+def _present_values(series: pl.Series) -> np.ndarray:
+    """``series.is_not_null()`` as a numpy ``bool`` array."""
+    n = series.len()
+    nulls = series.null_count()
+    if not nulls:
+        return np.ones(n, dtype=bool)
+    if nulls == n:
+        return np.zeros(n, dtype=bool)
+    if isinstance(series.dtype, _NESTED_DTYPES):
+        return series.is_not_null().to_numpy()
+    # ``x == x`` is null exactly where ``x`` is (polars: NaN equals NaN).
+    return _mask_values(series.eq(series))
+
+
+def _valid_values(series: pl.Series) -> np.ndarray:
+    """Non-missing mask of ``series`` (not null, and not NaN for floats) as numpy."""
+    if series.dtype.is_float():
+        return ~np.isnan(series.to_numpy())  # nulls come out as NaN
+    return _present_values(series)
+
+
+def _filter_rows(frame: pl.DataFrame, keep: np.ndarray) -> pl.DataFrame:
+    """``frame.filter(keep)`` as a plain frame, column by column (``keep``: numpy ``bool``)."""
+    columns = frame.get_columns()
+    if not columns:
+        return frame.filter(pl.Series(keep, dtype=pl.Boolean))
+    if keep.all():
+        return pl.DataFrame._from_pydf(frame._df.clone())
+    mask = pl.Series(keep, dtype=pl.Boolean)
+    return pl.DataFrame([column.filter(mask) for column in columns])
+
+
+def _take_rows(frame: pl.DataFrame, positions: np.ndarray | list[int]) -> pl.DataFrame:
+    """``frame.select(pl.all().gather(positions))`` column by column (positions in range)."""
+    columns = frame.get_columns()
+    if not columns:
+        return frame.select(pl.all().gather(positions))
+    index = np.asarray(positions, dtype=np.int64)
+    return pl.DataFrame([column[index] for column in columns])
+
+
+def _with_columns(frame: pl.DataFrame, *columns: pl.Series) -> pl.DataFrame:
+    """``frame.with_columns(columns)`` for full-height Series, as a plain frame.
+
+    A column already in ``frame`` is replaced in place, a new one appended,
+    as ``with_columns`` does.
+    """
+    if not frame.width or any(column.len() != frame.height for column in columns):
+        return frame.with_columns(*columns)
+    out = pl.DataFrame._from_pydf(frame._df.clone())
+    names = frame.columns
+    for column in columns:
+        if column.name in names:
+            out.replace_column(names.index(column.name), column)
+        else:
+            out.hstack([column], in_place=True)
+            names.append(column.name)
+    return out
+
+
+def _full_series(name: str, value: Any, length: int, dtype: Any) -> pl.Series:
+    """``pl.repeat(value, length, dtype=dtype, eager=True)`` named ``name``."""
+    return pl.Series(name, [value], dtype=dtype).new_from_index(0, length)
+
+
+def _shift_down(series: pl.Series) -> pl.Series:
+    """``series.shift(1)``: a leading null, the last value dropped."""
+    n = series.len()
+    if n == 0:
+        return series.clone()
+    return _full_series(series.name, None, 1, series.dtype).append(series.head(n - 1))
+
+
+def _isin_values(series: pl.Series, values: list[Any]) -> np.ndarray:
+    """``series.is_in(values).fill_null(False)`` for a text Series, as numpy."""
+    n = series.len()
+    if not values or not n:
+        return np.zeros(n, dtype=bool)
+    if len(values) <= 4:
+        hits = series == values[0]
+        for value in values[1:]:
+            hits = hits | (series == value)
+        return _mask_values(hits)
+    wanted = set(values)
+    return np.fromiter((value in wanted for value in series.to_list()), dtype=bool, count=n)
+
+
+def _text_test_values(series: pl.Series, test: Callable[[str], bool]) -> np.ndarray:
+    """``test`` of each value of a text Series (null: False), once per distinct value."""
+    values = series.to_list()
+    outcome = {value: value is not None and test(value) for value in set(values)}
+    return np.fromiter(map(outcome.__getitem__, values), dtype=bool, count=len(values))
+
+
+def _distinct_present(series: pl.Series) -> tuple[int, Any]:
+    """``(n, value)``: the number of distinct non-null values and the first of them.
+
+    ``series.drop_nulls().unique()`` as a count, plus the value when it is
+    the only one (``None`` otherwise or without values).
+    """
+    nulls = series.null_count()
+    if nulls == series.len():
+        return 0, None
+    count = series.n_unique() - (1 if nulls else 0)
+    if count != 1:
+        return count, None
+    if not nulls:
+        return 1, series[0]
+    return 1, series[int(np.flatnonzero(_present_values(series))[0])]
+
+
+def _held(series: pl.Series, has_nan: bool) -> pl.Series:
+    """``fill_nan(None)`` (with ``has_nan``), then ``forward_fill().backward_fill()``.
+
+    Each missing sample takes the last value before it, else the first after
+    it. A channel without any value is returned as it is, all NaN when it
+    held NaN (``fill_null(nan)``).
+    """
+    valid = _valid_values(series)
+    if not valid.any():
+        return (
+            _full_series(series.name, math.nan, series.len(), series.dtype) if has_nan else series
+        )
+    positions = np.where(valid, np.arange(valid.size), -1)
+    np.maximum.accumulate(positions, out=positions)
+    positions[positions < 0] = np.argmax(valid)
+    return series[positions]
+
+
+def _int_values(series: pl.Series) -> tuple[np.ndarray, np.ndarray]:
+    """An Int64 Series as ``(int64 values, present mask)``; a null reads as 0."""
+    present = _present_values(series)
+    if present.all():
+        return series.to_numpy(), present
+    filled = series.zip_with(pl.Series(present), pl.Series(np.zeros(series.len(), np.int64)))
+    return filled.to_numpy(), present
 
 
 def _first_present(frame: pl.DataFrame, *columns: str) -> str | None:
@@ -346,6 +523,28 @@ def _scalar_ns(value: Any) -> int | None:
     """:func:`_to_ns` with ``NaT`` (whose ``value`` is the int64 minimum) as ``None``."""
     ns = _to_ns(value)
     return None if ns == _NAT_NS else ns
+
+
+#: ASCII characters ``str.strip_chars()`` (Rust's ``trim``, Unicode White_Space) removes.
+_ASCII_WHITESPACE = "\t\n\x0b\x0c\r "
+
+
+def _segment_marks(labels: list[str | None]) -> list[str | None] | None:
+    """Q1/Q2/Q3 digit of each ``QualifyingSession`` label (``None`` without one).
+
+    ``str.to_uppercase().str.strip_chars().str.extract(r"([123])$")``, per
+    distinct label; ``None`` when a label is not ASCII (polars' Unicode case
+    mapping and trimming decide those).
+    """
+    marks: dict[str | None, str | None] = {None: None}
+    for label in set(labels):
+        if label is None:
+            continue
+        if not label.isascii():
+            return None
+        text = label.upper().strip(_ASCII_WHITESPACE)
+        marks[label] = text[-1] if text and text[-1] in "123" else None
+    return [marks[label] for label in labels]
 
 
 def _session_status_rows(status: Any) -> list[tuple[int | None, str]]:
@@ -457,33 +656,28 @@ def _weather_sample_positions(
     a lap without a start takes the latter, a lap without an end has none,
     and a sample without a time is never picked. ``starts``/``ends`` are ns.
     """
-    times = _ns_series(weather, "Time")
-    order: pl.Series | None = None  # sorted position -> table row (identity when sorted)
-    if times.null_count() or not times.is_sorted():
-        table = (
-            pl.DataFrame({"t": times, "p": pl.int_range(times.len(), dtype=pl.Int64, eager=True)})
-            .drop_nulls("t")
-            .sort("t", maintain_order=True)
-        )
-        times, order = table.get_column("t"), table.get_column("p")
-    n = times.len()
+    values, present = _int_values(_ns_series(weather, "Time"))
+    if present.all() and bool((values[1:] >= values[:-1]).all()):
+        order: np.ndarray | None = None  # sorted position -> table row (identity: sorted)
+        times = values
+    else:  # samples without a time dropped, the rest in time order (stable)
+        order = np.flatnonzero(present)
+        order = order[np.argsort(values[order], kind="stable")]
+        times = values[order]
+    n = times.size
     if n == 0:
-        return pl.repeat(None, starts.len(), dtype=pl.Int64, eager=True)
-    first = times.search_sorted(starts, side="left").cast(pl.Int64)
-    after_end = times.search_sorted(ends, side="right").cast(pl.Int64)
-    first_time = times.gather(first.clip(upper_bound=n - 1))
-    rows = pl.select(
-        pl.when(
-            pl.lit(starts).is_not_null()
-            & (pl.lit(first) < n)
-            & (pl.lit(first_time) <= pl.lit(ends))  # null for a lap without an end
-        )
-        .then(pl.lit(first))
-        .when(pl.lit(ends).is_not_null() & (pl.lit(after_end) > 0))
-        .then(pl.lit(after_end) - 1)
-        .otherwise(None)
-    ).to_series()
-    return rows if order is None else order.gather(rows)
+        return _full_series("rows", None, starts.len(), pl.Int64)
+    start, has_start = _int_values(starts)
+    end, has_end = _int_values(ends)
+    first = np.searchsorted(times, start, side="left")
+    after_end = np.searchsorted(times, end, side="right")
+    take_first = has_start & has_end & (first < n) & (times[np.minimum(first, n - 1)] <= end)
+    take_last = ~take_first & has_end & (after_end > 0)
+    rows = np.where(take_first, first, np.where(take_last, after_end - 1, -1))
+    if order is not None:
+        rows = np.where(rows >= 0, order[np.maximum(rows, 0)], -1)
+    # -1 (no sample) as null: through NaN, exact for row numbers.
+    return pl.Series("rows", np.where(rows >= 0, rows, np.nan), nan_to_null=True).cast(pl.Int64)
 
 
 def _weather_sample_row(times: list[int | None], start: int | None, end: int | None) -> int | None:
@@ -506,23 +700,26 @@ def _weather_sample_frame(weather: pl.DataFrame, positions: pl.Series) -> pl.Dat
     ``Time`` becomes ``Duration("ns")``; the channels keep the table's dtypes
     and a channel the table lacks is null.
     """
-    exprs: list[pl.Expr] = []
+    columns: list[pl.Series] = []
+    index = positions.cast(pl.get_index_type())
     for column, dtype in _WEATHER_SAMPLE_SCHEMA.items():
         if column in weather.columns:
-            expr = pl.col(column).gather(positions)
+            values = weather.get_column(column)[index]  # a null position: a null row
             if column == "Time":
-                expr = expr.cast(_DURATION_NS)
+                values = values.cast(_DURATION_NS)
         else:
-            expr = pl.repeat(None, positions.len(), dtype=dtype)
-        exprs.append(expr.alias(column))
-    return weather.select(exprs)
+            values = _full_series(column, None, positions.len(), dtype)
+        columns.append(values)
+    return pl.DataFrame(columns)
 
 
 def _missing_weather_frame(height: int) -> pl.DataFrame:
     """``height`` all-null weather samples with the sample schema."""
-    return pl.select(
-        pl.repeat(None, height, dtype=dtype).alias(column)
-        for column, dtype in _WEATHER_SAMPLE_SCHEMA.items()
+    return pl.DataFrame(
+        [
+            _full_series(column, None, height, dtype)
+            for column, dtype in _WEATHER_SAMPLE_SCHEMA.items()
+        ]
     )
 
 
@@ -735,6 +932,21 @@ class PolarsTelemetry(_TIF1Frame):
         return obj
 
     @classmethod
+    def _from_owned_frame(
+        cls, df: pl.DataFrame, session: Any = None, driver: str | None = None
+    ) -> Self:
+        """:meth:`_from_frame` for a fresh ``df`` nobody else holds (a frame-tier slice).
+
+        Its column handle is taken over instead of cloned: the caller drops
+        ``df``, so nothing can observe the sharing.
+        """
+        obj = cls.__new__(cls)
+        obj._df = df._df
+        obj.session = session
+        obj.driver = driver
+        return obj
+
+    @classmethod
     def _empty(cls, session: Any = None, driver: str | None = None) -> Self:
         return cls._from_frame(_empty_telemetry_frame(), session, driver)
 
@@ -749,27 +961,24 @@ class PolarsTelemetry(_TIF1Frame):
         """
         if "SessionTime" not in self.columns or "Time" not in self.columns:
             return self
-        time = pl.col("SessionTime").cast(self.schema["Time"], strict=False).alias("Time")
-        return self._rewrap(self.with_columns(time))
+        time = self.get_column("SessionTime").cast(self.schema["Time"], strict=False)
+        return self._rewrap(_with_columns(self, time.alias("Time")))
 
     def _resolve_driver_code(self) -> str | None:
         if isinstance(self.driver, str) and self.driver:
             return self.driver
         if "Driver" not in self.columns:
             return None
-        drivers = self.get_column("Driver").drop_nulls().unique()
-        if drivers.len() != 1:
+        count, driver = _distinct_present(self.get_column("Driver"))
+        if count != 1:
             return None
-        driver = drivers[0]
         return str(driver) if driver else None
 
     def _get_lap_numbers(self) -> list[int]:
         if "LapNumber" not in self.columns:
             return []
-        numbers = (
-            self.get_column("LapNumber").cast(pl.Int64, strict=False).drop_nulls().unique().sort()
-        )
-        return [int(value) for value in numbers.to_list()]
+        numbers, present = _int_values(self.get_column("LapNumber").cast(pl.Int64, strict=False))
+        return [int(value) for value in np.unique(numbers[present])]
 
     def _time_reference_column(self, other: pl.DataFrame | None = None) -> str | None:
         for column in ("SessionTime", "Time"):
@@ -781,8 +990,8 @@ class PolarsTelemetry(_TIF1Frame):
         """Position of the first sample whose ``Time`` is above zero (``0`` if none)."""
         if "Time" not in self.columns or self.height == 0:
             return 0
-        positions = (_ns_series(self, "Time") > 0).fill_null(False).arg_true()
-        return int(positions[0]) if positions.len() else 0
+        positions = np.flatnonzero(_mask_values(_ns_series(self, "Time") > 0))
+        return int(positions[0]) if positions.size else 0
 
     # -- missing values -----------------------------------------------------
 
@@ -799,70 +1008,74 @@ class PolarsTelemetry(_TIF1Frame):
         ones, anything else is kept. Only columns with gaps are touched.
         """
         null_counts = self.null_count().row(0)
-        float_columns = [col for col, dtype in self.schema.items() if dtype.is_float()]
-        nan_flags: dict[str, bool] = {}
-        if float_columns and self.height:
-            flags = self.select(
-                [pl.col(col).is_nan().any().alias(col) for col in float_columns]
-            ).row(0)
-            nan_flags = dict(zip(float_columns, (bool(flag) for flag in flags), strict=True))
         exprs: list[pl.Expr] = []
+        filled: list[pl.Series] = []
         for column, dtype, nulls in zip(self.columns, self.dtypes, null_counts, strict=True):
             rule = _fill_rule(column, dtype)
-            has_nan = nan_flags.get(column, False)
-            if rule is None or (not nulls and not has_nan):
+            if rule is None:
                 continue
-            expr = pl.col(column)
-            if rule == "source":
-                expr = expr.fill_null(pl.lit("interpolation").cast(dtype))
-            else:
+            series = self.get_column(column)
+            # ``is_nan().any()``: polars orders NaN above +inf (nulls are skipped).
+            has_nan = bool(dtype.is_float() and self.height and (series > math.inf).any())
+            if not nulls and not has_nan:
+                continue
+            if rule == "interpolate":
+                expr = pl.col(column)
                 if has_nan:
                     expr = expr.fill_nan(None)
-                if rule == "interpolate":
-                    expr = expr.interpolate()
-                expr = expr.forward_fill().backward_fill()
+                expr = expr.interpolate().forward_fill().backward_fill()
                 if has_nan:  # a channel that was all NaN stays NaN, not null
                     expr = expr.fill_null(math.nan)
-            exprs.append(expr.alias(column))
-        if not exprs:
+                exprs.append(expr.alias(column))
+            elif rule == "source":
+                if dtype not in (pl.String, pl.Categorical):
+                    exprs.append(pl.col(column).fill_null(pl.lit("interpolation").cast(dtype)))
+                    continue
+                gaps = _full_series(column, "interpolation", self.height, pl.String).cast(dtype)
+                filled.append(series.zip_with(pl.Series(_present_values(series)), gaps))
+            else:
+                filled.append(_held(series, has_nan))
+        if not exprs and not filled:
             return self._rewrap(self.clone())
-        return self._rewrap(self.with_columns(exprs))
+        frame: pl.DataFrame = _with_columns(self, *filled) if filled else self
+        return self._rewrap(frame.with_columns(exprs) if exprs else frame)
 
     # -- distance -----------------------------------------------------------
 
-    def _differential_distance_series(self) -> pl.Series:
+    def _differential_distance_values(self) -> np.ndarray:
         """``Speed / 3.6 * dt`` per sample, the pandas class's arithmetic bit for bit.
 
-        Series kernels with full-length divisors: polars evaluates a division
-        by a scalar as a multiplication by its reciprocal (1 ulp from numpy).
+        numpy arrays: element-wise division (polars evaluates a division by a
+        scalar as a multiplication by its reciprocal, 1 ulp from numpy).
         """
-        n = self.height
-        speed = self.get_column("Speed").cast(pl.Float64, strict=False)
-        speed_ms = speed.fill_nan(0.0).fill_null(0.0) / pl.repeat(3.6, n, eager=True)
+        speed = self.get_column("Speed").cast(pl.Float64, strict=False).to_numpy()
+        speed_ms = np.where(np.isnan(speed), 0.0, speed) / 3.6  # NaN and null count as 0
         if "Time" not in self.columns:
             return speed_ms * 0.0
-        nanoseconds = _series_ns(self.get_column("Time")).cast(pl.Float64)
-        seconds = (nanoseconds / pl.repeat(float(_NS_PER_SECOND), n, eager=True)).fill_null(0.0)
-        delta = seconds.diff().fill_null(0.0).clip(lower_bound=0.0)
+        nanoseconds = _series_ns(self.get_column("Time")).cast(pl.Float64).to_numpy()
+        seconds = nanoseconds / float(_NS_PER_SECOND)
+        seconds[np.isnan(seconds)] = 0.0  # a missing clock counts as 0
+        delta = np.zeros(seconds.size)
+        np.maximum(np.diff(seconds), 0.0, out=delta[1:])
         return speed_ms * delta
 
     def calculate_differential_distance(self) -> pl.Series:
         """Distance driven between subsequent samples in metres (``Speed * dt``)."""
         if self.height == 0 or "Speed" not in self.columns:
             return pl.Series("DifferentialDistance", [], dtype=pl.Float64)
-        return self._differential_distance_series().alias("DifferentialDistance")
+        return pl.Series("DifferentialDistance", self._differential_distance_values())
 
     def integrate_distance(self) -> pl.Series:
         """Distance driven since the first sample in metres (cumulative sum)."""
         if self.height == 0 or "Speed" not in self.columns:
             return pl.Series("Distance", [], dtype=pl.Float64)
-        return self._differential_distance_series().cum_sum().alias("Distance")
+        return pl.Series("Distance", np.cumsum(self._differential_distance_values()))
 
     def _with_float_column(self, name: str, values: pl.Series | None) -> Self:
         """A copy with ``name`` set to ``values`` (all null when None), in place or appended."""
         if values is None:
-            return self._rewrap(self.with_columns(pl.lit(None, dtype=pl.Float64).alias(name)))
-        return self._rewrap(self.with_columns(values.alias(name)))
+            values = _full_series(name, None, self.height, pl.Float64)
+        return self._rewrap(_with_columns(self, values.alias(name)))
 
     def add_differential_distance(self, drop_existing: bool = True) -> Self:
         """Add ``DifferentialDistance`` (recomputed unless ``drop_existing`` is False)."""
@@ -904,13 +1117,13 @@ class PolarsTelemetry(_TIF1Frame):
         elif self.height and "Speed" in self.columns:
             distance = self.integrate_distance()
         else:
-            distance = pl.repeat(math.nan, self.height, dtype=pl.Float64, eager=True)
+            distance = _full_series("Distance", math.nan, self.height, pl.Float64)
         # Divided element by element by a Series: polars turns a division by
         # a scalar into a multiplication by its reciprocal (1 ulp off numpy).
         last = distance[-1] if distance.len() else None
-        divisor = pl.repeat(math.nan if last is None else last, distance.len(), eager=True)
-        relative = distance / divisor
-        return self._rewrap(self.with_columns(relative.alias("RelativeDistance")))
+        divisor = np.full(distance.len(), math.nan if last is None else last, dtype=np.float64)
+        relative = distance / pl.Series(divisor)
+        return self._rewrap(_with_columns(self, relative.alias("RelativeDistance")))
 
     # -- driver ahead -------------------------------------------------------
 
@@ -928,12 +1141,8 @@ class PolarsTelemetry(_TIF1Frame):
             else:
                 distance = distance.clone()
         else:
-            driver_ahead = pl.repeat(None, self.height, dtype=pl.String, eager=True).alias(
-                "DriverAhead"
-            )
-            distance = pl.repeat(math.nan, self.height, dtype=pl.Float64, eager=True).alias(
-                "DistanceToDriverAhead"
-            )
+            driver_ahead = _full_series("DriverAhead", None, self.height, pl.String)
+            distance = _full_series("DistanceToDriverAhead", math.nan, self.height, pl.Float64)
         if return_reference:
             return driver_ahead, distance, self
         return driver_ahead, distance
@@ -944,8 +1153,8 @@ class PolarsTelemetry(_TIF1Frame):
             return self
         driver_ahead, distance = self.calculate_driver_ahead(return_reference=False)
         return self._rewrap(
-            self.with_columns(
-                driver_ahead.alias("DriverAhead"), distance.alias("DistanceToDriverAhead")
+            _with_columns(
+                self, driver_ahead.alias("DriverAhead"), distance.alias("DistanceToDriverAhead")
             )
         )
 
@@ -963,9 +1172,27 @@ class PolarsTelemetry(_TIF1Frame):
             and "Status" in table.columns
         )
         if not usable:
-            return pl.repeat("1", self.height, dtype=pl.String, eager=True).alias("TrackStatus")
+            return _full_series("TrackStatus", "1", self.height, pl.String)
         assert isinstance(table, pl.DataFrame)
         assert reference is not None
+        times = _series_ns(table.get_column("Time"))
+        present = _present_values(times)
+        if not present.any():
+            return _full_series("TrackStatus", "1", self.height, pl.String)
+        statuses = table.get_column("Status").cast(pl.String)
+        if not present.all():
+            keep = pl.Series(present)
+            times, statuses = times.filter(keep), statuses.filter(keep)
+        event_ns = times.to_numpy()
+        if bool((event_ns[1:] > event_ns[:-1]).all()):
+            # Strictly increasing event times (the order any sort gives): the
+            # last event at or before each sample, floored at the first event
+            # for samples preceding every event.
+            samples, known = _int_values(_ns_series(self, reference))
+            samples = np.where(known, samples, event_ns[0])
+            index = np.maximum(np.searchsorted(event_ns, samples, side="right") - 1, 0)
+            return statuses[index].alias("TrackStatus")
+        # Tied or unordered event times: the sort decides which event wins.
         events = (
             table.select(
                 _ns_expr(table, "Time").alias("t"), pl.col("Status").cast(pl.String).alias("s")
@@ -994,7 +1221,7 @@ class PolarsTelemetry(_TIF1Frame):
         """
         if "TrackStatus" in self.columns and not drop_existing:
             return self
-        return self._rewrap(self.with_columns(self._track_status_series()))
+        return self._rewrap(_with_columns(self, self._track_status_series()))
 
     # -- slicing ------------------------------------------------------------
 
@@ -1005,19 +1232,19 @@ class PolarsTelemetry(_TIF1Frame):
             series = series.cast(pl.Boolean)
         if series.len() != self.height:
             raise ValueError("Mask length must match telemetry length.")
-        if series.null_count():
-            series = series.fill_null(False)
-        if pad and series.any():
-            positions = series.arg_true()
+        keep = _mask_values(series)
+        if pad and keep.any():
+            positions = np.flatnonzero(keep)
             first = int(positions[0])
             last = int(positions[-1])
             if pad_side in ("both", "before"):
                 first = max(0, first - int(pad))
             if pad_side in ("both", "after"):
                 last = min(self.height - 1, last + int(pad))
-            index = pl.int_range(0, self.height, eager=True)
-            series = series | ((index >= first) & (index <= last))
-        return self._rewrap(self.filter(series))
+            if first <= last:
+                keep = keep.copy()
+                keep[first : last + 1] = True
+        return self._rewrap(_filter_rows(self, keep))
 
     def _slice_with_edges(
         self, reference: str, start_ns: int, end_ns: int, pad: int, pad_side: str
@@ -1035,12 +1262,12 @@ class PolarsTelemetry(_TIF1Frame):
         frame: pl.DataFrame = self
         if times.null_count() or not times.is_sorted():
             order = _stable_order(times)
-            frame = self.select(pl.all().gather(order))
-            times = times.gather(order)
-        clock = times.head(times.len() - times.null_count())
-        n_valid = clock.len()
-        lo = int(clock.search_sorted(start_ns, side="left"))
-        hi = int(clock.search_sorted(end_ns, side="right"))
+            frame = _take_rows(self, order)
+            times = times[order]
+        clock = times.head(times.len() - times.null_count()).to_numpy()
+        n_valid = clock.size
+        lo = int(np.searchsorted(clock, start_ns, side="left"))
+        hi = int(np.searchsorted(clock, end_ns, side="right"))
         first, last = lo, hi
         if pad and pad_side in ("both", "before"):
             first = max(0, lo - pad)
@@ -1060,7 +1287,7 @@ class PolarsTelemetry(_TIF1Frame):
             pieces.extend((frame.slice(cursor, position - cursor), samples.slice(k, 1)))
             cursor = position
         pieces.append(frame.slice(cursor, last - cursor))
-        return pl.concat([piece for piece in pieces if piece.height], how="vertical")
+        return _stack_rows([piece for piece in pieces if piece.height])
 
     def _slice_by_time_ns(
         self,
@@ -1081,15 +1308,12 @@ class PolarsTelemetry(_TIF1Frame):
             )
         else:
             times = _ns_series(self, reference)
-            mask = ((times >= start_ns) & (times <= end_ns)).fill_null(False)
+            mask = pl.Series(_mask_values((times >= start_ns) & (times <= end_ns)))
             data = self.slice_by_mask(mask, pad, pad_side)
         if data.height:
             # Time restarts at the slice start so laps can overlap (fastf1).
-            data = data._rewrap(
-                data.with_columns(
-                    (_ns_expr(data, reference) - start_ns).cast(_DURATION_NS).alias("Time")
-                )
-            )
+            time = (_ns_series(data, reference) - start_ns).cast(_DURATION_NS)
+            data = data._rewrap(_with_columns(data, time.alias("Time")))
         return data
 
     def slice_by_time(
@@ -1148,13 +1372,11 @@ class PolarsTelemetry(_TIF1Frame):
             )
         lap_numbers = _ref_lap_numbers(ref_laps)
         if "SessionTime" not in self.columns and "LapNumber" in self.columns and lap_numbers:
-            mask = pl.col("LapNumber").is_in(lap_numbers)
+            keep = self._lap_number_values(lap_numbers)
             drivers = _ref_lap_drivers(ref_laps)
             if drivers and "Driver" in self.columns:
-                mask = mask & pl.col("Driver").is_in(drivers)
-            return self.slice_by_mask(
-                self.select(mask.fill_null(False)).to_series(), pad=pad, pad_side=pad_side
-            )
+                keep = keep & _isin_values(self.get_column("Driver").cast(pl.String), drivers)
+            return self.slice_by_mask(pl.Series(keep), pad=pad, pad_side=pad_side)
         start_ns, end_ns = _ref_lap_window(ref_laps)
         if start_ns is not None and end_ns is not None:
             return self._slice_by_time_ns(start_ns, end_ns, pad, pad_side, interpolate_edges)
@@ -1162,8 +1384,16 @@ class PolarsTelemetry(_TIF1Frame):
             return self._rewrap(self.clone())
         if not lap_numbers:
             return self._rewrap(self.clear())
-        mask = pl.col("LapNumber").is_in(lap_numbers).fill_null(False)
-        return self.slice_by_mask(self.select(mask).to_series(), pad=pad, pad_side=pad_side)
+        keep = self._lap_number_values(lap_numbers)
+        return self.slice_by_mask(pl.Series(keep), pad=pad, pad_side=pad_side)
+
+    def _lap_number_values(self, lap_numbers: list[int]) -> np.ndarray:
+        """``LapNumber.is_in(lap_numbers).fill_null(False)`` as numpy."""
+        column = self.get_column("LapNumber")
+        if column.dtype.is_integer() or column.dtype.is_float():
+            return np.isin(column.to_numpy(), lap_numbers)  # a null reads as NaN: no match
+        hits = self.select(pl.col("LapNumber").is_in(lap_numbers).fill_null(False)).to_series()
+        return hits.to_numpy()
 
     # -- merging and resampling --------------------------------------------
 
@@ -1189,9 +1419,17 @@ class PolarsTelemetry(_TIF1Frame):
             merged = _merge_nearest(self.base_class_view, other, key)
         else:
             clashes = [column for column in other.columns if column in self.columns]
-            if clashes:
-                other = other.rename({column: f"{column}_other" for column in clashes})
-            merged = pl.concat([self.base_class_view, other], how="horizontal")
+            if other.height == self.height:
+                merged = self.base_class_view.hstack(
+                    [
+                        column.alias(f"{column.name}_other") if column.name in clashes else column
+                        for column in other.get_columns()
+                    ]
+                )
+            else:  # the shorter frame is padded with nulls
+                if clashes:
+                    other = other.rename({column: f"{column}_other" for column in clashes})
+                merged = pl.concat([self.base_class_view, other], how="horizontal")
         result = self._rewrap(merged)
         if frequency is None:
             frequency = type(self).TELEMETRY_FREQUENCY
@@ -1311,8 +1549,8 @@ def _first_lap_start_ns(laps: pl.DataFrame) -> int | None:
     """Earliest ``LapStartTime`` of a laps frame as integer ns (None when unknown)."""
     if laps.height == 0 or "LapStartTime" not in laps.columns:
         return None
-    start = laps.select(_ns_expr(laps, "LapStartTime").min()).item()
-    return None if start is None else int(start)
+    start = _ns_series(laps, "LapStartTime").min()
+    return None if start is None else int(cast(int, start))
 
 
 def _join_lap_frames(
@@ -1328,38 +1566,38 @@ def _join_lap_frames(
     ``multi_driver``). A frame of one lap, or without a session clock, is
     returned unchanged.
     """
-    # Series operations throughout: on a frame of ~60 concatenated chunks
-    # each expression-engine pass costs ~1.5 ms, a Series kernel ~0.1 ms.
+    # Series kernels and numpy, no query plan: on a frame of ~60 concatenated
+    # chunks each expression-engine pass costs ~1.5 ms.
     if frame.height < 2 or "LapNumber" not in frame.columns:
         return frame
     clock_col = _first_present(frame, "Date", "SessionTime")
     if clock_col is None:
         return frame
-    not_first = pl.int_range(0, frame.height, eager=True) > 0
+    not_first = np.arange(frame.height) > 0
     lap = frame.get_column("LapNumber").cast(pl.Float64, strict=False)
-    if not ((lap != lap.shift(1)).fill_null(True) & not_first).any():
+    if not (_mask_values(lap != _shift_down(lap), null=True) & not_first).any():
         return frame
     clock = _series_ns(frame.get_column(clock_col))
     if not multi_driver and not clock.null_count() and not clock.is_sorted():
-        order = (
-            pl.DataFrame({"c": clock, "l": lap})
-            .with_row_index("i")
-            .sort(["c", "l"], nulls_last=True, maintain_order=True)
-            .get_column("i")
-        )
-        frame = frame.select(pl.all().gather(order))
-        clock = clock.gather(order)
-        lap = lap.gather(order)
+        # By clock, then lap number (nulls last), stable; numpy sorts NaN last.
+        order = np.lexsort((lap.to_numpy(), ~_present_values(lap), clock.to_numpy()))
+        frame = _take_rows(frame, order)
+        clock = clock[order]
+        lap = lap[order]
     same = (
-        (lap != lap.shift(1)).fill_null(True)
+        _mask_values(lap != _shift_down(lap), null=True)
         & not_first
-        & (clock == clock.shift(1)).fill_null(False)
-        & clock.is_not_null()
+        & _mask_values(clock == _shift_down(clock))  # False where the clock is null
     )
     multi = multi_driver and "Driver" in frame.columns
     if multi:
         drivers = frame.get_column("Driver")
-        same = same & drivers.eq_missing(drivers.shift(1))
+        previous = _shift_down(drivers)
+        # ``eq_missing``: equal, or both null.
+        same = same & (
+            _mask_values(drivers == previous)
+            | (~_present_values(drivers) & ~_present_values(previous))
+        )
     if "SessionTime" in frame.columns and "Time" in frame.columns:
         session_time = _series_ns(frame.get_column("SessionTime"))
         implied = session_time - _series_ns(frame.get_column("Time"))  # each row's LapStartTime
@@ -1379,12 +1617,15 @@ def _join_lap_frames(
             time = (session_time - origin).cast(_DURATION_NS)
             if isinstance(time_dtype, pl.Duration):
                 time = time.cast(time_dtype)
-            frame = frame.with_columns(time.alias("Time"))
-    return frame.filter(~same) if same.any() else frame
+            frame = _with_columns(frame, time.alias("Time"))
+    return _filter_rows(frame, ~same) if same.any() else frame
 
 
 def _series_ns(series: pl.Series) -> pl.Series:
     """A clock Series as integer nanoseconds (``_ns_expr`` on a Series; numbers are seconds)."""
+    native = _ns_native(series)
+    if native is not None:
+        return native
     dtype = series.dtype
     if isinstance(dtype, pl.Duration):
         return series.dt.total_nanoseconds()
@@ -1393,17 +1634,24 @@ def _series_ns(series: pl.Series) -> pl.Series:
     if dtype.is_numeric():
         scaled = (series.cast(pl.Float64) * _NS_PER_SECOND).fill_nan(None).round()
         return scaled.cast(pl.Int64, strict=False)
-    return pl.repeat(None, series.len(), dtype=pl.Int64, eager=True)
+    return _full_series(series.name, None, series.len(), pl.Int64)
 
 
-def _stable_order(values: pl.Series) -> pl.Series:
-    """Row positions sorting ``values`` ascending, stable, nulls last."""
-    return (
-        pl.DataFrame({"__v": values})
-        .with_row_index("__i")
-        .sort("__v", nulls_last=True, maintain_order=True)
-        .get_column("__i")
-    )
+def _stable_order(values: pl.Series) -> np.ndarray:
+    """Row positions sorting Int64 ``values`` ascending, stable, nulls last."""
+    numbers, present = _int_values(values)
+    # lexsort: the last key is the primary one (present rows first).
+    return np.lexsort((numbers, ~present))
+
+
+def _stack_rows(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """``pl.concat(frames, how="vertical")`` of same-schema frames, as a plain frame."""
+    if len(frames) == 1:
+        return frames[0]
+    out = pl.DataFrame._from_pydf(frames[0]._df.clone())
+    for frame in frames[1:]:
+        out.vstack(frame, in_place=True)
+    return out
 
 
 def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.DataFrame:
@@ -1414,52 +1662,49 @@ def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.Data
     clock (or an empty ``right``) gets nulls. ``right``'s columns already in
     ``left`` get an ``_other`` suffix.
     """
-    # Series kernels and two key-only asof joins (an expression pass over a
-    # frame of ~60 concatenated chunks costs ~1.5 ms, ``search_sorted`` ~3 ms).
+    # numpy searches and column-by-column gathers: no query plan (an
+    # expression pass over a frame of ~60 concatenated chunks costs ~1.5 ms).
     left_ns = _series_ns(left.get_column(key))
     if left_ns.null_count() or not left_ns.is_sorted():
         order = _stable_order(left_ns)
-        left = left.select(pl.all().gather(order))
-        left_ns = left_ns.gather(order)
+        left = _take_rows(left, order)
+        left_ns = left_ns[order]
     right_ns = _series_ns(right.get_column(key))
     if right_ns.null_count():
-        right = right.filter(right_ns.is_not_null())
-        right_ns = right_ns.drop_nulls()
+        present = _present_values(right_ns)
+        right = _filter_rows(right, present)
+        right_ns = right_ns.filter(pl.Series(present))
     if not right_ns.is_sorted():
         order = _stable_order(right_ns)
-        right = right.select(pl.all().gather(order))
-        right_ns = right_ns.gather(order)
-    columns = [column for column in right.columns if column != key]
-    part = right.select(columns).rename(
-        {column: f"{column}_other" for column in columns if column in left.columns}
-    )
+        right = _take_rows(right, order)
+        right_ns = right_ns[order]
+    renamed = {column: f"{column}_other" for column in right.columns if column in left.columns}
+    part = [
+        right.get_column(column).alias(renamed.get(column, column))
+        for column in right.columns
+        if column != key
+    ]
     n = right_ns.len()
-    known = left.height - left_ns.null_count()  # null clocks sort last
+    height = left.height
+    known = height - left_ns.null_count()  # null clocks sort last
     if n == 0 or known == 0:
-        index = pl.repeat(None, left.height, dtype=pl.Int64, eager=True)
-    else:
-        x = left_ns.head(known).set_sorted()
-        targets = pl.DataFrame({"k": x})
-        candidates = pl.DataFrame(
-            {"k": right_ns.set_sorted(), "i": pl.int_range(0, n, dtype=pl.Int64, eager=True)}
-        )
-        # The last sample at or before each clock, and the first one after it.
-        before = targets.join_asof(candidates, on="k", strategy="backward").get_column("i")
-        after = targets.join_asof(
-            candidates, on="k", strategy="forward", allow_exact_matches=False
-        ).get_column("i")
-        gap_before = x - right_ns.gather(before.fill_null(0))
-        gap_after = right_ns.gather(after.fill_null(0)) - x
-        take_after = after.is_not_null() & (
-            before.is_null() | (gap_after < gap_before).fill_null(False)
-        )
-        index = pl.concat(
-            [
-                after.zip_with(take_after, before),
-                pl.repeat(None, left.height - known, dtype=pl.Int64, eager=True),
-            ]
-        )
-    return pl.concat([left, part.select(pl.all().gather(index))], how="horizontal")
+        return left.hstack([_full_series(c.name, None, height, c.dtype) for c in part])
+    x = left_ns.head(known).to_numpy()
+    keys = right_ns.to_numpy()
+    # The first sample after each clock, and the last one at or before it.
+    after = np.searchsorted(keys, x, side="right")
+    before = after - 1
+    gap_before = x - keys[np.maximum(before, 0)]
+    gap_after = keys[np.minimum(after, n - 1)] - x
+    take_after = (after < n) & ((before < 0) | (gap_after < gap_before))
+    index = np.where(take_after, after, before)  # never -1: n > 0
+    gathered = [column[index] for column in part]
+    if known < height:  # rows without a clock get nulls
+        gathered = [
+            column.append(_full_series(column.name, None, height - known, column.dtype))
+            for column in gathered
+        ]
+    return left.hstack(gathered)
 
 
 def _edge_linear(
@@ -1482,7 +1727,7 @@ def _as_float(value: Any) -> float:
 
 
 def _edge_samples(
-    frame: pl.DataFrame, clock: pl.Series, reference: str, times: list[int]
+    frame: pl.DataFrame, clock: np.ndarray, reference: str, times: list[int]
 ) -> pl.DataFrame:
     """Samples of ``frame`` at ``times`` ns on ``reference`` (none a sampled instant).
 
@@ -1493,14 +1738,15 @@ def _edge_samples(
     sample before the edge, else the one after). pandas
     ``Telemetry._edge_samples`` parity.
     """
-    n = clock.len()
-    after = [int(clock.search_sorted(t, side="right")) for t in times]
+    n = clock.size
+    after = [int(a) for a in np.searchsorted(clock, times, side="right")]
     prevs = [a - 1 if a > 0 else -1 for a in after]
     nexts = [a if a < n else -1 for a in after]
     # One gather of every neighbour: rows [prev..., next...], -1 read as row 0.
-    neighbours = frame.select(pl.all().gather([max(p, 0) for p in (*prevs, *nexts)]))
+    rows = [max(p, 0) for p in (*prevs, *nexts)]
+    neighbours = _take_rows(frame, rows)
     k = len(times)
-    refs = clock.gather([max(p, 0) for p in (*prevs, *nexts)]).to_list()
+    refs = clock[rows].tolist()
     held_at = [i if prevs[i] >= 0 else k + i for i in range(k)]
     series: list[pl.Series] = []
     for column, dtype in neighbours.schema.items():
@@ -1537,7 +1783,7 @@ def _edge_samples(
             else:
                 series.append(pl.Series(column, interpolated, dtype=pl.Float64).cast(dtype))
         else:
-            series.append(neighbours.get_column(column).gather(held_at))
+            series.append(neighbours.get_column(column)[np.asarray(held_at, dtype=np.int64)])
     return pl.DataFrame(series)
 
 
@@ -1654,8 +1900,8 @@ def _ref_lap_numbers(ref_laps: Any) -> list[int]:
         column = _first_present(ref_laps, "LapNumber", "lap")
         if column is None:
             return []
-        values = ref_laps.get_column(column).cast(pl.Int64, strict=False).drop_nulls()
-        return [int(value) for value in values.to_list()]
+        values = ref_laps.get_column(column).cast(pl.Int64, strict=False).to_list()
+        return [int(value) for value in values if value is not None]
     if isinstance(ref_laps, Mapping):
         for key in ("LapNumber", "lap"):
             value = ref_laps.get(key)
@@ -1674,7 +1920,9 @@ def _ref_lap_drivers(ref_laps: Any) -> list[str]:
     if isinstance(ref_laps, pl.DataFrame):
         if "Driver" not in ref_laps.columns:
             return []
-        return [str(value) for value in ref_laps.get_column("Driver").drop_nulls().unique()]
+        drivers = set(ref_laps.get_column("Driver").to_list())
+        drivers.discard(None)
+        return [str(value) for value in drivers]
     if isinstance(ref_laps, Mapping):
         value = ref_laps.get("Driver")
         return [] if value is None else [str(value)]
@@ -1690,14 +1938,12 @@ def _ref_lap_window(ref_laps: Any) -> tuple[int | None, int | None]:
             return None, None
         start = end = None
         if "LapStartTime" in ref_laps.columns:
-            start = ref_laps.select(_ns_expr(ref_laps, "LapStartTime").min()).item()
+            start = _ns_series(ref_laps, "LapStartTime").min()
         if "Time" in ref_laps.columns:
-            end = ref_laps.select(_ns_expr(ref_laps, "Time").max()).item()
+            end = _ns_series(ref_laps, "Time").max()
         if end is None and "LapStartTime" in ref_laps.columns and "LapTime" in ref_laps.columns:
-            end = ref_laps.select(
-                (_ns_expr(ref_laps, "LapStartTime") + _ns_expr(ref_laps, "LapTime")).max()
-            ).item()
-        return start, end
+            end = (_ns_series(ref_laps, "LapStartTime") + _ns_series(ref_laps, "LapTime")).max()
+        return cast("int | None", start), cast("int | None", end)
     if isinstance(ref_laps, Mapping):
         start = _to_ns(ref_laps.get("LapStartTime"))
         end = _to_ns(ref_laps.get("Time"))
@@ -1768,8 +2014,9 @@ class PolarsLaps(_TIF1Frame):
         """
         code = _driver_identifier(identifier)
         if code.isdigit():
-            return self._rewrap(self.filter(self._driver_number_expr([code])))
-        return self._rewrap(self.filter(pl.col("Driver").cast(pl.String) == code))
+            return self._rewrap(_filter_rows(self, self._driver_number_values([code])))
+        keep = _mask_values(self.get_column("Driver").cast(pl.String) == code)
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_drivers(self, identifiers: Any) -> Self:
         """Laps of the given drivers (fastf1 parity).
@@ -1784,19 +2031,22 @@ class PolarsLaps(_TIF1Frame):
         codes = [_driver_identifier(identifier) for identifier in _identifier_items(identifiers)]
         names = [code.upper() for code in codes if not code.isdigit()]
         numbers = [code for code in codes if code.isdigit()]
-        mask = pl.col("Driver").cast(pl.String).is_in(names)
+        keep = _isin_values(self.get_column("Driver").cast(pl.String), names)
         if numbers:
-            mask = mask | self._driver_number_expr(numbers)
-        return self._rewrap(self.filter(mask.fill_null(False)))
+            keep = keep | self._driver_number_values(numbers)
+        return self._rewrap(_filter_rows(self, keep))
 
-    def _driver_number_expr(self, numbers: list[str]) -> pl.Expr:
+    def _driver_number_values(self, numbers: list[str]) -> np.ndarray:
         """``DriverNumber`` (text or integer column) is one of ``numbers`` (digit strings)."""
         if "DriverNumber" not in self.columns:
-            return pl.lit(False)
-        return pl.col("DriverNumber").cast(pl.String).is_in(numbers).fill_null(False)
+            return np.zeros(self.height, dtype=bool)
+        return _isin_values(self.get_column("DriverNumber").cast(pl.String), numbers)
 
     def pick_lap(self, lap_number: int) -> Self:
         """Laps with ``LapNumber == lap_number``."""
+        column = self.get_column("LapNumber")
+        if type(lap_number) is int and column.dtype.is_integer():
+            return self._rewrap(_filter_rows(self, _mask_values(column == lap_number)))
         return self._rewrap(self.filter(pl.col("LapNumber") == lap_number))
 
     def pick_laps(self, lap_numbers: Any = None, *, laps: Any = None) -> Self:
@@ -1813,9 +2063,20 @@ class PolarsLaps(_TIF1Frame):
         column = pl.col("LapNumber")
         if isinstance(lap_numbers, slice):
             start = 1 if lap_numbers.start is None else lap_numbers.start
+            stop = lap_numbers.stop
+            values = self.get_column("LapNumber")
+            if (
+                values.dtype.is_integer()
+                and type(start) is int
+                and (stop is None or type(stop) is int)
+            ):
+                hits = values >= start
+                if stop is not None:
+                    hits = hits & (values <= stop)
+                return self._rewrap(_filter_rows(self, _mask_values(hits)))
             expr = column >= start
-            if lap_numbers.stop is not None:
-                expr = expr & (column <= lap_numbers.stop)
+            if stop is not None:
+                expr = expr & (column <= stop)
             return self._rewrap(self.filter(expr))
         if isinstance(lap_numbers, int | float):
             lap_numbers = [lap_numbers]
@@ -1824,20 +2085,27 @@ class PolarsLaps(_TIF1Frame):
             if isinstance(value, float) and not value.is_integer():
                 raise ValueError(f"Invalid value {value} in `lap_numbers`")
             numbers.append(int(value))
-        if self.schema["LapNumber"].is_float():  # polars 2 refuses int values in a float column
-            return self._rewrap(self.filter(column.is_in([float(n) for n in numbers])))
+        dtype = self.schema["LapNumber"]
+        if dtype.is_integer() or dtype.is_float():
+            # A null reads as NaN, which matches no number.
+            values = self.get_column("LapNumber").to_numpy()
+            return self._rewrap(_filter_rows(self, np.isin(values, numbers)))
         return self._rewrap(self.filter(column.is_in(numbers)))
 
     def pick_team(self, name: str) -> Self:
         """Laps of one team (fastf1's exact ``Team == name``)."""
+        if isinstance(name, str):
+            keep = _mask_values(self.get_column("Team").cast(pl.String) == name)
+            return self._rewrap(_filter_rows(self, keep))
         return self._rewrap(self.filter(pl.col("Team").cast(pl.String) == name))
 
     def pick_teams(self, names: Any) -> Self:
         """Laps of the given teams: a name or any iterable of names, matched exactly."""
         if isinstance(names, str):
             return self.pick_team(names)
-        team = pl.col("Team").cast(pl.String)
-        return self._rewrap(self.filter(team.is_in([str(name) for name in names])))
+        wanted = [str(name) for name in names]
+        keep = _isin_values(self.get_column("Team").cast(pl.String), wanted)
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_fastest(self, only_by_time: bool = False) -> "PolarsLap | None":
         """The lap with the lowest ``LapTime`` (fastf1 parity), or ``None``.
@@ -1864,19 +2132,21 @@ class PolarsLaps(_TIF1Frame):
         """
         if self.height == 0 or "LapTime" not in self.columns:
             return None
-        valid = _valid_expr(self, "LapTime")
+        lap_time = self.get_column("LapTime")
+        valid = _valid_values(lap_time)
         if rule == "personal_best" and "IsPersonalBest" in self.columns:
-            valid = valid & pl.col("IsPersonalBest").cast(pl.Boolean, strict=False).fill_null(False)
+            flag = self.get_column("IsPersonalBest").cast(pl.Boolean, strict=False)
+            valid = valid & _mask_values(flag)
         elif rule == "not_deleted" and "Deleted" in self.columns:
-            valid = valid & ~pl.col("Deleted").cast(pl.Boolean, strict=False).fill_null(False)
-        mask = self.select(valid.alias("valid")).to_series()
-        if mask.all():
-            position = int(cast(int, self.get_column("LapTime").arg_min()))
+            flag = self.get_column("Deleted").cast(pl.Boolean, strict=False)
+            valid = valid & ~_mask_values(flag)
+        if valid.all():
+            position = int(cast(int, lap_time.arg_min()))
         else:
-            positions = mask.arg_true()
-            if positions.len() == 0:
+            positions = np.flatnonzero(valid)
+            if positions.size == 0:
                 return None
-            times = self.get_column("LapTime").filter(mask)
+            times = lap_time.filter(pl.Series(valid))
             position = int(positions[int(cast(int, times.arg_min()))])
         return PolarsLap(self.slice(position, 1), session=self.session, name=position)
 
@@ -1886,24 +2156,27 @@ class PolarsLaps(_TIF1Frame):
             threshold = self.QUICKLAP_THRESHOLD
         if self.height == 0 or "LapTime" not in self.columns:
             return self
-        lap_time_ns = _ns_expr(self, "LapTime")
-        best = self.select(lap_time_ns.min()).item()
+        lap_time_ns = _ns_series(self, "LapTime")
+        best = lap_time_ns.min()
         if best is None:
             return self
-        return self._rewrap(self.filter(lap_time_ns < best * threshold))
+        # Int64 against a number: compared as float64, as polars does; a null
+        # (NaN here) is never quick.
+        keep = lap_time_ns.to_numpy() < cast(int, best) * threshold
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_tyre(self, compound: str) -> Self:
         """Laps on one compound (upper-cased, as fastf1 does)."""
-        return self._rewrap(
-            self.filter(pl.col("Compound").cast(pl.String) == str(compound).upper())
-        )
+        keep = _mask_values(self.get_column("Compound").cast(pl.String) == str(compound).upper())
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_compounds(self, compounds: Any) -> Self:
         """Laps on the given compounds: a name or any iterable of names, upper-cased (fastf1)."""
         if isinstance(compounds, str):
             return self.pick_tyre(compounds)
         wanted = [str(compound).upper() for compound in compounds]
-        return self._rewrap(self.filter(pl.col("Compound").cast(pl.String).is_in(wanted)))
+        keep = _isin_values(self.get_column("Compound").cast(pl.String), wanted)
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_track_status(self, status: Any, how: str = "equals") -> Self:
         """Laps by ``TrackStatus`` code string (fastf1 semantics).
@@ -1915,6 +2188,19 @@ class PolarsLaps(_TIF1Frame):
                 ``status``) or ``"none"`` (no character of ``status``).
         """
         status = str(status)
+        if how in ("equals", "contains", "excludes") or (
+            how in ("any", "none") and status.isalnum() and status.isascii()
+        ):
+            values = self.get_column("TrackStatus").cast(pl.String)
+            if how == "equals":
+                keep = _mask_values(values == status)
+            elif how in ("contains", "excludes"):
+                keep = _text_test_values(values, lambda value: status in value)
+            else:  # any character of ``status`` (a regex class of literal characters)
+                keep = _text_test_values(values, lambda value: any(ch in value for ch in status))
+            if how in ("excludes", "none"):
+                keep = ~keep  # a null status is kept, as ~fill_null(False) keeps it
+            return self._rewrap(_filter_rows(self, keep))
         column = pl.col("TrackStatus").cast(pl.String)
         if how == "equals":
             expr = column == status
@@ -1934,43 +2220,49 @@ class PolarsLaps(_TIF1Frame):
         """Laps that are neither in-laps nor out-laps."""
         if "PitInTime" not in self.columns or "PitOutTime" not in self.columns:
             return self
-        return self._rewrap(
-            self.filter(pl.col("PitInTime").is_null() & pl.col("PitOutTime").is_null())
+        keep = ~_present_values(self.get_column("PitInTime")) & ~_present_values(
+            self.get_column("PitOutTime")
         )
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_box_laps(self, which: str = "both") -> Self:
         """In-laps (``"in"``), out-laps (``"out"``) or either (``"both"``)."""
         if "PitInTime" not in self.columns or "PitOutTime" not in self.columns:
             return self
         if which == "in":
-            expr = pl.col("PitInTime").is_not_null()
+            keep = _present_values(self.get_column("PitInTime"))
         elif which == "out":
-            expr = pl.col("PitOutTime").is_not_null()
+            keep = _present_values(self.get_column("PitOutTime"))
         elif which == "both":
-            expr = pl.col("PitInTime").is_not_null() | pl.col("PitOutTime").is_not_null()
+            keep = _present_values(self.get_column("PitInTime")) | _present_values(
+                self.get_column("PitOutTime")
+            )
         else:
             raise ValueError(f"Invalid value '{which}' for kwarg 'which'")
-        return self._rewrap(self.filter(expr))
+        return self._rewrap(_filter_rows(self, keep))
 
     def pick_not_deleted(self) -> Self:
         """Laps whose time was not deleted (an unknown flag counts as not deleted)."""
         if "Deleted" not in self.columns:
             return self
-        return self._rewrap(
-            self.filter(~pl.col("Deleted").cast(pl.Boolean, strict=False).fill_null(False))
-        )
+        deleted = self.get_column("Deleted").cast(pl.Boolean, strict=False)
+        return self._rewrap(_filter_rows(self, ~_mask_values(deleted)))
 
     def pick_accurate(self) -> Self:
         """Laps flagged ``IsAccurate``."""
         if "IsAccurate" not in self.columns:
             return self
+        accurate = self.get_column("IsAccurate")
+        if accurate.dtype == pl.Boolean:
+            return self._rewrap(_filter_rows(self, _mask_values(accurate)))
         return self._rewrap(self.filter(pl.col("IsAccurate").fill_null(False)))
 
     # -- qualifying ---------------------------------------------------------
 
-    def _segment(self, mask: pl.Expr | pl.Series) -> "PolarsLaps | None":
-        subset = self.filter(mask)
-        return None if subset.height == 0 else self._rewrap(subset)
+    def _segment(self, keep: np.ndarray) -> "PolarsLaps | None":
+        if not keep.any():
+            return None
+        return self._rewrap(_filter_rows(self, keep))
 
     def split_qualifying_sessions(self) -> "list[PolarsLaps | None]":
         """``[Q1, Q2, Q3]`` laps (fastf1 parity; ``None`` for a segment without laps).
@@ -1992,47 +2284,61 @@ class PolarsLaps(_TIF1Frame):
         """
         _require_qualifying_session(self.session)
         if "QualifyingSession" in self.columns:
-            marks = self.select(
-                pl.col("QualifyingSession")
-                .cast(pl.String)
-                .str.to_uppercase()
-                .str.strip_chars()
-                .str.extract(r"([123])$", 1)
-                .alias("segment")
-            ).to_series()
-            if marks.null_count() < marks.len():
-                return [self._segment((marks == str(i)).fill_null(False)) for i in (1, 2, 3)]
+            labels = self.get_column("QualifyingSession").cast(pl.String)
+            marks = _segment_marks(labels.to_list())
+            if marks is None:  # non-ASCII labels: polars' own case mapping and trimming
+                marks = labels.to_frame().select(
+                    pl.col("QualifyingSession")
+                    .str.to_uppercase()
+                    .str.strip_chars()
+                    .str.extract(r"([123])$", 1)
+                )
+                marks = marks.to_series().to_list()
+            if any(mark is not None for mark in marks):
+                return [
+                    self._segment(np.fromiter((m == str(i) for m in marks), bool, len(marks)))
+                    for i in (1, 2, 3)
+                ]
         has_start = "LapStartTime" in self.columns
-        split_times = _qualifying_split_times(
-            self.session, _ns_series(self, "LapStartTime") if has_start else None
-        )
+        starts = _ns_series(self, "LapStartTime") if has_start else None
+        split_times = _qualifying_split_times(self.session, starts)
         if split_times is None:
             return [self if self.height else None, None, None]
-        null_ns = pl.lit(None, dtype=pl.Int64)
-        start = _ns_expr(self, "LapStartTime") if has_start else null_ns
-        end = _ns_expr(self, "Time") if "Time" in self.columns else null_ns
+        none = np.zeros(self.height, dtype=bool)
+        # Each bound as (int64 ns, present); a comparison with a missing
+        # bound is never true (``fill_null(False)``).
+        start, has_start_ns = self._lap_ns("LapStartTime" if has_start else None)
+        end, has_end = self._lap_ns("Time" if "Time" in self.columns else None)
         pit_out = (
-            pl.col("PitOutTime").is_not_null() if "PitOutTime" in self.columns else pl.lit(False)
+            _present_values(self.get_column("PitOutTime")) if "PitOutTime" in self.columns else none
         )
         segments: list[PolarsLaps | None] = [None, None, None]
-        previous_early: pl.Expr | None = None
+        previous_early: np.ndarray | None = None
         for i in range(min(3, len(split_times) - 1)):
             low, high = split_times[i], split_times[i + 1]
             if low is None or high is None:
-                cond = pl.lit(False)
+                cond = none
             else:
-                cond = ((start > low) & (start < high)).fill_null(False)
+                cond = has_start_ns & (start > low) & (start < high)
             if previous_early is not None:
                 cond = cond | previous_early
             if high is None:
-                is_early = pl.lit(False)
+                is_early = none
             else:
                 # An out-lap that crossed the pit timing line before the split
                 # and ends after it belongs to the next segment (fastf1).
-                is_early = ((start < high) & (end > high) & pit_out).fill_null(False)
+                is_early = has_start_ns & has_end & (start < high) & (end > high) & pit_out
             segments[i] = self._segment(cond & ~is_early)
             previous_early = is_early
         return segments
+
+    def _lap_ns(self, column: str | None) -> tuple[np.ndarray, np.ndarray]:
+        """``column`` as ``(int64 ns, present)`` (all missing for ``None`` or a text column)."""
+        if column is not None:
+            values = _ns_series(self, column)
+            if values.len() == self.height:
+                return _int_values(values)
+        return np.zeros(self.height, dtype=np.int64), np.zeros(self.height, dtype=bool)
 
     # -- iteration ----------------------------------------------------------
 
@@ -2053,11 +2359,11 @@ class PolarsLaps(_TIF1Frame):
         session = self.session
         positions: Iterable[int] = range(self.height)
         if required and self.height:
-            keep = self.select(
-                pl.all_horizontal([_valid_expr(self, column) for column in required]).alias("k")
-            ).to_series()
+            keep = _valid_values(self.get_column(required[0]))
+            for column in required[1:]:
+                keep = keep & _valid_values(self.get_column(column))
             if not keep.all():
-                positions = keep.arg_true().to_list()
+                positions = np.flatnonzero(keep).tolist()
         rows = self.rows(named=True)
         for position in positions:
             yield IterLapResult(
@@ -2070,10 +2376,13 @@ class PolarsLaps(_TIF1Frame):
     # -- telemetry ----------------------------------------------------------
 
     def _telemetry_refs(self) -> list[tuple[str, int]]:
-        refs = self.select(
-            pl.col("Driver").cast(pl.String), pl.col("LapNumber").cast(pl.Int64, strict=False)
-        ).drop_nulls()
-        return [(str(driver), int(number)) for driver, number in refs.iter_rows()]
+        drivers = self.get_column("Driver").cast(pl.String).to_list()
+        numbers = self.get_column("LapNumber").cast(pl.Int64, strict=False).to_list()
+        return [
+            (str(driver), int(number))
+            for driver, number in zip(drivers, numbers, strict=True)
+            if driver is not None and number is not None
+        ]
 
     def _lap_telemetry_frames(self, refs: list[tuple[str, int]]) -> list[pl.DataFrame]:
         """The non-empty telemetry frames of ``refs``, in ``refs`` order.
@@ -2121,7 +2430,13 @@ class PolarsLaps(_TIF1Frame):
             return PolarsTelemetry._empty(self.session, driver)
         if len(frames) == 1:
             return PolarsTelemetry._from_frame(frames[0], self.session, driver)
-        merged = pl.concat(frames, how="diagonal_relaxed")
+        try:
+            # vstack accepts only the same names, order and dtypes, where the
+            # relaxed concat is a plain stack (comparing the schemas in
+            # Python costs ~0.25 ms per frame).
+            merged = _stack_rows(frames)
+        except pl.exceptions.PolarsError:
+            merged = pl.concat(frames, how="diagonal_relaxed")
         start = None if multi_driver else _first_lap_start_ns(self)
         merged = _join_lap_frames(merged, start, multi_driver=multi_driver)
         return PolarsTelemetry._from_frame(merged, self.session, driver)
@@ -2137,10 +2452,10 @@ class PolarsLaps(_TIF1Frame):
         self._require_session("telemetry")
         if self.height == 0 or self.session is None:
             return PolarsTelemetry._empty(self.session, None)
-        drivers = self.get_column("Driver").drop_nulls().unique()
-        if drivers.len() > 1:
+        count, code = _distinct_present(self.get_column("Driver"))
+        if count > 1:
             raise ValueError("Cannot retrieve telemetry for multiple drivers.")
-        driver = str(drivers[0]) if drivers.len() else None
+        driver = str(code) if count else None
         refs = self._telemetry_refs()
         cached = getattr(self, "_telemetry_cache", None)
         if cached is not None and cached[0] == refs:
@@ -2180,10 +2495,10 @@ class PolarsLaps(_TIF1Frame):
         car_data = getattr(self.session, "car_data", None)
         if car_data is None:
             return None
-        drivers = self.get_column("Driver").drop_nulls().unique()
-        if drivers.len() != 1:
+        count, code = _distinct_present(self.get_column("Driver"))
+        if count != 1:
             raise ValueError("Cannot retrieve telemetry for multiple drivers.")
-        driver = str(drivers[0])
+        driver = str(code)
         try:
             full = car_data[driver]
         except KeyError:
@@ -2240,10 +2555,11 @@ class PolarsLaps(_TIF1Frame):
             starts, ends = self._weather_bounds()
             return _weather_sample_frame(weather, _weather_sample_positions(weather, starts, ends))
         if all(column in self.columns for column in ("WeatherTime", *WEATHER_COLUMNS)):
-            return pl.DataFrame.select(
-                self,
-                pl.col("WeatherTime").cast(_DURATION_NS).alias("Time"),
-                *(pl.col(column) for column in WEATHER_COLUMNS),
+            return pl.DataFrame(
+                [
+                    self.get_column("WeatherTime").cast(_DURATION_NS).alias("Time"),
+                    *(self.get_column(column) for column in WEATHER_COLUMNS),
+                ]
             )
         return _missing_weather_frame(self.height)
 
@@ -2253,21 +2569,22 @@ class PolarsLaps(_TIF1Frame):
         A frame without a ``Time`` column ends its laps at
         ``LapStartTime + LapTime``.
         """
-        null_ns = pl.lit(None, dtype=pl.Int64)
-        start = _ns_expr(self, "LapStartTime") if "LapStartTime" in self.columns else null_ns
+        height = self.height
+
+        def clock(column: str) -> pl.Series:
+            values = _ns_series(self, column) if column in self.columns else None
+            if values is None or values.len() != height:  # missing, or not a clock
+                return _full_series(column, None, height, pl.Int64)
+            return values
+
+        start = clock("LapStartTime")
         if "Time" in self.columns:
-            end = _ns_expr(self, "Time")
+            end = clock("Time")
         elif "LapStartTime" in self.columns and "LapTime" in self.columns:
-            end = start + _ns_expr(self, "LapTime")
+            end = start + clock("LapTime")
         else:
-            end = null_ns
-        bounds = pl.DataFrame.select(self, start.alias("start"), end.alias("end"))
-        if bounds.height != self.height:  # every expression was a literal
-            bounds = pl.DataFrame(
-                {"start": [None] * self.height, "end": [None] * self.height},
-                schema={"start": pl.Int64, "end": pl.Int64},
-            )
-        return bounds.get_column("start"), bounds.get_column("end")
+            end = _full_series("end", None, height, pl.Int64)
+        return start.alias("start"), end.alias("end")
 
 
 # --------------------------------------------------------------------------- #
@@ -2482,22 +2799,23 @@ class PolarsSessionResults(_TIF1Frame):
         if not key:
             # A blank identifier names no driver (it would match blank names).
             return None
-        exprs: list[pl.Expr] = []
+        matches: np.ndarray | None = None
+        upper, lower = key.upper(), key.lower()
         for column in self._IDENTIFIER_COLUMNS:
             if column not in self.columns:
                 continue
-            text = pl.col(column).cast(pl.String)
+            text = self.get_column(column).cast(pl.String)
             if column == "Abbreviation":
-                exprs.append(text.str.to_uppercase() == key.upper())
+                hits = _text_test_values(text, lambda value: value.upper() == upper)
             elif column == "DriverNumber":
-                exprs.append(text == key)
+                hits = _mask_values(text == key)
             else:
-                exprs.append(text.str.to_lowercase() == key.lower())
-        if not exprs:
+                hits = _text_test_values(text, lambda value: value.lower() == lower)
+            matches = hits if matches is None else matches | hits
+        if matches is None:
             return None
-        matches = self.select(pl.any_horizontal(exprs).fill_null(False).alias("m")).to_series()
-        positions = matches.arg_true()
-        if positions.len():
+        positions = np.flatnonzero(matches)
+        if positions.size:
             return int(positions[0])
         number, separator, code = key.partition("/")
         if (
@@ -2508,11 +2826,14 @@ class PolarsSessionResults(_TIF1Frame):
         ):
             # A shared car's later driver ("number/Abbreviation", the pandas
             # index label) against the raw car number polars keeps.
-            label = (pl.col("DriverNumber").cast(pl.String) == number) & (
-                pl.col("Abbreviation").cast(pl.String).str.to_uppercase() == code.strip().upper()
+            wanted = code.strip().upper()
+            label = _mask_values(self.get_column("DriverNumber").cast(pl.String) == number)
+            label = label & _text_test_values(
+                self.get_column("Abbreviation").cast(pl.String),
+                lambda value: value.upper() == wanted,
             )
-            positions = self.select(label.fill_null(False).alias("m")).to_series().arg_true()
-            if positions.len():
+            positions = np.flatnonzero(label)
+            if positions.size:
                 return int(positions[0])
         return None
 
@@ -2748,11 +3069,11 @@ class PolarsDriver(PolarsDriverResult):
             raise ValueError(f"lap_number must be a positive integer, got {lap_number!r}")
         laps = self.laps
         positions = (
-            (laps.get_column("LapNumber") == lap_number).fill_null(False).arg_true()
+            np.flatnonzero(_mask_values(laps.get_column("LapNumber") == lap_number))
             if "LapNumber" in laps.columns
-            else pl.Series([], dtype=pl.UInt32)
+            else np.zeros(0, dtype=np.int64)
         )
-        if positions.len() == 0:
+        if positions.size == 0:
             raise LapNotFoundError(
                 lap_number=lap_number, driver=self.driver, **_session_context(self.session)
             )

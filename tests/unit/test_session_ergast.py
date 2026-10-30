@@ -540,6 +540,48 @@ class TestHelpers:
         assert ergast_threads
         assert all(kw.get("daemon") for kw in ergast_threads)  # never delays interpreter exit
 
+    def test_warm_classification_is_resolved_without_a_thread(self, ergast_offline, monkeypatch):
+        _ = _session().results  # the first session fetches (the memo is the cache in tests)
+        fetched = len(ergast_offline.calls)
+        started: list[str] = []
+        real_thread = threading.Thread
+
+        class Recording(real_thread):
+            def __init__(self, *args, **kwargs):
+                started.append(str(kwargs.get("name")))
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(threading, "Thread", Recording)
+        session = _session()
+        assert session.drivers[:4] == ["81", "4", "63", "1"]
+        assert "tif1-ergast" not in started
+        assert session._ergast_loaded
+        assert len(ergast_offline.calls) == fetched
+
+    @pytest.mark.usefixtures("ergast_offline")
+    def test_warm_ergast_only_failure_is_memoized_without_a_thread(self, monkeypatch):
+        from tif1.ergast.stats import get_stats_source
+
+        monkeypatch.setitem(get_config()._config, "ergast_fallback", False)
+        assert get_stats_source().races(1950)  # the season index is cached, the round is not
+        monkeypatch.setitem(get_config()._config, "offline_mode", True)
+        started: list[str] = []
+        real_thread = threading.Thread
+
+        class Recording(real_thread):
+            def __init__(self, *args, **kwargs):
+                started.append(str(kwargs.get("name")))
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(threading, "Thread", Recording)
+        session = tif1.get_session(1950, "British Grand Prix", "Race")
+        with pytest.raises(NetworkError) as first:
+            _ = session.drivers
+        assert "tif1-ergast" not in started  # offline: answered (with an error) inline
+        with pytest.raises(NetworkError) as again:
+            _ = session.results
+        assert again.value is first.value  # the stored error, no second lookup
+
     @pytest.mark.usefixtures("ergast_offline")
     def test_session_laps_built_from_ergast_timings(self):
         get_config().set("ergast_fallback", False)

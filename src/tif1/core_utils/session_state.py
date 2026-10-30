@@ -13,13 +13,20 @@ is documented as such.
 Every function takes plain Python sequences or either backend's frame and
 returns the frame of the requested backend; the state machines run once on
 Python lists (a few hundred race-control rows) so there is one
-implementation per derivation.
+implementation per derivation. Clock columns are read as whole numpy arrays
+(``to_numpy()`` on either backend, never a polars query plan).
+
+The typed weather and race-control tables (:func:`weather_frame`,
+:func:`race_control_frame`) are built here straight from the payload lists
+for the common payload shapes; the session falls back to its generic build
+for anything else.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -119,6 +126,53 @@ def _timedelta_ns(values: list[Any] | None) -> np.ndarray:
     return out
 
 
+def _column_ns(frame: Any, name: str, *, timedelta: bool) -> np.ndarray:
+    """A clock column of either backend as int64 ns (int64 min where unknown).
+
+    Native columns convert as one array: pandas ``datetime64``/``timedelta64``
+    of any unit (naive), polars ``Datetime`` (naive)/``Duration``. polars
+    values are cut to microseconds as its ``to_list()`` objects are
+    (datetimes floor, durations truncate toward zero), so both paths give
+    the same numbers. Any other dtype goes value by value.
+    """
+    native = _native_column_ns(frame, name, timedelta=timedelta)
+    if native is not None:
+        return native
+    values = _column_list(frame, name)
+    return _timedelta_ns(values) if timedelta else _datetime_ns(values)
+
+
+def _native_column_ns(frame: Any, name: str, *, timedelta: bool) -> np.ndarray | None:
+    """:func:`_column_ns` for a natively typed column; None for any other column."""
+    if frame is None:
+        return None
+    columns = getattr(frame, "columns", None)
+    if columns is None or name not in columns:
+        return None
+    column = frame[name]
+    dtype = column.dtype
+    target = "timedelta64[ns]" if timedelta else "datetime64[ns]"
+    if isinstance(dtype, np.dtype):  # pandas (numpy-backed, so never tz-aware)
+        if dtype.kind != ("m" if timedelta else "M"):
+            return None
+        return column.to_numpy().astype(target).view("int64")
+    pl = import_supported_polars()
+    if pl is None or not isinstance(column, pl.Series):
+        return None
+    if timedelta:
+        if not isinstance(dtype, pl.Duration):
+            return None
+    elif not isinstance(dtype, pl.Datetime) or dtype.time_zone is not None:
+        return None
+    ns = column.to_numpy().astype(target).view("int64")
+    valid = ns != _NS_MIN
+    if valid.any():
+        values = ns[valid]
+        # The microseconds a datetime/timedelta object of to_list() holds.
+        ns[valid] = values - np.fmod(values, 1000) if timedelta else values // 1000 * 1000
+    return ns
+
+
 def _text(values: list[Any] | None, n: int) -> list[str]:
     if not values:
         return [""] * n
@@ -134,8 +188,8 @@ def t0_date_ns(laps: Any) -> int | None:
     Both columns come from fastf1's session clock in the extraction, so the
     difference is constant to the millisecond across every lap.
     """
-    dates = _datetime_ns(_column_list(laps, "LapStartDate"))
-    starts = _timedelta_ns(_column_list(laps, "LapStartTime"))
+    dates = _column_ns(laps, "LapStartDate", timedelta=False)
+    starts = _column_ns(laps, "LapStartTime", timedelta=True)
     if not len(dates) or len(dates) != len(starts):
         return None
     valid = (dates != _NS_MIN) & (starts != _NS_MIN)
@@ -166,19 +220,25 @@ def session_start_time_ns(
     return None
 
 
+def _timed_positions(times: np.ndarray) -> tuple[list[int], list[int]]:
+    """Row positions with a timestamp and their times, in stable time order."""
+    order = np.argsort(times, kind="stable")
+    ordered = times[order]
+    keep = ordered != _NS_MIN
+    return order[keep].tolist(), ordered[keep].tolist()
+
+
 def _first_green_light_ns(rcm: Any) -> int | None:
-    times = _datetime_ns(_column_list(rcm, "Time"))
+    times = _column_ns(rcm, "Time", timedelta=False)
     if not len(times):
         return None
     messages = _text(_column_list(rcm, "Message"), len(times))
     flags = _text(_column_list(rcm, "Flag"), len(times))
-    for position in np.argsort(times, kind="stable"):
-        if times[position] == _NS_MIN:
-            continue
+    for position, time_ns in zip(*_timed_positions(times), strict=True):
         if flags[position].upper() == "GREEN" and messages[position].upper().startswith(
             "GREEN LIGHT"
         ):
-            return int(times[position])
+            return time_ns
     return None
 
 
@@ -190,7 +250,7 @@ def _rcm_rows(rcm: Any, t0_ns: int) -> list[tuple[int, str, str, str, str, int |
 
     Time-sorted; rows without a timestamp are dropped.
     """
-    times = _datetime_ns(_column_list(rcm, "Time"))
+    times = _column_ns(rcm, "Time", timedelta=False)
     n = len(times)
     if not n:
         return []
@@ -201,9 +261,7 @@ def _rcm_rows(rcm: Any, t0_ns: int) -> list[tuple[int, str, str, str, str, int |
     messages = _text(_column_list(rcm, "Message"), n)
     sectors_raw = _column_list(rcm, "Sector") or [None] * n
     rows = []
-    for position in np.argsort(times, kind="stable"):
-        if times[position] == _NS_MIN:
-            continue
+    for position, time_ns in zip(*_timed_positions(times), strict=True):
         sector_value = sectors_raw[position]
         sector: int | None
         try:
@@ -214,7 +272,7 @@ def _rcm_rows(rcm: Any, t0_ns: int) -> list[tuple[int, str, str, str, str, int |
             sector = None
         rows.append(
             (
-                int(times[position]) - t0_ns,
+                time_ns - t0_ns,
                 categories[position],
                 flags[position].upper(),
                 scopes[position].upper(),
@@ -291,19 +349,17 @@ def track_status_rows_from_laps(laps: Any) -> list[tuple[int, str]]:
     Lap granularity: a multi-code lap (``"124"``) emits its codes in order at
     the lap start; for each lap number the earliest lap start is used.
     """
-    starts = _timedelta_ns(_column_list(laps, "LapStartTime"))
+    starts = _column_ns(laps, "LapStartTime", timedelta=True)
     codes = _text(_column_list(laps, "TrackStatus"), len(starts))
     numbers = _column_list(laps, "LapNumber") or [None] * len(starts)
     rows: list[tuple[int, str]] = [(0, "1")]
     if not len(starts):
         return rows
     first_by_lap: dict[Any, tuple[int, str]] = {}
-    for position in np.argsort(starts, kind="stable"):
-        if starts[position] == _NS_MIN:
-            continue
+    for position, start_ns in zip(*_timed_positions(starts), strict=True):
         key = numbers[position]
         if key not in first_by_lap:
-            first_by_lap[key] = (int(starts[position]), codes[position])
+            first_by_lap[key] = (start_ns, codes[position])
     current = "1"
     for start_ns, code in sorted(first_by_lap.values()):
         for char in code:
@@ -435,8 +491,227 @@ def status_frame(rows: list[tuple[int, str]], lib: str, *, with_message: bool) -
     return pd.DataFrame(data_pd)
 
 
+# -- typed weather / race-control tables ------------------------------------------
+
+_WEATHER_FLOAT_COLUMNS = frozenset({"AirTemp", "Humidity", "Pressure", "TrackTemp", "WindSpeed"})
+_WEATHER_COLUMNS = _WEATHER_FLOAT_COLUMNS | {"Time", "WindDirection", "Rainfall"}
+_RCM_TEXT_COLUMNS = frozenset({"Category", "Message", "Status", "Flag", "Scope", "RacingNumber"})
+_RCM_COLUMNS = _RCM_TEXT_COLUMNS | {"Time", "Sector", "Lap"}
+# Timestamps numpy, pandas' ISO8601 parser and polars' ``%Y-%m-%dT%H:%M:%S%.f`` agree on.
+_ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?")
+# Integers a float64 holds exactly: the generic builds pass some columns through float64.
+_FLOAT_EXACT_INT = 2**53
+
+
+def _table_columns(
+    data: dict[str, Any], rename_map: dict[str, str], known: frozenset[str]
+) -> list[tuple[str, str]] | None:
+    """``(payload key, column)`` pairs when every key renames to its own known column.
+
+    Only then does the generic build rename every key in payload order; a
+    payload with other keys, clashing keys or empty or ragged lists is left
+    to it.
+    """
+    pairs: list[tuple[str, str]] = []
+    taken: set[str] = set()
+    length = -1
+    for key, values in data.items():
+        column = rename_map.get(key)
+        if column is None or column not in known or column in taken:
+            return None
+        if type(values) is not list or not values or length not in (-1, len(values)):
+            return None
+        length = len(values)
+        taken.add(column)
+        pairs.append((key, column))
+    return pairs or None
+
+
+def weather_frame(data: dict[str, Any], rename_map: dict[str, str], lib: str) -> Any | None:
+    """The typed weather table of ``data`` built from its lists, or None.
+
+    Same frame as the generic build (renamed payload frame, then the
+    per-column casts of ``Session.weather``) for a payload whose columns are
+    all known and hold plain JSON numbers/booleans; None for anything else
+    (sentinels, nulls, strings), which the generic build handles.
+    """
+    pairs = _table_columns(data, rename_map, _WEATHER_COLUMNS)
+    if pairs is None:
+        return None
+    from .helpers import _seconds_to_td64ns, _td_cast_is_safe
+
+    arrays: dict[str, np.ndarray] = {}
+    try:
+        for key, column in pairs:
+            values = data[key]
+            types = set(map(type, values))
+            if column == "Rainfall":
+                if types != {bool}:
+                    return None
+                arrays[column] = np.array(values, dtype=bool)
+            elif column == "WindDirection":
+                # polars rounds through float64 before its Int64 cast.
+                if types != {int}:
+                    return None
+                directions = np.array(values, dtype=np.int64)
+                if np.abs(directions).max() >= _FLOAT_EXACT_INT:
+                    return None
+                arrays[column] = directions
+            else:
+                if not types <= {float, int}:
+                    return None
+                floats = np.array(values, dtype=np.float64)
+                if column == "Time":
+                    if not _td_cast_is_safe(floats):
+                        return None
+                    floats = _seconds_to_td64ns(floats)
+                arrays[column] = floats
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if lib == "polars":
+        pl = import_supported_polars()
+        if pl is None:  # pragma: no cover - a polars session always has polars
+            return None
+        return pl.DataFrame([pl.Series(column, array) for column, array in arrays.items()])
+    import pandas as pd
+
+    columns: dict[str, Any] = dict(arrays)
+    if "WindDirection" in columns:
+        columns["WindDirection"] = pd.array(columns["WindDirection"], dtype="Int64")
+    if "Rainfall" in columns:
+        columns["Rainfall"] = pd.array(columns["Rainfall"], dtype="boolean")
+    return pd.DataFrame(columns)
+
+
+def _iso_timestamps_ns(values: list[Any]) -> np.ndarray | None:
+    """Plain ISO timestamps (no zone) as int64 ns, or None when any value is not one."""
+    for value in values:
+        if type(value) is not str or _ISO_TIMESTAMP.fullmatch(value) is None:
+            return None
+    try:
+        return np.array(values, dtype="datetime64[ns]").view("int64")
+    except (OverflowError, ValueError):
+        return None
+
+
+def _sector_floats(values: list[Any], missing: Any) -> list[Any] | None:
+    """Sector numbers as floats (``missing`` for a gap), or None for any other value.
+
+    Gaps are ``None`` or ``"None"``; the numbers are either all digit strings
+    or all JSON numbers (never both), which the generic builds parse to the
+    same floats.
+    """
+    out: list[Any] = []
+    digits = numbers = False
+    for value in values:
+        kind = type(value)
+        if value is None or value == "None":
+            out.append(missing)
+        elif kind is str:
+            if not (value.isascii() and value.isdigit() and len(value) < 16):
+                return None
+            digits = True
+            out.append(float(value))
+        elif kind is float or (kind is int and abs(value) < _FLOAT_EXACT_INT):
+            numbers = True
+            out.append(float(value))
+        else:
+            return None
+    return None if digits and numbers else out
+
+
+def race_control_frame(data: dict[str, Any], rename_map: dict[str, str], lib: str) -> Any | None:
+    """The typed race-control table of ``data`` built from its lists, or None.
+
+    Same frame as the generic build (renamed payload frame, then the
+    per-column parsing of ``Session.race_control_messages``) for a payload
+    whose columns are all known, with plain ISO timestamps, text columns,
+    numeric sectors and integer laps (``"None"`` gaps allowed); None for
+    anything else, which the generic build handles.
+    """
+    pairs = _table_columns(data, rename_map, _RCM_COLUMNS)
+    if pairs is None:
+        return None
+    if lib == "polars":
+        return _race_control_polars(data, pairs)
+    import pandas as pd
+
+    columns: dict[str, Any] = {}
+    for key, column in pairs:
+        values = data[key]
+        if column == "Time":
+            times = _iso_timestamps_ns(values)
+            if times is None:
+                return None
+            columns[column] = times.view("datetime64[ns]")
+        elif column == "Sector":
+            if any(value is None for value in values):
+                return None
+            sectors = _sector_floats(values, math.nan)
+            if sectors is None:
+                return None
+            columns[column] = np.array(sectors, dtype=np.float64)
+        elif column == "Lap":
+            laps: list[int] = []
+            for value in values:
+                if type(value) is int and abs(value) < _FLOAT_EXACT_INT:
+                    laps.append(value)
+                elif value == "None":
+                    laps.append(0)
+                else:
+                    return None
+            columns[column] = np.array(laps, dtype=np.int64)
+        else:
+            if any(type(value) is not str for value in values):
+                return None
+            columns[column] = pd.Series(
+                [None if value == "None" else value for value in values], dtype=object
+            )
+    return pd.DataFrame(columns)
+
+
+def _race_control_polars(data: dict[str, Any], pairs: list[tuple[str, str]]) -> Any | None:
+    """:func:`race_control_frame` for polars: the generic build's null coercion, then typed lists."""
+    pl = import_supported_polars()
+    if pl is None:  # pragma: no cover - a polars session always has polars
+        return None
+    from .helpers import _coerce_null_like_payload
+
+    data = _coerce_null_like_payload(data)
+    series = []
+    try:
+        for key, column in pairs:
+            values = data[key]
+            if column == "Time":
+                times = _iso_timestamps_ns(values)
+                # polars parses these timestamps to microseconds.
+                if times is None or (times % 1000).any():
+                    return None
+                series.append(pl.Series(column, times.view("datetime64[ns]")))
+            elif column == "Sector":
+                sectors = _sector_floats(values, None)
+                if sectors is None:
+                    return None
+                series.append(pl.Series(column, sectors, dtype=pl.Float64))
+            elif column == "Lap":
+                if any(
+                    value is not None and (type(value) is not int or abs(value) >= 2**63)
+                    for value in values
+                ):
+                    return None
+                series.append(pl.Series(column, values, dtype=pl.Int64))
+            else:
+                if any(value is not None and type(value) is not str for value in values):
+                    return None
+                series.append(pl.Series(column, values, dtype=pl.String))
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return pl.DataFrame(series)
+
+
 __all__ = [
     "TRACK_STATUS_MESSAGES",
+    "race_control_frame",
     "session_info_dict",
     "session_start_time_ns",
     "session_status_rows",
@@ -444,4 +719,5 @@ __all__ = [
     "t0_date_ns",
     "track_status_rows",
     "track_status_rows_from_laps",
+    "weather_frame",
 ]

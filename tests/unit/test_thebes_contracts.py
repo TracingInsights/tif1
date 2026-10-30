@@ -16,8 +16,9 @@ import pandas as pd
 import pytest
 
 from tif1.cache import Cache, _compress_frame_blob
-from tif1.core_utils import frame_codec, helpers
-from tif1.core_utils.helpers import _create_telemetry_df, _frame_from_arrays
+from tif1.core_utils import frame_codec, pandas_blocks
+from tif1.core_utils.helpers import _create_telemetry_df
+from tif1.core_utils.pandas_blocks import _frame_from_arrays
 
 _PAYLOAD = {
     "time": [0.0, 0.016, 0.256, 0.5],
@@ -66,7 +67,7 @@ def test_direct_block_assembly_matches_public_constructor_path():
         for c in columns
     ]
     public = _frame_from_arrays(arrays, columns, len(frame))
-    direct = helpers._direct_frame_from_columns(arrays, columns, len(frame))
+    direct = pandas_blocks._direct_frame_from_columns(arrays, columns, len(frame))
     _assert_same_frame(direct, public)
     _assert_same_frame(frame, public)
 
@@ -92,7 +93,7 @@ def test_direct_block_frames_are_writable_and_independent():
 
 
 def test_frame_from_columns_falls_back_when_direct_path_unavailable(monkeypatch):
-    monkeypatch.setattr(helpers, "_DIRECT_BLOCKS_OK", False)
+    monkeypatch.setattr(pandas_blocks, "_DIRECT_BLOCKS_OK", False)
     frame = _frame()
     _assert_same_frame(frame, _frame())
 
@@ -101,14 +102,14 @@ def test_frame_from_columns_falls_back_on_direct_build_error(monkeypatch):
     def _boom(*_args, **_kwargs):
         raise ValueError("drift")
 
-    monkeypatch.setattr(helpers, "_direct_frame_from_columns", _boom)
+    monkeypatch.setattr(pandas_blocks, "_direct_frame_from_columns", _boom)
     frame = _frame()
     assert list(frame.columns)[-2:] == ["Driver", "LapNumber"]
 
 
 def test_probe_rejects_drifted_internals(monkeypatch):
-    monkeypatch.setattr(helpers, "_DIRECT_BLOCKS_AVAILABLE", False)
-    assert helpers._probe_direct_blocks() is False
+    monkeypatch.setattr(pandas_blocks, "_DIRECT_BLOCKS_AVAILABLE", False)
+    assert pandas_blocks._probe_direct_blocks() is False
 
 
 # -- TH1: frame codec ---------------------------------------------------------

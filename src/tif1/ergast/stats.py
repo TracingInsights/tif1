@@ -124,6 +124,10 @@ class StatsSource:
         races = payload.get("MRData", {}).get("RaceTable", {}).get("Races")
         return races if isinstance(races, list) else None
 
+    def season_index_cached(self, season: int) -> bool:
+        """True when ``{season}/events.json`` is answered from the cache tiers (no fetch)."""
+        return self.loader.is_fresh(season, "", EVENTS_FILE)
+
     def season_index(self, season: int) -> dict[int, RoundInfo] | None:
         """``{round: RoundInfo}`` for ``season`` (memoized), or None when unknown to Stats."""
         races = self.races(season)
