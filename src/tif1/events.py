@@ -132,6 +132,41 @@ def _parse_gmt_offset(value: Any) -> timedelta | None:
         return None
 
 
+def _is_race_round(round_value: Any) -> bool:
+    return isinstance(round_value, int) and round_value > 0
+
+
+def _number_shared_testing_names(
+    event_name_col: dict[str, Any], round_col: dict[str, Any], event_date_col: Any
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Unique names for testing events that share one: ``({index: name}, {shared: first})``.
+
+    2026 has two "Pre-Season Testing" weeks. Every schedule lookup and the
+    CDN folder of a session go by event name, so the second week overwrote
+    the first; they are numbered in date order instead ("Pre-Season Testing
+    1", "Pre-Season Testing 2"), the data repositories' folder names. The
+    shared name stays resolvable and means the first of them, as fastf1's
+    first-match search returns.
+    """
+    dates = event_date_col if isinstance(event_date_col, dict) else {}
+    by_name: dict[str, list[tuple[str, str]]] = {}
+    for index in _sorted_index_keys(event_name_col):
+        name = event_name_col.get(index)
+        if not isinstance(name, str) or not name.strip() or _is_race_round(round_col.get(index)):
+            continue
+        date = dates.get(index)
+        by_name.setdefault(name.strip(), []).append((date if isinstance(date, str) else "", index))
+    renamed: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    for name, entries in by_name.items():
+        if len(entries) < 2:
+            continue
+        for number, (_, index) in enumerate(sorted(entries, key=lambda item: item[0]), 1):
+            renamed[index] = f"{name} {number}"
+        aliases[name] = f"{name} 1"
+    return renamed, aliases
+
+
 def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, Any]:
     event_name_col = raw_year.get("event_name")
     round_col = raw_year.get("round_number")
@@ -149,12 +184,13 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
     testing_events: list[tuple[str, str]] = []
     sessions: dict[str, list[str]] = {}
     event_metadata: dict[str, dict[str, Any]] = {}
+    renamed, name_aliases = _number_shared_testing_names(event_name_col, round_col, event_date_col)
 
     for index in _sorted_index_keys(event_name_col):
         event_name = event_name_col.get(index)
         if not isinstance(event_name, str) or not event_name.strip():
             continue
-        event_name = event_name.strip()
+        event_name = renamed.get(index) or event_name.strip()
         event_sessions = _extract_sessions_for_index(raw_year, index)
         if event_sessions:
             sessions[event_name] = event_sessions
@@ -188,7 +224,7 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
         }
 
         round_value = round_col.get(index)
-        if isinstance(round_value, int) and round_value > 0:
+        if _is_race_round(round_value):
             race_events.append((round_value, event_name))
             continue
 
@@ -206,6 +242,7 @@ def _convert_f1schedule_year(raw_year: dict[str, Any], year: int) -> dict[str, A
         "events": race_events_sorted + testing_sorted,
         "sessions": sessions,
         "metadata": event_metadata,
+        "name_aliases": name_aliases,
     }
 
 
@@ -1033,11 +1070,7 @@ def _match_event_name(
     lookups by alias or near-miss name stay pandas-free.
     """
     matched, log_line = _match_event_name_unlogged(
-        year,
-        event_names,
-        name,
-        exact_match,
-        lambda: _record_metadata(_get_year_schedule(year, backend)),
+        year, event_names, name, exact_match, lambda: _get_year_schedule(year, backend)
     )
     if log_line is not None:
         logger.log(log_line[0], log_line[1], *log_line[2])
@@ -1071,24 +1104,38 @@ def _is_testing_metadata(metadata: Any) -> bool:
     return isinstance(metadata, dict) and metadata.get("EventFormat") == "testing"
 
 
+def _shared_testing_name_target(
+    record: _YearSchedule, event_names: list[str], name: str
+) -> str | None:
+    """The first numbered testing event when ``name`` is their shared name (else None)."""
+    aliases = record.payload.get("name_aliases")
+    if not aliases:
+        return None
+    folded = name.casefold()
+    for shared, target in aliases.items():
+        if shared.casefold() == folded and target in event_names:
+            return target
+    return None
+
+
 def _match_event_name_unlogged(
     year: int,
     event_names: list[str],
     name: str,
     exact_match: bool,
-    metadata_of: Callable[[], dict[str, Any]],
+    record_of: Callable[[], _YearSchedule],
 ) -> tuple[str | None, _LogLine | None]:
     """:func:`_match_event_name`, returning its log line instead of emitting it.
 
-    ``metadata_of`` returns the season's per-event metadata; it is only called
-    when the name needs fuzzy matching.
+    ``record_of`` returns the season's schedule record; it is only called when
+    the name is not an event name as given.
     """
     if exact_match:
         query = name.lower()
         for event_name in event_names:
             if event_name.lower() == query:
                 return event_name, None
-        return None, None
+        return _shared_testing_name_target(record_of(), event_names, name), None
 
     if not event_names:
         return None, None
@@ -1121,7 +1168,12 @@ def _match_event_name_unlogged(
             (name, alias_targets[0], year),
         )
 
-    metadata_dict = metadata_of()
+    record = record_of()
+    shared_target = _shared_testing_name_target(record, event_names, name)
+    if shared_target is not None:
+        return shared_target, None
+
+    metadata_dict = _record_metadata(record)
     candidates = [
         event_name
         for event_name in event_names
@@ -1269,7 +1321,7 @@ def _resolve_event_name(
     resolution = record.resolutions.get(key)
     if resolution is None:
         resolution = _match_event_name_unlogged(
-            year, list(record.events), name, exact_match, lambda: _record_metadata(record)
+            year, list(record.events), name, exact_match, lambda: record
         )
         if len(record.resolutions) >= _RESOLUTION_MEMO_MAX:
             record.resolutions.clear()

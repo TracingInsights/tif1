@@ -18,6 +18,7 @@ import pytest
 
 from tif1 import core
 from tif1.core_utils import session_state as ss
+from tif1.exceptions import DataNotFoundError, NetworkError
 from tif1.models import Laps
 
 T0 = pd.Timestamp("2024-06-09 17:59:06")
@@ -685,6 +686,10 @@ class TestSessionInfoDict:
 # -- Session surfaces (laps and messages set in memory) ---------------------------------
 
 
+def _missing_session_info(path: str) -> dict[str, Any]:
+    raise DataNotFoundError(path=path)
+
+
 def _session(session_name: str, *, with_laps: bool = True) -> core.Session:
     """A 2025 Bahrain session (vendored schedule) with laps and messages set in memory.
 
@@ -699,6 +704,8 @@ def _session(session_name: str, *, with_laps: bool = True) -> core.Session:
         The session; nothing it reads reaches the network.
     """
     session = core.Session(2025, "Bahrain Grand Prix", session_name, enable_cache=False)
+    # No session_info.json: the surfaces derive their values.
+    session._fetch_json = _missing_session_info  # type: ignore[method-assign]
     t0 = (
         pd.Timestamp("2025-04-13 14:55")
         if session_name == "Race"
@@ -799,6 +806,181 @@ class TestSessionSurfaces:
         assert info["Meeting"]["Country"]["Code"] == "BRN"
         assert info["Key"] is None
         assert info["Path"] is None
+
+
+# -- session_info.json --------------------------------------------------------------
+
+#: A ``session_info.json`` payload as the data repositories write it (fastf1's
+#: streams; the track status starts on a yellow, which no derivation produces).
+_FILE: dict[str, Any] = {
+    "t0_date": "2025-04-13T14:55:01.234000",
+    "session_start_time": 3414.74,
+    "total_laps": 57,
+    "track_status": {
+        "Time": [0.0, 539.21, 3551.354, 3565.035, 3575.426],
+        "Status": ["2", "1", "6", "7", "1"],
+        "Message": ["Yellow", "AllClear", "VSCDeployed", "VSCEnding", "AllClear"],
+    },
+    "session_status": {
+        "Time": [7.701, 3414.74, 4000.5, 4100.0, 9131.69, 9572.831, 9572.831],
+        "Status": ["Inactive", "Started", "Aborted", "Started", "Finished", "Finalised", "Ends"],
+    },
+    "session_info": {
+        "Meeting": {
+            "Key": 1257,
+            "Name": "Bahrain Grand Prix",
+            "OfficialName": "FORMULA 1 GULF AIR BAHRAIN GRAND PRIX 2025",
+            "Location": "Sakhir",
+            "Number": 4,
+            "Country": {"Key": 36, "Code": "BRN", "Name": "Bahrain"},
+            "Circuit": {"Key": 63, "ShortName": "Sakhir"},
+        },
+        "ArchiveStatus": {"Status": "Complete"},
+        "Key": 9998,
+        "Type": "Race",
+        "Name": "Race",
+        "StartDate": "2025-04-13T18:00:00",
+        "EndDate": "2025-04-13T20:00:00",
+        "GmtOffset": "03:00:00",
+        "Path": "2025/2025-04-13_Bahrain_Grand_Prix/2025-04-13_Race/",
+    },
+}
+
+
+def _file_session(
+    payload: dict[str, Any] | Exception = _FILE, *, lib: str = "pandas", session_name: str = "Race"
+) -> tuple[core.Session, list[str]]:
+    """A session (laps and messages in memory) whose ``session_info.json`` is ``payload``.
+
+    Returns:
+        The session and the list of paths it fetched.
+    """
+    session = _session(session_name)
+    if lib == "polars":
+        session = core.Session(
+            2025, "Bahrain Grand Prix", session_name, enable_cache=False, lib=lib
+        )
+    fetched: list[str] = []
+
+    def fetch(path: str) -> dict[str, Any]:
+        fetched.append(path)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    session._fetch_json = fetch  # type: ignore[method-assign]
+    return session, fetched
+
+
+class TestSessionInfoFileHelpers:
+    def test_t0_date_and_start_to_the_nanosecond(self):
+        assert ss.file_t0_date_ns(_FILE) == int(pd.Timestamp("2025-04-13 14:55:01.234").value)
+        # 3414.74 s is not exact in binary; the millisecond is.
+        assert ss.file_session_start_ns(_FILE) == 3_414_740_000_000
+        assert ss.file_t0_date_ns({"t0_date": None}) is None
+        assert ss.file_t0_date_ns({"t0_date": "not a date"}) is None
+        assert ss.file_session_start_ns({"session_start_time": None}) is None
+        assert ss.file_session_start_ns({"session_start_time": True}) is None
+
+    def test_status_table(self):
+        rows, messages = ss.file_status_table(_FILE, "track_status")
+        assert rows[:2] == [(0, "2"), (539_210_000_000, "1")]
+        assert messages == _FILE["track_status"]["Message"]
+        rows, messages = ss.file_status_table(_FILE, "session_status")
+        assert [status for _, status in rows][-2:] == ["Finalised", "Ends"]
+        assert messages is None
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            None,
+            {"Time": [0.0], "Status": ["1", "2"]},
+            {"Time": [None], "Status": ["1"]},
+            {"Time": [0.0], "Status": [1]},
+            {"Time": "0.0", "Status": ["1"]},
+        ],
+    )
+    def test_malformed_status_table_is_none(self, table):
+        assert ss.file_status_table({"track_status": table}, "track_status") is None
+
+    def test_session_info_types_and_copy(self):
+        info = ss.file_session_info(_FILE)
+        assert info["StartDate"] == pd.Timestamp("2025-04-13 18:00").to_pydatetime()
+        assert info["GmtOffset"] == timedelta(hours=3)
+        assert ss.file_session_info({"session_info": {"GmtOffset": "-05:00:00"}}) == {
+            "GmtOffset": -timedelta(hours=5)
+        }
+        info["Meeting"]["Name"] = "changed"
+        assert _FILE["session_info"]["Meeting"]["Name"] == "Bahrain Grand Prix"
+        assert ss.file_session_info({}) is None
+
+
+class TestSessionInfoFile:
+    def test_every_surface_reads_the_file_once(self):
+        session, fetched = _file_session()
+        assert session.t0_date == pd.Timestamp("2025-04-13 14:55:01.234")
+        assert session.session_start_time == pd.Timedelta(seconds=3414.74)
+        assert session.total_laps == 57
+        track = session.track_status
+        assert track["Status"].tolist() == ["2", "1", "6", "7", "1"]
+        assert track["Message"].tolist() == _FILE["track_status"]["Message"]
+        assert track["Time"].dtype == "timedelta64[ns]"
+        assert track["Time"].iloc[1] == pd.Timedelta(seconds=539.21)
+        status = session.session_status
+        assert list(status.columns) == ["Time", "Status"]
+        assert status["Status"].tolist() == _FILE["session_status"]["Status"]
+        info = session.session_info
+        assert (info["Key"], info["Meeting"]["Key"]) == (9998, 1257)
+        assert info["Path"] == _FILE["session_info"]["Path"]
+        assert fetched == ["session_info.json"]
+
+    def test_polars_frames(self):
+        session, _ = _file_session(lib="polars")
+        track = session.track_status
+        assert type(track).__module__.startswith("polars")
+        assert track["Status"].to_list() == ["2", "1", "6", "7", "1"]
+        assert track["Message"].to_list()[2] == "VSCDeployed"
+        assert session.session_status["Status"].to_list()[0] == "Inactive"
+
+    def test_missing_file_derives_the_values(self):
+        session, fetched = _file_session(DataNotFoundError(path="session_info.json"))
+        assert session.session_start_time == pd.Timedelta(minutes=5)  # scheduled start
+        assert session.track_status["Status"].tolist() == ["1", "5", "1"]
+        assert session.session_info["Key"] is None
+        assert fetched == ["session_info.json"]  # the miss is remembered
+
+    def test_network_failure_derives_the_values(self, caplog):
+        session, _ = _file_session(NetworkError(url="session_info.json", status_code=None))
+        with caplog.at_level("WARNING"):
+            assert session.session_status["Status"].tolist() == [
+                "Started",
+                "Aborted",
+                "Started",
+                "Finished",
+            ]
+        assert "session_info.json" in caplog.text
+
+    def test_null_t0_falls_back_to_the_laps(self):
+        session, _ = _file_session({**_FILE, "t0_date": None})
+        assert session.t0_date == pd.Timestamp("2025-04-13 14:55")
+
+    def test_file_values_are_authoritative(self):
+        # A race whose stream has no start and no lap count stays without them.
+        session, _ = _file_session({**_FILE, "session_start_time": None, "total_laps": None})
+        assert session.session_start_time is pd.NaT
+        assert session.total_laps is None
+
+    def test_malformed_table_derives_only_that_table(self):
+        session, _ = _file_session({**_FILE, "track_status": {"Time": [0.0]}})
+        assert session.track_status["Status"].tolist() == ["1", "5", "1"]
+        assert session.session_status["Status"].tolist()[0] == "Inactive"
+
+    def test_ergast_only_season_never_fetches(self):
+        session = core.Session(2010, "Bahrain Grand Prix", "Race", enable_cache=False)
+        fetched: list[str] = []
+        session._fetch_json = fetched.append  # type: ignore[method-assign]
+        assert session._session_info_file() is None
+        assert fetched == []
 
 
 # -- typed weather / race-control tables -------------------------------------------

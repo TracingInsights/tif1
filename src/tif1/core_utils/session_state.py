@@ -1,14 +1,18 @@
-"""Derived session state: fastf1's ``track_status``, ``session_status``, ``session_info``,
-``t0_date`` and ``session_start_time`` built from the files the CDN serves.
+"""Session state: fastf1's ``track_status``, ``session_status``, ``session_info``,
+``t0_date``, ``session_start_time`` and ``total_laps`` from the files the CDN serves.
 
 fastf1 reads these from the live-timing streams (``TrackStatus``,
-``SessionStatus``, ``SessionInfo``), which need an F1 account and are outside
-tif1's historical scope. The derivations below use the laps table (its
+``SessionStatus``, ``SessionInfo``, ``LapCount``), which need an F1 account.
+The data repositories publish them per session in ``session_info.json``
+(2018 onwards); :func:`file_t0_date_ns`, :func:`file_status_table` and
+:func:`file_session_info` read that file, and the values are fastf1's.
+
+Without the file the values are derived: from the laps table (its
 ``LapStartDate - LapStartTime`` is the session's ``t0_date`` to the
 millisecond), the race-control messages (exact timestamps of every flag and
 safety-car message) and the schedule row. Shapes, status codes and message
-strings are fastf1's exactly; the data is an approximation of the streams and
-is documented as such.
+strings are fastf1's exactly; the derived data is an approximation of the
+streams and is documented as such.
 
 Every function takes plain Python sequences or either backend's frame and
 returns the frame of the requested backend; the state machines run once on
@@ -24,10 +28,11 @@ for anything else.
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -177,6 +182,102 @@ def _text(values: list[Any] | None, n: int) -> list[str]:
     if not values:
         return [""] * n
     return ["" if value is None or _is_nan(value) else str(value) for value in values]
+
+
+# -- session_info.json ------------------------------------------------------------
+#
+# Keys and columns are fastf1's: ``t0_date`` (ISO, UTC), ``session_start_time``
+# (seconds), ``total_laps``, ``track_status`` {Time, Status, Message},
+# ``session_status`` {Time, Status} (times in seconds of session time, to the
+# millisecond) and ``session_info`` (the SessionInfo payload, dates as ISO
+# strings and ``GmtOffset`` as ``"-05:00:00"``). Missing values are null.
+
+
+def _seconds_ns(value: Any) -> int | None:
+    """Seconds stored to the millisecond as int64 ns (exact: no float noise below a ms)."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return None
+    return round(value * 1000) * 1_000_000
+
+
+def file_t0_date_ns(payload: dict[str, Any]) -> int | None:
+    """``t0_date`` of a ``session_info.json`` payload as int64 ns (None when absent)."""
+    value = payload.get("t0_date")
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(np.datetime64(value, "ns").astype("int64"))
+    except ValueError:
+        return None
+
+
+def file_session_start_ns(payload: dict[str, Any]) -> int | None:
+    """``session_start_time`` of a ``session_info.json`` payload as int64 ns."""
+    return _seconds_ns(payload.get("session_start_time"))
+
+
+def file_status_table(
+    payload: dict[str, Any], key: str
+) -> tuple[list[tuple[int, str]], list[str] | None] | None:
+    """``(rows, messages)`` of the ``track_status``/``session_status`` table, None if malformed.
+
+    ``rows`` are ``(session_time_ns, status)``; ``messages`` is the table's
+    ``Message`` column when it has one of the same length.
+    """
+    table = payload.get(key)
+    if not isinstance(table, dict):
+        return None
+    times, statuses = table.get("Time"), table.get("Status")
+    if not isinstance(times, list) or not isinstance(statuses, list):
+        return None
+    if len(times) != len(statuses):
+        return None
+    rows: list[tuple[int, str]] = []
+    for time_value, status in zip(times, statuses, strict=True):
+        time_ns = _seconds_ns(time_value)
+        if time_ns is None or not isinstance(status, str):
+            return None
+        rows.append((time_ns, status))
+    messages = table.get("Message")
+    if not (isinstance(messages, list) and len(messages) == len(rows)):
+        messages = None
+    else:
+        messages = ["" if message is None else str(message) for message in messages]
+    return rows, messages
+
+
+def _gmt_offset(value: Any) -> Any:
+    """The live-timing ``GmtOffset`` (``"-05:00:00"``) as a timedelta; other values unchanged."""
+    if not isinstance(value, str):
+        return value
+    sign = -1 if value.startswith("-") else 1
+    try:
+        hours, minutes, seconds = (int(part) for part in value.lstrip("+-").split(":"))
+    except ValueError:
+        return value
+    return sign * timedelta(hours=hours, minutes=minutes, seconds=seconds)
+
+
+def file_session_info(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """fastf1's ``session_info`` dict from a ``session_info.json`` payload (None when absent).
+
+    A copy (the payload is memoised), with fastf1's value types: ``StartDate``
+    and ``EndDate`` naive local datetimes, ``GmtOffset`` a timedelta.
+    """
+    info = payload.get("session_info")
+    if not isinstance(info, dict):
+        return None
+    info = copy.deepcopy(info)
+    for key in ("StartDate", "EndDate"):
+        value = info.get(key)
+        if isinstance(value, str):
+            try:
+                info[key] = datetime.fromisoformat(value)
+            except ValueError:
+                pass
+    if "GmtOffset" in info:
+        info["GmtOffset"] = _gmt_offset(info["GmtOffset"])
+    return info
 
 
 # -- t0_date / session_start_time ---------------------------------------------
@@ -464,11 +565,22 @@ def session_info_dict(
 # -- frame construction ----------------------------------------------------------
 
 
-def status_frame(rows: list[tuple[int, str]], lib: str, *, with_message: bool) -> Any:
-    """``Time``/``Status``(/``Message``) frame of ``rows`` on the requested backend."""
+def status_frame(
+    rows: list[tuple[int, str]],
+    lib: str,
+    *,
+    with_message: bool,
+    messages: list[str] | None = None,
+) -> Any:
+    """``Time``/``Status``(/``Message``) frame of ``rows`` on the requested backend.
+
+    ``messages`` are the stream's own; without them each status code's
+    fastf1 message is used.
+    """
     times = np.asarray([row[0] for row in rows], dtype="int64")
     statuses = [row[1] for row in rows]
-    messages = [TRACK_STATUS_MESSAGES.get(status, "") for status in statuses]
+    if messages is None:
+        messages = [TRACK_STATUS_MESSAGES.get(status, "") for status in statuses]
     if lib == "polars":
         pl = import_supported_polars()
         if pl is None:  # pragma: no cover - a polars session always has polars

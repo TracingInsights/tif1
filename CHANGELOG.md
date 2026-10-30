@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
+## [Unreleased]
+
+### Changed
+
+- `Session.t0_date`, `session_start_time`, `track_status`,
+  `session_status`, `session_info` and `total_laps` read the session's
+  `session_info.json`, which the data repositories now publish for every
+  session from 2018: fastf1's own values from the live-timing streams
+  (TrackStatus, SessionStatus, SessionInfo, LapCount). They were derived
+  from the race-control messages, the laps and the schedule, which got
+  race and sprint start times wrong by minutes (the scheduled start, not
+  the formation lap), read 2026's "VSC DEPLOYED" as a full safety car,
+  missed red flags published only as text (Monaco 2026) and kept times
+  to the whole second. Against fastf1's streams for every 2026 Grand Prix
+  session, all 90 now match exactly. `session_status` gains fastf1's
+  `Inactive`, `Finalised` and `Ends` rows, `track_status` can start on a
+  code other than `1`, and `session_info` has `Key`, `Meeting.Key`, `Path`
+  and `ArchiveStatus`, with fastf1's `datetime`/`timedelta` values. The
+  file is fetched once, on first use of one of these attributes (about
+  2 KB, then cached). Without it (seasons before 2018) the values are
+  derived as before. `Laps.split_qualifying_sessions` splits on the exact
+  stream too.
+
+### Fixed
+
+- 2026 pre-season testing: the schedule names both tests "Pre-Season
+  Testing", and the second test overwrote the first. Both rows had the
+  second test's dates, and every testing session loaded the data of the
+  first test. Testing events of one season that share a name are now
+  numbered in date order (`Pre-Season Testing 1`, `Pre-Season Testing 2`),
+  as the data repository folders are, so `get_testing_event(2026, n)` and
+  `get_testing_session(2026, n, m)` return test `n` with its own dates and
+  data. The shared name `"Pre-Season Testing"` still resolves, to the first
+  test, as in fastf1. Other seasons keep their names.
+
+
 ## [0.11.2] - 2026-10-30
 
 ### Summary

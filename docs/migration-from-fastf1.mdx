@@ -149,16 +149,19 @@ print(f"Estimated delta at the line: {delta.iloc[-1]:+.3f}s (positive = LEC slow
 print(f"Real lap time gap: {comp['LapTimeSeconds'] - ref['LapTimeSeconds']:+.3f}s")
 ```
 
-### 6. Derived Session State
-fastf1 reads the track status, the session status, and the session information from live-timing streams. Those streams need a Formula 1 account with an active F1TV subscription. tif1 derives the five session-state attributes from the race control messages, the laps, and the schedule. The shapes, the status codes, and the messages are the fastf1 ones. The values are an approximation of the live streams.
+### 6. Session State
+fastf1 reads the track status, the session status, and the session information from live-timing streams. Those streams need a Formula 1 account with an active F1TV subscription. tif1 reads the same values from the `session_info.json` file of each session (2018 onward), so no account is necessary. The shapes, the status codes, and the messages are the fastf1 ones.
 
 | Attribute | tif1 source |
 | :--- | :--- |
-| `t0_date` | `LapStartDate - LapStartTime` of the laps, to the millisecond. `NaT` for a session without laps |
-| `session_start_time` | Races and sprints: the scheduled start minus `t0_date`. Other sessions: the first `GREEN LIGHT - PIT EXIT OPEN` message |
-| `track_status` | `Time`, `Status`, `Message` rows from the flag and safety car messages. Without messages, the `TrackStatus` codes of the laps |
-| `session_status` | `Time`, `Status` rows: `Started`, `Aborted` at a red flag, `Started` at the restart, `Finished` at the chequered flag. `Finalised` and `Ends` never occur |
-| `session_info` | The fastf1 nested dict, filled from the schedule. `Key`, `Meeting.Key`, `Path`, and `ArchiveStatus` are `None` |
+| `t0_date` | The fastf1 value. `NaT` for a session without laps |
+| `session_start_time` | The first `Started` row of `session_status`. For races and sprints, the start of the formation lap |
+| `track_status` | `Time`, `Status`, `Message` rows of the `TrackStatus` stream |
+| `session_status` | `Time`, `Status` rows of the `SessionStatus` stream: `Inactive`, `Started`, `Aborted`, `Finished`, `Finalised`, `Ends` |
+| `session_info` | The `SessionInfo` payload, with `Key`, `Meeting.Key`, `Path`, and `ArchiveStatus` |
+| `total_laps` | The scheduled race distance of the `LapCount` stream |
+
+Without `session_info.json`, tif1 derives these values from the race control messages, the laps, and the schedule. The derived values are an approximation of the live streams.
 
 `laps.pick_track_status()` filters on the `TrackStatus` codes of each lap, as in fastf1. It does not read `session.track_status`.
 
@@ -168,7 +171,7 @@ import tif1
 session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
 print(session.t0_date)  # 2025-04-13 14:08:14.267000
 print(session.track_status.head(3))  # 1 AllClear, 4 SCDeployed, 1 AllClear
-print(session.session_status)  # Started, Finished
+print(session.session_status)  # Inactive, Started, Finished, Finalised, Ends
 print(session.session_info["Meeting"]["Circuit"])  # {'Key': 63, 'ShortName': 'Sakhir'}
 ```
 
