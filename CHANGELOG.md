@@ -320,7 +320,7 @@ surface-compliance test.
   the 0.1 decoder), 166 -> 111 ms (polars). Frames are identical with and
   without the decoder.
   `TIF1_DISABLE_NATIVE=1` turns it off. `.github/workflows/native.yml`
-  builds abi3 wheels (CPython 3.11+), free-threaded cp313t/cp314t wheels,
+  builds abi3 wheels (CPython 3.11+),
   Linux glibc/musl x86_64/aarch64, macOS universal2, Windows x64/arm64 and
   an sdist, tests each wheel, and uploads only from a manual dispatch.
 - A cold `car_data[n]` (and `Laps.telemetry` of many laps) fetches the

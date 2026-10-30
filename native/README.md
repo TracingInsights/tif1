@@ -29,9 +29,10 @@ dispatch only:
 
 - one `cp311-abi3` wheel per platform, used by every GIL CPython from 3.11
   on (3.15 included) without a rebuild;
-- version-specific free-threaded wheels (`cp313t`, `cp314t`): the stable
-  ABI does not cover free-threaded builds; the module declares
-  `gil_used = false`, so importing it keeps the GIL disabled;
+- no free-threaded wheels for now: pyo3 0.29 builds only 3.14t and tif1 does
+  not run on free-threaded CPython yet (orjson and polars ship no such
+  wheels); the module declares `gil_used = false`, so a local build on a
+  free-threaded interpreter keeps the GIL disabled;
 - Linux manylinux2014 and musllinux_1_2 (x86_64, aarch64), macOS universal2,
   Windows x64 and arm64, plus an sdist for other platforms (needs Rust).
 
