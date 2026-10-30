@@ -1,12 +1,13 @@
 """Jolpica (``api.jolpi.ca``) client: URL building, rate limiting, paging.
 
 Jolpica is the Ergast-compatible API fastf1 reads. tif1 only asks it what the
-Stats repository cannot answer (see ``tif1.ergast.router``), so the traffic
-stays well inside its unauthenticated limits: 4 requests per second and 500
-per hour, HTTP 429 beyond that. The limiter here blocks before a request
-would exceed either, a 429 honours ``Retry-After`` for up to three retries,
-and the shared HTTP session sends the descriptive ``User-Agent`` Jolpica
-requires.
+Stats repository cannot answer (see ``tif1.ergast.router``). Jolpica allows
+unauthenticated clients 4 requests per second and 500 per hour (HTTP 429
+beyond that); fastf1 caps its own Jolpica traffic at 200 per hour. The
+limiter here keeps to the stricter of the two: at most 4 requests in any
+second and 200 in any hour, blocking before a request would exceed either.
+A 429 honours ``Retry-After`` for up to three retries, and the shared HTTP
+session sends the descriptive ``User-Agent`` Jolpica requires.
 """
 
 from __future__ import annotations
@@ -138,11 +139,12 @@ def build_url(
 
 
 class RateLimiter:
-    """Token bucket per second plus a sliding one-hour window, process-wide.
+    """Sliding one-second and one-hour windows, process-wide.
 
-    ``acquire`` blocks until a request is allowed. Inside a browser without
-    JavaScript Promise Integration nothing can block, so the limiter only
-    records the request there.
+    At most ``burst_per_second`` requests go out in any one second and at most
+    ``hourly`` in any hour. ``acquire`` blocks until a request is allowed.
+    Inside a browser without JavaScript Promise Integration nothing can block,
+    so the limiter only records the request there.
     """
 
     def __init__(
@@ -158,21 +160,21 @@ class RateLimiter:
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
-        self._tokens = float(self.burst_per_second)
-        self._last_refill = clock()
-        self._window: deque[float] = deque()
+        self._second: deque[float] = deque()
+        self._hour: deque[float] = deque()
 
     def _wait_time(self, now: float) -> float:
-        elapsed = now - self._last_refill
-        self._tokens = min(self.burst_per_second, self._tokens + elapsed * self.burst_per_second)
-        self._last_refill = now
-        while self._window and now - self._window[0] >= 3600.0:
-            self._window.popleft()
         wait = 0.0
-        if self._tokens < 1.0:
-            wait = (1.0 - self._tokens) / self.burst_per_second
-        if len(self._window) >= self.hourly:
-            wait = max(wait, 3600.0 - (now - self._window[0]))
+        for window, limit, span in (
+            (self._second, self.burst_per_second, 1.0),
+            (self._hour, self.hourly, 3600.0),
+        ):
+            # Compare against the deadline itself: ``due - now`` is exact once
+            # the two are close, so one sleep always reaches the deadline.
+            while window and window[0] + span <= now:
+                window.popleft()
+            if len(window) >= limit:
+                wait = max(wait, window[0] + span - now)
         return wait
 
     def acquire(self) -> float:
@@ -184,9 +186,15 @@ class RateLimiter:
                 now = self._clock()
                 wait = self._wait_time(now)
                 if wait <= 0.0 or not can_block:
-                    self._tokens -= 1.0
-                    self._window.append(now)
+                    self._second.append(now)
+                    self._hour.append(now)
                     return waited
+            if wait > 1.0:
+                logger.warning(
+                    "Jolpica hourly limit of %d requests reached; waiting %.0fs",
+                    self.hourly,
+                    wait,
+                )
             self._sleep(wait)
             waited += wait
 
@@ -204,7 +212,7 @@ def get_rate_limiter() -> RateLimiter:
                 config = get_config()
                 _limiter = RateLimiter(
                     int(config.get("ergast_rate_limit_burst", 4) or 4),
-                    int(config.get("ergast_rate_limit_hourly", 500) or 500),
+                    int(config.get("ergast_rate_limit_hourly", 200) or 200),
                 )
     return _limiter
 

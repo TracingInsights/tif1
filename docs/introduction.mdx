@@ -40,16 +40,17 @@ keywords:
 
 ## Why tif1 over fastf1?
 
-`fastf1` is an established library at the center of the F1 data community. `tif1` started as a personal project with a different approach in a few areas:
+tif1 does not replace fastf1. The timing and telemetry data in tif1 is generated with fastf1. tif1 differs in how that data is delivered:
 
-1. **Fetch only the necessary data.** `session.load()` is not necessary. One lap of telemetry for one driver needs three small files. They hold the driver list, the lap table, and the telemetry of that lap.
-2. **No API rate limits.** fastf1 raises `RateLimitExceededError` after **500 uncached requests in one hour**. The jolpica-f1 API behind it documents the same limit for unauthenticated use. `tif1` reads static CDN files, the Ergast tables included, and keeps no request quota; jolpica-f1 is asked only for what the static files cannot answer.
-3. **Charts included.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
-4. **Public CDN access.** `tif1` needs no API key, cookie, or account. Any network that can reach jsDelivr, Hugging Face, or StaticDelivr can load the data.
-5. **More data.** Mini-sector color codes on every lap row and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
+1. **Download only the necessary data.** `session.load()` is not necessary. One lap of telemetry for one driver needs three small files: the driver list, the lap table, and the telemetry of that lap.
+2. **No F1TV account.** Since fastf1 3.9.0, most fastf1 features need an F1TV Access subscription and a sign-in. tif1 reads published files and needs no account.
+3. **No rate limits on the session data.** fastf1 raises `RateLimitExceededError` after 500 uncached requests in one hour across all its APIs, 200 of them to jolpica-f1. tif1 reads static CDN files, the Ergast tables included, and has no request quota. tif1 calls jolpica-f1 only for data that is not in the files, within the jolpica-f1 and fastf1 limits.
+4. **Built-in charts.** 22 optional one-call `plot_*()` functions turn raw data into finished charts: `tif1.plot_top_speeds(...)`, `tif1.plot_driver_laptimes(...)`, and more.
+5. **Public CDN access.** `tif1` needs no API key, cookie, or account. Any network that can reach jsDelivr, Hugging Face, or StaticDelivr can load the data.
+6. **More data.** Mini-sector color codes on every lap row and acceleration channels in telemetry. The `fastf1` laps and telemetry do not include these columns.
 
 <Card title="Full comparison" icon="scale" href="/why-tif1">
-  Read the "Why tif1 instead of fastf1?" page. It includes the verified 500 requests/hour rate-limit sources.
+  Read the "Why tif1 instead of fastf1?" page. It gives the fastf1 sign-in requirement and rate limits, with sources.
 </Card>
 
 ## Key Features

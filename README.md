@@ -9,88 +9,114 @@ A fast, canonical Formula 1 data library fetched from TracingInsights data https
 
 
 
-Data is available shortly after the session ends. tif1's files are built from the same F1 timing data that fastf1 reads and appear in under a minute after that data reaches fastf1, enriched with the extra channels tif1 adds.
+The timing and telemetry data is generated with [fastf1](https://github.com/theOehrly/Fast-F1). Extra channels are added, and the files are published in under a minute after fastf1 has the data.
 
 
 ## Why use tif1 instead of fastf1?
 
-First, a note of respect: `fastf1` is a great library and does a lot for the F1 data community — I've used it myself. `tif1` started as a personal project with a different approach in a few areas. Here's how the two differ:
+I still use fastf1. The timing and telemetry data in `tif1` is generated with fastf1, then processed and published to the TracingInsights data repositories. `tif1` differs in how you get that data:
 
-### 1. Fetch only what you need — no full-session downloads
+### 1. Download only the data you use
 
-`fastf1` is session-oriented: you call `session.load()` and, by default, it downloads the whole session (all drivers, every lap, every telemetry point) before the data is usable. Telemetry comes as the session's full car-data and position streams for every driver, so even one lap of telemetry means downloading and storing all of it.
+fastf1 loads a whole session at a time. By default `session.load()` downloads every driver, every lap and all telemetry before you can use any of it. Telemetry comes as the full car-data and position streams for every driver, so one lap of telemetry still means downloading all of them.
 
-`tif1` is lazy and fine-grained. A `Session` object costs almost nothing until you touch a property, and you can pull exactly the one lap of telemetry you need in seconds:
+tif1 loads data per file, when you ask for it. Creating a `Session` downloads no data; each property fetches only the files it needs:
 
 ```python
 import tif1
 
 session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
 
-# Fetch only Verstappen's lap 19 telemetry: the driver list, the session's lap
-# table and that one lap's telemetry file, nothing else.
+# Downloads the driver list, the lap table and the telemetry file of
+# Verstappen's lap 19. Nothing else.
 telemetry = session.get_driver("VER").get_lap(19).telemetry
 print(telemetry[["Time", "Speed", "Throttle"]].head())
 ```
 
-You pay for exactly the bytes you use: less waiting, less hard-disk space, less bandwidth. That efficiency also makes `tif1` the more energy- and environmentally-friendly choice for large or repeated analysis workloads.
+Less data means faster loads, less disk space and less bandwidth. This matters most when you process many sessions.
 
-### 2. No rate-limited API in the loop
+### 2. No F1TV account needed
 
-`fastf1` pulls historical and current data from the Ergast-compatible **jolpica-f1** API and the unofficial F1 live-timing API. jolpica-f1 rate-limits unauthenticated access to:
+In October 2026 Formula 1 started requiring authentication on its data APIs. Since fastf1 3.9.0, most fastf1 features need an F1TV Access (or higher) subscription, and fastf1 signs in to your F1 account: with the `F1_USERNAME`/`F1_PASSWORD` environment variables, a prompt in the terminal, or a browser add-on. The login token usually expires after four days. fastf1 cannot refresh it, so you sign in again (fastf1 does this for you when the credentials are in environment variables).
 
-- **Burst limit:** 4 requests per second
-- **Sustained limit: 500 requests per hour**
+tif1 does not call the F1 data APIs. It downloads files that were already generated with fastf1 and published to the CDNs, so you need no F1 account, no subscription and no sign-in, and there is no token to expire. Servers, CI jobs and notebooks need no stored credentials.
 
-and answers excessive traffic with `HTTP 429 Too Many Requests` ("Request was throttled"). Those limits are scheduled to **decrease** further as token-based access rolls out.
+Source: [fastf1 F1TV Account Authentication](https://docs.fastf1.dev/api_reference/accounts_auth.html).
 
-Apps that loop over many sessions in a single run — a whole season, an entire grid, backtesting, live dashboards — can approach these ceilings quickly. It's a real consideration in production, and one of the reasons I built `tif1` for my own app at [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
+### 3. No rate limits on the session data
 
-`tif1` keeps rate-limited APIs out of the loop. Timing, telemetry and the Ergast tables (results, standings, lap times, pit stops) are public static files on free, global CDNs (jsDelivr primary, Hugging Face bucket fallback, StaticDelivr backup) with automatic failover, retries, and a circuit breaker — no API keys, no tokens, no request quotas to track in your code. jolpica-f1 is asked only for what those files cannot answer, paced to its limits.
+fastf1 sends every network request through its own rate limiter (`fastf1/req.py` in fastf1 3.9.0). Requests to the F1 live-timing archive (`livetiming.formula1.com` and the fastf1 mirror), MultiViewer circuit data, jolpica-f1 and the schedule file on GitHub all count toward the same limits:
 
-Sources: [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
+| Requests | Limit | When the limit is reached |
+| :--- | :--- | :--- |
+| All APIs together | 4 per second (at least 0.25 s between requests) | fastf1 waits |
+| All APIs together | 500 per hour | fastf1 raises `RateLimitExceededError` |
+| jolpica-f1 only | 200 per hour (these also count toward the 500) | fastf1 raises `RateLimitExceededError` |
 
-### 3. Batteries included — 22 one-call chart functions
+Responses from the fastf1 cache do not count. An uncached session load makes one request per live-timing stream, plus jolpica-f1 requests for the results. A script that loops over many uncached sessions (a full season, backtests, live dashboards) reaches 500 per hour and stops with an error. This is one reason I built tif1 for my own app, [tracinginsights.com/analysis](https://tracinginsights.com/analysis).
 
-If you enjoy hand-building charts, fastf1 gives you all the pieces to do so. `tif1` additionally ships **22 ready-made chart functions** that load the data, run the analysis, and plot in a single call:
+jolpica-f1 also has its own limits on the server: 4 requests per second and 500 per hour for clients without a token, and `HTTP 429 Too Many Requests` above that. It plans to lower these limits when it adds token access.
+
+tif1 reads timing, telemetry and the Ergast tables (results, standings, lap times, pit stops) as static files from public CDNs: jsDelivr first, then Hugging Face buckets, then StaticDelivr. There are no API keys or request quotas. tif1 retries failed requests, moves to the next CDN when one fails, and has a circuit breaker.
+
+The Ergast tables come from the [TracingInsights Stats repository](https://github.com/TracingInsights-Archive/Stats) on GitHub, through the same CDNs, so in normal use tif1 does not call jolpica-f1 and its limits do not apply. tif1 calls jolpica-f1 only:
+
+- for a round that is not in the Stats repository yet (the repository is updated a few hours after jolpica-f1 has the data), and
+- for the few queries the files do not cover: the season and driver lists, `status=` filters, queries without a season, and `current`/`last`.
+
+These calls keep to the stricter of the fastf1 and jolpica-f1 limits:
+
+- At most 4 requests in any second and 200 in any hour, shared by all threads of the process. When a limit is reached, tif1 waits. It does not raise an error.
+- On `HTTP 429`, tif1 waits for the `Retry-After` time and retries, up to 3 times.
+- Answers are cached for `ergast_ttl_hours`, so a repeated query makes no new request.
+- `ergast_rate_limit_burst` and `ergast_rate_limit_hourly` (env `TIF1_ERGAST_RATE_LIMIT_BURST`, `TIF1_ERGAST_RATE_LIMIT_HOURLY`) change the limits.
+
+The MultiViewer API (circuit data) is served through Cloudflare's free CDN at no cost to MultiViewer, so tif1 does not rate-limit it. Its answers are cached anyway: a circuit layout is fetched once and kept, the circuit index is kept for `schedule_ttl_hours`.
+
+Sources: [fastf1 Rate Limits and Caching](https://docs.fastf1.dev/api_reference/cache_and_rate_limits.html), `fastf1/req.py`, [jolpica-f1 Terms of Use](https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md) and the [jolpica-f1 Rate Limits guide](https://github.com/jolpica/jolpica-f1/blob/main/docs/rate_limits.md).
+
+### 4. Built-in charts
+
+fastf1 gives you the data and plotting helpers, and you build each chart yourself. tif1 also has 22 chart functions. Each one loads the data, runs the analysis and draws the chart in one call:
 
 ```python
 import tif1
 import matplotlib.pyplot as plt
 
-# Top speeds by team at the 2023 Italian Grand Prix — one call.
+# Top speeds by team, 2023 Italian Grand Prix qualifying.
 fig, ax = tif1.plot_top_speeds(2023, "Italian Grand Prix", "Q")
 plt.show()
 
-# Alonso's lap times at the 2023 Azerbaijan Grand Prix — one call.
+# Alonso's lap times, 2023 Azerbaijan Grand Prix race.
 fig, ax = tif1.plot_driver_laptimes(2023, "Azerbaijan", "R", drivers=["ALO"])
 plt.show()
 
-# Or save straight to a PNG, no interactive session needed.
+# Save to a PNG instead of showing the figure.
 tif1.plot_telemetry_comparison(
     2024, "Monaco", "Q", drivers=["VER", "LEC"], save_path="monaco_ver_lec.png"
 )
 ```
 
-From track maps, speed traces, and telemetry comparisons to tire degradation, qualifying grids, GG diagrams, and lap-time heatmaps, there is a ready-made analysis for almost every F1 question. See the [Charts tutorial section](docs/tutorials/top-speeds.mdx) and the [Charts API reference](docs/api-reference/charts.mdx) for the full list.
+The charts include track maps, speed traces, telemetry comparisons, tire degradation, qualifying grids, GG diagrams and lap-time heatmaps. See the [Charts tutorial section](docs/tutorials/top-speeds.mdx) and the [Charts API reference](docs/api-reference/charts.mdx) for the full list.
 
-### 4. Works from anywhere — no IP restrictions
+### 5. No IP blocking
 
-The official F1 live-timing endpoints that `fastf1` uses have been reported to block VPNs, cloud/data-center IPs, and some hosting providers, which can make fastf1 tricky to run on servers. `tif1` avoids that class of problem by serving data from static CDN files.
+The F1 live-timing endpoints that fastf1 uses have been reported to block VPNs, cloud and data-center IPs, and some hosting providers, so fastf1 can fail on servers.
 
-`tif1` serves its data from free global CDNs (jsDelivr hosting the TracingInsights data repos, with Hugging Face buckets as the fallback and StaticDelivr as the last-resort backup), so it works from home, office, cloud, CI runners and notebooks alike, with no proxies.
+tif1 reads static files from the CDNs listed above, so it works the same on a laptop, a cloud server, a CI runner or in a notebook, without a proxy.
 
-### 5. Extra data — mini sectors and more
+### 6. Extra data and features
 
-`tif1` also includes a few things beyond fastf1's current scope:
+- **Mini sectors**: each lap has the OpenF1 mini-sector status (`ms1`/`ms2`/`ms3`, one digit per mini-sector: yellow, green, purple, pit lane, and so on) when OpenF1 data can be matched to the session.
+- **Per-lap weather**: weather (`AirTemp`, `TrackTemp`, `Rainfall`, wind, ...) is merged into each lap row.
+- **Precomputed channels**: telemetry includes `DriverAhead`, `DistanceToDriverAhead` and acceleration (`AccelerationX/Y/Z`).
+- **pandas and polars**: both backends are supported. Data is cached in SQLite and in an in-memory LRU cache.
+- **fastf1 column names**: laps and telemetry use fastf1's column names (`Sector1Time`, `SpeedST`, `nGear`, ...), so switching from fastf1 often needs only a change of import.
 
-- **Mini-sector data** — lap data carries the OpenF1 mini-sector status of every lap (`ms1`/`ms2`/`ms3`: one digit per mini-sector for yellow, green, purple, pit lane, and so on), when OpenF1 data can be matched to the session.
-- **Per-lap weather** — weather conditions (`AirTemp`, `TrackTemp`, `Rainfall`, wind, …) merged into the lap rows.
-- **Derived channels** — `DriverAhead`, `DistanceToDriverAhead`, and acceleration channels (`AccelerationX/Y/Z`) computed and included in the telemetry.
-- **Flexible backends** — pandas *and* polars, with SQLite + in-memory LRU caching under the hood.
-- **FastF1-style schema** — fastf1 column names for the lap and telemetry data (`Sector1Time`, `SpeedST`, `nGear`, …), so migration is often a one-line import change.
+## Why not use tif1?
 
-One honest trade-off: data becomes available in `tif1` a few minutes later than in fastf1, because the data is enriched and processed before being published.
+- **No live timing.** tif1 reads published files, so a session is available only after it ends. If you want live data during a session, use fastf1 (`fastf1.livetiming`, which signs in with your F1TV account).
+- **Data arrives later.** New session data reaches tif1 after it reaches fastf1 (under a minute), because the files are generated with fastf1 and then processed and published.
 
 ## Installation
 

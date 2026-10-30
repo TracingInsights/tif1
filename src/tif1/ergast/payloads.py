@@ -8,7 +8,7 @@ so freshness is decided at read time:
 - a past season never expires (its files do not change);
 - the current season and every Jolpica answer expire after
   ``ergast_ttl_hours`` (results get corrected, standings move on, the Stats
-  repository catches up a day or two after a round);
+  repository catches up a few hours after Jolpica);
 - a missing (404 on every CDN) or empty (``total == 0``) Stats file is
   re-probed after ``missing_payloads_ttl_days`` for past seasons and after
   ``ergast_ttl_hours`` for the current one, so later additions upstream are

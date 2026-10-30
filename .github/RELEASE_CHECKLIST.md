@@ -130,6 +130,11 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.11.2 (Jolpica limits, fastf1 3.9 docs)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.11.2"`
+- [ ] Confirm `tif1.ergast.jolpica.get_rate_limiter()` reports 4 per second and 200 per hour with the default config
+- [ ] Confirm the README renders on PyPI (the fastf1 rate-limit table and the "Why not use tif1?" section)
+
 ### v0.11.1 (native decoder dependency)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.11.1"`
 - [ ] Confirm `tif1-native` 0.2.x is on PyPI with abi3 wheels for Linux glibc/musl x86_64/aarch64, macOS universal2 and Windows x64/arm64

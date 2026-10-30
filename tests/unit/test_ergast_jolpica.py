@@ -85,10 +85,24 @@ class TestRateLimiter:
         assert limiter.acquire() == 0.0
         assert limiter.acquire() == 0.0
         waited = limiter.acquire()
-        assert waited == pytest.approx(0.5)
-        assert sleeps == [pytest.approx(0.5)]
+        assert waited == pytest.approx(1.0)
+        assert sleeps == [pytest.approx(1.0)]
 
-    def test_hourly_window(self):
+    def test_never_more_than_burst_in_any_second(self):
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        limiter = RateLimiter(4, 500, clock=lambda: clock[0], sleep=sleep)
+        sent: list[float] = []
+        for _ in range(20):
+            limiter.acquire()
+            sent.append(clock[0])
+            clock[0] += 0.05
+        assert all(earlier + 1.0 <= later for earlier, later in zip(sent, sent[4:], strict=False))
+
+    def test_hourly_window(self, caplog):
         clock = [0.0]
         sleeps: list[float] = []
 
@@ -99,9 +113,20 @@ class TestRateLimiter:
         limiter = RateLimiter(1000, 3, clock=lambda: clock[0], sleep=sleep)
         for _ in range(3):
             limiter.acquire()
-        limiter.acquire()
+        with caplog.at_level("WARNING", logger="tif1.ergast.jolpica"):
+            limiter.acquire()
         assert sleeps
         assert sleeps[0] == pytest.approx(3600.0)
+        assert "hourly limit of 3 requests" in caplog.text
+
+    def test_process_limiter_defaults(self):
+        jolpica.reset_rate_limiter()
+        try:
+            limiter = jolpica.get_rate_limiter()
+            assert limiter.burst_per_second == 4
+            assert limiter.hourly == 200
+        finally:
+            jolpica.reset_rate_limiter()
 
     def test_process_limiter_reads_config(self, monkeypatch):
         from tif1.config import get_config

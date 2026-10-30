@@ -1212,11 +1212,11 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="ergast_rate_limit_burst" type="int" default="4">
-  Jolpica requests per second the client allows itself (the API's unauthenticated burst limit). Environment variable: `TIF1_ERGAST_RATE_LIMIT_BURST`.
+  Jolpica requests the client allows itself in any one second (the API's unauthenticated burst limit). Environment variable: `TIF1_ERGAST_RATE_LIMIT_BURST`.
 </ResponseField>
 
-<ResponseField name="ergast_rate_limit_hourly" type="int" default="500">
-  Jolpica requests per hour the client allows itself (the API's unauthenticated sustained limit). Environment variable: `TIF1_ERGAST_RATE_LIMIT_HOURLY`.
+<ResponseField name="ergast_rate_limit_hourly" type="int" default="200">
+  Jolpica requests the client allows itself in any one hour. The default is fastf1's Jolpica limit, which is below the API's unauthenticated limit of 500. Environment variable: `TIF1_ERGAST_RATE_LIMIT_HOURLY`.
 </ResponseField>
 
 <ResponseField name="stats_repo" type="str" default="TracingInsights-Archive/Stats">
@@ -2570,7 +2570,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "ergast_ttl_hours": 6.0,
   "ergast_timeout": 5.0,
   "ergast_rate_limit_burst": 4,
-  "ergast_rate_limit_hourly": 500,
+  "ergast_rate_limit_hourly": 200,
   "stats_repo": "TracingInsights-Archive/Stats",
   "stats_branch": "main",
   "keepalive_timeout": 120,

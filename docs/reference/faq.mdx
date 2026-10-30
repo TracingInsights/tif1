@@ -87,7 +87,7 @@ No, tif1 focuses on historical data (timing and telemetry 2018-current, Ergast r
 
 ### How recent is the data?
 
-The TracingInsights data repositories publish a session shortly after it ends. The files are built from the same F1 timing data that fastf1 reads and are available in under a minute after that data reaches fastf1. A session that is not published yet raises `DataNotFoundError`. The Ergast classification of a round appears in the Stats repository a day or two after the race; until then `session.results` is merged from jolpica-f1.
+The TracingInsights data repositories publish a session shortly after it ends. The timing and telemetry files are generated with fastf1 and are available in under a minute after fastf1 has the data. A session that is not published yet raises `DataNotFoundError`. The Ergast classification of a round appears in the Stats repository a few hours after jolpica-f1 has it; until then `session.results` is merged from jolpica-f1.
 
 ### Why am I getting DataNotFoundError?
 

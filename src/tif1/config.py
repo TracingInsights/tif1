@@ -121,14 +121,16 @@ class Config:
             # TracingInsights-Archive/Stats repository is read first, Jolpica
             # (api.jolpi.ca) only for what Stats cannot answer. Current-season
             # payloads and Jolpica answers expire after ergast_ttl_hours; past
-            # seasons are cached permanently.
+            # seasons are cached permanently. Jolpica requests are paced to 4
+            # per second (Jolpica's limit) and 200 per hour (fastf1's cap,
+            # below Jolpica's 500).
             "ergast_results": True,
             "ergast_fallback": True,
             "jolpica_base_url": "https://api.jolpi.ca/ergast/f1",
             "ergast_ttl_hours": 6.0,
             "ergast_timeout": 5.0,
             "ergast_rate_limit_burst": 4,
-            "ergast_rate_limit_hourly": 500,
+            "ergast_rate_limit_hourly": 200,
             "stats_repo": "TracingInsights-Archive/Stats",
             "stats_branch": "main",
             # HTTP session configuration constants

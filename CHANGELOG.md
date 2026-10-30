@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
+## [0.11.2] - 2026-10-30
+
+### Summary
+
+`0.11.2` keeps Jolpica requests within both the jolpica-f1 and the fastf1
+limits, and updates the README and the "Why tif1" docs for fastf1 3.9.0,
+which needs an F1TV sign-in for most features.
+
+### Changed
+
+- Jolpica requests keep to the stricter of the jolpica-f1 and fastf1
+  limits: at most 4 in any second and 200 in any hour
+  (`ergast_rate_limit_hourly` default 500 -> 200, fastf1 3.9.0's Jolpica
+  cap). The per-second limit is now a sliding one-second window: the
+  token bucket let up to 7 requests through in one second. When the hourly
+  limit makes a request wait, a warning is logged.
+
+### Documentation
+
+- README and `docs/why-tif1.mdx`: the timing and telemetry data in tif1 is
+  generated with fastf1. New section on fastf1 3.9.0's F1TV sign-in (an
+  F1TV Access subscription for most features since Formula 1 added
+  authentication to its data APIs in October 2026); tif1 reads published
+  files and needs no account.
+- The rate-limit section lists fastf1's own limits from `fastf1/req.py`
+  (4 requests per second and 500 uncached per hour across every API it
+  calls, 200 per hour to jolpica-f1, `RateLimitExceededError` above that),
+  jolpica-f1's server limits, when tif1 calls jolpica-f1 (a round not yet
+  in the Stats repository, and the few queries the files do not cover) and
+  why the MultiViewer API (Cloudflare CDN) is not rate-limited.
+- New "Why not use tif1?" section: no live timing (use fastf1 for live
+  data), and data arrives after it reaches fastf1.
+- The comparison section, `docs/why-tif1.mdx` and the introduction list
+  are rewritten in plain English.
+- The Stats repository is updated a few hours after jolpica-f1 has a
+  round, not a day or two (FAQ, Ergast reference).
+
 ## [0.11.1] - 2026-10-30
 
 ### Summary
