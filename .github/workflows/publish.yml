@@ -122,6 +122,7 @@ jobs:
     permissions:
       contents: write
       discussions: write
+      actions: write  # Dispatch docs.yml
 
     steps:
       - uses: actions/checkout@v7
@@ -199,6 +200,19 @@ jobs:
           echo "created=$CREATED" >> "$GITHUB_OUTPUT"
           echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy documentation
+        # A release created with GITHUB_TOKEN does not start docs.yml through its
+        # `release: published` trigger; workflow_dispatch is exempt from that rule.
+        # The docs are deployed from the tag, so they match the released code.
+        # Prereleases keep the production docs on the last stable version.
+        if: steps.release.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh workflow run docs.yml --ref "$TAG" -f version="$VERSION"
 
       - name: Open release discussion
         # Always run (job-level `if` gates on pypi dispatch): the script checks
