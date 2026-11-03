@@ -11,11 +11,21 @@ dictionary-encoded (int32 codes into a short category list, built by the
 builds the string column from the codes. Frames are identical either way
 (`tests/unit/test_native_decoder.py`).
 
+From 0.2.1, `tif1_native.lz4_frame_decompress_into(src, dst) -> int` decodes
+an lz4 frame into a caller-owned writable buffer with the GIL released.
+On Linux, tif1 uses it to decompress the frame tier's driver rows into
+huge-page `mmap` buffers (`tests/unit/test_elis_e4_huge_page_rows.py`).
+The blocks are decoded by liblz4 (`LZ4_decompress_safe_usingDict`, the
+decoder pyarrow's lz4 codec runs), vendored by the `lz4-sys` crate and
+compiled into the extension; the frame header is parsed in Rust
+(`src/lz4.rs`), which rejects checksummed frames and dictionary ids.
+
 `TIF1_DISABLE_NATIVE=1` makes tif1 ignore an installed extension.
 
 ## Build locally
 
-Needs a Rust toolchain:
+Needs a Rust toolchain and a C compiler (gcc or clang, MSVC on Windows) for
+the vendored liblz4:
 
     uvx maturin develop --release -m native/Cargo.toml
 
@@ -34,6 +44,7 @@ dispatch only:
   wheels); the module declares `gil_used = false`, so a local build on a
   free-threaded interpreter keeps the GIL disabled;
 - Linux manylinux2014 and musllinux_1_2 (x86_64, aarch64), macOS universal2,
-  Windows x64 and arm64, plus an sdist for other platforms (needs Rust).
+  Windows x64 and arm64, plus an sdist for other platforms (needs Rust and a
+  C compiler).
 
 Pyodide is not built; tif1 uses orjson there.

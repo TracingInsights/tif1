@@ -521,6 +521,14 @@ class TestLapsResetIndexInPlace:
         laps = Laps(pd.DataFrame({"index": [5, 6], "LapNumber": [1.0, 2.0]}))
         assert "level_0" not in laps.reset_index().columns
 
+    def test_an_index_named_level_0_keeps_its_column(self):
+        """pandas 3.1's ``to_sql(index=True)`` names the index ``level_0`` and resets a copy."""
+        laps = Laps(pd.DataFrame({"index": [5, 6], "LapNumber": [1.0, 2.0]}))
+        laps.index.name = "level_0"
+        assert list(laps.reset_index().columns) == ["level_0", "index", "LapNumber"]
+        existing = Laps(pd.DataFrame({"level_0": [5, 6], "LapNumber": [1.0, 2.0]}))
+        assert list(existing.reset_index().columns) == ["index", "level_0", "LapNumber"]
+
 
 class TestDecodedNames:
     def test_session_exposes_plain_names(self):

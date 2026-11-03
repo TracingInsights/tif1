@@ -229,6 +229,18 @@ export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=64
   Type: `int`. Default: `32`
 </Info>
 
+### TIF1_TELEMETRY_COLUMNAR
+
+When `true`, a cold load that needs two or more laps of one driver asks first for that driver's columnar telemetry files. One file (`{driver}/tel.v1.{first}.bin`) holds ten laps. The files hold the same values as the lap JSON files in about 26% fewer bytes. A race driver's laps take 6 requests instead of 57. A missing file falls back to the lap JSON, and tif1 remembers the miss for the session. The reader is off until the data repositories publish the files.
+
+```bash
+export TIF1_TELEMETRY_COLUMNAR=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
 ### TIF1_LOAD_TELEMETRY_LAZY
 
 When `true`, `session.load(telemetry=True)` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.

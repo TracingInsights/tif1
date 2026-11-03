@@ -82,15 +82,21 @@ _DUMPS_OPTIONS = orjson.OPT_SERIALIZE_NUMPY
 # telemetry payload straight into typed numpy arrays with the GIL released,
 # so the fetch threads parse in parallel; without it every path uses orjson.
 # ``TIF1_DISABLE_NATIVE=1`` forces the pure-Python path (read at import).
+_native_module: Any = None
 _native_decode_telemetry: Any = None
 if os.environ.get("TIF1_DISABLE_NATIVE", "").strip().lower() not in {"1", "true", "yes", "on"}:
     try:
+        _native_module = importlib.import_module("tif1_native")
         _native_name = "decode_telemetry"  # the extension ships no stubs
-        _native_decode_telemetry = getattr(importlib.import_module("tif1_native"), _native_name)
+        _native_decode_telemetry = getattr(_native_module, _native_name)
     except (ImportError, AttributeError):  # pragma: no cover - depends on the optional wheel
+        _native_module = None
         _native_decode_telemetry = None
 
 NATIVE_TELEMETRY_DECODER_AVAILABLE = _native_decode_telemetry is not None
+#: ``tif1_native.lz4_frame_decompress_into(src, dst) -> int`` (tif1-native >= 0.2.1:
+#: an lz4 frame decoded into a caller-owned buffer, GIL released), or None.
+NATIVE_LZ4_DECOMPRESS_INTO: Any = getattr(_native_module, "lz4_frame_decompress_into", None)
 # Raw payload keys of the numeric-by-contract channels: an all-sentinel
 # channel among them decodes to a float64 NaN array, any other all-sentinel
 # channel stays a list of tokens (what a generic parser would hand over).

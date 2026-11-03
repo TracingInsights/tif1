@@ -1371,14 +1371,18 @@ class Laps(pd.DataFrame):
         """Reset index and drop the ``level_0`` column if one was created.
 
         ``inplace=True`` returns ``None`` and keeps the new column, like pandas
-        (``DataFrame.to_sql(index=True)`` resets the index in place and then
-        inserts that column).
+        (pandas < 3.1's ``DataFrame.to_sql(index=True)`` resets the index in
+        place and then inserts that column). Only a ``level_0`` pandas named
+        itself (for an unnamed index level) is dropped: an index level named
+        ``level_0`` (pandas >= 3.1's ``to_sql`` names it so before a plain
+        ``reset_index()``) or an existing ``level_0`` column is kept.
         """
+        auto_named = "level_0" not in self.index.names and "level_0" not in self.columns
         result = cast(Any, super()).reset_index(drop=drop, **kwargs)
         if result is None:  # inplace=True: pandas semantics, the new column stays
             return None
-        # Remove level_0 column if it was created
-        if not drop and "level_0" in result.columns:
+        # Remove the level_0 column pandas created for the unnamed index
+        if not drop and auto_named and "level_0" in result.columns:
             result = result.drop(columns=["level_0"])
         return result
 
@@ -2257,9 +2261,10 @@ class Telemetry(pd.DataFrame):
         """``speed_ms * dt`` as numpy for float64 ``Speed`` + numpy timedelta ``Time``.
 
         Same arithmetic as the pandas chain in
-        :meth:`calculate_differential_distance` (``asi8 / pps`` seconds,
-        NaN/NaT -> 0, ``diff`` clipped at 0), without its ~10 intermediate
-        Series. Returns None when the dtypes need the general path.
+        :meth:`calculate_differential_distance` (the array's own
+        ``total_seconds()``, whose rounding changed in pandas 3.1, NaN/NaT
+        -> 0, ``diff`` clipped at 0), without its ~10 intermediate Series.
+        Returns None when the dtypes need the general path.
         """
         if not self.columns.is_unique:
             return None
@@ -2270,14 +2275,10 @@ class Telemetry(pd.DataFrame):
         time_dtype = time.dtype
         if not isinstance(time_dtype, np.dtype) or time_dtype.kind != "m":
             return None
-        unit, count = np.datetime_data(time_dtype)
-        pps = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}.get(unit)
-        if pps is None or count != 1:
+        if np.datetime_data(time_dtype) not in _TICK_UNITS:
             return None
         speed_ms = np.where(np.isnan(speed), 0.0, speed) / 3.6
-        time_raw = np.asarray(time)
-        seconds = time_raw.view("i8") / pps
-        seconds[np.isnat(time_raw)] = 0.0
+        seconds = np.where(np.isnat(np.asarray(time)), 0.0, time.total_seconds())
         dt = np.empty_like(seconds)
         if len(dt):
             dt[0] = 0.0
@@ -3177,6 +3178,7 @@ def _driver_laps_frame(laps: pd.DataFrame, driver: str) -> pd.DataFrame:
 
 
 _PERIODS_PER_SECOND = {"s": 1, "ms": 1_000, "us": 1_000_000, "ns": 1_000_000_000}
+_TICK_UNITS = frozenset((unit, 1) for unit in _PERIODS_PER_SECOND)
 
 
 def _fastest_lap_frame(laps: pd.DataFrame) -> pd.DataFrame | None:
@@ -3196,8 +3198,7 @@ def _fastest_lap_frame(laps: pd.DataFrame) -> pd.DataFrame | None:
     dtype = lap_time.dtype
     if not (isinstance(dtype, np.dtype) and dtype.kind == "m"):
         return None
-    per_second = _PERIODS_PER_SECOND.get(np.datetime_data(cast(Any, dtype))[0])
-    if per_second is None:
+    if np.datetime_data(cast(Any, dtype)) not in _TICK_UNITS:
         return None
     ticks = lap_time.to_numpy().view("i8")
     usable = ticks != _NAT_NS
@@ -3207,9 +3208,9 @@ def _fastest_lap_frame(laps: pd.DataFrame) -> pd.DataFrame | None:
     candidates = np.flatnonzero(usable)
     if not len(candidates):
         return pd.DataFrame()
-    # ``total_seconds()``'s own arithmetic (ticks over the periods per second
-    # of the column's resolution), so ties fall exactly as the float sort's.
-    seconds = ticks[candidates] / per_second
+    # ``total_seconds()`` itself (its rounding changed in pandas 3.1), so ties
+    # fall exactly as the float sort's.
+    seconds = lap_time.array.total_seconds()[candidates]
     best = int(np.argmin(seconds))
     position = int(candidates[best])
     row = laps.iloc[position : position + 1]

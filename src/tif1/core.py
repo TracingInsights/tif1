@@ -1703,13 +1703,16 @@ class Session:
         use_cache, write_cache, validate = not ultra_cold, self.enable_cache, not ultra_cold
 
         async def fetch(request: tuple[int, str, str, str]) -> dict[str, Any] | None:
-            # The module-global name: tests serve it from memory.
+            # The module-global name: tests serve it from memory. Each call is
+            # one lap of a driver's wave: it may take the driver's columnar
+            # file (one download per driver, shared by the wave's laps).
             results = await fetch_multiple_async(
                 [request],
                 use_cache=use_cache,
                 write_cache=write_cache,
                 validate_payload=validate,
                 telemetry_writes=writes,
+                driver_files=True,
             )
             return results[0] if results else None
 

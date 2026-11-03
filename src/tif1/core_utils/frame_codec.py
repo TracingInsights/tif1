@@ -1059,7 +1059,9 @@ def _str_spans(ea: Any, spans: list[tuple[int, int]]) -> Any:
     if len(spans) == 1:
         begin, stop = spans[0]
         if fast_str and type(ea) is pd.arrays.ArrowStringArray:
-            return _str_slice(type(ea), ea._pa_array, ea._dtype, begin, stop - begin)
+            return _str_slice(
+                type(ea), ea._pa_array, ea._dtype, begin, stop - begin, _array_layout()[0]
+            )
         return ea[begin:stop]
     if fast_str and type(ea) is pd.arrays.ArrowStringArray:
         chunked = ea._pa_array
@@ -1497,18 +1499,23 @@ def decode_driver_frames(
 #   group, sliced per lap (disjoint slices: frames stay mutation-isolated);
 # - a ``str`` lap is an ``ArrowStringArray`` over ``ChunkedArray.slice``
 #   carrying the attributes ``__getitem__`` sets;
-# - a ``Time`` lap is ``NDArrayBacked._simple_new`` + ``_freq = None``,
-#   which is ``TimedeltaArray._simple_new`` without its argument asserts
-#   (the group's dtype is checked once instead).
+# - a ``Time`` lap is ``NDArrayBacked._simple_new`` (+ ``_freq = None``
+#   where pandas still has it), which is ``TimedeltaArray._simple_new``
+#   without its argument asserts (the group's dtype is checked once instead).
 #
-# The two hand-built arrays are verified against the public route once per
-# process (``_fast_arrays``); on any drift the route falls back to
-# ``__getitem__`` / ``TimedeltaArray._simple_new``.
+# Which optional attributes pandas' own arrays carry is read once from a
+# reference (``_array_layout``: pandas 3.1 gives every Arrow slice an empty
+# ``_cache`` dict and dropped ``TimedeltaArray._freq``), and the two
+# hand-built arrays are verified against the public route once per process
+# (``_fast_arrays``); on any drift the route falls back to ``__getitem__`` /
+# ``TimedeltaArray._simple_new``.
 
-_P_NP, _P_TD, _P_WRAP, _P_INT, _P_STR, _P_EA = range(6)
+_P_NP, _P_TD, _P_TDN, _P_WRAP, _P_INT, _P_STR, _P_STRC, _P_EA = range(8)
 
 _FAST_LAP_FRAMES: bool | None = None  # resolved by ``_fast_lap_frames`` on first use
 _FAST_ARRAYS: tuple[bool, bool] | None = None  # (str slice, timedelta), resolved on first use
+# (str slices carry ``_cache``, TimedeltaArray carries ``_freq``), resolved on first use
+_ARRAY_LAYOUT: tuple[bool, bool] | None = None
 
 
 def _fast_lap_frames() -> bool:
@@ -1522,11 +1529,31 @@ def _fast_lap_frames() -> bool:
     return fast
 
 
-def _str_slice(cls: Any, chunked: Any, dtype: Any, start: int, n: int) -> Any:
-    """``ea[start:start + n]`` for an ``ArrowStringArray`` without ``__getitem__``."""
+def _array_layout() -> tuple[bool, bool]:
+    """``(str slices carry _cache, TimedeltaArray carries _freq)`` on the installed pandas."""
+    global _ARRAY_LAYOUT
+    layout = _ARRAY_LAYOUT
+    if layout is None:
+        ea = _decode_str(["a"], np.array([0, 0], dtype="int32"))
+        values = np.zeros(1, dtype="m8[ns]")
+        tda: Any = pd.arrays.TimedeltaArray
+        layout = _ARRAY_LAYOUT = (
+            "_cache" in vars(ea[0:1]),
+            "_freq" in vars(tda._simple_new(values, dtype=values.dtype)),
+        )
+    return layout
+
+
+def _str_slice(cls: Any, chunked: Any, dtype: Any, start: int, n: int, cache: bool = False) -> Any:
+    """``ea[start:start + n]`` for an ``ArrowStringArray`` without ``__getitem__``.
+
+    ``cache`` adds the empty ``_cache`` dict pandas >= 3.1 gives every slice.
+    """
     sliced = object.__new__(cls)
     sliced._pa_array = chunked.slice(start, n)
     sliced._dtype = dtype
+    if cache:
+        sliced._cache = {}
     sliced._readonly = False
     return sliced
 
@@ -1536,10 +1563,14 @@ def _timedelta_new() -> Any:
     return super(tda, tda)._simple_new
 
 
-def _timedelta_array(base_new: Any, values: np.ndarray, dtype: np.dtype) -> Any:
-    """``TimedeltaArray._simple_new(values, dtype=dtype)`` without the asserts."""
+def _timedelta_array(base_new: Any, values: np.ndarray, dtype: np.dtype, freq: bool = True) -> Any:
+    """``TimedeltaArray._simple_new(values, dtype=dtype)`` without the asserts.
+
+    ``freq`` sets ``_freq = None`` as pandas < 3.1 does (3.1 dropped the attribute).
+    """
     arr = base_new(values, dtype)
-    arr._freq = None
+    if freq:
+        arr._freq = None
     return arr
 
 
@@ -1548,9 +1579,10 @@ def _probe_str_slice() -> bool:
     cls = type(ea)
     if cls is not pd.arrays.ArrowStringArray:
         return False
+    cache = _array_layout()[0]
     for start, stop in ((1, 4), (2, 2), (4, 5)):
         ref = ea[start:stop]
-        got = _str_slice(cls, ea._pa_array, ea._dtype, start, stop - start)
+        got = _str_slice(cls, ea._pa_array, ea._dtype, start, stop - start, cache)
         if (
             type(got) is not type(ref)
             or list(vars(got)) != list(vars(ref))
@@ -1567,12 +1599,12 @@ def _probe_timedelta() -> bool:
     values = np.array([[0, 16_000_000, 256_000_000]], dtype="m8[ns]")
     tda: Any = pd.arrays.TimedeltaArray
     ref = tda._simple_new(values[:, 1:], dtype=values.dtype)
-    got = _timedelta_array(_timedelta_new(), values[:, 1:], values.dtype)
+    got = _timedelta_array(_timedelta_new(), values[:, 1:], values.dtype, _array_layout()[1])
     return bool(
         type(got) is type(ref)
         and vars(got) == vars(ref)
         and got.dtype == ref.dtype
-        and got.freq is None
+        and getattr(got, "freq", None) is None
         and got._ndarray.shape == ref._ndarray.shape
         and np.shares_memory(got._ndarray, values)
         and np.array_equal(got._ndarray, ref._ndarray)
@@ -1597,6 +1629,11 @@ def _lap_plan(
 ) -> list[tuple[Any, ...]]:
     """``(code, values, extra, placement)`` per block, resolved once per group."""
     fast_str, fast_td = _fast_arrays()
+    str_code, td_code = _P_STR, _P_TD
+    if fast_str or fast_td:
+        str_cache, td_freq = _array_layout()
+        str_code = _P_STRC if str_cache else _P_STR
+        td_code = _P_TD if td_freq else _P_TDN
     plan: list[tuple[Any, ...]] = []
     for part in parts:
         kind = part[0]
@@ -1605,7 +1642,7 @@ def _lap_plan(
             dtype = values.dtype
             if dtype.kind == "m":
                 if fast_td and np.datetime_data(dtype)[0] != "generic":
-                    plan.append((_P_TD, values, (_timedelta_new(), dtype), part[1]))
+                    plan.append((td_code, values, (_timedelta_new(), dtype), part[1]))
                 else:
                     plan.append((_P_WRAP, values, _blocks._TimedeltaArray._simple_new, part[1]))
             elif dtype.kind == "M":
@@ -1620,7 +1657,7 @@ def _lap_plan(
         else:  # str
             ea = part[2]
             if fast_str and type(ea) is pd.arrays.ArrowStringArray:
-                plan.append((_P_STR, ea._pa_array, ea._dtype, part[1]))
+                plan.append((str_code, ea._pa_array, ea._dtype, part[1]))
             else:  # pragma: no cover - pandas internals changed
                 plan.append((_P_EA, ea, None, part[1]))
     return plan
@@ -1677,6 +1714,16 @@ class _LapBuilder:
                 sliced._dtype = extra
                 sliced._readonly = False
                 blocks.append(extension_block(sliced, placement, 2))
+            elif code == _P_TDN:  # pandas >= 3.1: no ``_freq``
+                wrapped = extra[0](values[:, start:end], extra[1])
+                blocks.append(wrapped_block(wrapped, placement, 2))
+            elif code == _P_STRC:  # pandas >= 3.1: every slice carries ``_cache``
+                cached: Any = object.__new__(pd.arrays.ArrowStringArray)
+                cached._pa_array = values.slice(start, end - start)
+                cached._dtype = extra
+                cached._cache = {}
+                cached._readonly = False
+                blocks.append(extension_block(cached, placement, 2))
             elif code == _P_WRAP:
                 window = values[:, start:end]
                 blocks.append(wrapped_block(extra(window, dtype=window.dtype), placement, 2))

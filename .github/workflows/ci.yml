@@ -140,7 +140,8 @@ jobs:
 
       - name: Build and install tif1-native
         # After the sync (uv sync prunes packages outside the lock); the tests
-        # then run with --no-sync. The runner image ships a Rust toolchain.
+        # then run with --no-sync. The runner image ships a Rust toolchain and
+        # gcc (lz4-sys compiles the vendored liblz4 with ``cc``).
         # ``--python .venv/bin/python``: run as ``python -m uv``, ``uv pip`` would
         # otherwise install into the interpreter running uv (the hosted
         # toolcache Python), not the project venv ``uv run`` uses.
@@ -150,7 +151,7 @@ jobs:
 
       - name: Check the native decoder is active
         run: |
-          python -m uv run --no-sync python -c "from tif1.core_utils import json_utils as j; assert j.NATIVE_TELEMETRY_DECODER_AVAILABLE and j.native_dictionary_channels()"
+          python -m uv run --no-sync python -c "from tif1.core_utils import json_utils as j; assert j.NATIVE_TELEMETRY_DECODER_AVAILABLE and j.native_dictionary_channels() and j.NATIVE_LZ4_DECOMPRESS_INTO is not None"
 
       - name: Run unit tests (native decoder)
         run: |

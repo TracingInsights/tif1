@@ -208,6 +208,12 @@ class Config:
             # Background requests of that stream in flight at most (they only
             # start while no foreground lap is queued).
             "lazy_telemetry_background_requests": 22,
+            # Gortyn G3: a cold wave of two or more laps of one driver asks for
+            # the driver's columnar file ({driver}/tel.v1.bin, one request,
+            # ~26% fewer bytes) before the per-lap JSON; a 404 is remembered in
+            # the missing-payload tier, so a session without files costs one
+            # request per driver. False: per-lap JSON only.
+            "telemetry_columnar": False,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
@@ -299,6 +305,7 @@ class Config:
             "TIF1_HTTP_REVOCATION_CACHE": ("http_revocation_cache", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
             "TIF1_CDN_FIRST_WAVE": ("cdn_first_wave", _to_bool),
+            "TIF1_TELEMETRY_COLUMNAR": ("telemetry_columnar", _to_bool),
             "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),

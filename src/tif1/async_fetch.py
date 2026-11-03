@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
 from . import first_wave
-from .core_utils.constants import telemetry_ref_from_path
+from .core_utils.constants import (
+    columnar_chunk_first_lap,
+    columnar_file_path,
+    telemetry_ref_from_path,
+)
 from .core_utils.json_utils import decode_telemetry_payload, json_loads, parse_response_json
 from .core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
@@ -454,6 +458,191 @@ def _flush_telemetry_writes(cache: Any, entries: list[tuple[Any, ...]]) -> None:
                 logger.debug("Deferred telemetry cache write skipped: %s", e)
 
 
+# -- per-driver columnar telemetry files (Gortyn G3) ------------------------------
+#
+# A cold wave of a driver's laps asks for the driver's columnar files
+# (``{driver}/tel.v1.{first}.bin``, ten laps each,
+# :mod:`tif1.core_utils.columnar_telemetry`) once; every lap request of the
+# wave awaits the download of its file and takes its lap from it, or falls
+# back to its ``_tel.json`` when the file is missing, unreadable or lacks the
+# lap. Downloads run in the fetch thread pool, so lap requests of any event
+# loop (a batch's ``asyncio.run``, the lazy stream's thread) share them
+# through a ``concurrent.futures.Future``.
+
+_driver_files_lock = threading.Lock()
+# (year, gp, session, driver, first lap) -> Future of {lap: tel} (None: no usable file).
+_driver_files: dict[tuple[Any, ...], Any] = {}
+# Sessions whose file probe answered 404: the data repository has not
+# published files for them, so no other file is asked for in this process.
+_sessions_without_files: set[tuple[Any, ...]] = set()
+# Decoded files kept for their unread laps, oldest dropped first.
+_DRIVER_FILES_CAP = 256
+# Missing-payload key of a session without columnar files (no such path is fetched).
+COLUMNAR_SESSION_MARKER = "tel.v1.session"
+
+
+def _columnar_enabled(config: Any, validate_payload: bool) -> bool:
+    """Whether telemetry waves ask for the per-driver files.
+
+    Off with ``telemetry_columnar=False``, when telemetry payloads are
+    validated (the validator reads the JSON lists), in the browser (no
+    thread pool) and offline.
+    """
+    return (
+        bool(config.get("telemetry_columnar", False))
+        and not (validate_payload and config.get("validate_telemetry", True))
+        and THREADS_AVAILABLE
+        and not IS_EMSCRIPTEN
+        and not bool(config.get("offline_mode", False))
+    )
+
+
+def _load_driver_file(
+    year: int, gp: str, session: str, driver: str, first_lap: int, use_cache: bool
+) -> dict[int, dict[str, Any]] | None:
+    """Download and decode one columnar file; None when there is none to use.
+
+    The primary CDN answers for the file: a 404 there means the data
+    repository holds no such file (the mirrors copy the same repository) and
+    is remembered in the missing-payload tier, so the per-lap JSON follows at
+    the cost of that one request. Any other failure tries the next mirror;
+    nothing usable from any of them falls back to the JSON without a verdict.
+    """
+    from .cdn import get_cdn_manager
+    from .config import get_config
+    from .core_utils.columnar_telemetry import ColumnarFormatError, decode_driver_file
+    from .payload_loader import get_url_loader
+
+    path = columnar_file_path(driver, first_lap)
+    cache_key = f"{year}/{gp}/{session}/{path}"
+    # The session-wide verdict: the repository publishes a session's files
+    # together, so one 404 stands for all of them until the verdict expires.
+    session_key = f"{year}/{gp}/{session}/{COLUMNAR_SESSION_MARKER}"
+    cache = get_cache() if use_cache else None
+    if cache is not None and (
+        cache.is_known_missing(session_key) or cache.is_known_missing(cache_key)
+    ):
+        with _driver_files_lock:
+            _sessions_without_files.add((year, gp, session))
+        return None
+    get_bytes = getattr(get_url_loader().transport, "get_bytes", None)
+    if not callable(get_bytes):
+        return None
+    timeout = max(1, get_config().get("timeout", 30))
+    for source in get_cdn_manager().get_sources():
+        url = source.format_url(year, gp, session, path)
+        try:
+            blob = get_bytes(url, timeout=timeout)
+        except DataNotFoundError:
+            with _driver_files_lock:
+                _sessions_without_files.add((year, gp, session))
+            if cache is not None:
+                cache.record_missing(cache_key)
+                cache.record_missing(session_key)
+            return None
+        except (NetworkError, InvalidDataError, OSError, ValueError) as e:
+            logger.debug("Columnar telemetry file %s failed on %s: %s", path, source.name, e)
+            continue
+        try:
+            return decode_driver_file(blob)
+        except ColumnarFormatError as e:
+            logger.warning("Columnar telemetry file %s unreadable, using the JSON laps: %s", url, e)
+            return None
+    return None
+
+
+def _driver_file_future(
+    year: int, gp: str, session: str, driver: str, lap: int, *, start: bool, use_cache: bool
+) -> Any | None:
+    """The download of the file holding ``lap``: the running or finished one, else a new one.
+
+    ``start`` False only joins a download a wave started (a lone lap never
+    pays for ten). None when there is none to join.
+    """
+    first_lap = columnar_chunk_first_lap(lap)
+    key = (year, gp, session, driver, first_lap)
+    with _driver_files_lock:
+        future = _driver_files.get(key)
+        if future is not None or not start or (year, gp, session) in _sessions_without_files:
+            return future
+        future = _get_executor().submit(
+            _load_driver_file, year, gp, session, driver, first_lap, use_cache
+        )
+        _driver_files[key] = future
+        if len(_driver_files) > _DRIVER_FILES_CAP:
+            done = [k for k, f in _driver_files.items() if f.done()]
+            for old in done[: len(_driver_files) - _DRIVER_FILES_CAP]:
+                del _driver_files[old]
+    return future
+
+
+async def _columnar_lap(
+    year: int, gp: str, session: str, path: str, *, start: bool, use_cache: bool
+) -> dict[str, Any] | None:
+    """``{"tel": ...}`` of a lap from its columnar file, or None (use the JSON).
+
+    A lap is handed out once (the decoded file only keeps the laps not read
+    yet); the frame and payload tiers serve it afterwards.
+    """
+    import asyncio  # lazy: only async/network paths need it
+
+    ref = telemetry_ref_from_path(path)
+    if ref is None:
+        return None
+    driver, lap = ref
+    future = _driver_file_future(year, gp, session, driver, lap, start=start, use_cache=use_cache)
+    if future is None:
+        return None
+    try:
+        laps = await asyncio.wrap_future(future)
+    except Exception as e:  # the download thread failed: the JSON path takes over
+        logger.debug("Columnar telemetry file of %s lap %s failed: %s", driver, lap, e)
+        return None
+    if not laps:
+        return None
+    tel = laps.pop(lap, None)
+    return {"tel": tel} if tel else None
+
+
+async def _persist_telemetry_payload(
+    cache: Any,
+    loop: Any,
+    executor: Any,
+    year: int,
+    gp: str,
+    session: str,
+    path: str,
+    tel_payload: dict[str, Any],
+) -> bool:
+    """Write a lap's ``tel`` payload to the telemetry tier; False when ``path`` is no lap.
+
+    Telemetry payloads persist to the telemetry table only (what every
+    batch/single-ref reader consults first). Inside a bulk batch with
+    deferred writes the row is collected for one serial flush after the
+    gather instead.
+    """
+    set_telemetry = getattr(cache, "set_telemetry", None)
+    tel_ref = telemetry_ref_from_path(path)
+    if tel_ref is None or not callable(set_telemetry):
+        return False
+    driver, lap = tel_ref
+    collector = _deferred_telemetry_writes.get()
+    if collector is not None:
+        collector.append((year, gp, session, driver, lap, tel_payload))
+    else:
+        await loop.run_in_executor(
+            executor, set_telemetry, year, gp, session, driver, lap, tel_payload
+        )
+    return True
+
+
+def reset_driver_files() -> None:
+    """Forget the downloaded columnar files and the sessions known to have none (tests)."""
+    with _driver_files_lock:
+        _driver_files.clear()
+        _sessions_without_files.clear()
+
+
 async def fetch_with_rate_limit(
     coro_func,
     *args,
@@ -510,6 +699,7 @@ async def fetch_json_async(
     use_cache: bool = True,
     write_cache: bool = True,
     validate_payload: bool = True,
+    driver_file: bool = False,
 ) -> dict[str, Any]:
     """Fetch JSON data asynchronously with caching, retry logic, and CDN fallback.
 
@@ -523,6 +713,10 @@ async def fetch_json_async(
         use_cache: If True, read from cache before network fetch
         write_cache: If True, persist successful network responses to cache
         validate_payload: If True, run payload validation before returning data
+        driver_file: For a ``{driver}/{lap}_tel.json`` path: the lap belongs
+            to a wave of its driver, so its columnar file may be downloaded
+            (once for the wave) instead of the lap's JSON. False still takes
+            the lap from a file a wave already downloaded.
 
     Returns:
         Parsed JSON data (never None, raises on error)
@@ -571,6 +765,18 @@ async def fetch_json_async(
 
     if bool(config.get("offline_mode", False)):
         raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+
+    if path.endswith("_tel.json") and _columnar_enabled(config, validate_payload):
+        columnar = await _columnar_lap(
+            year, gp, session, path, start=driver_file, use_cache=use_cache
+        )
+        if columnar is not None:
+            if write_cache and cache is not None:
+                await _persist_telemetry_payload(
+                    cache, loop, executor, year, gp, session, path, columnar["tel"]
+                )
+                cache.discard_missing(cache_key)
+            return columnar
 
     from .cdn import get_cdn_manager
     from .retry import get_circuit_breaker
@@ -718,38 +924,14 @@ async def fetch_json_async(
                 data = validated
 
             if write_cache and cache is not None:
-                set_telemetry = getattr(cache, "set_telemetry", None)
-                tel_ref = telemetry_ref_from_path(path)
                 tel_payload = data.get("tel") if isinstance(data, dict) else None
-                if (
-                    tel_ref is not None
-                    and callable(set_telemetry)
-                    and isinstance(tel_payload, dict)
+                if not (
+                    isinstance(tel_payload, dict)
                     and tel_payload
+                    and await _persist_telemetry_payload(
+                        cache, loop, executor, year, gp, session, path, tel_payload
+                    )
                 ):
-                    driver, lap = tel_ref
-                    collector = _deferred_telemetry_writes.get()
-                    if collector is not None:
-                        # Bulk batch with deferred writes: collect now, one
-                        # serial flush job after the gather (see collector
-                        # block above for the measurement rationale).
-                        collector.append((year, gp, session, driver, lap, tel_payload))
-                    else:
-                        # Single-tier write: telemetry payloads persist to the
-                        # telemetry table (what every batch/single-ref reader
-                        # consults first); the JSON-tier copy was duplicate
-                        # work.
-                        await loop.run_in_executor(
-                            executor,
-                            set_telemetry,
-                            year,
-                            gp,
-                            session,
-                            driver,
-                            lap,
-                            tel_payload,
-                        )
-                else:
                     set_raw = getattr(cache, "set_raw", None)
                     if (
                         untransformed
@@ -864,6 +1046,7 @@ async def fetch_multiple_async(
     max_concurrent_requests: int | None = None,
     defer_telemetry_writes: bool = False,
     telemetry_writes: list[tuple[Any, ...]] | None = None,
+    driver_files: bool | None = None,
 ) -> list[dict[str, Any] | None]:
     """Fetch multiple JSON files in parallel with optimized batch size.
 
@@ -879,6 +1062,11 @@ async def fetch_multiple_async(
             payload writes instead (with ``write_cache``); the caller hands
             it to :func:`schedule_telemetry_writes` when it sees fit (the
             lazy-telemetry stream issues one request per call)
+        driver_files: Whether the batch's telemetry laps may come from their
+            driver's columnar file (``telemetry_columnar``). None: for the
+            drivers with two or more laps in the batch (a lone lap keeps its
+            JSON); True: every lap (the lazy stream's one-lap calls belong to
+            driver waves)
 
     Returns:
         List of fetched data dictionaries (None for failed requests).
@@ -917,6 +1105,7 @@ async def fetch_multiple_async(
             max_retries=max_retries,
             timeout=timeout,
             max_concurrent=max_concurrent,
+            wave_flags=_driver_wave_flags(requests, driver_files),
         )
     finally:
         if collector_token is not None:
@@ -945,6 +1134,31 @@ def schedule_telemetry_writes(entries: list[tuple[Any, ...]]) -> None:
     register_frame_writer(partial(_flush_telemetry_writes, get_cache(), entries))
 
 
+def _driver_wave_flags(
+    requests: list[tuple[int, str, str, str]], driver_files: bool | None
+) -> list[bool] | None:
+    """Per request, whether it may start its driver's columnar file (None: no request may)."""
+    if driver_files is False:
+        return None
+    refs = [
+        telemetry_ref_from_path(path) if path.endswith("_tel.json") else None
+        for _, _, _, path in requests
+    ]
+    if driver_files:
+        flags = [ref is not None for ref in refs]
+    else:
+        counts: dict[tuple[Any, ...], int] = {}
+        keys = [
+            (year, gp, session, ref[0]) if ref is not None else None
+            for (year, gp, session, _), ref in zip(requests, refs, strict=True)
+        ]
+        for key in keys:
+            if key is not None:
+                counts[key] = counts.get(key, 0) + 1
+        flags = [key is not None and counts[key] > 1 for key in keys]
+    return flags if any(flags) else None
+
+
 async def _gather_fetches(
     requests: list[tuple[int, str, str, str]],
     *,
@@ -954,14 +1168,16 @@ async def _gather_fetches(
     max_retries: int | None,
     timeout: int | None,
     max_concurrent: int,
+    wave_flags: list[bool] | None = None,
 ) -> list[Any]:
     """Gather per-request fetches under the concurrency cap."""
     import asyncio  # lazy: only async/network paths need it
 
+    flags = wave_flags or [False] * len(requests)
     if max_concurrent < len(requests):
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def fetch_with_semaphore(req):
+        async def fetch_with_semaphore(req, driver_file):
             async with semaphore:
                 return await fetch_json_async(
                     *req,
@@ -970,9 +1186,15 @@ async def _gather_fetches(
                     validate_payload=validate_payload,
                     max_retries=max_retries,
                     timeout=timeout,
+                    driver_file=driver_file,
                 )
 
-        tasks = [fetch_with_semaphore(req) for req in requests]
+        if wave_flags is not None:
+            _start_wave_driver_files(requests, wave_flags, use_cache, validate_payload)
+        tasks = [
+            fetch_with_semaphore(req, driver_file)
+            for req, driver_file in zip(requests, flags, strict=True)
+        ]
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     return await asyncio.gather(
@@ -984,11 +1206,39 @@ async def _gather_fetches(
                 validate_payload=validate_payload,
                 max_retries=max_retries,
                 timeout=timeout,
+                driver_file=driver_file,
             )
-            for req in requests
+            for req, driver_file in zip(requests, flags, strict=True)
         ),
         return_exceptions=True,
     )
+
+
+def _start_wave_driver_files(
+    requests: list[tuple[int, str, str, str]],
+    wave_flags: list[bool],
+    use_cache: bool,
+    validate_payload: bool,
+) -> None:
+    """Start the wave's file downloads before the lap requests queue up.
+
+    A batch larger than the concurrency cap (``fetch_all``: 20 drivers'
+    laps behind 22 slots) would otherwise start a file only when its first
+    lap gets a slot, i.e. a few files at a time.
+    """
+    from .config import get_config
+
+    if not _columnar_enabled(get_config(), validate_payload):
+        return
+    started: set[tuple[Any, ...]] = set()
+    for (year, gp, session, path), flag in zip(requests, wave_flags, strict=True):
+        ref = telemetry_ref_from_path(path) if flag else None
+        if ref is None:
+            continue
+        key = (year, gp, session, ref[0], columnar_chunk_first_lap(ref[1]))
+        if key not in started:
+            started.add(key)
+            _driver_file_future(year, gp, session, *ref, start=True, use_cache=use_cache)
 
 
 def _process_fetch_results(

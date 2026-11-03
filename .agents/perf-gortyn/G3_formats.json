@@ -1,0 +1,46 @@
+{
+  "2025/Bahrain%20Grand%20Prix/Race": {
+    "laps": 1128,
+    "json_raw": 169495014,
+    "json_gzip": 71323991,
+    "a_arrow_driver": 57489728,
+    "b_bin_lap": 54642089,
+    "c_bin_driver": 51386195,
+    "c_mismatch_laps": 0,
+    "a_mismatch_laps": 1128,
+    "drivers": 20,
+    "decode_ms_per_driver_median": {
+      "json_native": 30.03344649914652,
+      "c_bin_driver": 11.567756497242954,
+      "a_arrow_driver": 3.053669996006647
+    },
+    "frames_ms_per_driver_median": {
+      "pandas_from_json_decode": 19.306136997329304,
+      "pandas_from_c_incl_decode": 31.42275750360568,
+      "polars_from_json_decode": 23.008440002740826,
+      "polars_from_c_incl_decode": 34.86183950008126
+    }
+  },
+  "2025/Bahrain%20Grand%20Prix/Qualifying": {
+    "laps": 277,
+    "json_raw": 74916251,
+    "json_gzip": 24265979,
+    "a_arrow_driver": 19954264,
+    "b_bin_lap": 18193337,
+    "c_bin_driver": 17678300,
+    "c_mismatch_laps": 0,
+    "a_mismatch_laps": 277,
+    "drivers": 20,
+    "decode_ms_per_driver_median": {
+      "json_native": 15.532461497059558,
+      "c_bin_driver": 5.936349003604846,
+      "a_arrow_driver": 1.9169539955328219
+    },
+    "frames_ms_per_driver_median": {
+      "pandas_from_json_decode": 9.215973001118982,
+      "pandas_from_c_incl_decode": 15.238183503242908,
+      "polars_from_json_decode": 7.441094996465836,
+      "polars_from_c_incl_decode": 13.638374501169892
+    }
+  }
+}

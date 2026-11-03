@@ -11,9 +11,20 @@ name: tif1-native wheels
 #   tif1 does not run on free-threaded CPython yet (orjson, polars);
 # - Linux: manylinux2014 and musllinux_1_2, x86_64 and aarch64;
 #   macOS: universal2 (arm64 + x86_64); Windows: x64 and arm64;
-# - an sdist, so an uncovered platform can still build with a Rust toolchain.
+# - an sdist, so an uncovered platform can still build with a Rust toolchain
+#   and a C compiler.
 # Pyodide is not built: tif1 never requires tif1-native there and falls back
 # to orjson.
+#
+# C toolchain (from 0.2.1): the lz4 frame decoder links liblz4, whose C source
+# the lz4-sys crate vendors and compiles with the `cc` crate in its build
+# script, so every leg needs a C compiler for its target. None needs a step of
+# its own: the manylinux2014 images (gcc), the musllinux_1_2 cross images
+# maturin-action runs (they export CC_<target> for their musl gcc), Xcode's
+# clang on macOS (cc passes `-arch` per target; maturin builds the x86_64 and
+# arm64 halves of universal2 separately and merges them) and MSVC on both
+# Windows runners (cc finds cl.exe through find-msvc-tools; windows-11-arm
+# builds natively). native/tests/smoke.py decodes an lz4 frame on every wheel.
 
 on:
   push:

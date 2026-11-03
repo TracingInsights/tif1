@@ -1,0 +1,72 @@
+{
+ "lib": "pandas",
+ "pairs": 20,
+ "site": {
+  "control": [
+   "/tmp/tif1-gortyn/G1/native/target/site"
+  ],
+  "candidate": [
+   "/tmp/tif1-gortyn/G6/native/target/site"
+  ]
+ },
+ "arms": {
+  "control": {
+   "src": "/tmp/tif1-gortyn/G1/src",
+   "cache": "/tmp/tif1-gortyn-warm-G6",
+   "python": "/home/harish/Documents/tif1/.venv/bin/python",
+   "env": {}
+  },
+  "candidate": {
+   "src": "/tmp/tif1-gortyn/G6/src",
+   "cache": "/tmp/tif1-gortyn-warm-G6",
+   "python": "/home/harish/Documents/tif1/.venv/bin/python",
+   "env": {}
+  }
+ },
+ "summary": {
+  "all_tel": {
+   "import": {
+    "control_median": 12.9,
+    "candidate_median": 12.9,
+    "control_min": 12.7,
+    "candidate_min": 12.6,
+    "candidate_faster_pairs": "9/20"
+   },
+   "get_session": {
+    "control_median": 391.1,
+    "candidate_median": 402.4,
+    "control_min": 339.6,
+    "candidate_min": 342.2,
+    "candidate_faster_pairs": "8/20"
+   },
+   "laps": {
+    "control_median": 3.4,
+    "candidate_median": 3.4,
+    "control_min": 3.3,
+    "candidate_min": 3.3,
+    "candidate_faster_pairs": "9/20"
+   },
+   "all_tel": {
+    "control_median": 98.1,
+    "candidate_median": 98.7,
+    "control_min": 87.1,
+    "candidate_min": 85.9,
+    "candidate_faster_pairs": "11/20"
+   },
+   "in_process_total": {
+    "control_median": 508.0,
+    "candidate_median": 509.9,
+    "control_min": 458.2,
+    "candidate_min": 453.2,
+    "candidate_faster_pairs": "8/20"
+   },
+   "process_wall": {
+    "control_median": 585.7,
+    "candidate_median": 584.8,
+    "control_min": 537.6,
+    "candidate_min": 535.8,
+    "candidate_faster_pairs": "7/20"
+   }
+  }
+ }
+}

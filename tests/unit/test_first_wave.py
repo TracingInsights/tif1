@@ -14,6 +14,7 @@ import pytest
 
 from tif1 import async_fetch, first_wave, http_session, payload_loader
 from tif1.cdn import get_cdn_manager
+from tif1.exceptions import DataNotFoundError
 
 GP, SESSION = "Bahrain%20Grand%20Prix", "Race"
 
@@ -377,6 +378,31 @@ def test_refused_bridge_request_goes_to_niquests(server, monkeypatch, warm_ups):
     assert _fetch_async("VER/9_tel.json") == {"from": "niquests"}
     assert fake.urls == [missing]
     assert server.requests[-1][0].endswith("/VER/9_tel.json")
+
+
+def test_binary_requests_ride_the_bridge_and_its_404_is_final(server, monkeypatch, warm_ups):
+    """Columnar telemetry files (Gortyn G3): bytes over the bridge, a 404 without niquests."""
+    server.routes["drivers.json"] = (200, orjson.dumps(DRIVERS), {})
+    server.routes["tel.v1.1.bin"] = (200, b"TIF1TEL\x01binary", {})  # routed by file name
+    (url,) = _start("drivers.json")
+    assert first_wave.take(url) is not None
+    monkeypatch.setattr(http_session, "_shared_session", None)
+
+    def _no_niquests() -> Any:
+        raise AssertionError("niquests must not be imported")
+
+    monkeypatch.setattr(payload_loader, "_import_niquests", _no_niquests)
+    transport = payload_loader.NiquestsTransport()
+    assert transport.get_bytes(url.replace("drivers.json", "VER/tel.v1.1.bin")) == (
+        b"TIF1TEL\x01binary"
+    )
+    with pytest.raises(DataNotFoundError):
+        transport.get_bytes(url.replace("drivers.json", "VER/tel.v1.11.bin"))
+    assert (
+        first_wave.fetch_status(url.replace("drivers.json", "VER/tel.v1.11.bin"), timeout=5)[0]
+        == 404
+    )
+    assert len(warm_ups.calls) == 1  # the bridge started the niquests warm-up
 
 
 def test_no_bridge_without_a_wave(monkeypatch, warm_ups):

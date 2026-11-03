@@ -43,6 +43,7 @@ from urllib.parse import quote, unquote
 
 from .core_utils.constants import MAX_CACHE_SIZE
 from .core_utils.json_utils import (
+    NATIVE_LZ4_DECOMPRESS_INTO,
     NATIVE_TELEMETRY_DECODER_AVAILABLE,
     decode_one_telemetry_payload,
     decode_telemetry_payload,
@@ -201,6 +202,78 @@ def _compress_driver_row(prefix: bytes | None, content: bytes | bytearray | memo
 # ``frame_narrow.NARROW_MAGIC``, repeated so the check imports nothing).
 _NARROW_ROW_MAGIC = b"TF1\x03"
 
+# Elis E4: the 20 driver rows of a race decompress into 123 MB of fresh
+# memory that the kernel zero-fills one 4 KB page fault at a time (~31 000
+# minor faults, ~80 ms of system time across the decompression workers).
+# Transparent huge pages are ``madvise``-only on most distributions, so
+# neither pyarrow's pool nor malloc gets them. A row of at least one huge
+# page is decompressed by ``tif1-native`` straight into an anonymous private
+# ``mmap`` advised ``MADV_HUGEPAGE`` (2 MB pages: ~1 400 faults, ~30 ms of
+# system time for the race); the narrow-row widening and the frame decoder's
+# views then sit on those pages. Without the extension, ``MADV_HUGEPAGE``
+# (Windows, macOS, Pyodide) or with THP set to ``never``, rows take the
+# pyarrow codec as before.
+_HUGE_PAGE_BYTES = 2 * 1024 * 1024
+_THP_ENABLED_PATH = "/sys/kernel/mm/transparent_hugepage/enabled"
+_HUGE_PAGE_ROWS: list[bool | None] = [None]
+
+
+def _huge_page_rows_enabled() -> bool:
+    """Whether big rows decompress into huge-page buffers (probed once per process)."""
+    enabled = _HUGE_PAGE_ROWS[0]
+    if enabled is None:
+        enabled = NATIVE_LZ4_DECOMPRESS_INTO is not None and not IS_EMSCRIPTEN
+        if enabled:
+            import mmap
+
+            enabled = hasattr(mmap, "MADV_HUGEPAGE")
+        if enabled:
+            try:
+                enabled = "[never]" not in Path(_THP_ENABLED_PATH).read_text(encoding="utf-8")
+            except OSError:
+                enabled = False
+        _HUGE_PAGE_ROWS[0] = enabled
+    return enabled
+
+
+def _huge_page_buffer(size: int) -> memoryview:
+    """A writable ``size``-byte view of fresh anonymous memory advised for huge pages.
+
+    The view starts on a 2 MB boundary and the advised span is rounded up to
+    whole huge pages, so every page of the row can be a huge page whatever
+    alignment the kernel picks for the mapping (the unaligned head of the
+    over-sized mapping is never touched and costs no memory). The mapping is
+    unmapped when the last view of it is released.
+    """
+    # ctypes is already loaded by numpy in every session that reads driver rows.
+    import ctypes
+    import mmap
+
+    span = -(-size // _HUGE_PAGE_BYTES) * _HUGE_PAGE_BYTES
+    mm = mmap.mmap(-1, span + _HUGE_PAGE_BYTES, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+    anchor = ctypes.c_char.from_buffer(mm)
+    offset = -ctypes.addressof(anchor) % _HUGE_PAGE_BYTES
+    del anchor
+    mm.madvise(mmap.MADV_HUGEPAGE, offset, span)
+    return memoryview(mm)[offset : offset + size]
+
+
+def _huge_page_decompress(src: Any, size: int) -> memoryview | None:
+    """``src`` (an lz4 frame) decompressed into a ``size``-byte huge-page buffer, or None.
+
+    None when the huge-page path is unavailable or the native decoder rejects
+    the frame (checksums, a corrupt frame, content longer than ``size``): the
+    caller then decodes it the usual way.
+    """
+    if not _huge_page_rows_enabled():
+        return None
+    try:
+        buffer = _huge_page_buffer(size)
+        NATIVE_LZ4_DECOMPRESS_INTO(src, buffer)
+    except (BufferError, OSError, ValueError):
+        return None
+    return buffer
+
 
 def _expand_narrow_row(blob: Any, codec: Any) -> Any:
     """Decompress a narrowed driver row and widen it into a writable driver blob.
@@ -215,7 +288,9 @@ def _expand_narrow_row(blob: Any, codec: Any) -> Any:
     plan, inner = frame_narrow.split_row(blob)
     size = plan[0]
     buffer: Any = None
-    if codec is not None and bytes(inner[:4]) == _LZ4_MAGIC:
+    if size >= _HUGE_PAGE_BYTES and bytes(inner[:4]) == _LZ4_MAGIC:
+        buffer = _huge_page_decompress(inner, size)
+    if buffer is None and codec is not None and bytes(inner[:4]) == _LZ4_MAGIC:
         try:
             buffer = codec.decompress(inner, decompressed_size=size, memory_pool=_PA_LZ4_POOL[0])
         except (OSError, RuntimeError, TypeError, ValueError, _arrow_error()):
@@ -375,6 +450,10 @@ def _decompress_row(row: tuple[Any, ...], codec: Any) -> tuple[Any, ...] | None:
             # once per row (numpy's casts and adds release the GIL).
             return (*row[:-1], _expand_narrow_row(blob, codec))
         size = _lz4_frame_content_size(blob) if codec is not None else -1
+        if size >= _HUGE_PAGE_BYTES:
+            buffer = _huge_page_decompress(blob, size)
+            if buffer is not None:
+                return (*row[:-1], buffer)
         if size >= 0:
             # pyarrow's decoder is ~2x python-lz4's even serially
             # (0.9 vs 1.9 ms on a 1.2 MB driver row) and copies nothing.

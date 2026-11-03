@@ -1,0 +1,171 @@
+{
+ "lib": "pandas",
+ "pairs": 6,
+ "site": [
+  "/tmp/tif1-gortyn/G1/native/target/site"
+ ],
+ "arms": {
+  "control": {
+   "src": "/tmp/tif1-gortyn-control/src",
+   "cache": "/tmp/tif1-delphi-warm",
+   "python": "/home/harish/Documents/tif1/.venv/bin/python",
+   "env": {
+    "TIF1_DISABLE_NATIVE": "1"
+   }
+  },
+  "candidate": {
+   "src": "/tmp/tif1-gortyn/G1/src",
+   "cache": "/tmp/tif1-gortyn-warm-G1",
+   "python": "/home/harish/Documents/tif1/.venv/bin/python",
+   "env": {
+    "TIF1_DISABLE_NATIVE": "1"
+   }
+  }
+ },
+ "summary": {
+  "notebook": {
+   "import": {
+    "control_median": 14.1,
+    "candidate_median": 13.6,
+    "control_min": 13.1,
+    "candidate_min": 12.9,
+    "candidate_faster_pairs": "4/6"
+   },
+   "get_session": {
+    "control_median": 378.4,
+    "candidate_median": 393.7,
+    "control_min": 354.2,
+    "candidate_min": 365.4,
+    "candidate_faster_pairs": "2/6"
+   },
+   "load": {
+    "control_median": 12.3,
+    "candidate_median": 11.9,
+    "control_min": 12.0,
+    "candidate_min": 11.6,
+    "candidate_faster_pairs": "5/6"
+   },
+   "picks_x8": {
+    "control_median": 10.7,
+    "candidate_median": 10.7,
+    "control_min": 10.2,
+    "candidate_min": 10.0,
+    "candidate_faster_pairs": "2/6"
+   },
+   "iterlaps_tel_loop": {
+    "control_median": 151.3,
+    "candidate_median": 161.1,
+    "control_min": 142.1,
+    "candidate_min": 148.8,
+    "candidate_faster_pairs": "3/6"
+   },
+   "iloc_200": {
+    "control_median": 20.0,
+    "candidate_median": 20.4,
+    "control_min": 19.5,
+    "candidate_min": 19.4,
+    "candidate_faster_pairs": "2/6"
+   },
+   "driver_merged_x4": {
+    "control_median": 36.0,
+    "candidate_median": 38.2,
+    "control_min": 34.3,
+    "candidate_min": 34.4,
+    "candidate_faster_pairs": "2/6"
+   },
+   "telemetry_analysis_4": {
+    "control_median": 21.5,
+    "candidate_median": 22.2,
+    "control_min": 20.7,
+    "candidate_min": 21.0,
+    "candidate_faster_pairs": "2/6"
+   },
+   "fastest_lap_tel": {
+    "control_median": 4.1,
+    "candidate_median": 4.1,
+    "control_min": 3.9,
+    "candidate_min": 4.0,
+    "candidate_faster_pairs": "1/6"
+   },
+   "driver_fastest_lap_x4": {
+    "control_median": 13.9,
+    "candidate_median": 14.5,
+    "control_min": 13.6,
+    "candidate_min": 13.7,
+    "candidate_faster_pairs": "2/6"
+   },
+   "results": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "control_min": 0.0,
+    "candidate_min": 0.0,
+    "candidate_faster_pairs": "0/6"
+   },
+   "weather": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "control_min": 0.0,
+    "candidate_min": 0.0,
+    "candidate_faster_pairs": "0/6"
+   },
+   "in_process_total": {
+    "control_median": 673.6,
+    "candidate_median": 701.5,
+    "control_min": 638.9,
+    "candidate_min": 668.3,
+    "candidate_faster_pairs": "2/6"
+   },
+   "process_wall": {
+    "control_median": 774.8,
+    "candidate_median": 780.6,
+    "control_min": 719.2,
+    "candidate_min": 745.6,
+    "candidate_faster_pairs": "2/6"
+   }
+  },
+  "all_tel": {
+   "import": {
+    "control_median": 13.3,
+    "candidate_median": 14.0,
+    "control_min": 12.9,
+    "candidate_min": 13.3,
+    "candidate_faster_pairs": "2/6"
+   },
+   "get_session": {
+    "control_median": 384.9,
+    "candidate_median": 386.4,
+    "control_min": 351.6,
+    "candidate_min": 365.5,
+    "candidate_faster_pairs": "1/6"
+   },
+   "laps": {
+    "control_median": 3.6,
+    "candidate_median": 3.6,
+    "control_min": 3.4,
+    "candidate_min": 3.4,
+    "candidate_faster_pairs": "3/6"
+   },
+   "all_tel": {
+    "control_median": 108.6,
+    "candidate_median": 103.1,
+    "control_min": 94.8,
+    "candidate_min": 90.5,
+    "candidate_faster_pairs": "3/6"
+   },
+   "in_process_total": {
+    "control_median": 503.7,
+    "candidate_median": 520.6,
+    "control_min": 463.0,
+    "candidate_min": 473.5,
+    "candidate_faster_pairs": "1/6"
+   },
+   "process_wall": {
+    "control_median": 587.9,
+    "candidate_median": 603.9,
+    "control_min": 538.9,
+    "candidate_min": 549.2,
+    "candidate_faster_pairs": "1/6"
+   }
+  }
+ }
+}

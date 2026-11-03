@@ -353,6 +353,21 @@ class TestFastestLapFrame:
         assert got["LapTimeSeconds"].dtype == "float64"
         _assert_same_frame(got, _reference_fastest(laps))
 
+    @pytest.mark.parametrize("unit", ["ns", "ms"])
+    def test_seconds_are_the_installed_total_seconds(self, unit: str) -> None:
+        """``LapTimeSeconds`` follows ``total_seconds()`` bit for bit (pandas 3.1 rounds it
+        through a divmod split, earlier versions as one division)."""
+        rng = np.random.default_rng(7)
+        for _ in range(50):
+            ticks = rng.integers(80_000_000_000, 120_000_000_000, 6)
+            lap_time = pd.Series(ticks.astype("m8[ns]")).astype(f"m8[{unit}]")
+            laps = Laps({"LapTime": lap_time, "LapNumber": np.arange(1.0, 7.0)})
+            got = _fastest_lap_frame(laps)
+            assert got is not None
+            best = int(lap_time.to_numpy().argmin())
+            expected = lap_time.dt.total_seconds().to_numpy()[best]
+            assert got["LapTimeSeconds"].to_numpy()[0] == expected
+
     def test_without_a_deleted_column(self) -> None:
         laps = _driver_laps_frame(_laps_frame(), "VER").drop(columns=["Deleted"])
         got = _fastest_lap_frame(laps)

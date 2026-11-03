@@ -33,8 +33,11 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use numpy::IntoPyArray;
+use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
+mod lz4;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList, PyTuple};
 
 enum Channel {
@@ -628,11 +631,49 @@ fn decode_telemetry(
     to_py(py, parsed, dict_factory)
 }
 
+/// Decompress the lz4 frame ``src`` into the front of the writable buffer
+/// ``dst`` and return the number of bytes written (the frame's content size).
+/// The GIL is released while decoding. ``dst`` may be larger than the content
+/// (the rest is left untouched). Raises ``ValueError`` when ``dst`` is too
+/// small, read-only or not contiguous, for a corrupt frame, and for frame
+/// features the decoder does not implement (checksums, a dictionary id);
+/// callers fall back to another lz4 decoder.
+#[pyfunction]
+fn lz4_frame_decompress_into(
+    py: Python<'_>,
+    src: &Bound<'_, PyAny>,
+    dst: &Bound<'_, PyAny>,
+) -> PyResult<usize> {
+    let src_buf = PyBuffer::<u8>::get(src)?;
+    let dst_buf = PyBuffer::<u8>::get(dst)?;
+    if dst_buf.readonly() {
+        return Err(PyValueError::new_err("destination buffer is read-only"));
+    }
+    if !src_buf.is_c_contiguous() || !dst_buf.is_c_contiguous() {
+        return Err(PyValueError::new_err("buffers must be contiguous"));
+    }
+    // Addresses, not pointers, cross into the GIL-free closure (raw pointers
+    // are not Send); both exports stay alive until the buffers drop below.
+    let (src_addr, src_len) = (src_buf.buf_ptr() as usize, src_buf.len_bytes());
+    let (dst_addr, dst_len) = (dst_buf.buf_ptr() as usize, dst_buf.len_bytes());
+    let result = py.detach(|| {
+        // SAFETY: the buffer protocol exports pin both memories for the
+        // lifetime of `src_buf`/`dst_buf`; `dst` is writable and contiguous.
+        let src = unsafe { std::slice::from_raw_parts(src_addr as *const u8, src_len) };
+        let dst = unsafe { std::slice::from_raw_parts_mut(dst_addr as *mut u8, dst_len) };
+        lz4::decode_frame_into(src, dst)
+    });
+    drop(dst_buf);
+    drop(src_buf);
+    result.map_err(|e| PyValueError::new_err(e.message()))
+}
+
 // The decoder keeps no state between calls, so free-threaded interpreters
 // (3.13t+) can run it without re-enabling the GIL on import.
 #[pymodule(gil_used = false)]
 fn tif1_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_telemetry, m)?)?;
+    m.add_function(wrap_pyfunction!(lz4_frame_decompress_into, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

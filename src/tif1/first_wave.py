@@ -271,11 +271,16 @@ class _StdlibClient:
         An idle kept-alive connection the server has closed meanwhile is
         replaced by a fresh one once.
         """
+        status, body = self.get_with_status(url, timeout)
+        return body if status == 200 else None
+
+    def get_with_status(self, url: str, timeout: float) -> tuple[int | None, bytes | None]:
+        """``(status, decoded body)`` of ``url`` (body None unless decodable); raises on errors."""
         from urllib.parse import urlsplit
 
         parts = urlsplit(url)
         if parts.scheme != "https" or not parts.hostname:
-            return None
+            return None, None
         key = (parts.hostname, parts.port or 443)
         target = parts.path + (f"?{parts.query}" if parts.query else "")
         with self._lock:
@@ -296,7 +301,7 @@ class _StdlibClient:
 
     def _request(
         self, key: tuple[str, int], connection: Any, target: str, timeout: float
-    ) -> bytes | None:
+    ) -> tuple[int | None, bytes | None]:
         reusable = False
         try:
             if getattr(connection, "sock", None) is not None:
@@ -305,8 +310,9 @@ class _StdlibClient:
             response = connection.getresponse()
             body = response.read()
             reusable = not response.will_close
-            if response.status != 200:
-                return None
+            status = response.status
+            if status != 200:
+                return status, None
             encoding = (response.getheader("Content-Encoding") or "").strip().lower()
         finally:
             if reusable:
@@ -314,7 +320,7 @@ class _StdlibClient:
                     self._idle.setdefault(key, []).append(connection)
             else:
                 connection.close()
-        return _decode(body, encoding)
+        return status, _decode(body, encoding)
 
     def close(self) -> None:
         """Close the idle connections."""
@@ -352,6 +358,24 @@ def fetch(url: str, *, timeout: float) -> bytes | None:
     except Exception as e:  # never surfaces: niquests fetches the file
         logger.debug("Stdlib fetch of %s failed: %s", url, e)
         return None
+
+
+def fetch_status(url: str, *, timeout: float) -> tuple[int | None, bytes | None]:
+    """:func:`fetch` with the status: ``(200, body)``, ``(404, None)``, ...; ``(None, None)``
+    when the wave did not run or the request failed. Never raises.
+
+    The columnar telemetry files (Gortyn G3) use it so that a session without
+    files learns it from the 404 over the stdlib connections, without waiting
+    for niquests.
+    """
+    client = _client
+    if client is None:
+        return None, None
+    try:
+        return client.get_with_status(url, timeout)
+    except Exception as e:  # never surfaces: niquests fetches the file
+        logger.debug("Stdlib fetch of %s failed: %s", url, e)
+        return None, None
 
 
 def _decode(body: bytes, encoding: str) -> bytes | None:

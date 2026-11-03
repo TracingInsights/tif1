@@ -1,0 +1,60 @@
+diff --git a/src/tif1/cache.py b/src/tif1/cache.py
+index bb01fcc..aa921b1 100644
+--- a/src/tif1/cache.py
++++ b/src/tif1/cache.py
+@@ -275,6 +275,46 @@ def _huge_page_decompress(src: Any, size: int) -> memoryview | None:
+     return buffer
+ 
+ 
++# Gortyn G1: ``Blob.read()`` copies a row into a fresh ``bytes`` that glibc
++# zero-fills one 4 KB fault at a time (the arena is trimmed between rows):
++# ~15 500 of the ~26 500 faults left in a race's ``fetch_all`` after E4.
++# A row of at least one huge page is read instead in chunks that the arena
++# hands back hot, each copied with the GIL released (``ctypes.memmove``) into
++# a huge-page buffer; the decompression then reads its frame from there.
++# Every chunk read takes the GIL back from the thread decoding the frames,
++# so chunks stay large: 64-256 KB chunks were slower than one read, 512 KB
++# halves the faults (26.5k -> 13.3k for the race).
++_BLOB_READ_CHUNK_BYTES = 512 * 1024
++
++
++def _read_blob(handle: sqlite3.Blob) -> Any:
++    """The whole of ``handle``: a huge-page ``memoryview`` for big rows, else ``bytes``."""
++    size = len(handle)
++    if size >= _HUGE_PAGE_BYTES and _huge_page_rows_enabled():
++        try:
++            buffer = _huge_page_buffer(size)
++        except (OSError, ValueError):
++            buffer = None
++        if buffer is not None:
++            import ctypes
++
++            address = ctypes.addressof(ctypes.c_char.from_buffer(buffer))
++            memmove = ctypes.memmove
++            read = handle.read
++            pos = 0
++            while pos < size:
++                chunk = read(_BLOB_READ_CHUNK_BYTES)
++                n = len(chunk)
++                if not n or pos + n > size:
++                    break
++                memmove(address + pos, chunk, n)
++                pos += n
++            if pos == size:
++                return buffer
++            handle.seek(0)
++    return handle.read()
++
++
+ def _expand_narrow_row(blob: Any, codec: Any) -> Any:
+     """Decompress a narrowed driver row and widen it into a writable driver blob.
+ 
+@@ -615,7 +655,7 @@ def _reader_frame_blob(
+             return None
+         handle = conn.blobopen(table, "frame", rowid, readonly=True)
+         try:
+-            return handle.read()
++            return _read_blob(handle)
+         finally:
+             handle.close()
+     finally:
