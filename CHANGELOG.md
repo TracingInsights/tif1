@@ -7,6 +7,29 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-11-03
+
+### Summary
+
+`0.11.3` is two performance rounds, Delphi and Elis, on top of the session
+state work. Delphi: scripts exit sooner (`gc.freeze` in an exit hook), warm
+polars sessions import neither pandas, pyarrow nor numpy until an array is
+needed, tif1's own pandas startup is trimmed, a warm `load()` keeps the
+frame-tier rows lazy, the frame-tier rows are read inside the lz4 workers,
+and the `Driver`, `resample_channels`/`fill_missing` and merged-telemetry
+paths are faster. Elis: cold loads fetch their first files on the standard
+library while pandas imports, keep the certificate revocation verdict across
+processes and start the first telemetry wave before niquests is up;
+`load(telemetry="lazy")` fetches a driver's telemetry on first access (opt-in:
+`load()` keeps filling the cache so a session works offline afterwards);
+polars telemetry reads no longer import numpy; CI gains a performance
+regression gate. Warm polars telemetry scripts are 25-35% faster, cold
+`laps` scripts about a third faster, and a cold four-driver notebook with
+lazy telemetry takes 3 s instead of 10 s. One surface change: on polars
+sessions `t0_date` and `session_start_time` are `datetime.datetime` and
+`datetime.timedelta` (`None` when unknown); pandas sessions keep the pandas
+scalars.
+
 ### Performance — Elis series (2026-11-03)
 
 - `Session.load(telemetry="lazy")` leaves the telemetry where it is until a

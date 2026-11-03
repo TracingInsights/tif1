@@ -130,6 +130,16 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### v0.11.3 (Delphi and Elis performance rounds, session state from session_info.json)
+- [ ] Validate `import tif1` and `tif1.__version__ == "0.11.3"`
+- [ ] Confirm `tif1-native` 0.2.0 still installs as the dependency (the 0.2.1 wheel with `lz4_frame_decompress_into` ships with E4 after this release)
+- [ ] Confirm `session.load()` still fetches all telemetry (eager) and `load(telemetry="lazy")` fetches a driver's laps on first access; `load_telemetry_lazy` defaults to `False`
+- [ ] Confirm a polars session's `t0_date` / `session_start_time` are `datetime` / `timedelta` (`None` when unknown) and a pandas session's are `Timestamp` / `Timedelta`
+- [ ] Confirm a cold `get_session()` fetches `drivers.json` and the laptimes without importing niquests (`"niquests" not in sys.modules` after `.laps`), and `cdn_first_wave=False` routes every request through niquests
+- [ ] Confirm the SQLite `json` row `tif1/ocsp_verdicts` appears after a cold telemetry load with the revocation check on, and `TIF1_HTTP_REVOCATION_CACHE=false` leaves it unused
+- [ ] Confirm the `perf-gate` CI job passes on the release commit (`pytest -o addopts='' -p no:xdist tests/perf_gate -m perf_gate`)
+- [ ] Confirm `track_status` / `session_status` / `session_info` of a 2025 session come from `session_info.json` (fastf1's live-timing values) and a session without the file still derives them
+
 ### v0.11.2 (Jolpica limits, fastf1 3.9 docs)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.11.2"`
 - [ ] Confirm `tif1.ergast.jolpica.get_rate_limiter()` reports 4 per second and 200 per hour with the default config
