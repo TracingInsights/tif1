@@ -128,7 +128,7 @@ def get_session(
   - **Abbreviated name**: `"Monaco"`, `"Silverstone"`, `"Spa"` (resolved through the alias table, then fuzzy matching)
   - **Round number**: `6`, `12` (1-indexed, based on calendar order). Any number that is not a string is a round number, as in fastf1: a numpy integer or a whole float (`8.0`) works too.
 
-  The function automatically resolves abbreviated names and round numbers to the official event name. A testing event matches only by its exact name (`"Pre-Season Testing"`); aliases and fuzzy matching never return it.
+  The function automatically resolves abbreviated names and round numbers to the official event name. A testing event matches only by its exact name (`"Pre-Season Testing"`); aliases and fuzzy matching never return it. In 2026, the two tests have the names `"Pre-Season Testing 1"` and `"Pre-Season Testing 2"`, and `"Pre-Season Testing"` matches the first test.
 
   **Example**: `"Monaco Grand Prix"`, `"Monaco"`, `8` (Monaco was round 8 in 2024)
 </ParamField>
@@ -453,7 +453,7 @@ class Session:
 </ResponseField>
 
 <ResponseField name="total_laps" type="int | None">
-  The race distance in laps (the leader's lap count of the Ergast classification) for Race and Sprint sessions; `None` otherwise.
+  The scheduled race distance in laps, as in fastf1 (the `LapCount` live-timing stream, from `session_info.json`). `None` for sessions that are not race-like. Without `session_info.json`, the leader's lap count of the Ergast classification for Race and Sprint sessions.
 </ResponseField>
 
 <ResponseField name="pit_stops" type="DataFrame">
@@ -484,14 +484,15 @@ class Session:
 </ResponseField>
 
 <ResponseField name="session_info" type="dict">
-  The fastf1 `session_info` dict, filled from the schedule row and the packaged circuit table. Reading it sends no request beyond the schedule lookup.
-  - `Meeting`: `Name`, `OfficialName`, `Location`, `Country` (`Key`, `Code`, `Name`), `Circuit` (`Key`, `ShortName`), and `Key` (`None`)
-  - `Type` (`"Practice"`, `"Qualifying"`, or `"Race"`) and `Name` (the session name)
-  - `StartDate` and `EndDate`: local `pd.Timestamp` values. `EndDate` is the start plus a nominal duration (2 hours for a race)
-  - `GmtOffset`: a `pd.Timedelta`
-  - `Key`, `Path`, and `ArchiveStatus`: always `None`, because no source file has them
+  The fastf1 `session_info` dict: the `SessionInfo` live-timing payload from `session_info.json`, with the fastf1 value types.
+  - `Meeting`: `Key`, `Name`, `OfficialName`, `Location`, `Number`, `Country` (`Key`, `Code`, `Name`), and `Circuit` (`Key`, `ShortName`)
+  - `Key`, `Type`, `Name`, `Path`, `ArchiveStatus`, and `SessionStatus`
+  - `StartDate` and `EndDate`: local `datetime` values
+  - `GmtOffset`: a `timedelta`
 
-  For the 2025 Bahrain Grand Prix race, `session_info["Meeting"]["Circuit"]` is `{"Key": 63, "ShortName": "Sakhir"}`.
+  For the 2025 Bahrain Grand Prix race, `session_info["Key"]` is `10014` and `session_info["Meeting"]["Circuit"]` is `{"Key": 63, "ShortName": "Sakhir"}`.
+
+  Without `session_info.json` (seasons before 2018), tif1 fills the dict from the schedule row and the packaged circuit table. `StartDate` and `EndDate` are then `pd.Timestamp` values (`EndDate` is the start plus a nominal duration), `GmtOffset` is a `pd.Timedelta`, and `Key`, `Meeting.Key`, `Path`, and `ArchiveStatus` are `None`.
 </ResponseField>
 
 <ResponseField name="name" type="str">
@@ -506,21 +507,16 @@ class Session:
   Schedule row for the event (a `pd.Series` subclass): `RoundNumber`, `Country`, `Location`, `EventName`, `EventFormat`, session names, and dates.
 </ResponseField>
 
-<ResponseField name="session_start_time" type="pd.Timedelta">
-  The session time of the session start. Races and sprints use the scheduled start (the formation lap) minus `t0_date`. Other sessions use the first `GREEN LIGHT - PIT EXIT OPEN` race control message. `NaT` when neither is known. It is a `pd.Timedelta` on both backends.
+<ResponseField name="session_start_time" type="pd.Timedelta | datetime.timedelta">
+  The session time of the first `Started` row of `session_status`, as in fastf1. For races and sprints, this is the start of the formation lap. On a pandas session it is a `pd.Timedelta`, `NaT` when it is not known. On a polars session it is a `datetime.timedelta`, `None` when it is not known: polars sessions never import pandas, and their `Duration` columns return the same type.
 </ResponseField>
 
-<ResponseField name="t0_date" type="pd.Timestamp">
-  The wall-clock date at session time zero: `LapStartDate - LapStartTime` of the laps, rounded to the millisecond. `NaT` for a session without laps (Ergast-only seasons). It is a `pd.Timestamp` on both backends.
+<ResponseField name="t0_date" type="pd.Timestamp | datetime.datetime">
+  The wall-clock date (UTC) at session time zero, as in fastf1. On a pandas session it is a `pd.Timestamp`, `NaT` for a session without laps (Ergast-only seasons). On a polars session it is a naive `datetime.datetime`, `None` for a session without laps.
 </ResponseField>
 
 <ResponseField name="session_status" type="DataFrame">
-  Session status changes with the columns `Time` (session time) and `Status`, as in fastf1. tif1 derives the rows from the race control messages:
-  - `Started` at `session_start_time`
-  - `Aborted` at each red flag, then `Started` at the next green light
-  - `Finished` at each chequered flag. In qualifying, the next green light starts the next segment
-
-  fastf1's `Finalised` and `Ends` rows never occur. The frame is empty (with both columns) when nothing can be derived. `Time` is `timedelta64[ns]` on pandas and `Duration("ns")` on polars.
+  Session status changes with the columns `Time` (session time) and `Status`: the fastf1 `SessionStatus` live-timing stream. The values are `Inactive`, `Started`, `Aborted` (a red flag), `Finished`, `Finalised`, and `Ends`. In qualifying, each segment has its own `Started` and `Finished` rows. `Time` is `timedelta64[ns]` on pandas and `Duration("ns")` on polars.
 </ResponseField>
 
 <ResponseField name="track_status" type="DataFrame">
@@ -535,10 +531,16 @@ class Session:
   | `"6"` | `VSCDeployed` |
   | `"7"` | `VSCEnding` |
 
-  fastf1 reads a live-timing stream that needs an F1 account. tif1 derives the rows from the race control messages, so the times are exact and the codes are inferred. Track flags set `1`, `2`, and `5`. A sector yellow sets `2`, and the status goes back to `1` only when every sector is clear. Safety car messages set `4`, `6`, and `7`. Without race control messages, the `TrackStatus` codes of the laps at each lap start are used. The first row is always `1` (`AllClear`) at time zero.
+  The rows are the fastf1 `TrackStatus` live-timing stream. The first row is the status when the stream starts, which is not always `1`.
 
   `Time` is `timedelta64[ns]` on pandas and `Duration("ns")` on polars. `laps.pick_track_status()` does not read this table: it filters on the `TrackStatus` codes of the laps.
 </ResponseField>
+
+<Note>
+  `t0_date`, `session_start_time`, `session_status`, `track_status`, `session_info`, and `total_laps` come from the `session_info.json` file of the session (2018 onward). fastf1 reads the same values from live-timing streams that need an F1 account. tif1 fetches the file when one of these attributes is first read (one request of about 2 KB), then reads it from the cache.
+
+  Without the file, tif1 derives the values from the race control messages, the laps, and the schedule. The derived values are an approximation. The `track_status` codes come from the flag and safety car messages, and races start at the scheduled time. The derived `session_status` has no `Inactive`, `Finalised`, or `Ends` rows.
+</Note>
 
 <ResponseField name="f1_api_support" type="bool">
   `True` when the session has timing and telemetry files (seasons from 2018). Earlier seasons are built from Ergast data.
@@ -567,7 +569,7 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 
 **Parameters:**
 - `laps`: Load lap timing data
-- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`
+- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`. `telemetry="lazy"` does not fetch telemetry now. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. The frames are the same as the frames of `telemetry=True`. Refer to [load()](/concepts/sessions#load)
 - `weather`: Load weather data
 - `messages`: Load race control messages
 - `livedata`: The fastf1 live-timing recording. tif1 reads historical data only, so any value other than `None` raises `NotImplementedError`

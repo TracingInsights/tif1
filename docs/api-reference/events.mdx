@@ -703,7 +703,9 @@ An exact (case-insensitive) name match comes first, then the alias table for cir
   - `"belgian grand prix"`, `"BELGIAN GP"`, `"Belgian"` all work
 
   **Testing events:**
-  - `"Pre-Season Testing"` or `"Testing"` match the testing event of that year (for example, "Pre-Season Test" in 2021). In a season with two testing events, such as 2020 or 2022, the match is one of them
+  - A testing event matches only by its full name, for example `"Pre-Season Testing"` in 2025. Aliases and fuzzy matching never return a testing event.
+  - When two testing events of a season have the same name, tif1 adds a number in date order. In 2026, the names are `"Pre-Season Testing 1"` and `"Pre-Season Testing 2"`. The shared name `"Pre-Season Testing"` matches the first test, as in fastf1.
+  - To get a test by its number, use `get_testing_event(year, test_number)`.
 </ParamField>
 
 <ParamField path="exact_match" type="bool" default="False">

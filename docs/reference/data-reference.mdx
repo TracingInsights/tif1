@@ -26,7 +26,7 @@ The current season's repository uses two main extraction scripts. Older season r
 
 | Script | Primary Output | Extra Session Files | Notes |
 | :--- | :--- | :--- | :--- |
-| `R.py` | Per-driver `laptimes.json` and per-lap `{lap}_tel.json` telemetry | `session_laptimes.json`, `weather.json`, `rcm.json`, `drivers.json`, `corners.json` | Full telemetry extraction; uses FastF1 + MultiViewer circuit API fallback. |
+| `R.py` | Per-driver `laptimes.json` and per-lap `{lap}_tel.json` telemetry | `session_laptimes.json`, `weather.json`, `rcm.json`, `session_info.json`, `drivers.json`, `corners.json` | Full telemetry extraction; uses FastF1 + MultiViewer circuit API fallback. |
 | `LapTimes.py` | Per-driver `laptimes.json` | `session_laptimes.json` (the laps of all drivers in one file) | Optimized lap-time-only extraction; enriches Race laps with official Ergast lap times and adds OpenF1 mini-sectors (`ms1`, `ms2`, `ms3`) and qualifying segments (`qs`). |
 
 **Data sources:**
@@ -74,6 +74,21 @@ Messages sent by Race Control (the officials) to teams about track status, penal
 ### What This Means
 
 When a yellow flag is shown in marshal sector 2, the data can show `{cat: "Flag", msg: "YELLOW IN TRACK SECTOR 2", flag: "YELLOW", scope: "Sector", sector: 2.0}`. This tells the teams that drivers must slow down in that sector.
+
+## Session State (`session_info.json`)
+
+The session state that fastf1 reads from the live-timing streams besides the laps. The keys and the column names are the fastf1 ones. A value that fastf1 cannot load is `null`. The data repositories have this file for every session from 2018.
+
+| Key | fastf1 Attribute | Description | Type |
+| :--- | :--- | :--- | :--- |
+| `t0_date` | `Session.t0_date` | The date at session time zero | ISO 8601 string (UTC, millisecond precision) |
+| `session_start_time` | `Session.session_start_time` | Session time of the first `Started` session status. For a Race or Sprint, this is the start of the formation lap | seconds |
+| `total_laps` | `Session.total_laps` | The scheduled race distance in laps. `null` for sessions that are not race-like | Integer |
+| `track_status` | `Session.track_status` | Columns `Time` (session time, seconds), `Status` (the codes in [Track Status Reference](#track-status-reference)), and `Message` | Object of lists |
+| `session_status` | `Session.session_status` | Columns `Time` (session time, seconds) and `Status` (`"Inactive"`, `"Started"`, `"Aborted"`, `"Finished"`, `"Finalised"`, `"Ends"`) | Object of lists |
+| `session_info` | `Session.session_info` | The `SessionInfo` payload: `Meeting`, `ArchiveStatus`, `Key`, `Type`, `Name`, `StartDate`, `EndDate`, `GmtOffset`, `Path` | Object. Dates are ISO 8601 strings in local time. `GmtOffset` is a string such as `"-05:00:00"` |
+
+tif1 reads this file for the six attributes in the table. Before 2018, tif1 derives the values from the race control messages, the laps, and the schedule.
 
 ## Telemetry Data (`{lap}_tel.json`)
 
