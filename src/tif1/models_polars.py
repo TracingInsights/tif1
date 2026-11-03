@@ -323,14 +323,28 @@ def _valid_values(series: pl.Series) -> np.ndarray:
     return _present_values(series)
 
 
-def _filter_rows(frame: pl.DataFrame, keep: np.ndarray) -> pl.DataFrame:
-    """``frame.filter(keep)`` as a plain frame, column by column (``keep``: numpy ``bool``)."""
+def _filter_rows(frame: pl.DataFrame, keep: np.ndarray | pl.Series) -> pl.DataFrame:
+    """``frame.filter(keep)`` as a plain frame, column by column.
+
+    ``keep`` is a numpy ``bool`` array or a Boolean Series, whose nulls drop
+    their rows (``fill_null(False)``), as ``DataFrame.filter`` does. A
+    Series mask is used as one chunk, as a numpy-built one is: filtering the
+    ~60-chunk columns of joined lap frames with a mask chunked differently
+    costs ~10x (0.15 instead of 0.015 ms a column).
+    """
+    if isinstance(keep, pl.Series):
+        mask = keep.rechunk() if keep.n_chunks() > 1 else keep
+        keep_all = not mask.null_count() and mask.all()
+    else:
+        mask = None
+        keep_all = keep.all()
     columns = frame.get_columns()
     if not columns:
-        return frame.filter(pl.Series(keep, dtype=pl.Boolean))
-    if keep.all():
+        return frame.filter(pl.Series(keep, dtype=pl.Boolean) if mask is None else mask)
+    if keep_all:
         return pl.DataFrame._from_pydf(frame._df.clone())
-    mask = pl.Series(keep, dtype=pl.Boolean)
+    if mask is None:
+        mask = pl.Series(keep, dtype=pl.Boolean)
     return pl.DataFrame([column.filter(mask) for column in columns])
 
 
@@ -1582,6 +1596,10 @@ def _join_lap_frames(
     clock_col = _first_present(frame, "Date", "SessionTime")
     if clock_col is None:
         return frame
+    if not multi_driver:
+        joined = _join_one_driver_laps(frame, clock_col, lap_start_ns)
+        if joined is not None:
+            return joined
     not_first = np.arange(frame.height) > 0
     lap = frame.get_column("LapNumber").cast(pl.Float64, strict=False)
     if not (_mask_values(lap != _shift_down(lap), null=True) & not_first).any():
@@ -1607,27 +1625,70 @@ def _join_lap_frames(
             _mask_values(drivers == previous)
             | (~_present_values(drivers) & ~_present_values(previous))
         )
-    if "SessionTime" in frame.columns and "Time" in frame.columns:
+    if not multi:
+        frame = _rebase_lap_time(frame, lap_start_ns)
+    elif "SessionTime" in frame.columns and "Time" in frame.columns:
         session_time = _series_ns(frame.get_column("SessionTime"))
         implied = session_time - _series_ns(frame.get_column("Time"))  # each row's LapStartTime
-        origin: pl.Series | int | None = None
-        if multi:
-            origin = (
-                pl.DataFrame({"d": frame.get_column("Driver"), "i": implied})
-                .select(pl.col("i").min().over("d"))
-                .to_series()
-            )
-        elif lap_start_ns is not None:
-            origin = lap_start_ns
-        elif implied.null_count() < implied.len():
-            origin = int(cast(int, implied.min()))
-        if origin is not None:
-            time_dtype = frame.schema["Time"]
-            time = (session_time - origin).cast(_DURATION_NS)
-            if isinstance(time_dtype, pl.Duration):
-                time = time.cast(time_dtype)
-            frame = _with_columns(frame, time.alias("Time"))
+        origin = (
+            pl.DataFrame({"d": frame.get_column("Driver"), "i": implied})
+            .select(pl.col("i").min().over("d"))
+            .to_series()
+        )
+        frame = _with_columns(frame, _time_from_origin(frame, session_time, origin))
     return _filter_rows(frame, ~same) if same.any() else frame
+
+
+def _time_from_origin(
+    frame: pl.DataFrame, session_time: pl.Series, origin: pl.Series | int
+) -> pl.Series:
+    """``Time`` as ``SessionTime`` (ns) minus ``origin``, in the frame's ``Time`` dtype."""
+    time_dtype = frame.schema["Time"]
+    time = (session_time - origin).cast(_DURATION_NS)
+    if isinstance(time_dtype, pl.Duration):
+        time = time.cast(time_dtype)
+    return time.alias("Time")
+
+
+def _rebase_lap_time(frame: pl.DataFrame, lap_start_ns: int | None) -> pl.DataFrame:
+    """One driver's ``Time`` from the first lap's start (``_join_lap_frames``)."""
+    if "SessionTime" not in frame.columns or "Time" not in frame.columns:
+        return frame
+    session_time = _series_ns(frame.get_column("SessionTime"))
+    origin: int | None = lap_start_ns
+    if origin is None:
+        implied = session_time - _series_ns(frame.get_column("Time"))  # each row's LapStartTime
+        if implied.null_count() == implied.len():
+            return frame
+        origin = int(cast(int, implied.min()))
+    return _with_columns(frame, _time_from_origin(frame, session_time, origin))
+
+
+def _join_one_driver_laps(
+    frame: pl.DataFrame, clock_col: str, lap_start_ns: int | None
+) -> pl.DataFrame | None:
+    """``_join_lap_frames`` of one driver's laps on Series kernels only (no numpy).
+
+    Covers the common shape: lap numbers and clock without nulls, the clock
+    already in order. ``None`` for anything else (the numpy path answers).
+    The boundary tests compare each row with the one before it through two
+    offset slices, so no shifted copy (and no leading null) is built.
+    """
+    lap = frame.get_column("LapNumber").cast(pl.Float64, strict=False)
+    if lap.null_count():
+        return None
+    clock = _series_ns(frame.get_column(clock_col))
+    if clock.null_count() or not clock.is_sorted():
+        return None
+    n = frame.height
+    boundary = lap.slice(1) != lap.slice(0, n - 1)  # row i (from 1) starts a new lap
+    if not boundary.any():
+        return frame
+    same = boundary & (clock.slice(1) == clock.slice(0, n - 1))
+    frame = _rebase_lap_time(frame, lap_start_ns)
+    if not same.any():
+        return frame
+    return _filter_rows(frame, pl.Series([True]).append(same.not_()))
 
 
 def _series_ns(series: pl.Series) -> pl.Series:
@@ -2024,8 +2085,8 @@ class PolarsLaps(_TIF1Frame):
         code = _driver_identifier(identifier)
         if code.isdigit():
             return self._rewrap(_filter_rows(self, self._driver_number_values([code])))
-        keep = _mask_values(self.get_column("Driver").cast(pl.String) == code)
-        return self._rewrap(_filter_rows(self, keep))
+        # A Boolean Series mask (nulls drop their rows): no numpy (Elis E6).
+        return self._rewrap(_filter_rows(self, self.get_column("Driver").cast(pl.String) == code))
 
     def pick_drivers(self, identifiers: Any) -> Self:
         """Laps of the given drivers (fastf1 parity).
@@ -2268,7 +2329,7 @@ class PolarsLaps(_TIF1Frame):
 
     # -- qualifying ---------------------------------------------------------
 
-    def _segment(self, keep: np.ndarray) -> PolarsLaps | None:
+    def _segment(self, keep: pl.Series) -> PolarsLaps | None:
         if not keep.any():
             return None
         return self._rewrap(_filter_rows(self, keep))
@@ -2305,7 +2366,7 @@ class PolarsLaps(_TIF1Frame):
                 marks = marks.to_series().to_list()
             if any(mark is not None for mark in marks):
                 return [
-                    self._segment(np.fromiter((m == str(i) for m in marks), bool, len(marks)))
+                    self._segment(pl.Series([m == str(i) for m in marks], dtype=pl.Boolean))
                     for i in (1, 2, 3)
                 ]
         has_start = "LapStartTime" in self.columns
@@ -2313,41 +2374,45 @@ class PolarsLaps(_TIF1Frame):
         split_times = _qualifying_split_times(self.session, starts)
         if split_times is None:
             return [self if self.height else None, None, None]
-        none = np.zeros(self.height, dtype=bool)
-        # Each bound as (int64 ns, present); a comparison with a missing
-        # bound is never true (``fill_null(False)``).
-        start, has_start_ns = self._lap_ns("LapStartTime" if has_start else None)
-        end, has_end = self._lap_ns("Time" if "Time" in self.columns else None)
+        # Python lists of int ns (``None``: missing) over the ~300 laps of a
+        # qualifying, no numpy (Elis E6); a comparison with a missing bound
+        # is never true (``fill_null(False)``).
+        start = self._lap_ns(starts)
+        end = self._lap_ns(_ns_series(self, "Time") if "Time" in self.columns else None)
         pit_out = (
-            _present_values(self.get_column("PitOutTime")) if "PitOutTime" in self.columns else none
+            [value is not None for value in self.get_column("PitOutTime").to_list()]
+            if "PitOutTime" in self.columns
+            else [False] * self.height
         )
         segments: list[PolarsLaps | None] = [None, None, None]
-        previous_early: np.ndarray | None = None
+        previous_early: list[bool] | None = None
         for i in range(min(3, len(split_times) - 1)):
             low, high = split_times[i], split_times[i + 1]
             if low is None or high is None:
-                cond = none
+                cond = [False] * self.height
             else:
-                cond = has_start_ns & (start > low) & (start < high)
+                cond = [s is not None and low < s < high for s in start]
             if previous_early is not None:
-                cond = cond | previous_early
+                cond = [a or b for a, b in zip(cond, previous_early, strict=True)]
             if high is None:
-                is_early = none
+                is_early = [False] * self.height
             else:
                 # An out-lap that crossed the pit timing line before the split
                 # and ends after it belongs to the next segment (fastf1).
-                is_early = has_start_ns & has_end & (start < high) & (end > high) & pit_out
-            segments[i] = self._segment(cond & ~is_early)
+                is_early = [
+                    s is not None and e is not None and s < high < e and pit
+                    for s, e, pit in zip(start, end, pit_out, strict=True)
+                ]
+            keep = [a and not b for a, b in zip(cond, is_early, strict=True)]
+            segments[i] = self._segment(pl.Series(keep, dtype=pl.Boolean))
             previous_early = is_early
         return segments
 
-    def _lap_ns(self, column: str | None) -> tuple[np.ndarray, np.ndarray]:
-        """``column`` as ``(int64 ns, present)`` (all missing for ``None`` or a text column)."""
-        if column is not None:
-            values = _ns_series(self, column)
-            if values.len() == self.height:
-                return _int_values(values)
-        return np.zeros(self.height, dtype=np.int64), np.zeros(self.height, dtype=bool)
+    def _lap_ns(self, values: pl.Series | None) -> list[int | None]:
+        """A lap clock (``_ns_series``) as a list (all missing for ``None`` or a text column)."""
+        if values is not None and values.len() == self.height:
+            return values.to_list()
+        return [None] * self.height
 
     # -- iteration ----------------------------------------------------------
 

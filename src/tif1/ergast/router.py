@@ -25,7 +25,6 @@ from __future__ import annotations
 import copy
 import logging
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -85,27 +84,93 @@ class StatsMissError(Exception):
     """The Stats repository cannot answer this query (route to Jolpica)."""
 
 
-@dataclass(slots=True)
+# Elis E7: plain ``__slots__`` classes with the ``@dataclass(slots=True)``
+# constructor, repr and equality: the decorator costs ~0.55 ms a class at
+# import, and the first ``session.results`` of a process imports this module.
 class QueryPlan:
     """One Ergast request: endpoint, response table/category and selectors."""
 
-    endpoint: str
-    table: str
-    category: dict[str, Any]
-    subcategory: dict[str, Any] | None
-    selectors: dict[str, Any] = field(default_factory=dict)
-    limit: int | None = None
-    offset: int | None = None
-    source: str = "auto"
+    __slots__ = (
+        "category",
+        "endpoint",
+        "limit",
+        "offset",
+        "selectors",
+        "source",
+        "subcategory",
+        "table",
+    )
+    __match_args__ = (
+        "endpoint",
+        "table",
+        "category",
+        "subcategory",
+        "selectors",
+        "limit",
+        "offset",
+        "source",
+    )
+    __hash__ = None  # type: ignore[assignment]  # mutable, compared by value
+
+    def __init__(
+        self,
+        endpoint: str,
+        table: str,
+        category: dict[str, Any],
+        subcategory: dict[str, Any] | None,
+        selectors: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        source: str = "auto",
+    ) -> None:
+        self.endpoint = endpoint
+        self.table = table
+        self.category = category
+        self.subcategory = subcategory
+        self.selectors: dict[str, Any] = {} if selectors is None else selectors
+        self.limit = limit
+        self.offset = offset
+        self.source = source
+
+    def _fields(self) -> tuple[Any, ...]:
+        return tuple(getattr(self, name) for name in self.__match_args__)
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return self._fields() == other._fields()
+
+    def __repr__(self) -> str:
+        values = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.__match_args__)
+        return f"{type(self).__qualname__}({values})"
 
 
-@dataclass(slots=True)
 class ExecutedQuery:
     """A routed answer: the payload, the source that produced it and when."""
 
-    payload: dict[str, Any]
-    source: str
-    fetched_at: float
+    __slots__ = ("fetched_at", "payload", "source")
+    __match_args__ = ("payload", "source", "fetched_at")
+    __hash__ = None  # type: ignore[assignment]  # mutable, compared by value
+
+    def __init__(self, payload: dict[str, Any], source: str, fetched_at: float) -> None:
+        self.payload = payload
+        self.source = source
+        self.fetched_at = fetched_at
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self.payload, self.source, self.fetched_at) == (
+            other.payload,
+            other.source,
+            other.fetched_at,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__qualname__}(payload={self.payload!r}, source={self.source!r}, "
+            f"fetched_at={self.fetched_at!r})"
+        )
 
 
 def _fallback_enabled() -> bool:

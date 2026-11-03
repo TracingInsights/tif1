@@ -1,0 +1,203 @@
+{
+ "lib": "polars",
+ "label": "",
+ "reps": 5,
+ "summary": {
+  "iterlaps_all_lazy": {
+   "control_workload": "iterlaps_all",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 273.5,
+     "min": 263.0
+    },
+    "load": {
+     "median": 8817.8,
+     "min": 8633.0
+    },
+    "iterlaps_tel_loop": {
+     "median": 158.8,
+     "min": 112.2
+    },
+    "in_process_total": {
+     "median": 9252.2,
+     "min": 9097.2
+    },
+    "process_wall": {
+     "median": 9788.3,
+     "min": 9636.5
+    },
+    "exit_tail": {
+     "median": 545.7,
+     "min": 536.1
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.0,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 281.1,
+     "min": 269.9
+    },
+    "load": {
+     "median": 304.6,
+     "min": 220.6
+    },
+    "iterlaps_tel_loop": {
+     "median": 7694.2,
+     "min": 7649.6
+    },
+    "in_process_total": {
+     "median": 8286.3,
+     "min": 8163.6
+    },
+    "process_wall": {
+     "median": 8460.8,
+     "min": 8366.2
+    },
+    "exit_tail": {
+     "median": 202.7,
+     "min": 156.2
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "5/5",
+   "control_runs": [
+    {
+     "import": 12.28,
+     "get_session": 262.99,
+     "load": 8868.09,
+     "iterlaps_tel_loop": 112.25,
+     "in_process_total": 9255.71,
+     "process_wall": 10249.17,
+     "exit_tail": 993.46,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.95,
+     "get_session": 273.49,
+     "load": 8916.36,
+     "iterlaps_tel_loop": 158.84,
+     "in_process_total": 9360.72,
+     "process_wall": 9906.41,
+     "exit_tail": 545.69,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.21,
+     "get_session": 274.63,
+     "load": 8633.01,
+     "iterlaps_tel_loop": 177.27,
+     "in_process_total": 9097.21,
+     "process_wall": 9636.53,
+     "exit_tail": 539.32,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.0,
+     "get_session": 277.61,
+     "load": 8688.8,
+     "iterlaps_tel_loop": 177.67,
+     "in_process_total": 9156.17,
+     "process_wall": 9709.41,
+     "exit_tail": 553.24,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.0,
+     "get_session": 268.02,
+     "load": 8817.78,
+     "iterlaps_tel_loop": 154.26,
+     "in_process_total": 9252.16,
+     "process_wall": 9788.31,
+     "exit_tail": 536.15,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.03,
+     "get_session": 269.93,
+     "load": 353.09,
+     "iterlaps_tel_loop": 7864.35,
+     "in_process_total": 8499.47,
+     "process_wall": 8720.14,
+     "exit_tail": 220.67,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.26,
+     "get_session": 301.84,
+     "load": 277.9,
+     "iterlaps_tel_loop": 7694.21,
+     "in_process_total": 8286.28,
+     "process_wall": 8460.77,
+     "exit_tail": 174.49,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.0,
+     "get_session": 272.06,
+     "load": 312.1,
+     "iterlaps_tel_loop": 7760.01,
+     "in_process_total": 8356.23,
+     "process_wall": 8559.61,
+     "exit_tail": 203.38,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.94,
+     "get_session": 284.68,
+     "load": 304.65,
+     "iterlaps_tel_loop": 7679.04,
+     "in_process_total": 8280.37,
+     "process_wall": 8436.53,
+     "exit_tail": 156.16,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.18,
+     "get_session": 281.14,
+     "load": 220.6,
+     "iterlaps_tel_loop": 7649.59,
+     "in_process_total": 8163.58,
+     "process_wall": 8366.25,
+     "exit_tail": 202.67,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}

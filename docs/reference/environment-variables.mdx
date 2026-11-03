@@ -229,6 +229,42 @@ export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=64
   Type: `int`. Default: `32`
 </Info>
 
+### TIF1_LOAD_TELEMETRY_LAZY
+
+When `true`, `session.load(telemetry=True)` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.
+
+```bash
+export TIF1_LOAD_TELEMETRY_LAZY=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
+### TIF1_LAZY_TELEMETRY_LOOKAHEAD
+
+The number of drivers that a cold lazy load fetches in the background. This starts when the code reads the drivers in the order of the laps table. `-1` fetches all the drivers that are not loaded. `0` turns the background fetch off.
+
+```bash
+export TIF1_LAZY_TELEMETRY_LOOKAHEAD=1
+```
+
+<Info>
+  Type: `int`. Default: `1`
+</Info>
+
+### TIF1_LAZY_TELEMETRY_BACKGROUND_REQUESTS
+
+Maximum in-flight background requests of a cold lazy load.
+
+```bash
+export TIF1_LAZY_TELEMETRY_BACKGROUND_REQUESTS=22
+```
+
+<Info>
+  Type: `int`. Default: `22`
+</Info>
+
 ## Circuit Breaker
 
 ### TIF1_CIRCUIT_BREAKER_THRESHOLD
@@ -285,7 +321,7 @@ export TIF1_HTTP_DISABLE_HTTP3=false
 
 ### TIF1_HTTP_REVOCATION_CHECK
 
-Check whether the CDN's TLS certificate has been revoked (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check imports an extra module and makes a request to the certificate authority before the first data request. It costs 120-240 ms on every cold load. Set to `false` to skip it.
+Check whether the CDN's TLS certificate has been revoked (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The first check of a certificate makes a request to the certificate authority before the first data request. tif1 keeps the GOOD answers in the cache (`TIF1_HTTP_REVOCATION_CACHE`), so later processes do not make that request again until the answer expires. Set to `false` to skip the check.
 
 ```bash
 export TIF1_HTTP_REVOCATION_CHECK=false
@@ -295,9 +331,25 @@ export TIF1_HTTP_REVOCATION_CHECK=false
   Type: `bool`. Default: `true`
 </Info>
 
+### TIF1_HTTP_REVOCATION_CACHE
+
+Keep the GOOD answers of the revocation check in the SQLite cache and use them again in later processes. tif1 uses a kept answer again only for the same certificate. It uses it only until the expiry time in the answer (`nextUpdate`, usually hours to days). It never uses it for more than 7 days. tif1 does not keep a REVOKED or UNKNOWN answer, or an answer with a signature that it cannot verify. A process that uses a kept answer does not ask the certificate authority again. Thus it finds a revocation only after the kept answer expires. Set to `false` to check again in each process.
+
+```bash
+export TIF1_HTTP_REVOCATION_CACHE=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`. Has no effect when `TIF1_HTTP_REVOCATION_CHECK` or the cache is off.
+</Info>
+
+<Warning>
+  A user who can write to the cache directory can change the cached data, and the kept answers too. Make sure that only the user account that runs tif1 can write to the cache directory.
+</Warning>
+
 ### TIF1_CDN_PRECONNECT
 
-Warm the shared CDN connections (DNS and TLS) in background threads during `get_session()`, when the session is not cached yet. `get_session()` imports the HTTP client and starts the connections before it imports pandas or polars, so the handshakes run while those libraries load. The first payload requests of a cold load then ride open connections. A cached session never imports the HTTP client or starts a thread. Set to `false` to keep `get_session()` free of network activity.
+Start the network work of a cold load in background threads during `get_session()`, when the session is not cached yet. `get_session()` starts the connections and the first requests (`TIF1_CDN_FIRST_WAVE`) before it imports pandas or polars, so the handshakes run while those libraries load. A cached session never imports the HTTP client or starts a thread. Set to `false` to keep `get_session()` free of network activity.
 
 ```bash
 export TIF1_CDN_PRECONNECT=false
@@ -306,6 +358,22 @@ export TIF1_CDN_PRECONNECT=false
 <Info>
   Type: `bool`. Default: `true`. Skipped automatically in offline and CI mode.
 </Info>
+
+### TIF1_CDN_FIRST_WAVE
+
+Fetch the first files of a cold load with the Python standard library. When `TIF1_CDN_PRECONNECT` is on and the session is not cached yet, `get_session()` gets `drivers.json` and the session lap times over `http.client` while pandas or polars loads. The HTTP client (niquests) loads only when a telemetry request needs it. Until niquests has an open connection, single requests and the first telemetry requests also use the standard-library connections. niquests then loads and connects in a background thread. A response other than `200` with a JSON object goes through niquests, so the CDN fallback is the same. Set to `false` to send every request through niquests.
+
+```bash
+export TIF1_CDN_FIRST_WAVE=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`. Has no effect when `TIF1_CDN_PRECONNECT` is off.
+</Info>
+
+<Warning>
+  The standard-library requests verify the certificate chain and the host name with the same root certificates as niquests. They do not do the revocation check (`TIF1_HTTP_REVOCATION_CHECK`). To do that check on each request, set `TIF1_CDN_FIRST_WAVE=false`.
+</Warning>
 
 ### TIF1_CDN_HEDGE
 

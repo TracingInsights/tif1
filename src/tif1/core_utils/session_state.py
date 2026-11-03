@@ -136,6 +136,60 @@ def _timedelta_ns(values: list[Any] | None) -> np.ndarray:
     return out
 
 
+def _timedelta_ns_list(values: list[Any] | None) -> list[int] | None:
+    """:func:`_timedelta_ns` of float seconds as a list, without numpy (Elis E6).
+
+    The shape of a laptime payload's ``lST``: numbers (``round(x * 1e9)``,
+    NaN/``None``/bools are int64 min). ``None`` when any value is something
+    else (a timedelta object, a string) or beyond the int64 range, so the
+    caller takes :func:`_timedelta_ns`.
+    """
+    if not values:
+        return None
+    out: list[int] = []
+    for value in values:
+        if value is None or type(value) is bool:
+            out.append(_NS_MIN)
+        elif type(value) is int or type(value) is float:
+            seconds = float(value)
+            if seconds != seconds:  # noqa: PLR0124 - NaN
+                out.append(_NS_MIN)
+            elif not abs(seconds) < 9.0e9:  # inf, or beyond int64 ns
+                return None
+            else:
+                out.append(round(seconds * 1_000_000_000))
+        else:
+            return None
+    return out
+
+
+def _datetime_ns_list(values: list[Any] | None) -> list[int] | None:
+    """:func:`_datetime_ns` of plain ISO timestamps as a list, without numpy (Elis E6).
+
+    The shape of a laptime payload's ``lSD``: ``YYYY-MM-DDTHH:MM:SS[.f]``
+    strings (read as ``numpy.datetime64`` reads them) and ``None`` (int64
+    min). ``None`` for any other value, so the caller takes
+    :func:`_datetime_ns`.
+    """
+    if not values:
+        return None
+    out: list[int] = []
+    for value in values:
+        if value is None:
+            out.append(_NS_MIN)
+            continue
+        if type(value) is not str or _ISO_TIMESTAMP.fullmatch(value) is None:
+            return None
+        try:
+            ns = _iso_timestamp_ns(value)
+        except (OverflowError, ValueError):
+            return None
+        if ns is None:
+            return None
+        out.append(ns)
+    return out
+
+
 def _column_ns(frame: Any, name: str, *, timedelta: bool) -> np.ndarray:
     """A clock column of either backend as int64 ns (int64 min where unknown).
 

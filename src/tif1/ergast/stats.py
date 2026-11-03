@@ -21,7 +21,6 @@ Layout (raw Jolpica ``MRData`` payloads, one file per table and round)::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,14 +48,37 @@ def race_slug(race_name: str) -> str:
     return race_name.lower().replace(" ", "-")
 
 
-@dataclass(slots=True)
 class RoundInfo:
     """One round of a season as ``events.json`` lists it."""
 
-    round: int
-    race_name: str
-    slug: str
-    race: dict[str, Any]
+    # Elis E7: the ``@dataclass(slots=True)`` constructor, repr and equality
+    # written out (the decorator costs ~0.55 ms at import, paid by the first
+    # ``session.results`` of a process).
+    __slots__ = ("race", "race_name", "round", "slug")
+    __match_args__ = ("round", "race_name", "slug", "race")
+    __hash__ = None  # type: ignore[assignment]  # mutable, compared by value
+
+    def __init__(self, round: int, race_name: str, slug: str, race: dict[str, Any]) -> None:  # noqa: A002
+        self.round = round
+        self.race_name = race_name
+        self.slug = slug
+        self.race = race
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self.round, self.race_name, self.slug, self.race) == (
+            other.round,
+            other.race_name,
+            other.slug,
+            other.race,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__qualname__}(round={self.round!r}, race_name={self.race_name!r}, "
+            f"slug={self.slug!r}, race={self.race!r})"
+        )
 
     @property
     def has_sprint(self) -> bool:

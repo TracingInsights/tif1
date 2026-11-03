@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from .core_utils.json_utils import parse_response_json
+from .core_utils.json_utils import json_loads, parse_response_json
 from .core_utils.runtime import IS_EMSCRIPTEN
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
 from .retry import retry_with_backoff
@@ -100,8 +100,35 @@ class NiquestsTransport:
     """Production :class:`HttpTransport` over the shared niquests session."""
 
     def get_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
-        """Fetch ``url`` with the pooled niquests session and parse the JSON body."""
+        """Fetch ``url`` with the pooled niquests session and parse the JSON body.
+
+        A cold load's first-wave file the stdlib fetch of ``get_session``
+        brought (Elis E2) is handed over without touching niquests, and until
+        a niquests session exists and has connected (Elis E9) a request rides
+        the wave's kept-alive stdlib connections; any answer but a ``200``
+        with a JSON object goes to niquests as before.
+        """
+        from . import first_wave, http_session
         from .config import get_config
+
+        if timeout is None:
+            timeout = get_config().get("timeout", 30)
+        if first_wave.pending(url):
+            content = first_wave.take(url)
+        elif first_wave.has_client() and (
+            http_session._shared_session is None or http_session.warm_connections_pending()
+        ):
+            content = first_wave.fetch(url, timeout=timeout)
+        else:
+            content = None
+        if content is not None:
+            try:
+                data = json_loads(content)
+            except (ValueError, TypeError):
+                data = None
+            if isinstance(data, dict):
+                return data
+
         from .http_session import (
             _response_reused_connection,
             _track_request,
@@ -110,8 +137,6 @@ class NiquestsTransport:
         )
 
         niquests = _import_niquests()
-        if timeout is None:
-            timeout = get_config().get("timeout", 30)
 
         wait_for_warm_connections()
         try:

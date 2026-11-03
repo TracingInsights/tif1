@@ -1,0 +1,103 @@
+{
+ "lib": "pandas",
+ "pairs": 8,
+ "control_src": "/tmp/tif1-elis-control/src",
+ "candidate_src": "/tmp/tif1-elis/E5/src",
+ "summary": {
+  "load_then_1_driver": {
+   "import": {
+    "control_median": 18.9,
+    "candidate_median": 14.2,
+    "control_min": 12.8,
+    "candidate_min": 12.6,
+    "candidate_faster_pairs": "5/8"
+   },
+   "get_session": {
+    "control_median": 438.4,
+    "candidate_median": 424.7,
+    "control_min": 386.8,
+    "candidate_min": 381.1,
+    "candidate_faster_pairs": "4/8"
+   },
+   "load": {
+    "control_median": 11.6,
+    "candidate_median": 12.7,
+    "control_min": 11.4,
+    "candidate_min": 11.5,
+    "candidate_faster_pairs": "3/8"
+   },
+   "access": {
+    "control_median": 23.5,
+    "candidate_median": 23.7,
+    "control_min": 17.9,
+    "candidate_min": 18.4,
+    "candidate_faster_pairs": "5/8"
+   },
+   "in_process_total": {
+    "control_median": 485.0,
+    "candidate_median": 472.7,
+    "control_min": 436.9,
+    "candidate_min": 434.1,
+    "candidate_faster_pairs": "5/8"
+   },
+   "process_wall": {
+    "control_median": 575.4,
+    "candidate_median": 538.9,
+    "control_min": 505.6,
+    "candidate_min": 510.8,
+    "candidate_faster_pairs": "5/8"
+   }
+  },
+  "load_only": {
+   "import": {
+    "control_median": 12.8,
+    "candidate_median": 13.1,
+    "control_min": 12.6,
+    "candidate_min": 12.9,
+    "candidate_faster_pairs": "3/8"
+   },
+   "get_session": {
+    "control_median": 413.3,
+    "candidate_median": 386.1,
+    "control_min": 392.8,
+    "candidate_min": 344.0,
+    "candidate_faster_pairs": "7/8"
+   },
+   "load": {
+    "control_median": 11.9,
+    "candidate_median": 12.0,
+    "control_min": 11.2,
+    "candidate_min": 11.4,
+    "candidate_faster_pairs": "2/8"
+   },
+   "laps": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "control_min": 0.0,
+    "candidate_min": 0.0,
+    "candidate_faster_pairs": "0/8"
+   },
+   "results": {
+    "control_median": 8.2,
+    "candidate_median": 8.3,
+    "control_min": 8.0,
+    "candidate_min": 8.1,
+    "candidate_faster_pairs": "2/8"
+   },
+   "in_process_total": {
+    "control_median": 446.3,
+    "candidate_median": 419.7,
+    "control_min": 425.0,
+    "candidate_min": 384.8,
+    "candidate_faster_pairs": "7/8"
+   },
+   "process_wall": {
+    "control_median": 514.3,
+    "candidate_median": 494.2,
+    "control_min": 483.8,
+    "candidate_min": 470.7,
+    "candidate_faster_pairs": "7/8"
+   }
+  }
+ }
+}

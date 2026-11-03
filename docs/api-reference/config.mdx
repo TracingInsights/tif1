@@ -405,7 +405,9 @@ export TIF1_MAX_CONCURRENT_REQUESTS=22
 export TIF1_HTTP_MULTIPLEXED=true
 export TIF1_HTTP_DISABLE_HTTP3=true
 export TIF1_HTTP_REVOCATION_CHECK=true
+export TIF1_HTTP_REVOCATION_CACHE=true
 export TIF1_CDN_PRECONNECT=true
+export TIF1_CDN_FIRST_WAVE=true
 # export TIF1_POOL_CONNECTIONS=256        # optional fixed override; unset by default: auto max(256, max_workers, max_concurrent_requests, telemetry_prefetch_max_concurrent_requests)
 # export TIF1_POOL_MAXSIZE=512            # optional fixed override; unset by default: auto max(512, pool_connections * 4)
 export TIF1_KEEPALIVE_TIMEOUT=120
@@ -1001,10 +1003,18 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="http_revocation_check" type="bool" default="True">
-  Check the CDN certificate for revocation (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check costs 120-240 ms before the first request of every cold load; set it to `False` to skip it.
+  Check the CDN certificate for revocation (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The first check of a certificate makes a request to the certificate authority before the first data request. With `http_revocation_cache`, later processes use the kept answer instead. Set it to `False` to skip the check.
 
   ```python
   config.set("http_revocation_check", False)  # skip the OCSP check
+  ```
+</ResponseField>
+
+<ResponseField name="http_revocation_cache" type="bool" default="True">
+  Keep the GOOD answers of the revocation check in the SQLite cache and use them again in later processes. A kept answer is used only for the same certificate, only until its expiry time (`nextUpdate`), and never for more than 7 days. REVOKED and UNKNOWN answers, and answers with a signature that tif1 cannot verify, are not kept. A process that uses a kept answer finds a revocation only after that answer expires. Set it to `False` to check again in each process.
+
+  ```python
+  config.set("http_revocation_cache", False)  # check again in each process
   ```
 </ResponseField>
 
@@ -1013,6 +1023,14 @@ config.set("pool_connections", 1024)
 
   ```python
   config.set("cdn_preconnect", False)  # keep get_session() network-free
+  ```
+</ResponseField>
+
+<ResponseField name="cdn_first_wave" type="bool" default="True">
+  Fetch the first files of a cold load (`drivers.json`, the session lap times) with the Python standard library while pandas or polars loads. niquests loads only when a telemetry request needs it, and the first telemetry requests use the standard-library connections until niquests has an open connection. These requests verify the certificate chain and the host name, but they do not do the revocation check (`http_revocation_check`). Has no effect when `cdn_preconnect` is off. Set it to `False` to send every request through niquests.
+
+  ```python
+  config.set("cdn_first_wave", False)  # every request through niquests
   ```
 </ResponseField>
 
@@ -1126,6 +1144,30 @@ config.set("pool_connections", 1024)
 
   ```python
   config.set("telemetry_prefetch_max_concurrent_requests", 128)
+  ```
+</ResponseField>
+
+<ResponseField name="load_telemetry_lazy" type="bool" default="False">
+  When `True`, `session.load(telemetry=True)` has the effect of `session.load(telemetry="lazy")`. The load does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.
+
+  ```python
+  config.set("load_telemetry_lazy", True)
+  ```
+</ResponseField>
+
+<ResponseField name="lazy_telemetry_lookahead" type="int" default="1">
+  The number of drivers that a cold lazy load fetches in the background. This starts when the code reads the drivers in the order of the laps table. The background requests use the free request slots of the current fetch. `-1` fetches all the drivers that are not loaded. `0` fetches each driver only when the code reads one of its laps.
+
+  ```python
+  config.set("lazy_telemetry_lookahead", -1)
+  ```
+</ResponseField>
+
+<ResponseField name="lazy_telemetry_background_requests" type="int" default="22">
+  The maximum number of background requests in flight for `lazy_telemetry_lookahead`. A background request starts only when no lap that the code waits for is in the queue.
+
+  ```python
+  config.set("lazy_telemetry_background_requests", 8)
   ```
 </ResponseField>
 
@@ -1467,6 +1509,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
+  "load_telemetry_lazy": false,
   "cdn_hedge": true,
   "cdn_hedge_max_delay": 4.0,
   "keepalive_timeout": 300,
@@ -2592,6 +2635,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
+  "load_telemetry_lazy": false,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,

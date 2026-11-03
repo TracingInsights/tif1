@@ -73,4 +73,5 @@ Most `EVENT` and `SESSION` level APIs work as expected.
 ### 🛠️ Key Differences
 - **Lazy Loading**: `tif1` fetches data automatically on property access (e.g., `session.laps`); `session.load()` prefetches.
 - **Laps extras**: the laps table keeps tif1's `index`, `drv`, `team`, `WeatherTime` + weather columns, `LapTimeSeconds`, `ms1`-`ms3` next to fastf1's 31 columns; `Driver`/`Team`/`Compound`/`TrackStatus` are categorical.
+- **HTTP**: fastf1 uses `requests` for each request. tif1 uses niquests. A cold load gets its first files, and the first telemetry requests, with the Python standard library until niquests has an open connection. These requests verify the certificate chain and the host name, but they do not do the revocation check (OCSP). `cdn_first_wave=False` (`TIF1_CDN_FIRST_WAVE=false`) sends every request through niquests.
 - **Compliance lock**: `tests/unit/test_fastf1_surface_compliance.py` checks members, parameters and column tables against fastf1 3.9.0 whenever fastf1 is importable (`uv pip install fastf1 --no-deps`).

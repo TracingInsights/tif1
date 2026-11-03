@@ -1,0 +1,176 @@
+"""``load(telemetry="lazy")``: a driver's laps arrive in one wave on first access.
+
+The lazy load must build the frames the eager load builds, fetch each
+driver once, and leave ``fetch_all_laps_telemetry()`` one batch for the
+drivers not touched yet. Every payload is served from memory.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pandas as pd
+import pytest
+
+from tif1 import async_fetch, core
+from tif1 import config as config_module
+from tif1.config import get_config
+
+from .test_polars_session_wiring import TEL_SAMPLES, _Cdn
+
+ALL_LAPS = [f"{code}/{lap}_tel.json" for code in ("VER", "HAM") for lap in (1, 2, 3)]
+VER_LAPS = ["VER/1_tel.json", "VER/2_tel.json", "VER/3_tel.json"]
+HAM_LAPS = ["HAM/1_tel.json", "HAM/2_tel.json", "HAM/3_tel.json"]
+
+
+@pytest.fixture
+def cdn(monkeypatch) -> _Cdn:
+    served = _Cdn(monkeypatch)
+    # The eager batch imports the fetcher from its module at call time.
+    monkeypatch.setattr(async_fetch, "fetch_multiple_async", core.fetch_multiple_async)
+    # One fetch_multiple_async batch per wave (no stream): these tests count
+    # batches. The stream (E10) is covered by test_lazy_telemetry_stream.py.
+    monkeypatch.setitem(get_config()._config, "lazy_telemetry_lookahead", 0)
+    return served
+
+
+def _telemetry_batches(cdn: _Cdn) -> list[list[str]]:
+    return [batch for batch in cdn.batches if any("_tel" in path for path in batch)]
+
+
+def _lap(session: core.Session, driver: str, number: int) -> Any:
+    laps = session.laps.pick_drivers(driver)
+    return next(lap for _, lap in laps.iterlaps() if int(lap["LapNumber"]) == number)
+
+
+def _assert_same_frame(left: Any, right: Any, lib: str) -> None:
+    assert type(left) is type(right)
+    if lib == "polars":
+        assert left.schema == right.schema
+        assert left.equals(right)
+    else:
+        pd.testing.assert_frame_equal(pd.DataFrame(left), pd.DataFrame(right), check_exact=True)
+
+
+@pytest.mark.parametrize("lib", ["pandas", "polars"])
+class TestLazyLoad:
+    def test_load_fetches_no_telemetry(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(telemetry="lazy", weather=False, messages=False)
+        assert _telemetry_batches(cdn) == []
+        assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
+
+    def test_first_lap_access_fetches_the_driver_in_one_wave(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(telemetry="lazy", weather=False, messages=False)
+        tel = _lap(session, "VER", 2).telemetry
+        assert len(tel) == TEL_SAMPLES
+        assert _telemetry_batches(cdn) == [VER_LAPS]
+        _lap(session, "VER", 3).get_car_data()
+        assert _telemetry_batches(cdn) == [VER_LAPS]
+        assert set(session._lazy_telemetry_refs) == {"HAM"}
+
+    def test_merged_telemetry_is_one_wave(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(telemetry="lazy", weather=False, messages=False)
+        tel = session.laps.pick_drivers("HAM").telemetry
+        assert len(tel) == 3 * TEL_SAMPLES
+        assert _telemetry_batches(cdn) == [HAM_LAPS]
+
+    def test_a_batch_of_two_drivers_is_one_wave(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(telemetry="lazy", weather=False, messages=False)
+        frames = session._telemetry_frames_for_refs([("VER", 1), ("HAM", 3)])
+        assert set(frames) == {("VER", 1), ("HAM", 3)}
+        assert _telemetry_batches(cdn) == [ALL_LAPS]
+        assert session._lazy_telemetry_refs == {}
+
+    def test_fetch_all_after_a_touch_fetches_the_rest_in_one_batch(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(telemetry="lazy", weather=False, messages=False)
+        _ = _lap(session, "VER", 1).telemetry
+        lazy_all = session.fetch_all_laps_telemetry()
+        assert _telemetry_batches(cdn) == [VER_LAPS, HAM_LAPS]
+        assert session._lazy_telemetry_refs == {}
+
+        eager = cdn.session(lib)
+        eager.load(weather=False, messages=False)
+        assert _telemetry_batches(cdn)[-1] == ALL_LAPS
+        # The same flow: a touched lap's memo entry is the session-wrapped frame.
+        _ = _lap(eager, "VER", 1).telemetry
+        eager_all = eager.fetch_all_laps_telemetry()
+        assert list(lazy_all) == list(eager_all)  # laps-row order, as a full batch
+        for ref, frame in eager_all.items():
+            _assert_same_frame(frame, lazy_all[ref], lib)
+
+    def test_lap_frames_equal_the_eager_load(self, cdn, lib):
+        lazy = cdn.session(lib)
+        lazy.load(telemetry="lazy", weather=False, messages=False)
+        eager = cdn.session(lib)
+        eager.load(weather=False, messages=False)
+        _assert_same_frame(_lap(eager, "HAM", 2).telemetry, _lap(lazy, "HAM", 2).telemetry, lib)
+        _assert_same_frame(
+            eager.laps.pick_drivers("VER").telemetry, lazy.laps.pick_drivers("VER").telemetry, lib
+        )
+
+    def test_config_key_makes_true_lazy(self, cdn, lib, monkeypatch):
+        monkeypatch.setitem(get_config()._config, "load_telemetry_lazy", True)
+        session = cdn.session(lib)
+        session.load(weather=False, messages=False)
+        assert _telemetry_batches(cdn) == []
+        _ = _lap(session, "HAM", 1).telemetry
+        assert _telemetry_batches(cdn) == [HAM_LAPS]
+
+    def test_eager_load_is_unchanged(self, cdn, lib):
+        session = cdn.session(lib)
+        session.load(weather=False, messages=False)
+        assert _telemetry_batches(cdn) == [ALL_LAPS]
+        assert session._lazy_telemetry_refs == {}
+        _ = _lap(session, "VER", 1).telemetry
+        assert _telemetry_batches(cdn) == [ALL_LAPS]
+
+
+@pytest.mark.parametrize(("from_cache", "second_wave"), [(False, ["B"]), (True, ["B", "C"])])
+def test_second_wave_of_a_cached_session_takes_every_pending_driver(
+    cdn, monkeypatch, from_cache, second_wave
+):
+    """Cached sessions batch the rest on the second wave (Delphi D5); the CDN path never does."""
+    session = cdn.session("polars")
+    session._lazy_telemetry_refs = {code: [(code, 1), (code, 2)] for code in ("A", "B", "C")}
+    waves: list[list[str]] = []
+    monkeypatch.setattr(
+        session,
+        "_fetch_lazy_telemetry_wave",
+        lambda refs: waves.append(list(dict.fromkeys(driver for driver, _ in refs))),
+    )
+    monkeypatch.setattr(session, "_lazy_telemetry_from_cache", lambda: from_cache)
+    session._ensure_lazy_telemetry([("A", 2)])
+    session._ensure_lazy_telemetry([("A", 1)])  # already fetched: no wave
+    session._ensure_lazy_telemetry([("B", 1)])
+    assert waves == [["A"], second_wave]
+    assert set(session._lazy_telemetry_refs) == ({"C"} - set(second_wave))
+
+
+def test_unknown_telemetry_string_raises(cdn):
+    session = cdn.session("pandas")
+    with pytest.raises(ValueError, match="lazy"):
+        session.load(telemetry="eager", weather=False, messages=False)
+
+
+async def test_load_async_lazy_defers_the_telemetry(cdn):
+    session = cdn.session("pandas")
+    await session.load_async(telemetry="lazy", weather=False, messages=False)
+    assert _telemetry_batches(cdn) == []
+    assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, False), ("true", True), ("0", False)])
+def test_env_var_sets_the_config_key(monkeypatch, tmp_path, value, expected):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config_module.Path, "home", staticmethod(lambda: tmp_path))
+    if value is None:
+        monkeypatch.delenv("TIF1_LOAD_TELEMETRY_LAZY", raising=False)
+    else:
+        monkeypatch.setenv("TIF1_LOAD_TELEMETRY_LAZY", value)
+    monkeypatch.setattr(config_module.Config, "_instance", None)
+    assert config_module.Config().get("load_telemetry_lazy") is expected

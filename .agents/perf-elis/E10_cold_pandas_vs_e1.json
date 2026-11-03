@@ -1,0 +1,775 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 5,
+ "summary": {
+  "iterlaps_all_lazy": {
+   "control_workload": "iterlaps_all_lazy",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.7
+    },
+    "get_session": {
+     "median": 620.9,
+     "min": 585.3
+    },
+    "load": {
+     "median": 130.4,
+     "min": 121.4
+    },
+    "iterlaps_tel_loop": {
+     "median": 10416.7,
+     "min": 9967.1
+    },
+    "in_process_total": {
+     "median": 11182.1,
+     "min": 10734.1
+    },
+    "process_wall": {
+     "median": 11388.3,
+     "min": 10924.8
+    },
+    "exit_tail": {
+     "median": 206.2,
+     "min": 190.6
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.1,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 608.8,
+     "min": 589.6
+    },
+    "load": {
+     "median": 132.0,
+     "min": 127.2
+    },
+    "iterlaps_tel_loop": {
+     "median": 7940.4,
+     "min": 7848.8
+    },
+    "in_process_total": {
+     "median": 8692.6,
+     "min": 8607.8
+    },
+    "process_wall": {
+     "median": 8918.3,
+     "min": 8821.1
+    },
+    "exit_tail": {
+     "median": 225.7,
+     "min": 203.3
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "4/5",
+   "control_runs": [
+    {
+     "import": 12.04,
+     "get_session": 609.19,
+     "load": 134.23,
+     "iterlaps_tel_loop": 15266.27,
+     "in_process_total": 16021.79,
+     "process_wall": 16221.52,
+     "exit_tail": 199.73,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.72,
+     "get_session": 585.28,
+     "load": 126.74,
+     "iterlaps_tel_loop": 10165.14,
+     "in_process_total": 10889.57,
+     "process_wall": 11143.64,
+     "exit_tail": 254.07,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.38,
+     "get_session": 697.69,
+     "load": 121.36,
+     "iterlaps_tel_loop": 10467.85,
+     "in_process_total": 11299.34,
+     "process_wall": 11530.75,
+     "exit_tail": 231.41,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.02,
+     "get_session": 624.53,
+     "load": 130.43,
+     "iterlaps_tel_loop": 9967.1,
+     "in_process_total": 10734.15,
+     "process_wall": 10924.76,
+     "exit_tail": 190.61,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.97,
+     "get_session": 620.89,
+     "load": 132.42,
+     "iterlaps_tel_loop": 10416.72,
+     "in_process_total": 11182.06,
+     "process_wall": 11388.27,
+     "exit_tail": 206.21,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 11.88,
+     "get_session": 684.46,
+     "load": 323.88,
+     "iterlaps_tel_loop": 13090.68,
+     "in_process_total": 14110.98,
+     "process_wall": 14368.31,
+     "exit_tail": 257.33,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.27,
+     "get_session": 615.64,
+     "load": 132.02,
+     "iterlaps_tel_loop": 13528.94,
+     "in_process_total": 14289.58,
+     "process_wall": 14516.02,
+     "exit_tail": 226.44,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 14.63,
+     "get_session": 608.81,
+     "load": 128.76,
+     "iterlaps_tel_loop": 7940.4,
+     "in_process_total": 8692.65,
+     "process_wall": 8918.32,
+     "exit_tail": 225.67,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.92,
+     "get_session": 589.59,
+     "load": 127.24,
+     "iterlaps_tel_loop": 7878.96,
+     "in_process_total": 8607.78,
+     "process_wall": 8821.08,
+     "exit_tail": 213.3,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.07,
+     "get_session": 599.86,
+     "load": 178.11,
+     "iterlaps_tel_loop": 7848.78,
+     "in_process_total": 8638.88,
+     "process_wall": 8842.15,
+     "exit_tail": 203.27,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  },
+  "notebook_lazy": {
+   "control_workload": "notebook_lazy",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.6
+    },
+    "get_session": {
+     "median": 602.3,
+     "min": 579.0
+    },
+    "load": {
+     "median": 128.8,
+     "min": 121.2
+    },
+    "merged_VER": {
+     "median": 568.0,
+     "min": 555.5
+    },
+    "merged_LEC": {
+     "median": 510.2,
+     "min": 502.4
+    },
+    "merged_NOR": {
+     "median": 518.5,
+     "min": 510.0
+    },
+    "merged_PIA": {
+     "median": 485.2,
+     "min": 465.6
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 27.6,
+     "min": 21.9
+    },
+    "results": {
+     "median": 64.5,
+     "min": 58.1
+    },
+    "in_process_total": {
+     "median": 2953.7,
+     "min": 2879.7
+    },
+    "process_wall": {
+     "median": 3100.5,
+     "min": 2976.3
+    },
+    "exit_tail": {
+     "median": 103.3,
+     "min": 96.6
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 11.9,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 593.8,
+     "min": 573.7
+    },
+    "load": {
+     "median": 128.5,
+     "min": 115.3
+    },
+    "merged_VER": {
+     "median": 579.7,
+     "min": 559.3
+    },
+    "merged_LEC": {
+     "median": 517.3,
+     "min": 508.5
+    },
+    "merged_NOR": {
+     "median": 507.6,
+     "min": 499.4
+    },
+    "merged_PIA": {
+     "median": 467.7,
+     "min": 458.6
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 25.4,
+     "min": 22.0
+    },
+    "results": {
+     "median": 68.8,
+     "min": 58.3
+    },
+    "in_process_total": {
+     "median": 2946.6,
+     "min": 2904.4
+    },
+    "process_wall": {
+     "median": 3042.0,
+     "min": 2999.0
+    },
+    "exit_tail": {
+     "median": 102.9,
+     "min": 92.3
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "2/5",
+   "control_runs": [
+    {
+     "import": 12.08,
+     "get_session": 582.22,
+     "load": 128.84,
+     "merged_VER": 589.55,
+     "merged_LEC": 510.17,
+     "merged_NOR": 509.96,
+     "merged_PIA": 485.22,
+     "fastest_car_data_x4": 0.61,
+     "telemetry_analysis_4": 25.7,
+     "results": 91.15,
+     "in_process_total": 2953.69,
+     "process_wall": 3100.47,
+     "exit_tail": 146.78,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.96,
+     "get_session": 680.86,
+     "load": 125.55,
+     "merged_VER": 558.7,
+     "merged_LEC": 536.23,
+     "merged_NOR": 570.33,
+     "merged_PIA": 546.16,
+     "fastest_car_data_x4": 0.61,
+     "telemetry_analysis_4": 21.95,
+     "results": 60.87,
+     "in_process_total": 3130.62,
+     "process_wall": 3233.94,
+     "exit_tail": 103.32,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.97,
+     "get_session": 634.48,
+     "load": 129.23,
+     "merged_VER": 581.51,
+     "merged_LEC": 503.44,
+     "merged_NOR": 539.28,
+     "merged_PIA": 499.34,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 34.87,
+     "results": 64.48,
+     "in_process_total": 3016.03,
+     "process_wall": 3124.51,
+     "exit_tail": 108.48,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.61,
+     "get_session": 602.26,
+     "load": 121.15,
+     "merged_VER": 555.51,
+     "merged_LEC": 502.37,
+     "merged_NOR": 518.51,
+     "merged_PIA": 465.55,
+     "fastest_car_data_x4": 0.59,
+     "telemetry_analysis_4": 27.98,
+     "results": 58.07,
+     "in_process_total": 2879.73,
+     "process_wall": 2976.32,
+     "exit_tail": 96.59,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.72,
+     "get_session": 579.01,
+     "load": 129.87,
+     "merged_VER": 568.02,
+     "merged_LEC": 521.6,
+     "merged_NOR": 518.0,
+     "merged_PIA": 466.58,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 27.61,
+     "results": 65.08,
+     "in_process_total": 2906.04,
+     "process_wall": 3003.45,
+     "exit_tail": 97.41,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 11.89,
+     "get_session": 631.28,
+     "load": 115.27,
+     "merged_VER": 579.73,
+     "merged_LEC": 508.47,
+     "merged_NOR": 550.82,
+     "merged_PIA": 465.87,
+     "fastest_car_data_x4": 1.58,
+     "telemetry_analysis_4": 36.4,
+     "results": 68.82,
+     "in_process_total": 2995.35,
+     "process_wall": 3109.35,
+     "exit_tail": 114.0,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.97,
+     "get_session": 611.98,
+     "load": 159.87,
+     "merged_VER": 617.97,
+     "merged_LEC": 527.06,
+     "merged_NOR": 499.35,
+     "merged_PIA": 458.55,
+     "fastest_car_data_x4": 0.62,
+     "telemetry_analysis_4": 24.35,
+     "results": 58.33,
+     "in_process_total": 2986.06,
+     "process_wall": 3090.19,
+     "exit_tail": 104.13,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.84,
+     "get_session": 593.47,
+     "load": 133.73,
+     "merged_VER": 565.58,
+     "merged_LEC": 513.88,
+     "merged_NOR": 539.51,
+     "merged_PIA": 470.01,
+     "fastest_car_data_x4": 0.63,
+     "telemetry_analysis_4": 26.0,
+     "results": 75.74,
+     "in_process_total": 2946.61,
+     "process_wall": 3042.0,
+     "exit_tail": 95.39,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.91,
+     "get_session": 593.78,
+     "load": 127.55,
+     "merged_VER": 559.29,
+     "merged_LEC": 525.64,
+     "merged_NOR": 507.58,
+     "merged_PIA": 467.67,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 25.43,
+     "results": 72.19,
+     "in_process_total": 2906.72,
+     "process_wall": 2999.04,
+     "exit_tail": 92.32,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.77,
+     "get_session": 573.68,
+     "load": 128.47,
+     "merged_VER": 585.24,
+     "merged_LEC": 517.33,
+     "merged_NOR": 506.38,
+     "merged_PIA": 487.13,
+     "fastest_car_data_x4": 0.61,
+     "telemetry_analysis_4": 21.98,
+     "results": 58.36,
+     "in_process_total": 2904.38,
+     "process_wall": 3007.26,
+     "exit_tail": 102.88,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  },
+  "notebook": {
+   "control_workload": "notebook",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 11.9,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 590.2,
+     "min": 555.4
+    },
+    "load": {
+     "median": 8539.9,
+     "min": 8398.9
+    },
+    "picks": {
+     "median": 9.9,
+     "min": 8.8
+    },
+    "driver_tel_x2": {
+     "median": 124.9,
+     "min": 111.4
+    },
+    "fastest_lap_tel": {
+     "median": 9.5,
+     "min": 9.1
+    },
+    "results": {
+     "median": 106.0,
+     "min": 84.9
+    },
+    "weather": {
+     "median": 0.0,
+     "min": 0.0
+    },
+    "in_process_total": {
+     "median": 9363.2,
+     "min": 9241.1
+    },
+    "process_wall": {
+     "median": 10072.5,
+     "min": 9878.8
+    },
+    "exit_tail": {
+     "median": 637.7,
+     "min": 628.3
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.4,
+     "min": 12.0
+    },
+    "get_session": {
+     "median": 627.8,
+     "min": 549.9
+    },
+    "load": {
+     "median": 8457.4,
+     "min": 8423.1
+    },
+    "picks": {
+     "median": 9.9,
+     "min": 6.9
+    },
+    "driver_tel_x2": {
+     "median": 146.6,
+     "min": 117.5
+    },
+    "fastest_lap_tel": {
+     "median": 7.7,
+     "min": 6.9
+    },
+    "results": {
+     "median": 80.3,
+     "min": 72.2
+    },
+    "weather": {
+     "median": 0.0,
+     "min": 0.0
+    },
+    "in_process_total": {
+     "median": 9359.9,
+     "min": 9203.9
+    },
+    "process_wall": {
+     "median": 10007.0,
+     "min": 9909.6
+    },
+    "exit_tail": {
+     "median": 705.8,
+     "min": 619.3
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "2/5",
+   "control_runs": [
+    {
+     "import": 11.89,
+     "get_session": 573.18,
+     "load": 8458.55,
+     "picks": 12.77,
+     "driver_tel_x2": 151.79,
+     "fastest_lap_tel": 10.85,
+     "results": 134.51,
+     "weather": 0.01,
+     "in_process_total": 9356.49,
+     "process_wall": 9984.77,
+     "exit_tail": 628.28,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.09,
+     "get_session": 590.24,
+     "load": 8398.93,
+     "picks": 9.9,
+     "driver_tel_x2": 123.19,
+     "fastest_lap_tel": 11.67,
+     "results": 92.75,
+     "weather": 0.0,
+     "in_process_total": 9241.11,
+     "process_wall": 9878.84,
+     "exit_tail": 637.73,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.95,
+     "get_session": 594.74,
+     "load": 8630.55,
+     "picks": 9.86,
+     "driver_tel_x2": 176.79,
+     "fastest_lap_tel": 9.49,
+     "results": 106.01,
+     "weather": 0.01,
+     "in_process_total": 9542.74,
+     "process_wall": 10256.84,
+     "exit_tail": 714.1,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.95,
+     "get_session": 601.25,
+     "load": 8539.85,
+     "picks": 10.37,
+     "driver_tel_x2": 124.89,
+     "fastest_lap_tel": 9.48,
+     "results": 135.36,
+     "weather": 0.0,
+     "in_process_total": 9436.43,
+     "process_wall": 10072.54,
+     "exit_tail": 636.11,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.95,
+     "get_session": 555.44,
+     "load": 8578.77,
+     "picks": 8.85,
+     "driver_tel_x2": 111.4,
+     "fastest_lap_tel": 9.11,
+     "results": 84.88,
+     "weather": 0.0,
+     "in_process_total": 9363.22,
+     "process_wall": 10597.19,
+     "exit_tail": 1233.97,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.0,
+     "get_session": 549.94,
+     "load": 8427.59,
+     "picks": 6.86,
+     "driver_tel_x2": 121.46,
+     "fastest_lap_tel": 7.4,
+     "results": 75.84,
+     "weather": 0.0,
+     "in_process_total": 9203.87,
+     "process_wall": 9909.64,
+     "exit_tail": 705.77,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.34,
+     "get_session": 627.84,
+     "load": 8457.43,
+     "picks": 7.24,
+     "driver_tel_x2": 117.45,
+     "fastest_lap_tel": 8.44,
+     "results": 72.21,
+     "weather": 0.0,
+     "in_process_total": 9305.79,
+     "process_wall": 10007.05,
+     "exit_tail": 701.26,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.26,
+     "get_session": 639.43,
+     "load": 8802.28,
+     "picks": 10.54,
+     "driver_tel_x2": 154.96,
+     "fastest_lap_tel": 6.9,
+     "results": 87.58,
+     "weather": 0.0,
+     "in_process_total": 9718.21,
+     "process_wall": 10476.97,
+     "exit_tail": 758.76,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.39,
+     "get_session": 623.17,
+     "load": 8423.15,
+     "picks": 9.87,
+     "driver_tel_x2": 146.56,
+     "fastest_lap_tel": 7.72,
+     "results": 133.93,
+     "weather": 0.0,
+     "in_process_total": 9359.89,
+     "process_wall": 9979.17,
+     "exit_tail": 619.28,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 18.36,
+     "get_session": 1000.68,
+     "load": 9368.29,
+     "picks": 18.51,
+     "driver_tel_x2": 224.08,
+     "fastest_lap_tel": 13.46,
+     "results": 80.35,
+     "weather": 0.01,
+     "in_process_total": 10729.29,
+     "process_wall": 11802.21,
+     "exit_tail": 1072.92,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}

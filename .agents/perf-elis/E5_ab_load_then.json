@@ -1,0 +1,140 @@
+{
+ "lib": "pandas",
+ "pairs": 8,
+ "control_src": "/tmp/tif1-elis-control/src",
+ "candidate_src": "/tmp/tif1-elis/E5/src",
+ "summary": {
+  "load_then_1_driver": {
+   "import": {
+    "control_median": 12.8,
+    "candidate_median": 13.1,
+    "control_min": 12.5,
+    "candidate_min": 12.7,
+    "candidate_faster_pairs": "2/8"
+   },
+   "get_session": {
+    "control_median": 360.3,
+    "candidate_median": 387.3,
+    "control_min": 333.3,
+    "candidate_min": 343.0,
+    "candidate_faster_pairs": "2/8"
+   },
+   "load": {
+    "control_median": 11.9,
+    "candidate_median": 13.0,
+    "control_min": 11.4,
+    "candidate_min": 11.6,
+    "candidate_faster_pairs": "2/8"
+   },
+   "access": {
+    "control_median": 20.1,
+    "candidate_median": 22.9,
+    "control_min": 17.3,
+    "candidate_min": 20.4,
+    "candidate_faster_pairs": "2/8"
+   },
+   "in_process_total": {
+    "control_median": 403.9,
+    "candidate_median": 440.2,
+    "control_min": 379.1,
+    "candidate_min": 393.0,
+    "candidate_faster_pairs": "2/8"
+   },
+   "process_wall": {
+    "control_median": 476.6,
+    "candidate_median": 504.7,
+    "control_min": 443.1,
+    "candidate_min": 453.4,
+    "candidate_faster_pairs": "2/8"
+   }
+  },
+  "load_then_2_drivers": {
+   "import": {
+    "control_median": 13.0,
+    "candidate_median": 13.1,
+    "control_min": 12.6,
+    "candidate_min": 12.6,
+    "candidate_faster_pairs": "3/8"
+   },
+   "get_session": {
+    "control_median": 379.8,
+    "candidate_median": 375.7,
+    "control_min": 347.7,
+    "candidate_min": 354.4,
+    "candidate_faster_pairs": "4/8"
+   },
+   "load": {
+    "control_median": 11.9,
+    "candidate_median": 11.8,
+    "control_min": 11.4,
+    "candidate_min": 11.4,
+    "candidate_faster_pairs": "3/8"
+   },
+   "access": {
+    "control_median": 71.0,
+    "candidate_median": 32.3,
+    "control_min": 62.2,
+    "candidate_min": 28.7,
+    "candidate_faster_pairs": "8/8"
+   },
+   "in_process_total": {
+    "control_median": 476.5,
+    "candidate_median": 440.7,
+    "control_min": 456.8,
+    "candidate_min": 411.3,
+    "candidate_faster_pairs": "6/8"
+   },
+   "process_wall": {
+    "control_median": 571.6,
+    "candidate_median": 532.9,
+    "control_min": 534.8,
+    "candidate_min": 485.2,
+    "candidate_faster_pairs": "7/8"
+   }
+  },
+  "load_then_4_drivers": {
+   "import": {
+    "control_median": 13.7,
+    "candidate_median": 13.1,
+    "control_min": 12.6,
+    "candidate_min": 12.8,
+    "candidate_faster_pairs": "5/8"
+   },
+   "get_session": {
+    "control_median": 389.4,
+    "candidate_median": 369.9,
+    "control_min": 349.3,
+    "candidate_min": 347.3,
+    "candidate_faster_pairs": "6/8"
+   },
+   "load": {
+    "control_median": 11.8,
+    "candidate_median": 11.9,
+    "control_min": 11.4,
+    "candidate_min": 11.6,
+    "candidate_faster_pairs": "3/8"
+   },
+   "access": {
+    "control_median": 78.1,
+    "candidate_median": 52.0,
+    "control_min": 65.6,
+    "candidate_min": 43.9,
+    "candidate_faster_pairs": "8/8"
+   },
+   "in_process_total": {
+    "control_median": 492.9,
+    "candidate_median": 457.7,
+    "control_min": 455.9,
+    "candidate_min": 425.1,
+    "candidate_faster_pairs": "7/8"
+   },
+   "process_wall": {
+    "control_median": 583.9,
+    "candidate_median": 540.1,
+    "control_min": 549.2,
+    "candidate_min": 500.1,
+    "candidate_faster_pairs": "8/8"
+   }
+  }
+ }
+}

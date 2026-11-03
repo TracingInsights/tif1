@@ -1,0 +1,339 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 2,
+ "summary": {
+  "iterlaps_all_lazy": {
+   "control_workload": "iterlaps_all_lazy",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 14.6,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 699.8,
+     "min": 550.9
+    },
+    "load": {
+     "median": 217.8,
+     "min": 160.4
+    },
+    "iterlaps_tel_loop": {
+     "median": 10547.0,
+     "min": 10435.9
+    },
+    "in_process_total": {
+     "median": 11484.9,
+     "min": 11159.1
+    },
+    "process_wall": {
+     "median": 11726.8,
+     "min": 11353.2
+    },
+    "exit_tail": {
+     "median": 241.9,
+     "min": 194.2
+    },
+    "warnings_403": {
+     "median": 0.0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.0,
+     "min": 12.0
+    },
+    "get_session": {
+     "median": 618.8,
+     "min": 588.3
+    },
+    "load": {
+     "median": 147.9,
+     "min": 120.5
+    },
+    "iterlaps_tel_loop": {
+     "median": 7520.8,
+     "min": 7323.3
+    },
+    "in_process_total": {
+     "median": 8299.5,
+     "min": 8044.1
+    },
+    "process_wall": {
+     "median": 8485.9,
+     "min": 8235.7
+    },
+    "exit_tail": {
+     "median": 186.4,
+     "min": 181.2
+    },
+    "warnings_403": {
+     "median": 0.0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "2/2",
+   "control_runs": [
+    {
+     "import": 17.52,
+     "get_session": 848.63,
+     "load": 275.15,
+     "iterlaps_tel_loop": 10658.05,
+     "in_process_total": 11810.82,
+     "process_wall": 12100.37,
+     "exit_tail": 289.55,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.77,
+     "get_session": 550.9,
+     "load": 160.44,
+     "iterlaps_tel_loop": 10435.89,
+     "in_process_total": 11159.06,
+     "process_wall": 11353.24,
+     "exit_tail": 194.18,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.04,
+     "get_session": 649.23,
+     "load": 175.3,
+     "iterlaps_tel_loop": 7718.27,
+     "in_process_total": 8554.9,
+     "process_wall": 8736.05,
+     "exit_tail": 181.15,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.98,
+     "get_session": 588.32,
+     "load": 120.49,
+     "iterlaps_tel_loop": 7323.29,
+     "in_process_total": 8044.13,
+     "process_wall": 8235.7,
+     "exit_tail": 191.57,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  },
+  "notebook_lazy": {
+   "control_workload": "notebook_lazy",
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 627.5,
+     "min": 553.5
+    },
+    "load": {
+     "median": 140.0,
+     "min": 136.3
+    },
+    "merged_VER": {
+     "median": 596.4,
+     "min": 577.5
+    },
+    "merged_LEC": {
+     "median": 547.5,
+     "min": 523.0
+    },
+    "merged_NOR": {
+     "median": 535.7,
+     "min": 512.8
+    },
+    "merged_PIA": {
+     "median": 495.2,
+     "min": 477.9
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 30.6,
+     "min": 25.3
+    },
+    "results": {
+     "median": 93.9,
+     "min": 74.4
+    },
+    "in_process_total": {
+     "median": 3098.3,
+     "min": 2946.1
+    },
+    "process_wall": {
+     "median": 3213.6,
+     "min": 3040.0
+    },
+    "exit_tail": {
+     "median": 115.3,
+     "min": 93.9
+    },
+    "warnings_403": {
+     "median": 0.0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 11.8,
+     "min": 11.7
+    },
+    "get_session": {
+     "median": 566.0,
+     "min": 565.8
+    },
+    "load": {
+     "median": 130.0,
+     "min": 126.0
+    },
+    "merged_VER": {
+     "median": 883.1,
+     "min": 843.3
+    },
+    "merged_LEC": {
+     "median": 805.8,
+     "min": 781.0
+    },
+    "merged_NOR": {
+     "median": 537.1,
+     "min": 534.8
+    },
+    "merged_PIA": {
+     "median": 812.8,
+     "min": 753.5
+    },
+    "fastest_car_data_x4": {
+     "median": 0.9,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 35.0,
+     "min": 31.0
+    },
+    "results": {
+     "median": 65.6,
+     "min": 56.3
+    },
+    "in_process_total": {
+     "median": 3869.5,
+     "min": 3858.1
+    },
+    "process_wall": {
+     "median": 3976.6,
+     "min": 3966.1
+    },
+    "exit_tail": {
+     "median": 107.1,
+     "min": 106.2
+    },
+    "warnings_403": {
+     "median": 0.0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "0/2",
+   "control_runs": [
+    {
+     "import": 11.86,
+     "get_session": 553.5,
+     "load": 136.34,
+     "merged_VER": 577.54,
+     "merged_LEC": 522.96,
+     "merged_NOR": 512.76,
+     "merged_PIA": 477.85,
+     "fastest_car_data_x4": 0.61,
+     "telemetry_analysis_4": 25.31,
+     "results": 113.48,
+     "in_process_total": 2946.05,
+     "process_wall": 3039.96,
+     "exit_tail": 93.91,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.18,
+     "get_session": 701.57,
+     "load": 143.6,
+     "merged_VER": 615.23,
+     "merged_LEC": 571.96,
+     "merged_NOR": 558.64,
+     "merged_PIA": 512.45,
+     "fastest_car_data_x4": 0.64,
+     "telemetry_analysis_4": 35.86,
+     "results": 74.37,
+     "in_process_total": 3250.48,
+     "process_wall": 3387.15,
+     "exit_tail": 136.67,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 11.67,
+     "get_session": 565.75,
+     "load": 134.03,
+     "merged_VER": 922.88,
+     "merged_LEC": 830.56,
+     "merged_NOR": 534.82,
+     "merged_PIA": 753.53,
+     "fastest_car_data_x4": 0.62,
+     "telemetry_analysis_4": 30.97,
+     "results": 56.27,
+     "in_process_total": 3858.14,
+     "process_wall": 3966.13,
+     "exit_tail": 107.99,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.03,
+     "get_session": 566.34,
+     "load": 125.95,
+     "merged_VER": 843.29,
+     "merged_LEC": 780.96,
+     "merged_NOR": 539.38,
+     "merged_PIA": 872.17,
+     "fastest_car_data_x4": 1.27,
+     "telemetry_analysis_4": 39.05,
+     "results": 74.91,
+     "in_process_total": 3880.86,
+     "process_wall": 3987.04,
+     "exit_tail": 106.18,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}
