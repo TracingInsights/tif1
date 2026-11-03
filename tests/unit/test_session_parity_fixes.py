@@ -123,6 +123,16 @@ class TestQualifyingFromLaps:
         assert core._quali_row_fields(None, floor) == {}
         assert core._quali_q1_floor({}) is None
 
+    def test_native_fields_are_int_nanoseconds(self):
+        """polars rows carry int ns (no numpy scalar: a polars results read never imports it)."""
+        floor = core._quali_q1_floor(_BESTS)
+        out = core._quali_row_fields(_BESTS["DDD"], floor, native=True)
+        assert out["ClassifiedPosition"] == "N"
+        assert out["Q1"] == 97_000_000_000
+        assert type(out["Q1"]) is int
+        assert out["Q2"] is None
+        assert core._quali_row_fields(None, floor, native=True) == {}
+
 
 @pytest.mark.parametrize("seconds", [90.505, 61.0, 100.001, 89.999])
 def test_practice_best_lap_time_is_the_exact_lap_time(seconds):
@@ -131,6 +141,10 @@ def test_practice_best_lap_time_is_the_exact_lap_time(seconds):
     assert best == lap_time
     assert core._best_lap_timedelta({"best": None}) is pd.NaT
     assert core._best_lap_timedelta(None) is pd.NaT
+    native = core._best_lap_timedelta({"best": lap_time.total_seconds()}, native=True)
+    assert type(native) is int
+    assert native == lap_time.value
+    assert core._best_lap_timedelta({"best": None}, native=True) is None
 
 
 class _ReferenceLap:

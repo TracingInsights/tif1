@@ -27,7 +27,6 @@ from collections.abc import Callable, Mapping
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from .cdn import CDNManager, get_cdn_manager
 from .core_utils.json_utils import parse_response_json
 from .core_utils.runtime import IS_EMSCRIPTEN
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError
@@ -35,6 +34,7 @@ from .retry import retry_with_backoff
 
 if TYPE_CHECKING:
     from .cache import SessionMemo
+    from .cdn import CDNManager
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +298,10 @@ class PayloadLoader:
         """CDN manager (falls back to the process-global instance)."""
         if self._cdn_manager is not None:
             return self._cdn_manager
+        # Imported here: a warm session never reaches a CDN, so it never pays
+        # for ``tif1.cdn`` (its dataclasses and the manager singleton).
+        from .cdn import get_cdn_manager
+
         return get_cdn_manager()
 
     @cdn_manager.setter

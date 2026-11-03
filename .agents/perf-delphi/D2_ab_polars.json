@@ -1,0 +1,75 @@
+{
+ "lib": "polars",
+ "pairs": 10,
+ "control_src": "/tmp/tif1-delphi-control/src",
+ "candidate_src": "/tmp/tif1-delphi/D2/src",
+ "summary": {
+  "import_get_session": {
+   "import": {
+    "control_median": 12.8,
+    "candidate_median": 12.8,
+    "control_min": 12.6,
+    "candidate_min": 12.6,
+    "candidate_faster_pairs": "5/10"
+   },
+   "get_session": {
+    "control_median": 247.6,
+    "candidate_median": 245.1,
+    "control_min": 209.8,
+    "candidate_min": 198.0,
+    "candidate_faster_pairs": "6/10"
+   },
+   "in_process_total": {
+    "control_median": 260.4,
+    "candidate_median": 257.9,
+    "control_min": 223.2,
+    "candidate_min": 210.8,
+    "candidate_faster_pairs": "6/10"
+   },
+   "process_wall": {
+    "control_median": 353.1,
+    "candidate_median": 346.6,
+    "control_min": 312.9,
+    "candidate_min": 299.5,
+    "candidate_faster_pairs": "6/10"
+   }
+  },
+  "laps": {
+   "import": {
+    "control_median": 12.9,
+    "candidate_median": 12.9,
+    "control_min": 12.6,
+    "candidate_min": 12.5,
+    "candidate_faster_pairs": "8/10"
+   },
+   "get_session": {
+    "control_median": 262.9,
+    "candidate_median": 242.0,
+    "control_min": 220.1,
+    "candidate_min": 193.5,
+    "candidate_faster_pairs": "7/10"
+   },
+   "laps": {
+    "control_median": 5.7,
+    "candidate_median": 5.6,
+    "control_min": 5.4,
+    "candidate_min": 5.4,
+    "candidate_faster_pairs": "6/10"
+   },
+   "in_process_total": {
+    "control_median": 281.8,
+    "candidate_median": 260.4,
+    "control_min": 238.7,
+    "candidate_min": 211.7,
+    "candidate_faster_pairs": "7/10"
+   },
+   "process_wall": {
+    "control_median": 375.5,
+    "candidate_median": 348.2,
+    "control_min": 326.8,
+    "candidate_min": 302.6,
+    "candidate_faster_pairs": "7/10"
+   }
+  }
+ }
+}

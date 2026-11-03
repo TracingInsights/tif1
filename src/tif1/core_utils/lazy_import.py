@@ -14,6 +14,7 @@ be an instance of a class whose module was never imported.
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from types import ModuleType
 from typing import Any
@@ -73,6 +74,53 @@ def loaded_module(name: str) -> ModuleType | None:
     return sys.modules.get(name)
 
 
+class LazyPattern:
+    """``re.compile(pattern, flags)`` deferred to the first attribute read.
+
+    The read compiles the pattern and rebinds ``alias`` in ``namespace`` to
+    the compiled :class:`re.Pattern`, so every later use of the module global
+    is the pattern itself (the same rebinding :class:`LazyModule` does for a
+    module). A module-level ``re.compile`` costs ~0.1 ms at import; the
+    patterns of the session startup path (Delphi D2) are compiled on first
+    use instead.
+    """
+
+    __slots__ = ("_alias", "_flags", "_namespace", "_pattern")
+
+    def __init__(self, pattern: str, flags: int, namespace: dict[str, Any], alias: str) -> None:
+        self._pattern = pattern
+        self._flags = flags
+        self._namespace = namespace
+        self._alias = alias
+
+    def _compile(self) -> re.Pattern[str]:
+        compiled = re.compile(self._pattern, self._flags)
+        if self._namespace.get(self._alias) is self:
+            self._namespace[self._alias] = compiled
+        return compiled
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._compile(), name)
+
+    def __repr__(self) -> str:
+        return f"<lazy pattern {self._pattern!r}>"
+
+
+def lazy_pattern(pattern: str, namespace: dict[str, Any], alias: str, flags: int = 0) -> Any:
+    """``re.compile(pattern, flags)`` bound to ``alias`` in ``namespace``, compiled on first use.
+
+    Args:
+        pattern: The regular expression.
+        namespace: The binding module's ``globals()``.
+        alias: The global name the proxy is bound to (rebound to the pattern).
+        flags: ``re`` flags.
+
+    Returns:
+        A :class:`LazyPattern`; module code uses it exactly like the compiled pattern.
+    """
+    return LazyPattern(pattern, flags, namespace, alias)
+
+
 def is_pandas_frame(obj: Any) -> bool:
     """``isinstance(obj, pandas.DataFrame)`` without importing pandas."""
     pd = sys.modules.get("pandas")
@@ -85,4 +133,12 @@ def is_pandas_series(obj: Any) -> bool:
     return pd is not None and isinstance(obj, pd.Series)
 
 
-__all__ = ["LazyModule", "is_pandas_frame", "is_pandas_series", "lazy_module", "loaded_module"]
+__all__ = [
+    "LazyModule",
+    "LazyPattern",
+    "is_pandas_frame",
+    "is_pandas_series",
+    "lazy_module",
+    "lazy_pattern",
+    "loaded_module",
+]

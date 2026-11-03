@@ -24,7 +24,13 @@ import numpy as np
 import pandas as pd
 
 from .cache import get_cache
-from .core_utils.constants import COL_DRIVER, COL_LAP_NUMBER, LAP_PAYLOAD_KEYS
+from .core_utils.constants import (
+    COL_DRIVER,
+    COL_LAP_NUMBER,
+    COL_LAP_TIME,
+    COL_LAP_TIME_SECONDS,
+    LAP_PAYLOAD_KEYS,
+)
 from .core_utils.driver_laps import build_driver_laps_frame
 from .core_utils.helpers import (
     DataFrame,
@@ -42,6 +48,7 @@ from .core_utils.helpers import (
     _telemetry_frame_from_merged,
     _validate_lap_number,
 )
+from .core_utils.lazy_import import lazy_pattern
 from .core_utils.runtime import import_supported_polars
 from .exceptions import (
     DataNotFoundError,
@@ -479,6 +486,36 @@ def _row_interleaved_dtype(dtypes: tuple[Any, ...]) -> Any:
     return entry[1]
 
 
+def _interleaved_row(mgr: Any, i: int) -> np.ndarray | None:
+    """Row ``i`` of a multi-block manager as ``BlockManager.fast_xs`` builds it, or ``None``.
+
+    The object array of the row's values (``Block.iget`` per column,
+    inlined) for a frame whose blocks interleave to object dtype. ``None``
+    when pandas must take the row itself: a single block, a typed
+    interleave (those need its conversions) or the private API missing.
+    """
+    if not _FAST_LAP_ROWS:
+        return None
+    blocks = mgr.blocks
+    if len(blocks) < 2:
+        return None
+    dtype = _row_interleaved_dtype(tuple(blk.dtype for blk in blocks))
+    if not (isinstance(dtype, np.dtype) and dtype.kind == "O"):
+        return None
+    result = np.empty(len(mgr.axes[0]), dtype=object)
+    for blk in blocks:
+        # ``Block.iget((j, i))`` inlined: ``values[j, i]`` for 2-D blocks,
+        # ``values[i]`` for an ExtensionBlock (one column, 1-D values).
+        values = blk.values
+        if isinstance(blk, _ExtensionBlock):
+            for rl in blk.mgr_locs:
+                result[rl] = values[i]
+        else:
+            for j, rl in enumerate(blk.mgr_locs):
+                result[rl] = values[j, i]
+    return result
+
+
 def _lap_from_row(values: np.ndarray, index: pd.Index, name: Any, session: Any) -> "Lap":
     """``Lap(values, index=index, name=name)`` with ``session`` set, for a fresh array.
 
@@ -585,29 +622,14 @@ class Laps(pd.DataFrame):
         once (pandas wraps it in a Series, then in a ``Lap``). Every other
         case goes to pandas.
         """
-        if axis != 0 or not _FAST_LAP_ROWS:
+        if axis != 0:
             return cast(Any, super())._ixs(i, axis)
         mgr = self._mgr
-        blocks = mgr.blocks
-        if len(blocks) < 2:
+        result = _interleaved_row(mgr, i)
+        if result is None:
             return cast(Any, super())._ixs(i, axis)
-        dtype = _row_interleaved_dtype(tuple(blk.dtype for blk in blocks))
-        if not (isinstance(dtype, np.dtype) and dtype.kind == "O"):
-            return cast(Any, super())._ixs(i, axis)
-        columns = mgr.axes[0]
-        result = np.empty(len(columns), dtype=object)
-        for blk in blocks:
-            # ``Block.iget((j, i))`` inlined: ``values[j, i]`` for 2-D blocks,
-            # ``values[i]`` for an ExtensionBlock (one column, 1-D values).
-            values = blk.values
-            if isinstance(blk, _ExtensionBlock):
-                for rl in blk.mgr_locs:
-                    result[rl] = values[i]
-            else:
-                for j, rl in enumerate(blk.mgr_locs):
-                    result[rl] = values[j, i]
         block = _new_block(result, placement=_BlockPlacement(slice(0, len(result))), ndim=1)
-        row_mgr = _SingleBlockManager(block, columns.view())
+        row_mgr = _SingleBlockManager(block, mgr.axes[0].view())
         lap = cast(Any, Lap)._from_mgr(row_mgr, axes=row_mgr.axes)
         object.__setattr__(lap, "_name", self.index[i])
         object.__setattr__(lap, "session", None)
@@ -1035,6 +1057,44 @@ class Laps(pd.DataFrame):
             and hasattr(session, "_get_telemetry_payload_for_ref")
         )
 
+    @staticmethod
+    def _merged_from_driver_source(session: Any, driver: str, laps: list[int]) -> Any | None:
+        """``laps`` of ``driver`` back to back from the driver's frame-tier row, or None.
+
+        Delphi D8: the decoded row the session memo holds
+        (:meth:`~tif1.cache.SessionMemo.driver_source`, put there by
+        ``load()`` or an earlier lap access) serves the build as a gather
+        over its arrays, which the memo keeps intact. Without one the row
+        is read, decoded and moved in place by
+        :meth:`~tif1.cache.Cache.get_driver_merged_frame` as before: the
+        decode is throwaway, and holding it would cost the merged frame a
+        copy of its rows (~1000 page faults per 4 MB block in a fresh
+        process, 3-4 ms for a race driver). None when the tier has no row
+        for the driver or the row lacks one of the laps (the caller falls
+        back to per-lap frames + concat).
+        """
+        source = session._memo.driver_source(driver)
+        if source is not None and not getattr(source, "decodable", True):
+            # Delphi D5: a lazy row ``load()`` has not read yet; the throwaway
+            # decode below is cheaper than reading it to hold.
+            source = None
+        merged = getattr(source, "merged", None)
+        if not callable(merged):
+            return get_cache().get_driver_merged_frame(
+                session.year,
+                session.gp,
+                session.session,
+                driver,
+                laps,
+                frame_class=Telemetry,
+                drop_repeats=True,
+            )
+        try:
+            return merged(laps, drop_repeats=True)
+        except (KeyError, ValueError) as e:  # a corrupt row: the per-lap path decides
+            logger.debug("Merged driver frame unavailable: %s", e, exc_info=True)
+            return None
+
     def _telemetry_merged(self) -> "Telemetry | None":
         """Assemble all laps' telemetry with a single merged-dict DataFrame build.
 
@@ -1076,18 +1136,17 @@ class Laps(pd.DataFrame):
             # Pergamon P10: the driver's row in the frame tier holds the laps
             # back to back, so the merged frame is a slice of it — no per-lap
             # frames, no concat (14 ms for a 76-lap driver otherwise).
+            # Delphi D8: when the session memo holds the driver's decoded
+            # row (``load()`` or an earlier lap access put it there), the
+            # merged frame is gathered from its arrays instead of reading,
+            # decompressing and decoding the ~6 MB row again (~12 ms per
+            # driver); without one the row is decoded for this frame alone.
             if refs and not ultra_cold and session.enable_cache:
                 drivers = {driver for driver, _ in refs}
                 if len(drivers) == 1 and session._session_cache_available():
                     merged_driver = next(iter(drivers))
-                    merged_frame = get_cache().get_driver_merged_frame(
-                        session.year,
-                        session.gp,
-                        session.session,
-                        merged_driver,
-                        [lap for _, lap in refs],
-                        frame_class=Telemetry,
-                        drop_repeats=True,
+                    merged_frame = self._merged_from_driver_source(
+                        session, merged_driver, [lap for _, lap in refs]
                     )
                     if merged_frame is not None:
                         tel = (
@@ -1412,7 +1471,7 @@ class Lap(pd.Series):
 # Offset aliases pandas 3 removed, as FastF1-era code still spells them
 # (``resample_channels("1S")``): upper-case second/milli/minute/hour.
 _LEGACY_OFFSET_ALIASES = {"S": "s", "L": "ms", "T": "min", "H": "h"}
-_LEGACY_OFFSET_RE = re.compile(r"^\s*(\d*\.?\d*)\s*([SLTH])\s*$")
+_LEGACY_OFFSET_RE = lazy_pattern(r"^\s*(\d*\.?\d*)\s*([SLTH])\s*$", globals(), "_LEGACY_OFFSET_RE")
 
 
 def _modern_offset_alias(rule: str) -> str:
@@ -1523,6 +1582,133 @@ def _clock_ns_values(values: pd.Series) -> np.ndarray:
     return _timedelta_ns(values)
 
 
+#: ``DataFrame._get_column_array`` (pandas 1.5-3.x): the stored column array
+#: (ndarray or extension array) without building a Series. ``_ixs`` is the
+#: fallback should it go away.
+_COLUMN_ARRAY: Any = getattr(pd.DataFrame, "_get_column_array", None)
+
+
+def _column_array(frame: pd.DataFrame, position: int) -> Any:
+    """Column ``position`` of ``frame`` as stored (a view: never written to)."""
+    if _COLUMN_ARRAY is not None:
+        return _COLUMN_ARRAY(frame, position)
+    return cast(Any, frame)._ixs(position, axis=1)._values
+
+
+def _na_mask(values: Any) -> np.ndarray | None:
+    """``isna`` of a column array as a bool ndarray; None when the dtype cannot hold NA.
+
+    The same test pandas' ``ffill``/``interpolate``/``fillna`` run on the
+    column (``isna`` on the block values; a masked array's own mask).
+    """
+    if isinstance(values, np.ndarray):
+        kind = values.dtype.kind
+        if kind in "biu":
+            return None
+        if kind == "f":
+            return np.isnan(values)
+        if kind in "mM":
+            return np.isnat(values)
+        return np.asarray(pd.isna(values), dtype=bool)
+    mask = getattr(values, "_mask", None)  # Int64/Float64/boolean arrays
+    if isinstance(mask, np.ndarray):
+        return mask
+    return np.asarray(values.isna(), dtype=bool)
+
+
+def _ffill_bfill_source(na: np.ndarray, held: np.ndarray | None = None) -> np.ndarray | None:
+    """Positions ``ffill()`` then ``bfill()`` read from; None when every value is NA.
+
+    ``na`` is the NA mask of the sequence in order. With ``held`` (positions
+    into that sequence, non-decreasing) the forward fill is gathered at
+    ``held`` before the backward fill, as
+    ``series.ffill().iloc[held].bfill()`` does. The leading gap, the only one
+    a forward fill leaves, takes the first value found after it.
+    """
+    last_valid = np.maximum.accumulate(np.where(na, -1, np.arange(len(na))))
+    source = last_valid if held is None else last_valid[held]
+    leading = int(np.count_nonzero(source < 0))  # non-decreasing: the NAs are a prefix
+    if leading == len(source):
+        return None
+    if leading:
+        source[:leading] = source[leading]
+    return source
+
+
+def _take_column(values: Any, source: np.ndarray) -> Any:
+    """``values`` gathered at ``source``, dtype and NA semantics kept (a new array)."""
+    if isinstance(values, np.ndarray):
+        return values[source]
+    if isinstance(values.dtype, np.dtype):  # tz-naive DatetimeArray / TimedeltaArray
+        return np.asarray(values)[source]
+    return values.take(source)
+
+
+def _float64_column(values: Any) -> np.ndarray | None:
+    """A numeric column array as float64 with NaN for NA (``to_numeric`` parity), else None.
+
+    Covers numpy integer/float columns and the masked ``Int64``/``Float64``
+    arrays; anything else (object numbers, Arrow-backed numerics) goes
+    through :meth:`Telemetry._float_values`.
+    """
+    if isinstance(values, np.ndarray):
+        if values.dtype == np.float64:
+            return values
+        if values.dtype.kind in "iuf":
+            return values.astype("float64")
+        return None
+    mask = getattr(values, "_mask", None)
+    if isinstance(mask, np.ndarray) and values.dtype.kind in "iuf":
+        return values.to_numpy(dtype="float64", na_value=np.nan)
+    return None
+
+
+#: ``_filled_column`` verdict: the column has gaps but pandas would leave its values as they are.
+_UNCHANGED = object()
+
+
+def _filled_column(values: Any, na: np.ndarray, rule: str, index: pd.Index) -> Any:
+    """The filled column array for a ``fill_missing`` rule, or how to get it.
+
+    Returns the new column (an array, or a Series over ``index`` for object
+    values: ``isetitem`` would infer ``str`` from an object ndarray),
+    ``_UNCHANGED`` when pandas would not alter a single value (an all-NA
+    column held or interpolated), or None when the dtype needs the pandas
+    chain (masked floats, Arrow-backed strings, ...).
+    """
+    if rule == "source":
+        if isinstance(values, np.ndarray) and values.dtype == object:
+            out = values.copy()
+            out[na] = "interpolation"
+            return pd.Series(out, index=index, dtype=object, copy=False)
+        return None
+    if na.all():
+        return _UNCHANGED
+    if rule == "hold":
+        source = _ffill_bfill_source(na)
+        out = _take_column(values, cast(np.ndarray, source))
+        if isinstance(out, np.ndarray) and out.dtype == object:
+            return pd.Series(out, index=index, dtype=object, copy=False)
+        return out
+    if isinstance(values, np.ndarray) and values.dtype.kind == "f":
+        # ``Series.interpolate(limit_direction="both")``: linear on the
+        # positions through ``np.interp``, the edges held (no extrapolation).
+        x = np.arange(len(values))
+        valid = ~na
+        out = values.copy()
+        out[na] = np.interp(x[na], x[valid], values[valid])
+        return out
+    return None
+
+
+def _clock_ns_column(values: Any) -> np.ndarray | None:
+    """An ``[ns]`` datetime/timedelta column array as int64 ns (NaT: int64 min), else None."""
+    dtype = getattr(values, "dtype", None)
+    if isinstance(dtype, np.dtype) and dtype.kind in "mM" and np.datetime_data(dtype) == ("ns", 1):
+        return np.asarray(values).view("i8")
+    return None
+
+
 def _fill_rule(channels: dict[str, dict[str, str | None]], col: Any, dtype: Any) -> str | None:
     """How ``fill_missing`` fills ``col``: ``"interpolate"``, ``"hold"``, ``"source"`` or None.
 
@@ -1538,6 +1724,10 @@ def _fill_rule(channels: dict[str, dict[str, str | None]], col: Any, dtype: Any)
         return None
     if kind == "discrete" or col in _TELEMETRY_META_COLUMNS:
         return "hold"
+    if isinstance(dtype, np.dtype):  # the ``pd.api.types`` checks below, on the kind
+        if dtype.kind in "biu":
+            return "hold"
+        return "interpolate" if dtype.kind == "f" else None
     if pd.api.types.is_bool_dtype(dtype) or pd.api.types.is_integer_dtype(dtype):
         return "hold"
     if pd.api.types.is_float_dtype(dtype):
@@ -1941,21 +2131,35 @@ class Telemetry(pd.DataFrame):
         boolean columns are held like discrete ones, anything else is kept.
         Only columns with gaps are touched.
         """
-        filled = self._owned_copy()
+        # Delphi D6: the gaps are found on the stored column arrays and the
+        # common dtypes are filled with numpy (one source-index gather for
+        # the hold rule, ``np.interp`` on the positions for the linear rule:
+        # pandas' own arithmetic); the pandas chain stays for the rest.
+        filled: Any = None
         for i, (col, dtype) in enumerate(zip(self.columns, self.dtypes, strict=True)):
             rule = _fill_rule(self._CHANNELS, col, dtype)
             if rule is None:
                 continue
-            values = cast(Any, self)._ixs(i, axis=1)
-            if not values.hasnans:
+            values = _column_array(self, i)
+            na = _na_mask(values)
+            if na is None or not na.any():
                 continue
-            if rule == "interpolate":
-                values = values.interpolate(limit_direction="both")
-            elif rule == "hold":
-                values = values.ffill().bfill()
-            else:
-                values = values.fillna("interpolation")
-            filled.isetitem(i, values)
+            new = _filled_column(values, na, rule, self.index)
+            if new is _UNCHANGED:
+                continue
+            if new is None:
+                series = cast(Any, self)._ixs(i, axis=1)
+                if rule == "interpolate":
+                    new = series.interpolate(limit_direction="both")
+                elif rule == "hold":
+                    new = series.ffill().bfill()
+                else:
+                    new = series.fillna("interpolation")
+            if filled is None:
+                filled = self._owned_copy()
+            filled.isetitem(i, new)
+        if filled is None:
+            filled = self._owned_copy()
         return self._wrap(filled)
 
     def _differential_distance_fast(self) -> np.ndarray | None:
@@ -2549,10 +2753,19 @@ class Telemetry(pd.DataFrame):
         step = int(pd.Timedelta(rule).value)
         if step <= 0:
             raise ValueError(f"Resampling rule {rule!r} must be a positive duration")
-        axis = next((col for col in _RESAMPLE_AXIS_COLUMNS if col in self.columns), None)
+        columns = list(self.columns)
+        axis = next((col for col in _RESAMPLE_AXIS_COLUMNS if col in columns), None)
         if axis is None:
             return self._wrap(self._owned_copy())
-        axis_ns = self._clock_ns(axis)
+        # Delphi D6: every column is read as its stored array; the held
+        # (non-continuous) columns are gathered once through a numpy
+        # source-index map instead of four pandas ops each, and the result
+        # is assembled block by block with this frame's column Index (the
+        # dict constructor would infer ``str`` from object ndarrays).
+        arrays = [_column_array(self, i) for i in range(len(columns))]
+        axis_ns = _clock_ns_column(arrays[columns.index(axis)])
+        if axis_ns is None:
+            axis_ns = self._clock_ns(axis)
         positions = np.flatnonzero(axis_ns != _NAT_NS)
         positions = positions[np.argsort(axis_ns[positions], kind="stable")]
         if not len(positions):
@@ -2562,13 +2775,26 @@ class Telemetry(pd.DataFrame):
         n_bins = int(bins[-1]) + 1
         offsets = np.arange(n_bins, dtype="int64") * step
         held = np.searchsorted(x, x[0] + offsets, side="right") - 1
-        out: dict[str, Any] = {}
-        for col, dtype in zip(self.columns, self.dtypes, strict=True):
+        held_source = positions[held]  # the value in force at each bin start, no gaps
+        all_counts = np.bincount(bins, minlength=n_bins)  # samples per bin, every column
+        no_empty_bins = bool(all_counts.all())
+        out: list[Any] = []
+        for i, (col, dtype) in enumerate(zip(columns, self.dtypes, strict=True)):
+            values = arrays[i]
             if col in _RESAMPLE_AXIS_COLUMNS:
-                out[col] = self._resampled_clock(col, dtype, positions[0], offsets)
+                out.append(self._resampled_clock(col, dtype, values, positions[0], offsets))
             elif self._is_continuous_column(col, dtype):
-                values = self._float_values(col)[positions]
+                floats = _float64_column(values)
+                if floats is None:
+                    floats = self._float_values(col)
+                values = floats[positions]
                 valid = ~np.isnan(values)
+                if no_empty_bins and valid.all():
+                    # No NaN sample and no empty bin: the means are the plain
+                    # ratios (the masked path divides the same numbers and
+                    # ``np.interp`` at its own knots returns them unchanged).
+                    out.append(np.bincount(bins, weights=values, minlength=n_bins) / all_counts)
+                    continue
                 counts = np.bincount(bins[valid], minlength=n_bins)
                 sums = np.bincount(bins[valid], weights=values[valid], minlength=n_bins)
                 filled = counts > 0
@@ -2576,11 +2802,21 @@ class Telemetry(pd.DataFrame):
                 if filled.any():
                     means[filled] = sums[filled] / counts[filled]
                     means = np.interp(np.arange(n_bins), np.flatnonzero(filled), means[filled])
-                out[col] = means
+                out.append(means)
             else:
-                in_force = self[col].iloc[positions].reset_index(drop=True).ffill()
-                out[col] = in_force.iloc[held].reset_index(drop=True).bfill()
-        return self._wrap(pd.DataFrame(out, columns=self.columns))
+                na = _na_mask(values)
+                source = held_source
+                if na is not None and na.any():
+                    mapped = _ffill_bfill_source(na[positions], held)
+                    if mapped is not None:  # all NA: any gather is NA
+                        source = positions[mapped]
+                out.append(_take_column(values, source))
+        from .core_utils.pandas_blocks import _frame_from_columns
+
+        frame = _frame_from_columns(
+            out, columns, n_bins, frame_class=Telemetry, column_index=self.columns
+        )
+        return self._wrap(frame)
 
     def _clock_ns(self, col: str) -> np.ndarray:
         """``col`` (timedelta, datetime or numeric seconds) as int64 ns; NaT is int64 min."""
@@ -2593,14 +2829,21 @@ class Telemetry(pd.DataFrame):
         return _timedelta_ns(values)
 
     def _resampled_clock(
-        self, col: str, dtype: Any, first_position: int, offsets: np.ndarray
+        self, col: str, dtype: Any, column: Any, first_position: int, offsets: np.ndarray
     ) -> np.ndarray:
-        """A clock column on the new bins: ``Time`` from zero, the others from the first sample."""
+        """A clock column on the new bins: ``Time`` from zero, the others from the first sample.
+
+        ``column`` is the stored column array (its ``[ns]`` values are read
+        directly; other resolutions and kinds go through :meth:`_clock_ns`).
+        """
         is_date = pd.api.types.is_datetime64_any_dtype(dtype)
         if col == "Time":
             values = offsets
         else:
-            first = int(self._clock_ns(col)[first_position])
+            clock = _clock_ns_column(column)
+            if clock is None:
+                clock = self._clock_ns(col)
+            first = int(clock[first_position])
             values = np.full(len(offsets), _NAT_NS) if first == _NAT_NS else first + offsets
         return values.view("M8[ns]" if is_date else "m8[ns]")
 
@@ -2609,6 +2852,8 @@ class Telemetry(pd.DataFrame):
         kind = self._CHANNELS.get(col, {}).get("type")
         if col in _TELEMETRY_META_COLUMNS or kind in ("discrete", "excluded"):
             return False
+        if isinstance(dtype, np.dtype):  # numeric and not boolean, on the kind
+            return dtype.kind in "iufc"
         return pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
 
     def _float_values(self, col: str) -> np.ndarray:
@@ -2681,7 +2926,9 @@ class Telemetry(pd.DataFrame):
 
 #: Finishing statuses that count as classified finishes (``Finished``, ``+1 Lap``,
 #: ``+2 Laps`` ..., ``Lapped``); everything else is a DNF.
-_CLASSIFIED_STATUS_RE = re.compile(r"^(finished|lapped|\+\s*\d+\s*laps?)$", re.IGNORECASE)
+_CLASSIFIED_STATUS_RE = lazy_pattern(
+    r"^(finished|lapped|\+\s*\d+\s*laps?)$", globals(), "_CLASSIFIED_STATUS_RE", re.IGNORECASE
+)
 
 
 class SessionResults(pd.DataFrame):
@@ -2712,6 +2959,22 @@ class SessionResults(pd.DataFrame):
     @property
     def _constructor_sliced(self):
         return DriverResult
+
+    # As ``Laps`` does: pandas hands these hooks a manager it just built (a
+    # column read, a row take, ...); wrapping it directly skips the
+    # ``SessionResults(df)`` / ``DriverResult(ser)`` constructor round trip
+    # (~20 us per ``results[column]``). ``session`` is reset as ``__init__``
+    # would and ``__finalize__`` propagates it from the source as before.
+    def _constructor_from_mgr(self, mgr, axes):
+        obj = cast(Any, SessionResults)._from_mgr(mgr, axes=axes)
+        object.__setattr__(obj, "session", None)
+        return obj
+
+    def _constructor_sliced_from_mgr(self, mgr, axes):
+        ser = cast(Any, DriverResult)._from_mgr(mgr, axes=axes)
+        ser._name = None  # caller sets the real name (pandas contract)
+        object.__setattr__(ser, "session", None)
+        return ser
 
 
 class DriverResult(pd.Series):
@@ -2784,6 +3047,86 @@ def _empty_result_row() -> dict[str, Any]:
     return row
 
 
+def _driver_rows_mask(laps: pd.DataFrame, driver: str) -> np.ndarray:
+    """``(laps["Driver"] == driver)`` as a boolean array (``NaN`` never matches).
+
+    A category column (the session table) compares its codes: the same
+    rows as the categorical comparison, without materializing it (~70 us
+    for a race).
+    """
+    column = laps[COL_DRIVER]
+    if isinstance(column.dtype, pd.CategoricalDtype):
+        categorical = cast(Any, column.array)
+        try:
+            code = categorical.categories.get_loc(driver)
+        except (KeyError, TypeError):
+            return np.zeros(len(column), dtype=bool)
+        if isinstance(code, int | np.integer):
+            return categorical.codes == code
+    return (column == driver).to_numpy(dtype=bool, na_value=False)
+
+
+def _driver_laps_frame(laps: pd.DataFrame, driver: str) -> pd.DataFrame:
+    """``laps[laps["Driver"] == driver].reset_index(drop=True)`` (a driver's laps).
+
+    The session table lists each driver's laps in one run of rows, so the
+    usual answer is a slice: the blocks are shared under copy-on-write
+    where the boolean take copied every column (~0.6 ms a driver). Rows
+    spread over the table take the boolean path.
+    """
+    mask = _driver_rows_mask(laps, driver)
+    hits = np.flatnonzero(mask)
+    count = len(hits)
+    if count and hits[-1] - hits[0] + 1 == count:
+        start = int(hits[0])
+        frame = laps.iloc[start : start + count]
+        frame.index = pd.RangeIndex(count)
+        return frame
+    return laps[mask].reset_index(drop=True)
+
+
+_PERIODS_PER_SECOND = {"s": 1, "ms": 1_000, "us": 1_000_000, "ns": 1_000_000_000}
+
+
+def _fastest_lap_frame(laps: pd.DataFrame) -> pd.DataFrame | None:
+    """``Driver.get_fastest_lap`` by position for a timedelta ``LapTime``.
+
+    The same lap as ``_filter_valid_laptimes(laps, exclude_deleted=True)``
+    followed by ``nsmallest(1, "LapTimeSeconds").reset_index(drop=True)``:
+    the first row (by position) with the lowest ``LapTime`` among the laps
+    that have one and are not ``Deleted``, as a one-row slice with
+    ``LapTimeSeconds`` set from ``LapTime`` as the filter sets it, on a
+    fresh ``RangeIndex``. An empty frame when no lap qualifies; ``None``
+    when ``LapTime`` is not a timedelta column (the filter converts those).
+    """
+    if COL_LAP_TIME not in laps.columns:
+        return None
+    lap_time = laps[COL_LAP_TIME]
+    dtype = lap_time.dtype
+    if not (isinstance(dtype, np.dtype) and dtype.kind == "m"):
+        return None
+    per_second = _PERIODS_PER_SECOND.get(np.datetime_data(cast(Any, dtype))[0])
+    if per_second is None:
+        return None
+    ticks = lap_time.to_numpy().view("i8")
+    usable = ticks != _NAT_NS
+    not_deleted = _not_deleted_mask(laps)
+    if not_deleted is not None:
+        usable &= not_deleted
+    candidates = np.flatnonzero(usable)
+    if not len(candidates):
+        return pd.DataFrame()
+    # ``total_seconds()``'s own arithmetic (ticks over the periods per second
+    # of the column's resolution), so ties fall exactly as the float sort's.
+    seconds = ticks[candidates] / per_second
+    best = int(np.argmin(seconds))
+    position = int(candidates[best])
+    row = laps.iloc[position : position + 1]
+    row.index = pd.RangeIndex(1)
+    row[COL_LAP_TIME_SECONDS] = seconds[best : best + 1]
+    return row
+
+
 def _results_row_data(
     session: Any, driver: str, driver_number: str
 ) -> tuple[Any, dict[str, Any]] | None:
@@ -2801,22 +3144,66 @@ def _results_row_data(
         return None
     if not isinstance(results, pd.DataFrame) or results.empty:
         return None
-    if "Abbreviation" in results.columns:
+    columns = results.columns
+    if "Abbreviation" in columns:
         mask = (results["Abbreviation"] == driver).to_numpy()
     else:
         mask = np.zeros(len(results), dtype=bool)
-    if "DriverNumber" in results.columns:
+    hits = np.flatnonzero(mask)
+    # The number only decides a shared car (two rows with the code) or stands
+    # in for an unknown code: the usual single match never reads the column.
+    if len(hits) != 1 and "DriverNumber" in columns:
         numbers = results["DriverNumber"].astype(str).to_numpy() == driver_number
-        if mask.sum() > 1:  # a shared car: the number names the driver
+        if len(hits) > 1:
             # ``to_numpy()`` of a pandas 3 (copy-on-write) Series is a
             # read-only view: combine into a new array, never in place.
-            mask = mask & numbers
-        elif not mask.any() and driver_number:
-            mask = numbers
-    if not mask.any():
+            hits = np.flatnonzero(mask & numbers)
+        elif driver_number:
+            hits = np.flatnonzero(numbers)
+    if not len(hits):
         return None
-    row = cast(pd.Series, results[mask].iloc[0])
-    return row.name, {str(key): value for key, value in row.items()}
+    # The row by position: ``results[mask].iloc[0]`` took every column of the
+    # frame (~0.8 ms for 33 single-column blocks) to read one row. The
+    # values are the ones ``fast_xs`` interleaves (``Block.iget`` per column,
+    # so the same scalar types); pandas takes the row when that path is off.
+    position = int(hits[0])
+    values = _interleaved_row(results._mgr, position)
+    if values is None:
+        row = cast(pd.Series, results.iloc[position])
+        return row.name, {str(key): value for key, value in row.items()}
+    return results.index[position], {
+        str(key): value for key, value in zip(columns, values.tolist(), strict=True)
+    }
+
+
+_DRIVER_ROW_INDEX_CACHE: dict[tuple[str, ...], pd.Index] = {}
+_DRIVER_ROW_INDEX_CACHE_MAX = 64
+
+
+def _driver_row_index(keys: tuple[str, ...]) -> pd.Index:
+    """``pd.Index(keys)`` (what ``pd.Series(dict)`` builds), memoized per key tuple.
+
+    A view per caller: an Index is immutable but its ``name`` is not, so no
+    two Drivers share one object.
+    """
+    index = _DRIVER_ROW_INDEX_CACHE.get(keys)
+    if index is None:
+        if len(_DRIVER_ROW_INDEX_CACHE) >= _DRIVER_ROW_INDEX_CACHE_MAX:
+            _DRIVER_ROW_INDEX_CACHE.clear()
+        index = pd.Index(keys)
+        _DRIVER_ROW_INDEX_CACHE[keys] = index
+    return index.view()
+
+
+def _reset_driver_lookup_state(driver: "Driver") -> None:
+    """Clear the per-object lap lookup caches (set directly, never through pandas)."""
+    setattr_ = object.__setattr__
+    setattr_(driver, "_laps", None)
+    setattr_(driver, "_lap_numbers", None)
+    setattr_(driver, "_lap_numbers_df_id", None)
+    setattr_(driver, "_lap_index_map", None)
+    setattr_(driver, "_lap_index_map_df_id", None)
+    setattr_(driver, "_lap_index_map_df_ref", None)
 
 
 class Driver(DriverResult):
@@ -2844,6 +3231,13 @@ class Driver(DriverResult):
     _metadata: ClassVar[list[str]] = ["_name", "session", "driver", "_prefetched_lap_data"]
     session: TelemetryProvider
     driver: str
+    _prefetched_lap_data: dict[str, Any] | None
+    _laps: Any
+    _lap_numbers: set[int] | None
+    _lap_numbers_df_id: int | None
+    _lap_index_map: dict[int, int] | None
+    _lap_index_map_df_id: int | None
+    _lap_index_map_df_ref: pd.DataFrame | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
         """Allow Series-style subclass construction without re-implementing __new__."""
@@ -2898,19 +3292,19 @@ class Driver(DriverResult):
             if not driver_number:
                 driver_number = str(data.get("DriverNumber") or "")
 
-        # Initialize Series with driver data and name
-        cast(Any, pd.Series).__init__(self, data, name=label)
+        # The Series constructor's own dict path (the values on an Index of
+        # the keys), with that ``str`` Index memoized per key tuple (~60 us).
+        cast(Any, pd.Series).__init__(
+            self, list(data.values()), index=_driver_row_index(tuple(data)), name=label
+        )
 
-        # Set custom attributes
+        # Set custom attributes. The lookup caches are not ``_metadata``, so
+        # ``NDFrame.__setattr__`` would probe the row index for each (~20 us
+        # on an Arrow-backed index) before storing them on the object.
         self.session = session
         self.driver = driver
         self._prefetched_lap_data = prefetched_lap_data
-        self._laps = None
-        self._lap_numbers = None
-        self._lap_numbers_df_id = None
-        self._lap_index_map: dict[int, int] | None = None
-        self._lap_index_map_df_id: int | None = None
-        self._lap_index_map_df_ref: pd.DataFrame | None = None
+        _reset_driver_lookup_state(self)
 
     def _reconstruct(self, data=None, *args, **kwargs):
         """Reconstruct a Driver Series without invoking its domain constructor."""
@@ -2921,12 +3315,7 @@ class Driver(DriverResult):
         result._prefetched_lap_data = self._prefetched_lap_data
         # Derived lookup state belongs to the source frame and must not be
         # shared with a reconstructed Series.
-        result._laps = None
-        result._lap_numbers = None
-        result._lap_numbers_df_id = None
-        result._lap_index_map = None
-        result._lap_index_map_df_id = None
-        result._lap_index_map_df_ref = None
+        _reset_driver_lookup_state(result)
         return result
 
     @property
@@ -2965,15 +3354,10 @@ class Driver(DriverResult):
                         driver_laps = session_laps_pl.filter(pl.col(COL_DRIVER) == self.driver)
                     else:
                         session_laps_pd = cast(pd.DataFrame, self.session._laps)
-                        # Argos A4: a boolean mask; DataFrame.query(engine="python")
-                        # re-tokenised the expression on every call (~1.7 ms vs
-                        # ~0.4 ms on a 1455-row frame) for the same rows.
-                        driver_mask = (session_laps_pd[COL_DRIVER] == self.driver).to_numpy(
-                            dtype=bool, na_value=False
-                        )
-                        driver_laps = session_laps_pd[driver_mask].reset_index(drop=True)
+                        driver_laps = _driver_laps_frame(session_laps_pd, self.driver)
                         if self.session.lib == "pandas":
-                            driver_laps = Laps(driver_laps)
+                            if not isinstance(driver_laps, Laps):
+                                driver_laps = Laps(driver_laps)
                             driver_laps.session = self.session
 
                     if not _is_empty_df(driver_laps, self.session.lib):
@@ -3153,17 +3537,23 @@ class Driver(DriverResult):
     def get_fastest_lap(self) -> DataFrame:
         """Get driver's fastest non-deleted lap (empty DataFrame if there is none)."""
         laps = self.laps
-        if _is_empty_df(laps, self.session.lib):
-            return _create_empty_df(self.session.lib)
+        lib = self.session.lib
+        if _is_empty_df(laps, lib):
+            return _create_empty_df(lib)
 
-        valid = _filter_valid_laptimes(laps, self.session.lib, exclude_deleted=True)
-        if _is_empty_df(valid, self.session.lib):
-            return _create_empty_df(self.session.lib)
+        if lib != "polars" and isinstance(laps, pd.DataFrame):
+            fastest = _fastest_lap_frame(laps)
+            if fastest is not None:
+                return fastest
+
+        valid = _filter_valid_laptimes(laps, lib, exclude_deleted=True)
+        if _is_empty_df(valid, lib):
+            return _create_empty_df(lib)
 
         sort_col = self.session._lap_time_sort_column(valid)
         return (
             valid.sort(sort_col).head(1)
-            if self.session.lib == "polars"
+            if lib == "polars"
             else valid.nsmallest(1, sort_col).reset_index(drop=True)
         )
 

@@ -13,7 +13,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import cache, lru_cache
-from importlib.resources import files
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import orjson
@@ -21,6 +21,7 @@ import orjson
 from .cache import get_cache
 from .config import get_config
 from .core_utils.constants import EVENT_NAME_ALIASES, F1_API_FIRST_YEAR, MIN_YEAR
+from .core_utils.lazy_import import lazy_pattern
 from .core_utils.runtime import THREADS_AVAILABLE
 from .exceptions import (
     CacheError,
@@ -53,7 +54,49 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-_F1SCHEDULE_YEAR_PATTERN = re.compile(r"^schedule_(\d{4})\.json$")
+_F1SCHEDULE_YEAR_PATTERN = lazy_pattern(
+    r"^schedule_(\d{4})\.json$", globals(), "_F1SCHEDULE_YEAR_PATTERN"
+)
+
+# The packaged schedules live next to this module. On a filesystem install
+# (every wheel and editable install) they are read through ``pathlib``:
+# ``importlib.resources`` costs ~2 ms to import plus ~1 ms for its first
+# ``files()`` call, which was most of the first ``get_session`` resolution
+# (Delphi D2). A package loaded from an archive still goes through
+# ``importlib.resources``.
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_VENDORED_SCHEDULES = "data/schedules"
+_package_dir_on_disk: bool | None = None
+
+
+def _package_on_disk() -> bool:
+    global _package_dir_on_disk
+    if _package_dir_on_disk is None:
+        _package_dir_on_disk = (_PACKAGE_DIR / _VENDORED_SCHEDULES).is_dir()
+    return _package_dir_on_disk
+
+
+def _vendored_schedule_bytes(relative: str) -> bytes:
+    """Bytes of ``data/schedules/<relative>``; ``OSError`` when it is not packaged."""
+    if _package_on_disk():
+        return (_PACKAGE_DIR / _VENDORED_SCHEDULES / relative).read_bytes()
+    from importlib.resources import files
+
+    return files("tif1").joinpath(f"{_VENDORED_SCHEDULES}/{relative}").read_bytes()
+
+
+def _vendored_schedule_names(subdir: str) -> list[str]:
+    """File names inside ``data/schedules/<subdir>`` (empty when not packaged)."""
+    if _package_on_disk():
+        directory = _PACKAGE_DIR / _VENDORED_SCHEDULES / subdir
+        return [path.name for path in directory.iterdir()] if directory.is_dir() else []
+    from importlib.resources import files
+
+    return [
+        item.name for item in files("tif1").joinpath(f"{_VENDORED_SCHEDULES}/{subdir}").iterdir()
+    ]
+
+
 # Same source FastF1 reads. raw.githubusercontent.com serves a branch file with
 # a 5-minute edge cache, so a calendar change lands within minutes; jsDelivr
 # pins branch references for 12 hours (and the CDN chain in ``tif1.cdn`` is for
@@ -255,9 +298,7 @@ def _load_vendored_f1schedule_year(year: int) -> dict[str, Any] | None:
     """
     name = f"schedule_{year}.json"
     try:
-        raw_year = orjson.loads(
-            files("tif1").joinpath(f"data/schedules/f1schedule/{name}").read_bytes()
-        )
+        raw_year = orjson.loads(_vendored_schedule_bytes(f"f1schedule/{name}"))
     except OSError:
         return None
     if not isinstance(raw_year, dict):
@@ -269,10 +310,9 @@ def _load_vendored_f1schedule_year(year: int) -> dict[str, Any] | None:
 
 def _load_vendored_f1schedule_years() -> dict[str, Any]:
     """Every packaged f1schedule season, keyed by year string."""
-    schedules_dir = files("tif1").joinpath("data/schedules/f1schedule")
     years: dict[str, Any] = {}
-    for item in schedules_dir.iterdir():
-        match = _F1SCHEDULE_YEAR_PATTERN.match(item.name)
+    for name in _vendored_schedule_names("f1schedule"):
+        match = _F1SCHEDULE_YEAR_PATTERN.match(name)
         if match is None:
             continue
         converted = _load_vendored_f1schedule_year(int(match.group(1)))
@@ -594,10 +634,9 @@ def _load_vendored_ergast_year(year: int) -> list[dict[str, Any]] | None:
     """The packaged compact Ergast race list of ``year`` (None when not vendored)."""
     if year in _ergast_vendored_years:
         return _ergast_vendored_years[year]
-    path = files("tif1").joinpath(f"data/schedules/ergast/schedule_{year}.json")
     races: list[dict[str, Any]] | None = None
     try:
-        payload = orjson.loads(path.read_bytes())
+        payload = orjson.loads(_vendored_schedule_bytes(f"ergast/schedule_{year}.json"))
         candidate = payload.get("races") if isinstance(payload, dict) else None
         if isinstance(candidate, list):
             races = candidate
@@ -1018,7 +1057,7 @@ def _event_session_name(
 # every event score 67 or less ("Moon GP", "Paris", "Invalid GP" 57).
 _FUZZY_MIN_SCORE = 70.0
 
-_ALIAS_NOISE_RE = re.compile(r"\b(?:grand prix|gp|formula ?1|f1)\b")
+_ALIAS_NOISE_RE = lazy_pattern(r"\b(?:grand prix|gp|formula ?1|f1)\b", globals(), "_ALIAS_NOISE_RE")
 
 
 def _event_alias_key(name: str) -> str:

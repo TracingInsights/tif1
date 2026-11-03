@@ -31,13 +31,17 @@ from __future__ import annotations
 import copy
 import logging
 import math
-import re
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
+from .lazy_import import lazy_module, lazy_pattern
 from .runtime import import_supported_polars
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    # numpy loads with the first state table; a polars laps read never needs it.
+    np = lazy_module("numpy", globals(), "np")
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,8 @@ _SESSION_DURATIONS: dict[str, timedelta] = {
     "Race": timedelta(hours=2),
 }
 
-_NS_MIN = np.iinfo("int64").min
+_NS_MIN = -(2**63)
+_NS_PER_SECOND = 1_000_000_000
 
 
 def _is_nan(value: Any) -> bool:
@@ -200,13 +205,45 @@ def _seconds_ns(value: Any) -> int | None:
     return round(value * 1000) * 1_000_000
 
 
+_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001 - naive, as the datetime64[ns] clocks
+_MICROSECOND = timedelta(microseconds=1)
+# ``YYYY-MM-DD[T ]HH:MM[:SS[.fraction]]`` or a date: parsed without numpy.
+_ISO_DATETIME_PARTS = lazy_pattern(
+    r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?",
+    globals(),
+    "_ISO_DATETIME_PARTS",
+)
+
+
+def _iso_timestamp_ns(value: str) -> int | None:
+    """A plain ISO timestamp (no zone) as int64 ns, exactly as ``numpy.datetime64`` reads it.
+
+    ``None`` when the string is not one of the shapes above (the caller
+    decides); an impossible calendar date raises ``ValueError`` like numpy.
+    """
+    match = _ISO_DATETIME_PARTS.fullmatch(value)
+    if match is None:
+        return None
+    year, month, day, hour, minute, second, fraction = match.groups()
+    moment = datetime(  # noqa: DTZ001 - naive
+        int(year), int(month), int(day), int(hour or 0), int(minute or 0), int(second or 0)
+    )
+    ns = ((moment - _EPOCH) // _MICROSECOND) * 1000
+    if fraction:
+        ns += int(fraction.ljust(9, "0"))
+    return ns
+
+
 def file_t0_date_ns(payload: dict[str, Any]) -> int | None:
     """``t0_date`` of a ``session_info.json`` payload as int64 ns (None when absent)."""
     value = payload.get("t0_date")
     if not isinstance(value, str):
         return None
     try:
-        return int(np.datetime64(value, "ns").astype("int64"))
+        ns = _iso_timestamp_ns(value)
+        if ns is None:  # another of numpy's spellings
+            ns = int(np.datetime64(value, "ns").astype("int64"))
+        return ns
     except ValueError:
         return None
 
@@ -515,10 +552,14 @@ def _session_type(session_name: str) -> str:
 
 
 def _event_value(event: Any, key: str) -> Any:
-    try:
-        value = event[key] if key in event.index else None
-    except (AttributeError, KeyError, TypeError):
-        value = getattr(event, key, None)
+    """A field of the schedule row (a pandas ``Event`` or the plain row mapping), None if unset."""
+    if isinstance(event, dict):
+        value = event.get(key)
+    else:
+        try:
+            value = event[key] if key in event.index else None
+        except (AttributeError, KeyError, TypeError):
+            value = getattr(event, key, None)
     if value is None or _is_nan(value):
         return None
     return value
@@ -577,7 +618,7 @@ def status_frame(
     ``messages`` are the stream's own; without them each status code's
     fastf1 message is used.
     """
-    times = np.asarray([row[0] for row in rows], dtype="int64")
+    times = [row[0] for row in rows]
     statuses = [row[1] for row in rows]
     if messages is None:
         messages = [TRACK_STATUS_MESSAGES.get(status, "") for status in statuses]
@@ -595,7 +636,7 @@ def status_frame(
     import pandas as pd
 
     data_pd: dict[str, Any] = {
-        "Time": pd.Series(times.view("timedelta64[ns]")),
+        "Time": pd.Series(np.asarray(times, dtype="int64").view("timedelta64[ns]")),
         "Status": pd.Series(statuses, dtype=object),
     }
     if with_message:
@@ -610,7 +651,9 @@ _WEATHER_COLUMNS = _WEATHER_FLOAT_COLUMNS | {"Time", "WindDirection", "Rainfall"
 _RCM_TEXT_COLUMNS = frozenset({"Category", "Message", "Status", "Flag", "Scope", "RacingNumber"})
 _RCM_COLUMNS = _RCM_TEXT_COLUMNS | {"Time", "Sector", "Lap"}
 # Timestamps numpy, pandas' ISO8601 parser and polars' ``%Y-%m-%dT%H:%M:%S%.f`` agree on.
-_ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?")
+_ISO_TIMESTAMP = lazy_pattern(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?", globals(), "_ISO_TIMESTAMP"
+)
 # Integers a float64 holds exactly: the generic builds pass some columns through float64.
 _FLOAT_EXACT_INT = 2**53
 
@@ -650,6 +693,8 @@ def weather_frame(data: dict[str, Any], rename_map: dict[str, str], lib: str) ->
     pairs = _table_columns(data, rename_map, _WEATHER_COLUMNS)
     if pairs is None:
         return None
+    if lib == "polars":
+        return _weather_polars(data, pairs)
     from .helpers import _seconds_to_td64ns, _td_cast_is_safe
 
     arrays: dict[str, np.ndarray] = {}
@@ -680,11 +725,6 @@ def weather_frame(data: dict[str, Any], rename_map: dict[str, str], lib: str) ->
                 arrays[column] = floats
     except (OverflowError, TypeError, ValueError):
         return None
-    if lib == "polars":
-        pl = import_supported_polars()
-        if pl is None:  # pragma: no cover - a polars session always has polars
-            return None
-        return pl.DataFrame([pl.Series(column, array) for column, array in arrays.items()])
     import pandas as pd
 
     columns: dict[str, Any] = dict(arrays)
@@ -693,6 +733,66 @@ def weather_frame(data: dict[str, Any], rename_map: dict[str, str], lib: str) ->
     if "Rainfall" in columns:
         columns["Rainfall"] = pd.array(columns["Rainfall"], dtype="boolean")
     return pd.DataFrame(columns)
+
+
+def _weather_polars(data: dict[str, Any], pairs: list[tuple[str, str]]) -> Any | None:
+    """:func:`weather_frame` for polars: typed lists, no numpy array (the import is ~55 ms)."""
+    pl = import_supported_polars()
+    if pl is None:  # pragma: no cover - a polars session always has polars
+        return None
+    series = []
+    try:
+        for key, column in pairs:
+            values = data[key]
+            types = set(map(type, values))
+            if column == "Rainfall":
+                if types != {bool}:
+                    return None
+                series.append(pl.Series(column, values, dtype=pl.Boolean))
+            elif column == "WindDirection":
+                # polars rounds through float64 before its Int64 cast.
+                if types != {int} or max(map(abs, values)) >= _FLOAT_EXACT_INT:
+                    return None
+                series.append(pl.Series(column, values, dtype=pl.Int64))
+            elif column == "Time":
+                if not types <= {float, int}:
+                    return None
+                nanos = _seconds_list_to_ns(values)
+                if nanos is None:
+                    return None
+                series.append(pl.Series(column, nanos, dtype=pl.Int64).cast(pl.Duration("ns")))
+            else:
+                if not types <= {float, int}:
+                    return None
+                series.append(pl.Series(column, [float(value) for value in values], pl.Float64))
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return pl.DataFrame(series)
+
+
+def _seconds_list_to_ns(seconds: list[float | int]) -> list[int | None] | None:
+    """float seconds as int64 ns exactly as ``helpers._seconds_to_td64ns`` casts an array.
+
+    pandas' ``cast_from_unit_vectorized`` value by value: truncate to whole
+    seconds, round the fraction to 9 decimals (``numpy.round``: scale, round
+    half to even, unscale), scale both to nanoseconds and truncate; NaN is
+    ``None`` (NaT). ``None`` for an empty list or a value the array cast would
+    not take (inf, or |x| >= 9e9 s), as ``helpers._td_cast_is_safe`` refuses.
+    """
+    if not seconds:
+        return None
+    out: list[int | None] = []
+    for raw in seconds:
+        value = float(raw)
+        if value != value:  # noqa: PLR0124 - NaN
+            out.append(None)
+            continue
+        if math.isinf(value) or abs(value) >= 9.0e9:
+            return None
+        whole = int(value)
+        fraction = round((value - whole) * _NS_PER_SECOND) / _NS_PER_SECOND
+        out.append(whole * _NS_PER_SECOND + int(fraction * _NS_PER_SECOND))
+    return out
 
 
 def _iso_timestamps_ns(values: list[Any]) -> np.ndarray | None:
@@ -704,6 +804,20 @@ def _iso_timestamps_ns(values: list[Any]) -> np.ndarray | None:
         return np.array(values, dtype="datetime64[ns]").view("int64")
     except (OverflowError, ValueError):
         return None
+
+
+def _iso_timestamps_ns_list(values: list[Any]) -> list[int] | None:
+    """:func:`_iso_timestamps_ns` as a list, parsed without numpy (polars tables)."""
+    out: list[int] = []
+    try:
+        for value in values:
+            ns = _iso_timestamp_ns(value) if type(value) is str else None
+            if ns is None or _ISO_TIMESTAMP.fullmatch(value) is None:
+                return None
+            out.append(ns)
+    except (OverflowError, ValueError):
+        return None
+    return out
 
 
 def _sector_floats(values: list[Any], missing: Any) -> list[Any] | None:
@@ -795,11 +909,11 @@ def _race_control_polars(data: dict[str, Any], pairs: list[tuple[str, str]]) -> 
         for key, column in pairs:
             values = data[key]
             if column == "Time":
-                times = _iso_timestamps_ns(values)
+                times = _iso_timestamps_ns_list(values)
                 # polars parses these timestamps to microseconds.
-                if times is None or (times % 1000).any():
+                if times is None or any(time_ns % 1000 for time_ns in times):
                     return None
-                series.append(pl.Series(column, times.view("datetime64[ns]")))
+                series.append(pl.Series(column, times, dtype=pl.Int64).cast(pl.Datetime("ns")))
             elif column == "Sector":
                 sectors = _sector_floats(values, None)
                 if sectors is None:

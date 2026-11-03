@@ -158,6 +158,10 @@ class Config:
             # thread while get_session() returns, so the first payload request
             # of a cold load rides an already-open connection.
             "cdn_preconnect": True,
+            # Delphi D1: freeze the heap in an atexit hook so CPython's final
+            # garbage collections skip the ~300k objects pandas/numpy/pyarrow
+            # (or polars) built at import: 40-80 ms off every script's exit.
+            "exit_gc_freeze": True,
             # Thebes TH3: a request on the primary CDN that has not answered
             # within a multiple of that CDN's measured latency (clamped to
             # cdn_hedge_max_delay seconds) is re-issued on the next mirror and
@@ -270,6 +274,7 @@ class Config:
             "TIF1_HTTP_DISABLE_HTTP3": ("http_disable_http3", _to_bool),
             "TIF1_HTTP_REVOCATION_CHECK": ("http_revocation_check", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
+            "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),
             "TIF1_CDNS": ("cdns", _to_list),

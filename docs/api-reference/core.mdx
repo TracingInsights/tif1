@@ -507,12 +507,12 @@ class Session:
   Schedule row for the event (a `pd.Series` subclass): `RoundNumber`, `Country`, `Location`, `EventName`, `EventFormat`, session names, and dates.
 </ResponseField>
 
-<ResponseField name="session_start_time" type="pd.Timedelta">
-  The session time of the first `Started` row of `session_status`, as in fastf1. For races and sprints, this is the start of the formation lap. `NaT` when it is not known. It is a `pd.Timedelta` on both backends.
+<ResponseField name="session_start_time" type="pd.Timedelta | datetime.timedelta">
+  The session time of the first `Started` row of `session_status`, as in fastf1. For races and sprints, this is the start of the formation lap. On a pandas session it is a `pd.Timedelta`, `NaT` when it is not known. On a polars session it is a `datetime.timedelta`, `None` when it is not known: polars sessions never import pandas, and their `Duration` columns return the same type.
 </ResponseField>
 
-<ResponseField name="t0_date" type="pd.Timestamp">
-  The wall-clock date at session time zero, as in fastf1. `NaT` for a session without laps (Ergast-only seasons). It is a `pd.Timestamp` on both backends.
+<ResponseField name="t0_date" type="pd.Timestamp | datetime.datetime">
+  The wall-clock date (UTC) at session time zero, as in fastf1. On a pandas session it is a `pd.Timestamp`, `NaT` for a session without laps (Ergast-only seasons). On a polars session it is a naive `datetime.datetime`, `None` for a session without laps.
 </ResponseField>
 
 <ResponseField name="session_status" type="DataFrame">

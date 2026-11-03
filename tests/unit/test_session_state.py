@@ -9,7 +9,8 @@ status codes and message strings; ``session_status``, ``session_start_time``,
 
 from __future__ import annotations
 
-from datetime import timedelta
+import math
+from datetime import datetime, timedelta
 from typing import Any, ClassVar
 
 import numpy as np
@@ -982,6 +983,60 @@ class TestSessionInfoFile:
         assert session._session_info_file() is None
         assert fetched == []
 
+    # -- polars sessions: stdlib scalars, no pandas (Delphi D3) ----------------------
+
+    def test_polars_scalars_are_stdlib(self):
+        pl = pytest.importorskip("polars")
+        session, _ = _file_session(lib="polars")
+        t0 = session.t0_date
+        assert type(t0) is datetime
+        assert t0 == datetime.fromisoformat("2025-04-13T14:55:01.234")
+        assert t0.tzinfo is None
+        start = session.session_start_time
+        assert type(start) is timedelta
+        assert start == timedelta(seconds=3414.74)
+        # The pandas session's values, to the microsecond.
+        pandas_session, _ = _file_session()
+        assert pandas_session.t0_date.to_pydatetime() == t0
+        assert pandas_session.session_start_time.to_pytimedelta() == start
+        assert session.total_laps == 57
+        assert isinstance(session.track_status, pl.DataFrame)
+
+    def test_polars_unknown_scalars_are_none(self):
+        pl = pytest.importorskip("polars")
+        session, _ = _file_session(
+            {**_FILE, "t0_date": None, "session_start_time": None}, lib="polars"
+        )
+        session._laps = pl.DataFrame()  # a null t0_date falls back to the (empty) laps
+        session._race_control_messages = pl.DataFrame()
+        assert session.t0_date is None
+        assert session.session_start_time is None
+
+    @pytest.mark.parametrize(
+        ("year", "event"), [(2025, "Bahrain Grand Prix"), (1995, "Brazilian Grand Prix")]
+    )
+    def test_polars_derived_session_info_matches_pandas(self, year, event):
+        """Without the file a polars session derives ``session_info`` from the schedule row."""
+        pytest.importorskip("polars")
+        missing = DataNotFoundError(path="session_info.json")
+        infos = {}
+        for lib in ("pandas", "polars"):
+            session = core.Session(year, event, "Race", enable_cache=False, lib=lib)
+            session._fetch_json = _missing_session_info  # type: ignore[method-assign]
+            assert session._session_info_file() is None, missing
+            infos[lib] = session.session_info
+        polars_info = infos["polars"]
+        assert type(polars_info["StartDate"]) is datetime
+        assert polars_info["EndDate"] - polars_info["StartDate"] == timedelta(hours=2)
+        assert polars_info["GmtOffset"] is None or type(polars_info["GmtOffset"]) is timedelta
+        pandas_info = infos["pandas"]
+        for key in ("StartDate", "EndDate"):
+            pandas_info[key] = pandas_info[key].to_pydatetime()
+        if pandas_info["GmtOffset"] is not None:
+            pandas_info["GmtOffset"] = pandas_info["GmtOffset"].to_pytimedelta()
+        assert polars_info == pandas_info
+        assert polars_info["Meeting"]["Name"] == event
+
 
 # -- typed weather / race-control tables -------------------------------------------
 
@@ -1076,6 +1131,108 @@ class TestTypedSessionTables:
         else:
             assert typed.schema == generic.schema
             assert typed.equals(generic, null_equal=True)
+
+
+class TestNumpyFreeTables:
+    """The polars state tables are built from lists (Delphi D10: no numpy import)."""
+
+    SECONDS: ClassVar[list[float]] = [
+        0.1 + 0.2,
+        14.542,
+        74.57,
+        134.574,
+        1e-9,
+        0.9999999995,
+        -0.5,
+        12345678.123456789,
+        7,
+        0,
+        -3,
+        math.nan,
+    ]
+
+    def test_seconds_list_is_the_vectorized_cast(self):
+        from tif1.core_utils.helpers import _seconds_to_td64ns
+
+        expected = _seconds_to_td64ns(np.asarray(self.SECONDS, dtype="float64")).view("int64")
+        got = ss._seconds_list_to_ns(self.SECONDS)
+        assert got == [None if value == ss._NS_MIN else value for value in expected.tolist()]
+
+    @pytest.mark.parametrize("values", [[math.inf], [-math.inf], [9.1e9], []])
+    def test_seconds_list_refuses_what_the_cast_refuses(self, values):
+        assert ss._seconds_list_to_ns(values) is None
+
+    def test_iso_timestamp_list_is_numpys_parse(self):
+        stamps = [
+            "2025-04-13T14:20:01.000000000",
+            "2025-04-13T14:20:01.123456789",
+            "2025-04-13T14:20:01.5",
+            "2025-04-13T14:20:01",
+            "1999-12-31T23:59:59.999999999",
+        ]
+        assert ss._iso_timestamps_ns_list(stamps) == ss._iso_timestamps_ns(stamps).tolist()
+        assert ss._iso_timestamps_ns_list(["2025-04-13T14:20:01Z"]) is None
+        assert ss._iso_timestamps_ns_list([None]) is None
+        assert ss._iso_timestamps_ns_list(["2025-02-30T00:00:00"]) is None
+
+    @pytest.mark.parametrize(
+        "value",
+        ["2025-04-13T14:08:14.267000", "2025-04-13 14:08:14", "2025-04-13", "2025-04-13T14:08"],
+    )
+    def test_iso_timestamp_spellings_match_numpy(self, value):
+        assert ss._iso_timestamp_ns(value) == int(np.datetime64(value, "ns").astype("int64"))
+
+    def test_other_spellings_and_bad_dates(self):
+        assert ss._iso_timestamp_ns("2025-04-13T14:08:14.1234567891") is None
+        with pytest.raises(ValueError, match="day is out of range"):
+            ss._iso_timestamp_ns("2025-02-30T00:00:00")
+
+    def test_file_t0_date_keeps_numpys_spellings(self):
+        value = "2025-04-13T14:08:14.1234567891"  # ten digits: not the fast parse
+        expected = int(np.datetime64(value, "ns").astype("int64"))
+        assert ss.file_t0_date_ns({"t0_date": value}) == expected
+        assert ss.file_t0_date_ns({"t0_date": "2025-04-13T14:08:14.267000"}) == int(
+            np.datetime64("2025-04-13T14:08:14.267000", "ns").astype("int64")
+        )
+        assert ss.file_t0_date_ns({"t0_date": "2025-02-30T00:00:00"}) is None
+        assert ss.file_t0_date_ns({"t0_date": "not a date"}) is None
+        assert ss.file_t0_date_ns({"t0_date": 5}) is None
+
+    def test_polars_weather_time_is_the_vectorized_cast(self):
+        pl = pytest.importorskip("polars")
+        from tif1.core_utils.helpers import _seconds_to_td64ns
+
+        seconds = [14.542, 74.57, 134.574, 194.6]
+        payload = {
+            "wT": seconds,
+            "wAT": [27.0, 27, 28.5, 28.0],
+            "wH": [45.0, 46.0, 47.0, 48.0],
+            "wP": [1017.0, 1017.0, 1016.5, 1016.0],
+            "wR": [False, False, True, False],
+            "wTT": [35.0, 35.5, 36.0, 36.5],
+            "wWD": [200, 210, 220, 230],
+            "wWS": [1.0, 1.2, 1.4, 1.6],
+        }
+        frame = ss.weather_frame(payload, core.WEATHER_RENAME_MAP, "polars")
+        assert frame.schema["Time"] == pl.Duration("ns")
+        assert frame.schema["Rainfall"] == pl.Boolean
+        assert frame.schema["WindDirection"] == pl.Int64
+        assert frame.schema["AirTemp"] == pl.Float64
+        assert (
+            frame["Time"].cast(pl.Int64).to_list()
+            == _seconds_to_td64ns(np.asarray(seconds)).view("int64").tolist()
+        )
+        assert frame["AirTemp"].to_list() == [27.0, 27.0, 28.5, 28.0]
+        assert (
+            ss.weather_frame(
+                {**payload, "wWD": [2**53, 0, 0, 0]}, core.WEATHER_RENAME_MAP, "polars"
+            )
+            is None
+        )
+        assert (
+            ss.weather_frame({**payload, "wR": [1, 0, 1, 0]}, core.WEATHER_RENAME_MAP, "polars")
+            is None
+        )
 
 
 class TestClockColumns:

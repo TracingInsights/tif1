@@ -154,8 +154,8 @@ fastf1 reads the track status, the session status, and the session information f
 
 | Attribute | tif1 source |
 | :--- | :--- |
-| `t0_date` | The fastf1 value. `NaT` for a session without laps |
-| `session_start_time` | The first `Started` row of `session_status`. For races and sprints, the start of the formation lap |
+| `t0_date` | The fastf1 value. `NaT` for a session without laps. A polars session returns a `datetime.datetime` (`None` without laps) |
+| `session_start_time` | The first `Started` row of `session_status`. For races and sprints, the start of the formation lap. A polars session returns a `datetime.timedelta` (`None` when unknown) |
 | `track_status` | `Time`, `Status`, `Message` rows of the `TrackStatus` stream |
 | `session_status` | `Time`, `Status` rows of the `SessionStatus` stream: `Inactive`, `Started`, `Aborted`, `Finished`, `Finalised`, `Ends` |
 | `session_info` | The `SessionInfo` payload, with `Key`, `Meeting.Key`, `Path`, and `ArchiveStatus` |

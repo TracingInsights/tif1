@@ -9,7 +9,8 @@ is served from memory: nothing reaches the network.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+import math
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -177,6 +178,107 @@ def _same_frame(pandas_frame: pd.DataFrame, polars_frame: Any) -> None:
 
 
 # -- session surfaces ----------------------------------------------------------------
+
+
+class TestPolarsResultsBuilder:
+    """The polars results frame is built from typed lists (Delphi D10: no numpy import)."""
+
+    ROWS: ClassVar[list[dict[str, Any]]] = [
+        {
+            "DriverNumber": "4",
+            "Abbreviation": "NOR",
+            "TeamName": "McLaren",
+            "Position": math.nan,  # unknown: sorts last, stable
+            "Status": None,
+            "Points": 0,
+            "Laps": 57.0,
+            "Time": dt.timedelta(seconds=5401, microseconds=123456),
+            "Q1": 90_123_456_789,  # int ns, as the lap-derived rows carry them
+            "Q2": None,
+            "DateOfBirth": "1999-11-13",
+        },
+        {
+            "DriverNumber": "1",
+            "Abbreviation": "VER",
+            "TeamName": "Red Bull Racing",
+            "Position": 2.0,
+            "Status": "Finished",
+            "Points": 18.0,
+            "Laps": 57.0,
+            "Time": None,
+            "Q1": np.timedelta64(91_000_000_000, "ns"),
+            "Q2": np.timedelta64("NaT", "ns"),
+            "DateOfBirth": dt.datetime(1997, 9, 30),  # noqa: DTZ001 - naive, as the column
+        },
+        {
+            "DriverNumber": "81",
+            "Abbreviation": "PIA",
+            "TeamName": "McLaren",
+            "Position": 1.0,
+            "Status": "Finished",
+            "Points": 25.0,
+            "Laps": 57,
+            "Time": dt.timedelta(seconds=5400),
+            "Q1": 89_000_000_000,
+            "Q2": 88_500_000_000,
+            "DateOfBirth": None,
+            "HeadshotUrl": 42,  # a str column with a non-str value reads as its str
+        },
+    ]
+
+    def test_list_path_is_the_array_path(self, monkeypatch):
+        from tif1.core_utils import ergast_results as er
+
+        frame = er.finalize_results_frame_polars(self.ROWS)
+        monkeypatch.setattr(er, "_native_result_columns", lambda _rows: None)
+        arrays = er.finalize_results_frame_polars(self.ROWS)
+        assert frame.schema == arrays.schema
+        assert frame.equals(arrays, null_equal=True)
+        assert frame.columns == list(er.RESULTS_COLUMN_ORDER)
+        assert frame["Abbreviation"].to_list() == ["PIA", "VER", "NOR"]
+        assert frame["Status"].to_list() == ["Finished", "Finished", None]
+        assert frame["TeamColor"].to_list() == ["", "", ""]
+        assert frame["HeadshotUrl"].to_list() == ["42", "", ""]
+        assert frame["Points"].to_list() == [25.0, 18.0, 0.0]
+        assert frame.schema["Q1"] == pl.Duration("ns")
+        assert frame["Q1"].cast(pl.Int64).to_list() == [
+            89_000_000_000,
+            91_000_000_000,
+            90_123_456_789,
+        ]
+        assert frame["Q2"].to_list() == [dt.timedelta(seconds=88.5), None, None]
+        assert frame["Time"].to_list() == [
+            dt.timedelta(seconds=5400),
+            None,
+            dt.timedelta(seconds=5401, microseconds=123456),
+        ]
+        assert frame.schema["DateOfBirth"] == pl.Datetime("ns")
+        assert frame["DateOfBirth"].to_list() == [
+            None,
+            dt.datetime(1997, 9, 30),  # noqa: DTZ001
+            dt.datetime(1999, 11, 13),  # noqa: DTZ001
+        ]
+
+    def test_values_only_pandas_reads_take_the_array_path(self):
+        from tif1.core_utils import ergast_results as er
+
+        rows = [dict(self.ROWS[1], Status=5), dict(self.ROWS[2])]
+        assert er._native_result_columns(rows) is None  # a numeric Status: pandas infers
+        assert er.finalize_results_frame_polars(rows)["Status"].to_list() == ["Finished", "5"]
+        rows = [dict(self.ROWS[1], Points=True), dict(self.ROWS[2])]
+        assert er._native_result_columns(rows) is None  # a bool: to_numeric decides
+        assert er.finalize_results_frame_polars(rows)["Points"].to_list() == [25.0, 1.0]
+        rows = [dict(self.ROWS[1], Time=pd.Timedelta(seconds=1))]
+        assert er._native_result_columns(rows) is None  # a pandas scalar
+        assert er.finalize_results_frame_polars(rows)["Time"].to_list() == [dt.timedelta(seconds=1)]
+
+    def test_empty_rows_keep_the_typed_schema(self):
+        from tif1.core_utils import ergast_results as er
+
+        frame = er.finalize_results_frame_polars([])
+        assert frame.height == 0
+        assert frame.schema["Q1"] == pl.Duration("ns")
+        assert frame.schema["DateOfBirth"] == pl.Datetime("ns")
 
 
 class TestSurfaceClasses:

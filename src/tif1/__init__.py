@@ -319,6 +319,46 @@ def _start_preload() -> "threading.Thread | None":
 
 _preload_thread = _start_preload()
 
+_EXIT_GC_FREEZE_ENV = "TIF1_EXIT_GC_FREEZE"
+
+
+def _exit_gc_freeze_wanted() -> bool:
+    """Whether the exit hook should freeze the heap (``exit_gc_freeze``, default on)."""
+    config_module = sys.modules.get("tif1.config")
+    if config_module is None:
+        # tif1 was imported but never used: only the environment can say no.
+        override = os.environ.get(_EXIT_GC_FREEZE_ENV)
+        return override is None or override.strip().lower() not in {"0", "false", "no", "off"}
+    try:
+        return bool(config_module.get_config().get("exit_gc_freeze", True))
+    except Exception:  # configuration must never break interpreter exit
+        return False
+
+
+def _exit_gc_freeze() -> None:
+    """Skip the interpreter's final garbage collections (Delphi D1).
+
+    CPython's finalization runs full collections over every tracked object
+    before it clears the modules. After a session the heap holds the ~300k
+    objects pandas, numpy and pyarrow (or polars) built at import, and those
+    passes cost 40-80 ms of every script's exit. ``gc.freeze`` moves the
+    objects to the permanent generation, which the passes skip; memory is
+    still released by reference counting and, at the end, by the operating
+    system. Cyclic garbage alive at exit is not finalized, which CPython does
+    not guarantee at shutdown anyway. Registered when ``tif1`` is imported, so
+    it runs after every hook registered later (tif1's cache flush included).
+    """
+    if _exit_gc_freeze_wanted():
+        import gc
+
+        gc.freeze()
+
+
+if sys.platform != "emscripten":
+    import atexit
+
+    atexit.register(_exit_gc_freeze)
+
 
 def setup_logging(level: int = logging.WARNING) -> None:
     """
