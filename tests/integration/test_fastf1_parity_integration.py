@@ -113,8 +113,30 @@ def test_marshal_frames_are_filled(year):
 
 
 def test_old_schema_corners_use_the_multiviewer_backup():
-    info = tif1.get_session(2022, "Bahrain Grand Prix", "Race", lib="pandas").get_circuit_info()
-    assert "multiviewer" in info.source
+    """An old-schema corners.json (no marshal lists) is completed from the live MultiViewer API.
+
+    The data repositories republish files in the new schema over time (2022
+    Bahrain's is new-schema now), so the old shape is cut from the live file
+    instead of expecting the CDN to still serve it.
+    """
+    from tif1.core_utils.circuit_info import build_circuit_info, is_new_schema
+
+    session = tif1.get_session(2022, "Bahrain Grand Prix", "Race", lib="pandas")
+    payload = session._fetch_json("corners.json")
+    old_schema = {key: payload[key] for key in ("CornerNumber", "X", "Y", "Angle", "Distance")}
+    assert not is_new_schema(old_schema)
+    info = build_circuit_info(
+        old_schema,
+        year=2022,
+        circuit_id="bahrain",
+        circuit_name="Bahrain International Circuit",
+        country="Bahrain",
+        location="Sakhir",
+    )
+    assert info.source == "corners.json+multiviewer"
+    assert len(info.corners) == len(payload["CornerNumber"])
+    assert not info.marshal_lights.empty
+    assert not info.marshal_sectors.empty
 
 
 # -- Ergast-only race -----------------------------------------------------------------------
