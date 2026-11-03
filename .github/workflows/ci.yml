@@ -78,12 +78,40 @@ jobs:
 
       - name: Run unit tests
         run: |
-          python -m uv run pytest -o addopts='' -o faulthandler_timeout=300 tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=xml --cov-report=term --cov-fail-under=80 -m "not slow and not integration and not benchmark"
+          python -m uv run pytest -o addopts='' -o faulthandler_timeout=300 tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=xml --cov-report=term --cov-fail-under=80 -m "not slow and not integration and not benchmark and not perf_gate"
 
       - name: Run integration tests
         if: matrix.python-version == env.DEFAULT_PYTHON && runner.os == 'Linux'
         run: |
           python -m uv run pytest -o addopts='' tests/ -v -n 0 --cov=src/tif1 --cov-append --cov-report=xml --cov-report=term -m integration
+
+  perf-gate:
+    # Performance regression gate: fresh-process warm workloads (both backends)
+    # against a cache seeded from tests/fixtures/perf/payloads.bin.xz, offline.
+    # In-process phases are compared with tests/fixtures/perf/baseline.json
+    # after scaling by the machine factor (median measured/baseline); the
+    # parity digest of every surface must match parity_<lib>.json. Alone on
+    # the runner and without xdist: parallel tests skew the timings. 3.13 is
+    # the interpreter the baseline and digests are written with.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Install dependencies
+        run: python -m uv sync --all-extras
+
+      - name: Run the performance gate
+        run: |
+          python -m uv run pytest -o addopts='' -p no:xdist -p no:cacheprovider tests/perf_gate -m perf_gate -v -s
 
   native:
     # The unit suite again with the tif1-native decoder (native/) built from

@@ -1,0 +1,129 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 3,
+ "summary": {
+  "iterlaps_all_lazy": {
+   "control_workload": "iterlaps_all",
+   "control": {
+    "import": {
+     "median": 12.9,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 570.8,
+     "min": 568.1
+    },
+    "load": {
+     "median": 8855.8,
+     "min": 8511.7
+    },
+    "iterlaps_tel_loop": {
+     "median": 193.5,
+     "min": 173.4
+    },
+    "in_process_total": {
+     "median": 9640.9,
+     "min": 9285.3
+    },
+    "process_wall": {
+     "median": 10578.9,
+     "min": 10136.1
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.1,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 587.4,
+     "min": 573.8
+    },
+    "load": {
+     "median": 130.5,
+     "min": 119.8
+    },
+    "iterlaps_tel_loop": {
+     "median": 10353.9,
+     "min": 10120.7
+    },
+    "in_process_total": {
+     "median": 11060.6,
+     "min": 10850.8
+    },
+    "process_wall": {
+     "median": 11272.0,
+     "min": 11088.0
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "0/3",
+   "control_runs": [
+    {
+     "import": 11.9,
+     "get_session": 568.12,
+     "load": 8511.7,
+     "iterlaps_tel_loop": 193.47,
+     "in_process_total": 9285.26,
+     "process_wall": 10136.13,
+     "warnings_403": 0
+    },
+    {
+     "import": 12.9,
+     "get_session": 598.31,
+     "load": 8855.75,
+     "iterlaps_tel_loop": 173.45,
+     "in_process_total": 9640.89,
+     "process_wall": 10578.88,
+     "warnings_403": 0
+    },
+    {
+     "import": 14.18,
+     "get_session": 570.77,
+     "load": 9060.18,
+     "iterlaps_tel_loop": 206.03,
+     "in_process_total": 9851.21,
+     "process_wall": 10715.01,
+     "warnings_403": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.11,
+     "get_session": 587.44,
+     "load": 130.46,
+     "iterlaps_tel_loop": 10120.71,
+     "in_process_total": 10850.78,
+     "process_wall": 11088.04,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.78,
+     "get_session": 615.79,
+     "load": 147.37,
+     "iterlaps_tel_loop": 10416.05,
+     "in_process_total": 11191.07,
+     "process_wall": 11440.18,
+     "warnings_403": 0
+    },
+    {
+     "import": 12.99,
+     "get_session": 573.79,
+     "load": 119.84,
+     "iterlaps_tel_loop": 10353.87,
+     "in_process_total": 11060.56,
+     "process_wall": 11271.99,
+     "warnings_403": 0
+    }
+   ]
+  }
+ }
+}

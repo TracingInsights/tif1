@@ -1,0 +1,219 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 5,
+ "summary": {
+  "notebook_lazy": {
+   "control_workload": "notebook_4drivers",
+   "control": {
+    "import": {
+     "median": 11.9,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 563.2,
+     "min": 546.1
+    },
+    "load": {
+     "median": 8379.0,
+     "min": 8268.3
+    },
+    "driver_merged_x4": {
+     "median": 197.3,
+     "min": 187.5
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 50.6,
+     "min": 47.1
+    },
+    "results": {
+     "median": 81.3,
+     "min": 77.1
+    },
+    "in_process_total": {
+     "median": 9283.5,
+     "min": 9169.5
+    },
+    "process_wall": {
+     "median": 9811.0,
+     "min": 9684.5
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 11.8,
+     "min": 11.7
+    },
+    "get_session": {
+     "median": 560.0,
+     "min": 526.8
+    },
+    "load": {
+     "median": 125.9,
+     "min": 124.2
+    },
+    "driver_merged_x4": {
+     "median": 2015.7,
+     "min": 1982.8
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 30.3,
+     "min": 25.0
+    },
+    "results": {
+     "median": 77.5,
+     "min": 59.2
+    },
+    "in_process_total": {
+     "median": 2885.2,
+     "min": 2801.5
+    },
+    "process_wall": {
+     "median": 2985.2,
+     "min": 2900.1
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "5/5",
+   "control_runs": [
+    {
+     "import": 11.82,
+     "get_session": 546.11,
+     "load": 8284.98,
+     "driver_merged_x4": 187.51,
+     "fastest_car_data_x4": 0.58,
+     "telemetry_analysis_4": 47.88,
+     "results": 77.4,
+     "in_process_total": 9169.47,
+     "process_wall": 9684.49,
+     "warnings_403": 0
+    },
+    {
+     "import": 12.33,
+     "get_session": 613.8,
+     "load": 8581.93,
+     "driver_merged_x4": 215.13,
+     "fastest_car_data_x4": 0.56,
+     "telemetry_analysis_4": 51.16,
+     "results": 383.79,
+     "in_process_total": 9880.41,
+     "process_wall": 10144.75,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.9,
+     "get_session": 548.04,
+     "load": 8601.3,
+     "driver_merged_x4": 214.04,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 65.14,
+     "results": 84.75,
+     "in_process_total": 9539.3,
+     "process_wall": 9991.95,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.87,
+     "get_session": 563.23,
+     "load": 8379.04,
+     "driver_merged_x4": 191.98,
+     "fastest_car_data_x4": 0.59,
+     "telemetry_analysis_4": 47.08,
+     "results": 77.09,
+     "in_process_total": 9283.51,
+     "process_wall": 9811.02,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.82,
+     "get_session": 565.47,
+     "load": 8268.34,
+     "driver_merged_x4": 197.3,
+     "fastest_car_data_x4": 0.58,
+     "telemetry_analysis_4": 50.58,
+     "results": 81.27,
+     "in_process_total": 9188.41,
+     "process_wall": 9700.3,
+     "warnings_403": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 11.78,
+     "get_session": 622.7,
+     "load": 130.75,
+     "driver_merged_x4": 2002.65,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 30.32,
+     "results": 77.53,
+     "in_process_total": 2889.52,
+     "process_wall": 2994.46,
+     "warnings_403": 0
+    },
+    {
+     "import": 12.06,
+     "get_session": 584.85,
+     "load": 125.09,
+     "driver_merged_x4": 2059.63,
+     "fastest_car_data_x4": 0.62,
+     "telemetry_analysis_4": 31.56,
+     "results": 59.17,
+     "in_process_total": 2885.15,
+     "process_wall": 2985.18,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.89,
+     "get_session": 526.79,
+     "load": 124.23,
+     "driver_merged_x4": 2015.73,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 34.67,
+     "results": 75.38,
+     "in_process_total": 2801.49,
+     "process_wall": 2900.11,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.77,
+     "get_session": 560.05,
+     "load": 128.08,
+     "driver_merged_x4": 2343.74,
+     "fastest_car_data_x4": 0.59,
+     "telemetry_analysis_4": 25.0,
+     "results": 82.95,
+     "in_process_total": 3164.25,
+     "process_wall": 3267.83,
+     "warnings_403": 0
+    },
+    {
+     "import": 11.72,
+     "get_session": 535.18,
+     "load": 125.91,
+     "driver_merged_x4": 1982.81,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 25.34,
+     "results": 113.96,
+     "in_process_total": 2807.23,
+     "process_wall": 2907.48,
+     "warnings_403": 0
+    }
+   ]
+  }
+ }
+}

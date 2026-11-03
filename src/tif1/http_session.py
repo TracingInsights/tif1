@@ -113,11 +113,8 @@ def _create_session() -> Any:
     # responder before the first request may go out, 120-240 ms on every
     # cold process. The check stays on by default; ``http_revocation_check``
     # False skips it (the chain is still verified; the check is soft-fail).
-    revocation: dict[str, Any] = (
-        {}
-        if bool(config.get("http_revocation_check", True))
-        else {"revocation_configuration": None}
-    )
+    revocation_check = bool(config.get("http_revocation_check", True))
+    revocation: dict[str, Any] = {} if revocation_check else {"revocation_configuration": None}
 
     # Dynamic pool sizing based on concurrency.
     target_concurrency = max(
@@ -214,6 +211,8 @@ def _create_session() -> Any:
                     "Keep-Alive": f"timeout={keepalive_timeout}, max={keepalive_max_requests}",
                 }
             )
+            if revocation_check:
+                _prepare_revocation_check(session, config)
             return session
         except Exception as e:
             # Release connection resources on failure
@@ -225,6 +224,65 @@ def _create_session() -> Any:
             logger.warning(f"Failed to initialize with {resolver or 'standard DNS'}: {e}")
 
     raise NetworkError(url="session_init", status_code=None)
+
+
+#: Whether the shared session's OCSP verdicts go to the SQLite cache (Elis E3).
+_ocsp_persist = False
+
+
+def _prepare_revocation_check(session: Any, config: Any) -> None:
+    """Make the session's first OCSP check cheap (Elis E3, :mod:`tif1.ocsp_cache`).
+
+    Loads qh3's hazmat layer without the QUIC stack, then restores the GOOD
+    verdicts earlier processes persisted, so a certificate checked before
+    skips the responder round trip. Best effort: the check itself is
+    niquests' and runs unchanged when anything here fails.
+    """
+    global _ocsp_persist
+    from . import ocsp_cache
+
+    ocsp_cache.preload_hazmat()
+    if (
+        not bool(config.get("http_revocation_cache", True))
+        or not bool(config.get("enable_cache", True))
+        or bool(config.get("offline_mode", False))
+        or getattr(session, "_ocsp_cache", None) is not None
+    ):
+        return
+    try:
+        from .cache import get_cache
+
+        restored = ocsp_cache.seed(session, get_cache())
+        _ocsp_persist = True
+        if restored:
+            logger.debug("Restored %d OCSP verdict(s) from the cache", restored)
+    except Exception as e:  # a cache problem never blocks the session
+        logger.debug("OCSP verdict restore skipped: %s", e)
+
+
+def persist_ocsp_verdicts(session: Any | None = None) -> None:
+    """Write the GOOD OCSP verdicts the shared session collected to the cache.
+
+    Called after each connection warm-up and when the session closes; a no-op
+    when nothing is new, when the cache is not open, or when
+    ``http_revocation_cache`` is off.
+    """
+    if not _ocsp_persist:
+        return
+    session = session if session is not None else _shared_session
+    if session is None:
+        return
+    from . import cache as cache_module
+
+    cache = cache_module._cache
+    if cache is None:
+        return
+    try:
+        from . import ocsp_cache
+
+        ocsp_cache.persist(session, cache)
+    except Exception as e:  # best effort, never surfaces
+        logger.debug("OCSP verdict persist skipped: %s", e)
 
 
 def get_session() -> Any:
@@ -283,8 +341,15 @@ def warm_connections(urls: list[str], timeout: float) -> None:
                 logger.debug("CDN pre-connect skipped: %s", e)
             finally:
                 done.set()
+            # The connection's OCSP check (if any) has completed by now.
+            persist_ocsp_verdicts(session)
 
         threading.Thread(target=_head, name="tif1-cdn-preconnect", daemon=True).start()
+
+
+def warm_connections_pending() -> bool:
+    """Whether a connection warm-up is still connecting (no wait)."""
+    return any(not done.is_set() for done in tuple(_warmups))
 
 
 def wait_for_warm_connections() -> None:
@@ -378,6 +443,12 @@ def reset_connection_stats() -> None:
 def close_session() -> None:
     """Close shared HTTP session and cleanup resources."""
     global _shared_session
+    if _shared_session is None:
+        # Nothing to close. A daemon warm-up may hold the lock while it
+        # imports niquests and builds the session (Elis E9): an exiting
+        # script must not wait for that.
+        return
+    persist_ocsp_verdicts()
     with _session_lock:
         if _shared_session is not None:
             try:

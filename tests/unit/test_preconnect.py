@@ -1,46 +1,102 @@
-"""CDN pre-connect (Argos A8, Olympia H11): cold sessions only, started before pandas/polars.
+"""CDN pre-connect (Argos A8, Olympia H11, Elis E2): cold sessions only, started before pandas.
 
-Offline: the warm-up itself is replaced by a recorder, so no socket is opened.
+Offline: the first wave itself is replaced by a recorder, so no socket is opened.
 """
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
 import pytest
 
-from tif1 import core, http_session
+from tif1 import core, first_wave, http_session
 from tif1.cache import get_cache
 from tif1.config import get_config
 
 
 @pytest.fixture
 def preconnect(monkeypatch):
-    """Turn the pre-connect on for one test and record the warm-up URLs."""
+    """Turn the pre-connect on for one test and record the first-wave URLs."""
     config = get_config()
     monkeypatch.setitem(config._config, "cdn_preconnect", True)
     monkeypatch.setattr(core, "_preconnect_started", False)
     monkeypatch.setattr(core, "THREADS_AVAILABLE", True)
     calls: list[list[str]] = []
 
-    def _record(urls: list[str], timeout: float) -> None:
+    def _record(urls: list[str], *, timeout: float) -> None:
         assert timeout >= 1
         calls.append(list(urls))
 
-    monkeypatch.setattr(http_session, "warm_connections", _record)
+    monkeypatch.setattr(first_wave, "start", _record)
     return calls
 
 
-def test_cold_session_warms_one_connection_per_first_wave_request(preconnect):
+def test_cold_session_starts_the_first_wave(preconnect):
+    niquests_loaded = "niquests" in sys.modules
     session = core.get_session(2025, "Bahrain Grand Prix", "Race", lib="pandas")
     assert len(preconnect) == 1
     urls = preconnect[0]
     assert [url.rsplit("/", 1)[-1] for url in urls] == list(core._FIRST_WAVE_PATHS)
     assert all("Bahrain%20Grand%20Prix/Race/" in url for url in urls)
+    assert all(url.startswith("https://cdn.jsdelivr.net/") for url in urls)
     # The probe that decided "cold" is handed to the session, not run again.
     assert session._memo.has_session_data is False
     assert core._preconnect_started is True
+    # The HTTP stack is no longer imported up front.
+    assert ("niquests" in sys.modules) is niquests_loaded
+
+
+def test_first_wave_off_warms_niquests_instead(preconnect, monkeypatch):
+    monkeypatch.setitem(get_config()._config, "cdn_first_wave", False)
+    warmed: list[list[str]] = []
+
+    def _warm(urls: list[str], timeout: float) -> None:
+        assert timeout >= 1
+        warmed.append(list(urls))
+
+    monkeypatch.setattr(http_session, "warm_connections", _warm)
+    core.get_session(2025, "Bahrain Grand Prix", "Race", lib="pandas")
+    assert preconnect == []
+    assert len(warmed) == 1
+    assert [url.rsplit("/", 1)[-1] for url in warmed[0]] == list(core._FIRST_WAVE_PATHS)
+
+
+def test_first_wave_env_switch(monkeypatch):
+    from tif1.config import Config
+
+    monkeypatch.setenv("TIF1_CDN_FIRST_WAVE", "false")
+    config = get_config()
+    snapshot = dict(config._config)
+    try:
+        Config._load_env(config)
+        assert config.get("cdn_first_wave") is False
+    finally:
+        config._config.clear()
+        config._config.update(snapshot)
+    assert config.get("cdn_first_wave") is True
+
+
+def test_close_session_never_waits_for_a_session_being_built(monkeypatch):
+    monkeypatch.setattr(http_session, "_shared_session", None)
+    held, release = threading.Event(), threading.Event()
+
+    def _building() -> None:  # a warm-up thread importing niquests under the lock
+        with http_session._session_lock:
+            held.set()
+            release.wait(5)
+
+    builder = threading.Thread(target=_building, daemon=True)
+    builder.start()
+    assert held.wait(2)
+    closer = threading.Thread(target=http_session.close_session, daemon=True)
+    closer.start()
+    closer.join(0.5)
+    finished = not closer.is_alive()
+    release.set()
+    builder.join(2)
+    assert finished
 
 
 def test_cached_session_never_warms(preconnect):

@@ -261,11 +261,34 @@ if mode == "numpy":
         if "numpy" in sys.modules:
             break
     numpy_before = "numpy" in sys.modules
+    # Elis E6: the common telemetry reads build their frames from the list
+    # payloads with Series kernels, so numpy stays unloaded through them too.
+    lap_telemetry = {
+        "fastest_lap_tel": lambda: [session.get_fastest_lap_tel()],
+        "driver_telemetry": lambda: [session.laps.pick_driver("VER").telemetry],
+        "lap_car_data": lambda: [
+            lap.get_car_data() for _, lap in session.laps.pick_driver("PIA").iterlaps()
+        ],
+    }
+    lap_telemetry_seen = {}
+    for name, read in lap_telemetry.items():
+        frames = read()
+        lap_telemetry_seen[name] = [
+            [type(frame).__name__, frame.height, frame["Time"].cast(int).to_list()[:2]]
+            for frame in frames
+        ]
+        if "numpy" in sys.modules:
+            break
+    numpy_after_lap_telemetry = "numpy" in sys.modules
+    fastest_schema = {k: str(v) for k, v in session.get_fastest_lap_tel().schema.items()}
     telemetry_rows = session.laps.pick_drivers("VER").pick_fastest().get_telemetry().height
     print(
         json.dumps(
             {
                 "numpy_before_telemetry": numpy_before,
+                "numpy_after_lap_telemetry": numpy_after_lap_telemetry,
+                "lap_telemetry_seen": lap_telemetry_seen,
+                "fastest_schema": fastest_schema,
                 "numpy_after_telemetry": "numpy" in sys.modules,
                 "pandas": "pandas" in sys.modules,
                 "models_polars": "tif1.models_polars" in sys.modules,
@@ -355,7 +378,20 @@ def test_polars_laps_results_and_state_never_import_numpy(tmp_path):
     assert len(report["seen"]) == 9
     assert report["pandas"] is False
     assert report["models_polars"] is True  # the lazy binding of its hot paths was exercised
-    # The first telemetry read loads numpy (the masks and typed channels run on it) and works.
+    # Elis E6: the fastest lap's telemetry, a driver's merged laps and each
+    # lap's car data are built from the list payloads without numpy.
+    assert report["numpy_after_lap_telemetry"] is False, report["lap_telemetry_seen"]
+    seen_tel = report["lap_telemetry_seen"]
+    assert seen_tel["fastest_lap_tel"] == [["PolarsTelemetry", 9, [0, 250_000_000]]]
+    # Three 9-sample laps joined into one slice, ``Time`` from the first lap start.
+    assert seen_tel["driver_telemetry"] == [["PolarsTelemetry", 27, [0, 250_000_000]]]
+    assert seen_tel["lap_car_data"] == [["PolarsTelemetry", 9, [0, 250_000_000]]] * 3
+    assert report["fastest_schema"]["Date"] == "Datetime(time_unit='ns', time_zone=None)"
+    assert report["fastest_schema"]["SessionTime"] == "Duration(time_unit='ns')"
+    assert report["fastest_schema"]["nGear"] == "Int64"
+    assert report["fastest_schema"]["Brake"] == "Boolean"
+    assert report["fastest_schema"]["DriverAhead"] == "String"
+    # pick_fastest and the resampling of get_telemetry still load numpy, and work.
     assert report["numpy_after_telemetry"] is True
     assert report["telemetry_rows"] == 9
     # The frames themselves are the typed ones.

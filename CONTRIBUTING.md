@@ -44,7 +44,7 @@ uv run pytest tests/unit/test_core.py -v
 
 Run with coverage:
 ```bash
-uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html -m "not slow and not integration and not benchmark"
+uv run pytest -o addopts='' tests/ -v -n auto --dist=loadfile --cov=src/tif1 --cov-report=html -m "not slow and not integration and not benchmark and not perf_gate"
 ```
 
 Run only unit tests:
@@ -61,6 +61,16 @@ Run benchmarks (serial for stable timing):
 ```bash
 uv run pytest -o addopts='' tests/benchmarks/ -v -m benchmark --benchmark-only --no-cov -n 0
 ```
+
+Run the performance gate (the CI `perf-gate` job; alone, without xdist):
+```bash
+uv run pytest -o addopts='' -p no:xdist tests/perf_gate -m perf_gate -v -s
+```
+It times fresh-process warm workloads against a cache seeded from
+`tests/fixtures/perf/payloads.bin.xz` and compares them with
+`tests/fixtures/perf/baseline.json`, and checks the parity digests next to it.
+When a change is meant to move a timing or a user-visible value, add
+`--write-baseline` and commit the rewritten files with the change.
 
 ### Code Quality
 

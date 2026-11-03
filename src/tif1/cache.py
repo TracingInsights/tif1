@@ -44,6 +44,7 @@ from urllib.parse import quote, unquote
 from .core_utils.constants import MAX_CACHE_SIZE
 from .core_utils.json_utils import (
     NATIVE_TELEMETRY_DECODER_AVAILABLE,
+    decode_one_telemetry_payload,
     decode_telemetry_payload,
     json_dumps_bytes,
     json_loads,
@@ -598,6 +599,120 @@ def _submit_frame_row_reads(
     ]
 
 
+# Elis E5: the first two lazy rows a script touches after a warm ``load()``
+# are read on their own; the rows of every other driver of the session are
+# then read ahead in the pool, so the next drivers find their row read (or
+# in flight) instead of the second driver paying the 19-row batch (D5). A
+# queued read is cancelled at interpreter exit and when the cache closes, so
+# the exit never waits for the rows nobody touched.
+class _PrefetchedRow:
+    """A driver row submitted to the decompression pool ahead of its first lap."""
+
+    __slots__ = ("args", "future", "pid")
+
+    def __init__(self, future: Any, args: tuple[Any, ...]) -> None:
+        self.future = future
+        self.args = args
+        self.pid = os.getpid()
+
+    def take(self) -> tuple[Any, ...] | None:
+        """The ``(driver, buffer)`` row, or None when it cannot be read.
+
+        A read no worker has started yet runs here instead (the caller would
+        otherwise wait behind the reads queued before it); one already running
+        is waited for. In a forked child the read runs here too: the lanes
+        stayed in the parent, so a read running at the fork never completes
+        (and the future's lock may have been held), so the future is left alone.
+        """
+        from concurrent.futures import CancelledError
+
+        if self.pid != os.getpid():
+            return _read_frame_row(*self.args)
+        future = self.future
+        if future.cancel():
+            return _read_frame_row(*self.args)
+        try:
+            return future.result()
+        except CancelledError:  # cancelled by close() or exit before it started
+            return _read_frame_row(*self.args)
+
+    def cancel(self) -> None:
+        """Drop the read if no worker has started it."""
+        self.future.cancel()
+
+
+# The reads ahead run in this many pool tasks, each reading its share of
+# the rows one after the other. The cost of a row is mostly the page faults
+# of its fresh 6 MB output buffer, and faulting threads of one process
+# contend with each other and with the main thread's own allocations: one
+# task per row (8 at once) took 20-47 ms per row and slowed the lap builds
+# beside them by ~2 ms per driver, while a lap loop only needs a row every
+# ~3 ms (a row is ~5 ms alone: read ~1, lz4 ~3, widening ~1).
+_PREFETCH_LANES = 2
+
+
+def _prefetch_lane(handles: Any) -> None:
+    """Pool task: read the rows of ``handles`` (a shared deque) in order until none is left.
+
+    A row whose future was cancelled (by :meth:`_PrefetchedRow.take`, which
+    then reads it on the caller's thread, by ``close()`` or at exit) is
+    skipped.
+    """
+    while True:
+        try:
+            handle = handles.popleft()
+        except IndexError:
+            return
+        future = handle.future
+        if not future.set_running_or_notify_cancel():
+            continue
+        try:
+            future.set_result(_read_frame_row(*handle.args))
+        except BaseException as e:
+            future.set_exception(e)
+
+
+_PREFETCHING_CACHES: Any = None
+_PREFETCH_EXIT_HOOK_REGISTERED = False
+
+
+def _cancel_all_frame_prefetches() -> None:
+    """Cancel every queued prefetch read (runs before the pool joins its workers at exit)."""
+    caches = _PREFETCHING_CACHES
+    if caches is None:
+        return
+    for cache in list(caches):
+        cache._cancel_prefetches()
+
+
+def _track_prefetching_cache(cache: Cache) -> None:
+    """Remember ``cache`` for the exit hook, registering the hook once.
+
+    ``concurrent.futures`` joins the pool's workers from a ``threading``
+    exit hook, and a worker drains the whole queue before it exits, so the
+    queued prefetch reads would delay the exit of a script that touched one
+    driver. Hooks run in reverse registration order and this one is
+    registered after the pool's (the pool exists by now), so it cancels the
+    queued reads first; only the reads in flight (at most a few rows) finish.
+    """
+    global _PREFETCHING_CACHES, _PREFETCH_EXIT_HOOK_REGISTERED
+    if _PREFETCHING_CACHES is None:
+        import weakref
+
+        _PREFETCHING_CACHES = weakref.WeakSet()
+    _PREFETCHING_CACHES.add(cache)
+    if not _PREFETCH_EXIT_HOOK_REGISTERED:
+        register = getattr(threading, "_register_atexit", None)
+        if register is None:  # pragma: no cover - CPython has it since 3.9
+            atexit.register(_cancel_all_frame_prefetches)
+        else:
+            try:
+                register(_cancel_all_frame_prefetches)
+            except RuntimeError:  # interpreter already shutting down
+                return
+        _PREFETCH_EXIT_HOOK_REGISTERED = True
+
+
 # Pergamon Q15: a warm load whose frame tiers are empty (pre-frame-tier
 # caches, an interrupted background frame write, invalidated frame tables,
 # a frame schema bump) reads the payload tier: 1452 rows of zstd JSON on the
@@ -746,6 +861,58 @@ def _ipc_reader_prefers_arrow() -> bool:
     reader (a ``None`` entry, the "import blocked" marker, is not resident).
     """
     return sys.modules.get("pyarrow") is not None
+
+
+# An Arrow IPC file is this 8-byte magic (``ARROW1`` and two padding bytes),
+# the stream messages (schema, dictionaries, record batches, end-of-stream
+# marker), the footer and ``ARROW1``; the bytes after the magic are a valid
+# IPC stream that a stream reader consumes up to the end-of-stream marker.
+_IPC_FILE_MAGIC = b"ARROW1"
+_IPC_FILE_HEADER_BYTES = 8
+_IPC_STREAM_READER: Any = None
+
+
+def _ipc_stream_reader() -> Any:
+    """polars' eager IPC stream reader (``PyDataFrame.read_ipc_stream``), ``False`` if absent."""
+    global _IPC_STREAM_READER
+    if _IPC_STREAM_READER is None:
+        try:
+            from polars._plr import PyDataFrame
+
+            _IPC_STREAM_READER = PyDataFrame.read_ipc_stream
+        except (ImportError, AttributeError):  # pragma: no cover - other polars builds
+            _IPC_STREAM_READER = False
+    return _IPC_STREAM_READER
+
+
+def _read_polars_ipc_row(blob: bytes) -> Any:
+    """polars DataFrame from one IPC file row without pyarrow (Elis E6).
+
+    ``pl.read_ipc`` in polars 2 is ``scan_ipc(...).collect()`` (one query
+    plan per row, the first of a process ~7 ms) and copies every buffer: a
+    4 MB race row took 16 ms (31 ms the first of a process). The eager
+    stream reader of the extension reads the same bytes past the file magic
+    into the same frame (dtypes, categories, one chunk per column) in ~9 ms
+    (15 the first). The tier's rows come from pyarrow's file writer
+    (:func:`_write_polars_ipc`), whose body is that stream; anything the
+    stream reader rejects (another writer's layout: polars' own file writer
+    lays its messages out differently; a corrupt row), anything that is not
+    an IPC file, and a polars build without that reader go through
+    ``pl.read_ipc``, which decides. The reader holds the GIL while it
+    decodes, so the pooled tier read keeps ``pl.read_ipc``.
+    """
+    import polars as pl
+    from polars.exceptions import PolarsError
+
+    reader = _ipc_stream_reader()
+    if reader and blob[: len(_IPC_FILE_MAGIC)] == _IPC_FILE_MAGIC:
+        try:
+            pydf = reader(blob[_IPC_FILE_HEADER_BYTES:], None, None, None, None, False)
+        except (TypeError, PolarsError):  # a changed private signature, another layout
+            pass
+        else:
+            return pl.DataFrame._from_pydf(pydf)
+    return pl.read_ipc(blob)
 
 
 def _write_polars_ipc(frame: Any) -> bytes:
@@ -988,7 +1155,9 @@ class LazyDriverFrameSource:
     (~1.5 ms of main-thread work per race driver), which waits for the first
     lap of that driver, so a batch never decodes a driver nobody touches. A
     row that is gone or corrupt by then raises ``KeyError`` from
-    :meth:`frame`.
+    :meth:`frame`. Elis E5: a row can also be read ahead in the pool
+    (:meth:`prefetch`, started by the first driver a script touches); its
+    first lap then takes the read's result.
     """
 
     __slots__ = (
@@ -997,6 +1166,7 @@ class LazyDriverFrameSource:
         "_frame_class",
         "_key",
         "_lap_set",
+        "_prefetched",
         "_raw",
         "_real",
         "driver",
@@ -1021,12 +1191,18 @@ class LazyDriverFrameSource:
         self._lap_set = set(self.laps)
         self._raw: Any = None
         self._real: Any = None
+        self._prefetched: _PrefetchedRow | None = None
         self._failed = False
 
     @property
     def hydrated(self) -> bool:
-        """Whether the row has been read (decoded, a decompressed buffer, or found corrupt)."""
-        return self._real is not None or self._raw is not None or self._failed
+        """Whether the row has been read or is being read ahead (or was found corrupt)."""
+        return (
+            self._real is not None
+            or self._raw is not None
+            or self._prefetched is not None
+            or self._failed
+        )
 
     def hydrate(self, real: Any) -> None:
         """Adopt an already decoded row."""
@@ -1036,6 +1212,27 @@ class LazyDriverFrameSource:
     def hydrate_raw(self, raw: Any) -> None:
         """Adopt the decompressed row; it is decoded when a lap is first built."""
         if self._real is None:
+            self._raw = raw
+
+    def prefetch(self, prefetched: _PrefetchedRow) -> None:
+        """Take the read started ahead in the pool; its result is used at the first lap."""
+        if self._real is None and self._raw is None:
+            self._prefetched = prefetched
+
+    def cancel_prefetch(self) -> None:
+        """Drop a read ahead that no worker has started (the row is read on demand)."""
+        prefetched = self._prefetched
+        if prefetched is not None and (prefetched.pid != os.getpid() or prefetched.future.cancel()):
+            self._prefetched = None
+
+    def fetch(self) -> None:
+        """Read (fetch and decompress) the row now; the decode waits for the first lap."""
+        if self.hydrated:
+            return
+        raw = self._cache.get_telemetry_frame_rows(*self._key, [self.driver]).get(self.driver)
+        if raw is None:
+            self._failed = True
+        else:
             self._raw = raw
 
     def __contains__(self, lap: object) -> bool:
@@ -1049,8 +1246,14 @@ class LazyDriverFrameSource:
             raise KeyError(self.driver)
         raw = self._raw
         if raw is None:
-            rows = self._cache.get_telemetry_frame_rows(*self._key, [self.driver])
-            raw = rows.get(self.driver)
+            prefetched = self._prefetched
+            if prefetched is not None:
+                self._prefetched = None
+                row = prefetched.take()
+                raw = None if row is None else row[-1]
+            else:
+                rows = self._cache.get_telemetry_frame_rows(*self._key, [self.driver])
+                raw = rows.get(self.driver)
             if raw is None:
                 self._failed = True
                 raise KeyError(self.driver)
@@ -1069,8 +1272,8 @@ class LazyDriverFrameSource:
 
     @property
     def decodable(self) -> bool:
-        """Whether the row is at hand (decoded or decompressed), so a gather beats a re-read."""
-        return self._real is not None or self._raw is not None
+        """Whether the row is at hand (decoded, decompressed, read ahead): a gather beats a re-read."""
+        return self._real is not None or self._raw is not None or self._prefetched is not None
 
     def merged(self, laps: list[int], *, drop_repeats: bool = False) -> Any | None:
         """The merged frame of ``laps`` from the held row (Delphi D8), copying its rows.
@@ -1167,6 +1370,10 @@ class SessionMemo:
         # Delphi D5: drivers whose lazy row was read on its own (the first);
         # a second driver's lap reads every remaining lazy row in one batch.
         self._lazy_hydrated_drivers: set[str] = set()
+        # Elis E5: whether the second driver started the reads ahead of the
+        # remaining lazy rows (once per session; later rows batch as in D5).
+        self._lazy_prefetch_started = False
+        self._lazy_first_driver: str | None = None
         # Drivers that had one lap built on its own from the payload tier; their
         # next single lap decodes the whole driver row instead.
         self.single_lap_drivers: set[str] = set()
@@ -1272,26 +1479,95 @@ class SessionMemo:
         return frame
 
     def _hydrate_for(self, source: LazyDriverFrameSource) -> None:
-        """Read the row of ``source``; from the second driver on, every lazy row at once.
+        """Read the row of ``source``: the first two drivers alone, then the rest ahead.
 
-        One driver's row read on its own costs ~20 ms (SQLite, a serial lz4
-        decompress, the decode); the batch read of a race's 20 rows ~80 ms
-        with the pool decompressing in parallel. A script that touches one
-        driver pays for one row; a script walking through the drivers (a
-        loop over every lap) pays the batch once, as an eager load() did.
+        One driver's row read on its own costs ~10-20 ms (SQLite, a serial
+        lz4 decompress, the decode); the batch read of a race's 19 other rows
+        ~45-60 ms with the pool decompressing in parallel, all of it paid by
+        the second driver's first lap (Delphi D5). Elis E5: the second
+        driver's row is read alone too, then every other lazy row of the
+        session is read ahead in the pool, in the order the laps list the
+        drivers (:meth:`Cache.prefetch_telemetry_frame_rows`), so the next
+        drivers find their row read while the script works on the first
+        ones. A script touching one driver reads one row, as before; queued
+        reads ahead are cancelled at exit. When the second driver is the one
+        after the first in the laps' order (a loop over the laps or the
+        drivers, see :meth:`_walks_lazy_order`), or without the parallel path
+        (no codec, one worker), the second driver's lap reads every remaining
+        lazy row in one batch, as in D5.
         """
         hydrated = self._lazy_hydrated_drivers
-        if hydrated:
-            lazy = {
+        if not hydrated:
+            hydrated.add(source.driver)
+            self._lazy_first_driver = source.driver
+            return
+        if not self._lazy_prefetch_started:
+            self._lazy_prefetch_started = True
+            if not self._walks_lazy_order(source.driver) and self._prefetch_others(source):
+                return
+        lazy = {
+            id(held): held
+            for held in self._telemetry_sources.values()
+            if isinstance(held, LazyDriverFrameSource) and not held.hydrated
+        }
+        lazy.setdefault(id(source), source)
+        hydrate_lazy_sources(list(lazy.values()), decode=source)
+        hydrated.update(held.driver for held in lazy.values())
+
+    def _walks_lazy_order(self, second: str) -> bool:
+        """Whether ``second`` follows the first lazy driver in the order the laps list them.
+
+        A loop over the laps (or over ``session.drivers``) touches the drivers
+        in that order and will touch all of them: the batch, read while the
+        caller waits, beats reading ahead beside its lap builds (Elis E5:
+        loop over every lap 142 ms with the batch, 156-162 ms reading ahead,
+        the faulting readers slow the builds beside them).
+        """
+        order = [
+            driver
+            for driver, held in self._driver_sources.items()
+            if isinstance(held, LazyDriverFrameSource)
+        ]
+        first = self._lazy_first_driver
+        if first not in order or second not in order:
+            return False
+        return order.index(second) == order.index(first) + 1
+
+    def _prefetch_others(self, source: LazyDriverFrameSource) -> bool:
+        """Read ``source``'s row alone, then start reading every other lazy row ahead.
+
+        Returns False when the reads ahead cannot run (no parallel path, a
+        cache without the seam, a closed cache): the caller batches instead.
+        """
+        cache = source._cache
+        prefetch = getattr(cache, "prefetch_telemetry_frame_rows", None)
+        if not callable(prefetch) or not _can_decompress_in_parallel(_pa_lz4_codec()):
+            return False
+        pending = list(
+            {
                 id(held): held
                 for held in self._telemetry_sources.values()
-                if isinstance(held, LazyDriverFrameSource) and not held.hydrated
-            }
-            lazy.setdefault(id(source), source)
-            hydrate_lazy_sources(list(lazy.values()), decode=source)
-            hydrated.update(held.driver for held in lazy.values())
-        else:
-            hydrated.add(source.driver)
+                if isinstance(held, LazyDriverFrameSource)
+                and held is not source
+                and not held.hydrated
+                and held._cache is cache
+                and held._key == source._key
+            }.values()
+        )
+        # The touched row first, alone: the reads ahead would share the
+        # memory bandwidth (page faults of the fresh buffers) with it.
+        source.fetch()
+        if not pending:
+            return True
+        handles = prefetch(*source._key, [held.driver for held in pending])
+        if not handles:
+            return False
+        for held in pending:
+            handle = handles.get(held.driver)
+            if handle is not None:
+                held.prefetch(handle)
+        self._lazy_hydrated_drivers.update(handles)
+        return True
 
     def _drop_telemetry_source(self, source: Any) -> None:
         pending = self._telemetry_sources
@@ -1434,9 +1710,14 @@ class SessionMemo:
         self._json_payloads.clear()
         self._telemetry_payloads.clear()
         self._telemetry_dfs.clear()
+        for source in self._driver_sources.values():
+            if isinstance(source, LazyDriverFrameSource):
+                source.cancel_prefetch()
         self._telemetry_sources.clear()
         self._driver_sources.clear()
         self._lazy_hydrated_drivers.clear()
+        self._lazy_prefetch_started = False
+        self._lazy_first_driver = None
         self.fastest_lap_ref = None
         self.fastest_lap_ref_laps_source_id = None
         self.fastest_lap_ref_driver_source_id = None
@@ -1509,6 +1790,11 @@ class Cache:
         self._readers_closed = False
         self._reader_cap = max(1, min(_FRAME_READER_CONNECTIONS, _decompress_workers()))
         self._reader_slots = threading.BoundedSemaphore(self._reader_cap)
+        # Elis E5: the driver-row reads submitted ahead of their first lap
+        # (guarded by ``_reader_lock``); queued ones are cancelled by close()
+        # and at interpreter exit.
+        self._prefetches: list[Any] = []
+        self._prefetch_pid = os.getpid()
 
         # Load config values for cache constants
         from .config import get_config
@@ -1749,8 +2035,23 @@ class Cache:
         except sqlite3.Error as e:  # pragma: no cover - close never fails on a reader
             logger.debug("Frame reader connection close failed: %s", e)
 
+    def _cancel_prefetches(self) -> None:
+        """Cancel the queued row reads ahead (Elis E5); the ones running finish.
+
+        A forked child drops the parent's futures without touching them (their
+        lanes stayed in the parent; see :meth:`_PrefetchedRow.take`).
+        """
+        if self._prefetch_pid != os.getpid():
+            self._prefetches = []
+            return
+        with self._reader_lock:
+            futures, self._prefetches = self._prefetches, []
+        for future in futures:
+            future.cancel()
+
     def _close_readers(self) -> None:
         """Close the idle readers; lent ones close on return."""
+        self._cancel_prefetches()
         with self._reader_lock:
             self._readers_closed = True
             idle, self._idle_readers = self._idle_readers, []
@@ -2153,7 +2454,7 @@ class Cache:
 
             if json_data is not None:
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
-                parsed = decode_telemetry_payload(json_data)
+                parsed = decode_one_telemetry_payload(json_data)
                 self._parsed_telemetry_cache.set(cache_key, parsed)
                 return parsed
 
@@ -2169,7 +2470,7 @@ class Cache:
             # Update memory cache outside SQLite lock
             if json_data is not None:
                 self._memory_telemetry_cache.set(cache_key, json_data)
-                parsed = decode_telemetry_payload(json_data)
+                parsed = decode_one_telemetry_payload(json_data)
                 self._parsed_telemetry_cache.set(cache_key, parsed)
                 logger.debug("Telemetry cache hit: %s/%s/%s/%s/%s", year, gp, session, driver, lap)
                 return parsed
@@ -2676,6 +2977,74 @@ class Cache:
         rows = self.stream_telemetry_frame_rows(year, gp, session, drivers)
         return {} if rows is None else dict(rows)
 
+    def prefetch_telemetry_frame_rows(
+        self, year: int, gp: str, session: str, drivers: list[str]
+    ) -> dict[str, _PrefetchedRow] | None:
+        """Start reading the drivers' pandas frame-tier rows in the pool, in ``drivers`` order.
+
+        Elis E5: the reads ahead of :meth:`SessionMemo._hydrate_for`. Each
+        row is read and decompressed by a worker as in
+        :meth:`stream_telemetry_frame_rows` (at most ``_reader_cap`` rows in
+        flight); :meth:`_PrefetchedRow.take` gives its ``(driver, buffer)``.
+        Drivers without a row are absent. None when the parallel path is
+        unavailable (no codec, one worker, a pool thread), the cache is
+        closed or the tier cannot be read: the caller reads on demand.
+        """
+        conn = self.conn
+        if conn is None or not drivers or not _FRAME_CODEC_AVAILABLE:
+            return None
+        codec = _pa_lz4_codec()
+        if not _can_decompress_in_parallel(codec):
+            return None
+        wanted = list(dict.fromkeys(drivers))
+        try:
+            placeholders = ", ".join("?" for _ in wanted)
+            with self._sqlite_lock:
+                stored = conn.execute(
+                    f"SELECT driver, rowid, length(frame) FROM {_PANDAS_DRIVER_TABLE} "
+                    f"WHERE year = ? AND gp = ? AND session = ? AND driver IN ({placeholders})",
+                    (year, gp, session, *wanted),
+                ).fetchall()
+        except (RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Driver frame tier read error: %s", e)
+            return None
+        from collections import deque
+        from concurrent.futures import Future
+
+        located = {driver: (rowid, nbytes) for driver, rowid, nbytes in stored}
+        session_key = (year, gp, session)
+        handles: dict[str, _PrefetchedRow] = {}
+        for driver in wanted:
+            location = located.get(driver)
+            if location is not None:
+                args = (self, _PANDAS_DRIVER_TABLE, session_key, driver, *location, codec)
+                handles[driver] = _PrefetchedRow(Future(), args)
+        if not handles:
+            return None
+        futures = [handle.future for handle in handles.values()]
+        queue = deque(handles.values())
+        pool = _decompress_pool()
+        try:
+            for _ in range(min(_PREFETCH_LANES, len(queue))):
+                pool.submit(_prefetch_lane, queue)
+        except RuntimeError:  # the pool refuses work once the interpreter shuts down
+            for future in futures:
+                future.cancel()
+            return None
+        with self._reader_lock:
+            closed = self._readers_closed
+            if not closed:
+                pid = os.getpid()
+                if self._prefetch_pid != pid:  # a forked child: the parent's are not ours
+                    self._prefetches, self._prefetch_pid = [], pid
+                self._prefetches = [f for f in self._prefetches if not f.done()] + futures
+        if closed:
+            for future in futures:
+                future.cancel()
+            return None
+        _track_prefetching_cache(self)
+        return handles
+
     def get_telemetry_frame_laps(
         self, year: int, gp: str, session: str, drivers: list[str]
     ) -> dict[str, list[int]]:
@@ -2719,10 +3088,18 @@ class Cache:
         drivers: list[str],
         frame_class: Any = None,
     ) -> dict[str, LazyDriverFrameSource]:
-        """Lazy stand-ins for the drivers' rows (see :class:`LazyDriverFrameSource`)."""
+        """Lazy stand-ins for the drivers' rows (see :class:`LazyDriverFrameSource`).
+
+        Keyed in ``drivers`` order (the order the laps list them): the reads
+        ahead of the first lazy access follow it (Elis E5).
+        """
+        stored = self.get_telemetry_frame_laps(year, gp, session, drivers)
         return {
-            driver: LazyDriverFrameSource(self, year, gp, session, driver, laps, frame_class)
-            for driver, laps in self.get_telemetry_frame_laps(year, gp, session, drivers).items()
+            driver: LazyDriverFrameSource(
+                self, year, gp, session, driver, stored[driver], frame_class
+            )
+            for driver in dict.fromkeys(drivers)
+            if driver in stored
         }
 
     def get_driver_merged_frame(
@@ -2925,6 +3302,11 @@ class Cache:
         # process: one driver's row is 13 ms instead of 34, and the 20 rows of
         # a race 42 ms instead of 49 pooled. Once pyarrow is resident (a
         # pandas session, the tier writer) its reader is the faster one.
+        # Elis E6: the serial read (one to three drivers) is the extension's
+        # eager stream reader (``_read_polars_ipc_row``): ~9 ms for that row,
+        # no query plan. The pooled read keeps ``pl.read_ipc``: the stream
+        # reader holds the GIL while it decodes, which stalls the cursor loop
+        # feeding the pool (a race's 20 rows: 160 vs 132 ms, fresh process).
         parallel = THREADS_AVAILABLE and len(wanted) >= 4 and (os.cpu_count() or 1) > 1
         use_arrow = _ipc_reader_prefers_arrow()
         if use_arrow:
@@ -2946,11 +3328,12 @@ class Cache:
                     return driver, None, None, 0, e
 
         else:
+            read_row = pl.read_ipc if parallel else _read_polars_ipc_row
 
             def _read(row: tuple[Any, ...]) -> tuple[Any, ...]:
                 driver, laps_json, blob = row
                 try:
-                    frame = pl.read_ipc(bytes(blob))
+                    frame = read_row(bytes(blob))
                     return driver, json_loads(laps_json), frame, frame.height, None
                 except (TypeError, ValueError, OSError, PolarsError) as e:
                     return driver, None, None, 0, e

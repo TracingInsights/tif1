@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import sys
 from collections.abc import Iterator
 from typing import Any, Protocol, cast
 
@@ -172,6 +173,22 @@ def decode_telemetry_payload(payload: str | bytes | bytearray | memoryview) -> A
         except ValueError:
             pass
     return json_loads(payload)
+
+
+def decode_one_telemetry_payload(payload: str | bytes | bytearray | memoryview) -> Any:
+    """:func:`decode_telemetry_payload` for a lone payload: orjson until numpy is resident.
+
+    The native decoder hands back numpy arrays, so its first call imports
+    numpy (~55 ms) for a ~0.5 ms decode. A polars process that has not
+    imported numpy yet reads the lap (``get_fastest_lap_tel``, a driver's
+    first lone lap) from the orjson lists instead, which every frame builder
+    turns into the same frame (Elis E6). pandas processes always hold numpy
+    and keep the native decoder; batch reads go through
+    :func:`decode_telemetry_payload` (the GIL-free parse pays off there).
+    """
+    if sys.modules.get("numpy") is None:
+        return json_loads(payload)
+    return decode_telemetry_payload(payload)
 
 
 def json_dumps(data: Any) -> str:

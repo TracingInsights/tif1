@@ -569,7 +569,7 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 
 **Parameters:**
 - `laps`: Load lap timing data
-- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`
+- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`. `telemetry="lazy"` does not fetch telemetry now. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. The frames are the same as the frames of `telemetry=True`. Refer to [load()](/concepts/sessions#load)
 - `weather`: Load weather data
 - `messages`: Load race control messages
 - `livedata`: The fastf1 live-timing recording. tif1 reads historical data only, so any value other than `None` raises `NotImplementedError`

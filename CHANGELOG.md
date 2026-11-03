@@ -7,6 +7,137 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Elis series (2026-11-03)
+
+- `Session.load(telemetry="lazy")` leaves the telemetry where it is until a
+  lap needs it. The first access of any lap of a driver (`lap.telemetry`,
+  `get_car_data()`, `Laps.telemetry`, `get_fastest_lap_tel()`) fetches all of
+  that driver's laps in one parallel wave; `fetch_all_laps_telemetry()`
+  fetches the drivers not touched yet in one batch. The frames, the cache
+  writes and the frame tier are the ones `telemetry=True` produces. A cold
+  2025 Bahrain race notebook that uses four drivers (merged telemetry, the
+  fastest laps' car data, a four-lap analysis, results) drops from 9.8 s to
+  3.0 s on pandas and from 9.9 s to 3.0 s on polars; `load()` itself takes
+  0.13 s instead of 8.4 s, and a warm polars `load()` 8 ms instead of 179.
+  Touching every lap of a cold session is ~6% slower than the eager load
+  (20 driver waves instead of one batch), so `telemetry=True` stays eager;
+  `load_telemetry_lazy` (env `TIF1_LOAD_TELEMETRY_LAZY`) makes `True` mean
+  `"lazy"`.
+- A cold `load(telemetry="lazy")` session runs its telemetry fetches through
+  one background stream (`PriorityFetchStream`). The laps the code waits for
+  go first, and each lap is fetched once. When the code reads the drivers in
+  laps-row order, the next driver's laps fill the free request slots while
+  the current driver's frames are built (`lazy_telemetry_lookahead`, default
+  1; -1 for every pending driver; 0 for one wave per driver). A cold loop
+  over every lap of the 2025 Bahrain race after a lazy load drops from 11.4 s
+  to 8.9 s on pandas and from 10.3 s to 8.5 s on polars: now 10-14% faster
+  than `load(telemetry=True)` followed by the same loop, where it was 6.5%
+  slower. A four-driver notebook in another order makes no background
+  requests and keeps its 3.0 s (eager: 10.0 s). `fetch_all_laps_telemetry()`
+  takes the payloads the stream already holds. Interpreter exit cancels the
+  stream's requests in flight; a cancelled hedged CDN request now also
+  cancels its backup request.
+- Cold sessions fetch their first files without loading the HTTP library.
+  `get_session` fetches `drivers.json` and the session laptimes over Python's
+  own `http.client` (the same certificate store, User-Agent and gzip as
+  niquests) while pandas or polars imports; niquests, which took ~120-145 ms
+  to import plus a TLS handshake and an OCSP check before its first request,
+  is imported only when a request needs it: a telemetry wave. Until then,
+  single requests (the fastest lap's telemetry, the Ergast classification)
+  reuse the kept-alive stdlib connections. Anything but a `200` goes through
+  niquests as before, so the CDN fallback and the 404/403 handling are
+  unchanged. A cold `session.laps` script takes 586 ms instead of 876 ms with
+  pandas and 430 ms instead of 645 ms with polars; a cold
+  `get_fastest_lap_tel()` 609 ms instead of 871 ms. A cold script's first
+  telemetry wave does not wait for the HTTP library either: it starts on the
+  standard-library connections the first wave opened while niquests imports
+  and connects in a background thread (its import, ~90-135 ms of CPU, runs
+  while the main thread waits on the network); once niquests has connected,
+  the rest of the wave and every later one run on it as before (HTTP/2,
+  hedging, the revocation check). Requests on the stdlib connections verify
+  the certificate chain and host name but skip the OCSP check, and are not
+  hedged (bounded by `cdn_hedge_max_delay`); anything but a `200` with JSON
+  goes to niquests. A cold `laps.pick_driver("VER").telemetry` script on a
+  machine that has used tif1 before takes 1233 ms instead of 1515 ms with
+  pandas and 1301 ms instead of 1412 ms with polars. `cdn_first_wave=False`
+  (`TIF1_CDN_FIRST_WAVE=false`) sends every request through niquests and
+  its revocation check. An exiting script no longer waits for a niquests
+  session that a background warm-up is still building.
+- Cold loads keep the certificate revocation (OCSP) check but no longer pay
+  for it again in every process. niquests' GOOD answers are kept in the
+  SQLite cache (one row, at most 8 certificates, each until its `nextUpdate`
+  and never longer than 7 days) and restored into the next process's
+  revocation cache, so a certificate checked before skips the round trip to
+  the CA's responder. Only SUCCESSFUL, GOOD answers whose signature verifies
+  against the issuer are kept; REVOKED and UNKNOWN answers never are. The
+  check also no longer imports qh3's QUIC stack: tif1 loads only the
+  `qh3._hazmat` extension it needs (2 ms instead of 32 ms). Cold pandas
+  `laps` on a machine that has used tif1 before: 863 -> 793 ms (a rerun 991
+  -> 819), fastest-lap telemetry 1005 -> 900 ms; polars `laps` 685 -> 575 ms,
+  fastest-lap telemetry 867 -> 742 ms. `http_revocation_cache=False`
+  (`TIF1_HTTP_REVOCATION_CACHE=false`) checks again in every process.
+- Small warm pandas paths: `laps.iloc[i]` boxes the laps frame's twelve
+  timedelta columns with one call instead of one per column (200 rows 29 ->
+  20 ms); `pick_driver` slices the driver's run of rows when `Driver` is the
+  session table's category column instead of taking every column through a
+  boolean mask (0.8 -> 0.2 ms; ~5 -> ~1 ms as the first selection of a
+  script, which no longer imports `pyarrow.compute`); `split_qualifying_sessions`
+  reads the `QualifyingSession` labels once per distinct value instead of
+  through three pyarrow string kernels (fresh process 12 -> 7 ms);
+  nanosecond clock columns are read as their own int64 view (merged
+  telemetry of four drivers 40 -> 35 ms); the Ergast query classes are plain
+  slotted classes (the first `session.results` of a script 11.5 -> 9.7 ms).
+  Values, dtypes, index and classes are unchanged.
+- The common telemetry reads of a `lib="polars"` session no longer import
+  numpy (~55 ms on a fresh process): `pick_driver` filters with polars
+  Series masks, a driver's laps are joined into one telemetry slice with
+  Series kernels, `split_qualifying_sessions`, the fastest-lap selection and
+  the lap start clock work on Python lists, and a lone lap read from the
+  payload cache is decoded with orjson and typed from the lists while numpy
+  is not loaded. The frames are the same as the numpy route's. The polars
+  frame tier also reads the rows of one to three drivers with polars' eager
+  IPC stream reader instead of `pl.read_ipc` (9 ms instead of 16 ms for a
+  race driver row, 15 instead of 31 ms for the first read of a process); the
+  pooled read of a whole session keeps `pl.read_ipc`. Warm cache, fresh
+  process, 2025 Bahrain race, whole-process wall: `laps.pick_driver("VER").telemetry`
+  373 -> 264 ms, `get_fastest_lap_tel()` 284 -> 236 ms, per-lap
+  `get_car_data()` over a driver's laps 380 -> 252 ms,
+  `split_qualifying_sessions()` 300 -> 231 ms.
+- After a warm pandas `Session.load()`, the second driver a script touches
+  no longer reads every other driver's frame-tier row before its first lap
+  (19 rows, ~45-60 ms for a 2025 race, all of it waited for). It reads its
+  own row alone, like the first driver, and the remaining rows are read
+  ahead in the decompression pool, in the laps' driver order, on two serial
+  lanes, while the script works on the drivers it touched; a row no lane
+  has started yet is read by the caller instead of waiting behind the
+  queue. `load()` then two drivers' fastest-lap car data: 71-78 -> 32 ms
+  (process 572-598 -> 525-533 ms); four drivers: 78-89 -> 52-74 ms. A loop
+  over the laps or the drivers keeps the single batch, which is faster
+  there than reading ahead beside the lap builds; scripts that touch one
+  driver read one row, as before. The reads still queued are cancelled
+  when the cache closes and before the interpreter joins the pool at exit,
+  so the exit waits for at most the two rows in flight.
+- CI has a performance regression gate (`perf-gate` job, `tests/perf_gate`,
+  marker `perf_gate`). It seeds a cache from a 7 MB vendored payload bundle
+  (the 2025 Bahrain race and qualifying, with the telemetry of four drivers),
+  then times 10 fresh-process warm workloads on both backends, offline. A
+  phase fails when its best of 3 is above 1.5x (and more than 5 ms above)
+  the baseline median, after scaling by the runner's speed (the median ratio
+  over all ~120 phases) and 5 confirmation reruns. A parity digest of 89
+  surfaces per backend, on the cold build path and on the warm frame-tier
+  path, must match the committed one. The job takes about 47 s of tests on
+  a 32-core machine; it fails when `Session.laps` sleeps for 50 ms.
+  `pytest tests/perf_gate --write-baseline` rewrites the baseline and the
+  digests when a change is meant to move them.
+- Fixed (found by the gate's cold digest): on pandas,
+  `fetch_all_laps_telemetry()` returned plain `DataFrame` values for frames
+  built from payloads (a cold cache, or a load only partly in the frame
+  tier) and `Telemetry` values for frames read from the frame tier. Both
+  paths now return `Telemetry` (wrapped without a copy, with the session,
+  driver and session clock attached), so `add_distance()` and the other
+  `Telemetry` methods are available on a cold result too. Values, dtypes
+  and index are unchanged.
+
 ### Performance — Delphi series (2026-11-03)
 
 - Scripts exit sooner: `tif1` registers an exit hook that freezes the heap

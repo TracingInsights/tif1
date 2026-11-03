@@ -114,6 +114,7 @@ if TYPE_CHECKING:
 
     from . import models as _models
     from .cdn import CDNManager
+    from .core_utils.telemetry_stream import PriorityFetchStream
 
     # Re-exported for backward compatibility; ``__getattr__`` resolves them at runtime.
     from .models import (  # noqa: F401
@@ -248,6 +249,35 @@ async def fetch_multiple_async(
     return await _impl(requests, **kwargs)
 
 
+def _in_lap_order(
+    telemetry_map: dict[tuple[str, int], Any], lap_refs: list[tuple[str, int]]
+) -> dict[tuple[str, int], Any]:
+    """``telemetry_map`` in laps-row order, the order of a full eager batch.
+
+    Frames memoized before a batch (a lazy ``load()``'s touched drivers, the
+    payloads its stream fetched) are mapped before the ones the batch
+    builds; a map already in order is returned as is.
+    """
+    ordered = [ref for ref in lap_refs if ref in telemetry_map]
+    if ordered == list(telemetry_map):
+        return telemetry_map
+    return {ref: telemetry_map[ref] for ref in ordered}
+
+
+_LAZY_STREAM_WRITES_LOCK = threading.Lock()
+
+
+def _flush_lazy_stream_writes(writes: list[tuple[Any, ...]]) -> None:
+    """Hand the payload writes a lazy stream collected so far to the background writer."""
+    with _LAZY_STREAM_WRITES_LOCK:
+        entries = writes[:]
+        del writes[: len(entries)]
+    if entries:
+        from .async_fetch import schedule_telemetry_writes
+
+        schedule_telemetry_writes(entries)
+
+
 def get_cdn_manager() -> CDNManager:
     """:func:`tif1.cdn.get_cdn_manager`, imported on first use (cold loads only)."""
     from .cdn import get_cdn_manager as _impl
@@ -365,8 +395,30 @@ def _polars_ns_values(column: Any, mask: np.ndarray, *, timedelta: bool) -> np.n
     return _ss._timedelta_ns(values) if timedelta else _ss._datetime_ns(values)
 
 
+def _polars_ns_list(column: Any, *, timedelta: bool) -> list[int]:
+    """``_polars_ns_values`` of a whole (already filtered) polars column, as a list.
+
+    ``Duration("ns")`` / naive ``Datetime("ns")`` read their physical Int64
+    (``cast``, no query plan, no numpy), a null as int64 min; any other dtype
+    goes through the value-by-value session-state helpers.
+    """
+    dtype = column.dtype
+    unit_ns = getattr(dtype, "time_unit", None) == "ns"
+    if (timedelta and isinstance(dtype, pl.Duration) and unit_ns) or (
+        not timedelta
+        and isinstance(dtype, pl.Datetime)
+        and unit_ns
+        and getattr(dtype, "time_zone", None) is None
+    ):
+        nat = _ss._NS_MIN
+        return [nat if value is None else value for value in column.cast(pl.Int64).to_list()]
+    values = column.to_list()
+    ns = _ss._timedelta_ns(values) if timedelta else _ss._datetime_ns(values)
+    return [int(value) for value in ns]
+
+
 def _fastest_laps_polars(laps: Any, *, by_driver: bool, drivers: list[str] | None) -> Any:
-    """``Session._select_fastest_laps`` for a polars frame, on column ``to_numpy()`` arrays.
+    """``Session._select_fastest_laps`` for a polars frame, on the columns' Python lists.
 
     The expression path ran ~5 query plans for a ~1,100-row table (the
     process's first plan alone costs ~7 ms while polars starts its thread
@@ -376,7 +428,10 @@ def _fastest_laps_polars(laps: Any, *, by_driver: bool, drivers: list[str] | Non
     ``LapTimeSeconds`` is set from ``LapTime`` as ``_filter_valid_laptimes``
     does. Returns None for a frame it does not handle (a non-``Duration``
     ``LapTime``, a non-boolean ``Deleted``, a null driver code): the caller
-    keeps the expression path.
+    keeps the expression path. Lists rather than numpy arrays (Elis E6): the
+    ~1,100 values cost ~0.3 ms in Python, the numpy import of a polars
+    process ~55 ms; the rows are gathered column by column (``Series``
+    indexing), which also skips the thread-pool start of a frame gather.
     """
     columns = laps.columns
     if COL_LAP_TIME not in columns or COL_DRIVER not in columns:
@@ -384,35 +439,43 @@ def _fastest_laps_polars(laps: Any, *, by_driver: bool, drivers: list[str] | Non
     lap_time = laps[COL_LAP_TIME]
     if not isinstance(lap_time.dtype, pl.Duration):
         return None
-    raw = lap_time.to_numpy().astype("timedelta64[ns]").view("int64")
-    keep = raw != _ss._NS_MIN
+    raw = lap_time.cast(pl.Duration("ns")).cast(pl.Int64).to_list()
+    deleted: list[Any] | None = None
     if COL_DELETED in columns:
-        deleted = laps[COL_DELETED]
-        if deleted.dtype != pl.Boolean:
+        deleted_column = laps[COL_DELETED]
+        if deleted_column.dtype != pl.Boolean:
             return None
-        keep &= ~(deleted.to_numpy() == True)  # noqa: E712 - object array with None
-    codes = laps[COL_DRIVER].to_numpy()
+        deleted = deleted_column.to_list()
+    codes = laps[COL_DRIVER].to_list()
     if any(code is None for code in codes):
         return None
-    if drivers:
-        keep &= np.isin(codes, list(drivers))
-    rows = np.flatnonzero(keep)
-    seconds = raw.astype("float64") / 1_000_000_000
-    if not len(rows):
+    wanted = set(drivers) if drivers else None
+    rows = [
+        row
+        for row, ns in enumerate(raw)
+        if ns is not None
+        and (deleted is None or deleted[row] is not True)
+        and (wanted is None or codes[row] in wanted)
+    ]
+    # int64 -> float64, then / 1e9: the numpy cast's value, row for row.
+    seconds = {row: float(raw[row]) / 1_000_000_000 for row in rows}
+    if not rows:
         picked: list[int] = []
     elif not by_driver:
-        picked = [int(rows[np.argmin(seconds[rows])])]
+        picked = [min(rows, key=seconds.__getitem__)]  # the first on ties, as argmin
     else:
         first_seen: dict[Any, int] = {}
-        for position, code in enumerate(codes[rows].tolist()):
-            first_seen.setdefault(code, position)
+        for position, row in enumerate(rows):
+            first_seen.setdefault(codes[row], position)
         best: dict[Any, int] = {}
-        for row in rows[np.argsort(seconds[rows], kind="stable")].tolist():
+        for row in sorted(rows, key=seconds.__getitem__):  # stable
             best.setdefault(codes[row], row)
         picked = sorted(best.values(), key=lambda row: (seconds[row], first_seen[codes[row]]))
-    base = pl.DataFrame._from_pydf(laps._df.clone())
-    result = base[np.asarray(picked, dtype="int64")]
-    lap_seconds = pl.Series(COL_LAP_TIME_SECONDS, seconds[picked], dtype=pl.Float64)
+    index = pl.Series(picked, dtype=pl.Int64)
+    result = pl.DataFrame([column[index] for column in laps.get_columns()])
+    lap_seconds = pl.Series(
+        COL_LAP_TIME_SECONDS, [seconds[row] for row in picked], dtype=pl.Float64
+    )
     if COL_LAP_TIME_SECONDS in result.columns:
         result.replace_column(result.get_column_index(COL_LAP_TIME_SECONDS), lap_seconds)
     else:
@@ -1129,7 +1192,7 @@ class Session:
         self._typed_session_tables: dict[str, DataFrame] = {}
         # Per-driver lap start lookup (LapStartTime/LapStartDate by lap
         # number) used to give telemetry its SessionTime/Date columns.
-        self._lap_start_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
+        self._lap_start_cache: dict[str, tuple[list[int], list[int]] | None] = {}
         self._lap_start_cache_source: int | None = None
         # (laps table, per-driver Q1/Q2/Q3 best ns): fastf1's quali results from laps.
         self._quali_bests_cache: tuple[Any, dict[str, list[int | None]]] | None = None
@@ -1155,6 +1218,17 @@ class Session:
         self._telemetry_bulk_prefetch_attempted = False
         self._telemetry_bulk_prefetch_done = False
         self._telemetry_background_prefetch_started = False
+        # load(telemetry="lazy"): the laps whose telemetry load() left to the
+        # first access of the driver, by driver in laps-row order.
+        self._lazy_telemetry_refs: dict[str, list[tuple[str, int]]] = {}
+        self._lazy_telemetry_lock = threading.RLock()
+        self._lazy_telemetry_waves = 0
+        self._lazy_telemetry_order: list[str] = []
+        # The driver the last lazy wave expects next (laps-row order).
+        self._lazy_lookahead_next: str | None = None
+        # Cold lazy waves run through one background stream (Elis E10).
+        self._lazy_stream: PriorityFetchStream | None = None
+        self._lazy_stream_writes: list[tuple[Any, ...]] = []
         self._session_tables_prefetched = False
         # Session-level tables (weather.json/rcm.json) are only fetched when
         # explicitly requested (load() flags or a property access); laps-only
@@ -1273,7 +1347,14 @@ class Session:
         Args:
             laps: If True, fetch laps data. Required for telemetry - if telemetry=True
                   and laps=False, laps will be automatically set to True.
-            telemetry: If True, fetch telemetry data for all laps
+            telemetry: If True, fetch telemetry data for all laps. ``"lazy"``
+                makes every lap's telemetry available without fetching it
+                now: the first access of any lap of a driver fetches all of
+                that driver's laps in one parallel wave, and
+                :meth:`fetch_all_laps_telemetry` fetches every driver not yet
+                touched in one batch. The frames are the ones ``True`` builds.
+                Config key ``load_telemetry_lazy`` (env
+                ``TIF1_LOAD_TELEMETRY_LAZY``) makes ``True`` mean ``"lazy"``.
             weather: If True, fetch weather data
             messages: If True, fetch race control messages
             livedata: fastf1's live-timing recording; tif1 serves historical
@@ -1309,8 +1390,11 @@ class Session:
         if messages:
             _ = self.race_control_messages
         if telemetry:
-            # Fetch telemetry for all laps if telemetry is requested
-            self._load_all_laps_telemetry()
+            if self._lazy_telemetry_requested(telemetry):
+                self._register_lazy_telemetry()
+            else:
+                # Fetch telemetry for all laps if telemetry is requested
+                self._load_all_laps_telemetry()
         return self
 
     async def load_async(
@@ -1327,7 +1411,7 @@ class Session:
 
         Args:
             laps: Fetch laps data (forced on when ``telemetry`` is requested).
-            telemetry: Fetch telemetry for all laps.
+            telemetry: Fetch telemetry for all laps (``"lazy"``: see :meth:`load`).
             weather: Fetch weather data.
             messages: Fetch race control messages.
             livedata: Not supported (see :meth:`load`).
@@ -1361,7 +1445,10 @@ class Session:
         if messages:
             _ = self.race_control_messages
         if telemetry:
-            await self._load_all_laps_telemetry_async()
+            if self._lazy_telemetry_requested(telemetry):
+                self._register_lazy_telemetry()
+            else:
+                await self._load_all_laps_telemetry_async()
         return self
 
     async def _prefetch_session_tables_async(self) -> None:
@@ -1474,6 +1561,272 @@ class Session:
             if not pending or self._all_known_missing(pending):
                 return False
         return True
+
+    @staticmethod
+    def _lazy_telemetry_requested(telemetry: Any) -> bool:
+        """Whether a truthy ``load(telemetry=...)`` means the lazy load.
+
+        ``"lazy"`` always does; ``True`` does when the ``load_telemetry_lazy``
+        config key is set.
+
+        Raises:
+            ValueError: ``telemetry`` is a string other than ``"lazy"``.
+        """
+        if isinstance(telemetry, str):
+            if telemetry.lower() == "lazy":
+                return True
+            raise ValueError(f"telemetry must be a bool or 'lazy', got {telemetry!r}")
+        return bool(config.get("load_telemetry_lazy", False))
+
+    def _register_lazy_telemetry(self) -> None:
+        """``load(telemetry="lazy")``: note the laps whose telemetry is still to fetch.
+
+        The warm readers run exactly as for the eager load (a pandas frame
+        tier registers its driver rows as sources, Delphi D5), so a warm lazy
+        load holds what an eager one does. The laps left over are grouped by
+        driver; :meth:`_ensure_lazy_telemetry` fetches a driver's group in one
+        wave on the first access of any of its laps.
+        """
+        if self._ergast_only or not self._telemetry_load_pending():
+            return
+        laps = self.laps
+        memo = self._memo
+        pending: dict[str, dict[tuple[str, int], None]] = {}
+        for ref in self._telemetry_lap_refs(laps):
+            if not memo.contains("telemetry_df", ref):
+                pending.setdefault(ref[0], {})[ref] = None
+        lock = getattr(self, "_lazy_telemetry_lock", None)
+        if lock is None:  # a Session built without __init__ (test doubles)
+            lock = self._lazy_telemetry_lock = threading.RLock()
+        with lock:
+            self._close_lazy_telemetry_stream()
+            self._lazy_telemetry_refs = {driver: list(refs) for driver, refs in pending.items()}
+            self._lazy_telemetry_order = list(pending)
+            self._lazy_lookahead_next = None
+            self._lazy_telemetry_waves = 0
+
+    def _ensure_lazy_telemetry(self, refs: Iterable[tuple[str, int]]) -> None:
+        """Fetch the lazily loaded laps of every driver in ``refs`` (one wave for all).
+
+        A no-op unless ``load(telemetry="lazy")`` left drivers pending. Each
+        driver is fetched once: it leaves the pending table before its wave,
+        so a lap the wave could not bring takes the per-lap path afterwards,
+        as it does after an eager load.
+
+        On a session the cache holds (polars: the frame tier is not read by
+        ``load()``), the second wave reads every driver still pending in one
+        batch, as Delphi D5's lazy rows do: one driver's IPC row read alone
+        costs ~15-20 ms, the pooled batch of a race's 20 rows ~110 ms, so a
+        loop over every lap would otherwise pay ~4x the eager load.
+        """
+        lazy = getattr(self, "_lazy_telemetry_refs", None)
+        if not lazy:
+            return
+        with self._lazy_telemetry_lock:
+            wave: list[tuple[str, int]] = []
+            for driver in dict.fromkeys(str(driver) for driver, _ in refs):
+                driver_refs = lazy.pop(driver, None)
+                if driver_refs:
+                    wave.extend(driver_refs)
+            if not wave:
+                return
+            if self._lazy_telemetry_waves and lazy and self._lazy_telemetry_from_cache():
+                for driver_refs in lazy.values():
+                    wave.extend(driver_refs)
+                lazy.clear()
+            self._lazy_telemetry_waves += 1
+            self._fetch_lazy_telemetry_wave(wave)
+
+    def _lazy_telemetry_from_cache(self) -> bool:
+        """Whether lazy waves read the SQLite tiers (a cached session) instead of the CDN."""
+        return (
+            self.enable_cache
+            and not self._resolve_telemetry_ultra_cold_mode(None)
+            and self._session_cache_available()
+        )
+
+    def _fetch_lazy_telemetry_wave(self, refs: list[tuple[str, int]]) -> None:
+        """Memoize the frames of ``refs`` as :meth:`fetch_all_laps_telemetry` builds them.
+
+        Frame tier first (warm polars sessions), then the payloads (memo,
+        SQLite, one parallel network wave with the eager batch's options);
+        the frames built from payloads go to the frame-tier writer.
+        """
+        ultra_cold = self._resolve_telemetry_ultra_cold_mode(None)
+        memo = self._memo
+        pending = [ref for ref in refs if not memo.contains("telemetry_df", ref)]
+        if pending and self._lazy_telemetry_from_cache():
+            frame_hits = get_cache().get_telemetry_frames_batch(
+                self.year,
+                self.gp,
+                self.session,
+                pending,
+                lib=self.lib,
+                frame_class=self._telemetry_frame_class(),
+            )
+            for ref, tier_frame in frame_hits.items():
+                memo.set("telemetry_df", ref, self._adopt_telemetry_frame(tier_frame, ref[0]))
+            pending = [ref for ref in pending if ref not in frame_hits]
+        stream = self._lazy_telemetry_stream(ultra_cold)
+        if not pending or self._all_known_missing(pending):
+            if stream is not None:
+                self._queue_lazy_lookahead(stream, refs)
+            return
+        if stream is None:
+            found = self._prefetch_telemetry_payloads(pending, ultra_cold=ultra_cold)
+        else:
+            found = self._stream_telemetry_payloads(stream, pending, refs, ultra_cold=ultra_cold)
+        self._schedule_frame_materialization(self._frames_from_payloads(found, {}))
+
+    def _lazy_telemetry_stream(self, ultra_cold: bool) -> PriorityFetchStream | None:
+        """The stream cold lazy waves fetch through (``None``: one wave per driver, as E1).
+
+        Off on a cached session (the SQLite tiers serve it), without threads
+        (Pyodide) and with ``lazy_telemetry_lookahead`` set to 0. The stream's
+        requests carry the eager batch's options; their payload writes are
+        collected and flushed after each wave and whenever the stream idles.
+        """
+        stream = getattr(self, "_lazy_stream", None)
+        if stream is not None and not stream.closed:
+            return stream
+        lookahead = config.get("lazy_telemetry_lookahead", 1)
+        if (
+            not THREADS_AVAILABLE
+            or not isinstance(lookahead, int)
+            or lookahead == 0
+            or self._lazy_telemetry_from_cache()
+        ):
+            return None
+        from .core_utils.telemetry_stream import PriorityFetchStream
+
+        writes: list[tuple[Any, ...]] = []
+        use_cache, write_cache, validate = not ultra_cold, self.enable_cache, not ultra_cold
+
+        async def fetch(request: tuple[int, str, str, str]) -> dict[str, Any] | None:
+            # The module-global name: tests serve it from memory.
+            results = await fetch_multiple_async(
+                [request],
+                use_cache=use_cache,
+                write_cache=write_cache,
+                validate_payload=validate,
+                telemetry_writes=writes,
+            )
+            return results[0] if results else None
+
+        stream = PriorityFetchStream(
+            fetch,
+            max_concurrent=int(config.get("max_concurrent_requests", 22)),
+            background_concurrent=int(config.get("lazy_telemetry_background_requests", 22)),
+            on_idle=lambda: _flush_lazy_stream_writes(writes),
+        )
+        self._lazy_stream = stream
+        self._lazy_stream_writes = writes
+        return stream
+
+    def _stream_telemetry_payloads(
+        self,
+        stream: PriorityFetchStream,
+        refs: list[tuple[str, int]],
+        wave: list[tuple[str, int]],
+        *,
+        ultra_cold: bool,
+    ) -> list[tuple[str, int, Any]]:
+        """:meth:`_prefetch_telemetry_payloads` through the lazy stream.
+
+        The laps of ``refs`` go first (joining any already in flight); the
+        drivers after the wave's last one are queued behind them
+        (:meth:`_queue_lazy_lookahead`), so the wave's tail and the time
+        spent on its frames fetch the next driver.
+        """
+        requests, lap_info, found = self._fetch_telemetry_batch_from_refs(
+            refs, skip_cache=ultra_cold
+        )
+        items = [
+            (ref, request)
+            for request, ref in zip(requests, lap_info, strict=True)
+            if not self._should_skip_telemetry_fetch(ref[0])
+        ]
+        import concurrent.futures  # lazy: cold lazy waves only
+
+        futures = stream.request(items)
+        self._queue_lazy_lookahead(stream, wave)
+        concurrent.futures.wait(futures)
+        for ((driver, lap_num), _), future in zip(items, futures, strict=True):
+            result = None if future.cancelled() else future.result()
+            tel_data = result.get("tel") if isinstance(result, dict) else None
+            if isinstance(tel_data, dict) and tel_data:
+                self._remember_telemetry_payload(driver, lap_num, tel_data)
+                found.append((driver, lap_num, tel_data))
+        _flush_lazy_stream_writes(self._lazy_stream_writes)
+        return found
+
+    def _queue_lazy_lookahead(
+        self, stream: PriorityFetchStream, wave: list[tuple[str, int]]
+    ) -> None:
+        """Queue the next ``lazy_telemetry_lookahead`` pending drivers as background work.
+
+        Only once the script reads the drivers in laps-row order: a wave
+        whose drivers include the one the previous wave predicted (the next
+        pending driver after its last) queues the drivers after its own last
+        driver (wrapping around, still pending; ``-1`` queues every pending
+        driver). Background requests share the link with the foreground
+        wave they trail (a cold four-driver notebook in another order was
+        +24% with an unconditional lookahead), so a wave that does not
+        follow the prediction queues nothing. A driver queued earlier and
+        not chosen now is dropped from the queue (its laps in flight finish
+        and stay with the stream).
+        """
+        lookahead = config.get("lazy_telemetry_lookahead", 1)
+        lazy = self._lazy_telemetry_refs
+        order = getattr(self, "_lazy_telemetry_order", None) or list(lazy)
+        predicted = getattr(self, "_lazy_lookahead_next", None)
+        self._lazy_lookahead_next = None
+        if not wave or not lazy or not isinstance(lookahead, int):
+            stream.prefetch(())
+            return
+        last = str(wave[-1][0])
+        start = order.index(last) + 1 if last in order else 0
+        chosen: list[str] = []
+        for driver in order[start:] + order[:start]:
+            if driver in lazy and not self._should_skip_telemetry_fetch(driver):
+                chosen.append(driver)
+                if 0 < lookahead <= len(chosen):
+                    break
+        self._lazy_lookahead_next = chosen[0] if chosen else None
+        if predicted is None or all(str(driver) != predicted for driver, _ in wave):
+            stream.prefetch(())
+            return
+        memo = self._memo
+        stream.prefetch(
+            (ref, (self.year, self.gp, self.session, f"{ref[0]}/{ref[1]}_tel.json"))
+            for driver in chosen
+            for ref in lazy[driver]
+            if not memo.contains("telemetry_df", ref)
+            and self._get_telemetry_payload(ref[0], ref[1]) is None
+        )
+
+    def _close_lazy_telemetry_stream(self) -> None:
+        """Stop the lazy stream and memoize the payloads it fetched (in flight included).
+
+        :meth:`fetch_all_laps_telemetry` runs this first, so its batch finds
+        the stream's payloads in the memo instead of fetching them again.
+        """
+        stream = getattr(self, "_lazy_stream", None)
+        if stream is None:
+            return
+        import concurrent.futures  # lazy: cold lazy waves only
+
+        self._lazy_stream = None
+        concurrent.futures.wait(stream.close())
+        for (driver, lap_num), result in stream.results().items():
+            tel_data = result.get("tel") if isinstance(result, dict) else None
+            if (
+                isinstance(tel_data, dict)
+                and tel_data
+                and self._get_telemetry_payload(driver, lap_num) is None
+            ):
+                self._remember_telemetry_payload(driver, lap_num, tel_data)
+        _flush_lazy_stream_writes(self._lazy_stream_writes)
 
     def _get_local_payload(self, path: str) -> dict[str, Any] | None:
         """Get in-memory payload previously fetched during this session."""
@@ -6498,8 +6851,8 @@ class Session:
             return frame
         return polars_telemetry._from_frame(frame, self, driver)
 
-    def _lap_start_lookup(self, driver: str) -> tuple[np.ndarray, np.ndarray] | None:
-        """``(LapStartTime, LapStartDate)`` as int64-ns arrays indexed by lap number.
+    def _lap_start_lookup(self, driver: str) -> tuple[list[int], list[int]] | None:
+        """``(LapStartTime, LapStartDate)`` as int-ns lists indexed by lap number.
 
         From the loaded laps table, else from the driver's memoised laptime
         payload (``lap``/``lST``/``lSD``); never fetches. Int64 min marks an
@@ -6513,22 +6866,26 @@ class Session:
         if driver in self._lap_start_cache:
             return self._lap_start_cache[driver]
         numbers: Any = None
-        starts: np.ndarray | None = None
-        dates: np.ndarray | None = None
+        starts: Any = None
+        dates: Any = None
         if laps is not None and not _is_empty_df(laps, self.lib):
             columns = list(laps.columns)
             if {"Driver", "LapNumber", "LapStartTime", "LapStartDate"}.issubset(columns):
                 if self.lib == "polars":
-                    # Column ``to_numpy()`` and a numpy mask: a ``filter`` runs a
-                    # query plan (~7 ms for the process's first one).
+                    # Series kernels (a comparison and ``Series.filter``, no
+                    # query plan) and lists: a driver's first lap of a numpy-free
+                    # polars process must not import numpy for ~60 values.
                     frame = cast(Any, laps)
-                    mask = frame["Driver"].to_numpy() == driver
-                    numbers = frame["LapNumber"].to_numpy()[mask].tolist()
-                    starts = _polars_ns_values(frame["LapStartTime"], mask, timedelta=True)
-                    dates = _polars_ns_values(frame["LapStartDate"], mask, timedelta=False)
+                    mask = frame["Driver"].cast(pl.String) == driver
+                    numbers = frame["LapNumber"].filter(mask).to_list()
+                    starts = _polars_ns_list(frame["LapStartTime"].filter(mask), timedelta=True)
+                    dates = _polars_ns_list(frame["LapStartDate"].filter(mask), timedelta=False)
                 else:
                     laps_pd = cast("pd.DataFrame", laps)
-                    mask = laps_pd["Driver"].to_numpy(dtype=object) == driver
+                    # Elis E7: the category column's codes, not an object
+                    # array of it (a pyarrow take of the categories, ~4 ms
+                    # as the first take of a process).
+                    mask = _models._driver_rows_mask(laps_pd, driver)
                     numbers = laps_pd["LapNumber"].to_numpy()[mask].tolist()
                     starts = _pandas_ns_values(laps_pd["LapStartTime"], mask, timedelta=True)
                     dates = _pandas_ns_values(laps_pd["LapStartDate"], mask, timedelta=False)
@@ -6536,9 +6893,15 @@ class Session:
             payload = self._get_or_derive_driver_laptime_payload(driver)
             if isinstance(payload, dict) and isinstance(payload.get("lap"), list):
                 numbers = payload.get("lap")
-                starts = _ss._timedelta_ns(payload.get("lST"))
-                dates = _ss._datetime_ns(payload.get("lSD"))
-        lookup: tuple[np.ndarray, np.ndarray] | None = None
+                # Lists for the payload's own shapes (no numpy on a polars
+                # process's first lap); anything else takes the array helpers.
+                starts = _ss._timedelta_ns_list(payload.get("lST"))
+                if starts is None:
+                    starts = _ss._timedelta_ns(payload.get("lST"))
+                dates = _ss._datetime_ns_list(payload.get("lSD"))
+                if dates is None:
+                    dates = _ss._datetime_ns(payload.get("lSD"))
+        lookup: tuple[list[int], list[int]] | None = None
         if numbers is not None and starts is not None and dates is not None:
             laps_known: list[int] = []
             for value in numbers:
@@ -6548,12 +6911,14 @@ class Session:
                     laps_known.append(-1)
             size = max(laps_known, default=-1) + 1
             if size > 0 and len(laps_known) == len(starts) == len(dates):
-                start_arr = np.full(size, _ss._NS_MIN, dtype="int64")
-                date_arr = np.full(size, _ss._NS_MIN, dtype="int64")
+                # Lists, not arrays: ``_lap_clock`` reads one entry, and
+                # ``_attach_session_clock`` gathers them as arrays itself.
+                start_arr = [_ss._NS_MIN] * size
+                date_arr = [_ss._NS_MIN] * size
                 for position, lap in enumerate(laps_known):
                     if lap >= 0 and start_arr[lap] == _ss._NS_MIN:
-                        start_arr[lap] = starts[position]
-                        date_arr[lap] = dates[position]
+                        start_arr[lap] = int(starts[position])
+                        date_arr[lap] = int(dates[position])
                 lookup = (start_arr, date_arr)
         self._lap_start_cache[driver] = lookup
         return lookup
@@ -6628,7 +6993,8 @@ class Session:
             lookup = self._lap_start_lookup(str(code))
             if lookup is None:
                 continue
-            start_arr, date_arr = lookup
+            start_arr = np.asarray(lookup[0], dtype=np.int64)
+            date_arr = np.asarray(lookup[1], dtype=np.int64)
             if len(drivers) == 1 or driver_col is None:
                 rows = np.arange(n)
             else:
@@ -6672,6 +7038,11 @@ class Session:
             return self._session_telemetry(frame, driver)
 
         cached_df = self._memo.get("telemetry_df", (driver, lap_num))
+        if cached_df is None and getattr(self, "_lazy_telemetry_refs", None):
+            # load(telemetry="lazy"): the driver's first touched lap brings
+            # all of its laps in one wave.
+            self._ensure_lazy_telemetry(((driver, lap_num),))
+            cached_df = self._memo.get("telemetry_df", (driver, lap_num))
         if cached_df is not None:
             wrapped = _as_pandas_telemetry(cached_df)
             if wrapped is not cached_df:
@@ -7028,6 +7399,10 @@ class Session:
         """
         if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
             return {}
+        # Every lap a lazy load() left pending is fetched by this batch; the
+        # payloads the lazy stream already holds are memoized first.
+        self._close_lazy_telemetry_stream()
+        self._lazy_telemetry_refs = {}
         ultra_cold_enabled = self._resolve_telemetry_ultra_cold_mode(ultra_cold)
 
         # Get all laps first
@@ -7079,7 +7454,7 @@ class Session:
                                 clock=self._lap_clock(driver, lap_num),
                             )
                             if tel_df is not None and not _is_empty_df(tel_df, self.lib):
-                                tel_df = self._bind_telemetry(tel_df, driver)
+                                tel_df = self._session_telemetry(tel_df, driver)
                                 self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                                 telemetry_map[(driver, lap_num)] = tel_df
                                 if self.enable_cache:
@@ -7088,6 +7463,8 @@ class Session:
                                     # at the frame tier instead of re-parsing the
                                     # payload tier first.
                                     materialized_frames.append((driver, lap_num, tel_df))
+        if requests or cached_tels:
+            telemetry_map = _in_lap_order(telemetry_map, lap_refs)
 
         # One bulk write materializes the assembled telemetry frames (payload
         # tier hits and network fetches alike); the next warm load reads them
@@ -7115,7 +7492,7 @@ class Session:
                     tel_payload, driver, lap_num, self.lib, clock=self._lap_clock(driver, lap_num)
                 )
                 if tel_df is not None and not _is_empty_df(tel_df, self.lib):
-                    tel_df = self._bind_telemetry(tel_df, driver)
+                    tel_df = self._session_telemetry(tel_df, driver)
                     self._memo.set("telemetry_df", (driver, lap_num), tel_df)
                     telemetry_map[(str(driver), int(lap_num))] = tel_df
                     materialized_frames.append((driver, lap_num, tel_df))
@@ -7176,6 +7553,10 @@ class Session:
         # tier) is served synchronously — no event loop, no asyncio import.
         if self._ergast_only:  # no telemetry exists before F1_API_FIRST_YEAR
             return {}
+        # Every lap a lazy load() left pending is fetched by this batch; the
+        # payloads the lazy stream already holds are memoized first.
+        self._close_lazy_telemetry_stream()
+        self._lazy_telemetry_refs = {}
         ultra_cold_enabled = self._resolve_telemetry_ultra_cold_mode(ultra_cold)
         laps = self.laps
         if _is_empty_df(laps, self.lib):
@@ -7197,6 +7578,7 @@ class Session:
             self._schedule_frame_materialization(
                 self._frames_from_payloads(cached_tels, telemetry_map)
             )
+            telemetry_map = _in_lap_order(telemetry_map, lap_refs)
         if not missing_refs or self._all_known_missing(missing_refs):
             return telemetry_map
 
@@ -7264,6 +7646,7 @@ class Session:
         """
         if not refs or self._ergast_only:
             return {}
+        self._ensure_lazy_telemetry(refs)
         ultra_cold = self._resolve_telemetry_ultra_cold_mode(None)
         frames, pending = self._memoized_telemetry(refs, ultra_cold)
         frames = {ref: self._session_telemetry(frame, ref[0]) for ref, frame in frames.items()}
@@ -7582,17 +7965,24 @@ _FIRST_WAVE_PATHS = ("drivers.json", "session_laptimes.json")
 def _preconnect_cdn(
     year: int, gp_name: str, session_name: str, enable_cache: bool | None
 ) -> bool | None:
-    """Warm the shared CDN connections for an uncached session (Argos A8, Olympia H11).
+    """Start the first wave of an uncached session (Argos A8, Olympia H11, Elis E2).
 
-    The first request of a cold load pays the HTTP-stack import (~0.1 s of
-    CPU), DNS and TLS (160-800 ms measured against jsDelivr). ``get_session``
-    calls this before the session imports pandas or polars: the import runs
-    here, on the calling thread (in a thread it would only share the GIL
-    with the pandas import and reach the network as late as before), then
-    daemon threads open the connections while pandas or polars loads. One
-    attempt per process; any failure is swallowed (the real fetch path
-    reports its own errors) and the hook is skipped in offline/CI mode or
-    when ``cdn_preconnect`` is off. A cached session returns after the probe:
+    The first requests of a cold load used to pay the niquests import
+    (~0.12-0.14 s of CPU), DNS, TLS and niquests' OCSP check (~0.35 s from
+    here to a warm connection against jsDelivr). ``get_session`` calls this
+    before the session imports pandas or polars: daemon threads fetch the
+    first-wave files over the standard library (:mod:`tif1.first_wave`)
+    while pandas or polars loads, and niquests is only imported once a
+    request needs it (a telemetry wave). Where the stdlib wave cannot match
+    niquests' setup (a proxy, no ``wassima``) the thread warms niquests
+    connections instead, as before; ``cdn_first_wave`` False does that here,
+    on the calling thread (every request then goes through niquests and its
+    OCSP check). The first telemetry wave starts on the stdlib connections
+    while niquests imports and connects in a daemon thread (Elis E9). One
+    attempt per process; any failure is swallowed
+    (the real fetch path reports its own errors) and the hook is skipped in
+    offline/CI mode or when ``cdn_preconnect`` is off. A cached session
+    returns after the probe:
     no HTTP-stack import, no thread. An Ergast-only season counts as cached
     when the Stats tier holds its classification; the session's own probe
     (handed back) only covers the timing-data tier.
@@ -7634,14 +8024,20 @@ def _preconnect_cdn(
             return cache_probe
         _preconnect_started = True
     try:
-        from .http_session import warm_connections
-
         sources = get_cdn_manager().get_sources()
         if sources:
-            warm_connections(
-                [sources[0].format_url(year, gp, session, path) for path in _FIRST_WAVE_PATHS],
-                timeout=max(1, config.get("timeout", 10)),
-            )
+            urls = [sources[0].format_url(year, gp, session, path) for path in _FIRST_WAVE_PATHS]
+            timeout = max(1, config.get("timeout", 10))
+            if bool(config.get("cdn_first_wave", True)):
+                from . import first_wave
+
+                first_wave.start(urls, timeout=timeout)
+            else:
+                # The Olympia pre-connect: niquests (and its OCSP check) for
+                # every request, its import on this thread.
+                from .http_session import warm_connections
+
+                warm_connections(urls, timeout=timeout)
     except Exception as e:  # best effort, never surfaces
         logger.debug("CDN pre-connect skipped: %s", e)
     return cache_probe

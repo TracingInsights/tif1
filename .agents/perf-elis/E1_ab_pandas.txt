@@ -1,0 +1,7 @@
+delphi_warm_ab.py --lib pandas --pairs 6 --workloads notebook,load_only,all_tel
+(control /tmp/tif1-elis-control/src + /tmp/tif1-delphi-warm; candidate E1 src + /tmp/tif1-elis-warm-E1;
+the JSON write failed on a missing directory, the printed summary follows)
+
+[pandas] notebook             wall control 809/791  candidate 807/749  faster 3/6  | get_session=399->401  load=11->12  picks_x8=11->11  iterlaps_tel_loop=139->140  iloc_200=29->29  driver_merged_x4=43->46  telemetry_analysis_4=25->23  fastest_lap_tel=5->4  driver_fastest_lap_x4=19->15  results=0->0  weather=0->0
+[pandas] load_only            wall control 466/463  candidate 469/438  faster 3/6  | get_session=373->372  load=11->12  laps=0->0  results=8->8
+[pandas] all_tel              wall control 595/527  candidate 601/536  faster 3/6  | get_session=403->382  laps=3->3  all_tel=98->96

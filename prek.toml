@@ -8,7 +8,8 @@ hooks = [
     { id = "trailing-whitespace", exclude = "\\.(patch|diff)$" },
     { id = "end-of-file-fixer" },
     { id = "check-yaml" },
-    { id = "check-added-large-files" },
+    # The perf gate's payload bundle (tools/perf/perf_gate_fixture.py) is ~7 MB.
+    { id = "check-added-large-files", exclude = "^tests/fixtures/perf/payloads\\.bin\\.xz$" },
     { id = "check-json" },
     { id = "check-toml" },
     { id = "check-merge-conflict" },

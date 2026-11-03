@@ -1,0 +1,399 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 3,
+ "summary": {
+  "iterlaps_all_lazy": {
+   "control_workload": "iterlaps_all_lazy",
+   "control_env": {},
+   "candidate_env": {
+    "TIF1_LAZY_TELEMETRY_LOOKAHEAD": "-1"
+   },
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 580.4,
+     "min": 552.6
+    },
+    "load": {
+     "median": 132.2,
+     "min": 129.0
+    },
+    "iterlaps_tel_loop": {
+     "median": 10288.0,
+     "min": 9978.3
+    },
+    "in_process_total": {
+     "median": 11030.5,
+     "min": 10674.8
+    },
+    "process_wall": {
+     "median": 11311.0,
+     "min": 10854.3
+    },
+    "exit_tail": {
+     "median": 257.9,
+     "min": 179.6
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.4,
+     "min": 12.0
+    },
+    "get_session": {
+     "median": 611.8,
+     "min": 607.0
+    },
+    "load": {
+     "median": 137.0,
+     "min": 124.4
+    },
+    "iterlaps_tel_loop": {
+     "median": 8279.9,
+     "min": 7708.0
+    },
+    "in_process_total": {
+     "median": 9041.1,
+     "min": 8485.4
+    },
+    "process_wall": {
+     "median": 9350.4,
+     "min": 8742.4
+    },
+    "exit_tail": {
+     "median": 309.3,
+     "min": 257.1
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "3/3",
+   "control_runs": [
+    {
+     "import": 11.76,
+     "get_session": 552.56,
+     "load": 132.15,
+     "iterlaps_tel_loop": 9978.27,
+     "in_process_total": 10674.79,
+     "process_wall": 10854.34,
+     "exit_tail": 179.55,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.02,
+     "get_session": 580.37,
+     "load": 150.03,
+     "iterlaps_tel_loop": 10288.05,
+     "in_process_total": 11030.53,
+     "process_wall": 11310.96,
+     "exit_tail": 280.43,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.09,
+     "get_session": 713.04,
+     "load": 129.03,
+     "iterlaps_tel_loop": 10631.84,
+     "in_process_total": 11486.26,
+     "process_wall": 11744.12,
+     "exit_tail": 257.86,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 14.71,
+     "get_session": 620.15,
+     "load": 142.43,
+     "iterlaps_tel_loop": 7708.03,
+     "in_process_total": 8485.37,
+     "process_wall": 8742.44,
+     "exit_tail": 257.07,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.37,
+     "get_session": 611.78,
+     "load": 136.97,
+     "iterlaps_tel_loop": 8279.9,
+     "in_process_total": 9041.08,
+     "process_wall": 9350.35,
+     "exit_tail": 309.27,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.04,
+     "get_session": 607.03,
+     "load": 124.4,
+     "iterlaps_tel_loop": 8891.4,
+     "in_process_total": 9634.93,
+     "process_wall": 10065.89,
+     "exit_tail": 430.96,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  },
+  "notebook_lazy": {
+   "control_workload": "notebook_lazy",
+   "control_env": {},
+   "candidate_env": {
+    "TIF1_LAZY_TELEMETRY_LOOKAHEAD": "-1"
+   },
+   "control": {
+    "import": {
+     "median": 12.0,
+     "min": 11.9
+    },
+    "get_session": {
+     "median": 590.2,
+     "min": 582.3
+    },
+    "load": {
+     "median": 133.9,
+     "min": 126.3
+    },
+    "merged_VER": {
+     "median": 593.3,
+     "min": 575.5
+    },
+    "merged_LEC": {
+     "median": 527.1,
+     "min": 526.6
+    },
+    "merged_NOR": {
+     "median": 522.4,
+     "min": 515.2
+    },
+    "merged_PIA": {
+     "median": 535.1,
+     "min": 475.1
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 29.1,
+     "min": 24.6
+    },
+    "results": {
+     "median": 60.7,
+     "min": 58.7
+    },
+    "in_process_total": {
+     "median": 3061.4,
+     "min": 2937.0
+    },
+    "process_wall": {
+     "median": 3170.1,
+     "min": 3041.7
+    },
+    "exit_tail": {
+     "median": 108.7,
+     "min": 104.7
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.2,
+     "min": 11.8
+    },
+    "get_session": {
+     "median": 656.4,
+     "min": 602.8
+    },
+    "load": {
+     "median": 130.7,
+     "min": 129.5
+    },
+    "merged_VER": {
+     "median": 608.4,
+     "min": 570.4
+    },
+    "merged_LEC": {
+     "median": 547.8,
+     "min": 530.5
+    },
+    "merged_NOR": {
+     "median": 546.2,
+     "min": 516.3
+    },
+    "merged_PIA": {
+     "median": 473.3,
+     "min": 465.2
+    },
+    "fastest_car_data_x4": {
+     "median": 0.6,
+     "min": 0.6
+    },
+    "telemetry_analysis_4": {
+     "median": 45.1,
+     "min": 44.5
+    },
+    "results": {
+     "median": 66.5,
+     "min": 59.5
+    },
+    "in_process_total": {
+     "median": 3115.3,
+     "min": 3033.5
+    },
+    "process_wall": {
+     "median": 3217.7,
+     "min": 3140.8
+    },
+    "exit_tail": {
+     "median": 102.4,
+     "min": 102.3
+    },
+    "warnings_403": {
+     "median": 0,
+     "min": 0
+    },
+    "stderr_warnings": {
+     "median": 0,
+     "min": 0
+    }
+   },
+   "candidate_faster_pairs": "1/3",
+   "control_runs": [
+    {
+     "import": 20.51,
+     "get_session": 744.37,
+     "load": 133.92,
+     "merged_VER": 656.31,
+     "merged_LEC": 540.94,
+     "merged_NOR": 522.39,
+     "merged_PIA": 583.14,
+     "fastest_car_data_x4": 0.63,
+     "telemetry_analysis_4": 29.09,
+     "results": 73.24,
+     "in_process_total": 3320.15,
+     "process_wall": 3451.63,
+     "exit_tail": 131.48,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.04,
+     "get_session": 582.29,
+     "load": 126.35,
+     "merged_VER": 593.33,
+     "merged_LEC": 526.62,
+     "merged_NOR": 539.47,
+     "merged_PIA": 535.11,
+     "fastest_car_data_x4": 1.28,
+     "telemetry_analysis_4": 39.33,
+     "results": 60.72,
+     "in_process_total": 3061.45,
+     "process_wall": 3170.12,
+     "exit_tail": 108.67,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.86,
+     "get_session": 590.21,
+     "load": 137.86,
+     "merged_VER": 575.51,
+     "merged_LEC": 527.1,
+     "merged_NOR": 515.17,
+     "merged_PIA": 475.15,
+     "fastest_car_data_x4": 0.63,
+     "telemetry_analysis_4": 24.61,
+     "results": 58.71,
+     "in_process_total": 2937.03,
+     "process_wall": 3041.71,
+     "exit_tail": 104.68,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.2,
+     "get_session": 656.38,
+     "load": 129.51,
+     "merged_VER": 608.36,
+     "merged_LEC": 530.45,
+     "merged_NOR": 581.12,
+     "merged_PIA": 465.19,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 45.14,
+     "results": 66.52,
+     "in_process_total": 3115.31,
+     "process_wall": 3217.67,
+     "exit_tail": 102.36,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 11.83,
+     "get_session": 729.97,
+     "load": 130.74,
+     "merged_VER": 645.68,
+     "merged_LEC": 547.76,
+     "merged_NOR": 546.19,
+     "merged_PIA": 480.28,
+     "fastest_car_data_x4": 1.23,
+     "telemetry_analysis_4": 69.16,
+     "results": 73.86,
+     "in_process_total": 3264.39,
+     "process_wall": 3366.72,
+     "exit_tail": 102.33,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.18,
+     "get_session": 602.81,
+     "load": 165.39,
+     "merged_VER": 570.36,
+     "merged_LEC": 566.66,
+     "merged_NOR": 516.3,
+     "merged_PIA": 473.33,
+     "fastest_car_data_x4": 0.6,
+     "telemetry_analysis_4": 44.55,
+     "results": 59.49,
+     "in_process_total": 3033.5,
+     "process_wall": 3140.79,
+     "exit_tail": 107.29,
+     "warnings_403": 0,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}

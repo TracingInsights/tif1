@@ -154,10 +154,23 @@ class Config:
             # TIF1_HTTP_REVOCATION_CHECK=false skips it (the chain is verified
             # either way).
             "http_revocation_check": True,
+            # Elis E3: keep the GOOD OCSP answers (valid until their nextUpdate,
+            # at most 7 days) in the SQLite cache and restore them into the next
+            # process, which then skips the responder round trip for the same
+            # certificate. TIF1_HTTP_REVOCATION_CACHE=false checks afresh in
+            # every process.
+            "http_revocation_cache": True,
             # Argos A8: warm the shared CDN connection (DNS + TLS) in a daemon
             # thread while get_session() returns, so the first payload request
             # of a cold load rides an already-open connection.
             "cdn_preconnect": True,
+            # Elis E2/E9: with cdn_preconnect, fetch a cold load's first files
+            # (drivers.json, the session laptimes) over the standard library
+            # while pandas/polars imports, and import niquests later, in a
+            # daemon thread. Those files are verified (chain and host name)
+            # but skip niquests' OCSP check; TIF1_CDN_FIRST_WAVE=false sends
+            # them through niquests as before.
+            "cdn_first_wave": True,
             # Delphi D1: freeze the heap in an atexit hook so CPython's final
             # garbage collections skip the ~300k objects pandas/numpy/pyarrow
             # (or polars) built at import: 40-80 ms off every script's exit.
@@ -185,6 +198,16 @@ class Config:
             "prefetch_all_telemetry_on_first_lap_request": False,
             "prefetch_all_telemetry_after_laps_load": False,
             "telemetry_prefetch_max_concurrent_requests": 32,
+            # load(telemetry=True) means telemetry="lazy": a driver's laps are
+            # fetched in one wave on the first access of any of them.
+            "load_telemetry_lazy": False,
+            # Cold lazy loads: after a driver's wave, the next N pending drivers
+            # (laps-row order) are fetched in the background slots of the same
+            # stream; -1 fetches every pending driver, 0 turns the stream off.
+            "lazy_telemetry_lookahead": 1,
+            # Background requests of that stream in flight at most (they only
+            # start while no foreground lap is queued).
+            "lazy_telemetry_background_requests": 22,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
@@ -273,7 +296,9 @@ class Config:
             "TIF1_HTTP_MULTIPLEXED": ("http_multiplexed", _to_bool),
             "TIF1_HTTP_DISABLE_HTTP3": ("http_disable_http3", _to_bool),
             "TIF1_HTTP_REVOCATION_CHECK": ("http_revocation_check", _to_bool),
+            "TIF1_HTTP_REVOCATION_CACHE": ("http_revocation_cache", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
+            "TIF1_CDN_FIRST_WAVE": ("cdn_first_wave", _to_bool),
             "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),
@@ -301,6 +326,12 @@ class Config:
             ),
             "TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS": (
                 "telemetry_prefetch_max_concurrent_requests",
+                int,
+            ),
+            "TIF1_LOAD_TELEMETRY_LAZY": ("load_telemetry_lazy", _to_bool),
+            "TIF1_LAZY_TELEMETRY_LOOKAHEAD": ("lazy_telemetry_lookahead", int),
+            "TIF1_LAZY_TELEMETRY_BACKGROUND_REQUESTS": (
+                "lazy_telemetry_background_requests",
                 int,
             ),
             "TIF1_JSON_PARSE_WORKERS": ("json_parse_workers", int),

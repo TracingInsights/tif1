@@ -1,0 +1,3 @@
+# E10 handoff
+
+The worktree already holds E1 (lazy telemetry in `load()`) applied and staged on top of origin/main; read `/tmp/tif1-elis/E1/.agents/perf-elis/E1.md` first (its section 6 lists the two ideas this hypothesis measures). Your control is `/tmp/tif1-elis-control-e10/src` (the same E1 tree, frozen), so your A/B isolates the follow-up; the round's plain control is irrelevant here. Commit the inherited staged work as one commit (`perf(elis-E10): base: E1`) before you start, so your own commits are separate. E1's harness copies live in `tools/perf/elis_cold_bench.py` (workloads `notebook_4drivers`, `notebook_lazy`, `iterlaps_all`, `iterlaps_all_lazy`, `--control-workload`) and `tools/perf/elis_e1_lazy_parity.py`.

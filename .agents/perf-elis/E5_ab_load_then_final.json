@@ -1,0 +1,140 @@
+{
+ "lib": "pandas",
+ "pairs": 8,
+ "control_src": "/tmp/tif1-elis-control/src",
+ "candidate_src": "/tmp/tif1-elis/E5/src",
+ "summary": {
+  "load_then_2_drivers": {
+   "import": {
+    "control_median": 12.9,
+    "candidate_median": 13.1,
+    "control_min": 12.7,
+    "candidate_min": 12.7,
+    "candidate_faster_pairs": "2/8"
+   },
+   "get_session": {
+    "control_median": 391.3,
+    "candidate_median": 388.3,
+    "control_min": 368.5,
+    "candidate_min": 334.8,
+    "candidate_faster_pairs": "4/8"
+   },
+   "load": {
+    "control_median": 12.4,
+    "candidate_median": 11.8,
+    "control_min": 11.6,
+    "candidate_min": 11.4,
+    "candidate_faster_pairs": "5/8"
+   },
+   "access": {
+    "control_median": 77.5,
+    "candidate_median": 33.3,
+    "control_min": 66.6,
+    "candidate_min": 28.6,
+    "candidate_faster_pairs": "8/8"
+   },
+   "in_process_total": {
+    "control_median": 491.3,
+    "candidate_median": 444.6,
+    "control_min": 471.6,
+    "candidate_min": 389.2,
+    "candidate_faster_pairs": "8/8"
+   },
+   "process_wall": {
+    "control_median": 598.2,
+    "candidate_median": 525.1,
+    "control_min": 563.2,
+    "candidate_min": 468.2,
+    "candidate_faster_pairs": "8/8"
+   }
+  },
+  "load_then_4_drivers": {
+   "import": {
+    "control_median": 13.9,
+    "candidate_median": 13.4,
+    "control_min": 12.8,
+    "candidate_min": 12.6,
+    "candidate_faster_pairs": "5/8"
+   },
+   "get_session": {
+    "control_median": 402.0,
+    "candidate_median": 408.0,
+    "control_min": 346.1,
+    "candidate_min": 355.5,
+    "candidate_faster_pairs": "4/8"
+   },
+   "load": {
+    "control_median": 12.9,
+    "candidate_median": 14.7,
+    "control_min": 11.5,
+    "candidate_min": 11.9,
+    "candidate_faster_pairs": "2/8"
+   },
+   "access": {
+    "control_median": 88.7,
+    "candidate_median": 73.7,
+    "control_min": 73.5,
+    "candidate_min": 43.5,
+    "candidate_faster_pairs": "6/8"
+   },
+   "in_process_total": {
+    "control_median": 537.2,
+    "candidate_median": 524.0,
+    "control_min": 446.1,
+    "candidate_min": 425.1,
+    "candidate_faster_pairs": "6/8"
+   },
+   "process_wall": {
+    "control_median": 646.8,
+    "candidate_median": 609.0,
+    "control_min": 549.7,
+    "candidate_min": 508.2,
+    "candidate_faster_pairs": "6/8"
+   }
+  },
+  "load_then_1_driver": {
+   "import": {
+    "control_median": 14.9,
+    "candidate_median": 18.3,
+    "control_min": 12.7,
+    "candidate_min": 12.9,
+    "candidate_faster_pairs": "4/8"
+   },
+   "get_session": {
+    "control_median": 410.8,
+    "candidate_median": 409.0,
+    "control_min": 343.5,
+    "candidate_min": 362.1,
+    "candidate_faster_pairs": "4/8"
+   },
+   "load": {
+    "control_median": 13.6,
+    "candidate_median": 12.1,
+    "control_min": 11.5,
+    "candidate_min": 11.5,
+    "candidate_faster_pairs": "5/8"
+   },
+   "access": {
+    "control_median": 23.1,
+    "candidate_median": 22.1,
+    "control_min": 17.3,
+    "candidate_min": 17.0,
+    "candidate_faster_pairs": "5/8"
+   },
+   "in_process_total": {
+    "control_median": 457.9,
+    "candidate_median": 465.4,
+    "control_min": 408.1,
+    "candidate_min": 404.5,
+    "candidate_faster_pairs": "4/8"
+   },
+   "process_wall": {
+    "control_median": 534.1,
+    "candidate_median": 547.4,
+    "control_min": 482.3,
+    "candidate_min": 467.2,
+    "candidate_faster_pairs": "3/8"
+   }
+  }
+ }
+}

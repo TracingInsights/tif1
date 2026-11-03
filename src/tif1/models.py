@@ -199,6 +199,8 @@ _QUALI_LIKE_SESSION_NAMES = frozenset({"Qualifying", "Sprint Qualifying", "Sprin
 #: when neither a ``QualifyingSession`` marker nor session status exists (5 min).
 _QUALI_SEGMENT_GAP = 5 * 60 * 10**9
 _NAT_NS = np.iinfo("int64").min
+_M8_NS = np.dtype("m8[ns]")
+_M8_DATETIME_NS = np.dtype("M8[ns]")
 #: Upper bound of the open-ended last qualifying segment (no lap starts after it).
 _NO_UPPER_BOUND = np.iinfo("int64").max
 
@@ -210,6 +212,11 @@ def _timedelta_ns(values: pd.Series) -> np.ndarray:
     resolutions, so a bare ``.view("i8")`` of a timedelta column is not
     nanoseconds in general.
     """
+    dtype = getattr(values, "dtype", None)
+    if isinstance(values, pd.Series) and isinstance(dtype, np.dtype) and dtype == _M8_NS:
+        # Elis E7: the same read-only view the coerce + astype below returns
+        # for a nanosecond column, without their dispatch (~70 us a call).
+        return values.to_numpy().view("i8")
     coerced = Telemetry._coerce_timedelta_series(values)
     return coerced.astype("timedelta64[ns]").to_numpy().view("i8")
 
@@ -462,6 +469,8 @@ try:  # pragma: no cover - import-time probe of pandas internals
         "pandas.core.internals.managers"
     ).interleaved_dtype
     _BlockPlacement: Any = importlib.import_module("pandas._libs.internals").BlockPlacement
+    _timedeltas: Any = importlib.import_module("pandas._libs.tslibs.timedeltas")
+    _ints_to_pytimedelta: Any = _timedeltas.ints_to_pytimedelta
     _FAST_LAP_ROWS = callable(getattr(pd.Series, "_from_mgr", None))
     _DTYPE_IF_ALL_NAT = np.dtype("M8[s]")
 except (ImportError, AttributeError):  # pragma: no cover - pandas internals changed
@@ -510,6 +519,11 @@ def _interleaved_row(mgr: Any, i: int) -> np.ndarray | None:
         if isinstance(blk, _ExtensionBlock):
             for rl in blk.mgr_locs:
                 result[rl] = values[i]
+        elif blk.dtype.kind == "m" and len(blk.mgr_locs) > 1:
+            # Elis E7: the TimedeltaArray boxes one value per ``values[j, i]``
+            # (~4 us each, 12 columns in a laps frame); its own vectorized
+            # boxing gives the same ``Timedelta``/``NaT`` objects at once.
+            result[blk.mgr_locs.as_array] = _ints_to_pytimedelta(values._ndarray[:, i], box=True)
         else:
             for j, rl in enumerate(blk.mgr_locs):
                 result[rl] = values[j, i]
@@ -645,7 +659,41 @@ class Laps(pd.DataFrame):
         code = self._normalize_driver_identifier(identifier)
         if code.isdigit():
             return self[self._driver_number_mask([code])]
+        run = self._driver_run(code)
+        if run is not None:
+            return self.iloc[run]
         return self[self["Driver"] == code]
+
+    def _driver_run(self, code: str) -> slice | None:
+        """The rows of ``Driver == code`` as one slice, when they are one run (else None).
+
+        Elis E7: the session table lists each driver's laps back to back, so
+        :meth:`pick_driver` slices them (blocks shared under copy-on-write)
+        where the boolean take copied every column (~0.5 ms a race driver,
+        ~1.5 ms on the first take of a process); the slice keeps the
+        boolean selection's ``RangeIndex`` labels. Only a category
+        ``Driver`` column (the session table) is read through its codes;
+        anything else, no match, or rows spread over the frame take the
+        boolean path.
+        """
+        column = self.get("Driver")
+        if not isinstance(column, pd.Series) or not isinstance(column.dtype, pd.CategoricalDtype):
+            return None
+        if not isinstance(self.index, pd.RangeIndex) or self.index.step != 1:
+            return None
+        categorical = cast(Any, column.array)
+        try:
+            category = categorical.categories.get_loc(code)
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(category, int | np.integer):
+            return None
+        hits = np.flatnonzero(categorical.codes == category)
+        count = len(hits)
+        if not count or hits[-1] - hits[0] + 1 != count:
+            return None
+        start = int(hits[0])
+        return slice(start, start + count)
 
     @staticmethod
     def _normalize_driver_identifier(identifier: Any) -> str:
@@ -973,6 +1021,9 @@ class Laps(pd.DataFrame):
         _require_qualifying_session(self.session)
         qualifying_sessions = self.get("QualifyingSession")
         if qualifying_sessions is not None:
+            marks = _qualifying_marks(qualifying_sessions)
+            if marks is not None:
+                return [self._bound_subset(marks == suffix) for suffix in ("1", "2", "3")]
             normalized = qualifying_sessions.astype("string").str.upper().str.strip()
             session_suffix = normalized.str.extract(r"([123])$", expand=False)
             if bool(session_suffix.notna().any()):
@@ -1132,6 +1183,12 @@ class Laps(pd.DataFrame):
             cached = getattr(self, "_merged_telemetry_cache", None)
             if cached is not None and cached[0] == len(refs) and cached[1] == refs:
                 return cached[2]
+
+            # load(telemetry="lazy"): the drivers' laps arrive in one wave and
+            # are memoized as frames, as the eager load leaves them.
+            ensure_lazy = getattr(session, "_ensure_lazy_telemetry", None)
+            if callable(ensure_lazy):
+                ensure_lazy(refs)
 
             # Pergamon P10: the driver's row in the frame tier holds the laps
             # back to back, so the merged frame is a slice of it — no per-lap
@@ -1571,6 +1628,11 @@ def _with_session_clock(session: Any, tel: Any, driver: str | None = None) -> An
 
 def _clock_ns_values(values: pd.Series) -> np.ndarray:
     """A clock column (datetime, timedelta or numeric seconds) as int64 ns; NaT is int64 min."""
+    dtype = values.dtype
+    if isinstance(dtype, np.dtype) and dtype == _M8_DATETIME_NS:
+        # Elis E7: a naive nanosecond column is its own int64 view (the
+        # astype below returns the same read-only view, ~95 us slower).
+        return values.to_numpy().view("i8")
     if pd.api.types.is_datetime64_any_dtype(values.dtype):
         if getattr(values.dt, "tz", None) is not None:
             values = values.dt.tz_localize(None)
@@ -1794,6 +1856,35 @@ def _nearest_positions(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     take_after = (after < n) & ((before < 0) | (gap_after < gap_before))
     out[valid] = np.where(take_after, nearest_after, before)
     return out
+
+
+def _qualifying_marks(labels: pd.Series) -> np.ndarray | None:
+    """Q1/Q2/Q3 digit of every ``QualifyingSession`` label, or None.
+
+    Elis E7: the value of
+    ``labels.astype("string").str.upper().str.strip().str.extract(r"([123])$")``
+    computed once per distinct label in Python (pyarrow's ASCII upper-casing
+    and whitespace trim are ``str.upper``/``str.strip``) instead of three
+    pyarrow kernels and a regex pass over every row (~4 ms on the first
+    call of a process). None (the caller takes the pandas path) unless
+    every label is an ASCII ``str`` ending in a segment digit: a missing or
+    unmarked label makes that path's comparison raise or fall through, and
+    other values are its ``astype`` to decide.
+    """
+    if not isinstance(labels, pd.Series) or not len(labels):
+        return None
+    codes, distinct = pd.factorize(labels.to_numpy(dtype=object))
+    if (codes < 0).any():
+        return None
+    marks = []
+    for label in distinct:
+        if type(label) is not str or not label.isascii():
+            return None
+        text = label.upper().strip()
+        if not text or text[-1] not in "123":
+            return None
+        marks.append(text[-1])
+    return np.asarray(marks, dtype=object)[codes]
 
 
 def _first_lap_start_ns(laps: Any) -> int | None:

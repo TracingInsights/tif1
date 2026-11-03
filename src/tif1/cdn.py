@@ -598,6 +598,37 @@ class CDNManager:
             return payload, None
 
         primary_task = asyncio.ensure_future(awaitable)
+        tasks = [primary_task]
+        try:
+            return await self._hedge_wait(
+                primary, backup, tasks, delay, started, year, gp, session, path, fetch_func
+            )
+        except asyncio.CancelledError:
+            # ``asyncio.wait`` leaves its tasks running when the caller is
+            # cancelled; a request abandoned at interpreter exit would then
+            # fail on the shut-down thread pool with nobody to retrieve it.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
+
+    async def _hedge_wait(
+        self,
+        primary: CDNSource,
+        backup: CDNSource,
+        tasks: list[Any],
+        delay: float,
+        started: float,
+        year: int,
+        gp: str,
+        session: str,
+        path: str,
+        fetch_func: Callable[[CDNSource, str], Awaitable[Any]],
+    ) -> tuple[Any, BaseException | None]:
+        """The waits of :meth:`_hedged_primary_async` (``tasks`` collects the tasks it starts)."""
+        import asyncio  # lazy: only async/network paths need it
+
+        primary_task = tasks[0]
         done, _pending = await asyncio.wait({primary_task}, timeout=delay)
         if primary_task in done:
             return self._settle_primary(primary, primary_task, started)
@@ -611,6 +642,7 @@ class CDNManager:
         backup_task = asyncio.ensure_future(
             fetch_func(backup, backup.format_url(year, gp, session, path))
         )
+        tasks.append(backup_task)
         pending = {primary_task, backup_task}
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)

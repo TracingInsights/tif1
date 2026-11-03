@@ -10,6 +10,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
+from . import first_wave
 from .core_utils.constants import telemetry_ref_from_path
 from .core_utils.json_utils import decode_telemetry_payload, json_loads, parse_response_json
 from .core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
@@ -199,6 +200,64 @@ def _get_resolved(session_client: Any, url: str, timeout: Any) -> Any:
     response = session_client.get(url, timeout=timeout)
     _ = getattr(response, "status_code", None)
     return response
+
+
+def _first_wave_payload(url: str) -> tuple[dict[str, Any], bytes] | None:
+    """``(parsed, raw)`` of the stdlib first-wave body of ``url`` (Elis E2), or None.
+
+    Waits (bounded) for the fetch ``get_session`` started. A body that does
+    not parse to a JSON object is not handed over: niquests fetches it again
+    and the pipeline reports what it finds.
+    """
+    content = first_wave.take(url)
+    if content is None:
+        return None
+    try:
+        data = json_loads(content)
+    except (ValueError, TypeError):
+        return None
+    return (data, content) if isinstance(data, dict) else None
+
+
+def _stdlib_payload(
+    url: str, timeout: float, telemetry: bool
+) -> tuple[dict[str, Any], bytes] | None:
+    """``(parsed, raw)`` of ``url`` over the first wave's stdlib connections, or None.
+
+    The bridge of a telemetry wave that starts before niquests is warm (Elis
+    E9). Parsed exactly as the niquests path parses (``telemetry``: the typed
+    decoder). None, and niquests fetches the file, for anything but a
+    ``200`` with a JSON object.
+    """
+    content = first_wave.fetch(url, timeout=timeout)
+    if content is None:
+        return None
+    try:
+        data = decode_telemetry_payload(content) if telemetry else json_loads(content)
+    except (ValueError, TypeError):
+        return None
+    return (data, content) if isinstance(data, dict) else None
+
+
+async def _stdlib_served(
+    loop: Any, executor: Any, url: str, timeout: float, telemetry: bool
+) -> tuple[dict[str, Any], bytes] | None:
+    """A payload the stdlib connections serve (Elis E2 first wave, E9 bridge), or None.
+
+    A first-wave URL is handed over from its slot (and never fetched again
+    over the stdlib when that failed); any other URL rides the stdlib
+    connections while niquests is not warm (:func:`tif1.first_wave.bridge_open`).
+    Bridge requests are bounded by ``cdn_hedge_max_delay``: they are not
+    hedged, so a stalled one goes to niquests (which hedges) after that.
+    """
+    if first_wave.pending(url):
+        return await loop.run_in_executor(executor, _first_wave_payload, url)
+    if not first_wave.bridge_open():
+        return None
+    from .config import get_config
+
+    bound = min(float(timeout), float(get_config().get("cdn_hedge_max_delay", 4.0)))
+    return await loop.run_in_executor(executor, _stdlib_payload, url, bound, telemetry)
 
 
 def _parse_json_payload_bytes(payload: bytes | bytearray | memoryview) -> Any:
@@ -523,24 +582,34 @@ async def fetch_json_async(
 
     cdn_manager = get_cdn_manager()
     circuit_breaker = get_circuit_breaker()
-    transport_errors: tuple[type[BaseException], ...]
+    # The niquests client is resolved on the first request that needs it:
+    # a cold load's first wave may be served by the stdlib fetch started in
+    # get_session (Elis E2), and then niquests is not imported for it.
+    niquests_client: list[Any] = []
+    transport_errors: tuple[type[BaseException], ...] = (
+        TimeoutError,
+        OSError,
+        ConnectionError,
+    )
     if IS_EMSCRIPTEN:
         # Browser: the fetch API through the async transport (tif1.browser).
         # niquests and the thread pool are never imported here.
-        session_client = None
         transport = _get_async_transport()
-        transport_errors = (NetworkError, TimeoutError, OSError, ConnectionError)
+        transport_errors = (NetworkError, *transport_errors)
     else:
-        niquests = _import_niquests()
-        session_client = _get_async_session()
         transport = None
-        transport_errors = (
-            niquests.RequestException,
-            niquests.exceptions.HTTPError,
-            TimeoutError,
-            OSError,
-            ConnectionError,
-        )
+
+    def _niquests_session() -> Any:
+        nonlocal transport_errors
+        if not niquests_client:
+            niquests = _import_niquests()
+            niquests_client.append(_get_async_session())
+            transport_errors = (
+                niquests.RequestException,
+                niquests.exceptions.HTTPError,
+                *transport_errors,
+            )
+        return niquests_client[0]
 
     backoff_factor = config.get("retry_backoff_factor", 2.0)
     use_jitter = config.get("retry_jitter", True)
@@ -583,9 +652,20 @@ async def fetch_json_async(
                         content = None
                 except DataNotFoundError as e:
                     raise DataNotFoundError(year=year, event=gp, session=session) from e
+            elif not niquests_client and (
+                served := await _stdlib_served(
+                    loop,
+                    executor,
+                    url,
+                    timeout,
+                    path.endswith("_tel.json")
+                    and not (validate_payload and config.get("validate_telemetry", True)),
+                )
+            ):
+                data, content = served
             else:
                 response = await loop.run_in_executor(
-                    executor, partial(_get_resolved, session_client, url, timeout)
+                    executor, partial(_get_resolved, _niquests_session(), url, timeout)
                 )
 
                 from .http_session import _response_reused_connection, _track_request
@@ -783,6 +863,7 @@ async def fetch_multiple_async(
     timeout: int | None = None,
     max_concurrent_requests: int | None = None,
     defer_telemetry_writes: bool = False,
+    telemetry_writes: list[tuple[Any, ...]] | None = None,
 ) -> list[dict[str, Any] | None]:
     """Fetch multiple JSON files in parallel with optimized batch size.
 
@@ -794,6 +875,10 @@ async def fetch_multiple_async(
         defer_telemetry_writes: If True, telemetry payloads are collected
             during the batch and written in one serial flush after the
             gather, instead of inside the concurrency slots
+        telemetry_writes: A caller-owned list that collects the telemetry
+            payload writes instead (with ``write_cache``); the caller hands
+            it to :func:`schedule_telemetry_writes` when it sees fit (the
+            lazy-telemetry stream issues one request per call)
 
     Returns:
         List of fetched data dictionaries (None for failed requests).
@@ -813,7 +898,9 @@ async def fetch_multiple_async(
 
     collector: list[tuple[Any, ...]] | None = None
     collector_token = None
-    if defer_telemetry_writes and write_cache:
+    if telemetry_writes is not None and write_cache:
+        collector_token = _deferred_telemetry_writes.set(telemetry_writes)
+    elif defer_telemetry_writes and write_cache:
         cache_for_defer = get_cache() if (use_cache or write_cache) else None
         if cache_for_defer is not None and callable(
             getattr(cache_for_defer, "set_telemetry", None)
@@ -836,18 +923,26 @@ async def fetch_multiple_async(
             _deferred_telemetry_writes.reset(collector_token)
 
     if collector:
-        # Argos A3: the flush (orjson dumps + zstd + SQLite for ~1450 rows,
-        # ~0.4-0.8 s) only matters to the *next* process, so it runs in a
-        # background writer thread after the batch returns - the same
-        # registry the frame-tier write uses (Ithome U5), joined by
-        # Cache.close()/invalidate()/clear() and the atexit cache close, so
-        # every row is on disk before the process exits.
-        from .cache import register_frame_writer
-
-        cache_for_flush = get_cache()
-        register_frame_writer(partial(_flush_telemetry_writes, cache_for_flush, collector))
+        schedule_telemetry_writes(collector)
 
     return _process_fetch_results(requests, results)
+
+
+def schedule_telemetry_writes(entries: list[tuple[Any, ...]]) -> None:
+    """Persist collected telemetry payload writes in a background writer thread.
+
+    Argos A3: the flush (orjson dumps + zstd + SQLite for ~1450 rows,
+    ~0.4-0.8 s) only matters to the *next* process, so it runs in a
+    background writer thread after the batch returns - the same registry the
+    frame-tier write uses (Ithome U5), joined by Cache.close()/invalidate()/
+    clear() and the atexit cache close, so every row is on disk before the
+    process exits.
+    """
+    if not entries:
+        return
+    from .cache import register_frame_writer
+
+    register_frame_writer(partial(_flush_telemetry_writes, get_cache(), entries))
 
 
 async def _gather_fetches(

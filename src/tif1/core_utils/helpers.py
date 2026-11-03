@@ -12,6 +12,8 @@ from __future__ import annotations
 import array
 import importlib
 import logging
+import math
+import sys
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
 from urllib.parse import quote
@@ -355,7 +357,13 @@ def _create_telemetry_df(
             ahead = col_data.get(_DRIVER_AHEAD_CHANNEL)
             if ahead is not None and not isinstance(ahead, DictionaryChannel):
                 col_data[_DRIVER_AHEAD_CHANNEL] = _without_null_tokens(ahead)
-            typed = _polars_typed_telemetry_frame(col_data, driver, lap_num, clock)
+            typed = (
+                _polars_list_telemetry_frame(col_data, driver, lap_num, clock)
+                if sys.modules.get("numpy") is None
+                else _UNHANDLED
+            )
+            if typed is _UNHANDLED:
+                typed = _polars_typed_telemetry_frame(col_data, driver, lap_num, clock)
             if typed is not None:
                 return typed
             telemetry_df = pl.DataFrame(
@@ -521,6 +529,134 @@ def _polars_typed_telemetry_frame(
             series["Date"] = pl.Series("Date", [None] * n, dtype=pl.Datetime("ns"))
         else:
             series["Date"] = pl.Series("Date", (time_ns + date_ns).view("M8[ns]"))
+    return pl.DataFrame([series[name] for name in ordered_telemetry_columns(list(series))])
+
+
+#: ``_polars_list_telemetry_frame``/``_polars_list_channel``: not a clean list
+#: case, the numpy builder decides (and imports numpy).
+_UNHANDLED: Any = object()
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
+_INT_ONLY = frozenset({int})
+_INT_FLOAT = frozenset({int, float})
+_BRAKE_TYPES = frozenset({bool, int})
+_NONE_ONLY = frozenset({type(None)})
+
+
+def _ints_in_int64(values: list[Any], types: set[type]) -> bool:
+    """Whether every ``int`` in ``values`` fits int64 (``array.array("q")``'s range)."""
+    if int not in types:
+        return True
+    ints = [x for x in values if type(x) is int] if len(types) > 1 else values
+    return min(ints) >= _INT64_MIN and max(ints) <= _INT64_MAX
+
+
+def _polars_list_channel(name: str, values: list[Any]) -> Any:
+    """:func:`_polars_typed_channel` for an orjson list, without numpy.
+
+    The clean cases only, each giving the Series the numpy route gives:
+    all-int channels (``Int64``), int/float channels (``Float64``), numeric
+    channels whose only non-numbers are the null tokens (``Float64``, the
+    tokens null), ``Brake`` of bools/ints (``Boolean``), ``DriverAhead``
+    strings. Anything else (bools in a numeric channel, ``None`` samples,
+    ints beyond int64, unknown channels) returns ``_UNHANDLED``.
+    """
+    if name == _DRIVER_AHEAD_CHANNEL:
+        cleaned = _without_null_tokens(values)
+        if not all(x is None or type(x) is str for x in cleaned):
+            return _UNHANDLED
+        return pl.Series(name, cleaned, dtype=pl.String)
+    types = set(map(type, values))
+    if name == "Brake":
+        if not types <= _BRAKE_TYPES or not _ints_in_int64(values, types):
+            return _UNHANDLED
+        return pl.Series(name, [bool(x) for x in values], dtype=pl.Boolean)
+    if name not in _NUMERIC_TELEMETRY_CHANNELS and name not in ("nGear", "DRS"):
+        return _UNHANDLED
+    if types == _INT_ONLY:
+        if not _ints_in_int64(values, types):
+            return _UNHANDLED
+        return pl.Series(name, values, dtype=pl.Int64)
+    if name in ("nGear", "DRS"):
+        return _UNHANDLED  # a float or a token: the generic path types it
+    if types == _NONE_ONLY:  # no sample at all (a race leader has nobody ahead)
+        return pl.Series(name, [None] * len(values), dtype=pl.Float64)
+    if types <= _INT_FLOAT:
+        if not _ints_in_int64(values, types):
+            return _UNHANDLED
+        return pl.Series(name, values, dtype=pl.Float64)
+    if str not in types or not types <= _INT_FLOAT | {str}:
+        return _UNHANDLED  # None samples, bools: the numpy route's inference
+    floats = [None if type(x) is str and x in _NULL_LIKE_TOKEN_PROBE else x for x in values]
+    rest = set(map(type, floats))
+    rest.discard(type(None))
+    if not rest <= _INT_FLOAT or not _ints_in_int64(floats, {*rest, type(None)}):
+        return _UNHANDLED  # an unexpected string
+    return pl.Series(name, floats, dtype=pl.Float64)
+
+
+def _polars_list_telemetry_frame(
+    col_data: dict[str, Any], driver: str, lap_num: int, clock: tuple[int, int] | None
+) -> Any:
+    """:func:`_polars_typed_telemetry_frame` for orjson lists, without numpy (Elis E6).
+
+    A polars process reads a lone lap (``get_fastest_lap_tel``, a driver's
+    first lap) from its cached payload; with the lists the orjson path
+    gives, every channel becomes a typed ``Series`` from the list and the
+    frame equals the numpy builder's (values, dtypes, nulls, column order).
+    ``Time`` is ``round(seconds * 1e9)`` per sample, numpy's round-half-even
+    on the same float64 product. Returns ``_UNHANDLED`` for anything outside
+    the clean cases (see :func:`_polars_list_channel`, non-finite or huge
+    times, ragged channels), so the numpy builder answers exactly as before.
+    """
+    lengths = {len(values) for values in col_data.values()}
+    if len(lengths) != 1:
+        return _UNHANDLED
+    n = lengths.pop()
+    series: dict[str, Any] = {}
+    time_ns: list[int] | None = None
+    for name, values in col_data.items():
+        if type(values) is not list:
+            return _UNHANDLED
+        if name == "Time":
+            types = set(map(type, values))
+            if not types <= _INT_FLOAT:
+                return _UNHANDLED
+            try:
+                seconds = [float(x) for x in values]
+            except OverflowError:
+                return _UNHANDLED
+            if not all(math.isfinite(x) and -9.0e9 < x < 9.0e9 for x in seconds):
+                return _UNHANDLED
+            time_ns = [round(x * _NS_PER_SECOND) for x in seconds]
+            series[name] = pl.Series(name, time_ns, dtype=pl.Int64).cast(pl.Duration("ns"))
+            continue
+        column = _polars_list_channel(name, values)
+        if column is _UNHANDLED:
+            return _UNHANDLED
+        series[name] = column
+    for name in ("Speed", "nGear", "X", "Y", "Z"):
+        if name not in series:
+            dtype = pl.Int64 if name == "nGear" else pl.Float64
+            series[name] = pl.Series(name, [None] * n, dtype=dtype)
+    if time_ns is None:
+        series["Time"] = pl.Series("Time", [None] * n, dtype=pl.Duration("ns"))
+    series["Driver"] = pl.Series("Driver", [driver] * n, dtype=pl.String)
+    series["LapNumber"] = pl.Series("LapNumber", [int(lap_num)] * n, dtype=pl.Int64)
+    for name, value in (("Source", TELEMETRY_SOURCE_VALUE), ("Status", TELEMETRY_STATUS_VALUE)):
+        if name not in series:
+            series[name] = _polars_constant_categorical(name, value, n)
+    if clock is not None and time_ns is not None:
+        start_ns, date_ns = clock
+        series["SessionTime"] = pl.Series(
+            "SessionTime", [t + start_ns for t in time_ns], dtype=pl.Int64
+        ).cast(pl.Duration("ns"))
+        if date_ns == _NS_MIN:
+            series["Date"] = pl.Series("Date", [None] * n, dtype=pl.Datetime("ns"))
+        else:
+            series["Date"] = pl.Series("Date", [t + date_ns for t in time_ns], dtype=pl.Int64).cast(
+                pl.Datetime("ns")
+            )
     return pl.DataFrame([series[name] for name in ordered_telemetry_columns(list(series))])
 
 
@@ -1187,17 +1323,25 @@ def _telemetry_channel_types() -> tuple[type, ...]:
     """``(list, numpy.ndarray, DictionaryChannel)``: the payload channel shapes.
 
     Built on the first telemetry payload, so the module never imports numpy
-    for it (a polars laps read does not need numpy at all).
+    for it (a polars laps read does not need numpy at all). Until numpy is
+    imported no payload can hold an array (the native decoder imports it), so
+    the tuple is ``(list, DictionaryChannel)`` and is not memoized: a polars
+    lap read from orjson lists stays numpy-free (Elis E6).
     """
     global _TELEMETRY_CHANNEL_TYPES
     if _TELEMETRY_CHANNEL_TYPES is None:
-        _TELEMETRY_CHANNEL_TYPES = (list, np.ndarray, DictionaryChannel)
+        numpy = sys.modules.get("numpy")
+        if numpy is None:
+            return (list, DictionaryChannel)
+        _TELEMETRY_CHANNEL_TYPES = (list, numpy.ndarray, DictionaryChannel)
     return _TELEMETRY_CHANNEL_TYPES
 
 
 def _channel_list(values: Any) -> Any:
     """A payload channel as the list a generic JSON parser returns (lists pass through)."""
-    return values.tolist() if isinstance(values, np.ndarray | DictionaryChannel) else values
+    if isinstance(values, list):
+        return values
+    return values.tolist() if isinstance(values, _telemetry_channel_types()) else values
 
 
 def _decoded_channels(

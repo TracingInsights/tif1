@@ -1,0 +1,536 @@
+{
+  "meta": {
+    "machine": "x86_64",
+    "python": "3.13.15",
+    "reps": 7,
+    "statistic": "min and median over reps, ms, in-process phases",
+    "system": "Linux"
+  },
+  "phases": {
+    "pandas": {
+      "all_tel": {
+        "all_tel": {
+          "median": 140.651,
+          "min": 128.208
+        },
+        "get_session": {
+          "median": 341.677,
+          "min": 312.555
+        },
+        "import": {
+          "median": 10.597,
+          "min": 10.406
+        },
+        "in_process_total": {
+          "median": 498.444,
+          "min": 465.901
+        },
+        "laps": {
+          "median": 2.709,
+          "min": 2.647
+        }
+      },
+      "car_data_loop": {
+        "car_data_loop": {
+          "median": 126.634,
+          "min": 125.335
+        },
+        "get_session": {
+          "median": 352.534,
+          "min": 315.722
+        },
+        "import": {
+          "median": 10.49,
+          "min": 10.357
+        },
+        "in_process_total": {
+          "median": 495.868,
+          "min": 456.944
+        },
+        "laps": {
+          "median": 3.408,
+          "min": 3.31
+        }
+      },
+      "driver_tel": {
+        "driver_tel": {
+          "median": 90.869,
+          "min": 89.832
+        },
+        "get_session": {
+          "median": 325.017,
+          "min": 313.657
+        },
+        "import": {
+          "median": 10.631,
+          "min": 10.412
+        },
+        "in_process_total": {
+          "median": 431.114,
+          "min": 420.537
+        },
+        "laps": {
+          "median": 3.441,
+          "min": 3.354
+        }
+      },
+      "fastest_lap_tel": {
+        "driver_fastest_tel": {
+          "median": 26.465,
+          "min": 25.858
+        },
+        "fastest_lap_tel": {
+          "median": 12.561,
+          "min": 12.442
+        },
+        "get_session": {
+          "median": 333.578,
+          "min": 313.351
+        },
+        "import": {
+          "median": 10.733,
+          "min": 10.37
+        },
+        "in_process_total": {
+          "median": 383.43,
+          "min": 363.527
+        }
+      },
+      "import_get_session": {
+        "get_session": {
+          "median": 355.254,
+          "min": 313.764
+        },
+        "import": {
+          "median": 10.713,
+          "min": 10.432
+        },
+        "in_process_total": {
+          "median": 365.707,
+          "min": 324.48
+        }
+      },
+      "laps": {
+        "get_session": {
+          "median": 325.915,
+          "min": 311.572
+        },
+        "import": {
+          "median": 10.632,
+          "min": 10.556
+        },
+        "in_process_total": {
+          "median": 339.968,
+          "min": 325.805
+        },
+        "laps": {
+          "median": 3.464,
+          "min": 3.344
+        }
+      },
+      "notebook": {
+        "driver_fastest_lap_x3": {
+          "median": 10.56,
+          "min": 10.399
+        },
+        "driver_merged_x3": {
+          "median": 19.372,
+          "min": 19.129
+        },
+        "fastest_lap_tel": {
+          "median": 3.694,
+          "min": 3.598
+        },
+        "get_session": {
+          "median": 353.579,
+          "min": 312.01
+        },
+        "iloc_200": {
+          "median": 18.232,
+          "min": 17.984
+        },
+        "import": {
+          "median": 10.584,
+          "min": 10.427
+        },
+        "in_process_total": {
+          "median": 597.518,
+          "min": 549.545
+        },
+        "iterlaps_tel_loop": {
+          "median": 2.118,
+          "min": 1.949
+        },
+        "load": {
+          "median": 144.642,
+          "min": 133.951
+        },
+        "picks_x8": {
+          "median": 12.559,
+          "min": 9.69
+        },
+        "results": {
+          "median": 0.001,
+          "min": 0.001
+        },
+        "telemetry_analysis_3": {
+          "median": 16.494,
+          "min": 16.348
+        },
+        "weather": {
+          "median": 0.003,
+          "min": 0.002
+        }
+      },
+      "quali_split": {
+        "get_session": {
+          "median": 347.983,
+          "min": 313.573
+        },
+        "import": {
+          "median": 10.783,
+          "min": 10.354
+        },
+        "in_process_total": {
+          "median": 374.353,
+          "min": 339.475
+        },
+        "laps": {
+          "median": 2.765,
+          "min": 2.686
+        },
+        "results": {
+          "median": 6.622,
+          "min": 6.532
+        },
+        "split": {
+          "median": 6.037,
+          "min": 5.905
+        }
+      },
+      "results": {
+        "get_session": {
+          "median": 353.145,
+          "min": 312.367
+        },
+        "import": {
+          "median": 10.645,
+          "min": 10.521
+        },
+        "in_process_total": {
+          "median": 376.94,
+          "min": 335.851
+        },
+        "laps": {
+          "median": 3.387,
+          "min": 3.303
+        },
+        "results": {
+          "median": 9.686,
+          "min": 9.563
+        }
+      },
+      "state": {
+        "get_session": {
+          "median": 332.737,
+          "min": 311.773
+        },
+        "import": {
+          "median": 10.515,
+          "min": 10.376
+        },
+        "in_process_total": {
+          "median": 353.773,
+          "min": 332.709
+        },
+        "laps": {
+          "median": 3.372,
+          "min": 3.322
+        },
+        "rcm": {
+          "median": 1.69,
+          "min": 1.67
+        },
+        "session_status": {
+          "median": 0.42,
+          "min": 0.41
+        },
+        "t0_date": {
+          "median": 0.285,
+          "min": 0.28
+        },
+        "track_status": {
+          "median": 0.65,
+          "min": 0.629
+        },
+        "weather": {
+          "median": 4.128,
+          "min": 4.032
+        }
+      }
+    },
+    "polars": {
+      "all_tel": {
+        "all_tel": {
+          "median": 257.578,
+          "min": 222.75
+        },
+        "get_session": {
+          "median": 110.981,
+          "min": 109.738
+        },
+        "import": {
+          "median": 10.832,
+          "min": 10.472
+        },
+        "in_process_total": {
+          "median": 386.6,
+          "min": 347.998
+        },
+        "laps": {
+          "median": 4.575,
+          "min": 4.436
+        }
+      },
+      "car_data_loop": {
+        "car_data_loop": {
+          "median": 23.886,
+          "min": 23.588
+        },
+        "get_session": {
+          "median": 110.067,
+          "min": 108.963
+        },
+        "import": {
+          "median": 10.669,
+          "min": 10.532
+        },
+        "in_process_total": {
+          "median": 150.677,
+          "min": 148.914
+        },
+        "laps": {
+          "median": 5.371,
+          "min": 5.235
+        }
+      },
+      "driver_tel": {
+        "driver_tel": {
+          "median": 21.506,
+          "min": 21.192
+        },
+        "get_session": {
+          "median": 110.168,
+          "min": 109.539
+        },
+        "import": {
+          "median": 10.699,
+          "min": 10.475
+        },
+        "in_process_total": {
+          "median": 148.107,
+          "min": 146.771
+        },
+        "laps": {
+          "median": 5.347,
+          "min": 5.263
+        }
+      },
+      "fastest_lap_tel": {
+        "driver_fastest_tel": {
+          "median": 8.036,
+          "min": 7.928
+        },
+        "fastest_lap_tel": {
+          "median": 8.898,
+          "min": 8.724
+        },
+        "get_session": {
+          "median": 110.133,
+          "min": 108.922
+        },
+        "import": {
+          "median": 10.762,
+          "min": 10.58
+        },
+        "in_process_total": {
+          "median": 138.418,
+          "min": 136.359
+        }
+      },
+      "import_get_session": {
+        "get_session": {
+          "median": 110.136,
+          "min": 109.69
+        },
+        "import": {
+          "median": 10.476,
+          "min": 10.342
+        },
+        "in_process_total": {
+          "median": 120.849,
+          "min": 120.105
+        }
+      },
+      "laps": {
+        "get_session": {
+          "median": 110.165,
+          "min": 108.835
+        },
+        "import": {
+          "median": 10.523,
+          "min": 10.354
+        },
+        "in_process_total": {
+          "median": 126.259,
+          "min": 124.611
+        },
+        "laps": {
+          "median": 5.38,
+          "min": 5.223
+        }
+      },
+      "notebook": {
+        "driver_fastest_lap_x3": {
+          "median": 8.427,
+          "min": 7.614
+        },
+        "driver_merged_x3": {
+          "median": 4.289,
+          "min": 4.096
+        },
+        "fastest_lap_tel": {
+          "median": 1.184,
+          "min": 1.059
+        },
+        "get_session": {
+          "median": 110.914,
+          "min": 109.551
+        },
+        "iloc_200": {
+          "median": 6.099,
+          "min": 3.473
+        },
+        "import": {
+          "median": 10.631,
+          "min": 10.462
+        },
+        "in_process_total": {
+          "median": 434.524,
+          "min": 408.555
+        },
+        "iterlaps_tel_loop": {
+          "median": 3.367,
+          "min": 2.024
+        },
+        "load": {
+          "median": 248.709,
+          "min": 220.052
+        },
+        "picks_x8": {
+          "median": 5.135,
+          "min": 3.295
+        },
+        "results": {
+          "median": 0.001,
+          "min": 0.001
+        },
+        "telemetry_analysis_3": {
+          "median": 33.058,
+          "min": 26.743
+        },
+        "weather": {
+          "median": 0.003,
+          "min": 0.002
+        }
+      },
+      "quali_split": {
+        "get_session": {
+          "median": 110.171,
+          "min": 109.442
+        },
+        "import": {
+          "median": 10.723,
+          "min": 10.416
+        },
+        "in_process_total": {
+          "median": 131.935,
+          "min": 130.886
+        },
+        "laps": {
+          "median": 4.545,
+          "min": 4.41
+        },
+        "results": {
+          "median": 5.069,
+          "min": 5.045
+        },
+        "split": {
+          "median": 1.246,
+          "min": 1.223
+        }
+      },
+      "results": {
+        "get_session": {
+          "median": 110.23,
+          "min": 109.116
+        },
+        "import": {
+          "median": 10.544,
+          "min": 10.405
+        },
+        "in_process_total": {
+          "median": 131.62,
+          "min": 130.386
+        },
+        "laps": {
+          "median": 5.377,
+          "min": 5.244
+        },
+        "results": {
+          "median": 5.53,
+          "min": 5.403
+        }
+      },
+      "state": {
+        "get_session": {
+          "median": 110.342,
+          "min": 108.979
+        },
+        "import": {
+          "median": 10.726,
+          "min": 10.464
+        },
+        "in_process_total": {
+          "median": 128.893,
+          "min": 127.65
+        },
+        "laps": {
+          "median": 5.393,
+          "min": 5.269
+        },
+        "rcm": {
+          "median": 1.227,
+          "min": 1.218
+        },
+        "session_status": {
+          "median": 0.08,
+          "min": 0.077
+        },
+        "t0_date": {
+          "median": 0.019,
+          "min": 0.017
+        },
+        "track_status": {
+          "median": 0.226,
+          "min": 0.219
+        },
+        "weather": {
+          "median": 0.839,
+          "min": 0.832
+        }
+      }
+    }
+  },
+  "version": 1
+}
