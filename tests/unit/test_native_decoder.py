@@ -27,6 +27,7 @@ from tif1.core_utils.helpers import (
     _create_telemetry_df,
     _decoded_channels,
     _merge_telemetry_payloads,
+    _polars_typed_channel,
     _telemetry_frame_from_merged,
     _without_null_categories,
 )
@@ -417,3 +418,49 @@ def _assert_same_payload(decoded, expected) -> None:
             assert got.dtype == (np.int64 if all(type(v) is int for v in value) else np.float64)
         else:
             assert got == value, key
+
+
+class TestPolarsDriverAheadFromCodes:
+    """Delphi D3: the polars ``DriverAhead`` column is gathered without pyarrow."""
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            ["4", "4", None, "16", "4"],
+            [None, "None", "1"],  # a "None" token is a missing sample too
+            ["81", "81"],
+        ],
+    )
+    def test_codes_become_a_string_series_with_nulls(self, values):
+        pl = pytest.importorskip("polars")
+        from tif1.core_utils.helpers import _ensure_polars_available
+
+        _ensure_polars_available()
+        series = _polars_typed_channel("DriverAhead", _encode(values))
+        assert series.dtype == pl.String
+        assert series.name == "DriverAhead"
+        assert series.to_list() == [None if v in (None, "None") else v for v in values]
+        assert series.n_chunks() == 1
+        # The same series the orjson list builds.
+        listed = _polars_typed_channel("DriverAhead", list(values))
+        assert series.equals(listed)
+
+    def test_all_missing_stays_a_null_string_series(self):
+        pl = pytest.importorskip("polars")
+        from tif1.core_utils.helpers import _ensure_polars_available
+
+        _ensure_polars_available()
+        for values in ([None, None, None], ["None", "None"]):
+            series = _polars_typed_channel("DriverAhead", _encode(values))
+            assert series.dtype == pl.String
+            assert series.null_count() == len(values) == len(series)
+
+    def test_gather_never_touches_pyarrow(self, monkeypatch):
+        """The build runs with pyarrow unimportable (a polars session never loads it)."""
+        pytest.importorskip("polars")
+        from tif1.core_utils.helpers import _ensure_polars_available
+
+        _ensure_polars_available()
+        monkeypatch.setitem(sys.modules, "pyarrow", None)
+        series = _polars_typed_channel("DriverAhead", _encode(["4", None, "16"]))
+        assert series.to_list() == ["4", None, "16"]

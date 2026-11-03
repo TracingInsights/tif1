@@ -16,8 +16,6 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
 from urllib.parse import quote
 
-import numpy as np
-
 from tif1.config import get_config
 from tif1.core_utils.lazy_import import is_pandas_frame, lazy_module
 from tif1.core_utils.runtime import import_supported_polars
@@ -43,6 +41,7 @@ from .constants import (
 from .json_utils import DictionaryChannel
 
 if TYPE_CHECKING:
+    import numpy as np
     import pandas as pd
     import polars as pl
 
@@ -56,6 +55,8 @@ else:
     # global is then the module itself (no per-access indirection).
     pd = lazy_module("pandas", globals(), "pd")
     _pb = lazy_module("tif1.core_utils.pandas_blocks", globals(), "_pb")
+    # numpy loads on the first telemetry frame; a polars laps read never needs it.
+    np = lazy_module("numpy", globals(), "np")
 
 POLARS_AVAILABLE = False
 
@@ -167,6 +168,8 @@ def _not_deleted_mask(laps: pd.DataFrame) -> np.ndarray | None:
     if deleted.dtype == bool:
         return ~deleted.to_numpy()
     # Nullable/object flags: a missing value means "not deleted".
+    if isinstance(deleted.dtype, pd.BooleanDtype):
+        return ~deleted.to_numpy(dtype=bool, na_value=False)
     return ~deleted.astype("boolean").fillna(False).to_numpy(dtype=bool)
 
 
@@ -337,7 +340,7 @@ def _create_telemetry_df(
         # Native-decoded payloads (Thebes TH4) carry numpy arrays for the
         # numeric channels and a DictionaryChannel for DriverAhead (Olympia
         # H6); the typed builders consume them directly.
-        if not isinstance(v, _TELEMETRY_CHANNEL_TYPES):
+        if not isinstance(v, _telemetry_channel_types()):
             continue
         renamed_key = TELEMETRY_RENAME_MAP.get(k, k)
         col_data[renamed_key] = v
@@ -412,7 +415,7 @@ def _polars_typed_channel(name: str, values: Any) -> Any:
         codes, categories = _without_null_categories(values)
         if not categories:  # no driver ahead on any sample
             return pl.Series(name, [None] * len(codes), dtype=pl.String)
-        return pl.Series(name, _arrow_strings_from_codes(categories, codes))
+        return _polars_strings_from_codes(name, categories, codes)
     elif name == "Brake":
         arr = np.asarray(values)
     elif name == _DRIVER_AHEAD_CHANNEL:
@@ -441,6 +444,18 @@ def _polars_typed_channel(name: str, values: Any) -> Any:
     if kind == "f":
         return pl.Series(name, arr, nan_to_null=True)
     return None
+
+
+def _polars_strings_from_codes(name: str, categories: list[str], codes: np.ndarray) -> Any:
+    """A polars ``String`` Series of ``categories[codes]`` (code -1: null), without pyarrow.
+
+    One gather from the categories with a null appended: polars counts a
+    negative index from the end, so every ``-1`` lands on that null slot.
+    ~60 us for a race lap where a pyarrow ``take`` cost ~120 us and, on a
+    polars session, the pyarrow import (and pandas, which ``pa.array`` of an
+    ndarray imports); the all-null case is handled by the caller.
+    """
+    return pl.Series(name, [*categories, None], dtype=pl.String).gather(codes)
 
 
 def _polars_constant_categorical(name: str, value: str, n: int) -> Any:
@@ -612,7 +627,7 @@ def _polars_telemetry_contract(frame):
 
 
 #: NaT as int64 (the session-clock arithmetic works on int64 nanoseconds).
-_NS_MIN = np.iinfo("int64").min
+_NS_MIN = -(2**63)
 
 
 def _typed_telemetry_frame(
@@ -1015,7 +1030,9 @@ def _seconds_array_to_td64ns(seconds: np.ndarray) -> np.ndarray:
 
 
 _NULL_LIKE_TOKEN_PROBE = _NULL_LIKE_STRINGS | {"None"}
-_NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
+_NULL_LIKE_TOKEN_ARRAY: Any = (
+    None  # ``np.array(sorted(_NULL_LIKE_TOKEN_PROBE))``, built on first use
+)
 
 # Telemetry channels that are numeric by contract. Upstream encodes a missing
 # value as the literal string "None" (e.g. ``DistanceToDriverAhead`` on a race
@@ -1027,7 +1044,7 @@ _DRIVER_AHEAD_CHANNEL = "DriverAhead"
 
 
 _NS_PER_SECOND = 1_000_000_000
-_NAT_INT64 = np.iinfo("int64").min
+_NAT_INT64 = -(2**63)
 
 
 def _seconds_to_td64ns(seconds: np.ndarray) -> np.ndarray:
@@ -1130,6 +1147,9 @@ def _coerce_numeric_channel(values: list[Any], arr: np.ndarray | None = None) ->
     parse.
     """
     if arr is not None and arr.dtype.kind == "U":
+        global _NULL_LIKE_TOKEN_ARRAY
+        if _NULL_LIKE_TOKEN_ARRAY is None:
+            _NULL_LIKE_TOKEN_ARRAY = np.array(sorted(_NULL_LIKE_TOKEN_PROBE))
         sentinel = np.isin(arr, _NULL_LIKE_TOKEN_ARRAY)
         out = np.full(arr.shape[0], np.nan, dtype="float64")
         try:
@@ -1160,7 +1180,19 @@ def _without_null_tokens(values: list[Any]) -> list[Any]:
 
 # Payload channel shapes: orjson lists, native numpy arrays (Thebes TH4) and
 # native dictionary-encoded string channels (Olympia H6).
-_TELEMETRY_CHANNEL_TYPES = (list, np.ndarray, DictionaryChannel)
+_TELEMETRY_CHANNEL_TYPES: tuple[type, ...] | None = None
+
+
+def _telemetry_channel_types() -> tuple[type, ...]:
+    """``(list, numpy.ndarray, DictionaryChannel)``: the payload channel shapes.
+
+    Built on the first telemetry payload, so the module never imports numpy
+    for it (a polars laps read does not need numpy at all).
+    """
+    global _TELEMETRY_CHANNEL_TYPES
+    if _TELEMETRY_CHANNEL_TYPES is None:
+        _TELEMETRY_CHANNEL_TYPES = (list, np.ndarray, DictionaryChannel)
+    return _TELEMETRY_CHANNEL_TYPES
 
 
 def _channel_list(values: Any) -> Any:
@@ -1829,7 +1861,7 @@ def _merge_telemetry_payloads(
         col_data = {
             TELEMETRY_RENAME_MAP.get(k, k): v
             for k, v in tel_payload.items()
-            if isinstance(v, _TELEMETRY_CHANNEL_TYPES)
+            if isinstance(v, _telemetry_channel_types())
         }
         if not col_data:
             continue
@@ -1965,6 +1997,7 @@ _PANDAS_BLOCK_NAMES = frozenset(
         "_TimedeltaArray",
         "_block_placement",
         "_dataframe_from_mgr",
+        "_direct_blocks_ok",
         "_direct_frame_from_columns",
         "_ensure_wrapped_if_datetimelike",
         "_extension_block",
@@ -1986,8 +2019,13 @@ _PANDAS_BLOCK_NAMES = frozenset(
 
 
 def _load_pandas_blocks() -> None:
-    """Import (and probe) :mod:`tif1.core_utils.pandas_blocks` now; a pandas session does."""
-    _pb._DIRECT_BLOCKS_OK  # noqa: B018 - the attribute read imports and rebinds ``_pb``
+    """Import and probe :mod:`tif1.core_utils.pandas_blocks` now.
+
+    Not on the session startup path (Delphi D2): the first frame build that
+    needs the block route probes it; this is the seam for callers that want
+    the probe paid up front.
+    """
+    _pb._direct_blocks_ok()  # the attribute read imports and rebinds ``_pb``
 
 
 def __getattr__(name: str) -> Any:

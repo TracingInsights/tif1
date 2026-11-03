@@ -94,7 +94,7 @@ def main() -> None:
         return
     from tif1.core_utils import frame_codec
 
-    assert frame_codec._FAST_LAP_FRAMES
+    assert frame_codec._fast_lap_frames()
     fast = _decode_all(args.db, args.year, args.gp, args.session)
     frame_codec._FAST_LAP_FRAMES = False
     generic = _decode_all(args.db, args.year, args.gp, args.session)

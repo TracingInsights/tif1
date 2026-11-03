@@ -1194,10 +1194,38 @@ class TestLapHelpers:
         assert padded["SessionTime"].max() == pd.Timedelta(seconds=last_s)
         assert lap.get_pos_data(pad=1, pad_side=pad_side).equals(padded)
 
-    def test_session_info_requests_nothing(self, race, cdn):
+    def test_session_info_requests_only_its_file(self, race, cdn):
         info = race.session_info
+        # Not published here (every mirror answers 404): derived from the schedule row.
         assert info["Meeting"]["Circuit"]["Key"] is not None
-        assert cdn.requested() == []
+        assert {url.rsplit("/", 1)[-1] for url in cdn.requested()} == {"session_info.json"}
+
+    def test_session_state_reads_session_info_json(self, cdn):
+        cdn.transport.add(
+            "session_info.json",
+            {
+                "t0_date": "2025-04-13T14:55:00.000000",
+                "session_start_time": 301.5,
+                "total_laps": 57,
+                "track_status": {
+                    "Time": [0.0, 400.25, 481.0],
+                    "Status": ["1", "4", "1"],
+                    "Message": ["AllClear", "SCDeployed", "AllClear"],
+                },
+                "session_status": {
+                    "Time": [5.0, 301.5, 6000.0, 6400.0, 6400.0],
+                    "Status": ["Inactive", "Started", "Finished", "Finalised", "Ends"],
+                },
+                "session_info": {"Key": 9998, "Name": "Race", "GmtOffset": "03:00:00"},
+            },
+        )
+        race = cdn.session("Race")
+        assert race.session_start_time == pd.Timedelta(seconds=301.5)
+        assert race.track_status["Time"].tolist()[1] == pd.Timedelta(seconds=400.25)
+        assert race.session_status["Status"].tolist()[-2:] == ["Finalised", "Ends"]
+        assert race.session_info["Key"] == 9998
+        assert race.total_laps == 57
+        assert len(cdn.requested_matching("session_info.json")) == 1
 
     def test_session_track_status_is_the_derived_table(self, race):
         track = race.track_status

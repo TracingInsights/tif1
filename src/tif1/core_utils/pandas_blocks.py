@@ -17,20 +17,36 @@ import numpy as np
 import pandas as pd
 
 
-def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+def _frame_from_arrays(
+    arrays: list[Any],
+    columns: list[str],
+    n_rows: int,
+    *,
+    column_index: pd.Index | None = None,
+) -> pd.DataFrame:
     """One-shot DataFrame from ready column arrays (no sanitize, consolidated).
 
     ``DataFrame._from_arrays`` is the constructor pandas' own readers use for
     pre-typed columns; it is private but stable across pandas 1.x-3.x. Should
     it ever disappear, the public constructor (slower, unconsolidated) is the
-    fallback, so behaviour never depends on it.
+    fallback, so behaviour never depends on it. ``column_index`` (an Index
+    over ``columns``) becomes the frame's column axis as is: the result of
+    an operation on an existing frame keeps that frame's column Index.
     """
     from_arrays: Any = getattr(pd.DataFrame, "_from_arrays", None)
     if from_arrays is None:  # pragma: no cover - pandas internals changed
-        return pd.DataFrame(dict(zip(columns, arrays)), copy=False)
+        frame = pd.DataFrame(dict(zip(columns, arrays)), copy=False)
+        if column_index is not None:
+            frame.columns = column_index
+        return frame
     return cast(
         pd.DataFrame,
-        from_arrays(arrays, columns=columns, index=pd.RangeIndex(n_rows), verify_integrity=False),
+        from_arrays(
+            arrays,
+            columns=columns if column_index is None else column_index,
+            index=pd.RangeIndex(n_rows),
+            verify_integrity=False,
+        ),
     )
 
 
@@ -46,8 +62,12 @@ def _frame_from_arrays(arrays: list[Any], columns: list[str], n_rows: int) -> pd
 # identical columns. The private pandas API involved (``BlockManager``,
 # ``new_block``, ``DataFrame._from_mgr``) is probed once at import with a
 # round-trip against the public constructor; if anything drifted, or a
-# build raises, ``_frame_from_arrays`` is used instead.
-try:  # pragma: no cover - import-time probe of pandas internals
+# build raises, ``_frame_from_arrays`` is used instead. Delphi D2: the probe
+# runs at the first frame build that needs it (``_direct_blocks_ok``), not
+# at import: a warm ``get_session`` paid ~6 ms for it (the probe frames pull
+# pyarrow's pandas shim and the first ``ArrowStringArray`` of the process)
+# although laps, results and the state tables never build a block frame.
+try:  # pragma: no cover - import-time resolution of pandas internals
     # importlib keeps the static checker out of pandas' private modules (the
     # stubs do not describe them); any ImportError/AttributeError disables
     # the direct path and ``_from_arrays`` is used instead.
@@ -89,7 +109,7 @@ def _shared_column_index(columns: list[str]) -> pd.Index:
 # coerced kinds ``new_block`` would produce (float/bool/object ndarrays,
 # ``TimedeltaArray``/``DatetimeArray`` for datetime-likes, extension arrays
 # for the rest). ``_probe_direct_blocks`` verifies the whole route against
-# the public constructor at import; any drift disables it.
+# the public constructor on first use; any drift disables it.
 _RANGE_INDEX_CACHE: dict[int, pd.RangeIndex] = {}
 _RANGE_INDEX_CACHE_MAX = 4096
 _PLACEMENT_CACHE: dict[Any, Any] = {}
@@ -150,17 +170,28 @@ except Exception:  # pragma: no cover - pandas internals changed
 
 
 def _frame_from_blocks(
-    blocks: tuple[Any, ...], columns: list[str], n_rows: int, frame_class: Any = None
+    blocks: tuple[Any, ...],
+    columns: list[str],
+    n_rows: int,
+    frame_class: Any = None,
+    *,
+    column_index: pd.Index | None = None,
 ) -> pd.DataFrame:
     """DataFrame over ready 2-D blocks (``(ncols, n_rows)`` values + placements).
 
     ``frame_class`` (a DataFrame subclass such as ``Telemetry``) builds that
     class directly: wrapping a finished frame afterwards costs a shallow
     manager copy (~70 us per frame), building it here costs nothing. Its
-    ``_metadata`` attributes start as None.
+    ``_metadata`` attributes start as None. ``column_index`` replaces the
+    shared Index built from ``columns`` (see :func:`_frame_from_arrays`).
     """
     mgr = _BlockManager(
-        blocks, [_shared_column_index(columns), _range_index(n_rows)], verify_integrity=False
+        blocks,
+        [
+            _shared_column_index(columns) if column_index is None else column_index,
+            _range_index(n_rows),
+        ],
+        verify_integrity=False,
     )
     if frame_class is None or frame_class is pd.DataFrame:
         return cast(pd.DataFrame, _dataframe_from_mgr(mgr, axes=mgr.axes))
@@ -235,7 +266,14 @@ def _int64_array(data: np.ndarray, mask: np.ndarray) -> Any:
     return pd.arrays.IntegerArray(data, mask)
 
 
-def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
+def _direct_frame_from_columns(
+    arrays: list[Any],
+    columns: list[str],
+    n_rows: int,
+    *,
+    frame_class: Any = None,
+    column_index: pd.Index | None = None,
+) -> pd.DataFrame:
     """Assemble ready 1-D columns into a consolidated frame without sanitizing."""
     numpy_groups: dict[np.dtype, list[tuple[int, np.ndarray]]] = {}
     ea_columns: list[tuple[int, Any]] = []
@@ -263,7 +301,9 @@ def _direct_frame_from_columns(arrays: list[Any], columns: list[str], n_rows: in
         del dtype
     for position, column in ea_columns:
         blocks.append(_extension_block(column, position))
-    return _frame_from_blocks(tuple(blocks), columns, n_rows)
+    return _frame_from_blocks(
+        tuple(blocks), columns, n_rows, frame_class, column_index=column_index
+    )
 
 
 def _probe_direct_blocks() -> bool:
@@ -307,14 +347,44 @@ def _probe_direct_blocks() -> bool:
         return False
 
 
-_DIRECT_BLOCKS_OK = _probe_direct_blocks()
+#: The probe's verdict: ``None`` until the first frame build asks for it
+#: (``_direct_blocks_ok``); tests may set it to ``False`` to force the
+#: ``_from_arrays`` route.
+_DIRECT_BLOCKS_OK: bool | None = None
 
 
-def _frame_from_columns(arrays: list[Any], columns: list[str], n_rows: int) -> pd.DataFrame:
-    """Consolidated DataFrame from ready 1-D columns (direct blocks, else ``_from_arrays``)."""
-    if _DIRECT_BLOCKS_OK:
+def _direct_blocks_ok() -> bool:
+    """Whether the direct block route is usable (probed once, on first use).
+
+    The probe is idempotent, so two threads racing on the first call both
+    store the same verdict.
+    """
+    global _DIRECT_BLOCKS_OK
+    verdict = _DIRECT_BLOCKS_OK
+    if verdict is None:
+        verdict = _DIRECT_BLOCKS_OK = _probe_direct_blocks()
+    return verdict
+
+
+def _frame_from_columns(
+    arrays: list[Any],
+    columns: list[str],
+    n_rows: int,
+    *,
+    frame_class: Any = None,
+    column_index: pd.Index | None = None,
+) -> pd.DataFrame:
+    """Consolidated DataFrame from ready 1-D columns (direct blocks, else ``_from_arrays``).
+
+    ``frame_class`` and ``column_index`` are honoured by the direct route
+    (see :func:`_frame_from_blocks`); the fallback keeps ``column_index`` and
+    returns a plain DataFrame for the caller to wrap.
+    """
+    if _direct_blocks_ok():
         try:
-            return _direct_frame_from_columns(arrays, columns, n_rows)
+            return _direct_frame_from_columns(
+                arrays, columns, n_rows, frame_class=frame_class, column_index=column_index
+            )
         except (AttributeError, TypeError, ValueError):
             pass
-    return _frame_from_arrays(arrays, columns, n_rows)
+    return _frame_from_arrays(arrays, columns, n_rows, column_index=column_index)

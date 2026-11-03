@@ -19,17 +19,19 @@ This module never imports pandas (or :mod:`tif1.core`): the only project
 imports are the exception classes.
 """
 
+from __future__ import annotations
+
 import bisect
 import datetime as dt
 import math
 import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from typing import Any, ClassVar, NamedTuple, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Self, cast
 
-import numpy as np
 import polars as pl
 
+from .core_utils.lazy_import import lazy_module
 from .exceptions import (
     DataNotFoundError,
     DriverNotFoundError,
@@ -37,6 +39,13 @@ from .exceptions import (
     LapNotFoundError,
     NetworkError,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    # The masks and gathers of the hot paths run on numpy, which loads on the
+    # first of them; reading ``session.laps`` back from the tier never does.
+    np = lazy_module("numpy", globals(), "np")
 
 __all__ = [
     "TELEMETRY_SCHEMA",
@@ -1963,7 +1972,7 @@ class IterLapResult(NamedTuple):
     """``(index, lap)`` pair yielded by :meth:`PolarsLaps.iterlaps`."""
 
     index: int
-    lap: "PolarsLap"
+    lap: PolarsLap
 
 
 class PolarsLaps(_TIF1Frame):
@@ -2107,7 +2116,7 @@ class PolarsLaps(_TIF1Frame):
         keep = _isin_values(self.get_column("Team").cast(pl.String), wanted)
         return self._rewrap(_filter_rows(self, keep))
 
-    def pick_fastest(self, only_by_time: bool = False) -> "PolarsLap | None":
+    def pick_fastest(self, only_by_time: bool = False) -> PolarsLap | None:
         """The lap with the lowest ``LapTime`` (fastf1 parity), or ``None``.
 
         By default only laps marked ``IsPersonalBest`` are candidates (a lap
@@ -2122,7 +2131,7 @@ class PolarsLaps(_TIF1Frame):
             "personal_best" if "IsPersonalBest" in self.columns else "not_deleted"
         )
 
-    def _fastest_lap(self, rule: str) -> "PolarsLap | None":
+    def _fastest_lap(self, rule: str) -> PolarsLap | None:
         """The first lap with the lowest ``LapTime`` among the ``rule`` candidates.
 
         Args:
@@ -2259,12 +2268,12 @@ class PolarsLaps(_TIF1Frame):
 
     # -- qualifying ---------------------------------------------------------
 
-    def _segment(self, keep: np.ndarray) -> "PolarsLaps | None":
+    def _segment(self, keep: np.ndarray) -> PolarsLaps | None:
         if not keep.any():
             return None
         return self._rewrap(_filter_rows(self, keep))
 
-    def split_qualifying_sessions(self) -> "list[PolarsLaps | None]":
+    def split_qualifying_sessions(self) -> list[PolarsLaps | None]:
         """``[Q1, Q2, Q3]`` laps (fastf1 parity; ``None`` for a segment without laps).
 
         The ``QualifyingSession`` column (``"Q1"``.. or any value ending in
@@ -2837,7 +2846,7 @@ class PolarsSessionResults(_TIF1Frame):
                 return int(positions[0])
         return None
 
-    def row_for(self, identifier: Any) -> "PolarsDriverResult":
+    def row_for(self, identifier: Any) -> PolarsDriverResult:
         """The result row of a driver.
 
         Args:
@@ -2878,7 +2887,7 @@ class PolarsSessionResults(_TIF1Frame):
         entries = zip(numbers.head(position + 1).to_list(), codes, strict=True)
         return _unique_driver_labels([(n or "", c or "") for n, c in entries])[-1]
 
-    def get_driver(self, identifier: Any) -> "PolarsDriverResult":
+    def get_driver(self, identifier: Any) -> PolarsDriverResult:
         """Alias of :meth:`row_for`."""
         return self.row_for(identifier)
 

@@ -27,25 +27,30 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-import re
 import sys
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any, Literal
-
-import numpy as np
 
 from tif1.core_utils.constants import (
     FASTF1_RESULTS_COLUMNS,
     RESULTS_COLUMN_ORDER,
     TIF1_RESULTS_EXTRA_COLUMNS,
 )
-from tif1.core_utils.lazy_import import lazy_module
-from tif1.ergast.structure import date_from_ergast, timedelta_from_ergast
+from tif1.core_utils.lazy_import import lazy_module, lazy_pattern
 
 if TYPE_CHECKING:
+    import numpy as np
     import pandas as pd
+
+    from tif1.ergast import structure as _structure
 else:
+    # The polars results frame is built from Python lists: neither loads here.
+    np = lazy_module("numpy", globals(), "np")
     pd = lazy_module("pandas", globals(), "pd")
+    # The Ergast value parsers (four regex compiles at import) are only
+    # needed once a classification is merged; ``tif1.core`` imports this
+    # module for every session (Delphi D2).
+    _structure = lazy_module("tif1.ergast.structure", globals(), "_structure")
 
 SessionKind = Literal["race", "qualifying", "identity"]
 
@@ -90,10 +95,10 @@ _NO_FILL_STR = frozenset({"Status"})  # keeps NaN when nothing is known (no laps
 _STR_SET = frozenset(_STR_COLUMNS)
 _FLOAT_SET = frozenset(_FLOAT_COLUMNS)
 _TIMEDELTA_SET = frozenset(_TIMEDELTA_COLUMNS)
-_NAT_NS = np.iinfo("int64").min
+_NAT_NS = -(2**63)
 _EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001 - naive, as the datetime64[ns] columns
 _MICROSECOND = dt.timedelta(microseconds=1)
-_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_ISO_DATE = lazy_pattern(r"\d{4}-\d{2}-\d{2}", globals(), "_ISO_DATE")
 
 
 def session_kind(session_name: str) -> SessionKind:
@@ -137,7 +142,7 @@ def _timedelta(value: Any, native: bool = False) -> Any:
 
     ``native``: the ``datetime.timedelta`` itself, ``None`` when missing (no pandas).
     """
-    parsed = timedelta_from_ergast(value)
+    parsed = _structure.timedelta_from_ergast(value)
     if native:
         return parsed
     return pd.NaT if parsed is None else pd.Timedelta(parsed)
@@ -262,7 +267,7 @@ def _first_unused(queue: deque[dict[str, Any]] | None, used: set[int]) -> dict[s
 def _identity_fields(row: dict[str, Any], native: bool = False) -> dict[str, Any]:
     driver = row.get("Driver", {}) if isinstance(row.get("Driver"), dict) else {}
     constructor = row.get("Constructor", {}) if isinstance(row.get("Constructor"), dict) else {}
-    date_of_birth = date_from_ergast(driver.get("dateOfBirth"))
+    date_of_birth = _structure.date_from_ergast(driver.get("dateOfBirth"))
     if native:
         birth: Any = date_of_birth
     else:
@@ -485,36 +490,54 @@ def _float_values(values: list[Any], native: bool = False) -> np.ndarray:
     )
 
 
-def _native_ns_values(values: list[Any], kind: str) -> np.ndarray | None:
-    """pandas-free ``to_timedelta``/``to_datetime`` of the values a polars session's rows hold.
+_NS_PER_DAY = 86_400_000_000_000
 
-    ``kind`` is ``"m"`` (``timedelta64[ns]``) or ``"M"`` (``datetime64[ns]``).
-    ``datetime`` scalars (and polars' row values), numpy scalars, ``None``/NaN
-    and ``YYYY-MM-DD`` strings convert exactly as pandas converts them;
-    ``None`` is returned for any other value (the caller then uses pandas).
+
+def _native_ns_list(values: list[Any], kind: str) -> list[int | None] | None:
+    """pandas-free ``to_timedelta``/``to_datetime`` of a polars session's row values, in ns.
+
+    ``kind`` is ``"m"`` (timedelta) or ``"M"`` (datetime). ``datetime``
+    scalars (polars' row values), ``int`` nanoseconds (``"m"`` only: the
+    lap-derived times of :mod:`tif1.core`), numpy scalars, ``None``/NaN and
+    ``YYYY-MM-DD`` strings convert exactly as pandas converts them, a missing
+    value to ``None``; the result is ``None`` for any other value (the caller
+    then uses pandas). Neither numpy nor pandas is imported for it.
     """
-    out = np.empty(len(values), dtype="int64")
-    for i, value in enumerate(values):
+    out: list[int | None] = []
+    append = out.append
+    for value in values:
         kind_of = type(value)
         if value is None or (kind_of is float and value != value):  # noqa: PLR0124
-            out[i] = _NAT_NS
+            append(None)
         elif kind == "m" and kind_of is dt.timedelta:
-            out[i] = (value // _MICROSECOND) * 1000
-        elif kind == "m" and kind_of is np.timedelta64:
-            out[i] = value.astype("m8[ns]").astype("int64")
+            append((value // _MICROSECOND) * 1000)
+        elif kind == "m" and kind_of is int:
+            append(value)
         elif kind == "M" and kind_of is dt.datetime and value.tzinfo is None:
-            out[i] = ((value - _EPOCH) // _MICROSECOND) * 1000
-        elif kind == "M" and kind_of is np.datetime64:
-            out[i] = value.astype("M8[ns]").astype("int64")
+            append(((value - _EPOCH) // _MICROSECOND) * 1000)
         elif kind == "M" and kind_of is str and not value:
-            out[i] = _NAT_NS
+            append(None)
         elif kind == "M" and kind_of is str and _ISO_DATE.fullmatch(value):
             try:
-                out[i] = np.datetime64(value, "ns").astype("int64")
+                append((dt.date.fromisoformat(value) - _EPOCH.date()).days * _NS_PER_DAY)
             except ValueError:  # not a calendar date: pandas decides
                 return None
+        elif kind_of.__module__ == "numpy" and kind_of is (
+            np.timedelta64 if kind == "m" else np.datetime64
+        ):
+            ns = int(value.astype("m8[ns]" if kind == "m" else "M8[ns]").astype("int64"))
+            append(None if ns == _NAT_NS else ns)
         else:
             return None
+    return out
+
+
+def _native_ns_values(values: list[Any], kind: str) -> np.ndarray | None:
+    """:func:`_native_ns_list` as a ``timedelta64[ns]``/``datetime64[ns]`` array (NaT for None)."""
+    ns = _native_ns_list(values, kind)
+    if ns is None:
+        return None
+    out = np.array([_NAT_NS if value is None else value for value in ns], dtype="int64")
     return out.view("m8[ns]" if kind == "m" else "M8[ns]")
 
 
@@ -600,6 +623,61 @@ def _result_columns(
     return columns, np.argsort(columns["Position"], kind="stable")  # NaN sorts last
 
 
+def _native_result_columns(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, list[Any]], list[int]] | None:
+    """``(values per results column, row order by Position)`` of a polars session's rows.
+
+    The list twin of :func:`_result_columns`: ``str`` (``""`` where missing,
+    ``None`` for a missing ``Status``), ``float`` and int-nanosecond values
+    with ``None`` where missing, in the same order (``Position``, unknown
+    last, stable), so building the polars results frame imports neither
+    numpy nor pandas. ``None`` when a value needs pandas' own inference (the
+    caller then takes the array path).
+    """
+    present: set[str] = set()
+    for row in rows:
+        present.update(row)
+    count = len(rows)
+    columns: dict[str, list[Any]] = {}
+    for column in RESULTS_COLUMN_ORDER:
+        if column not in present:
+            fill = (None if column in _NO_FILL_STR else "") if column in _STR_SET else None
+            columns[column] = [fill] * count
+            continue
+        values = [row.get(column) for row in rows]
+        if column in _STR_SET:
+            if column in _NO_FILL_STR:
+                if not all(type(value) is str or _is_missing(value) for value in values):
+                    return None  # pandas' inference decides how it reads
+                columns[column] = [None if _is_missing(value) else value for value in values]
+            else:
+                columns[column] = [
+                    "" if _is_missing(value) else (value if type(value) is str else str(value))
+                    for value in values
+                ]
+        elif column in _FLOAT_SET:
+            floats: list[float | None] = []
+            for value in values:
+                if value is None:
+                    floats.append(None)
+                elif isinstance(value, float):
+                    floats.append(None if value != value else float(value))  # noqa: PLR0124
+                elif isinstance(value, int) and not isinstance(value, bool):
+                    floats.append(float(value))
+                else:
+                    return None  # pandas' to_numeric decides
+            columns[column] = floats
+        else:
+            ns = _native_ns_list(values, "m" if column in _TIMEDELTA_SET else "M")
+            if ns is None:
+                return None
+            columns[column] = ns
+    position = columns["Position"]
+    order = sorted(range(count), key=lambda i: (position[i] is None, position[i] or 0.0))
+    return columns, order
+
+
 def _results_frame_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
     """:func:`finalize_results_frame` for a non-empty ``rows``: one frame of typed columns."""
     columns, order = _result_columns(rows)
@@ -634,8 +712,30 @@ def finalize_results_frame_polars(rows: list[dict[str, Any]]) -> Any:
     import polars as pl
 
     if rows:
-        # The pandas builder's typed arrays: one ``pl.Series`` per column, no
-        # non-strict cast of Python values (each ran a query plan).
+        native = _native_result_columns(rows)
+        if native is not None:
+            # Typed lists, one ``pl.Series`` per column: no numpy array and no
+            # non-strict cast of Python values (each ran a query plan). Int
+            # nanoseconds go in as ``Int64`` and are cast (a Series kernel):
+            # polars misreads ints given straight to ``Duration``/``Datetime``.
+            lists, positions = native
+            series = []
+            for column, values in lists.items():
+                ordered = [values[i] for i in positions]
+                if column in _STR_SET:
+                    series.append(pl.Series(column, ordered, dtype=pl.String))
+                elif column in _FLOAT_SET:
+                    series.append(pl.Series(column, ordered, dtype=pl.Float64))
+                elif column in _TIMEDELTA_SET:
+                    series.append(
+                        pl.Series(column, ordered, dtype=pl.Int64).cast(pl.Duration("ns"))
+                    )
+                else:
+                    series.append(
+                        pl.Series(column, ordered, dtype=pl.Int64).cast(pl.Datetime("ns"))
+                    )
+            return pl.DataFrame(series)
+        # A value only pandas can read: the pandas builder's typed arrays.
         columns, order = _result_columns(rows, native=True)
         series = []
         for column, array in columns.items():
@@ -691,7 +791,7 @@ def build_standings_frame(payload: dict[str, Any] | None, kind: str) -> pd.DataF
         if kind == "driver":
             driver = row.get("Driver", {}) if isinstance(row.get("Driver"), dict) else {}
             constructors = [c for c in row.get("Constructors", []) if isinstance(c, dict)]
-            date_of_birth = date_from_ergast(driver.get("dateOfBirth"))
+            date_of_birth = _structure.date_from_ergast(driver.get("dateOfBirth"))
             out.update(
                 {
                     "DriverNumber": str(driver.get("permanentNumber", "")),
@@ -887,7 +987,7 @@ def build_laps_payloads(
             if not isinstance(timing, dict):
                 continue
             driver_id = str(timing.get("driverId", ""))
-            parsed = timedelta_from_ergast(timing.get("time"))
+            parsed = _structure.timedelta_from_ergast(timing.get("time"))
             seconds = parsed.total_seconds() if parsed is not None else None
             per_driver[driver_id].append((number, seconds, _as_int(timing.get("position"))))
 

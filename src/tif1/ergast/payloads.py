@@ -33,16 +33,18 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from tif1.cache import LRUCache, get_cache
-from tif1.cdn import CDNManager, get_cdn_manager
 from tif1.config import get_config
 from tif1.core_utils.runtime import IS_EMSCRIPTEN, THREADS_AVAILABLE
 from tif1.exceptions import CacheError, DataNotFoundError, InvalidDataError, NetworkError
 from tif1.payload_loader import HttpTransport, default_transport
 from tif1.retry import retry_with_backoff
+
+if TYPE_CHECKING:
+    from tif1.cdn import CDNManager
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +192,13 @@ class ErgastPayloadLoader:
 
     @property
     def cdn_manager(self) -> CDNManager:
-        return self._cdn_manager if self._cdn_manager is not None else get_cdn_manager()
+        if self._cdn_manager is not None:
+            return self._cdn_manager
+        # Imported here: a warm session answers the classification from the
+        # cache (``cache_only``) and never reaches a mirror (Delphi D2).
+        from tif1.cdn import get_cdn_manager
+
+        return get_cdn_manager()
 
     @property
     def enable_cache(self) -> bool:

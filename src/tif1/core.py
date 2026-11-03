@@ -22,10 +22,6 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import unquote
 
-import numpy as np
-
-from .async_fetch import _validate_json_payload as _validate_json_impl
-from .async_fetch import fetch_multiple_async
 from .cache import (
     FASTEST_LAP_REF_MISS,
     LRUCache,  # noqa: F401  # re-exported for backward compatibility
@@ -36,7 +32,6 @@ from .cache import (
     get_cache,
     register_frame_writer,
 )
-from .cdn import get_cdn_manager
 from .config import get_config
 from .core_utils import ergast_results as _er
 from .core_utils import session_state as _ss
@@ -61,7 +56,6 @@ from .core_utils.constants import (
     telemetry_ref_from_path,
 )
 from .core_utils.helpers import (
-    _TELEMETRY_CHANNEL_TYPES,
     DataFrame,
     _channel_list,
     _coerce_lap_number,
@@ -73,7 +67,6 @@ from .core_utils.helpers import (
     _filter_valid_laptimes,
     _get_lap_column,
     _is_empty_df,
-    _load_pandas_blocks,
     _merge_telemetry_payloads,
     _normalize_lap_payload,
     _normalize_lap_payload_polars,
@@ -84,12 +77,13 @@ from .core_utils.helpers import (
     _rename_columns,
     _replace_null_like_strings,
     _seconds_array_to_td64ns,
+    _telemetry_channel_types,
     _telemetry_frame_from_merged,
     _validate_drivers_list,
     _validate_string_param,
     _validate_year,
 )
-from .core_utils.lazy_import import is_pandas_frame, is_pandas_series, lazy_module
+from .core_utils.lazy_import import is_pandas_frame, is_pandas_series, lazy_module, lazy_pattern
 from .core_utils.runtime import (
     IS_EMSCRIPTEN,
     THREADS_AVAILABLE,
@@ -113,12 +107,13 @@ from .models_shared import (
     _load_driver_lap_payload,
 )
 from .payload_loader import PayloadLoader
-from .types import ScheduleBackend
 
 if TYPE_CHECKING:
+    import numpy as np
     import pandas as pd
 
     from . import models as _models
+    from .cdn import CDNManager
 
     # Re-exported for backward compatibility; ``__getattr__`` resolves them at runtime.
     from .models import (  # noqa: F401
@@ -134,7 +129,11 @@ if TYPE_CHECKING:
         _LapInternal,
         _timedelta_ns,
     )
+    from .types import ScheduleBackend
 else:
+    # numpy (~55 ms on top of polars) loads on the first array a session
+    # builds; a polars laps/results read never does (Delphi D10).
+    np = lazy_module("numpy", globals(), "np")
     pd = lazy_module("pandas", globals(), "pd")
     _models = lazy_module("tif1.models", globals(), "_models")
 
@@ -192,14 +191,14 @@ def _polars_models() -> Any:
 
 
 def _load_pandas_models() -> None:
-    """Import pandas, :mod:`tif1.models` and the block assembly now (pandas sessions).
+    """Import pandas and :mod:`tif1.models` now (pandas sessions).
 
-    Everything a pandas session builds frames with, imported (and the block
-    assembly probed) up front as the eager imports did, so no data access
-    pays for it. Idempotent: two attribute reads once loaded.
+    The block assembly (:mod:`tif1.core_utils.pandas_blocks`) is imported and
+    probed by the first telemetry frame build instead (Delphi D2): laps,
+    results and the state tables never need it. Idempotent: one attribute
+    read once loaded.
     """
     _models.Laps  # noqa: B018 - the attribute read imports and rebinds ``_models``
-    _load_pandas_blocks()
 
 
 def _is_pandas_laps(obj: Any) -> TypeGuard[Laps]:
@@ -230,7 +229,30 @@ SESSION_LAPTIMES_PATH = "session_laptimes.json"
 
 def _validate_json_payload(path: str, data: dict[str, Any]) -> dict[str, Any]:
     """Validate JSON payload using global config (wrapper for async_fetch version)."""
+    from .async_fetch import _validate_json_payload as _validate_json_impl
+
     return _validate_json_impl(path, data, config)
+
+
+# Delphi D2: ``tif1.async_fetch`` (and the HTTP session module it imports)
+# is only needed by a cold load, so ``tif1.core`` binds these two names
+# through thin delegates instead of importing it at module load. Both keep
+# their module-global names: tests patch ``tif1.core.fetch_multiple_async``
+# and the fetch paths look the name up at call time.
+async def fetch_multiple_async(
+    requests: list[tuple[int, str, str, str]], **kwargs: Any
+) -> list[dict[str, Any] | None]:
+    """:func:`tif1.async_fetch.fetch_multiple_async`, imported on first use."""
+    from .async_fetch import fetch_multiple_async as _impl
+
+    return await _impl(requests, **kwargs)
+
+
+def get_cdn_manager() -> CDNManager:
+    """:func:`tif1.cdn.get_cdn_manager`, imported on first use (cold loads only)."""
+    from .cdn import get_cdn_manager as _impl
+
+    return _impl()
 
 
 # Applied on-demand only when a blocking sync API is called from an async loop.
@@ -453,8 +475,11 @@ def _extract_driver_info_map(drivers: list[dict] | None) -> dict[str, dict]:
 
 _RACE_LIKE_SESSION_NAMES = frozenset({"Race", "Sprint"})
 
+#: Per-session payload with fastf1's live-timing session state (2018 onwards).
+_SESSION_INFO_FILE = "session_info.json"
+
 #: A naive ``YYYY-MM-DDTHH:MM:SS`` schedule stamp (parsed without pandas).
-_ISO_SECONDS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_ISO_SECONDS = lazy_pattern(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", globals(), "_ISO_SECONDS")
 _EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001 - naive UTC, as pandas' Timestamp.value
 _MICROSECOND = dt.timedelta(microseconds=1)
 _UNSET: Any = object()
@@ -496,12 +521,15 @@ def _clean_scalar(value: Any) -> Any:
 
 def _native_isna(value: Any) -> bool:
     """``pandas.isna`` of a scalar that is not a pandas object (pandas is never imported)."""
-    if isinstance(value, np.datetime64 | np.timedelta64):
-        return bool(np.isnat(value))
-    if isinstance(value, float | complex | np.floating | np.complexfloating):
+    if isinstance(value, float | complex):
         return bool(value != value)  # noqa: PLR0124 - NaN
     if isinstance(value, decimal.Decimal):
         return value.is_nan()
+    if type(value).__module__ == "numpy":  # numpy scalars (never imports numpy)
+        if isinstance(value, np.datetime64 | np.timedelta64):
+            return bool(np.isnat(value))
+        if isinstance(value, np.floating | np.complexfloating):
+            return bool(value != value)  # noqa: PLR0124 - NaN
     return False
 
 
@@ -522,7 +550,7 @@ _PRACTICE_SESSIONS = frozenset({"Practice 1", "Practice 2", "Practice 3"})
 def _best_lap_timedelta(info: dict[str, Any] | None, native: bool = False) -> Any:
     """A lap summary's best lap (seconds) as a ``Timedelta``, ``NaT`` without one.
 
-    ``native`` (polars sessions): a ``numpy.timedelta64`` in ns, ``None`` without one.
+    ``native`` (polars sessions): the ``int`` nanoseconds, ``None`` without one.
     """
     best = info.get("best") if info is not None else None
     if best is None:
@@ -530,7 +558,7 @@ def _best_lap_timedelta(info: dict[str, Any] | None, native: bool = False) -> An
     # LapTimeSeconds is total_seconds() of the LapTime: rounding to the
     # nanosecond recovers the exact Timedelta.
     if native:
-        return np.timedelta64(round(best * 1e9), "ns")
+        return round(best * 1e9)
     return pd.Timedelta(round(best * 1e9), unit="ns")
 
 
@@ -749,16 +777,13 @@ def _quali_row_fields(
 ) -> dict[str, Any]:
     """``Q1``-``Q3`` of a driver's results row, plus ``"N"`` for a Q1 exit outside 107%.
 
-    ``native`` (polars sessions): ``numpy.timedelta64`` values, ``None`` when missing.
+    ``native`` (polars sessions): the ``int`` nanoseconds, ``None`` when missing.
     """
     if times is None:
         return {}
     fields: dict[str, Any]
     if native:
-        fields = {
-            name: np.timedelta64(value, "ns") if value is not None else None
-            for name, value in zip(("Q1", "Q2", "Q3"), times, strict=True)
-        }
+        fields = dict(zip(("Q1", "Q2", "Q3"), times, strict=True))
     else:
         fields = {
             name: pd.Timedelta(value, unit="ns") if value is not None else pd.NaT
@@ -934,7 +959,7 @@ def _telemetry_payload_has_lists(tel_payload: dict | None) -> bool:
         return False
     expected_len: int | None = None
     for value in tel_payload.values():
-        if isinstance(value, _TELEMETRY_CHANNEL_TYPES):
+        if isinstance(value, _telemetry_channel_types()):
             expected_len = len(value)
             break
     return expected_len is not None and expected_len > 0
@@ -1095,8 +1120,9 @@ class Session:
         self._car_data: LazyTelemetryDict | None = None
         self._results = None
         self._circuit_info: CircuitInfo | None = None
-        # Derived session state (track_status, session_status, session_info,
-        # t0_date, session_start_time), memoised per attribute.
+        # Session state (track_status, session_status, session_info, t0_date,
+        # session_start_time), memoised per attribute, and the
+        # session_info.json payload they read (under its file name).
         self._session_state: dict[str, Any] = {}
         # Session tables _load_session_table built already typed, by path
         # (the property skips its casts for exactly that frame).
@@ -1401,10 +1427,13 @@ class Session:
     def _telemetry_load_pending(self) -> bool:
         """Whether ``load()`` still needs the eager telemetry batch.
 
-        Pergamon Q1: a warm pandas load reads and decodes the driver rows of
-        the frame tier but leaves the per-lap frame construction (~11 us
-        each, ~16 ms for a race) to the first access of each lap through
-        the session memo; :meth:`fetch_all_laps_telemetry` builds them all.
+        Pergamon Q1: a warm pandas load leaves the per-lap frame construction
+        (~11 us each, ~16 ms for a race) to the first access of each lap
+        through the session memo; :meth:`fetch_all_laps_telemetry` builds
+        them all. Delphi D5: the driver rows are not read either (57 ms of
+        SQLite plus ~5 ms of decode per driver for a race): their lap lists
+        come from the rows' ``laps`` column, and a row is read when one of
+        its laps is first built.
         Laps the tier does not hold (legacy rows, payload tier, network)
         take the eager batch path as before.
         """
@@ -1424,7 +1453,13 @@ class Session:
             memo = self._memo
             pending = [ref for ref in lap_refs if not memo.contains("telemetry_df", ref)]
             if pending:
-                read_sources = getattr(get_cache(), "get_telemetry_frame_sources", None)
+                # Delphi D5: the rows' lap lists say which laps the tier holds;
+                # the rows themselves are read and decoded when a lap of the
+                # driver is first built (or all at once by a bulk reader).
+                cache = get_cache()
+                read_sources = getattr(cache, "lazy_telemetry_frame_sources", None)
+                if not callable(read_sources):
+                    read_sources = getattr(cache, "get_telemetry_frame_sources", None)
                 if callable(read_sources):
                     sources = read_sources(
                         self.year,
@@ -2196,10 +2231,17 @@ class Session:
 
     @property
     def total_laps(self) -> int | None:
-        """Laps of the race distance: the leader's lap count from the Ergast classification.
+        """Laps of the scheduled race distance (fastf1 parity).
 
-        None for sessions without an official race classification.
+        fastf1's value (the LapCount stream) from ``session_info.json``: None
+        for sessions that are not race-like. Without the file, the leader's
+        lap count from the Ergast classification (None for sessions without
+        an official race classification).
         """
+        payload = self._session_info_file()
+        if payload is not None and "total_laps" in payload:
+            value = payload["total_laps"]
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
         if self.session_name not in _RACE_LIKE_SESSION_NAMES or not self._ergast_enabled:
             return None
         return _er.total_laps_from_rows(
@@ -2430,10 +2472,10 @@ class Session:
                 self._race_control_messages = _create_empty_df(self.lib)
         return self._race_control_messages
 
-    # -- derived session state (fastf1's live-timing stream surfaces) ------------
+    # -- session state (fastf1's live-timing stream surfaces) ----------------------
 
     def _state(self, key: str, build: Any) -> Any:
-        """Memoised derived session state (``None`` results are memoised too).
+        """Memoised session state (``None`` results are memoised too).
 
         The memo is keyed on the identity of the laps table: every derivation
         starts from ``t0_date`` (and the laps' codes), so swapping the table
@@ -2446,8 +2488,49 @@ class Session:
             self._session_state[key] = entry
         return entry[1]
 
+    def _session_info_file(self) -> dict[str, Any] | None:
+        """The session's ``session_info.json``, or None when it is not published.
+
+        fastf1's live-timing session state as the data repositories publish it
+        (2018 onwards): the TrackStatus and SessionStatus streams, the session
+        start, ``t0_date``, the scheduled race distance and the SessionInfo
+        payload. Fetched once, when a property that reads it is first used
+        (about 2 KB, then cached like every payload); without it those
+        properties derive their values from the race-control messages, the
+        laps and the schedule.
+        """
+        if _SESSION_INFO_FILE in self._session_state:
+            return self._session_state[_SESSION_INFO_FILE]
+        payload: dict[str, Any] | None = None
+        if not self._ergast_only:
+            try:
+                data = self._fetch_json(_SESSION_INFO_FILE)
+                payload = data if isinstance(data, dict) else None
+            except DataNotFoundError:
+                logger.info(
+                    "No %s for %s/%s/%s", _SESSION_INFO_FILE, self.year, self.gp, self.session
+                )
+            except (InvalidDataError, NetworkError, RuntimeError, TypeError, ValueError) as e:
+                logger.warning(
+                    "Failed to load %s for %s/%s/%s: %s",
+                    _SESSION_INFO_FILE,
+                    self.year,
+                    self.event_name,
+                    self.session_name,
+                    e,
+                )
+        self._session_state[_SESSION_INFO_FILE] = payload
+        return payload
+
     def _t0_date_ns(self) -> int | None:
-        return self._state("t0_ns", lambda: _ss.t0_date_ns(self._loaded_laps_or_none()))
+        def build() -> int | None:
+            payload = self._session_info_file()
+            t0_ns = None if payload is None else _ss.file_t0_date_ns(payload)
+            # A file without t0_date (laps without LapStartDate) is no better
+            # than the laps it was built from.
+            return t0_ns if t0_ns is not None else _ss.t0_date_ns(self._loaded_laps_or_none())
+
+        return self._state("t0_ns", build)
 
     def _loaded_laps_or_none(self) -> DataFrame | None:
         """The laps table, loaded on demand (``None`` when the session has none).
@@ -2517,51 +2600,73 @@ class Session:
         return int(pd.Timestamp(scheduled).tz_localize(None).value)
 
     def _session_start_time_ns(self) -> int | None:
-        return self._state(
-            "start_ns",
-            lambda: _ss.session_start_time_ns(
+        def build() -> int | None:
+            payload = self._session_info_file()
+            if payload is not None:
+                return _ss.file_session_start_ns(payload)
+            return _ss.session_start_time_ns(
                 self.race_control_messages,
                 self._t0_date_ns(),
                 self._scheduled_start_utc_ns(),
                 race_like=self._is_race_like(),
-            ),
-        )
+            )
+
+        return self._state("start_ns", build)
 
     @property
     def t0_date(self) -> Any:
         """The date at ``SessionTime`` zero (fastf1 parity).
 
-        ``LapStartDate - LapStartTime`` of the laps table, constant to the
-        millisecond across every lap; ``NaT`` for a session without laps.
+        fastf1's value from the session's ``session_info.json``; without it,
+        ``LapStartDate - LapStartTime`` of the laps table (how fastf1 builds
+        ``LapStartDate``, constant to the millisecond across every lap).
+        A ``pd.Timestamp`` (``NaT`` when neither is known) on a pandas
+        session; on a polars session, which never imports pandas, a naive UTC
+        ``datetime.datetime`` (``None`` when unknown), the scalar type of its
+        ``Datetime`` columns.
         """
         t0_ns = self._t0_date_ns()
+        if self.lib == "polars":
+            return None if t0_ns is None else _EPOCH + dt.timedelta(microseconds=t0_ns // 1000)
         return pd.NaT if t0_ns is None else pd.Timestamp(t0_ns)
 
     @property
     def session_start_time(self) -> Any:
         """``SessionTime`` of the session start (fastf1 parity).
 
-        Races and sprints: the scheduled UTC start (the formation lap) minus
-        :attr:`t0_date`; other sessions: the first ``GREEN LIGHT - PIT EXIT
-        OPEN`` race-control message. ``NaT`` when neither is known.
+        The first ``Started`` row of the SessionStatus stream (for races and
+        sprints the start of the formation lap), from ``session_info.json``.
+        Without the file it is derived: races and sprints, the scheduled UTC
+        start minus :attr:`t0_date`; other sessions, the first ``GREEN LIGHT
+        - PIT EXIT OPEN`` race-control message. A ``pd.Timedelta`` (``NaT``
+        when unknown) on a pandas session; a ``datetime.timedelta`` (``None``
+        when unknown) on a polars session.
         """
         start_ns = self._session_start_time_ns()
+        if self.lib == "polars":
+            return None if start_ns is None else dt.timedelta(microseconds=start_ns // 1000)
         return pd.NaT if start_ns is None else pd.Timedelta(start_ns)
 
     @property
     def track_status(self) -> DataFrame:
         """Track status changes: ``Time`` (session time), ``Status`` code, ``Message``.
 
-        fastf1's shape and vocabulary (``1`` AllClear, ``2`` Yellow, ``4``
-        SCDeployed, ``5`` Red, ``6`` VSCDeployed, ``7`` VSCEnding) derived
-        from the race-control messages (exact timestamps, inferred codes:
-        sector yellows are tracked as a set so the status returns to ``1``
-        only when every sector is clear). Without race-control messages the
-        laps' ``TrackStatus`` codes at each lap start are used instead. The
-        first row is ``AllClear`` at time zero as in the live stream.
+        fastf1's TrackStatus stream from ``session_info.json`` (``1``
+        AllClear, ``2`` Yellow, ``4`` SCDeployed, ``5`` Red, ``6``
+        VSCDeployed, ``7`` VSCEnding; the first row is the status when the
+        stream starts). Without the file it is derived from the race-control
+        messages (exact timestamps, inferred codes: sector yellows are
+        tracked as a set so the status returns to ``1`` only when every
+        sector is clear), or from the laps' ``TrackStatus`` codes at each lap
+        start without messages, starting with ``AllClear`` at time zero.
         """
 
         def build() -> DataFrame:
+            payload = self._session_info_file()
+            table = None if payload is None else _ss.file_status_table(payload, "track_status")
+            if table is not None:
+                rows, messages = table
+                return _ss.status_frame(rows, self.lib, with_message=True, messages=messages)
             t0_ns = self._t0_date_ns()
             rows: list[tuple[int, str]] = [(0, "1")]
             if t0_ns is not None:
@@ -2580,13 +2685,20 @@ class Session:
     def session_status(self) -> DataFrame:
         """Session status changes: ``Time`` (session time) and ``Status`` (fastf1 parity).
 
-        ``Started`` at :attr:`session_start_time`, ``Aborted`` at each red
-        flag, ``Started`` again on the following green light and
-        ``Finished`` at the chequered flag, from the race-control messages.
-        ``Finalised``/``Ends`` are not derivable and are not emitted.
+        fastf1's SessionStatus stream from ``session_info.json``
+        (``Inactive``, ``Started``, ``Aborted``, ``Finished``, ``Finalised``,
+        ``Ends``). Without the file it is derived from the race-control
+        messages: ``Started`` at :attr:`session_start_time`, ``Aborted`` at
+        each red flag, ``Started`` again on the following green light and
+        ``Finished`` at the chequered flag (no ``Inactive``, ``Finalised`` or
+        ``Ends``).
         """
 
         def build() -> DataFrame:
+            payload = self._session_info_file()
+            table = None if payload is None else _ss.file_status_table(payload, "session_status")
+            if table is not None:
+                return _ss.status_frame(table[0], self.lib, with_message=False)
             t0_ns = self._t0_date_ns()
             rows: list[tuple[int, str]] = []
             if t0_ns is not None:
@@ -2599,18 +2711,26 @@ class Session:
 
     @property
     def session_info(self) -> dict[str, Any]:
-        """fastf1's ``session_info`` dict derived from the schedule row.
+        """fastf1's ``session_info`` dict (the live-timing SessionInfo payload).
 
-        ``Meeting`` (name, official name, location, country, circuit),
-        ``Type``, ``Name``, ``StartDate``, ``EndDate`` (nominal duration) and
+        From ``session_info.json``, with fastf1's value types (``StartDate``
+        and ``EndDate`` naive local datetimes, ``GmtOffset`` a timedelta).
+        Without the file it is derived from the schedule row: ``Meeting``
+        (name, official name, location, country, circuit), ``Type``,
+        ``Name``, ``StartDate``, ``EndDate`` (nominal duration) and
         ``GmtOffset`` are filled; ``Key``, ``Meeting.Key``, ``Path`` and
-        ``ArchiveStatus`` are ``None`` (not derivable). The circuit and
-        country keys come from the vendored circuit table or, when it was
-        already built, :meth:`get_circuit_info`; reading this dict never
-        starts a request beyond the schedule.
+        ``ArchiveStatus`` are ``None``. The derived circuit and country keys
+        come from the vendored circuit table or, when it was already built,
+        :meth:`get_circuit_info`.
         """
 
         def build() -> dict[str, Any]:
+            payload = self._session_info_file()
+            info = None if payload is None else _ss.file_session_info(payload)
+            if info is not None:
+                return info
+            if self.lib == "polars":
+                return self._derived_session_info_native()
             # One schedule row for every field (each ``self.event`` builds it anew).
             found: Any = None
             try:
@@ -2637,6 +2757,49 @@ class Session:
             )
 
         return self._state("session_info", build)
+
+    def _derived_session_info_native(self) -> dict[str, Any]:
+        """:attr:`session_info` derived from the schedule row without pandas (polars sessions).
+
+        The pandas derivation on the row of :meth:`_event_row`: ``StartDate``
+        is the session's local schedule date (its UTC date on Ergast
+        schedules, which carry no local times), ``GmtOffset`` the parsed
+        schedule offset, both stdlib values as fastf1's.
+        """
+        from .events import _parse_gmt_offset
+
+        row: dict[str, Any] = {}
+        found: dict[str, Any] | None = None
+        try:
+            found = row = self._event_row()[1]
+        except (EventNotFoundError, ValueError):
+            pass
+        gmt_raw = row.get("GmtOffset")
+        gmt_offset = _parse_gmt_offset(gmt_raw) if gmt_raw is not None else None
+        start_date: dt.datetime | None = None
+        for i in range(1, 6):
+            if row.get(f"Session{i}") != self.session_name:
+                continue
+            for key in (f"Session{i}Date", f"Session{i}DateUtc"):
+                value = row.get(key)
+                if isinstance(value, str) and value:
+                    try:
+                        start_date = dt.datetime.fromisoformat(value).replace(tzinfo=None)
+                    except ValueError:
+                        continue
+                    break
+            break
+        keys = self._circuit_keys(found)
+        return _ss.session_info_dict(
+            row,
+            self.session_name,
+            start_date=start_date,
+            gmt_offset=gmt_offset,
+            circuit_key=keys.get("circuit_key"),
+            country_key=keys.get("country_key"),
+            country_code=keys.get("country_code") or "",
+            circuit_short_name=keys.get("circuit_name") or "",
+        )
 
     def _circuit_keys(self, event: Any = None) -> dict[str, Any]:
         """Circuit/country keys without a request: memoised circuit info, else the vendored table.
@@ -5703,7 +5866,7 @@ class Session:
             list_lengths = [
                 len(values)
                 for values in tel_payload.values()
-                if isinstance(values, _TELEMETRY_CHANNEL_TYPES)
+                if isinstance(values, _telemetry_channel_types())
             ]
             n_rows = max(list_lengths) if list_lengths else 0
             if n_rows == 0:
@@ -5711,7 +5874,7 @@ class Session:
 
             payload_list_keys: set[str] = set()
             for k, channel in tel_payload.items():
-                if isinstance(channel, _TELEMETRY_CHANNEL_TYPES):
+                if isinstance(channel, _telemetry_channel_types()):
                     # Native payloads (arrays, dictionary channels) as lists.
                     v = _channel_list(channel)
                     mapped_key = TELEMETRY_RENAME_MAP.get(k, k)

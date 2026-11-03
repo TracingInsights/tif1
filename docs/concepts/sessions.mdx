@@ -539,20 +539,23 @@ print(f"Analyzing {info['Meeting']['Name']} {info['Name']} ({info['Type']})")
 
 ### track_status and session_status
 
-fastf1 reads these two tables from the live-timing streams. tif1 derives them from the race control messages, so the times are exact and the codes are inferred. The codes and messages are the fastf1 ones. `session_status` never contains `Finalised` or `Ends`.
+fastf1 reads these two tables from the live-timing streams, which need an F1 account. tif1 reads the same streams from the `session_info.json` file of the session (2018 onward). The codes and messages are the fastf1 ones. Without the file, tif1 derives the tables from the race control messages, and the values are an approximation.
 
 ```python
 print(session.track_status.head(3))
 # For the 2025 Bahrain Grand Prix race:
 #                     Time Status     Message
 # 0        0 days 00:00:00      1    AllClear
-# 1 0 days 01:47:54.733000      4  SCDeployed
-# 2 0 days 01:55:40.733000      1    AllClear
+# 1 0 days 01:47:55.160000      4  SCDeployed
+# 2 0 days 01:55:40.811000      1    AllClear
 
 print(session.session_status)
-#                     Time    Status
-# 0 0 days 00:51:45.733000   Started
-# 1 0 days 02:31:14.733000  Finished
+#                     Time     Status
+# 0 0 days 00:00:06.398000   Inactive
+# 1 0 days 00:55:34.907000    Started
+# 2 0 days 02:31:14.574000   Finished
+# 3 0 days 02:37:59.928000  Finalised
+# 4 0 days 02:45:13.997000       Ends
 ```
 
 `Time` is the session time: add `session.t0_date` to get the wall-clock date. Refer to the [Core API](/api-reference/core) for the status codes and `session_start_time`.

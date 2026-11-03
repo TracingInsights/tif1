@@ -221,6 +221,62 @@ class TestTestingHelpers:
         assert captured["session"] == "Practice 2"
         assert "Testing" in captured["gp"]
 
+
+class TestSharedTestingNames:
+    """Testing events sharing a name (2026: two "Pre-Season Testing" weeks)."""
+
+    def test_shared_names_numbered_in_date_order(self):
+        raw = {
+            "event_name": {"0": "Pre-Season Testing", "1": "Pre-Season Testing", "2": "A GP"},
+            "round_number": {"0": 0, "1": 0, "2": 1},
+            # Listed out of date order: the number follows the date.
+            "event_date": {"0": "2026-02-20T19:00:00", "1": "2026-02-13T19:00:00"},
+            "event_format": {"0": "testing", "1": "testing", "2": "conventional"},
+        }
+        payload = events_mod._convert_f1schedule_year(raw, 2026)
+        assert payload["events"] == ["A GP", "Pre-Season Testing 1", "Pre-Season Testing 2"]
+        assert payload["metadata"]["Pre-Season Testing 1"]["EventDate"] == "2026-02-13T19:00:00"
+        assert payload["metadata"]["Pre-Season Testing 2"]["EventDate"] == "2026-02-20T19:00:00"
+        assert payload["name_aliases"] == {"Pre-Season Testing": "Pre-Season Testing 1"}
+
+    def test_unique_testing_names_unchanged(self):
+        for year, names in (
+            (2025, ["Pre-Season Testing"]),
+            (2022, ["Pre-Season Track Session", "Pre-Season Test"]),
+            (2020, ["Pre-Season Test 1", "Pre-Season Test 2"]),
+        ):
+            schedule = get_event_schedule(year)
+            assert schedule.loc[schedule.is_testing(), "EventName"].tolist() == names
+
+    def test_each_test_keeps_its_own_dates_and_folder(self, monkeypatch):
+        captured: list = []
+        monkeypatch.setattr(
+            "tif1.core.get_session", lambda _year, gp, _session, **_kw: captured.append(gp)
+        )
+        first, second = get_testing_event(2026, 1), get_testing_event(2026, 2)
+        assert (first.EventName, second.EventName) == (
+            "Pre-Season Testing 1",
+            "Pre-Season Testing 2",
+        )
+        assert first.EventDate < second.EventDate
+        get_testing_session(2026, 1, 1)
+        get_testing_session(2026, 2, 1)
+        # The data repositories' folders of the two weeks.
+        assert captured == ["Pre-Season Testing 1", "Pre-Season Testing 2"]
+
+    @pytest.mark.parametrize("exact_match", [False, True])
+    def test_shared_name_resolves_to_first_test(self, exact_match):
+        # fastf1's first-match search returns the first of the same-named events.
+        event = events_mod.get_event_by_name(2026, "pre-season testing", exact_match=exact_match)
+        assert event.EventName == "Pre-Season Testing 1"
+        assert events_mod.get_event_by_name(2026, "Pre-Season Testing 2").EventName == (
+            "Pre-Season Testing 2"
+        )
+
+    def test_shared_name_needs_the_testing_rows(self):
+        schedule = get_event_schedule(2026, include_testing=False)
+        assert schedule.get_event_by_name("Pre-Season Testing") is None
+
     def test_get_events_remaining(self):
         everything = get_events_remaining(datetime(2026, 1, 1))  # noqa: DTZ001
         assert len(everything) == len(get_event_schedule(2026))

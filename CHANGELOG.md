@@ -5,6 +5,164 @@ All notable changes to this project are documented in this file.
 The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` format.
 
 
+## [Unreleased]
+
+### Performance — Delphi series (2026-11-03)
+
+- Scripts exit sooner: `tif1` registers an exit hook that freezes the heap
+  (`gc.freeze`) so CPython's final garbage collections skip the ~300k
+  objects pandas, numpy and pyarrow (or polars) built at import, which cost
+  40-80 ms of every script's teardown. Memory is released as before; cyclic
+  garbage alive at exit is not finalized (CPython never guaranteed it at
+  shutdown). Fresh process, warm cache, 2025 Bahrain race: pandas `laps`
+  566 -> 493 ms, the notebook flow 984 -> 874 ms; polars `get_session`
+  383 -> 329 ms; a cold pandas `laps` 992 -> 876 ms. `exit_gc_freeze=False`
+  (`TIF1_EXIT_GC_FREEZE=0`) turns it off.
+- A warm polars session no longer imports pandas or pyarrow. `t0_date` and
+  `session_start_time` return `datetime.datetime` (naive UTC) and
+  `datetime.timedelta`, `None` when unknown, on a polars session (pandas
+  sessions keep `pd.Timestamp`/`pd.Timedelta`/`NaT`); the derived
+  `session_info` of a polars session is built from the schedule row without
+  pandas. The `DriverAhead` column of a native-decoded telemetry payload is
+  a polars gather instead of a pyarrow `take`, and the per-driver Arrow IPC
+  rows of the polars frame tier are read with polars' own reader when
+  pyarrow is not already imported (pyarrow's reader, faster in-process, is
+  used when it is). 2025 Bahrain race, warm cache, fresh process:
+  `session.t0_date` 229 ms -> 0, `get_driver("VER").get_fastest_lap_tel()`
+  254 -> 24 ms, `laps.pick_driver("VER").telemetry` 52 -> 39 ms,
+  `fetch_all_laps_telemetry()` 168 -> 114 ms; whole-process wall 685 -> 392,
+  693 -> 380, 454 -> 413 and 580 -> 505 ms.
+- `lib="polars"` sessions import numpy only when something builds an array
+  (~55 ms of their startup): `core.py`, the shared helpers, the session-state
+  tables, the results builder and the polars models bind `np` through the
+  lazy module proxy that already keeps pandas out, the polars results frame
+  is built from typed lists instead of numpy arrays, and the polars weather,
+  race-control, track-status and session-status tables are typed lists too
+  (the seconds and ISO timestamp casts replicate numpy's value for value).
+  Warm polars, fresh process, 2025 Bahrain race: import plus `get_session`
+  351 -> 240 ms, the script to `laps` 378 -> 250 ms, to `results` 368 -> 260
+  ms, `get_fastest_lap_tel()` end to end 390 -> 338 ms, a driver's
+  `Laps.telemetry` 427 -> 400 ms, `fetch_all_laps_telemetry()` 578 -> 536 ms.
+  The first telemetry read, `split_qualifying_sessions` and the fuzzy event
+  match now carry the numpy import, so those alone are slower in isolation
+  while every script that reaches them finishes sooner. pandas sessions are
+  unchanged (pandas imports numpy).
+- A warm pandas `get_session` no longer pays for work it does not use: the
+  block-assembly probe (`_probe_direct_blocks`, ~6 ms with pandas 3 because
+  its string column initialises pyarrow's pandas shim and the first
+  `ArrowStringArray` of the process) runs at the first telemetry frame
+  build instead of at session creation; `tif1.core` no longer imports the
+  async fetch layer, the HTTP session module, the CDN manager or
+  `tif1.types` at module load (the fetch paths and the Ergast tier resolve
+  them on first use); the Ergast value parsers load with the first
+  classification merge; the vendored event schedules are read through
+  `pathlib` instead of `importlib.resources` (its import and first
+  `files()` call were ~3 ms of the first event-name resolution); and the
+  regexes of the startup path compile on first use. tif1's own startup with
+  pandas already imported drops from ~34 ms to ~20 ms (12/12 interleaved
+  pairs); the first telemetry frame of a process picks up ~6 ms of the
+  deferred one-time pyarrow string initialisation, the first `results`
+  ~1.5 ms. A fresh-interpreter test pins the modules a warm pandas session
+  may import.
+- `get_driver` on pandas sessions reads the driver's `results` row by
+  position (the row `BlockManager.fast_xs` interleaves, shared with
+  `Laps.iloc[i]`) instead of taking every column of the results frame for
+  one row, `Driver.laps` slices the session table when the driver's laps
+  are one run of rows, and `Driver.get_fastest_lap` picks the lap by
+  `argmin` on the valid, not deleted lap times and returns that one-row
+  slice with `LapTimeSeconds` set as before. Warm pandas session, 2025
+  Bahrain race: `get_driver(d).get_fastest_lap()` 6.5 -> 1.0 ms per driver
+  (`get_driver` 1.9 -> 0.3, `.laps` 1.3 -> 0.25, `.get_fastest_lap()` 2.9
+  -> 0.35); the notebook flow's four-driver fastest-lap step 36 -> 15 ms.
+  Values, dtypes, index, name and class of every result are unchanged.
+- `Telemetry.resample_channels` and `fill_missing` (pandas) no longer run a
+  pandas `ffill`/`bfill`/`interpolate` chain per column: the value in force
+  is found once per lap as a numpy source-index map and every held column
+  (gear, DRS, brake, status, driver ahead, source, driver, lap number) is
+  gathered once with its dtype kept; float gaps are closed with
+  `np.interp` on the sample positions, which is the arithmetic pandas'
+  linear `interpolate` runs; clocks and float channels are read from the
+  stored arrays instead of through `to_datetime`/`to_numeric`; the
+  resampled frame is assembled block by block with the frame's own column
+  Index. Values, dtypes, column order and index are unchanged. 2025 Bahrain
+  race, four fastest laps, in process: `resample_channels("0.1s")` 39.5 ->
+  6.1 ms, `fill_missing()` 7.5 -> 2.5 ms; the notebook flow's 4-lap
+  analysis step 60 -> 21 ms. Masked float columns, Arrow-backed strings
+  under the `Source` rule and other unusual dtypes still take the pandas
+  chain. The polars class is unchanged.
+- `laps.pick_driver(d).telemetry` after `load()` (or after any lap of the
+  driver was touched) gathers the frame from the decoded driver row the
+  session memo already holds instead of reading the row from SQLite,
+  decompressing and decoding it a second time; a driver whose laps span
+  two storage layouts is joined column by column instead of through
+  `pd.concat`. Four drivers' merged telemetry in the notebook benchmark
+  76 -> 40 ms, the whole notebook 982 -> 935 ms; in process after `load()`
+  61 -> 26 ms for four drivers. Without `load()` the path is the previous
+  one (23 ms, unchanged): the merged frame then views its own decode, where
+  a held row would cost it a copy. A single driver row read by a per-lap
+  access decompresses inline instead of through the pool (a
+  `get_car_data()` loop over one driver's laps 25 -> 21 ms).
+- A warm pandas `Session.load()` no longer reads and decodes every driver's
+  telemetry frame-tier row (57 ms of SQLite plus ~30 ms of decode for a
+  2025 race, 85 of its ~95 ms) to learn which laps the tier holds: it reads
+  the rows' lap lists and holds a lazy source per driver, so `load()` then
+  `laps`/`results` costs 8 ms instead of 85 and `load()` then one driver's
+  telemetry reads one row (~15 ms). The first driver touched reads its row
+  alone; the second driver fetches every remaining row in one streamed batch
+  (SQLite and lz4 in parallel, ~60 ms), and each row is decoded (~1.5 ms)
+  only at its first lap, so a batch never decodes a driver nobody touches.
+  `fetch_all_laps_telemetry()` keeps one batched read, and a driver's merged
+  telemetry is gathered from the lazy row once a lap has read it. A loop
+  over every lap of the session after `load()` pays what `load()` used to
+  pay plus one lone row read (~15 ms): the notebook workload is unchanged
+  (1028 -> 1030 ms) while `load()` then laps and results is 652 -> 566 ms.
+- Warm pandas sessions read the frame tier's driver rows in the lz4
+  workers. The 20 rows of a race (70 MB of lz4) were copied out of SQLite by
+  one cursor on the calling thread before any decompression started; each
+  row is now read by the worker that decompresses it, on one of up to four
+  read-only connections through `Connection.blobopen` (one copy, GIL
+  released) inside a read transaction that re-checks the row against the
+  main connection's index, with the main connection as the fallback for a
+  row written in this process and not yet committed. Fresh process, 2025
+  Bahrain race: `fetch_all_laps_telemetry()` 111-120 -> 94 ms, an eager
+  `load()` of the rows 83-88 -> 58-61 ms, `get_car_data()` over a driver's
+  laps 24 -> 21 ms; single-row reads, `Laps.telemetry` and polars sessions
+  unchanged. The readers open on first use and close with the cache.
+
+### Changed
+
+- `Session.t0_date`, `session_start_time`, `track_status`,
+  `session_status`, `session_info` and `total_laps` read the session's
+  `session_info.json`, which the data repositories now publish for every
+  session from 2018: fastf1's own values from the live-timing streams
+  (TrackStatus, SessionStatus, SessionInfo, LapCount). They were derived
+  from the race-control messages, the laps and the schedule, which got
+  race and sprint start times wrong by minutes (the scheduled start, not
+  the formation lap), read 2026's "VSC DEPLOYED" as a full safety car,
+  missed red flags published only as text (Monaco 2026) and kept times
+  to the whole second. Against fastf1's streams for every 2026 Grand Prix
+  session, all 90 now match exactly. `session_status` gains fastf1's
+  `Inactive`, `Finalised` and `Ends` rows, `track_status` can start on a
+  code other than `1`, and `session_info` has `Key`, `Meeting.Key`, `Path`
+  and `ArchiveStatus`, with fastf1's `datetime`/`timedelta` values. The
+  file is fetched once, on first use of one of these attributes (about
+  2 KB, then cached). Without it (seasons before 2018) the values are
+  derived as before. `Laps.split_qualifying_sessions` splits on the exact
+  stream too.
+
+### Fixed
+
+- 2026 pre-season testing: the schedule names both tests "Pre-Season
+  Testing", and the second test overwrote the first. Both rows had the
+  second test's dates, and every testing session loaded the data of the
+  first test. Testing events of one season that share a name are now
+  numbered in date order (`Pre-Season Testing 1`, `Pre-Season Testing 2`),
+  as the data repository folders are, so `get_testing_event(2026, n)` and
+  `get_testing_session(2026, n, m)` return test `n` with its own dates and
+  data. The shared name `"Pre-Season Testing"` still resolves, to the first
+  test, as in fastf1. Other seasons keep their names.
+
+
 ## [0.11.2] - 2026-10-30
 
 ### Summary

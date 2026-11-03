@@ -44,8 +44,8 @@ import pandas as pd
 from . import frame_narrow as _narrow
 from . import pandas_blocks as _blocks
 from .pandas_blocks import (
-    _DIRECT_BLOCKS_OK,
     _block_placement,
+    _direct_blocks_ok,
     _extension_block,
     _extension_block_placed,
     _frame_from_blocks,
@@ -123,7 +123,7 @@ def _decode_str(cats: list[str], codes: np.ndarray) -> Any:
 
 def encode_frame(frame: pd.DataFrame) -> bytes | None:
     """Encode a telemetry DataFrame; ``None`` when a block is not supported."""
-    if not _DIRECT_BLOCKS_OK or not isinstance(frame, pd.DataFrame):
+    if not _direct_blocks_ok() or not isinstance(frame, pd.DataFrame):
         return None
     if (
         not isinstance(frame.index, pd.RangeIndex)
@@ -226,7 +226,7 @@ def decode_frame(blob: bytes | bytearray | memoryview, frame_class: Any = None) 
     Raises ``ValueError`` on a malformed blob (callers treat it as a
     corrupt-row cache miss).
     """
-    if not _DIRECT_BLOCKS_OK:
+    if not _direct_blocks_ok():
         raise ValueError("direct block assembly unavailable")
     view = memoryview(blob)
     if bytes(view[:4]) != FRAME_CODEC_MAGIC:
@@ -360,7 +360,7 @@ def _frame_parts(
     share one layout. ``values`` are the live block arrays (no copies).
     ``seen`` memoizes the column list per column-Index object across calls.
     """
-    if not _DIRECT_BLOCKS_OK or not isinstance(frame, pd.DataFrame):
+    if not _direct_blocks_ok() or not isinstance(frame, pd.DataFrame):
         return None
     index = frame.index
     if not isinstance(index, pd.RangeIndex) or index.start != 0 or index.step != 1:
@@ -931,7 +931,11 @@ def _group_parts(
         elif kind == "str":
             _, placement, cats, offset, _nbytes = spec
             codes = frombuffer(body, dtype="int32", count=total, offset=offset)
-            parts.append(("str", _block_placement(placement[0]), _decode_str(cats, codes)))
+            # The dictionary rides along: a merged frame that joins this
+            # column with an object-typed group rebuilds it as objects.
+            parts.append(
+                ("str", _block_placement(placement[0]), _decode_str(cats, codes), cats, codes)
+            )
         else:
             raise ValueError(f"unknown block kind {kind!r}")
     return parts
@@ -940,7 +944,7 @@ def _group_parts(
 def _writable_body(
     blob: bytes | bytearray | memoryview,
 ) -> tuple[list[tuple[Any, ...]], memoryview]:
-    if not _DIRECT_BLOCKS_OK:
+    if not _direct_blocks_ok():
         raise ValueError("direct block assembly unavailable")
     view = memoryview(blob)
     header, body_start = _driver_header(view)
@@ -960,126 +964,44 @@ def decode_driver_merged(
     """One frame holding ``laps`` back to back, straight from the group arrays.
 
     Pergamon P10: ``Laps.telemetry`` for a driver is the concatenation of the
-    driver's lap frames in laps-row order. Every maximal run of laps that
-    are stored consecutively in one layout group becomes a slice of that
-    group's arrays (no per-lap frames); a single run is returned as is,
-    several runs are concatenated (a handful of pieces instead of one per
-    lap, with the same dtype promotion ``pd.concat`` of the lap frames
-    gives). Returns None when a lap is not stored in the blob.
-
-    ``drop_repeats`` leaves out a lap's first row when its ``Date`` equals
-    the row before it (each lap frame repeats the sample at its boundary):
-    the kept stretches are joined with one ``np.concatenate`` per block
-    instead of a row gather over the whole frame afterwards.
+    driver's lap frames in laps-row order; see
+    :meth:`DriverFrameSource.merged`, which builds it from the decoded blob.
+    The decode is this call's own (nothing else reads ``blob``'s body), so
+    the rows are moved in place (``move=True``) instead of copied. Delphi
+    D8: a session memo that holds the driver's decoded source calls the
+    method on that source instead. Returns None when a lap is not stored in
+    the blob.
     """
-    if not laps:
-        return None
-    header, body = _writable_body(blob)
-    try:
-        where: dict[int, tuple[int, int]] = {}
-        groups: list[tuple[Any, ...]] = []
-        for g, (group_columns, raw_group_laps, lengths, specs) in enumerate(header):
-            group_laps = [int(lap) for lap in raw_group_laps]
-            starts = np.zeros(len(lengths) + 1, dtype="int64")
-            np.cumsum(lengths, out=starts[1:])
-            groups.append((list(group_columns), group_laps, list(lengths), specs, starts))
-            for position, lap in enumerate(group_laps):
-                where.setdefault(lap, (g, position))
-        wanted = [int(lap) for lap in laps]
-        if any(lap not in where for lap in wanted):
-            return None
-        # Maximal runs of (group, consecutive positions) in laps order.
-        runs: list[tuple[int, int, int]] = []  # (group, first position, count)
-        for lap in wanted:
-            g, position = where[lap]
-            if runs and runs[-1][0] == g and runs[-1][1] + runs[-1][2] == position:
-                runs[-1] = (g, runs[-1][1], runs[-1][2] + 1)
-            else:
-                runs.append((g, position, 1))
-        parts_by_group: dict[int, list[tuple[Any, ...]]] = {}
-        pieces: list[pd.DataFrame] = []
-        previous_clock: int | None = None  # Date of the last row taken so far
-        for g, first, k in runs:
-            columns, group_laps, lengths, specs, starts = groups[g]
-            total = int(starts[-1])
-            parts = parts_by_group.get(g)
-            if parts is None:
-                parts = parts_by_group[g] = _group_parts(body, group_laps, total, specs)
-            start, end = int(starts[first]), int(starts[first + k])
-            # Row stretches to keep and each lap's kept length.
-            spans = [(start, end)]
-            kept = [int(length) for length in lengths[first : first + k]]
-            clock = _date_values(parts, columns) if drop_repeats else None
-            if clock is not None and end > start:
-                spans = []
-                stretch = start
-                for j in range(k):
-                    row = int(starts[first + j])
-                    before = previous_clock if j == 0 else int(clock[row - 1])
-                    if (
-                        kept[j]
-                        and before is not None
-                        and before != _NAT_NS
-                        and clock[row] == before
-                    ):
-                        if row > stretch:
-                            spans.append((stretch, row))
-                        stretch = row + 1
-                        kept[j] -= 1
-                if end > stretch:
-                    spans.append((stretch, end))
-                previous_clock = int(clock[end - 1])
-            n = sum(stop - begin for begin, stop in spans)
-            blocks: list[Any] = []
-            for part in parts:
-                kind = part[0]
-                if kind == "np":
-                    blocks.append(_numpy_block_placed(_take_spans(part[2], spans), part[1]))
-                elif kind == "Int64":
-                    data = _take_spans(part[2], spans)
-                    mask = _take_spans(part[3], spans)
-                    blocks.append(_extension_block_placed(_int64_array(data, mask), part[1]))
-                elif kind == "Int64c":
-                    data = np.repeat(
-                        np.asarray(part[2][first : first + k], dtype="int64"),
-                        np.asarray(kept, dtype="int64"),
-                    )
-                    ea = _int64_array(data, np.zeros(n, dtype=bool))
-                    blocks.append(_extension_block_placed(ea, part[1]))
-                else:  # str
-                    ea = part[2]
-                    pieces_ea = [ea[begin:stop] for begin, stop in spans]
-                    joined = (
-                        pieces_ea[0]
-                        if len(pieces_ea) == 1
-                        else type(ea)._concat_same_type(pieces_ea)
-                    )
-                    blocks.append(_extension_block_placed(joined, part[1]))
-            pieces.append(_frame_from_blocks(tuple(blocks), columns, n, frame_class))
-    except (AttributeError, IndexError, TypeError, ValueError) as e:
-        raise ValueError(f"corrupt driver blob body: {e}") from e
-    if len(pieces) == 1:
-        return pieces[0]
-    return pd.concat(pieces, ignore_index=True)
+    return DriverFrameSource(blob, frame_class).merged(laps, drop_repeats=drop_repeats, move=True)
 
 
 _NAT_NS = np.iinfo("int64").min
 
 
-def _take_spans(values: np.ndarray, spans: list[tuple[int, int]]) -> np.ndarray:
-    """The ``spans`` of ``values`` (last axis) back to back, a view of ``values``.
+def _gather_spans(
+    values: np.ndarray, spans: list[tuple[int, int]], *, move: bool = False
+) -> np.ndarray:
+    """The ``spans`` of ``values`` (last axis) back to back.
 
-    The stretches are moved down to the start of the first one in place:
-    ``values`` is a view of this decode's own buffer and the spans of one run
-    lie inside that run's rows, so nothing else reads them. Moving the data
-    touches no fresh memory, where a new ~7 MB array costs its page faults
-    (a race driver: 6 -> ~1.5 ms). A read-only array is concatenated instead.
+    A copy by default: the group arrays are the memoized driver row every
+    lap frame of the driver is a view of, so the merged frame must own its
+    rows. With ``move`` the stretches are moved down to the start of the
+    first one in place and a view is returned (``values`` is a throwaway
+    decode's own buffer, nothing else reads it): moving touches no fresh
+    memory, where a new ~4 MB block costs its ~1000 page faults in a fresh
+    process (a race driver's float block: 3.1 ms copied, 0.5 ms once the
+    pages exist, 1.0 ms moved). A read-only array, or spans that are not
+    ascending and disjoint (laps asked for out of their stored order: the
+    move would overwrite rows not yet moved), are copied either way.
     """
-    begin = spans[0][0]
     if len(spans) == 1:
-        return values[..., begin : spans[0][1]]
-    if not values.flags.writeable:
-        return np.concatenate([values[..., start:stop] for start, stop in spans], axis=-1)
+        begin, stop = spans[0]
+        return values[..., begin:stop] if move else values[..., begin:stop].copy()
+    if not spans:  # every row of the selection was a repeated boundary sample
+        return values[..., :0].copy()
+    if not move or not values.flags.writeable or not _ascending(spans):
+        return np.concatenate([values[..., begin:stop] for begin, stop in spans], axis=-1)
+    begin = spans[0][0]
     end = begin
     for start, stop in spans:
         length = stop - start
@@ -1089,19 +1011,63 @@ def _take_spans(values: np.ndarray, spans: list[tuple[int, int]]) -> np.ndarray:
     return values[..., begin:end]
 
 
-def _date_values(parts: list[tuple[Any, ...]], columns: list[str]) -> np.ndarray | None:
-    """The group's ``Date`` column as int64 nanoseconds (None without one)."""
-    if "Date" not in columns:
-        return None
-    position = columns.index("Date")
-    for part in parts:
-        if part[0] != "np":
-            continue
-        rows = list(part[1].as_array) if hasattr(part[1], "as_array") else list(part[1])
-        if position in rows:
-            values = part[2][rows.index(position)]
-            return values.view("int64") if values.dtype.kind == "M" else None
-    return None
+def _ascending(spans: list[tuple[int, int]]) -> bool:
+    """Whether each span starts at or after the end of the one before it."""
+    end = spans[0][0]
+    for start, stop in spans:
+        if start < end:
+            return False
+        end = stop
+    return True
+
+
+def _repeat_constants(constants: list[Any], positions: list[int], kept: list[int]) -> np.ndarray:
+    """An ``Int64c`` column over the laps at ``positions``, each repeated ``kept`` times."""
+    return np.repeat(
+        np.asarray([constants[i] for i in positions], dtype="int64"),
+        np.asarray(kept, dtype="int64"),
+    )
+
+
+def _str_pieces(pieces: list[tuple[Any, list[tuple[int, int]]]]) -> Any:
+    """The ``spans`` of every ``(ea, spans)`` piece back to back (``_concat_same_type``)."""
+    if len(pieces) == 1:
+        return _str_spans(*pieces[0])
+    fast_str, _ = _fast_arrays()
+    first = pieces[0][0]
+    if fast_str and all(type(ea) is pd.arrays.ArrowStringArray for ea, _spans in pieces):
+        chunks = [
+            chunk
+            for ea, spans in pieces
+            for begin, stop in spans
+            for chunk in ea._pa_array.slice(begin, stop - begin).chunks
+        ]
+        return first._from_pyarrow_array(_pa().chunked_array(chunks, type=first._pa_array.type))
+    return type(first)._concat_same_type(
+        [ea[begin:stop] for ea, spans in pieces for begin, stop in spans]
+    )
+
+
+def _str_spans(ea: Any, spans: list[tuple[int, int]]) -> Any:
+    """``ea[begin:stop]`` for every span, concatenated: what ``_concat_same_type`` gives.
+
+    The chunks are sliced on the ``pyarrow`` array directly: each
+    ``ArrowExtensionArray.__getitem__`` validates its indexer and rebuilds
+    the array class (~30 us; a race driver's merged frame takes ~57 spans).
+    """
+    fast_str, _ = _fast_arrays()
+    if len(spans) == 1:
+        begin, stop = spans[0]
+        if fast_str and type(ea) is pd.arrays.ArrowStringArray:
+            return _str_slice(type(ea), ea._pa_array, ea._dtype, begin, stop - begin)
+        return ea[begin:stop]
+    if fast_str and type(ea) is pd.arrays.ArrowStringArray:
+        chunked = ea._pa_array
+        chunks = [
+            chunk for begin, stop in spans for chunk in chunked.slice(begin, stop - begin).chunks
+        ]
+        return ea._from_pyarrow_array(_pa().chunked_array(chunks, type=chunked.type))
+    return type(ea)._concat_same_type([ea[begin:stop] for begin, stop in spans])
 
 
 class DriverFrameSource:
@@ -1116,7 +1082,15 @@ class DriverFrameSource:
     Raises ``ValueError`` on a malformed blob.
     """
 
-    __slots__ = ("_builders", "_frame_class", "_groups", "_where", "laps")
+    __slots__ = (
+        "_builders",
+        "_clocks",
+        "_column_maps",
+        "_frame_class",
+        "_groups",
+        "_where",
+        "laps",
+    )
 
     def __init__(self, blob: bytes | bytearray | memoryview, frame_class: Any = None) -> None:
         header, body = _writable_body(blob)
@@ -1141,6 +1115,8 @@ class DriverFrameSource:
         self._groups = groups
         self._where = where
         self._builders: dict[int, _LapBuilder] = {}
+        self._clocks: dict[int, np.ndarray | None] = {}
+        self._column_maps: dict[int, dict[str, tuple[int, int]]] = {}
         self.laps: list[int] = list(where)
 
     def _builder(self, g: int) -> _LapBuilder:
@@ -1155,6 +1131,264 @@ class DriverFrameSource:
     def __contains__(self, lap: object) -> bool:
         return lap in self._where
 
+    def _clock(self, g: int) -> np.ndarray | None:
+        """Group ``g``'s ``Date`` column as int64 nanoseconds (None without one)."""
+        if g in self._clocks:
+            return self._clocks[g]
+        columns, _laps, _offsets, parts = self._groups[g]
+        clock: np.ndarray | None = None
+        if "Date" in columns:
+            position = columns.index("Date")
+            for part in parts:
+                if part[0] != "np":
+                    continue
+                rows = list(part[1].as_array) if hasattr(part[1], "as_array") else list(part[1])
+                if position in rows:
+                    values = part[2][rows.index(position)]
+                    clock = values.view("int64") if values.dtype.kind == "M" else None
+                    break
+        self._clocks[g] = clock
+        return clock
+
+    def merged(
+        self, laps: list[int], *, drop_repeats: bool = False, move: bool = False
+    ) -> pd.DataFrame | None:
+        """One frame holding ``laps`` back to back, straight from the group arrays.
+
+        Pergamon P10 / Delphi D8: ``Laps.telemetry`` for a driver is the
+        concatenation of the driver's lap frames in laps-row order. Every
+        maximal run of laps stored consecutively in one layout group is a
+        gather over that group's arrays (no per-lap frames); consecutive
+        runs of the same group share one gather. A single piece is returned
+        as is, pieces of different groups are concatenated (a handful of
+        pieces instead of one per lap, with the dtype promotion
+        ``pd.concat`` of the lap frames gives). Returns None when a lap is
+        not stored in the blob.
+
+        ``drop_repeats`` leaves out a lap's first row when its ``Date``
+        equals the row before it (each lap frame repeats the sample at its
+        boundary): the kept stretches are gathered straight into the
+        frame instead of a row take over the whole frame afterwards.
+
+        The frame owns its rows (a copy of the gathered stretches) unless
+        ``move`` is set: then the stretches of a single-group selection are
+        moved in place and the frame views this source's arrays, which
+        consumes the source (its lap frames are wrong afterwards). Only for
+        a throwaway decode (:func:`decode_driver_merged`); a source the
+        session memo holds must copy.
+        """
+        if not laps:
+            return None
+        where = self._where
+        wanted = [int(lap) for lap in laps]
+        if any(lap not in where for lap in wanted):
+            return None
+        # Maximal runs of (group, consecutive positions) in laps order.
+        runs: list[list[int]] = []  # [group, first position, count]
+        for lap in wanted:
+            g, position = where[lap]
+            if runs and runs[-1][0] == g and runs[-1][1] + runs[-1][2] == position:
+                runs[-1][2] += 1
+            else:
+                runs.append([g, position, 1])
+        groups = self._groups
+        # One piece per stretch of consecutive runs in the same group:
+        # (group, row spans, kept rows per lap, lap positions).
+        pieces: list[tuple[int, list[tuple[int, int]], list[int], list[int]]] = []
+        previous_clock: int | None = None  # Date of the last row taken so far
+        for g, first, k in runs:
+            offsets = groups[g][2]
+            start, end = offsets[first], offsets[first + k]
+            spans = [(start, end)]
+            kept = [offsets[first + j + 1] - offsets[first + j] for j in range(k)]
+            clock = self._clock(g) if drop_repeats else None
+            if clock is not None and end > start:
+                spans = []
+                stretch = start
+                for j in range(k):
+                    row = offsets[first + j]
+                    before = previous_clock if j == 0 else int(clock[row - 1])
+                    if (
+                        kept[j]
+                        and before is not None
+                        and before != _NAT_NS
+                        and clock[row] == before
+                    ):
+                        if row > stretch:
+                            spans.append((stretch, row))
+                        stretch = row + 1
+                        kept[j] -= 1
+                if end > stretch:
+                    spans.append((stretch, end))
+                previous_clock = int(clock[end - 1])
+            positions = list(range(first, first + k))
+            if pieces and pieces[-1][0] == g:
+                pieces[-1][1].extend(spans)
+                pieces[-1][2].extend(kept)
+                pieces[-1][3].extend(positions)
+            else:
+                pieces.append((g, spans, kept, positions))
+        if len(pieces) == 1:
+            return self._piece_frame(*pieces[0], move=move)
+        joined = self._joined_pieces(pieces)
+        if joined is not None:
+            return joined
+        # Pieces of layouts the column-wise join does not cover: ``pd.concat``
+        # copies into fresh arrays anyway, so the pieces may be moved views.
+        return pd.concat(
+            [self._piece_frame(*piece, move=move) for piece in pieces], ignore_index=True
+        )
+
+    def _piece_frame(
+        self,
+        g: int,
+        spans: list[tuple[int, int]],
+        kept: list[int],
+        positions: list[int],
+        *,
+        move: bool = False,
+    ) -> pd.DataFrame:
+        """The rows ``spans`` of group ``g`` as one frame of the group's layout."""
+        columns, _laps, _offsets, parts = self._groups[g]
+        n = sum(stop - begin for begin, stop in spans)
+        blocks: list[Any] = []
+        try:
+            for part in parts:
+                kind = part[0]
+                if kind == "np":
+                    values = _gather_spans(part[2], spans, move=move)
+                    blocks.append(_numpy_block_placed(values, part[1]))
+                elif kind == "Int64":
+                    data = _gather_spans(part[2], spans, move=move)
+                    mask = _gather_spans(part[3], spans, move=move)
+                    blocks.append(_extension_block_placed(_int64_array(data, mask), part[1]))
+                elif kind == "Int64c":
+                    ea = _int64_array(
+                        _repeat_constants(part[2], positions, kept), np.zeros(n, bool)
+                    )
+                    blocks.append(_extension_block_placed(ea, part[1]))
+                else:  # str
+                    blocks.append(_extension_block_placed(_str_spans(part[2], spans), part[1]))
+            return _frame_from_blocks(tuple(blocks), columns, n, self._frame_class)
+        except (AttributeError, IndexError, TypeError, ValueError) as e:
+            raise ValueError(f"corrupt driver blob body: {e}") from e
+
+    def _column_map(self, g: int) -> dict[str, tuple[int, int]]:
+        """column -> (part index, row inside the part) of group ``g``."""
+        column_map = self._column_maps.get(g)
+        if column_map is None:
+            columns, _laps, _offsets, parts = self._groups[g]
+            column_map = {}
+            for index, part in enumerate(parts):
+                placement = part[1]
+                if hasattr(placement, "as_array"):
+                    rows = list(placement.as_array)
+                else:
+                    rows = list(placement) if isinstance(placement, tuple) else [placement]
+                for row, position in enumerate(rows):
+                    column_map[columns[int(position)]] = (index, row)
+            self._column_maps[g] = column_map
+        return column_map
+
+    def _joined_pieces(
+        self, pieces: list[tuple[int, list[tuple[int, int]], list[int], list[int]]]
+    ) -> pd.DataFrame | None:
+        """``pd.concat`` of the pieces' frames, gathered column by column instead.
+
+        Delphi D8: a race driver whose laps span two layout groups (a lap
+        with no driver ahead stores ``DriverAhead`` as objects, the others
+        as ``str``) paid ~6 ms of ``pd.concat`` per merged frame, most of it
+        the ``str`` -> object promotion materializing every string. Each
+        column's output dtype follows pandas' rule for the layouts the
+        codec writes: equal dtypes stay, ``str`` joined with objects becomes
+        objects (``nan`` for a ``str`` null, the stored object otherwise,
+        as ``astype(object)`` gives). Any other mix, or pieces with
+        different columns, returns None for the ``pd.concat`` fallback.
+        """
+        groups = self._groups
+        columns = groups[pieces[0][0]][0]
+        if any(groups[g][0] != columns for g, _spans, _kept, _positions in pieces[1:]):
+            return None
+        maps = [self._column_map(g) for g, _spans, _kept, _positions in pieces]
+        n = sum(stop - begin for _g, spans, _kept, _positions in pieces for begin, stop in spans)
+        # (output kind, dtype) per column: "np" (dtype), "Int64", "str", "object".
+        resolved: list[tuple[str, Any]] = []
+        for column in columns:
+            kinds: set[tuple[str, Any]] = set()
+            for (g, _spans, _kept, _positions), column_map in zip(pieces, maps, strict=True):
+                part = groups[g][3][column_map[column][0]]
+                kind = part[0]
+                if kind == "np":
+                    kinds.add(("np", part[2].dtype))
+                elif kind == "str":
+                    kinds.add(("str", None))
+                else:
+                    kinds.add(("Int64", None))
+            if len(kinds) == 1:
+                resolved.append(next(iter(kinds)))
+            elif kinds == {("str", None), ("np", _OBJECT_DTYPE)}:
+                resolved.append(("np", _OBJECT_DTYPE))
+            else:
+                return None
+        blocks: list[Any] = []
+        try:
+            position = 0
+            while position < len(columns):
+                kind, dtype = resolved[position]
+                if kind != "np":
+                    column = columns[position]
+                    if kind == "Int64":
+                        data_parts: list[np.ndarray] = []
+                        mask_parts: list[np.ndarray] = []
+                        for (g, spans, kept, positions), column_map in zip(
+                            pieces, maps, strict=True
+                        ):
+                            part = groups[g][3][column_map[column][0]]
+                            if part[0] == "Int64c":
+                                data = _repeat_constants(part[2], positions, kept)
+                                data_parts.append(data)
+                                mask_parts.append(np.zeros(len(data), dtype=bool))
+                            else:
+                                data_parts.extend(part[2][begin:stop] for begin, stop in spans)
+                                mask_parts.extend(part[3][begin:stop] for begin, stop in spans)
+                        ea = _int64_array(np.concatenate(data_parts), np.concatenate(mask_parts))
+                    else:  # str
+                        ea = _str_pieces(
+                            [
+                                (groups[g][3][column_map[column][0]][2], spans)
+                                for (g, spans, _kept, _positions), column_map in zip(
+                                    pieces, maps, strict=True
+                                )
+                            ]
+                        )
+                    blocks.append(_extension_block_placed(ea, _block_placement(position)))
+                    position += 1
+                    continue
+                stop_position = position + 1
+                while stop_position < len(columns) and resolved[stop_position] == (kind, dtype):
+                    stop_position += 1
+                out = np.empty((stop_position - position, n), dtype=dtype)
+                for row, column in enumerate(columns[position:stop_position]):
+                    sources: list[np.ndarray] = []
+                    for (g, spans, _kept, _positions), column_map in zip(pieces, maps, strict=True):
+                        index, part_row = column_map[column]
+                        part = groups[g][3][index]
+                        if part[0] == "str":  # promoted: nan for a null, as astype(object)
+                            table = np.array([*part[3], np.nan], dtype=object)
+                            codes = part[4]
+                            sources.extend(table[codes[begin:stop]] for begin, stop in spans)
+                        else:
+                            values = part[2][part_row]
+                            sources.extend(values[begin:stop] for begin, stop in spans)
+                    if sources:
+                        np.concatenate(sources, out=out[row])
+                placement = _block_placement(_placement(list(range(position, stop_position))))
+                blocks.append(_numpy_block_placed(out, placement))
+                position = stop_position
+            return _frame_from_blocks(tuple(blocks), columns, n, self._frame_class)
+        except (AttributeError, IndexError, TypeError, ValueError) as e:
+            raise ValueError(f"corrupt driver blob body: {e}") from e
+
     def frame(self, lap: int) -> pd.DataFrame:
         """Build the frame of ``lap`` (``KeyError`` when the blob does not hold it)."""
         g, i = self._where[lap]
@@ -1162,7 +1396,7 @@ class DriverFrameSource:
         start, end = offsets[i], offsets[i + 1]
         n = end - start
         try:
-            if _FAST_LAP_FRAMES:
+            if _fast_lap_frames():
                 return self._builder(g).build(start, end)
             blocks: list[Any] = []
             for part in parts:
@@ -1196,7 +1430,7 @@ class DriverFrameSource:
         full = np.full
         zeros = np.zeros
         try:
-            if _FAST_LAP_FRAMES:
+            if _fast_lap_frames():
                 for g, (_columns, laps, offsets, _parts) in enumerate(self._groups):
                     build = self._builder(g).build
                     for i, lap in enumerate(laps):
@@ -1273,8 +1507,19 @@ def decode_driver_frames(
 
 _P_NP, _P_TD, _P_WRAP, _P_INT, _P_STR, _P_EA = range(6)
 
-_FAST_LAP_FRAMES = bool(_DIRECT_BLOCKS_OK and getattr(_blocks, "_DIRECT_BLOCK_CLASSES_OK", False))
+_FAST_LAP_FRAMES: bool | None = None  # resolved by ``_fast_lap_frames`` on first use
 _FAST_ARRAYS: tuple[bool, bool] | None = None  # (str slice, timedelta), resolved on first use
+
+
+def _fast_lap_frames() -> bool:
+    """Whether the hand-built lap frame route is usable (probes the block route once)."""
+    global _FAST_LAP_FRAMES
+    fast = _FAST_LAP_FRAMES
+    if fast is None:
+        fast = _FAST_LAP_FRAMES = bool(
+            _direct_blocks_ok() and getattr(_blocks, "_DIRECT_BLOCK_CLASSES_OK", False)
+        )
+    return fast
 
 
 def _str_slice(cls: Any, chunked: Any, dtype: Any, start: int, n: int) -> Any:

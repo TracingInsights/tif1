@@ -10,7 +10,7 @@
 | **Loading** | `session.load()` downloads the whole session | **Lazy, per-file fetching** (async, parallel) |
 | **Backends** | Pandas only | **Pandas + Polars** |
 | **Caching** | Pickle files + SQLite HTTP cache | **SQLite + Memory LRU** |
-| **Live Timing** | Supported | **Historical only (timing/telemetry 2018-present, Ergast results 1950-present)**; track/session status derived from the race-control messages |
+| **Live Timing** | Supported | **Historical only (timing/telemetry 2018-present, Ergast results 1950-present)**; track/session status, session info and `t0_date` from the published `session_info.json` (2018-present) |
 
 ## Current Status
 

@@ -1016,6 +1016,14 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
+<ResponseField name="exit_gc_freeze" type="bool" default="True">
+  Freeze the heap in an exit hook so the interpreter's final garbage collections skip the objects pandas, numpy and pyarrow (or polars) built at import. Saves 40-80 ms at the end of every script. Memory is still released; cyclic garbage alive at exit is not finalized, which CPython does not guarantee at shutdown anyway. `TIF1_EXIT_GC_FREEZE=0` turns it off.
+
+  ```python
+  config.set("exit_gc_freeze", False)  # run the full collections at exit
+  ```
+</ResponseField>
+
 <ResponseField name="cdn_hedge" type="bool" default="True">
   Re-issue a stalled request on the next CDN source and take the first answer. Each source keeps a moving average of its request latency. A request waits two times that average before the second request starts, clamped between 1 second and `cdn_hedge_max_delay`. A source measured at more than twice the latency of a lower-priority source is re-ranked behind it for the process. A healthy source still sends one request per file.
 
@@ -1458,6 +1466,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_multiplexed": true,
   "http_disable_http3": true,
   "cdn_preconnect": true,
+  "exit_gc_freeze": true,
   "cdn_hedge": true,
   "cdn_hedge_max_delay": 4.0,
   "keepalive_timeout": 300,
@@ -2582,6 +2591,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http_multiplexed": true,
   "http_disable_http3": true,
   "cdn_preconnect": true,
+  "exit_gc_freeze": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,

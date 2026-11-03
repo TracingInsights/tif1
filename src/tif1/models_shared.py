@@ -14,19 +14,20 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
-
 from .core_utils.constants import LAP_PAYLOAD_KEYS
 from .core_utils.ergast_results import unique_driver_labels
 from .core_utils.helpers import _create_lap_df, _process_lap_df
-from .core_utils.lazy_import import is_pandas_frame
+from .core_utils.lazy_import import is_pandas_frame, lazy_module
 from .core_utils.runtime import import_supported_polars
 from .exceptions import DataNotFoundError
 
 if TYPE_CHECKING:
+    import numpy as np
     import pandas as pd
 
     from .models import Lap, TelemetryProvider
+else:
+    np = lazy_module("numpy", globals(), "np")  # circuit geometry only
 
 #: Columns used in every corners / marshal-marker DataFrame.
 _CORNERS_DF_COLUMNS = ["X", "Y", "Number", "Letter", "Angle", "Distance"]

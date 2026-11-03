@@ -22,6 +22,7 @@ import subprocess
 import sys
 import types
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -315,8 +316,11 @@ def test_merged_frame_equals_concat_of_lap_frames_in_requested_order(tmp_path):
 # -- P4: polars batched read ------------------------------------------------------
 
 
-def test_polars_tier_reads_all_drivers_in_one_conversion(tmp_path):
+@pytest.mark.parametrize("arrow_reader", [True, False], ids=["pyarrow", "polars"])
+def test_polars_tier_reads_all_drivers_in_one_conversion(tmp_path, monkeypatch, arrow_reader):
     pl = pytest.importorskip("polars")
+    # Delphi D3: the rows are read by pyarrow when it is resident, else by polars.
+    monkeypatch.setattr(cache_mod, "_ipc_reader_prefers_arrow", lambda: arrow_reader)
     cache = Cache(cache_dir=tmp_path)
     try:
         frames = []
@@ -973,13 +977,17 @@ def _large_string_ipc(blob: bytes) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
-def test_polars_tier_rows_store_string_view_and_read_back_single_chunk(tmp_path):
+@pytest.mark.parametrize("arrow_reader", [True, False], ids=["pyarrow", "polars"])
+def test_polars_tier_rows_store_string_view_and_read_back_single_chunk(
+    tmp_path, monkeypatch, arrow_reader
+):
     pl = pytest.importorskip("polars")
     import pyarrow as pa
     import pyarrow.ipc as pa_ipc
 
     from tif1.cache import _POLARS_IPC_TABLE
 
+    monkeypatch.setattr(cache_mod, "_ipc_reader_prefers_arrow", lambda: arrow_reader)
     cache = Cache(cache_dir=tmp_path)
     try:
         frames = [
@@ -1016,10 +1024,14 @@ def test_polars_tier_rows_store_string_view_and_read_back_single_chunk(tmp_path)
         cache.close()
 
 
-def test_polars_tier_corrupt_row_is_a_miss_on_the_streamed_path(tmp_path):
+@pytest.mark.parametrize("arrow_reader", [True, False], ids=["pyarrow", "polars"])
+def test_polars_tier_corrupt_row_is_a_miss_on_the_streamed_path(
+    tmp_path, monkeypatch, arrow_reader
+):
     pytest.importorskip("polars")
     from tif1.cache import _POLARS_IPC_TABLE
 
+    monkeypatch.setattr(cache_mod, "_ipc_reader_prefers_arrow", lambda: arrow_reader)
     cache = Cache(cache_dir=tmp_path)
     try:
         frames = [
@@ -1283,7 +1295,7 @@ def test_fast_lap_frames_match_the_generic_loop(monkeypatch, use_telemetry_class
     blob, leftovers = frame_codec.encode_driver_frames(list(frames.items()))
     assert blob is not None
     assert leftovers == []
-    assert frame_codec._FAST_LAP_FRAMES
+    assert frame_codec._fast_lap_frames()
     for wanted in (None, {3, 7}):
         fast, generic = _decode_both(blob, monkeypatch, wanted, cls)
         assert set(fast) == set(generic) == (wanted or set(frames))
@@ -1341,3 +1353,430 @@ def test_fast_lap_frames_fall_back_when_the_array_probes_fail(monkeypatch):
     for lap, frame in fast.items():
         _same(frame, generic[lap])
         assert _block_signature(frame) == _block_signature(generic[lap])
+
+
+# -- Delphi D3: the reader follows pyarrow's residency ------------------------------
+
+
+def test_polars_tier_reader_choice_follows_pyarrow_residency(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyarrow", types.ModuleType("pyarrow"))
+    assert cache_mod._ipc_reader_prefers_arrow() is True
+    monkeypatch.delitem(sys.modules, "pyarrow")
+    assert cache_mod._ipc_reader_prefers_arrow() is False
+
+
+def test_polars_tier_read_never_imports_pyarrow(tmp_path, monkeypatch):
+    """Rows written by pyarrow are read by polars with pyarrow unimportable."""
+    pl = pytest.importorskip("polars")
+    cache = Cache(cache_dir=tmp_path)
+    try:
+        frames = []
+        for driver in ("VER", "LEC", "HAM", "SAI", "NOR"):
+            for lap in (1, 2):
+                ahead = (["4", None] * (3 + lap))[: 3 + lap]
+                payload = _payload(3 + lap, ahead)
+                frames.append((driver, lap, _create_telemetry_df(payload, driver, lap, "polars")))
+        assert cache.set_telemetry_frames_batch(2026, GP, "Race", frames, lib="polars") == 10
+        monkeypatch.setitem(sys.modules, "pyarrow", None)  # ``import pyarrow`` raises
+        monkeypatch.setitem(sys.modules, "pyarrow.ipc", None)
+        refs = [(d, lap) for d, lap, _ in frames]
+        for wanted in (refs, refs[:1]):  # pooled, then serial path
+            hits = cache.get_telemetry_frames_batch(2026, GP, "Race", wanted, lib="polars")
+            assert set(hits) == set(wanted)
+            for driver, lap, frame in frames:
+                if (driver, lap) in wanted:
+                    hit = hits[(driver, lap)]
+                    assert isinstance(hit, pl.DataFrame)
+                    assert hit.schema == frame.schema
+                    assert hit.equals(frame)
+                    assert hit.n_chunks() == 1
+    finally:
+        cache.close()
+
+
+# -- Delphi D8: merged driver telemetry from the memoized row --------------------
+
+
+def _clocked_lap(lap: int, n: int, start_s: float, ahead: list | None = None) -> pd.DataFrame:
+    """A lap frame with Date/SessionTime; ``start_s`` places its first sample."""
+    start_ns = int(start_s * 1e9)
+    frame = _create_telemetry_df(
+        _payload(n, ahead), "VER", lap, "pandas", clock=(START_NS + start_ns, DATE_NS + start_ns)
+    )
+    assert frame is not None
+    return frame
+
+
+START_NS = 395 * 10**9
+DATE_NS = pd.Timestamp("2025-04-13 15:01:35").value
+
+
+def _tier_read_forbidden(*_args, **_kwargs):
+    raise AssertionError("the frame tier must not be read")
+
+
+def test_session_memo_keeps_the_driver_source_after_every_lap_is_built():
+    from tif1.cache import SessionMemo
+
+    frames = [(lap, _frame(lap=lap)) for lap in (1, 2)]
+    blob, _ = frame_codec.encode_driver_frames(frames)
+    source = frame_codec.DriverFrameSource(blob)
+    memo = SessionMemo()
+    assert memo.driver_source("VER") is None
+    memo.add_telemetry_source("VER", source)
+    assert memo.driver_source("VER") is source
+    for lap in (1, 2):
+        memo.get("telemetry_df", ("VER", lap))
+    assert not memo._telemetry_sources  # every lap built ...
+    assert memo.driver_source("VER") is source  # ... the row is still held
+    assert memo.driver_source("LEC") is None
+    memo.clear()
+    assert memo.driver_source("VER") is None
+
+
+@pytest.mark.parametrize(
+    "laps",
+    [[1, 2, 3, 5, 7], [2, 7], [1, 3], [7, 1, 2], [5], [3, 2, 1], [1, 2, 3, 5, 7, 1], [7, 2]],
+)
+def test_merged_frame_of_mixed_layout_groups_is_gathered_without_concat(monkeypatch, laps):
+    frames = _q18_frames()  # str + masked nGear laps, and object + constant nGear laps
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    source = frame_codec.DriverFrameSource(blob)
+    expected = pd.concat([frames[lap] for lap in laps], ignore_index=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(frame_codec.pd, "concat", _tier_read_forbidden)
+        merged = source.merged(laps)
+    assert merged is not None
+    assert list(merged.columns) == list(expected.columns)
+    assert merged.dtypes.equals(expected.dtypes)
+    pd.testing.assert_frame_equal(merged, expected, check_exact=True)
+    for column in expected.columns:  # None stays None, a str null becomes nan
+        if expected[column].dtype == object:
+            assert repr(list(merged[column])) == repr(list(expected[column])), column
+    assert source.merged([1, 9]) is None
+    assert source.merged([]) is None
+
+
+def test_merged_frame_falls_back_to_concat_for_layouts_it_does_not_join():
+    frames = _q18_frames()
+    frames[4] = _frame(lap=4, n=2)
+    frames[4]["Extra"] = [1.0, 2.0]  # a column the other laps lack
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    source = frame_codec.DriverFrameSource(blob)
+    for laps in ([1, 4], [4, 2, 3], [2, 4, 7]):
+        expected = pd.concat([frames[lap] for lap in laps], ignore_index=True)
+        merged = source.merged(laps)
+        assert merged is not None
+        assert list(merged.columns) == list(expected.columns)
+        assert merged.dtypes.equals(expected.dtypes)
+        pd.testing.assert_frame_equal(merged, expected, check_exact=True)
+
+
+def test_merged_frame_drops_the_sample_a_lap_repeats_at_its_boundary():
+    frames = {
+        1: _clocked_lap(1, 4, 0.0),
+        2: _clocked_lap(2, 3, 0.3, ahead=[None] * 3),  # first sample == lap 1's last
+        3: _clocked_lap(3, 3, 0.5),  # first sample == lap 2's last
+        4: _clocked_lap(4, 2, 0.9),  # a gap: nothing repeated
+        5: _clocked_lap(5, 1, 1.0),  # a single sample, repeated: the lap is empty
+    }
+    assert "Date" in frames[1].columns
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    source = frame_codec.DriverFrameSource(blob)
+    for laps in ([1, 2, 3, 4, 5], [1, 2], [2, 3, 4], [1, 3], [4, 5], [5, 1]):
+        plain = pd.concat([frames[lap] for lap in laps], ignore_index=True)
+        merged = source.merged(laps)
+        assert merged is not None
+        pd.testing.assert_frame_equal(merged, plain, check_exact=True)
+        dates = plain["Date"].to_numpy().view("int64")
+        lap_numbers = plain["LapNumber"].to_numpy(dtype="int64")
+        repeated = np.zeros(len(plain), dtype=bool)
+        repeated[1:] = (dates[1:] == dates[:-1]) & (lap_numbers[1:] != lap_numbers[:-1])
+        expected = plain[~repeated].reset_index(drop=True)
+        dropped = source.merged(laps, drop_repeats=True)
+        assert dropped is not None
+        assert len(dropped) == len(expected)
+        pd.testing.assert_frame_equal(dropped, expected, check_exact=True)
+    assert len(source.merged([1, 2, 3, 4, 5], drop_repeats=True)) == 13 - 3
+
+
+def test_driver_merged_telemetry_is_gathered_from_the_memoized_row(tmp_path, monkeypatch):
+    from tif1.models import Telemetry
+
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        session.load(weather=False, messages=False)
+        memo = session._memo
+        source = memo.driver_source("LEC")
+        # Delphi D5: load() holds a lazy stand-in; the first lap reads the row.
+        assert isinstance(source, cache_mod.LazyDriverFrameSource)
+        assert not source.decodable
+        for lap in (1, 2):  # every LEC lap built: the row is still held
+            memo.get("telemetry_df", ("LEC", lap))
+        assert source.decodable
+        assert not any(driver == "LEC" for driver, _ in memo._telemetry_sources)
+        assert memo.driver_source("LEC") is source
+        monkeypatch.setattr(cache, "get_driver_merged_frame", _tier_read_forbidden)
+        monkeypatch.setattr(cache, "get_telemetry_frame_sources", _tier_read_forbidden)
+        monkeypatch.setattr(cache, "get_telemetry_frames_batch", _tier_read_forbidden)
+        tel = session.laps.pick_driver("LEC").telemetry
+        expected = pd.concat([f for d, _, f in frames if d == "LEC"], ignore_index=True)
+        assert isinstance(tel, Telemetry)
+        assert tel.session is session
+        assert tel.driver == "LEC"
+        pd.testing.assert_frame_equal(pd.DataFrame(tel), expected, check_exact=True)
+        # The merged frame owns its rows: a write to it leaves the lap frames alone.
+        lap_frame = session.laps.pick_driver("LEC").iloc[0].telemetry
+        before = lap_frame["Speed"].copy()
+        tel.loc[0, "Speed"] = -1.0
+        assert tel["Speed"].iloc[0] == -1.0
+        assert lap_frame["Speed"].equals(before)
+        assert source._load()._groups[0][3]  # the held arrays are untouched too
+    finally:
+        cache.close()
+
+
+def test_driver_merged_telemetry_of_an_unread_lazy_row_is_a_throwaway_decode(tmp_path, monkeypatch):
+    """Delphi D5 + D8: a lazy row load() has not read stays unread by a merged access."""
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        session.load(weather=False, messages=False)
+        memo = session._memo
+        lazy = memo.driver_source("VER")
+        assert isinstance(lazy, cache_mod.LazyDriverFrameSource)
+        calls: list[str] = []
+        merged_read = cache.get_driver_merged_frame
+
+        def spy(year, gp, session_name, driver, laps, *args, **kwargs):
+            calls.append(driver)
+            return merged_read(year, gp, session_name, driver, laps, *args, **kwargs)
+
+        monkeypatch.setattr(cache, "get_driver_merged_frame", spy)
+        tel = session.laps.pick_driver("VER").telemetry
+        expected = pd.concat([f for d, _, f in frames if d == "VER"], ignore_index=True)
+        pd.testing.assert_frame_equal(pd.DataFrame(tel), expected, check_exact=True)
+        assert calls == ["VER"]
+        assert memo.driver_source("VER") is lazy
+        assert not lazy.hydrated  # the throwaway decode left the lazy row alone
+        # Once a lap read the row, the merged frame is a gather from the held row.
+        _same(session.laps.pick_driver("VER").iloc[0].telemetry, frames[0][2])
+        assert lazy.decodable
+        monkeypatch.setattr(cache, "get_driver_merged_frame", _tier_read_forbidden)
+        monkeypatch.setattr(cache, "get_telemetry_frame_sources", _tier_read_forbidden)
+        again = session.laps.pick_driver("VER").telemetry
+        pd.testing.assert_frame_equal(pd.DataFrame(again), expected, check_exact=True)
+        assert calls == ["VER"]
+    finally:
+        cache.close()
+
+
+def test_driver_merged_telemetry_without_a_memoized_row_decodes_it_once(tmp_path, monkeypatch):
+    """No source in the memo: the row is read and moved in place, not held (control's path)."""
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        memo = session._memo
+        assert memo.driver_source("VER") is None
+        calls: list[tuple[str, list[int]]] = []
+        merged_read = cache.get_driver_merged_frame
+
+        def spy(year, gp, session_name, driver, laps, *args, **kwargs):
+            calls.append((driver, list(laps)))
+            return merged_read(year, gp, session_name, driver, laps, *args, **kwargs)
+
+        monkeypatch.setattr(cache, "get_driver_merged_frame", spy)
+        monkeypatch.setattr(cache, "get_telemetry_frame_sources", _tier_read_forbidden)
+        tel = session.laps.pick_driver("VER").telemetry
+        expected = pd.concat([f for d, _, f in frames if d == "VER"], ignore_index=True)
+        pd.testing.assert_frame_equal(pd.DataFrame(tel), expected, check_exact=True)
+        assert calls == [("VER", [1, 2])]
+        assert memo.driver_source("VER") is None  # a throwaway decode: nothing held
+        assert not memo._telemetry_sources
+        assert not memo._telemetry_dfs
+        tel.loc[0, "Speed"] = -1.0  # the frame is writable
+        assert tel["Speed"].iloc[0] == -1.0
+        # A later lap access reads the row for itself and holds it from then on.
+        monkeypatch.setattr(
+            cache,
+            "get_telemetry_frame_sources",
+            type(cache).get_telemetry_frame_sources.__get__(cache),
+        )
+        monkeypatch.setattr(cache, "get_driver_merged_frame", _tier_read_forbidden)
+        _same(session.laps.pick_driver("VER").iloc[1].telemetry, frames[1][2])
+        _same(session.laps.pick_driver("VER").iloc[0].telemetry, frames[0][2])
+        assert isinstance(memo.driver_source("VER"), frame_codec.DriverFrameSource)
+        again = session.laps.pick_driver("VER").telemetry  # now a gather from the held row
+        pd.testing.assert_frame_equal(pd.DataFrame(again), expected, check_exact=True)
+    finally:
+        cache.close()
+
+
+@pytest.mark.parametrize("laps", [[1, 2, 3, 5, 7], [2, 7], [7, 1, 2], [5], [3, 2, 1]])
+def test_merged_frame_moved_in_place_matches_the_copying_gather(laps):
+    """``move=True`` (a throwaway decode) gives the copy's frame over the source's own memory."""
+    frames = _q18_frames()
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    expected = pd.concat([frames[lap] for lap in laps], ignore_index=True)
+    copied = frame_codec.DriverFrameSource(blob).merged(laps)
+    assert copied is not None
+    pd.testing.assert_frame_equal(copied, expected, check_exact=True)
+    source = frame_codec.DriverFrameSource(blob)
+    moved = source.merged(laps, move=True)
+    assert moved is not None
+    pd.testing.assert_frame_equal(moved, expected, check_exact=True)
+    assert _block_signature(moved) == _block_signature(copied)
+    decoded = frame_codec.decode_driver_merged(blob, laps)
+    assert decoded is not None
+    pd.testing.assert_frame_equal(decoded, expected, check_exact=True)
+    moved.iloc[0, moved.columns.get_loc("Speed")] = -1.0  # writable
+    assert moved["Speed"].iloc[0] == -1.0
+    single_group = len({source._where[lap][0] for lap in laps}) == 1
+    speed = moved["Speed"].to_numpy()
+    shares = any(
+        part[0] == "np" and np.shares_memory(speed, part[2])
+        for _c, _l, _o, parts in source._groups
+        for part in parts
+    )
+    assert shares == single_group  # one group: views of the source; joined: fresh arrays
+
+
+def test_merged_frame_moved_in_place_with_repeats_dropped():
+    frames = {
+        1: _clocked_lap(1, 4, 0.0),
+        2: _clocked_lap(2, 3, 0.3, ahead=[None] * 3),
+        3: _clocked_lap(3, 3, 0.5),
+        4: _clocked_lap(4, 2, 0.9),
+        5: _clocked_lap(5, 1, 1.0),
+    }
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    for laps in ([1, 2, 3, 4, 5], [2, 3, 4], [4, 5], [5, 1]):
+        copied = frame_codec.DriverFrameSource(blob).merged(laps, drop_repeats=True)
+        moved = frame_codec.DriverFrameSource(blob).merged(laps, drop_repeats=True, move=True)
+        assert copied is not None
+        assert moved is not None
+        pd.testing.assert_frame_equal(moved, copied, check_exact=True)
+        assert _block_signature(moved) == _block_signature(copied)
+        decoded = frame_codec.decode_driver_merged(blob, laps, drop_repeats=True)
+        assert decoded is not None
+        pd.testing.assert_frame_equal(decoded, copied, check_exact=True)
+
+
+# -- Delphi D5: load() reads no driver row until a lap is built ----------------
+
+
+def _count_row_reads(cache, monkeypatch):
+    """Record the driver lists of every frame-tier row read (lone reads and batches)."""
+    calls: list[list[str]] = []
+    real_read = cache.stream_telemetry_frame_rows
+
+    def counted(year, gp, sess, drivers, **kwargs):
+        calls.append(sorted(drivers))
+        return real_read(year, gp, sess, drivers, **kwargs)
+
+    monkeypatch.setattr(cache, "stream_telemetry_frame_rows", counted)
+    return calls
+
+
+def test_warm_load_reads_no_driver_row(tmp_path, monkeypatch):
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        calls = _count_row_reads(cache, monkeypatch)
+        session.load(weather=False, messages=False)
+        memo = session._memo
+        assert calls == []  # the lap lists came from the rows' laps column
+        assert set(memo._telemetry_sources) == {(d, lap) for d, lap, _ in frames}
+        assert all(
+            isinstance(source, cache_mod.LazyDriverFrameSource) and not source.hydrated
+            for source in memo._telemetry_sources.values()
+        )
+        tel = session.laps.pick_driver("LEC").iloc[1].telemetry
+        _same(tel, frames[3][2])
+        assert calls == [["LEC"]]  # one row, the touched driver's
+        assert set(memo._telemetry_dfs) == {("LEC", 2)}
+        second = session.laps.pick_driver("LEC").iloc[0].telemetry
+        _same(second, frames[2][2])
+        assert calls == [["LEC"]]  # the hydrated source served it
+        # The second driver reads every remaining lazy row in one batch.
+        _same(session.laps.pick_driver("VER").iloc[0].telemetry, frames[0][2])
+        assert calls == [["LEC"], ["VER"]]
+        _same(session.laps.pick_driver("VER").iloc[1].telemetry, frames[1][2])
+        assert calls == [["LEC"], ["VER"]]
+        assert not memo._telemetry_sources
+    finally:
+        cache.close()
+
+
+def test_bulk_reader_hydrates_lazy_rows_in_one_batch(tmp_path, monkeypatch):
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        calls = _count_row_reads(cache, monkeypatch)
+        session.load(weather=False, messages=False)
+        all_tel = session.fetch_all_laps_telemetry()
+        assert calls == [["LEC", "VER"]]
+        assert set(all_tel) == {(d, lap) for d, lap, _ in frames}
+        for d, lap, frame in frames:
+            _same(all_tel[(d, lap)], frame)
+        assert not session._memo._telemetry_sources
+    finally:
+        cache.close()
+
+
+def test_lazy_batch_decodes_a_row_at_its_first_lap(tmp_path, monkeypatch):
+    """A batch hands the lazy sources decompressed rows; the decode waits for a lap."""
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        session.load(weather=False, messages=False)
+        memo = session._memo
+        sources = {source.driver: source for source in memo._telemetry_sources.values()}
+        assert set(sources) == {"VER", "LEC"}
+        decoded: list[str] = []
+        real_init = cache_mod.LazyDriverFrameSource._load
+
+        def counted(self):
+            if self._real is None:
+                decoded.append(self.driver)
+            return real_init(self)
+
+        monkeypatch.setattr(cache_mod.LazyDriverFrameSource, "_load", counted)
+        # The whole batch (no requested driver, pool idle): rows arrive raw.
+        cache_mod.hydrate_lazy_sources(list(sources.values()))
+        assert all(source.hydrated for source in sources.values())
+        raw_only = [d for d, source in sources.items() if source._real is None]
+        for d in raw_only:
+            assert sources[d]._raw is not None
+        _same(session.laps.pick_driver("VER").iloc[1].telemetry, frames[1][2])
+        assert sources["VER"]._real is not None
+        assert sources["VER"]._raw is None
+        assert "VER" in decoded
+        # A decompressed row that turns out corrupt is a KeyError, as a missing row is.
+        bad = cache_mod.LazyDriverFrameSource(cache, 2026, GP, "Race", "NOR", [1, 2])
+        bad.hydrate_raw(b"not a row")
+        with pytest.raises(KeyError):
+            bad.frame(1)
+        assert bad._raw is None
+        assert bad._real is None
+        assert bad.hydrated  # found corrupt: never read again
+        with pytest.raises(KeyError):
+            bad.frame(2)
+    finally:
+        cache.close()
+
+
+def test_lazy_row_that_cannot_be_read_falls_through(tmp_path, monkeypatch):
+    session, cache, frames, _ = _warm_session(tmp_path, monkeypatch)
+    try:
+        session.load(weather=False, messages=False)
+        memo = session._memo
+        assert set(memo._telemetry_sources) == {(d, lap) for d, lap, _ in frames}
+        # VER's row goes bad after load() looked at its lap list.
+        cache.conn.execute(
+            f"UPDATE {cache_mod._PANDAS_DRIVER_TABLE} SET frame = ? WHERE driver = ?",
+            (b"not a row", "VER"),
+        )
+        cache.conn.commit()
+        monkeypatch.setattr(session, "_get_telemetry_payload_for_ref", lambda *_a, **_k: None)
+        tel = session.laps.pick_driver("VER").iloc[0].telemetry
+        assert tel.empty  # no row, no payload: the ordinary miss
+        assert set(memo._telemetry_sources) == {("LEC", 1), ("LEC", 2)}  # VER's refs dropped
+        _same(session.laps.pick_driver("LEC").iloc[0].telemetry, frames[2][2])
+    finally:
+        cache.close()
