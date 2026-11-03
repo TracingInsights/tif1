@@ -89,7 +89,7 @@ output.
 - [ ] Import works: `python -c "import tif1"`
 - [ ] Version correct: `python -c "import tif1; print(tif1.__version__)"`
 - [ ] Basic functionality works
-- [ ] CLI works: `tif1 --version`
+- [ ] CLI works: `tif1 version`
 
 ### Communication
 - [ ] Announcement prepared
