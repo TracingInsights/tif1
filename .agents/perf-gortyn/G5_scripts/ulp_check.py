@@ -21,7 +21,7 @@ for driver in ("VER", "NOR", "LEC", "HAM"):
         worst_seconds = max(worst_seconds, int(np.count_nonzero(old[ok] != new[ok])))
         speed = np.nan_to_num(tel["Speed"].to_numpy(dtype=float)) / 3.6
 
-        def dist(sec):
+        def dist(sec, speed=speed):
             sec = np.where(np.isnan(sec), 0.0, sec)
             dt = np.diff(sec, prepend=sec[:1])
             return np.cumsum(speed * np.where(dt >= 0, dt, 0.0))

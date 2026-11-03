@@ -17,7 +17,10 @@ for mod in ("pandas", "polars", "numpy", "pyarrow"):
                 env["PYTHONPATH"] = NEW
             out = subprocess.run(
                 [sys.executable, "-c", CODE.format(mod=mod)],
-                env=env, capture_output=True, text=True, check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             res[arm].append(float(out.stdout.strip()))
     print(

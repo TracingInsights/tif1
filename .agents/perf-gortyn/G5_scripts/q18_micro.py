@@ -18,7 +18,8 @@ session.load(laps=True, telemetry=False, weather=False, messages=False)
 laps = session.laps.pick_drivers("VER")
 frames = [(int(lap["LapNumber"]), pd.DataFrame(lap.telemetry)) for _, lap in laps.iterlaps()]
 blob, leftovers = fc.encode_driver_frames(frames)
-assert blob is not None and not leftovers
+assert blob is not None
+assert not leftovers
 fc._FAST_ARRAYS = None
 fast_flags = fc._fast_arrays()
 
