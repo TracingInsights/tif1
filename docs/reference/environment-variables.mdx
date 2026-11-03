@@ -285,7 +285,7 @@ export TIF1_HTTP_DISABLE_HTTP3=false
 
 ### TIF1_HTTP_REVOCATION_CHECK
 
-Check whether the CDN's TLS certificate has been revoked (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check imports an extra module and makes a request to the certificate authority before the first data request, which costs 120-240 ms on every cold load. Set to `false` to skip it.
+Check whether the CDN's TLS certificate has been revoked (OCSP) on the first connection of each process. The certificate chain and host name are verified either way. The check imports an extra module and makes a request to the certificate authority before the first data request. It costs 120-240 ms on every cold load. Set to `false` to skip it.
 
 ```bash
 export TIF1_HTTP_REVOCATION_CHECK=false

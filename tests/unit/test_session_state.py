@@ -1184,7 +1184,9 @@ class TestNumpyFreeTables:
 
     def test_other_spellings_and_bad_dates(self):
         assert ss._iso_timestamp_ns("2025-04-13T14:08:14.1234567891") is None
-        with pytest.raises(ValueError, match="day is out of range"):
+        # The message differs between CPython versions ("day is out of range for
+        # month" / "day 30 must be in range 1..28 for month 2 in year 2025").
+        with pytest.raises(ValueError, match="day"):
             ss._iso_timestamp_ns("2025-02-30T00:00:00")
 
     def test_file_t0_date_keeps_numpys_spellings(self):
