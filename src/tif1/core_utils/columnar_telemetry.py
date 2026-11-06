@@ -1331,13 +1331,24 @@ def decode_driver_file(blob: bytes | bytearray | memoryview) -> dict[int, dict[s
     """Decode a ``tel.v2.bin`` file into lap number -> ``tel`` mapping.
 
     Each lap's mapping equals what the native telemetry decoder returns for
-    that lap's ``_tel.json`` (see the module docstring). Arrays of one
-    channel are slices of one per-driver array (disjoint per lap).
+    that lap's ``_tel.json`` (see the module docstring). With
+    ``tif1_native.tel_decode_file`` the whole body is decoded in one call
+    with the GIL released, one array per lap and channel; it declines
+    (``ValueError``) anything it does not take, and so does a build without
+    it: the column-by-column decoder below then runs, where arrays of one
+    channel are slices of one per-driver array (disjoint per lap). Both give
+    the same values.
 
     Raises:
         ColumnarFormatError: The bytes are not a valid version-2 file.
     """
     body = _decompress(blob)
+    native = _json_utils.NATIVE_TEL_DECODE_FILE
+    if native is not None:
+        try:
+            return native(body, DictionaryChannel)
+        except ValueError:
+            pass  # a layout the native decoder does not take: the decoder below decides
     try:
         (header_len,) = _HEADER_SIZE.unpack_from(body, 0)
         header = orjson.loads(bytes(body[_HEADER_SIZE.size : _HEADER_SIZE.size + header_len]))

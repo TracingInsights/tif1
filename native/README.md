@@ -29,7 +29,14 @@ interpolating spline of fastf1's position channels), `tel_interp`
 and `tel_apply` (residuals applied in place), all with the GIL released. They compute the same bits as the numpy twins in
 `tif1.core_utils.columnar_telemetry` (IEEE `+ - * /` and `fmod` only: no
 libm transcendental, no fused multiply-add); tif1 uses the twins with an
-older build.
+older build. `tel_decode_file(body, dict_factory)` (`src/telfile.rs`) decodes
+a whole file body (the zstd frame's content) into `{lap: tel}` in one call:
+the header, the byte-shuffled buffers, the value encodings and every
+prediction run with the GIL released, so tif1's fetch threads decode files
+in parallel. It mirrors the codec's `decode_driver_file` and raises
+`ValueError` for anything it does not take (tif1 then decodes column by
+column). `TIF1_C8_BODIES=dir cargo test --release -- --ignored --nocapture`
+prints its time per decoding phase over a directory of file bodies.
 
 `TIF1_DISABLE_NATIVE=1` makes tif1 ignore an installed extension.
 

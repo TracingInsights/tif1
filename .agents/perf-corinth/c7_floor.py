@@ -6,8 +6,12 @@ import sys
 import time
 
 PY = "/home/harish/Documents/tif1/.venv/bin/python"
-ENV = dict(os.environ, PYTHONPATH=sys.argv[1], HOME="/tmp/corinth/home-C7",
-           TIF1_CACHE_DIR="/tmp/corinth/warm-C7")
+ENV = dict(
+    os.environ,
+    PYTHONPATH=sys.argv[1],
+    HOME="/tmp/corinth/home-C7",
+    TIF1_CACHE_DIR="/tmp/corinth/warm-C7",
+)
 snippets = sys.argv[2:] or [
     "pass",
     "import typer",

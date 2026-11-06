@@ -11,7 +11,9 @@ sess = tif1.get_session(2025, "Bahrain", sys.argv[2] if len(sys.argv) > 2 else "
 t1 = time.perf_counter()
 res = sess.results
 t2 = time.perf_counter()
-print(type(res).__name__, f"get_session {1000 * (t1 - t0):.0f} ms results {1000 * (t2 - t1):.0f} ms")
+print(
+    type(res).__name__, f"get_session {1000 * (t1 - t0):.0f} ms results {1000 * (t2 - t1):.0f} ms"
+)
 if lib == "polars":
     print(res.schema)
     print(res.row(0, named=True))

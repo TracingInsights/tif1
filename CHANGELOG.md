@@ -249,6 +249,17 @@ backends is unchanged (133 pandas, 131 polars), and the perf gate passes
   resolve on the schedule payload and build only the matched `Event` (30.1
   -> 18.7 ms by name, 12.6 -> 0.5 ms by round). The frames are unchanged (568
   schedule surfaces, 1950-2026, every backend).
+- A `tel.v2` columnar telemetry file decodes in one tif1-native call,
+  `tel_decode_file`, with the GIL released, instead of a column-by-column
+  numpy decoder around the prediction kernels; the decoded laps are the same
+  bits. One thread decodes the 2025 Bahrain race's 119 files in ~315 ms
+  instead of ~490 ms (qualifying 165 instead of 238), and the fetch threads
+  decode files in parallel (8 threads: ~80 ms instead of ~330 ms). On a
+  100 MB/s local CDN a cold `fetch_all_laps_telemetry()` takes 2.48 s instead
+  of 3.07 s with pandas and 2.35 s instead of 2.92 s with polars; on an
+  8 MB/s link the transfer still dominates. Needs `tif1-native` 0.3.0 and the
+  published `tel.v2` files (the reader stays off by default); without
+  `tel_decode_file` the column decoder is used as before.
 
 ### Changed
 

@@ -14,9 +14,10 @@ Sources:
 - ``--cache DIR --year Y --gp GP --session S``: the ``telemetry_cache`` tier of a
   tif1 cache (the payloads tif1 fetched, re-serialized by orjson).
 
-``--verify`` decodes every file written, once with the native prediction
-kernels of ``tif1-native`` (when the installed build has them) and once with
-the codec's numpy twins, and checks, lap by lap, that both decoded mappings
+``--verify`` decodes every file written with each decoder the installed
+``tif1-native`` allows: its whole-file decoder (``tel_decode_file``), the
+column-by-column decoder around its prediction kernels, and the codec's
+numpy twins, and checks, lap by lap, that every decoded mapping
 equal the JSON decode bit for bit and that the pandas and polars frames built
 from them equal the frames built from the JSON
 (``assert_frame_equal(check_exact=True)`` / ``DataFrame.equals``). The tool
@@ -131,16 +132,29 @@ def _verify_lap(driver: str, lap: int, expected: dict[str, Any], actual: dict[st
 _NATIVE_KERNELS = tuple(name for name in dir(json_utils) if name.startswith("NATIVE_TEL_"))
 
 
-def _decode_with_numpy(blob: bytes) -> dict[int, dict[str, Any]]:
-    """Decode with the codec's numpy predictions (the client without the native kernels)."""
-    saved = {name: getattr(json_utils, name) for name in _NATIVE_KERNELS}
-    try:
-        for name in _NATIVE_KERNELS:
-            setattr(json_utils, name, None)
-        return decode_driver_file(blob)
-    finally:
-        for name, kernel in saved.items():
-            setattr(json_utils, name, kernel)
+def _decode_without(names: tuple[str, ...]) -> Any:
+    """A decoder that runs with the native handles ``names`` hidden."""
+
+    def decode(blob: bytes) -> dict[int, dict[str, Any]]:
+        saved = {name: getattr(json_utils, name) for name in names}
+        try:
+            for name in names:
+                setattr(json_utils, name, None)
+            return decode_driver_file(blob)
+        finally:
+            for name, kernel in saved.items():
+                setattr(json_utils, name, kernel)
+
+    return decode
+
+
+# The whole-file decoder (when installed), the column-by-column decoder around
+# the native kernels, and the numpy twins (the client without the kernels).
+_DECODERS = (
+    decode_driver_file,
+    _decode_without(("NATIVE_TEL_DECODE_FILE",)),
+    _decode_without(_NATIVE_KERNELS),
+)
 
 
 def main() -> int:
@@ -185,7 +199,7 @@ def main() -> int:
                 (target / name).write_bytes(blob)
         if args.verify:
             for blob in files.values():
-                for decode in (decode_driver_file, _decode_with_numpy):
+                for decode in _DECODERS:
                     for lap, decoded in decode(blob).items():
                         _verify_lap(driver, lap, tels[lap], decoded)
     print(

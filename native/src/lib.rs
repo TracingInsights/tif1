@@ -39,6 +39,7 @@ use pyo3::prelude::*;
 
 mod lz4;
 mod telcols;
+mod telfile;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList, PyTuple};
 
 enum Channel {
@@ -777,6 +778,87 @@ fn tel_spline<'py>(
     Ok(out.into_pyarray(py))
 }
 
+fn json_to_py(py: Python<'_>, value: &telfile::Json) -> PyResult<Py<PyAny>> {
+    use telfile::Json;
+    Ok(match value {
+        Json::Null => py.None(),
+        Json::Bool(v) => PyBool::new(py, *v).to_owned().into_any().unbind(),
+        Json::Int(v) => v.into_pyobject(py)?.into_any().unbind(),
+        Json::Float(v) => v.into_pyobject(py)?.into_any().unbind(),
+        Json::Str(v) => v.into_pyobject(py)?.into_any().unbind(),
+        Json::Arr(items) => {
+            let list = PyList::empty(py);
+            for item in items {
+                list.append(json_to_py(py, item)?)?;
+            }
+            list.into_any().unbind()
+        }
+        Json::Obj(items) => {
+            let dict = PyDict::new(py);
+            for (key, item) in items {
+                dict.set_item(key, json_to_py(py, item)?)?;
+            }
+            dict.into_any().unbind()
+        }
+    })
+}
+
+/// `tel.v2` driver file: the body of its zstd frame (``bytes`` or any
+/// contiguous buffer) -> ``{lap: tel}``, every lap's mapping as the Python
+/// decoder builds it (int64/float64 arrays, ``DriverAhead`` as
+/// ``dict_factory(int32 codes, categories)``, the other values as Python
+/// objects). The header, the buffers, the predictions and the residuals are
+/// decoded with the GIL released; only the result objects need it. Raises
+/// ``ValueError`` for anything the decoder does not take (malformed or
+/// unknown layouts): the caller then runs the Python decoder, which decides.
+#[pyfunction]
+#[pyo3(signature = (body, dict_factory=None))]
+fn tel_decode_file(
+    py: Python<'_>,
+    body: &Bound<'_, PyAny>,
+    dict_factory: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<PyAny>> {
+    use telfile::Item;
+    let buf = PyBuffer::<u8>::get(body)?;
+    if !buf.is_c_contiguous() {
+        return Err(PyValueError::new_err("body must be contiguous"));
+    }
+    // An address, not a pointer, crosses into the GIL-free closure; the
+    // buffer export pins the memory until `buf` drops below.
+    let (addr, len) = (buf.buf_ptr() as usize, buf.len_bytes());
+    let decoded = py.detach(|| {
+        // SAFETY: the buffer protocol export keeps `len` bytes at `addr` alive
+        // and unchanged for the lifetime of `buf`.
+        let bytes = unsafe { std::slice::from_raw_parts(addr as *const u8, len) };
+        telfile::decode(bytes)
+    });
+    drop(buf);
+    let file = decoded.map_err(PyValueError::new_err)?;
+    let laps = file.laps().map_err(PyValueError::new_err)?;
+    let out = PyDict::new(py);
+    for (lap, items) in laps {
+        let tel = PyDict::new(py);
+        for (key, item) in items {
+            let value: Py<PyAny> = match item {
+                Item::Floats(values) => PyArray1::from_slice(py, values).into_any().unbind(),
+                Item::Ints(values) => PyArray1::from_slice(py, values).into_any().unbind(),
+                Item::Codes(codes, categories) => {
+                    let codes = codes.into_pyarray(py).into_any();
+                    let categories = json_to_py(py, categories)?.into_bound(py);
+                    match dict_factory {
+                        Some(factory) => factory.call1((codes, categories))?.unbind(),
+                        None => PyTuple::new(py, [codes, categories])?.into_any().unbind(),
+                    }
+                }
+                Item::Json(value) => json_to_py(py, value)?,
+            };
+            tel.set_item(key, value)?;
+        }
+        out.set_item(lap, tel)?;
+    }
+    Ok(out.into_any().unbind())
+}
+
 // The decoder keeps no state between calls, so free-threaded interpreters
 // (3.13t+) can run it without re-enabling the GIL on import.
 #[pymodule(gil_used = false)]
@@ -789,6 +871,7 @@ fn tif1_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tel_accx, m)?)?;
     m.add_function(wrap_pyfunction!(tel_lateral, m)?)?;
     m.add_function(wrap_pyfunction!(tel_spline, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_decode_file, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

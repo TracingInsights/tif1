@@ -33,14 +33,17 @@ if mode == "time":
 elif mode == "importtime":
     for cmd in cmds:
         r = subprocess.run(
-            [PY, "-X", "importtime", "-m", "tif1.cli", *cmd], env=ENV, capture_output=True,
-            text=True, check=False,
+            [PY, "-X", "importtime", "-m", "tif1.cli", *cmd],
+            env=ENV,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         rows = []
         for line in r.stderr.splitlines():
             if not line.startswith("import time:") or "cumulative" in line:
                 continue
-            parts = line[len("import time:"):].split("|")
+            parts = line[len("import time:") :].split("|")
             rows.append((int(parts[1]), int(parts[0]), parts[2].rstrip()))
         print("==", " ".join(cmd), "total modules", len(rows))
         for cum, self_us, name in sorted(rows, reverse=True)[:40]:
@@ -48,14 +51,20 @@ elif mode == "importtime":
 elif mode in ("inproc", "profile"):
     env = dict(ENV, PROFILE="1") if mode == "profile" else ENV
     for cmd in cmds:
-        r = subprocess.run([PY, str(TREE / ".agents/perf-corinth/c7_inproc.py"), *cmd], env=env,
-                           capture_output=True, text=True, check=False)
+        r = subprocess.run(
+            [PY, str(TREE / ".agents/perf-corinth/c7_inproc.py"), *cmd],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         print("==", " ".join(cmd))
         print("\n".join(r.stderr.splitlines()[:60]))
 elif mode == "show":
     for cmd in cmds:
-        r = subprocess.run([PY, "-m", "tif1.cli", *cmd], env=ENV, capture_output=True, text=True,
-                           check=False)
+        r = subprocess.run(
+            [PY, "-m", "tif1.cli", *cmd], env=ENV, capture_output=True, text=True, check=False
+        )
         print("== rc", r.returncode, cmd)
         print(r.stdout)
         print(r.stderr)

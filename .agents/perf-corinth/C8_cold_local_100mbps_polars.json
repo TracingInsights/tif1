@@ -1,0 +1,228 @@
+{
+ "lib": "polars",
+ "args": {
+  "child": null,
+  "base": "",
+  "verify": false,
+  "lib": "polars",
+  "reps": 8,
+  "cache": "/tmp/corinth/warm-C8",
+  "control_src": "/tmp/corinth/control/src",
+  "candidate_src": "/tmp/corinth/C8/src",
+  "workloads": "driver_tel,notebook4,all_tel",
+  "no_files": false,
+  "link_mbps": 100.0,
+  "conn_mbps": 50.0,
+  "rtt_ms": 30.0,
+  "level": 19,
+  "log_paths": false,
+  "out": ".agents/perf-corinth/C8_cold_local_100mbps_polars.json",
+  "encode_out": null,
+  "candidate_python": "/tmp/corinth/venv-C8/bin/python",
+  "control_python": "/tmp/corinth/venv-C8-base/bin/python",
+  "same_files": true
+ },
+ "summary": {
+  "driver_tel": {
+   "control": {
+    "import": {
+     "median": 4.1,
+     "min": 3.9
+    },
+    "get_session": {
+     "median": 233.0,
+     "min": 222.9
+    },
+    "laps": {
+     "median": 81.0,
+     "min": 70.5
+    },
+    "driver_tel": {
+     "median": 347.4,
+     "min": 283.8
+    },
+    "in_process_total": {
+     "median": 669.5,
+     "min": 581.2
+    },
+    "process_wall": {
+     "median": 853.2,
+     "min": 733.2
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 4.0,
+     "min": 3.9
+    },
+    "get_session": {
+     "median": 227.9,
+     "min": 224.1
+    },
+    "laps": {
+     "median": 79.6,
+     "min": 70.6
+    },
+    "driver_tel": {
+     "median": 304.1,
+     "min": 253.0
+    },
+    "in_process_total": {
+     "median": 609.6,
+     "min": 562.4
+    },
+    "process_wall": {
+     "median": 806.5,
+     "min": 766.6
+    }
+   },
+   "candidate_faster_pairs": "6/8",
+   "traffic_control": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 6,
+    "bin_bytes": 561617
+   },
+   "traffic_candidate": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 6,
+    "bin_bytes": 561617
+   }
+  },
+  "notebook4": {
+   "control": {
+    "import": {
+     "median": 4.0,
+     "min": 3.9
+    },
+    "get_session": {
+     "median": 281.0,
+     "min": 220.1
+    },
+    "load": {
+     "median": 108.6,
+     "min": 81.2
+    },
+    "driver_tel_x4": {
+     "median": 981.6,
+     "min": 867.1
+    },
+    "in_process_total": {
+     "median": 1374.6,
+     "min": 1211.3
+    },
+    "process_wall": {
+     "median": 1579.1,
+     "min": 1385.4
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 3.9,
+     "min": 3.8
+    },
+    "get_session": {
+     "median": 232.9,
+     "min": 219.5
+    },
+    "load": {
+     "median": 92.8,
+     "min": 82.8
+    },
+    "driver_tel_x4": {
+     "median": 894.4,
+     "min": 824.0
+    },
+    "in_process_total": {
+     "median": 1236.8,
+     "min": 1149.8
+    },
+    "process_wall": {
+     "median": 1421.8,
+     "min": 1332.7
+    }
+   },
+   "candidate_faster_pairs": "7/8",
+   "traffic_control": {
+    "json": 6,
+    "json_bytes": 117466,
+    "bin": 24,
+    "bin_bytes": 2105097
+   },
+   "traffic_candidate": {
+    "json": 6,
+    "json_bytes": 117466,
+    "bin": 24,
+    "bin_bytes": 2105097
+   }
+  },
+  "all_tel": {
+   "control": {
+    "import": {
+     "median": 3.9,
+     "min": 3.8
+    },
+    "get_session": {
+     "median": 225.3,
+     "min": 218.1
+    },
+    "laps": {
+     "median": 73.8,
+     "min": 68.7
+    },
+    "all_tel": {
+     "median": 2920.6,
+     "min": 2844.4
+    },
+    "in_process_total": {
+     "median": 3227.0,
+     "min": 3140.6
+    },
+    "process_wall": {
+     "median": 3916.7,
+     "min": 3854.5
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 3.9,
+     "min": 3.8
+    },
+    "get_session": {
+     "median": 226.7,
+     "min": 218.2
+    },
+    "laps": {
+     "median": 76.3,
+     "min": 73.8
+    },
+    "all_tel": {
+     "median": 2346.0,
+     "min": 2311.4
+    },
+    "in_process_total": {
+     "median": 2650.9,
+     "min": 2614.9
+    },
+    "process_wall": {
+     "median": 3387.7,
+     "min": 3287.3
+    }
+   },
+   "candidate_faster_pairs": "8/8",
+   "traffic_control": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 119,
+    "bin_bytes": 10790172
+   },
+   "traffic_candidate": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 119,
+    "bin_bytes": 10790172
+   }
+  }
+ }
+}

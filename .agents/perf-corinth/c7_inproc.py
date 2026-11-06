@@ -21,6 +21,8 @@ finally:
     if prof:
         prof.disable()
 t2 = time.perf_counter()
-print(f"import tif1.cli {1000 * (t1 - t0):.1f} ms, app() {1000 * (t2 - t1):.1f} ms", file=sys.stderr)
+print(
+    f"import tif1.cli {1000 * (t1 - t0):.1f} ms, app() {1000 * (t2 - t1):.1f} ms", file=sys.stderr
+)
 if prof:
     pstats.Stats(prof, stream=sys.stderr).sort_stats("cumulative").print_stats(40)

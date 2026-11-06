@@ -1,0 +1,10 @@
+- 18:54 start: read brief, hypothesis, N7 report; reading codec + kernels
+- 18:58 baseline decode (control codec, kernels built from tree): race 473 ms (4.10 ms/file), quali 222 ms (6.38 ms/file); profile: kernels ~195 ms, zstd 45, rest numpy orchestration
+- 19:07 whole-file native decoder (native/src/telfile.rs, tel_decode_file) exact on 1405 laps; race one-thread 3.4 vs 4.1 ms/file, 8-thread pool 100 vs 440 ms wall (column path is GIL-bound)
+- 19:21 kernels: spline Basis shared across x/y/z per lap, branch-free apply, fmod fast path; race one-thread 310 vs 668 ms (columns), pool8 89 vs 502; unit tests added (whole-file == column decoder, declines); now cold A/B harness
+- 19:26 encoder --verify exact (race+quali, 3 decoders, frames); cold verify pandas digests equal; unit suite 4121 passed/26 skipped; ruff/ty clean
+- 19:31 cold 8 MB/s pandas: ties (link-bound): driver_tel 978/999 4/8, notebook4 2046/1957 5/8, all_tel 4684/4659 2/8; added size/dup-key guards, rebuilt, still exact; running 100 MB/s
+- 19:45 cold 100 MB/s polars: all_tel 3917->3388 (-13.5%, 8/8), notebook4 1579->1422 (-9.9%, 7/8), driver_tel 853->806 (-5.5%, 6/8); running polars 8 MB/s
+- 19:48 cold 8 MB/s polars: notebook4 1867->1749 (8/8), all_tel/driver_tel tie; decode A/B race 472->298 one-thread, pool8 276->74; quali 221->160, pool8 80->31; running warm A/B
+- 19:50 warm A/B noise (laps 446/450 3/8, all_tel 558/546 4/8, notebook 698/687 5/8); parity 0/133 pandas, 0/131 polars; perf gate 6 passed; report written; verdict SHIP; committing
+- 19:51 done: SHIP; everything staged (commit denied, see C8_COMMITS.md); scratch bodies and native/target removed
