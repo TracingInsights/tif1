@@ -199,6 +199,7 @@ def test_disabled_huge_pages_use_the_codec(monkeypatch) -> None:
     assert bytes(memoryview(cache._expand_narrow_row(blob, None))) == content
 
 
+@pytest.mark.skipif(not hasattr(mmap, "MADV_HUGEPAGE"), reason="no MADV_HUGEPAGE here")
 def test_native_rejection_falls_back_to_the_codec(monkeypatch) -> None:
     def reject(src, dst):
         raise ValueError("unsupported lz4 frame: checksums")
