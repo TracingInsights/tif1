@@ -105,14 +105,21 @@ SEAMS: tuple[Seam, ...] = (
         name="pandas-lap-rows",
         package="pandas",
         verified="3.1.0",
-        where="models._interleaved_row/_lap_from_row/Laps._ixs (Pergamon Q7, Elis E7)",
+        where=(
+            "models._interleaved_row/_lap_from_row/_object_row_placement/Laps._ixs "
+            "(Pergamon Q7, Elis E7, Naxos N6)"
+        ),
         surface=(
             "DataFrame._ixs, Series._from_mgr, SingleBlockManager.from_array, "
-            "construction.sanitize_array, _libs.lib.maybe_convert_objects, "
-            "managers.interleaved_dtype, blocks.ExtensionBlock, "
-            "_libs.tslibs.timedeltas.ints_to_pytimedelta"
+            "SingleBlockManager(block, index), NumpyBlock(values, placement, 1), "
+            "construction.sanitize_array, _libs.lib.maybe_convert_objects (keeps a "
+            "row holding a number or bool as object), managers.interleaved_dtype, "
+            "blocks.ExtensionBlock, _libs.tslibs.timedeltas.ints_to_pytimedelta"
         ),
-        fallback="pandas' fast_xs per Laps.iloc[i] / results row and the Series constructor",
+        fallback=(
+            "pandas' fast_xs per Laps.iloc[i] / results row and the Series constructor; "
+            "iterlaps infers every row (_probe_object_rows False)"
+        ),
         test="test_pandas_lap_rows",
     ),
     Seam(
@@ -338,6 +345,14 @@ def test_pandas_lap_rows(monkeypatch):
     fast = models._lap_from_row(values.copy(), index, 7, None)
     reference = models.Lap(values.copy(), index=index, name=7)
     pd.testing.assert_series_equal(fast, reference)
+
+    # Naxos N6: rows holding a number or bool skip the inference.
+    assert models._probe_object_rows(), f"object-row inference rule drifted ({note})"
+    placement = models._object_row_placement(laps)
+    assert placement is not None, f"iterlaps fell back to the row inference ({note})"
+    row_placement = models._BlockPlacement(slice(0, len(index)))
+    direct = models._lap_from_row(values.copy(), index, 7, None, row_placement)
+    pd.testing.assert_series_equal(direct, reference)
 
 
 def test_pandas_constructor_hooks(monkeypatch):
