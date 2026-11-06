@@ -45,7 +45,7 @@ tif1 does not replace fastf1. The timing and telemetry data in tif1 is generated
 
 fastf1 loads a whole session at a time. `session.load()` downloads the laps, telemetry, weather, and messages of every driver. The car data and the position data each come as one file for all drivers. `session.load(telemetry=False)` skips them, but fastf1 has no option to load one driver or one lap.
 
-tif1 downloads per file, when a property is read. A new session downloads no data. The example below downloads three files: the driver list, the lap table, and the telemetry of lap 19.
+tif1 downloads per file, when a property is read. A new session downloads no data. The example below downloads three files: the driver list, the lap table, and the telemetry of lap 19. `session.load()` also fetches no telemetry. A driver's telemetry is fetched at the first access of one of its laps. `session.load(telemetry="eager")` downloads all of it, as fastf1 does.
 
 ```python
 import tif1

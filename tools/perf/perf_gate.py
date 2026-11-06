@@ -254,7 +254,10 @@ def _child(workload: str, lib: str) -> dict[str, float]:
 
 def _notebook(session: Any, lib: str, step: Callable[[str, Callable[[], Any]], Any]) -> None:
     """The Delphi ``notebook`` workload on the drivers the bundle has telemetry for."""
-    step("load", lambda: session.load(weather=True, messages=True))
+    # The eager load (fastf1's load()): the baseline was measured on it, and
+    # it keeps the batch reader of every driver row under the gate. The lazy
+    # default moves that cost into the first lap loop (iterlaps_tel_loop).
+    step("load", lambda: session.load(telemetry="eager", weather=True, messages=True))
     laps = session.laps
     step(
         "picks_x8",

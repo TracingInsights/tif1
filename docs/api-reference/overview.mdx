@@ -64,7 +64,7 @@ Complex operations should stay simple. The API hides complexity behind consisten
 
 - **Minimal Entry Points**: Most users only need `get_session()` to start working with F1 data. Everything else is discoverable through the returned `Session` object via IDE autocomplete.
 
-- **Sensible Defaults**: All optional parameters have sensible defaults. `session.load()` fetches laps, weather, messages, and all telemetry by default. Disable unneeded data sources for faster loading.
+- **Sensible Defaults**: All optional parameters have sensible defaults. `session.load()` fetches laps, weather, and messages by default. Telemetry is fetched per driver at the first access of a lap. `telemetry="eager"` fetches all of it in `load()`, as fastf1 does.
 
 - **Fuzzy Matching**: Event names support aliases and fuzzy matching—"spa", "belgium", "Belgian Grand Prix", and "Spa-Francorchamps" all work. Session types accept both full names ("Qualifying") and short codes ("Q"). This reduces friction and makes the API more forgiving.
 
@@ -119,7 +119,7 @@ import tif1
 
 # Create the session handle, then fetch the data the analysis needs.
 # load() fetches laps, weather, and race control messages here;
-# telemetry stays lazy and loads per lap on first access.
+# telemetry=False: each lap fetches its own telemetry file on first access.
 session = tif1.get_session(2024, "Bahrain Grand Prix", "Race")
 session.load(laps=True, telemetry=False, weather=True, messages=True)
 
@@ -334,11 +334,13 @@ def get_session(
 class Session:
     def load(self, laps=True, telemetry=True, weather=True, messages=True) -> "Session":
         """
-        Fetch the selected data eagerly and return the session.
+        Fetch the selected data and return the session.
 
         Args:
             laps: Fetch lap timing data (forced to True when telemetry=True)
-            telemetry: Fetch telemetry for every lap of every driver (slow)
+            telemetry: True/"lazy" (default): fetch each driver's telemetry at
+                the first access of one of its laps; "eager": fetch the
+                telemetry of every lap now (slow, the fastf1 load())
             weather: Fetch weather samples
             messages: Fetch race control messages
 
@@ -385,11 +387,11 @@ session = tif1.get_session(2024, "Austria", "Sprint")  # or "S"
 Control exactly what data gets loaded to optimize performance for each specific use case:
 
 ```python
-# Load everything (default behavior of load())
+# Load everything now, telemetry of every lap included (the fastf1 load())
 session = tif1.get_session(2021, "Belgian Grand Prix", "Race")
 session.load(
     laps=True,        # Lap timing data
-    telemetry=True,   # Telemetry for every lap (slowest option)
+    telemetry="eager",  # Telemetry for every lap (slowest option)
     weather=True,     # Weather conditions
     messages=True     # Race control messages
 )
@@ -487,11 +489,13 @@ The data selection flags belong to `session.load(laps, telemetry, weather, messa
   - Forced to `True` when `telemetry=True`
   - Required for: almost all analysis workflows
 
-- **`telemetry` (bool)**: Fetch telemetry for every lap of every driver
+- **`telemetry` (bool, `"lazy"` or `"eager"`)**: Make the telemetry of every lap available
   - Includes: speed, RPM, throttle, brake, gear, DRS, position (X/Y/Z)
   - Sampling rate: roughly 7-9 samples per second
-  - Slowest option: one payload per driver lap
-  - Leave `False` and call `driver.get_lap(n).telemetry` to fetch single laps on demand
+  - `True` (default) and `"lazy"`: no fetch in `load()`; the first access of a lap of a driver fetches all the laps of that driver
+  - `"eager"`: fetch every lap now, as the fastf1 `load()` does. This is the slowest option: one payload per driver lap
+  - `False`: each lap fetches only its own file on first access, for example `driver.get_lap(n).telemetry`
+  - Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry) for errors, the cache, and work without a network
 
 - **`weather` (bool)**: Fetch weather conditions
   - Includes: air temp, track temp, humidity, pressure, wind speed/direction, rainfall
@@ -574,7 +578,7 @@ except ValueError as e:
 
 1. **Load only the needed data**: Disable unused data sources
    ```python
-   # Much faster than load() with telemetry=True
+   # Much faster than load() with telemetry="eager"
    session = tif1.get_session(2021, "Monaco", "Race")
    session.load(laps=True, telemetry=False, weather=False, messages=False)
    ```

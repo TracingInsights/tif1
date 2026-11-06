@@ -377,14 +377,12 @@ laps = session.laps
 print(f"Loaded {len(laps)} laps")
 
 # Load additional data on demand: the attribute fetches it on first access.
-# Do not call session.load(weather=True) here: load() defaults to
-# laps=True and telemetry=True, so that call fetches all telemetry too.
 weather = session.weather
 ```
 
 **Performance Tips:**
 - Use `session.load()` with specific parameters to avoid fetching unnecessary data
-- Every `load()` flag defaults to `True`, so pass `telemetry=False` unless all telemetry is needed
+- `load()` does not fetch telemetry by default. A driver's telemetry is fetched at the first access of one of its laps. Pass `telemetry="eager"` only when every lap is needed, or before work without a network
 - Telemetry data is large - only load when needed
 - Weather and race control messages are small tables compared to telemetry
 - The cache (enabled by default) serves repeated loads

@@ -7,7 +7,7 @@
 | Feature | fastf1 | tif1 |
 | :--- | :--- | :--- |
 | **Data Source** | Ergast + F1 Live Timing | TracingInsights (CDN); Ergast tables from the TracingInsights Stats repository, Jolpica only as fallback |
-| **Loading** | `session.load()` downloads the whole session | **Lazy, per-file fetching** (async, parallel) |
+| **Loading** | `session.load()` downloads the whole session, telemetry included | **Lazy, per-file fetching** (async, parallel); `session.load()` fetches no telemetry (see [Lazy telemetry in `load()`](#lazy-telemetry-in-load)) |
 | **Backends** | Pandas only | **Pandas + Polars** |
 | **Caching** | Pickle files + SQLite HTTP cache | **SQLite + Memory LRU** |
 | **Live Timing** | Supported | **Historical only (timing/telemetry 2018-present, Ergast results 1950-present)**; track/session status, session info and `t0_date` from the published `session_info.json` (2018-present) |
@@ -48,7 +48,7 @@ Most `EVENT` and `SESSION` level APIs work as expected.
 - [x] `get_driver(identifier)` returns the `results` row (`.dnf`) plus tif1's `.laps` and friends; abbreviation, car number, shared-car label or full name (`"8"` and `"8/fagioli"` pick the two rows of a shared car); an unknown identifier raises `DriverNotFoundError`, which is also fastf1's `ValueError`
 - [x] `Laps`: the `pick_*` selectors with fastf1's rules (any iterable, `pick_drivers`/`pick_compounds` upper-case, `pick_driver`/`pick_team` exact, `pick_quicklaps` strictly below the threshold, `pick_fastest` among the `IsPersonalBest` laps), `iterlaps()` yields every lap, `split_qualifying_sessions()` with fastf1's algorithm and its `ValueError` outside qualifying, `get_weather_data()` with fastf1's sample rule on `session.weather_data`
 - [/] `Laps.get_weather_data()` keeps the laps index (fastf1 indexes the rows by weather sample); the laps' own `WeatherTime` columns are misaligned upstream and read only without a session weather table
-- [x] `load(laps=, telemetry=, weather=, messages=, livedata=)`: a `livedata` recording raises `NotImplementedError`
+- [/] `load(laps=, telemetry=, weather=, messages=, livedata=)`: a `livedata` recording raises `NotImplementedError`; `telemetry=True` is lazy by default (see [Lazy telemetry in `load()`](#lazy-telemetry-in-load)); `telemetry="eager"` is fastf1's load
 
 ### 🗺️ Circuit info
 
@@ -71,7 +71,69 @@ Most `EVENT` and `SESSION` level APIs work as expected.
 - [/] no index: `PolarsSessionResults` keeps `DriverNumber` as a column (`results.row_for("1")` looks a driver up); a lap row is `PolarsLap` (scalar access, `.telemetry`), its weather a `dict`
 
 ### 🛠️ Key Differences
-- **Lazy Loading**: `tif1` fetches data automatically on property access (e.g., `session.laps`); `session.load()` prefetches.
+- **Lazy Loading**: `tif1` fetches data automatically on property access (e.g., `session.laps`); `session.load()` prefetches laps, weather and messages, but not telemetry (next section).
 - **Laps extras**: the laps table keeps tif1's `index`, `drv`, `team`, `WeatherTime` + weather columns, `LapTimeSeconds`, `ms1`-`ms3` next to fastf1's 31 columns; `Driver`/`Team`/`Compound`/`TrackStatus` are categorical.
 - **HTTP**: fastf1 uses `requests` for each request. tif1 uses niquests. A cold load gets its first files, and the first telemetry requests, with the Python standard library until niquests has an open connection. These requests verify the certificate chain and the host name, but they do not do the revocation check (OCSP). `cdn_first_wave=False` (`TIF1_CDN_FIRST_WAVE=false`) sends every request through niquests.
 - **Compliance lock**: `tests/unit/test_fastf1_surface_compliance.py` checks members, parameters and column tables against fastf1 3.9.0 whenever fastf1 is importable (`uv pip install fastf1 --no-deps`).
+
+## Lazy telemetry in `load()`
+
+fastf1's `session.load()` downloads the car data and position data of every
+driver. tif1's `session.load()` (and `load(telemetry=True)`) does not fetch
+telemetry: the `load_telemetry_lazy` config key is `True` by default. The
+frames a script reads are the same; what differs is when the downloads
+happen, when errors show, and what the cache holds.
+
+- **When telemetry is downloaded.** The first access of any lap of a driver
+  (`lap.telemetry`, `lap.get_telemetry()`, `lap.get_car_data()`,
+  `lap.get_pos_data()`, `laps.telemetry`, `laps.get_telemetry()`,
+  `session.car_data[n]` / `session.pos_data[n]`, `get_fastest_lap_tel()`)
+  fetches all of that driver's laps in one parallel wave. Later laps of the
+  driver come from memory. When the script reads drivers in laps-table order,
+  the next driver is fetched in the background (`lazy_telemetry_lookahead`,
+  default 1; `-1` every pending driver; `0` off), in the free request slots
+  only (`lazy_telemetry_background_requests`, default 22). Pyodide has no
+  threads, so there each driver is one foreground wave.
+  `fetch_all_laps_telemetry()` fetches every driver not read yet in one batch.
+- **Errors.** `load()` reports no telemetry error. A failed request is logged
+  as a warning (`Failed telemetry load for VER lap 12: ...`; after three per
+  driver, one "suppressed" warning, then debug level) when the lap is first
+  read, and the lap gets an empty telemetry frame with fastf1's columns. No
+  exception is raised; the eager load behaves the same per lap, but warns
+  inside `load()`. A failed background request is logged (`Lazy telemetry
+  fetch failed for ...`) and the lap's first access requests it again with
+  the normal CDN fallback and retries.
+- **Cache.** `load()` writes no telemetry to the cache. Each driver is cached
+  when the script reads it (payload and frame tiers, as the eager load writes
+  them); a later process reads those drivers from the cache and the others
+  from the CDN.
+- **Work without a network.** With `offline_mode` on, or no network, a driver
+  the script did not read before has no telemetry: its first access logs a
+  warning and returns an empty frame. Fetch everything while online with
+  `session.load(telemetry="eager")` or `session.fetch_all_laps_telemetry()`.
+- **Warm cache.** pandas sessions read each cached driver row on first access
+  with either setting. polars sessions read the first touched driver's row
+  alone and the other rows in one batch at the second access: a warm polars
+  `load()` takes ~7 ms instead of 110-160 ms, and the first lap loop takes
+  that time instead.
+- **Other.** `load_async()` takes the same values (`"eager"` awaits
+  `fetch_all_laps_telemetry_async()`). Sessions before 2018 have no telemetry
+  either way. At interpreter exit the background requests are cancelled; one
+  already running can delay the exit by ~0.2-0.5 s. `"lazy"` / `"eager"` are
+  case-insensitive; any other string raises `ValueError`.
+
+Cold cache, 2025 Bahrain Grand Prix race, whole process (Elis E10):
+
+| Script | `telemetry="eager"` | lazy (default) |
+| :--- | ---: | ---: |
+| `load()`, then laps and results | 8.5 s in `load()` | 0.13 s in `load()` |
+| `load()`, then four drivers' telemetry | 10.0 s | 3.0 s |
+| `load()`, then every lap of every driver | 10.3 s | 9.2 s |
+
+fastf1's behaviour, per call or for every call:
+
+```python
+session.load(telemetry="eager")
+tif1.get_config().set("load_telemetry_lazy", False)
+# or TIF1_LOAD_TELEMETRY_LAZY=false, or {"load_telemetry_lazy": false} in .tif1rc
+```

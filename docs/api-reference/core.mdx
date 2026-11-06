@@ -569,7 +569,7 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 
 **Parameters:**
 - `laps`: Load lap timing data
-- `telemetry`: Prefetch telemetry for all laps (expensive). `telemetry=True` also sets `laps=True`. `telemetry="lazy"` does not fetch telemetry now. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. The frames are the same as the frames of `telemetry=True`. Refer to [load()](/concepts/sessions#load)
+- `telemetry`: `True` (default) or `"lazy"`: do not fetch telemetry now. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. `"eager"`: fetch the telemetry of every lap now, as the fastf1 `load()` does. This takes time on a cold cache. `False`: no telemetry registration; each lap fetches its own file on first access. Any value other than `False` also sets `laps=True`. The frames are the same with every value. The config key `load_telemetry_lazy` set to `False` gives `True` the effect of `"eager"`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry) for the errors, the cache, and work without a network
 - `weather`: Load weather data
 - `messages`: Load race control messages
 - `livedata`: The fastf1 live-timing recording. tif1 reads historical data only, so any value other than `None` raises `NotImplementedError`
@@ -604,7 +604,7 @@ async def load_async(
 The async twin of `load()`. It fetches the same tables through the async pipeline only, so it never blocks the event loop. Use it inside a running event loop and in Pyodide, where the synchronous API needs JavaScript Promise Integration. Refer to [Pyodide and the Browser](/concepts/pyodide).
 
 **Parameters:**
-- The same four flags and the `livedata` keyword as `load()`
+- The same four flags and the `livedata` keyword as `load()`. `telemetry` is lazy by default, as in `load()`. With `telemetry="eager"`, the method awaits `fetch_all_laps_telemetry_async()`
 
 **Returns:**
 - Self (for method chaining)

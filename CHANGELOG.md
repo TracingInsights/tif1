@@ -42,6 +42,41 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   resamples or merges telemetry imports numpy at that point, so its total
   time is unchanged.
 
+### Changed
+
+- **`session.load()` no longer fetches telemetry by default** (different
+  from fastf1). The `load_telemetry_lazy` config key now defaults to `True`,
+  so `load()` and `load(telemetry=True)` mean `load(telemetry="lazy")`: laps,
+  weather and race control messages are fetched, and a driver's telemetry is
+  fetched in one parallel wave on the first access of any of its laps
+  (`lap.telemetry`, `get_car_data()`, `laps.telemetry`, `car_data[n]`,
+  `get_fastest_lap_tel()`, ...). The frames are identical to the eager load.
+  Cold 2025 Bahrain race, whole process: `load()` then laps and results 8.5 s
+  -> 0.13 s in `load()`; `load()` then four drivers' telemetry 10.0 -> 3.0 s;
+  `load()` then every lap of every driver 10.3 -> 9.2 s. A warm polars
+  `load()` takes ~7 ms instead of 110-160 ms; the first lap loop pays the
+  driver-row reads instead.
+  What changes for a script:
+  - A telemetry network failure is logged when the lap is first read, not in
+    `load()`; the lap gets an empty telemetry frame (as an eager load's
+    failed lap did). A failed background request is retried at that access.
+  - `load()` writes no telemetry to the cache, so a driver the script never
+    read is not available offline. Before work without a network, run
+    `session.load(telemetry="eager")` or `session.fetch_all_laps_telemetry()`.
+  - fastf1's behaviour for every call: `load_telemetry_lazy=False`
+    (`TIF1_LOAD_TELEMETRY_LAZY=false`, or `.tif1rc`).
+  `COMPATIBILITY.md` ("Lazy telemetry in `load()`") and the migration guide
+  list every difference.
+- `load()` / `load_async()` accept `telemetry="eager"`: the telemetry of every
+  lap now, whatever `load_telemetry_lazy` says (`"lazy"` and `"eager"` are
+  case-insensitive; other strings raise `ValueError`).
+- A lazy `load()` of a session without laps registers nothing (it raised
+  `KeyError: 'Driver'` when the laps table had no `Driver` column), and
+  `fetch_all_laps_telemetry()` after a lazy load on a warm polars session
+  returns its map in laps-row order (the touched driver came first).
+- The perf gate's `notebook` workload loads with `telemetry="eager"`, the
+  path its baseline was measured on.
+
 ### Added
 
 - Cold telemetry can come from per-driver columnar files when the data

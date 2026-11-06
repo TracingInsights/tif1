@@ -130,6 +130,11 @@ If critical issues are found:
 
 ## Version-Specific Notes
 
+### Next release (lazy telemetry by default)
+- [ ] Confirm `session.load()` fetches no telemetry (`load_telemetry_lazy` defaults to `True`), the first access of a lap of a driver fetches that driver's laps in one wave, and `load(telemetry="eager")` / `load_telemetry_lazy=False` fetch every lap in `load()`
+- [ ] Confirm the release notes put the behaviour change first, with the offline recipe (`load(telemetry="eager")` or `fetch_all_laps_telemetry()` while online) and the link to `COMPATIBILITY.md` "Lazy telemetry in `load()`"
+- [ ] Consider a minor version bump: the default of a public call changed
+
 ### v0.11.3 (Delphi and Elis performance rounds, session state from session_info.json)
 - [ ] Validate `import tif1` and `tif1.__version__ == "0.11.3"`
 - [ ] Confirm `tif1-native` 0.2.0 still installs as the dependency (the 0.2.1 wheel with `lz4_frame_decompress_into` ships with E4 after this release)

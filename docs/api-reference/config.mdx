@@ -1155,11 +1155,11 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="load_telemetry_lazy" type="bool" default="False">
-  When `True`, `session.load(telemetry=True)` has the effect of `session.load(telemetry="lazy")`. The load does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.
+<ResponseField name="load_telemetry_lazy" type="bool" default="True">
+  When `True` (the default), `session.load()` and `session.load(telemetry=True)` have the effect of `session.load(telemetry="lazy")`. The load does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver. When `False`, `telemetry=True` has the effect of `telemetry="eager"`: the load fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `False` before work without a network. The explicit values `"lazy"` and `"eager"` ignore this key. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
   ```python
-  config.set("load_telemetry_lazy", True)
+  config.set("load_telemetry_lazy", False)  # the fastf1 load() behavior
   ```
 </ResponseField>
 
@@ -1517,7 +1517,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
-  "load_telemetry_lazy": false,
+  "load_telemetry_lazy": true,
   "cdn_hedge": true,
   "cdn_hedge_max_delay": 4.0,
   "keepalive_timeout": 300,
@@ -2643,7 +2643,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
-  "load_telemetry_lazy": false,
+  "load_telemetry_lazy": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,

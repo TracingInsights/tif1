@@ -37,7 +37,7 @@ The cache stores two primary types of data:
 - **JSON Data**: Session metadata, lap data, driver information, weather data, and race control messages in a key-value table
 - **Telemetry Data**: High-frequency sensor data (speed, throttle, brake, gear, RPM, DRS). Stored in the dedicated `telemetry_cache` table with a composite primary key on (year, gp, session, driver, lap)
 
-With `enable_cache` on (the default), `Session.load()` caches all data that it fetches. The Cache API gives manual control.
+With `enable_cache` on (the default), `Session.load()` caches all data that it fetches. The default `load()` fetches no telemetry, so the cache gets the telemetry of a driver when the code reads it. `load(telemetry="eager")` or `fetch_all_laps_telemetry()` caches the telemetry of every lap. The Cache API gives manual control.
 
 ## Getting the Cache Instance
 
@@ -116,7 +116,7 @@ cache.clear()
 
 # Load fresh data
 session = tif1.get_session(2024, "Monaco Grand Prix", "Race")
-session.load(laps=True, telemetry=True, weather=True)
+session.load(laps=True, telemetry="eager", weather=True)  # every lap's telemetry too
 print("Fresh data loaded and cached")
 ```
 
@@ -1263,7 +1263,8 @@ def warm_cache(year: int, event_names: list[str]):
     for event_name in event_names:
         try:
             session = tif1.get_session(year, event_name, 'Race')
-            session.load(laps=True, telemetry=True, weather=True)
+            # "eager": the default load() leaves telemetry to the first lap access
+            session.load(laps=True, telemetry="eager", weather=True)
             print(f"✓ Cached {event_name} Race")
         except Exception as e:
             print(f"✗ Failed to cache {event_name}: {e}")

@@ -35,6 +35,8 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 
 Less data means faster loads, less disk space and less bandwidth. This matters most when you process many sessions.
 
+`session.load()` works the same way: it fetches the laps, weather and race control messages, but no telemetry. A driver's telemetry is fetched the first time you read one of its laps. This is different from fastf1. Use `session.load(telemetry="eager")` (or set `load_telemetry_lazy` to `False`) to download all the telemetry up front, for example before working offline. [COMPATIBILITY.md](COMPATIBILITY.md#lazy-telemetry-in-load) lists the differences.
+
 ### 2. No F1TV account needed
 
 In October 2026 Formula 1 started requiring authentication on its data APIs. Since fastf1 3.9.0, most fastf1 features need an F1TV Access (or higher) subscription, and fastf1 signs in to your F1 account: with the `F1_USERNAME`/`F1_PASSWORD` environment variables, a prompt in the terminal, or a browser add-on. The login token usually expires after four days. fastf1 cannot refresh it, so you sign in again (fastf1 does this for you when the credentials are in environment variables).

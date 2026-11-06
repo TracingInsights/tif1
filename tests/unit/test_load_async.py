@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pandas as pd
 import pytest
@@ -44,10 +44,31 @@ async def test_load_async_runs_every_phase(session, monkeypatch):
     monkeypatch.setattr(core.Session, "weather", property(lambda _self: "weather"))
     monkeypatch.setattr(core.Session, "race_control_messages", property(lambda _self: "rcm"))
 
-    assert await session.load_async() is session
+    assert await session.load_async(telemetry="eager") is session
     assert {"weather.json", "rcm.json"} <= session._requested_session_tables
     prefetch.assert_awaited_once()
     fetch_all.assert_awaited_once()
+
+
+async def test_load_async_default_telemetry_is_lazy(session, monkeypatch):
+    laps = pd.DataFrame({"LapNumber": [1]})
+
+    async def fake_laps_async():
+        session._laps = laps
+        return laps
+
+    fetch_all = AsyncMock(return_value={})
+    register = Mock()
+    monkeypatch.setattr(session, "laps_async", fake_laps_async)
+    monkeypatch.setattr(session, "_prefetch_session_tables_async", AsyncMock())
+    monkeypatch.setattr(session, "fetch_all_laps_telemetry_async", fetch_all)
+    monkeypatch.setattr(session, "_register_lazy_telemetry", register)
+    monkeypatch.setattr(core.Session, "weather", property(lambda _self: "weather"))
+    monkeypatch.setattr(core.Session, "race_control_messages", property(lambda _self: "rcm"))
+
+    assert await session.load_async() is session
+    register.assert_called_once_with()
+    fetch_all.assert_not_awaited()
 
 
 async def test_load_async_telemetry_forces_laps(session, monkeypatch):

@@ -243,14 +243,14 @@ export TIF1_TELEMETRY_COLUMNAR=true
 
 ### TIF1_LOAD_TELEMETRY_LAZY
 
-When `true`, `session.load(telemetry=True)` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.
+When `true` (the default), `session.load()` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver. When `false`, `session.load()` fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `false` before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
 ```bash
-export TIF1_LOAD_TELEMETRY_LAZY=true
+export TIF1_LOAD_TELEMETRY_LAZY=false
 ```
 
 <Info>
-  Type: `bool`. Default: `false`
+  Type: `bool`. Default: `true`
 </Info>
 
 ### TIF1_LAZY_TELEMETRY_LOOKAHEAD

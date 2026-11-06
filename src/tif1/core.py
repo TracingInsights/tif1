@@ -1342,19 +1342,26 @@ class Session:
         """Load session data based on requested data types.
 
         This method fetches only the data that is required based on the boolean parameters.
-        By default, all data types are fetched (laps, telemetry, weather, and messages).
+        By default it fetches laps, weather and messages, and makes the
+        telemetry of every lap available without fetching it yet (lazy
+        telemetry, unlike fastf1's ``load()``, which fetches all of it).
 
         Args:
             laps: If True, fetch laps data. Required for telemetry - if telemetry=True
                   and laps=False, laps will be automatically set to True.
-            telemetry: If True, fetch telemetry data for all laps. ``"lazy"``
-                makes every lap's telemetry available without fetching it
-                now: the first access of any lap of a driver fetches all of
-                that driver's laps in one parallel wave, and
+            telemetry: ``True`` (default) or ``"lazy"``: make every lap's
+                telemetry available without fetching it now. The first
+                access of any lap of a driver fetches all of that driver's
+                laps in one parallel wave (a network failure is logged then
+                and the lap gets an empty telemetry frame), and
                 :meth:`fetch_all_laps_telemetry` fetches every driver not yet
-                touched in one batch. The frames are the ones ``True`` builds.
-                Config key ``load_telemetry_lazy`` (env
-                ``TIF1_LOAD_TELEMETRY_LAZY``) makes ``True`` mean ``"lazy"``.
+                touched in one batch. ``"eager"``: fetch the telemetry of
+                every lap now, as fastf1's ``load()`` does (needed before
+                work without a network). The frames are the same either
+                way. Config key ``load_telemetry_lazy`` (env
+                ``TIF1_LOAD_TELEMETRY_LAZY``, default True) set to False
+                makes ``True`` mean ``"eager"``. ``False``: no telemetry
+                now; each lap fetches its own file on first access.
             weather: If True, fetch weather data
             messages: If True, fetch race control messages
             livedata: fastf1's live-timing recording; tif1 serves historical
@@ -1366,10 +1373,10 @@ class Session:
 
         Example:
             >>> session = get_session(2025, "Silverstone Grand Prix", "Race")
-            >>> # Fetch only laps and telemetry
-            >>> session.load(laps=True, telemetry=True, weather=False, messages=False)
-            >>> # Fetch everything (default)
+            >>> # Laps, weather and messages; telemetry on first access (default)
             >>> session.load()
+            >>> # Also fetch the telemetry of every lap now (fastf1's load())
+            >>> session.load(telemetry="eager")
         """
         self._reject_livedata(livedata)
         # Telemetry requires laps data, so ensure laps is True if telemetry is requested
@@ -1411,7 +1418,8 @@ class Session:
 
         Args:
             laps: Fetch laps data (forced on when ``telemetry`` is requested).
-            telemetry: Fetch telemetry for all laps (``"lazy"``: see :meth:`load`).
+            telemetry: ``True``/``"lazy"``/``"eager"``/``False`` as for
+                :meth:`load` (default: lazy).
             weather: Fetch weather data.
             messages: Fetch race control messages.
             livedata: Not supported (see :meth:`load`).
@@ -1566,17 +1574,21 @@ class Session:
     def _lazy_telemetry_requested(telemetry: Any) -> bool:
         """Whether a truthy ``load(telemetry=...)`` means the lazy load.
 
-        ``"lazy"`` always does; ``True`` does when the ``load_telemetry_lazy``
-        config key is set.
+        ``"lazy"`` always does and ``"eager"`` never does; ``True`` follows
+        the ``load_telemetry_lazy`` config key (default True).
 
         Raises:
-            ValueError: ``telemetry`` is a string other than ``"lazy"``.
+            ValueError: ``telemetry`` is a string other than ``"lazy"`` or
+                ``"eager"``.
         """
         if isinstance(telemetry, str):
-            if telemetry.lower() == "lazy":
+            mode = telemetry.lower()
+            if mode == "lazy":
                 return True
-            raise ValueError(f"telemetry must be a bool or 'lazy', got {telemetry!r}")
-        return bool(config.get("load_telemetry_lazy", False))
+            if mode == "eager":
+                return False
+            raise ValueError(f"telemetry must be a bool, 'lazy' or 'eager', got {telemetry!r}")
+        return bool(config.get("load_telemetry_lazy", True))
 
     def _register_lazy_telemetry(self) -> None:
         """``load(telemetry="lazy")``: note the laps whose telemetry is still to fetch.
@@ -1590,6 +1602,8 @@ class Session:
         if self._ergast_only or not self._telemetry_load_pending():
             return
         laps = self.laps
+        if _is_empty_df(laps, self.lib):  # as fetch_all_laps_telemetry: no laps, no telemetry
+            return
         memo = self._memo
         pending: dict[str, dict[tuple[str, int], None]] = {}
         for ref in self._telemetry_lap_refs(laps):
@@ -7309,6 +7323,8 @@ class Session:
             # A categorical ``Driver`` maps its codes through the category
             # labels (``astype(str)`` materializes one Arrow string per row).
             frame = cast("pd.DataFrame", laps)
+            if COL_DRIVER not in frame.columns or COL_LAP_NUMBER not in frame.columns:
+                return lap_refs
             drivers = frame[COL_DRIVER]
             numbers = frame[COL_LAP_NUMBER]
             keep = (drivers.notna() & numbers.notna()).to_numpy()
@@ -7371,11 +7387,16 @@ class Session:
                 lib=self.lib,
                 frame_class=self._telemetry_frame_class(),
             )
+            memo_hits = bool(telemetry_map)
             for ref, tier_frame in frame_hits.items():
                 # polars frames come back as new objects: keep the adopted one.
                 adopted = self._adopt_telemetry_frame(tier_frame, ref[0])
                 self._memo.set("telemetry_df", ref, adopted)
                 telemetry_map[ref] = adopted
+            if memo_hits and frame_hits:
+                # A lazy load()'s touched drivers are memoized: keep laps-row
+                # order, as when every frame comes from one source.
+                telemetry_map = _in_lap_order(telemetry_map, lap_refs)
             pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
         return telemetry_map, pending_refs
 

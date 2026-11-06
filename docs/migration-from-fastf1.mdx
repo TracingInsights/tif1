@@ -19,7 +19,7 @@ keywords:
 | :--- | :--- | :--- |
 | **Data Source** | F1 live-timing API + jolpica-f1 (Ergast-compatible) API | TracingInsights static files (CDN); Ergast tables from the TracingInsights Stats repository, jolpica-f1 only as fallback |
 | **Account** | Timing data needs a Formula 1 account with an active F1TV subscription (fastf1 3.9 and later) | None |
-| **Loading** | Session-wide `session.load()` | **Lazy, per file**; multi-file loads run in parallel |
+| **Loading** | Session-wide `session.load()`, telemetry included | **Lazy, per file**; multi-file loads run in parallel. `session.load()` fetches no telemetry |
 | **Lib** | Pandas only | **Pandas + Polars** |
 | **Caching** | SQLite HTTP cache + pickle files of parsed data | **SQLite + Memory LRU** |
 | **HTTP Version** | HTTP/1.1 (`requests`) | **HTTP/2** (`niquests`) |
@@ -68,6 +68,38 @@ import tif1
 session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Automatically fetches on first access
 ```
+
+#### Lazy telemetry in load()
+
+In fastf1, `session.load()` downloads the car data and the position data of every driver. In tif1, `session.load()` and `session.load(telemetry=True)` do not fetch telemetry. Code that reads telemetry gets the same frames. The differences are in the time of the downloads, the errors, and the cache.
+
+| Behavior | fastf1 `load()` | tif1 `load()` (default) |
+| :--- | :--- | :--- |
+| Telemetry download | All drivers, in `load()` | One driver at a time, at the first access of a lap of that driver |
+| Lap and telemetry frames | - | The same values, columns and dtypes as `telemetry="eager"` |
+| Telemetry error | In `load()` | A log warning at the first access of the lap; the lap has an empty telemetry frame |
+| Cache after `load()` | Holds all the telemetry | Holds the telemetry of the drivers that the code read |
+| Work without a network after `load()` | Every lap is available | Drivers that the code did not read have no telemetry |
+| Cold four-driver notebook, 2025 Bahrain race | - | 3.0 s instead of 10.0 s with `telemetry="eager"` |
+
+The details:
+
+- **Time of the download.** The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. `lap.telemetry`, `lap.get_car_data()`, `laps.telemetry`, `session.car_data[number]` and `get_fastest_lap_tel()` all start a wave. When the code reads the drivers in the order of the laps table, the next driver is fetched in the background.
+- **Errors.** `load()` reports no telemetry error. A failed request writes a warning to the log when the code reads the lap. The lap then has an empty telemetry frame, and no exception is raised. The eager load has the same per-lap behavior, but its warnings occur in `load()`. A failed background request is sent again at the first access of the lap.
+- **Cache.** The cache gets the telemetry of a driver when the code reads that driver. `fetch_all_laps_telemetry()` fetches the remaining drivers.
+- **Work without a network.** In `offline_mode`, or without a network, a driver that was not read gives an empty frame and a warning. Fetch all the telemetry while the network is available. Use `session.load(telemetry="eager")`, or call `session.fetch_all_laps_telemetry()` after `load()`.
+- **Warm cache.** On a cached session, the time of the first lap access includes the read of the driver rows. A polars `load()` is then faster, and the first lap loop is slower by the same amount.
+
+To get the fastf1 behavior, use one of these:
+
+```python
+session.load(telemetry="eager")                      # one call
+tif1.get_config().set("load_telemetry_lazy", False)  # every load() call
+# Environment: TIF1_LOAD_TELEMETRY_LAZY=false
+# .tif1rc:     {"load_telemetry_lazy": false}
+```
+
+The [load() reference](/concepts/sessions#lazy-telemetry) has the full description, with the measurements.
 
 ### 2. Telemetry Access
 Both libraries have the `lap.telemetry` property and the `lap.get_telemetry()` method. Telemetry code needs no change. `get_telemetry(frequency=...)` accepts fastf1's values: `"original"`, or a sampling rate in Hz.
