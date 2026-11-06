@@ -102,6 +102,9 @@ _on_demand = True
 #: The client cannot be built in this process (a proxy, no ``wassima``).
 _client_unavailable = False
 _client_lock = threading.Lock()
+#: Set once the wave's thread has built its client or given up on it (the
+#: lookahead's fetches of :func:`prefetch` wait on it).
+_client_settled = threading.Event()
 
 
 def start(urls: list[str], *, timeout: float, wait_limit: float | None = None) -> None:
@@ -155,6 +158,67 @@ def take(url: str) -> bytes | None:
         logger.debug("First-wave fetch of %s missed its window", url)
         return None
     return slot.body
+
+
+def prefetch(urls: list[str], *, timeout: float) -> list[str]:
+    """Fetch ``urls`` into slots over the wave's connections, one daemon thread each.
+
+    The session lookahead of a season loop (Corinth C1,
+    :mod:`tif1.session_lookahead`): the bodies are handed over through
+    :func:`pending`/:func:`take` exactly like the first wave's, so a later
+    load of those files takes them instead of requesting them. Only runs once
+    a wave was started in this process (its client is reused; a request
+    waits, bounded, while that client is still being built). URLs that
+    already have a slot are skipped. Never raises.
+
+    Returns:
+        The URLs that got a slot (``[]`` when no wave ran).
+    """
+    if _client is None and not _warm_urls:
+        return []
+    deadline = time.monotonic() + WAIT_LIMIT
+    with _slots_lock:
+        fresh = [(url, _Slot(deadline)) for url in dict.fromkeys(urls) if url not in _slots]
+        _slots.update(fresh)
+    if not fresh:
+        return []
+    try:
+        # One thread start on the caller's thread (each is a GIL handoff);
+        # that thread starts the others.
+        threading.Thread(
+            target=_run_prefetch, args=(fresh, timeout), name="tif1-lookahead", daemon=True
+        ).start()
+    except RuntimeError:  # interpreter shutting down
+        _release(fresh)
+    return [url for url, _slot in fresh]
+
+
+def discard(urls: list[str]) -> None:
+    """Drop the slots of ``urls`` that were not taken (a lookahead the script left)."""
+    with _slots_lock:
+        for url in urls:
+            _slots.pop(url, None)
+
+
+def _run_prefetch(slots: list[tuple[str, _Slot]], timeout: float) -> None:
+    if _client is None:
+        _client_settled.wait(max(0.0, slots[0][1].deadline - time.monotonic()))
+    client = _client
+    if client is None:
+        _release(slots)
+        return
+    for index, (url, slot) in enumerate(slots[1:], 1):
+        try:
+            threading.Thread(
+                target=_fetch_into,
+                args=(client, url, slot, timeout),
+                name="tif1-lookahead",
+                daemon=True,
+            ).start()
+        except RuntimeError:  # interpreter shutting down
+            _release(slots[index:])
+            break
+    _fetch_into(client, *slots[0], timeout)
 
 
 def warm_niquests() -> None:
@@ -223,6 +287,7 @@ def reset() -> None:
     _warm_started = False
     _warm_urls = []
     _bridged = 0
+    _client_settled.clear()
     with _slots_lock:
         _slots.clear()
     client, _client = _client, None
@@ -239,6 +304,7 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
     # A cold ``get_session`` that fetched the calendar built the client already.
     client = _build_client()
     if client is None:
+        _client_settled.set()
         _release(slots)
         # The wave cannot match niquests' setup here: warm niquests
         # connections for the same files instead (the Olympia pre-connect).
@@ -249,6 +315,7 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
         except Exception as e:  # best effort, never surfaces
             logger.debug("CDN pre-connect skipped: %s", e)
         return
+    _client_settled.set()
     for url, slot in slots[1:]:
         threading.Thread(
             target=_fetch_into,

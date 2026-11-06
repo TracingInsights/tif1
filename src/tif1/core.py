@@ -4015,6 +4015,12 @@ class Session:
                         self.session_name,
                         exc,
                     )
+                if payload is not None:
+                    # Corinth C1: the next round of a season loop fetches its
+                    # classification ahead of time.
+                    from .session_lookahead import note_classification
+
+                    note_classification(self.year, self.gp, self.session, self._ergast_endpoint())
             self._ergast_payload = payload
             self._ergast_loaded = True
             return payload
@@ -8214,6 +8220,19 @@ def get_session(
     # session imports pandas or polars, so the HTTP-stack import, DNS and TLS
     # overlap that import instead of delaying the first payload request.
     cache_probe = _preconnect_cdn(year, gp_name, session_name, enable_cache)
+    # Corinth C1: round r right after round r-1 fetches round r+1's files in
+    # the background (a season loop); otherwise it only notes the session.
+    from .session_lookahead import on_get_session
+
+    lookahead_probe = on_get_session(
+        year,
+        gp_name,
+        session_name,
+        backend,
+        _resolve_enable_cache(enable_cache, log_warnings=False),
+    )
+    if cache_probe is None:
+        cache_probe = lookahead_probe
     if (lib if lib is not None else config.get("lib", "pandas")) != "polars":
         # A pandas session imports pandas and the model family here, where
         # importing tif1.core used to (a polars session never imports them).

@@ -171,6 +171,11 @@ class Config:
             # but skip niquests' OCSP check; TIF1_CDN_FIRST_WAVE=false sends
             # them through niquests as before.
             "cdn_first_wave": True,
+            # Corinth C1: when get_session() asks for round r of a season right
+            # after round r-1 (same session), fetch the files round r-1 fetched
+            # for round r+1 in the background, over the first wave's stdlib
+            # connections. TIF1_SESSION_LOOKAHEAD=false turns it off.
+            "session_lookahead": True,
             # Delphi D1: freeze the heap in an atexit hook so CPython's final
             # garbage collections skip the ~300k objects pandas/numpy/pyarrow
             # (or polars) built at import: 40-80 ms off every script's exit.
@@ -309,6 +314,7 @@ class Config:
             "TIF1_HTTP_REVOCATION_CACHE": ("http_revocation_cache", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
             "TIF1_CDN_FIRST_WAVE": ("cdn_first_wave", _to_bool),
+            "TIF1_SESSION_LOOKAHEAD": ("session_lookahead", _to_bool),
             "TIF1_TELEMETRY_COLUMNAR": ("telemetry_columnar", _to_bool),
             "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
