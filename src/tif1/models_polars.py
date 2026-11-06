@@ -2875,13 +2875,13 @@ class PolarsLaps(_TIF1Frame):
             if not keep.all():
                 positions = _true_positions(keep)
         rows = self.rows(named=True)
+        walk = _LapWalk(rows, positions)
         for position in positions:
-            yield IterLapResult(
-                position,
-                PolarsLap(
-                    self.slice(position, 1), session=session, name=position, row=rows[position]
-                ),
+            lap = PolarsLap(
+                self.slice(position, 1), session=session, name=position, row=rows[position]
             )
+            lap._walk = walk
+            yield IterLapResult(position, lap)
 
     # -- telemetry ----------------------------------------------------------
 
@@ -3102,6 +3102,36 @@ class PolarsLaps(_TIF1Frame):
 # --------------------------------------------------------------------------- #
 
 
+class _LapWalk:
+    """The laps one :meth:`PolarsLaps.iterlaps` call yields (shared by its laps).
+
+    Naxos N2: after a warm ``load()`` the drivers' frame-tier rows are read
+    lazily; a lap of a walk asks its session for every driver of the walk at
+    its first telemetry access (one pooled read, what the eager load paid),
+    instead of one driver's row alone and then the rest.
+    """
+
+    __slots__ = ("_positions", "_refs", "_rows")
+
+    def __init__(self, rows: list[dict[str, Any]], positions: Iterable[int]) -> None:
+        self._rows = rows
+        self._positions = positions
+        self._refs: list[tuple[str, int]] | None = None
+
+    def refs(self) -> list[tuple[str, int]]:
+        """``(driver, lap number)`` of the walk's laps (built on first use)."""
+        if self._refs is None:
+            refs: list[tuple[str, int]] = []
+            rows = self._rows
+            for position in self._positions:
+                row = rows[position]
+                driver, number = row.get("Driver"), row.get("LapNumber")
+                if driver and not _is_missing_number(number):
+                    refs.append((str(driver), int(cast(Any, number))))
+            self._refs = refs
+        return self._refs
+
+
 class _PolarsRow:
     """One row of a tif1 polars frame with scalar access.
 
@@ -3187,6 +3217,8 @@ class PolarsLap(_PolarsRow):
     """One lap (a one-row :class:`PolarsLaps`) with telemetry access."""
 
     _frame_class = PolarsLaps
+    # The iterlaps() walk this lap came from (None for a lap taken on its own).
+    _walk: _LapWalk | None = None
 
     @property
     def driver(self) -> str | None:
@@ -3215,6 +3247,11 @@ class PolarsLap(_PolarsRow):
         session = self.session
         if not driver or lap_number is None or session is None:
             return PolarsTelemetry._empty(session, driver)
+        walk = self._walk
+        if walk is not None:
+            ensure_walk = getattr(session, "_ensure_lazy_telemetry_walk", None)
+            if callable(ensure_walk):
+                ensure_walk(walk.refs, driver)
         try:
             tel = session._get_telemetry_df_for_ref(
                 driver,

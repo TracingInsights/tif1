@@ -3109,23 +3109,30 @@ class Cache:
         return handles
 
     def get_telemetry_frame_laps(
-        self, year: int, gp: str, session: str, drivers: list[str]
+        self,
+        year: int,
+        gp: str,
+        session: str,
+        drivers: list[str],
+        lib: Literal["pandas", "polars"] = "pandas",
     ) -> dict[str, list[int]]:
-        """The laps each driver's pandas frame-tier row stores, without reading the blobs.
+        """The laps each driver's frame-tier row stores, without reading the blobs.
 
         Delphi D5: the ``laps`` column of the row (written with it since
-        Pergamon P3). Drivers without a row, or whose lap list is unreadable,
-        are absent.
+        Pergamon P3): lap numbers in a pandas row, ``[lap, rows]`` spans in a
+        polars IPC row (Naxos N2). Drivers without a row, or whose lap list is
+        unreadable, are absent.
         """
         conn = self.conn
         if conn is None or not drivers or not _FRAME_CODEC_AVAILABLE:
             return {}
+        table = _POLARS_IPC_TABLE if lib == "polars" else _PANDAS_DRIVER_TABLE
         wanted = list(dict.fromkeys(drivers))
         try:
             placeholders = ", ".join("?" for _ in wanted)
             with self._sqlite_lock:
                 rows = conn.execute(
-                    f"SELECT driver, laps FROM {_PANDAS_DRIVER_TABLE} WHERE year = ? "
+                    f"SELECT driver, laps FROM {table} WHERE year = ? "
                     f"AND gp = ? AND session = ? AND driver IN ({placeholders})",
                     (year, gp, session, *wanted),
                 ).fetchall()
@@ -3138,7 +3145,10 @@ class Cache:
                 continue
             try:
                 laps = json_loads(laps_json)
-                out[driver] = [int(lap) for lap in laps]
+                if lib == "polars":
+                    out[driver] = [int(lap) for lap, _rows in laps]
+                else:
+                    out[driver] = [int(lap) for lap in laps]
             except (TypeError, ValueError):
                 logger.debug("Driver frame tier lap list unreadable: %s", driver)
         return out

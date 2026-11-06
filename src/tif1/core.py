@@ -18,7 +18,7 @@ import re
 import sys
 import threading
 import warnings
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import unquote
 
@@ -247,6 +247,15 @@ async def fetch_multiple_async(
     from .async_fetch import fetch_multiple_async as _impl
 
     return await _impl(requests, **kwargs)
+
+
+#: Lazy waves of a cached session that read their drivers' rows alone; the next
+#: one reads every driver still pending in one batch. Naxos N2 measured 1-4 on
+#: a warm polars race (load() then N drivers' fastest-lap car data): two keeps
+#: every shape of three or more drivers within one lone read (~20 ms) of the
+#: eager load, as one does, and reads two drivers in ~45 ms instead of ~130;
+#: four also wins four drivers but costs a loop over the drivers ~45 ms.
+_LAZY_CACHED_LONE_WAVES = 2
 
 
 def _in_lap_order(
@@ -1531,8 +1540,15 @@ class Session:
         its laps is first built.
         Laps the tier does not hold (legacy rows, payload tier, network)
         take the eager batch path as before.
+        Naxos N2: a polars session whose IPC frame tier holds every pending
+        lap (the rows' ``[lap, rows]`` spans say so without the blobs) leaves
+        them lazy as ``load(telemetry="lazy")`` does
+        (:meth:`_ensure_lazy_telemetry`: the first driver touched reads its
+        row alone, the second reads every remaining row in one batch).
         """
         ultra_cold = self._resolve_telemetry_ultra_cold_mode(None)
+        if not ultra_cold and self.enable_cache and self.lib == "polars":
+            return self._polars_telemetry_load_pending()
         if (
             self.lib == "pandas"
             and not ultra_cold
@@ -1570,6 +1586,44 @@ class Session:
                 return False
         return True
 
+    def _polars_telemetry_load_pending(self) -> bool:
+        """:meth:`_telemetry_load_pending` of a polars session (cache on, not ultra-cold).
+
+        Reading every driver's IPC row is ~110 ms of a warm race's ~120 ms
+        ``load()``; the rows' spans (no blobs, ~1 ms) tell whether the tier
+        holds every lap not memoized yet. If it does (laps it lacks may only
+        be ones the negative-result cache knows are missing, as the eager
+        batch skips them too), those laps are registered lazily and ``load()``
+        reads nothing; otherwise the eager batch runs as before.
+        """
+        if not self._session_cache_available():
+            return True
+        laps = self.laps
+        if _is_empty_df(laps, self.lib):
+            return False
+        memo = self._memo
+        pending = [
+            ref for ref in self._telemetry_lap_refs(laps) if not memo.contains("telemetry_df", ref)
+        ]
+        if not pending:
+            return False
+        read_laps = getattr(get_cache(), "get_telemetry_frame_laps", None)
+        if not callable(read_laps):
+            return True
+        stored = read_laps(
+            self.year,
+            self.gp,
+            self.session,
+            list(dict.fromkeys(driver for driver, _ in pending)),
+            lib="polars",
+        )
+        held = {driver: set(laps_of) for driver, laps_of in stored.items()}
+        uncovered = [ref for ref in pending if ref[1] not in held.get(ref[0], ())]
+        if uncovered and (len(uncovered) == len(pending) or not self._all_known_missing(uncovered)):
+            return True
+        self._set_lazy_telemetry_refs(pending)
+        return False
+
     @staticmethod
     def _lazy_telemetry_requested(telemetry: Any) -> bool:
         """Whether a truthy ``load(telemetry=...)`` means the lazy load.
@@ -1605,16 +1659,31 @@ class Session:
         if _is_empty_df(laps, self.lib):  # as fetch_all_laps_telemetry: no laps, no telemetry
             return
         memo = self._memo
+        self._set_lazy_telemetry_refs(
+            [
+                ref
+                for ref in self._telemetry_lap_refs(laps)
+                if not memo.contains("telemetry_df", ref)
+            ]
+        )
+
+    def _set_lazy_telemetry_refs(self, refs: list[tuple[str, int]]) -> None:
+        """Hold ``refs`` (laps without a memoized frame) as the lazy load's pending laps.
+
+        Grouped by driver in laps-row order; any earlier lazy stream is
+        closed first (its payloads are memoized).
+        """
         pending: dict[str, dict[tuple[str, int], None]] = {}
-        for ref in self._telemetry_lap_refs(laps):
-            if not memo.contains("telemetry_df", ref):
-                pending.setdefault(ref[0], {})[ref] = None
+        for ref in refs:
+            pending.setdefault(ref[0], {})[ref] = None
         lock = getattr(self, "_lazy_telemetry_lock", None)
         if lock is None:  # a Session built without __init__ (test doubles)
             lock = self._lazy_telemetry_lock = threading.RLock()
         with lock:
             self._close_lazy_telemetry_stream()
-            self._lazy_telemetry_refs = {driver: list(refs) for driver, refs in pending.items()}
+            self._lazy_telemetry_refs = {
+                driver: list(driver_refs) for driver, driver_refs in pending.items()
+            }
             self._lazy_telemetry_order = list(pending)
             self._lazy_lookahead_next = None
             self._lazy_telemetry_waves = 0
@@ -1628,10 +1697,13 @@ class Session:
         as it does after an eager load.
 
         On a session the cache holds (polars: the frame tier is not read by
-        ``load()``), the second wave reads every driver still pending in one
-        batch, as Delphi D5's lazy rows do: one driver's IPC row read alone
-        costs ~15-20 ms, the pooled batch of a race's 20 rows ~110 ms, so a
-        loop over every lap would otherwise pay ~4x the eager load.
+        ``load()``), the first :data:`_LAZY_CACHED_LONE_WAVES` waves read
+        their drivers alone and the next reads every driver still pending in
+        one batch, as Delphi D5's lazy rows do from the second: one driver's
+        IPC row read alone costs ~10-25 ms, the pooled batch of a race's 20
+        rows ~115 ms, so a loop over the drivers would otherwise pay several
+        times the eager load (a loop over the laps reads its drivers at once:
+        :meth:`_ensure_lazy_telemetry_walk`).
         """
         lazy = getattr(self, "_lazy_telemetry_refs", None)
         if not lazy:
@@ -1644,12 +1716,31 @@ class Session:
                     wave.extend(driver_refs)
             if not wave:
                 return
-            if self._lazy_telemetry_waves and lazy and self._lazy_telemetry_from_cache():
+            if (
+                self._lazy_telemetry_waves >= _LAZY_CACHED_LONE_WAVES
+                and lazy
+                and self._lazy_telemetry_from_cache()
+            ):
                 for driver_refs in lazy.values():
                     wave.extend(driver_refs)
                 lazy.clear()
             self._lazy_telemetry_waves += 1
             self._fetch_lazy_telemetry_wave(wave)
+
+    def _ensure_lazy_telemetry_walk(
+        self, walk_refs: Callable[[], list[tuple[str, int]]], driver: str
+    ) -> None:
+        """A lap of an ``iterlaps()`` walk is touched: bring the walk's drivers in one wave.
+
+        Naxos N2: only on a session the cache holds and only while ``driver``
+        is still pending. A loop over a session's laps after a warm polars
+        ``load()`` then reads every row in one pooled batch, as the eager
+        load did, instead of the first driver's row alone and then the rest
+        (~25 ms more). Cold lazy loads keep their per-driver waves.
+        """
+        lazy = getattr(self, "_lazy_telemetry_refs", None)
+        if lazy and driver in lazy and self._lazy_telemetry_from_cache():
+            self._ensure_lazy_telemetry(walk_refs())
 
     def _lazy_telemetry_from_cache(self) -> bool:
         """Whether lazy waves read the SQLite tiers (a cached session) instead of the CDN."""
@@ -7387,15 +7478,14 @@ class Session:
                 lib=self.lib,
                 frame_class=self._telemetry_frame_class(),
             )
-            memo_hits = bool(telemetry_map)
+            mixed = bool(telemetry_map) and bool(frame_hits)
             for ref, tier_frame in frame_hits.items():
                 # polars frames come back as new objects: keep the adopted one.
                 adopted = self._adopt_telemetry_frame(tier_frame, ref[0])
                 self._memo.set("telemetry_df", ref, adopted)
                 telemetry_map[ref] = adopted
-            if memo_hits and frame_hits:
-                # A lazy load()'s touched drivers are memoized: keep laps-row
-                # order, as when every frame comes from one source.
+            if mixed:
+                # Drivers a lazy load() already read come first otherwise.
                 telemetry_map = _in_lap_order(telemetry_map, lap_refs)
             pending_refs = [ref for ref in pending_refs if ref not in frame_hits]
         return telemetry_map, pending_refs

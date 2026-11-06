@@ -163,13 +163,13 @@ class TestLazyLoad:
         assert _telemetry_batches(cdn) == []
 
 
-@pytest.mark.parametrize(("from_cache", "second_wave"), [(False, ["B"]), (True, ["B", "C"])])
-def test_second_wave_of_a_cached_session_takes_every_pending_driver(
-    cdn, monkeypatch, from_cache, second_wave
+@pytest.mark.parametrize(("from_cache", "third_wave"), [(False, ["C"]), (True, ["C", "D"])])
+def test_third_wave_of_a_cached_session_takes_every_pending_driver(
+    cdn, monkeypatch, from_cache, third_wave
 ):
-    """Cached sessions batch the rest on the second wave (Delphi D5); the CDN path never does."""
+    """Cached sessions batch the rest on the third wave (Delphi D5, Naxos N2); the CDN never does."""
     session = cdn.session("polars")
-    session._lazy_telemetry_refs = {code: [(code, 1), (code, 2)] for code in ("A", "B", "C")}
+    session._lazy_telemetry_refs = {code: [(code, 1), (code, 2)] for code in ("A", "B", "C", "D")}
     waves: list[list[str]] = []
     monkeypatch.setattr(
         session,
@@ -180,8 +180,35 @@ def test_second_wave_of_a_cached_session_takes_every_pending_driver(
     session._ensure_lazy_telemetry([("A", 2)])
     session._ensure_lazy_telemetry([("A", 1)])  # already fetched: no wave
     session._ensure_lazy_telemetry([("B", 1)])
-    assert waves == [["A"], second_wave]
-    assert set(session._lazy_telemetry_refs) == ({"C"} - set(second_wave))
+    session._ensure_lazy_telemetry([("C", 1)])
+    assert waves == [["A"], ["B"], third_wave]
+    assert set(session._lazy_telemetry_refs) == ({"D"} - set(third_wave))
+
+
+@pytest.mark.parametrize(
+    ("touched", "expected"),
+    [
+        (["D", "A"], [["D"], ["A"]]),
+        (["A", "B"], [["A"], ["B"]]),  # laps-row order too: two drivers read two rows
+        (["D", "A", "F", "B"], [["D"], ["A"], ["F", "B", "C", "E", "G"]]),
+    ],
+)
+def test_cached_waves_read_two_drivers_alone(cdn, monkeypatch, touched, expected):
+    """Naxos N2: two drivers compared after a warm load read two rows, a third the rest."""
+    session = cdn.session("polars")
+    codes = ("A", "B", "C", "D", "E", "F", "G")
+    session._set_lazy_telemetry_refs([(code, lap) for code in codes for lap in (1, 2)])
+    waves: list[list[str]] = []
+    monkeypatch.setattr(
+        session,
+        "_fetch_lazy_telemetry_wave",
+        lambda refs: waves.append(list(dict.fromkeys(driver for driver, _ in refs))),
+    )
+    monkeypatch.setattr(session, "_lazy_telemetry_from_cache", lambda: True)
+    for code in touched:
+        session._ensure_lazy_telemetry([(code, 2)])
+    assert waves == expected
+    assert set(session._lazy_telemetry_refs) == set(codes) - {d for wave in waves for d in wave}
 
 
 def test_unknown_telemetry_string_raises(cdn):
