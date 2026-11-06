@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import orjson
 
@@ -38,6 +38,8 @@ from .schedule_schema import validate_schedule_payload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import polars as pl
 
     from .event_frames import Event, EventSchedule
     from .types import ScheduleBackend
@@ -988,7 +990,18 @@ def _event_row(
     year_payload = _resolve_year_payload(year, backend)
     metadata_dict = year_payload.get("metadata", {})
     metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
-    event_metadata = _event_metadata(year, metadata, backend)
+    return _event_row_from_metadata(
+        year, event_name, _event_metadata(year, metadata, backend), backend
+    )
+
+
+def _event_row_from_metadata(
+    year: int,
+    event_name: str,
+    event_metadata: dict[str, Any] | None,
+    backend: ScheduleBackend | None = None,
+) -> dict[str, Any]:
+    """:func:`_event_row` of an event whose metadata (circuit columns joined) is at hand."""
     sessions = get_sessions(year, event_name, backend=backend)
     row: dict[str, Any] = {
         "RoundNumber": 0,
@@ -1296,20 +1309,24 @@ def get_event(
         force_ergast: Deprecated alias of ``backend="ergast"``.
         strict_search: Same as ``exact_match``.
     """
+    # Resolved on the schedule payload, as ``EventSchedule.get_event_by_round``
+    # and ``get_event_by_name`` answer: only the matched Event is built, not
+    # the season's frame.
     backend = _normalize_backend(backend, force_ergast)
     exact_match = exact_match or strict_search
-    schedule = get_event_schedule(year, backend=backend)
     if not isinstance(gp, str):
         # Any non-string is a round number, as in fastf1 (numpy ints, 8.0).
-        return schedule.get_event_by_round(gp)
+        return get_event_by_round(year, gp, backend=backend)
 
-    event = schedule.get_event_by_name(gp, strict_search=exact_match)
-    if event is not None:
-        return event
+    matched = _match_event_name(
+        year, list(_get_events_cached(year, backend)), gp, exact_match=exact_match, backend=backend
+    )
+    if matched is not None:
+        return _get_event_for_year(year, matched, backend)
 
     if not exact_match:
         try:
-            return schedule.get_event_by_round(int(gp))
+            return get_event_by_round(year, int(gp), backend=backend)
         except (TypeError, ValueError):
             return None
     return None
@@ -1319,7 +1336,11 @@ def get_event_by_round(
     year: int, round_number: int, *, backend: ScheduleBackend | None = None
 ) -> Event:
     """Get event by round number."""
-    return get_event_schedule(year, backend=backend).get_event_by_round(round_number)
+    if round_number is None:
+        # EventSchedule.get_event_by_round's message for a missing round.
+        raise ValueError("get_event_by_round() missing 1 required argument: 'round_number'")
+    event_name = _resolve_event_round(year, cast("numbers.Real", round_number), backend)
+    return _get_event_for_year(year, event_name, backend)
 
 
 def get_event_by_name(
@@ -1385,13 +1406,188 @@ def _resolve_event_name(
     return event
 
 
+def _schedule_lib(lib: str) -> str:
+    """``"pandas"`` or ``"polars"`` for a schedule ``lib`` argument (pandas without polars)."""
+    if lib not in ("pandas", "polars"):
+        raise ValueError(f"Unknown schedule lib {lib!r}; use 'pandas' or 'polars'")
+    if lib == "polars":
+        from .core_utils.runtime import import_supported_polars
+
+        if import_supported_polars() is None:
+            logger.warning("Polars not available, falling back to pandas")
+            return "pandas"
+    return lib
+
+
+def _schedule_event_metadata(
+    year: int, backend: ScheduleBackend | None
+) -> list[tuple[str, dict[str, Any] | None]]:
+    """``(event name, metadata with the circuit columns joined)`` of every schedule row."""
+    metadata_dict = _resolve_year_payload(year, backend).get("metadata", {})
+    if not isinstance(metadata_dict, dict):
+        metadata_dict = {}
+    return [
+        (event_name, _event_metadata(year, metadata_dict.get(event_name), backend))
+        for event_name in _get_events_cached(year, backend)
+    ]
+
+
+def _schedule_native_rows(year: int, backend: ScheduleBackend | None) -> list[dict[str, Any]]:
+    """Every schedule row as :func:`_event_row` builds it (ISO date strings, no pandas)."""
+    return [
+        _event_row_from_metadata(year, event_name, metadata, backend)
+        for event_name, metadata in _schedule_event_metadata(year, backend)
+    ]
+
+
+def _frame_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Column labels of a frame built from ``rows``: keys in order of first appearance.
+
+    The order ``pandas.DataFrame(list_of_dicts)`` gives; a testing event's
+    three-session row before a race row puts ``Session4``/``Session5`` last.
+    """
+    columns: dict[str, None] = {}
+    for row in rows:
+        for key in row:
+            columns.setdefault(key, None)
+    return list(columns)
+
+
+def _iso_datetime(value: Any, *, date_only: bool = False, local: bool = False) -> datetime | None:
+    """A schedule ISO string as a naive :class:`datetime` (``None`` when empty).
+
+    ``local`` keeps the wall-clock time of an offset-carrying string (the
+    track's local time); otherwise an offset is converted to naive UTC.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        parsed = datetime.fromisoformat(value.split("T")[0] if date_only else value)
+    else:
+        return None
+    if parsed.tzinfo is not None:
+        if local:
+            return parsed.replace(tzinfo=None)
+        return parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed
+
+
+def _polars_column_kind(column: str) -> str:
+    """How a schedule column is typed in the polars schedule (see :func:`get_event_schedule`)."""
+    if column == "RoundNumber":
+        return "int"
+    if column == "F1ApiSupport":
+        return "bool"
+    if column in ("CircuitLatitude", "CircuitLongitude"):
+        return "float"
+    if column == "EventDate":
+        return "date"
+    if column.endswith("DateUtc"):
+        return "utc"
+    if column.endswith("Date"):
+        return "local"
+    return "str"
+
+
+def _polars_column_values(kind: str, values: list[Any]) -> list[Any]:
+    if kind == "int":
+        return [None if v is None or isinstance(v, bool) else int(v) for v in values]
+    if kind == "bool":
+        return [None if v is None else bool(v) for v in values]
+    if kind == "float":
+        return [None if v is None else float(v) for v in values]
+    if kind in ("date", "utc", "local"):
+        # Microseconds since the epoch: polars builds a Datetime Series from
+        # Python datetimes through a query plan (~5 ms for the first, 0.5 ms
+        # each after), from integers with an eager cast.
+        parsed = [_iso_datetime(v, date_only=kind == "date", local=kind == "local") for v in values]
+        return [
+            None if v is None else (v.replace(tzinfo=UTC) - _EPOCH) // _MICROSECOND for v in parsed
+        ]
+    return [v if isinstance(v, str) or v is None else str(v) for v in values]
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MICROSECOND = timedelta(microseconds=1)
+
+
+def _polars_schedule_frame(rows: list[dict[str, Any]], columns: list[str]) -> Any:
+    """A polars frame of schedule ``rows`` (Python lists into typed Series; no pandas)."""
+    from .core_utils.runtime import import_supported_polars
+
+    pl = cast(Any, import_supported_polars())
+    dtypes = {"int": pl.Int64, "bool": pl.Boolean, "float": pl.Float64, "str": pl.String}
+    series = []
+    for column in columns:
+        kind = _polars_column_kind(column)
+        values = _polars_column_values(kind, [row.get(column) for row in rows])
+        if kind in dtypes:
+            series.append(pl.Series(column, values, dtype=dtypes[kind]))
+        else:
+            series.append(pl.Series(column, values, dtype=pl.Int64).cast(pl.Datetime("us")))
+    return pl.DataFrame(series)
+
+
+def _is_race_row(row: dict[str, Any]) -> bool:
+    """``RoundNumber > 0`` as ``pd.to_numeric(..., errors="coerce") > 0`` reads it."""
+    value = row.get("RoundNumber")
+    try:
+        return value is not None and float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _event_finished(row: dict[str, Any], dt: datetime, include_testing: bool) -> bool:
+    """:func:`get_events_remaining`'s drop rule on a native row.
+
+    The last session (the third for a testing event while testing events are
+    kept) started at or before ``dt``; an event without that time is not over.
+    """
+    testing = include_testing and str(row.get("EventFormat", "")) == "testing"
+    started = _iso_datetime(row.get("Session3DateUtc" if testing else "Session5DateUtc"))
+    return started is not None and started <= dt
+
+
+def _polars_event_schedule(
+    year: int, include_testing: bool, backend: ScheduleBackend | None
+) -> Any:
+    rows = _schedule_native_rows(year, backend)
+    columns = _frame_columns(rows)
+    if not include_testing and "RoundNumber" in columns:
+        rows = [row for row in rows if _is_race_row(row)]
+    return _polars_schedule_frame(rows, columns)
+
+
+@overload
 def get_event_schedule(
     year: int,
     include_testing: bool = True,
     *,
     backend: ScheduleBackend | None = None,
     force_ergast: bool = False,
-) -> EventSchedule:
+    lib: Literal["pandas"] = "pandas",
+) -> EventSchedule: ...
+
+
+@overload
+def get_event_schedule(
+    year: int,
+    include_testing: bool = True,
+    *,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+    lib: Literal["polars"],
+) -> pl.DataFrame: ...
+
+
+def get_event_schedule(
+    year: int,
+    include_testing: bool = True,
+    *,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+    lib: Literal["pandas", "polars"] = "pandas",
+) -> EventSchedule | pl.DataFrame:
     """Return FastF1-compatible event schedule for a specific season.
 
     Args:
@@ -1404,21 +1600,32 @@ def get_event_schedule(
             f1schedule from 2018 (Ergast when it has no season yet) and
             Ergast before.
         force_ergast: Deprecated alias of ``backend="ergast"``.
+        lib: ``"pandas"`` (default) returns fastf1's :class:`EventSchedule`.
+            ``"polars"`` returns a plain ``polars.DataFrame`` with the same
+            rows and columns, built without importing pandas (~400 ms):
+            ``RoundNumber`` is ``Int64``, ``F1ApiSupport`` ``Boolean``, the
+            circuit coordinates ``Float64``, ``EventDate`` and every
+            ``Session{i}DateUtc`` a naive ``Datetime("us")`` (as the pandas
+            columns), ``Session{i}Date`` a naive ``Datetime("us")`` holding the
+            local track time (the pandas column holds tz-aware datetimes; the
+            offset is in ``GmtOffset``), every other column ``String``. Missing
+            values are null where pandas has ``NaN``/``NaT``/``None``. The
+            frame has no ``year``/``backend`` attributes and no event methods.
     """
+    backend = _normalize_backend(backend, force_ergast)
+    if _schedule_lib(lib) == "polars":
+        return _polars_event_schedule(year, include_testing, backend)
+
     import pandas as pd
 
-    from .event_frames import EventSchedule
+    from .event_frames import EventSchedule, _event_data
 
-    backend = _normalize_backend(backend, force_ergast)
-    year_payload = _resolve_year_payload(year, backend)
-    metadata_dict = year_payload.get("metadata", {})
-    events = list(_get_events_cached(year, backend))
-
-    rows: list[dict[str, Any]] = []
-    for event_name in events:
-        metadata = metadata_dict.get(event_name) if isinstance(metadata_dict, dict) else None
-        event = _create_event(year, event_name, metadata, backend)
-        rows.append(cast(dict[str, Any], event.to_dict()))
+    # The rows hold the values each event's Series would (``Event(...).to_dict()``),
+    # built without the 25 Series.
+    rows = [
+        _event_data(year, event_name, metadata, backend)
+        for event_name, metadata in _schedule_event_metadata(year, backend)
+    ]
 
     schedule = EventSchedule(rows)
     schedule.year = year
@@ -1433,13 +1640,36 @@ def get_event_schedule(
     return filtered
 
 
+@overload
 def get_events_remaining(
     dt: datetime | None = None,
     *,
     include_testing: bool = True,
     backend: ScheduleBackend | None = None,
     force_ergast: bool = False,
-) -> EventSchedule:
+    lib: Literal["pandas"] = "pandas",
+) -> EventSchedule: ...
+
+
+@overload
+def get_events_remaining(
+    dt: datetime | None = None,
+    *,
+    include_testing: bool = True,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+    lib: Literal["polars"],
+) -> pl.DataFrame: ...
+
+
+def get_events_remaining(
+    dt: datetime | None = None,
+    *,
+    include_testing: bool = True,
+    backend: ScheduleBackend | None = None,
+    force_ergast: bool = False,
+    lib: Literal["pandas", "polars"] = "pandas",
+) -> EventSchedule | pl.DataFrame:
     """Events of the season of ``dt`` (default: now, UTC) that have not finished yet.
 
     An event is kept while its last session (the third session for testing
@@ -1450,11 +1680,22 @@ def get_events_remaining(
         include_testing: Keep pre-season testing events.
         backend: Schedule backend (see :func:`get_event_schedule`).
         force_ergast: Deprecated alias of ``backend="ergast"``.
+        lib: ``"pandas"`` (default) or ``"polars"`` (the polars schedule of
+            :func:`get_event_schedule`, built without importing pandas).
     """
-    import pandas as pd
-
     if dt is None:
         dt = datetime.now(UTC).replace(tzinfo=None)
+    if _schedule_lib(lib) == "polars":
+        backend = _normalize_backend(backend, force_ergast)
+        rows = _schedule_native_rows(dt.year, backend)
+        columns = _frame_columns(rows)
+        if not include_testing and "RoundNumber" in columns:
+            rows = [row for row in rows if _is_race_row(row)]
+        rows = [row for row in rows if not _event_finished(row, dt, include_testing)]
+        return _polars_schedule_frame(rows, columns)
+
+    import pandas as pd
+
     events = get_event_schedule(
         dt.year, include_testing=include_testing, backend=backend, force_ergast=force_ergast
     )
@@ -1469,11 +1710,18 @@ def get_events_remaining(
         result.backend = events.backend
         return result
 
+    # Whole columns as lists: ``iterrows`` built a Series per event (~0.4 ms each).
+    columns = events.columns
+    formats = events["EventFormat"].tolist() if "EventFormat" in columns else [""] * len(events)
+    dates = {
+        column: events[column].tolist() if column in columns else None
+        for column in ("Session3DateUtc", "Session5DateUtc")
+    }
     indexes_to_drop = []
-    for idx, event in events.iterrows():
-        testing = str(event.get("EventFormat", "")) == "testing"
-        column = "Session3DateUtc" if testing else "Session5DateUtc"
-        session_date = pd.Timestamp(event[column]) if column in event.index else pd.NaT
+    for position, idx in enumerate(events.index):
+        testing = str(formats[position]) == "testing"
+        values = dates["Session3DateUtc" if testing else "Session5DateUtc"]
+        session_date = pd.Timestamp(values[position]) if values is not None else pd.NaT
         if not pd.isna(session_date) and session_date <= dt:
             indexes_to_drop.append(idx)
     result = events.drop(index=indexes_to_drop)

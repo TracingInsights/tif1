@@ -433,7 +433,7 @@ Status key:
 |---|---|---|
 | `get_session` | supported | round/event aliases supported |
 | `get_event` | supported | event lookup supported |
-| `get_event_schedule` | supported | fastf1 schedule columns plus `GmtOffset`; testing rows (round 0) kept unless `include_testing=False` |
+| `get_event_schedule` | supported | fastf1 schedule columns plus `GmtOffset`; testing rows (round 0) kept unless `include_testing=False`; `lib="polars"` (tif1 extension, also on `get_events_remaining`) returns a polars frame without importing pandas |
 | `Cache.enable_cache` | supported | compatibility shim |
 | `set_log_level` | supported | compatibility shim |
 | `plotting.setup_mpl` | supported | compatibility helper module |

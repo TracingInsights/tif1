@@ -1,0 +1,290 @@
+{
+ "pairs": 10,
+ "cold": false,
+ "control_src": "/tmp/corinth/control/src",
+ "candidate_src": "/tmp/corinth/C9/src",
+ "cache": "/tmp/corinth/warm-C9",
+ "summary": {
+  "schedule_pandas": {
+   "phases": {
+    "import": {
+     "control_median": 14.2,
+     "candidate_median": 20.5,
+     "control_p90": 30.7,
+     "candidate_p90": 22.7,
+     "control_min": 12.3,
+     "candidate_min": 13.2,
+     "candidate_faster_pairs": "4/10"
+    },
+    "schedule": {
+     "control_median": 498.4,
+     "candidate_median": 587.5,
+     "control_p90": 709.5,
+     "candidate_p90": 802.8,
+     "control_min": 392.5,
+     "candidate_min": 437.4,
+     "candidate_faster_pairs": "4/10"
+    },
+    "in_process_total": {
+     "control_median": 521.2,
+     "candidate_median": 606.0,
+     "control_p90": 722.8,
+     "candidate_p90": 824.9,
+     "control_min": 404.8,
+     "candidate_min": 452.8,
+     "candidate_faster_pairs": "4/10"
+    },
+    "process_wall": {
+     "control_median": 627.0,
+     "candidate_median": 677.2,
+     "control_p90": 800.1,
+     "candidate_p90": 981.1,
+     "control_min": 468.4,
+     "candidate_min": 527.3,
+     "candidate_faster_pairs": "5/10"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  },
+  "schedule_polars": {
+   "phases": {
+    "import": {
+     "control_median": 12.6,
+     "candidate_median": 18.6,
+     "control_p90": 22.1,
+     "candidate_p90": 21.3,
+     "control_min": 12.1,
+     "candidate_min": 12.2,
+     "candidate_faster_pairs": "4/10"
+    },
+    "schedule": {
+     "control_median": 474.7,
+     "candidate_median": 202.5,
+     "control_p90": 572.5,
+     "candidate_p90": 250.4,
+     "control_min": 376.5,
+     "candidate_min": 123.9,
+     "candidate_faster_pairs": "10/10"
+    },
+    "in_process_total": {
+     "control_median": 495.5,
+     "candidate_median": 215.1,
+     "control_p90": 585.2,
+     "candidate_p90": 270.8,
+     "control_min": 398.6,
+     "candidate_min": 145.0,
+     "candidate_faster_pairs": "10/10"
+    },
+    "process_wall": {
+     "control_median": 605.0,
+     "candidate_median": 269.7,
+     "control_p90": 661.4,
+     "candidate_p90": 358.6,
+     "control_min": 503.5,
+     "candidate_min": 224.9,
+     "candidate_faster_pairs": "10/10"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "polars"
+     ],
+     "pandas_imported": [
+      "False"
+     ]
+    }
+   }
+  },
+  "remaining_pandas": {
+   "phases": {
+    "import": {
+     "control_median": 16.6,
+     "candidate_median": 16.9,
+     "control_p90": 22.3,
+     "candidate_p90": 22.9,
+     "control_min": 12.1,
+     "candidate_min": 12.2,
+     "candidate_faster_pairs": "5/10"
+    },
+    "remaining": {
+     "control_median": 496.3,
+     "candidate_median": 432.6,
+     "control_p90": 717.8,
+     "candidate_p90": 629.5,
+     "control_min": 426.6,
+     "candidate_min": 388.0,
+     "candidate_faster_pairs": "8/10"
+    },
+    "in_process_total": {
+     "control_median": 514.0,
+     "candidate_median": 445.2,
+     "control_p90": 739.3,
+     "candidate_p90": 651.4,
+     "control_min": 439.1,
+     "candidate_min": 400.6,
+     "candidate_faster_pairs": "8/10"
+    },
+    "process_wall": {
+     "control_median": 623.9,
+     "candidate_median": 557.1,
+     "control_p90": 835.2,
+     "candidate_p90": 874.9,
+     "control_min": 530.2,
+     "candidate_min": 470.6,
+     "candidate_faster_pairs": "8/10"
+    }
+   },
+   "info": {
+    "control": {
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  },
+  "remaining_polars": {
+   "phases": {
+    "import": {
+     "control_median": 18.5,
+     "candidate_median": 15.1,
+     "control_p90": 25.0,
+     "candidate_p90": 21.1,
+     "control_min": 12.1,
+     "candidate_min": 12.0,
+     "candidate_faster_pairs": "7/10"
+    },
+    "remaining": {
+     "control_median": 473.9,
+     "candidate_median": 180.8,
+     "control_p90": 662.4,
+     "candidate_p90": 268.1,
+     "control_min": 389.3,
+     "candidate_min": 133.2,
+     "candidate_faster_pairs": "10/10"
+    },
+    "in_process_total": {
+     "control_median": 490.6,
+     "candidate_median": 199.6,
+     "control_p90": 675.0,
+     "candidate_p90": 284.9,
+     "control_min": 401.7,
+     "candidate_min": 146.1,
+     "candidate_faster_pairs": "10/10"
+    },
+    "process_wall": {
+     "control_median": 611.1,
+     "candidate_median": 284.7,
+     "control_p90": 770.9,
+     "candidate_p90": 365.9,
+     "control_min": 472.1,
+     "candidate_min": 204.4,
+     "candidate_faster_pairs": "10/10"
+    }
+   },
+   "info": {
+    "control": {
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "pandas_imported": [
+      "False"
+     ]
+    }
+   }
+  },
+  "get_event": {
+   "phases": {
+    "import": {
+     "control_median": 12.6,
+     "candidate_median": 12.5,
+     "control_p90": 20.4,
+     "candidate_p90": 20.4,
+     "control_min": 11.9,
+     "candidate_min": 11.8,
+     "candidate_faster_pairs": "4/10"
+    },
+    "get_event_name": {
+     "control_median": 451.4,
+     "candidate_median": 428.0,
+     "control_p90": 544.1,
+     "candidate_p90": 552.6,
+     "control_min": 382.4,
+     "candidate_min": 353.6,
+     "candidate_faster_pairs": "7/10"
+    },
+    "get_event_round": {
+     "control_median": 10.8,
+     "candidate_median": 0.4,
+     "control_p90": 23.9,
+     "candidate_p90": 0.7,
+     "control_min": 9.7,
+     "candidate_min": 0.4,
+     "candidate_faster_pairs": "10/10"
+    },
+    "in_process_total": {
+     "control_median": 474.6,
+     "candidate_median": 443.7,
+     "control_p90": 573.2,
+     "candidate_p90": 568.4,
+     "control_min": 407.1,
+     "candidate_min": 374.6,
+     "candidate_faster_pairs": "7/10"
+    },
+    "process_wall": {
+     "control_median": 553.0,
+     "candidate_median": 528.6,
+     "control_p90": 643.7,
+     "candidate_p90": 646.5,
+     "control_min": 483.5,
+     "candidate_min": 463.3,
+     "candidate_faster_pairs": "7/10"
+    }
+   },
+   "info": {
+    "control": {
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,67 @@
+{
+ "pairs": 5,
+ "cold": true,
+ "control_src": "/tmp/corinth/control/src",
+ "candidate_src": "/tmp/corinth/C9/src",
+ "cache": null,
+ "summary": {
+  "current_schedule": {
+   "phases": {
+    "import": {
+     "control_median": 20.6,
+     "candidate_median": 54.1,
+     "control_p90": 55.3,
+     "candidate_p90": 84.0,
+     "control_min": 14.5,
+     "candidate_min": 21.2,
+     "candidate_faster_pairs": "2/5"
+    },
+    "schedule": {
+     "control_median": 2463.1,
+     "candidate_median": 968.7,
+     "control_p90": 3285.8,
+     "candidate_p90": 1731.9,
+     "control_min": 1531.6,
+     "candidate_min": 679.0,
+     "candidate_faster_pairs": "5/5"
+    },
+    "in_process_total": {
+     "control_median": 2480.0,
+     "candidate_median": 990.4,
+     "control_p90": 3341.8,
+     "candidate_p90": 1786.8,
+     "control_min": 1567.2,
+     "candidate_min": 766.7,
+     "candidate_faster_pairs": "5/5"
+    },
+    "process_wall": {
+     "control_median": 2569.8,
+     "candidate_median": 1090.7,
+     "control_p90": 3814.6,
+     "candidate_p90": 2149.3,
+     "control_min": 1771.6,
+     "candidate_min": 988.4,
+     "candidate_faster_pairs": "5/5"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "polars"
+     ],
+     "pandas_imported": [
+      "False"
+     ]
+    }
+   }
+  }
+ }
+}
