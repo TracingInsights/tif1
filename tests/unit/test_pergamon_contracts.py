@@ -132,6 +132,17 @@ def test_parallel_decompression_matches_serial_and_drops_unreadable_rows():
     assert all(serial[("D", i)] == payloads[i] for i in range(70))
 
 
+def test_no_rows_never_probe_the_codec(monkeypatch):
+    # A polars tier miss must not import pyarrow for the lz4 codec.
+    from tif1 import cache as cache_module
+
+    def probe():
+        raise AssertionError("codec probed for an empty batch")
+
+    monkeypatch.setattr(cache_module, "_pa_lz4_codec", probe)
+    assert list(_decompress_frame_rows([])) == []
+
+
 # -- P3: per-driver blobs ---------------------------------------------------------
 
 
