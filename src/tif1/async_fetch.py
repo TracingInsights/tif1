@@ -432,11 +432,81 @@ atexit.register(cleanup_resources)
 
 # Deferred telemetry cache writes: bulk telemetry batches collect the
 # (year, gp, session, driver, lap, tel_payload) tuples during the fetch and
-# flush them in ONE serial executor job after the gather. Writing inside the
-# semaphore slots serializes 22 concurrent slots on the SQLite lock and adds
-# seconds to cold batches on small machines; the post-gather flush costs a
-# fraction of that (measured, see .agents/perf-kalchedon/RESULTS.md).
-_deferred_telemetry_writes: ContextVar[list[tuple[Any, ...]] | None] = ContextVar(
+# persist them outside the semaphore slots. Writing inside the slots
+# serializes 22 concurrent slots on the SQLite lock and adds seconds to cold
+# batches on small machines (measured, see .agents/perf-kalchedon/RESULTS.md);
+# a batch's collector is either a list flushed after the gather or a
+# _StreamedTelemetryWrites whose writer thread persists rows as they arrive.
+
+# Seconds a streamed-writes thread waits for the next row before it exits
+# (the next row starts a new one).
+_STREAMED_WRITES_IDLE_S = 0.5
+
+
+class _StreamedTelemetryWrites:
+    """A batch's deferred telemetry writes, persisted while the batch still fetches.
+
+    Naxos N9: a cold bulk wave is bound by the link (~10 MB/s here) and
+    leaves the GIL mostly idle, while the payload-tier flush (orjson dumps,
+    zstd, SQLite: ~1.35 s for a race's 1128 laps) used to start only after
+    the gather, where it fought the GIL-bound frame build for the same core
+    (the build took ~1.9 s instead of ~0.75 s). Rows queued here are written
+    by a writer thread during the wave instead, so only the rows of the last
+    few responses remain after the gather.
+
+    The writer is registered like the frame-tier writers (joined by
+    ``Cache.close()``/``invalidate()`` and at exit). It exits after
+    ``_STREAMED_WRITES_IDLE_S`` without a row or once :meth:`close` is called
+    and the queue is empty, so an unclosed batch cannot hold the exit join;
+    a later row starts a new writer.
+    """
+
+    __slots__ = ("_cache", "_closed", "_cond", "_pending", "_running")
+
+    def __init__(self, cache: Any) -> None:
+        self._cache = cache
+        self._cond = threading.Condition(threading.Lock())
+        self._pending: list[tuple[Any, ...]] = []
+        self._running = False
+        self._closed = False
+
+    def append(self, entry: tuple[Any, ...]) -> None:
+        """Queue one ``(year, gp, session, driver, lap, tel_payload)`` row."""
+        with self._cond:
+            self._pending.append(entry)
+            if self._running:
+                self._cond.notify()
+                return
+            self._running = True
+        from .cache import register_frame_writer
+
+        register_frame_writer(self._drain)
+
+    def close(self) -> None:
+        """No more rows: the writer exits once the queue is empty."""
+        with self._cond:
+            self._closed = True
+            self._cond.notify()
+
+    def _drain(self) -> None:
+        set_telemetry = self._cache.set_telemetry
+        while True:
+            with self._cond:
+                if not self._pending and not self._closed:
+                    self._cond.wait(_STREAMED_WRITES_IDLE_S)
+                if not self._pending:
+                    self._running = False
+                    return
+                batch, self._pending = self._pending, []
+            for year, gp, session, driver, lap, tel_payload in batch:
+                try:
+                    set_telemetry(year, gp, session, driver, lap, tel_payload)
+                except (RuntimeError, TypeError, ValueError) as e:
+                    logger.debug("Deferred telemetry cache write skipped: %s", e)
+
+
+_TelemetryWriteCollector = list[tuple[Any, ...]] | _StreamedTelemetryWrites
+_deferred_telemetry_writes: ContextVar[_TelemetryWriteCollector | None] = ContextVar(
     "tif1_deferred_telemetry_writes", default=None
 )
 
@@ -1056,9 +1126,9 @@ async def fetch_multiple_async(
         use_cache: If True, read from cache before network fetch
         write_cache: If True, persist successful network responses to cache
         validate_payload: If True, run payload validation before returning data
-        defer_telemetry_writes: If True, telemetry payloads are collected
-            during the batch and written in one serial flush after the
-            gather, instead of inside the concurrency slots
+        defer_telemetry_writes: If True, telemetry payloads are written
+            outside the concurrency slots: by a writer thread while the batch
+            fetches (one serial flush after the gather without threads)
         telemetry_writes: A caller-owned list that collects the telemetry
             payload writes instead (with ``write_cache``); the caller hands
             it to :func:`schedule_telemetry_writes` when it sees fit (the
@@ -1086,6 +1156,7 @@ async def fetch_multiple_async(
         return []
 
     collector: list[tuple[Any, ...]] | None = None
+    streamed: _StreamedTelemetryWrites | None = None
     collector_token = None
     if telemetry_writes is not None and write_cache:
         collector_token = _deferred_telemetry_writes.set(telemetry_writes)
@@ -1094,8 +1165,14 @@ async def fetch_multiple_async(
         if cache_for_defer is not None and callable(
             getattr(cache_for_defer, "set_telemetry", None)
         ):
-            collector = []
-            collector_token = _deferred_telemetry_writes.set(collector)
+            if THREADS_AVAILABLE:
+                # Naxos N9: rows are persisted during the wave.
+                streamed = _StreamedTelemetryWrites(cache_for_defer)
+                collector_token = _deferred_telemetry_writes.set(streamed)
+            else:
+                # No threads (Pyodide): one inline flush after the gather.
+                collector = []
+                collector_token = _deferred_telemetry_writes.set(collector)
 
     try:
         results = await _gather_fetches(
@@ -1111,6 +1188,8 @@ async def fetch_multiple_async(
     finally:
         if collector_token is not None:
             _deferred_telemetry_writes.reset(collector_token)
+        if streamed is not None:
+            streamed.close()
 
     if collector:
         schedule_telemetry_writes(collector)
