@@ -30,7 +30,7 @@ from typing import Any
 
 from tif1.config import get_config
 from tif1.ergast.jolpica import DEFAULT_PAGE_SIZE, JolpicaClient
-from tif1.ergast.stats import RoundInfo, StatsSource, get_stats_source
+from tif1.ergast.stats import STATS_FILES, RoundInfo, StatsSource, get_stats_source
 from tif1.exceptions import DataNotFoundError, ErgastInvalidRequestError, NetworkError
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,28 @@ def _jolpica_disabled_error(what: str) -> ErgastInvalidRequestError:
     )
 
 
+def _numeric_selectors(selectors: dict[str, Any]) -> dict[str, Any]:
+    """A copy of ``selectors`` with digit-string ``season``/``round`` values as integers."""
+    resolved = dict(selectors)
+    for key in ("season", "round"):
+        value = resolved.get(key)
+        if isinstance(value, str) and value.strip().isdigit():
+            resolved[key] = int(value.strip())
+    return resolved
+
+
+def routes_to_stats(plan: QueryPlan) -> bool:
+    """Whether :func:`execute` answers ``plan`` from Stats without asking Jolpica first.
+
+    A static check (no request): ``current``/``last`` selectors resolve
+    through Jolpica and are not counted; a Stats miss that falls back to
+    Jolpica is only known once the files are read.
+    """
+    if plan.source == SOURCE_JOLPICA:
+        return False
+    return stats_applicable(plan, _numeric_selectors(plan.selectors))
+
+
 def resolve_selectors(selectors: dict[str, Any], jolpica: JolpicaClient) -> dict[str, Any]:
     """Normalize the ``season`` and ``round`` selectors to integers.
 
@@ -191,11 +213,7 @@ def resolve_selectors(selectors: dict[str, Any], jolpica: JolpicaClient) -> dict
     the Stats routing sees them; ``"current"`` and ``"last"`` resolve through
     Jolpica.
     """
-    resolved = dict(selectors)
-    for key in ("season", "round"):
-        value = resolved.get(key)
-        if isinstance(value, str) and value.strip().isdigit():
-            resolved[key] = int(value.strip())
+    resolved = _numeric_selectors(selectors)
     season = resolved.get("season")
     round_number = resolved.get("round")
     if season == "current":
@@ -288,6 +306,94 @@ def _execute_jolpica(plan: QueryPlan, selectors: dict[str, Any], jolpica: Jolpic
 # -- Stats -------------------------------------------------------------------
 
 
+def _predicted_files(
+    endpoint: str,
+    index: dict[int, RoundInfo],
+    round_number: int | None,
+    sel: dict[str, Any],
+    now: datetime,
+) -> list[tuple[str, str]]:
+    """``(slug, file name)`` of the round files ``endpoint`` reads, per ``index``.
+
+    Mirrors the reads of the ``_stats_*`` handlers: the selected rounds'
+    files for results-like endpoints (and for schedule/circuit/constructor
+    queries that filter on results), the round's file for laps, pit stops and
+    a round's standings, the last started round's file for season standings
+    (the first probe of :func:`last_completed_round`).
+    """
+    rounds = [index[key] for key in sorted(index) if index[key].completed(now)]
+    if round_number is not None:
+        rounds = [info for info in rounds if info.round == int(round_number)]
+    file_endpoint = endpoint
+    if endpoint in ("races", "circuits", "constructors"):
+        if endpoint != "constructors" and not any(
+            sel.get(key) is not None for key in _RESULT_DEPENDENT
+        ):
+            return []
+        file_endpoint = "results"
+    elif endpoint in _STANDINGS_LEAVES:
+        rounds = rounds[-1:]
+    elif endpoint in ("laps", "pitstops"):
+        if round_number is None:
+            return []
+    elif endpoint not in _RESULT_LEAVES:
+        return []
+    if endpoint == "sprint":
+        rounds = [info for info in rounds if info.has_sprint]
+    circuit = sel.get("circuit")
+    if circuit is not None and endpoint != "circuits":
+        rounds = [info for info in rounds if info.circuit_id == circuit]
+    file_name = STATS_FILES[file_endpoint]
+    return [(info.slug, file_name) for info in rounds]
+
+
+def _prefetch_cold_season(
+    stats: StatsSource,
+    endpoint: str,
+    season: int,
+    round_number: int | None,
+    sel: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Fetch ``events.json`` and the round files a query reads in one parallel wave.
+
+    Corinth C3: a cold query used to fetch ``{season}/events.json`` (the slug
+    of every round) and only then the round files, two round trips in a row.
+    When the season index is not cached, the files are predicted from the
+    packaged copy of ``events.json`` (:meth:`StatsSource.packaged_index`)
+    and fetched together with it through the normal pipeline (memo, SQLite
+    tier, persistence rules); the handlers then read them from the memo. The
+    answer still comes from the fetched ``events.json``: a mispredicted file
+    is fetched by the handler as before (the speculative one is a wasted
+    request, its verdict cached under its own key). Skipped offline, inside
+    :func:`tif1.ergast.payloads.cache_only`, without threads, and when there is
+    no prediction.
+    """
+    from tif1.core_utils.runtime import THREADS_AVAILABLE
+    from tif1.ergast.payloads import _CACHE_ONLY
+    from tif1.ergast.stats import EVENTS_FILE
+
+    if (
+        not THREADS_AVAILABLE
+        or _CACHE_ONLY.get()
+        or get_config().get("offline_mode", False)
+        or stats.season_index_cached(season)
+    ):
+        return
+    index = stats.packaged_index(season)
+    if not index:
+        return
+    files = _predicted_files(endpoint, index, round_number, sel, now)
+    if not files:
+        return
+    refs = [(season, "", EVENTS_FILE), *((season, slug, name) for slug, name in files)]
+    events = stats.loader.stats_payloads(refs)[0]
+    if isinstance(events, Exception):
+        # What the handler's own read of events.json would raise (no cached
+        # copy to serve): raise it now instead of walking the mirrors again.
+        raise events
+
+
 def _execute_stats(
     plan: QueryPlan, sel: dict[str, Any], stats: StatsSource, jolpica: JolpicaClient
 ) -> dict:
@@ -295,6 +401,7 @@ def _execute_stats(
     season = int(sel["season"])
     round_number = sel.get("round")
     now = datetime.now(UTC)
+    _prefetch_cold_season(stats, endpoint, season, round_number, sel, now)
 
     if endpoint in _RESULT_LEAVES:
         races = _collect_results(stats, jolpica, season, round_number, endpoint, sel, now)
@@ -822,5 +929,6 @@ __all__ = [
     "execute",
     "last_completed_round",
     "resolve_selectors",
+    "routes_to_stats",
     "stats_applicable",
 ]

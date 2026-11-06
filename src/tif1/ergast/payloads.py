@@ -417,9 +417,10 @@ class ErgastPayloadLoader:
         timeout = config.get("timeout", 30)
         transport = self.transport
         repo, branch = self.repo()
+        get_json = _stdlib_get_json(transport) or transport.get_json
 
         def fetch_from_url(url: str) -> dict[str, Any]:
-            return transport.get_json(url, timeout=timeout)
+            return get_json(url, timeout=timeout)
 
         fetch = (
             fetch_from_url
@@ -533,6 +534,61 @@ class ErgastPayloadLoader:
             raise
         self._write_entry(key, payload, now)
         return payload
+
+
+def _stdlib_get_json(transport: HttpTransport) -> Callable[..., dict[str, Any]] | None:
+    """A ``get_json`` over the stdlib client for Stats files, or None (use ``transport``).
+
+    Corinth C3: a cold ``tif1.ergast`` query has no niquests session; its
+    Stats files go over :mod:`tif1.first_wave`'s stdlib client
+    (:func:`tif1.first_wave.standalone_client`) instead of importing niquests and
+    opening OCSP-checked connections. A ``200`` with a JSON object is the
+    answer, a ``404`` raises :class:`DataNotFoundError` and a ``403`` a
+    :class:`NetworkError` with that status (the file refusals
+    :meth:`tif1.cdn.CDNManager.try_sources_repo` walks past, as niquests
+    reports them); anything else (a redirect, another status, a transport
+    error) is asked again through ``transport``. Only for the production
+    transport, while niquests has no warm session, with ``cdn_first_wave``
+    on.
+    """
+    from tif1.payload_loader import NiquestsTransport
+
+    if (
+        IS_EMSCRIPTEN
+        or not isinstance(transport, NiquestsTransport)
+        or not bool(get_config().get("cdn_first_wave", True))
+    ):
+        return None
+    from tif1 import first_wave, http_session
+
+    if http_session._shared_session is not None and not http_session.warm_connections_pending():
+        return None
+    client = first_wave.standalone_client()
+    if client is None:
+        return None
+    from tif1.core_utils.json_utils import json_loads
+
+    def get_json(url: str, *, timeout: float | None = None) -> dict[str, Any]:
+        wait = float(timeout if timeout is not None else get_config().get("timeout", 30))
+        try:
+            status, content = client.get_with_status(url, wait)
+        except Exception as exc:  # transport error: niquests asks again below
+            logger.debug("Stdlib fetch of %s failed: %s", url, exc)
+            status, content = None, None
+        if status == 404:
+            raise DataNotFoundError(url=url)
+        if status == 403:
+            raise NetworkError(url=url, status_code=403)
+        if status == 200 and content is not None:
+            try:
+                data = json_loads(content)
+            except (ValueError, TypeError):
+                data = None
+            if isinstance(data, dict):
+                return data
+        return transport.get_json(url, timeout=timeout)
+
+    return get_json
 
 
 _shared_loader: ErgastPayloadLoader | None = None

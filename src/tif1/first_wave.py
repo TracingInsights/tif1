@@ -40,6 +40,13 @@ raw.githubusercontent.com, a ~250 KB certificate revocation list downloaded
 and parsed in every process (~0.2 s), on the main thread when cold and
 under the GIL beside the pandas import when refreshing.
 
+A cold ``tif1.ergast`` query (no ``get_session``, so no wave) fetches its
+Stats files over :func:`standalone_client` (Corinth C3). Both on-demand uses
+share one process-wide stdlib client (:func:`_build_client`), which a first
+wave reuses; only a wave sets ``_client``, the wave's client, which opens the
+telemetry bridge (:func:`bridge_open`): its niquests hand-over needs the
+wave's URLs, so single requests never open it.
+
 Security note: the stdlib requests verify the certificate chain and the host
 name against the same roots as niquests, but do not run niquests' OCSP
 revocation check (``http_revocation_check``), which is soft-fail there.
@@ -294,7 +301,7 @@ def _run_niquests_warmup(urls: list[str], timeout: float) -> None:
 
 def reset() -> None:
     """Forget every slot and the wave's client (tests)."""
-    global _bridged, _client, _client_unavailable, _warm_started, _warm_urls
+    global _bridged, _client, _client_unavailable, _shared, _warm_started, _warm_urls
     _client_unavailable = False
     _warm_started = False
     _warm_urls = []
@@ -303,8 +310,9 @@ def reset() -> None:
     with _slots_lock:
         _slots.clear()
     client, _client = _client, None
-    if client is not None:
-        client.close()
+    shared, _shared = _shared, None
+    for idle in {id(c): c for c in (client, shared) if c is not None}.values():
+        idle.close()
 
 
 def _release(slots: list[tuple[str, _Slot]]) -> None:
@@ -314,6 +322,7 @@ def _release(slots: list[tuple[str, _Slot]]) -> None:
 
 def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
     # A cold ``get_session`` that fetched the calendar built the client already.
+    global _client
     client = _build_client()
     if client is None:
         _client_settled.set()
@@ -327,6 +336,7 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
         except Exception as e:  # best effort, never surfaces
             logger.debug("CDN pre-connect skipped: %s", e)
         return
+    _client = client
     _client_settled.set()
     for url, slot in slots[1:]:
         threading.Thread(
@@ -339,14 +349,19 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
 
 
 def _build_client() -> _StdlibClient | None:
-    """The stdlib client, built once per process (None where it cannot match niquests)."""
-    global _client, _client_unavailable
-    client = _client
+    """The shared stdlib client, built once per process (None where it cannot match niquests).
+
+    A first wave adopts it as ``_client``; single requests use it through
+    :func:`ensure_client` / :func:`standalone_client` without opening the
+    telemetry bridge.
+    """
+    global _client_unavailable, _shared
+    client = _shared
     if client is not None or _client_unavailable:
         return client
     with _client_lock:
-        if _client is not None or _client_unavailable:
-            return _client
+        if _shared is not None or _client_unavailable:
+            return _shared
         try:
             context = _tls_context()
         except Exception as e:  # never surfaces: niquests takes the requests
@@ -357,11 +372,11 @@ def _build_client() -> _StdlibClient | None:
             return None
         from .http_session import user_agent
 
-        _client = _StdlibClient(
+        _shared = _StdlibClient(
             context,
             {"User-Agent": user_agent(), "Accept": "*/*", "Accept-Encoding": "gzip, deflate"},
         )
-        return _client
+        return _shared
 
 
 def ensure_client() -> bool:
@@ -375,7 +390,7 @@ def ensure_client() -> bool:
     importing niquests. False with ``cdn_first_wave`` off, a proxy or no
     ``wassima``; never raises.
     """
-    if _client is not None:
+    if _client is not None or _shared is not None:
         return True
     if not _on_demand or _client_unavailable:
         return False
@@ -497,13 +512,42 @@ class _StdlibClient:
 
 
 #: The wave's client once its TLS context is built (``None`` before, and
-#: when the wave was skipped).
+#: when the wave was skipped). Its presence opens the telemetry bridge.
 _client: _StdlibClient | None = None
+#: The process-wide stdlib client (:func:`_build_client`): the wave's when a
+#: wave ran, else built on demand for single requests.
+_shared: _StdlibClient | None = None
 
 
 def has_client() -> bool:
     """Whether the wave built its stdlib client (its TLS context is ready)."""
     return _client is not None
+
+
+def standalone_client() -> _StdlibClient | None:
+    """A stdlib client for single requests outside a session load, or None (Corinth C3).
+
+    A cold ``tif1.ergast`` query never runs ``get_session``, so no first wave
+    built a client; its Stats files (``events.json`` and the per-round files,
+    jsDelivr) go over this one instead of importing niquests (~120-145 ms of
+    CPU, which competed for the GIL with the pandas import the query
+    overlaps) and opening OCSP-checked connections. The wave's client (and its
+    kept-alive connections) when a wave ran, else the shared one
+    (:func:`_build_client`), with the wave's setup: same trust store, same
+    User-Agent, same security trade-off (no OCSP check). None where the wave
+    cannot match niquests' setup (a proxy, no ``wassima``): the requests then
+    go to niquests. It never opens the telemetry bridge.
+    """
+    client = _client
+    if client is not None:
+        return client
+    return _build_client()
+
+
+def _single_request_client() -> _StdlibClient | None:
+    """The client of :func:`fetch` / :func:`fetch_status`: the wave's, else the shared one."""
+    client = _client
+    return client if client is not None else _shared
 
 
 def fetch(url: str, *, timeout: float) -> bytes | None:
@@ -512,10 +556,10 @@ def fetch(url: str, *, timeout: float) -> bytes | None:
     For the sync transport before any niquests session exists: a single
     request (the fastest lap's telemetry file, the Ergast classification)
     then needs no HTTP-stack import and no new TLS handshake. None, and the
-    caller goes to niquests, when the wave did not run or the answer is not a
-    ``200`` with a decodable body; never raises.
+    caller goes to niquests, when no stdlib client exists or the answer is not
+    a ``200`` with a decodable body; never raises.
     """
-    client = _client
+    client = _single_request_client()
     if client is None:
         return None
     try:
@@ -533,7 +577,7 @@ def fetch_status(url: str, *, timeout: float) -> tuple[int | None, bytes | None]
     files learns it from the 404 over the stdlib connections, without waiting
     for niquests.
     """
-    client = _client
+    client = _single_request_client()
     if client is None:
         return None, None
     try:

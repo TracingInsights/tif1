@@ -202,6 +202,30 @@ class StatsSource:
             return None
         return info
 
+    @staticmethod
+    def packaged_index(season: int) -> dict[int, RoundInfo] | None:
+        """``{round: RoundInfo}`` from the packaged copy of ``events.json``, or None.
+
+        ``tif1.events`` ships a compact copy of every season's race list (round,
+        name, dates, circuit, session keys). It only predicts which files a
+        cold query will read so they can be fetched beside ``events.json``
+        (Corinth C3); answers always come from :meth:`season_index`.
+        """
+        from tif1.events import _load_vendored_ergast_year
+
+        races = _load_vendored_ergast_year(season)
+        if not races:
+            return None
+        index: dict[int, RoundInfo] = {}
+        for race in races:
+            try:
+                number = int(str(race.get("round")))
+            except (TypeError, ValueError):
+                continue
+            name = str(race.get("raceName", ""))
+            index[number] = RoundInfo(number, name, race_slug(name), race)
+        return index
+
     def round_info(self, season: int, round_number: int) -> RoundInfo | None:
         settled = self.settled_round(season, round_number)
         if settled is not None:

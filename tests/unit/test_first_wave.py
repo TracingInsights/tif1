@@ -487,7 +487,10 @@ def test_single_request_without_a_wave_builds_the_client_once(on_demand, monkeyp
     assert not first_wave.has_client()
     assert transport.get_json(url) == {"MRData": {}}
     assert transport.get_json(url) == {"MRData": {}}
-    assert first_wave.has_client()
+    # The shared client serves single requests; only a wave opens the bridge.
+    assert first_wave._shared is not None
+    assert not first_wave.has_client()
+    assert not first_wave.bridge_open()
     assert contexts == ["built"]
     assert len(on_demand.connections) == 1  # kept alive between the two requests
 
@@ -495,7 +498,7 @@ def test_single_request_without_a_wave_builds_the_client_once(on_demand, monkeyp
 def test_first_wave_reuses_the_on_demand_client(on_demand, monkeypatch):
     on_demand.routes["drivers.json"] = (200, orjson.dumps(DRIVERS), {})
     assert first_wave.ensure_client()
-    client = first_wave._client
+    client = first_wave._shared
 
     def _built_twice() -> None:
         pytest.fail("the TLS context was built twice")
