@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
+# No numpy here (Corinth C2): a polars session that resolves a fuzzy event name
+# ("British") would otherwise import it (~100-190 ms) for a matrix of a few
+# dozen ratios; its hot paths never import numpy (Elis E6, Naxos N3).
 
 
 def _lcs_length(a: str, b: str) -> int:
@@ -109,14 +111,16 @@ def _fuzzy_match(query: str, reference: list[list[str]]) -> tuple[int, bool, flo
     else:
         candidate_indices = range(len(reference))
 
-    ratios = np.zeros((len(reference), width), dtype=float)
+    # Rows outside the candidates score 0.0 on every feature.
+    ratios = [[0.0] * width for _ in reference]
     for i in candidate_indices:
-        ratios[i] = [_ratio(val, query) if val else 0.0 for val in reference[i]]
+        ratios[i] = [float(_ratio(val, query)) if val else 0.0 for val in reference[i]]
 
-    max_ratio = float(ratios.max())
-    tied = np.flatnonzero(ratios.max(axis=1) == max_ratio)
+    row_max = [max(row) for row in ratios]
+    max_ratio = max(row_max)
+    tied = [i for i, best in enumerate(row_max) if best == max_ratio]
     if len(tied) == 1:
-        return int(tied[0]), False, max_ratio
+        return tied[0], False, max_ratio
 
     # Several elements share the best score (Bahrain GP and pre-season testing
     # both match "bahrain"). A feature that more than one tied element has
@@ -138,4 +142,5 @@ def _fuzzy_match(query: str, reference: list[list[str]]) -> tuple[int, bool, flo
         )
         for i in tied
     ]
-    return int(tied[int(np.argmax(tie_scores))]), False, max_ratio
+    # The first of equal scores wins, as numpy's argmax picked it.
+    return tied[max(range(len(tie_scores)), key=tie_scores.__getitem__)], False, max_ratio

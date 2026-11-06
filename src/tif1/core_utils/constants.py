@@ -8,6 +8,13 @@ MAX_YEAR = 2100
 F1_API_FIRST_YEAR = 2018
 #: Sessions a season before F1_API_FIRST_YEAR can load (Ergast carries no practice data).
 ERGAST_LOADABLE_SESSIONS: tuple[str, ...] = ("Qualifying", "Sprint", "Race")
+#: First seasons with Ergast lap timings and pit stops (Ergast's documented
+#: coverage; Jolpica answers ``total: 0`` before them and the Stats repository
+#: has no ``laptimes.json``/``pitstops.json``): an earlier session asks for
+#: neither, instead of a jsDelivr 404, a StaticDelivr 404 and an empty Jolpica
+#: page per file (Corinth C2: 1.2-3.6 s of a cold pre-2018 ``laps``).
+ERGAST_FIRST_LAPS_SEASON = 1996
+ERGAST_FIRST_PIT_STOPS_SEASON = 2011
 
 # Cache configuration
 MAX_CACHE_SIZE = 100

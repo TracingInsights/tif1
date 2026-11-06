@@ -25,8 +25,9 @@ def preconnect(monkeypatch):
     monkeypatch.setattr(core, "THREADS_AVAILABLE", True)
     calls: list[list[str]] = []
 
-    def _record(urls: list[str], *, timeout: float) -> None:
+    def _record(urls: list[str], *, timeout: float, wait_limit: float | None = None) -> None:
         assert timeout >= 1
+        assert wait_limit is None or wait_limit >= timeout
         calls.append(list(urls))
 
     monkeypatch.setattr(first_wave, "start", _record)

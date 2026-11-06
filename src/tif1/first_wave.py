@@ -88,16 +88,25 @@ _warm_started = False
 _bridged = 0
 
 
-def start(urls: list[str], *, timeout: float) -> None:
+def start(urls: list[str], *, timeout: float, wait_limit: float | None = None) -> None:
     """Fetch ``urls`` over the standard library in daemon threads.
 
     One thread builds the TLS context (the ``ssl``/``http.client`` imports and
     the trust store, ~40 ms of CPU) and fetches the first URL; one more
     thread per further URL. Never raises: a failure leaves the slot empty and
     the request goes to niquests.
+
+    Args:
+        urls: The wave's URLs.
+        timeout: Socket timeout of each request.
+        wait_limit: Seconds after the start that :func:`take` still waits for
+            a body (default :data:`WAIT_LIMIT`). The Ergast-only wave (Corinth
+            C2) waits up to the request timeout: its Stats files come from
+            cold jsDelivr edges (up to ~2 s each) and nothing else would fetch
+            them sooner.
     """
     global _warm_urls, _warm_timeout
-    deadline = time.monotonic() + WAIT_LIMIT
+    deadline = time.monotonic() + (WAIT_LIMIT if wait_limit is None else wait_limit)
     slots = [(url, _Slot(deadline)) for url in urls]
     if not slots:
         return
