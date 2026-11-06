@@ -182,7 +182,7 @@ tif1 exports `SessionNotLoadedError` but does not raise it. Session data propert
 
 ### Telemetry errors
 
-A failed telemetry request does not raise. tif1 writes a warning to the log, and the lap gets an empty telemetry frame with the usual columns. With the default `session.load()`, this occurs at the first access of a lap of the driver, not in `load()`. With `session.load(telemetry="eager")`, the warnings occur in `load()`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
+A failed telemetry request does not raise. tif1 writes a warning to the log, and the lap gets an empty telemetry frame with the usual columns. With the default `session.load()`, this occurs when the code reads the lap, not in `load()`. A failed one-lap fetch on a cold session is sent again by the per-lap path, which writes the warning if it fails again. With `session.load(telemetry="eager")`, the warnings occur in `load()`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
 ```python
 import tif1

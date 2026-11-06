@@ -53,7 +53,7 @@ session = get_session(2025, "Abu Dhabi Grand Prix", "Race")
 session.load(laps=True, telemetry=False, messages=True, weather=True)
 ```
 
-The `session.load()` call requires network access on a cold cache. By default it does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver. `telemetry="eager"` fetches the telemetry of every lap in `load()`, as fastf1 does, which is slow. With `telemetry=False`, each lap fetches only its own telemetry on first access. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
+The `session.load()` call requires network access on a cold cache. By default it does not fetch telemetry. The telemetry of a driver is fetched when the code reads it. On a cold session, a first read of one lap fetches only that lap. Other reads fetch all the laps of the driver in one wave. `telemetry="eager"` fetches the telemetry of every lap in `load()`, as fastf1 does, which is slow. With `telemetry=False`, each lap fetches only its own telemetry on first access. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
 ## Full Reference
 

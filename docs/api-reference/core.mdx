@@ -569,7 +569,7 @@ Explicitly load session data. By default, data is loaded lazily when accessed.
 
 **Parameters:**
 - `laps`: Load lap timing data
-- `telemetry`: `True` (default) or `"lazy"`: do not fetch telemetry now. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. `"eager"`: fetch the telemetry of every lap now, as the fastf1 `load()` does. This takes time on a cold cache. `False`: no telemetry registration; each lap fetches its own file on first access. Any value other than `False` also sets `laps=True`. The frames are the same with every value. The config key `load_telemetry_lazy` set to `False` gives `True` the effect of `"eager"`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry) for the errors, the cache, and work without a network
+- `telemetry`: `True` (default) or `"lazy"`: do not fetch telemetry now. The telemetry of a driver is fetched when the code reads it. On a cold session, a first read of one lap fetches only that lap. Other reads fetch all the laps of the driver in one wave. `"eager"`: fetch the telemetry of every lap now, as the fastf1 `load()` does. This takes time on a cold cache. `False`: no telemetry registration; each lap fetches its own file on first access. Any value other than `False` also sets `laps=True`. The frames are the same with every value. The config key `load_telemetry_lazy` set to `False` gives `True` the effect of `"eager"`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry) for the errors, the cache, and work without a network
 - `weather`: Load weather data
 - `messages`: Load race control messages
 - `livedata`: The fastf1 live-timing recording. tif1 reads historical data only, so any value other than `None` raises `NotImplementedError`

@@ -338,8 +338,8 @@ class Session:
 
         Args:
             laps: Fetch lap timing data (forced to True when telemetry=True)
-            telemetry: True/"lazy" (default): fetch each driver's telemetry at
-                the first access of one of its laps; "eager": fetch the
+            telemetry: True/"lazy" (default): fetch each driver's telemetry when
+                the code reads it; "eager": fetch the
                 telemetry of every lap now (slow, the fastf1 load())
             weather: Fetch weather samples
             messages: Fetch race control messages
@@ -492,7 +492,7 @@ The data selection flags belong to `session.load(laps, telemetry, weather, messa
 - **`telemetry` (bool, `"lazy"` or `"eager"`)**: Make the telemetry of every lap available
   - Includes: speed, RPM, throttle, brake, gear, DRS, position (X/Y/Z)
   - Sampling rate: roughly 7-9 samples per second
-  - `True` (default) and `"lazy"`: no fetch in `load()`; the first access of a lap of a driver fetches all the laps of that driver
+  - `True` (default) and `"lazy"`: no fetch in `load()`. A driver's telemetry is fetched when the code reads it. On a cold session, a first one-lap read fetches only that lap
   - `"eager"`: fetch every lap now, as the fastf1 `load()` does. This is the slowest option: one payload per driver lap
   - `False`: each lap fetches only its own file on first access, for example `driver.get_lap(n).telemetry`
   - Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry) for errors, the cache, and work without a network

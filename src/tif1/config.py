@@ -199,8 +199,9 @@ class Config:
             "prefetch_all_telemetry_after_laps_load": False,
             "telemetry_prefetch_max_concurrent_requests": 32,
             # load(telemetry=True) means telemetry="lazy" (the default): a
-            # driver's laps are fetched in one wave on the first access of any
-            # of them. False makes load() fetch every lap's telemetry, as
+            # driver's laps are fetched in one wave when it is first read (on
+            # a cold session a first one-lap read fetches that lap alone).
+            # False makes load() fetch every lap's telemetry, as
             # fastf1's load() does (telemetry="eager" asks for that per call).
             "load_telemetry_lazy": True,
             # Cold lazy loads: after a driver's wave, the next N pending drivers

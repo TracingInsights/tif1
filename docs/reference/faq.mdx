@@ -173,7 +173,7 @@ session = tif1.get_session(2025, "Monaco Grand Prix", "Race")
 laps = session.laps  # Data fetched here
 ```
 
-For explicit control over the data that is fetched, use `session.load()`. Unlike fastf1, `session.load()` does not fetch telemetry by default: a driver's telemetry is fetched at the first access of one of its laps. Use `session.load(telemetry="eager")` for the fastf1 behavior, for example before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
+For explicit control over the data that is fetched, use `session.load()`. Unlike fastf1, `session.load()` does not fetch telemetry by default: a driver's telemetry is fetched when the code reads it. Use `session.load(telemetry="eager")` for the fastf1 behavior, for example before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
 ### How do I get telemetry for all drivers?
 

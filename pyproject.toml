@@ -78,7 +78,7 @@ dependencies = [
     # x86_64 and arm64 (one abi3 wheel per platform for every GIL CPython >= 3.11;
     # no free-threaded wheels yet). Pyodide, PyPy and other platforms keep the
     # pure-Python decoder; TIF1_DISABLE_NATIVE=1 turns it off at runtime.
-    "tif1-native>=0.2,<0.3; platform_python_implementation == 'CPython' and (sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32') and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ARM64')",
+    "tif1-native>=0.2.1,<0.4; platform_python_implementation == 'CPython' and (sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32') and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ARM64')",
 ]
 
 [project.urls]

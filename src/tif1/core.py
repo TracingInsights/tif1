@@ -1361,10 +1361,12 @@ class Session:
             laps: If True, fetch laps data. Required for telemetry - if telemetry=True
                   and laps=False, laps will be automatically set to True.
             telemetry: ``True`` (default) or ``"lazy"``: make every lap's
-                telemetry available without fetching it now. The first
-                access of any lap of a driver fetches all of that driver's
-                laps in one parallel wave (a network failure is logged then
-                and the lap gets an empty telemetry frame), and
+                telemetry available without fetching it now. A driver's
+                telemetry is fetched when it is first read: all of the
+                driver's laps in one parallel wave, or, on a cold session,
+                only the lap a first one-lap read asks for (the next read
+                brings the rest). A network failure is logged then and the
+                lap gets an empty telemetry frame, and
                 :meth:`fetch_all_laps_telemetry` fetches every driver not yet
                 touched in one batch. ``"eager"``: fetch the telemetry of
                 every lap now, as fastf1's ``load()`` does (needed before
@@ -1653,7 +1655,8 @@ class Session:
         tier registers its driver rows as sources, Delphi D5), so a warm lazy
         load holds what an eager one does. The laps left over are grouped by
         driver; :meth:`_ensure_lazy_telemetry` fetches a driver's group in one
-        wave on the first access of any of its laps.
+        wave when it is first read (on a cold session a first one-lap read
+        fetches that lap alone: :meth:`_lazy_lone_lap`).
         """
         if self._ergast_only or not self._telemetry_load_pending():
             return
@@ -7255,8 +7258,8 @@ class Session:
 
         cached_df = self._memo.get("telemetry_df", (driver, lap_num))
         if cached_df is None and getattr(self, "_lazy_telemetry_refs", None):
-            # load(telemetry="lazy"): the driver's first touched lap brings
-            # all of its laps in one wave.
+            # load(telemetry="lazy"): the driver's first touch brings all of its
+            # laps in one wave, or this lap alone on a cold session (_lazy_lone_lap).
             self._ensure_lazy_telemetry(((driver, lap_num),))
             cached_df = self._memo.get("telemetry_df", (driver, lap_num))
         if cached_df is not None:

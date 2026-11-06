@@ -1706,7 +1706,7 @@ print(f"{len(laps)} laps")
 
 **Example - Explicit Loading Pattern:**
 
-`session.load()` fetches several data types in one call. Its default is `laps=True, telemetry=True, weather=True, messages=True`. `telemetry=True` fetches no telemetry in `load()`: a driver's laps are fetched at the first access of one of them. A telemetry error then occurs at that access, as a log warning and an empty telemetry frame. `telemetry="eager"` fetches the telemetry of every lap in `load()`. Turn off what is not needed:
+`session.load()` fetches several data types in one call. Its default is `laps=True, telemetry=True, weather=True, messages=True`. `telemetry=True` fetches no telemetry in `load()`: a driver's telemetry is fetched when the code reads it. A telemetry error then occurs at that access, as a log warning and an empty telemetry frame. `telemetry="eager"` fetches the telemetry of every lap in `load()`. Turn off what is not needed:
 
 ```python
 import tif1

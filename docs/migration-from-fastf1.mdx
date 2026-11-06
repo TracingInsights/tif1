@@ -75,7 +75,7 @@ In fastf1, `session.load()` downloads the car data and the position data of ever
 
 | Behavior | fastf1 `load()` | tif1 `load()` (default) |
 | :--- | :--- | :--- |
-| Telemetry download | All drivers, in `load()` | One driver at a time, at the first access of a lap of that driver |
+| Telemetry download | All drivers, in `load()` | One driver at a time, when the code reads it. On a cold session, a first read of one lap fetches only that lap |
 | Lap and telemetry frames | - | The same values, columns and dtypes as `telemetry="eager"` |
 | Telemetry error | In `load()` | A log warning at the first access of the lap; the lap has an empty telemetry frame |
 | Cache after `load()` | Holds all the telemetry | Holds the telemetry of the drivers that the code read |
@@ -84,11 +84,12 @@ In fastf1, `session.load()` downloads the car data and the position data of ever
 
 The details:
 
-- **Time of the download.** The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. `lap.telemetry`, `lap.get_car_data()`, `laps.telemetry`, `session.car_data[number]` and `get_fastest_lap_tel()` all start a wave. When the code reads the drivers in the order of the laps table, the next driver is fetched in the background.
-- **Errors.** `load()` reports no telemetry error. A failed request writes a warning to the log when the code reads the lap. The lap then has an empty telemetry frame, and no exception is raised. The eager load has the same per-lap behavior, but its warnings occur in `load()`. A failed background request is sent again at the first access of the lap.
-- **Cache.** The cache gets the telemetry of a driver when the code reads that driver. `fetch_all_laps_telemetry()` fetches the remaining drivers.
+- **Time of the download.** A read that needs several laps of a driver fetches all the laps of that driver in one parallel wave. `laps.telemetry` and `session.car_data[number]` are examples. When the code reads the drivers in the order of the laps table, the next driver is fetched in the background.
+- **One lap.** On a cold session, the first read of a driver that asks for one lap fetches only the file of that lap. `lap.telemetry`, `lap.get_car_data()`, `pick_fastest().get_telemetry()` and `get_fastest_lap_tel()` are examples. The next read of that driver fetches the other laps in one wave. An `iterlaps()` loop over two or more laps of a driver fetches the wave at the first lap. The fastest-lap telemetry of one driver takes 1.05 s instead of 2.9 s on a cold 2025 Bahrain race.
+- **Errors.** `load()` reports no telemetry error. A failed request writes a warning to the log when the code reads the lap. The lap then has an empty telemetry frame, and no exception is raised. The eager load has the same per-lap behavior, but its warnings occur in `load()`. A failed background request is sent again at the first access of the lap. A failed one-lap request is also sent again, with the usual retries.
+- **Cache.** The cache gets the telemetry of a driver when the code reads that driver. A lap that is fetched alone goes to the payload cache only. A later process builds its frame from that payload. `fetch_all_laps_telemetry()` fetches the remaining drivers.
 - **Work without a network.** In `offline_mode`, or without a network, a driver that was not read gives an empty frame and a warning. Fetch all the telemetry while the network is available. Use `session.load(telemetry="eager")`, or call `session.fetch_all_laps_telemetry()` after `load()`.
-- **Warm cache.** On a cached session, the time of the first lap access includes the read of the driver rows. A polars `load()` is then faster, and the first lap loop is slower by the same amount.
+- **Warm cache.** On a cached session, the time of the first lap access includes the read of the driver rows. A polars `load()` is then faster, and the first lap loop is slower by the same amount. A cached session never fetches one lap alone.
 
 To get the fastf1 behavior, use one of these:
 

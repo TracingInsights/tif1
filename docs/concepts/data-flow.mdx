@@ -2080,8 +2080,9 @@ laps = session.laps
 # Weather loads on its first access, not before
 weather = session.weather
 
-# session.load() with its defaults fetches no telemetry. A driver's laps are
-# fetched at the first access of one of them. telemetry="eager" fetches every
+# session.load() with its defaults fetches no telemetry. A driver's telemetry is
+# fetched when the code reads it (on a cold session, one lap alone for a first
+# one-lap read; else all its laps in one wave). telemetry="eager" fetches every
 # lap in load(): one file per lap, more than a thousand files for a race
 ```
 

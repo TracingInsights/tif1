@@ -2877,7 +2877,7 @@ class PolarsLaps(_TIF1Frame):
         rows = self.rows(named=True)
         walk = _LapWalk(rows, positions)
         if getattr(session, "_lazy_telemetry_refs", None) and "Driver" in self.columns:
-            cast(Any, session)._note_lazy_telemetry_walk(row.get("Driver") for row in rows)
+            session._note_lazy_telemetry_walk(row.get("Driver") for row in rows)
         for position in positions:
             lap = PolarsLap(
                 self.slice(position, 1), session=session, name=position, row=rows[position]

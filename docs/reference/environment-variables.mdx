@@ -231,7 +231,7 @@ export TIF1_TELEMETRY_PREFETCH_MAX_CONCURRENT_REQUESTS=64
 
 ### TIF1_TELEMETRY_COLUMNAR
 
-When `true`, a cold load that needs two or more laps of one driver asks first for that driver's columnar telemetry files. One file (`{driver}/tel.v1.{first}.bin`) holds ten laps. The files hold the same values as the lap JSON files in about 26% fewer bytes. A race driver's laps take 6 requests instead of 57. A missing file falls back to the lap JSON, and tif1 remembers the miss for the session. The reader is off until the data repositories publish the files.
+When `true`, a cold load that needs two or more laps of one driver asks first for that driver's columnar telemetry files. One file (`{driver}/tel.v2.{first}.bin`) holds ten laps. The files hold the same values as the lap JSON files, bit for bit, in about 85% fewer bytes. A race is 10.8 MB instead of 71 MB. A race driver's laps take 6 requests instead of 57. A missing file falls back to the lap JSON, and tif1 remembers the miss for the session. The reader needs the decoder kernels of `tif1-native` 0.3.0 or later. Without them, tif1 reads the lap JSON. The reader is off until the data repositories publish the files.
 
 ```bash
 export TIF1_TELEMETRY_COLUMNAR=true
@@ -243,7 +243,7 @@ export TIF1_TELEMETRY_COLUMNAR=true
 
 ### TIF1_LOAD_TELEMETRY_LAZY
 
-When `true` (the default), `session.load()` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver. When `false`, `session.load()` fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `false` before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
+When `true` (the default), `session.load()` does not fetch telemetry. The telemetry of a driver is fetched when the code reads it. On a cold session, a first read of one lap fetches only that lap. Other reads fetch all the laps of the driver in one wave. When `false`, `session.load()` fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `false` before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
 ```bash
 export TIF1_LOAD_TELEMETRY_LAZY=false

@@ -84,17 +84,32 @@ telemetry: the `load_telemetry_lazy` config key is `True` by default. The
 frames a script reads are the same; what differs is when the downloads
 happen, when errors show, and what the cache holds.
 
-- **When telemetry is downloaded.** The first access of any lap of a driver
-  (`lap.telemetry`, `lap.get_telemetry()`, `lap.get_car_data()`,
-  `lap.get_pos_data()`, `laps.telemetry`, `laps.get_telemetry()`,
-  `session.car_data[n]` / `session.pos_data[n]`, `get_fastest_lap_tel()`)
-  fetches all of that driver's laps in one parallel wave. Later laps of the
-  driver come from memory. When the script reads drivers in laps-table order,
-  the next driver is fetched in the background (`lazy_telemetry_lookahead`,
-  default 1; `-1` every pending driver; `0` off), in the free request slots
-  only (`lazy_telemetry_background_requests`, default 22). Pyodide has no
-  threads, so there each driver is one foreground wave.
-  `fetch_all_laps_telemetry()` fetches every driver not read yet in one batch.
+- **When telemetry is downloaded.** Telemetry is fetched per driver, when the
+  script first reads it:
+  - A read that needs several laps of a driver (`laps.telemetry`,
+    `laps.get_telemetry()`, `session.car_data[n]` / `session.pos_data[n]`)
+    fetches all of that driver's laps in one parallel wave.
+  - On a cold session, a driver's first read that asks for one lap
+    (`lap.telemetry`, `lap.get_telemetry()`, `lap.get_car_data()`,
+    `lap.get_pos_data()`, `pick_fastest().get_telemetry()`,
+    `get_fastest_lap_tel()`) fetches only that lap's file. The driver's next
+    read brings the rest of its laps in one wave. One driver's fastest-lap
+    telemetry on a cold 2025 Bahrain race: 1.05 s instead of 2.9 s (pandas),
+    0.92 s instead of 2.8 s (polars); four drivers' fastest laps 1.1 s
+    instead of 4.2 s (pandas), 1.5 s instead of 4.4 s (polars).
+  - An `iterlaps()` loop over two or more laps of a driver fetches that
+    driver's wave at its first lap, not one lap and then the wave.
+  - The driver that the background lookahead expects next, and a lap the
+    background fetch already holds, also go through the wave.
+
+  Later laps of the driver come from memory. When the script reads drivers
+  in laps-table order, the next driver is fetched in the background
+  (`lazy_telemetry_lookahead`, default 1; `-1` every pending driver; `0`
+  off), in the free request slots only (`lazy_telemetry_background_requests`,
+  default 22). Pyodide has no threads, so there each driver is one
+  foreground wave. `fetch_all_laps_telemetry()` fetches every driver not
+  read yet in one batch. Sessions the cache holds never take the one-lap
+  path.
 - **Errors.** `load()` reports no telemetry error. A failed request is logged
   as a warning (`Failed telemetry load for VER lap 12: ...`; after three per
   driver, one "suppressed" warning, then debug level) when the lap is first
@@ -102,20 +117,25 @@ happen, when errors show, and what the cache holds.
   exception is raised; the eager load behaves the same per lap, but warns
   inside `load()`. A failed background request is logged (`Lazy telemetry
   fetch failed for ...`) and the lap's first access requests it again with
-  the normal CDN fallback and retries.
+  the normal CDN fallback and retries. A failed one-lap fetch is retried the
+  same way, by the per-lap path, which logs the failure if it fails again.
 - **Cache.** `load()` writes no telemetry to the cache. Each driver is cached
   when the script reads it (payload and frame tiers, as the eager load writes
   them); a later process reads those drivers from the cache and the others
-  from the CDN.
+  from the CDN. A lap fetched alone goes to the payload tier only; a later
+  process builds its frame from that payload, without the network.
 - **Work without a network.** With `offline_mode` on, or no network, a driver
   the script did not read before has no telemetry: its first access logs a
   warning and returns an empty frame. Fetch everything while online with
   `session.load(telemetry="eager")` or `session.fetch_all_laps_telemetry()`.
 - **Warm cache.** pandas sessions read each cached driver row on first access
-  with either setting. polars sessions read the first touched driver's row
-  alone and the other rows in one batch at the second access: a warm polars
-  `load()` takes ~7 ms instead of 110-160 ms, and the first lap loop takes
-  that time instead.
+  with either setting. polars sessions do the same with either setting (the
+  eager `load()` of a polars session whose frame tier holds every lap reads
+  no driver row either): the
+  first two drivers read their rows alone, the third read takes every row
+  still pending in one batch, and an `iterlaps()` loop reads the rows of all
+  its drivers at once. A warm polars `load()` takes ~7-14 ms instead of
+  110-160 ms, and the first lap loop takes that time instead.
 - **Other.** `load_async()` takes the same values (`"eager"` awaits
   `fetch_all_laps_telemetry_async()`). Sessions before 2018 have no telemetry
   either way. At interpreter exit the background requests are cancelled; one

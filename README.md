@@ -35,7 +35,7 @@ print(telemetry[["Time", "Speed", "Throttle"]].head())
 
 Less data means faster loads, less disk space and less bandwidth. This matters most when you process many sessions.
 
-`session.load()` works the same way: it fetches the laps, weather and race control messages, but no telemetry. A driver's telemetry is fetched the first time you read one of its laps. This is different from fastf1. Use `session.load(telemetry="eager")` (or set `load_telemetry_lazy` to `False`) to download all the telemetry up front, for example before working offline. [COMPATIBILITY.md](COMPATIBILITY.md#lazy-telemetry-in-load) lists the differences.
+`session.load()` works the same way: it fetches the laps, weather and race control messages, but no telemetry. A driver's telemetry is fetched the first time you read it: one lap's file if you ask for one lap, all of the driver's laps in one batch otherwise. This is different from fastf1. Use `session.load(telemetry="eager")` (or set `load_telemetry_lazy` to `False`) to download all the telemetry up front, for example before working offline. [COMPATIBILITY.md](COMPATIBILITY.md#lazy-telemetry-in-load) lists the differences.
 
 ### 2. No F1TV account needed
 

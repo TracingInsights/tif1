@@ -382,7 +382,7 @@ weather = session.weather
 
 **Performance Tips:**
 - Use `session.load()` with specific parameters to avoid fetching unnecessary data
-- `load()` does not fetch telemetry by default. A driver's telemetry is fetched at the first access of one of its laps. Pass `telemetry="eager"` only when every lap is needed, or before work without a network
+- `load()` does not fetch telemetry by default. A driver's telemetry is fetched when the code reads it. Pass `telemetry="eager"` only when every lap is needed, or before work without a network
 - Telemetry data is large - only load when needed
 - Weather and race control messages are small tables compared to telemetry
 - The cache (enabled by default) serves repeated loads
