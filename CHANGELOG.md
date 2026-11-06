@@ -34,6 +34,13 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   unchanged within noise. Rows under 2 MB, Windows, macOS, Pyodide, THP
   `never`, older wheels and `TIF1_DISABLE_NATIVE=1` keep the pyarrow codec.
   Building `tif1-native` from source now needs a C compiler as well as Rust.
+- A warm polars session no longer imports pyarrow when the legacy
+  per-lap frame table has no rows for the laps it wants. The empty lookup
+  loaded the lz4 codec anyway (~110 ms of pyarrow and numpy imports).
+  Perf-gate fixture, 2025 Bahrain qualifying: `fetch_all_laps_telemetry()`
+  289 -> 150 ms, the whole process 426 -> 305 ms. A notebook that later
+  resamples or merges telemetry imports numpy at that point, so its total
+  time is unchanged.
 
 ### Added
 

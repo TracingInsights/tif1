@@ -478,6 +478,10 @@ def _decompress_frame_rows(
     Rows a codec cannot read are dropped (the caller logs the miss).
     """
     n_rows = len(rows)
+    if not n_rows:
+        # A tier miss (the polars legacy table on a warm session) must not
+        # import pyarrow for the codec (~110 ms).
+        return
     codec = _pa_lz4_codec()
     if workers is None:
         workers = _decompress_workers()
