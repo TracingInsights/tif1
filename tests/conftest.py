@@ -3,6 +3,7 @@
 import json
 import os
 import socket
+import sys
 
 # Headless matplotlib for every test file, whichever one runs first
 # (a Windows session would otherwise pick TkAgg).
@@ -15,6 +16,50 @@ import pytest
 # Markers whose tests are allowed to open real network connections. Everything
 # else runs hermetically: a CDN stall must never hang the unit matrix.
 _NETWORK_MARKERS = ("integration", "compliance_online", "benchmark")
+
+
+# Hypothesis deadlines guard against a slow example, not a wrong one. The
+# property suite sets 46 of them per test (2-10 s); the advisory Windows CI
+# runners are slow enough to cross them now and then (PR #127: 2.7 s and 14 s
+# on correctness tests). There, and with TIF1_TEST_NO_DEADLINES set, every
+# Hypothesis test runs without one; Linux CI keeps them.
+_NO_HYPOTHESIS_DEADLINES = sys.platform == "win32" or bool(os.environ.get("TIF1_TEST_NO_DEADLINES"))
+
+
+def drop_hypothesis_deadline(test: Any) -> bool:
+    """Run the Hypothesis test ``test`` without a deadline; False when it is not one.
+
+    Hypothesis has no public override of a test's own ``@settings(deadline=...)``:
+    it reads the settings from ``_hypothesis_internal_use_settings`` on the
+    wrapped test when the test runs, so the replacement there takes effect.
+    ``tests/unit/test_conftest_hypothesis_deadlines.py`` fails if a Hypothesis
+    release stops reading that attribute.
+    """
+    function = getattr(test, "__func__", test)
+    current = getattr(function, "_hypothesis_internal_use_settings", None)
+    if current is None:
+        return False
+    if current.deadline is not None:
+        from hypothesis import settings
+
+        function._hypothesis_internal_use_settings = settings(current, deadline=None)
+    return True
+
+
+@pytest.fixture
+def hypothesis_deadline_dropper() -> Any:
+    """:func:`drop_hypothesis_deadline`, for its own test (``tests`` is not a package)."""
+    return drop_hypothesis_deadline
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Drop the Hypothesis deadlines on Windows (see ``_NO_HYPOTHESIS_DEADLINES``)."""
+    if not _NO_HYPOTHESIS_DEADLINES:
+        return
+    for item in items:
+        test = getattr(item, "obj", None)
+        if test is not None:
+            drop_hypothesis_deadline(test)
 
 
 _BLOCK_MESSAGE = (
