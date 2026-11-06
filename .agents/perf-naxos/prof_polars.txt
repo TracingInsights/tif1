@@ -1,0 +1,53 @@
+         516181 function calls (494592 primitive calls) in 0.929 seconds
+
+   Ordered by: internal time
+   List reduced from 3163 to 45 due to restriction <45>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+  1431/17    0.091    0.000    0.008    0.000 {method 'read' of '_ssl._SSLSocket' objects}
+      270    0.039    0.000    0.039    0.000 {built-in method marshal.loads}
+       58    0.024    0.000    0.026    0.000 {orjson.dumps}
+      413    0.018    0.000    0.032    0.000 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/inspect.py:900(cleandoc)
+    57/29    0.017    0.000    0.008    0.000 {built-in method zlib.decompress}
+       71    0.014    0.000    0.014    0.000 {method 'filter' of 'builtins.PySeries' objects}
+     1311    0.013    0.000    0.063    0.000 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/polars/_utils/construction/series.py:506(numpy_to_pyseries)
+1208/1163    0.013    0.000    0.013    0.000 {built-in method posix.stat}
+    79/29    0.012    0.000    0.006    0.000 {built-in method tif1_native.tif1_native.decode_telemetry}
+    44956    0.012    0.000    0.016    0.000 {built-in method builtins.isinstance}
+  614/613    0.011    0.000    0.040    0.000 {built-in method builtins.__build_class__}
+   413/63    0.011    0.000    0.427    0.007 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/re/_parser.py:511(_parse)
+    296/7    0.011    0.000    0.207    0.030 {built-in method builtins.exec}
+42804/41799    0.010    0.000    0.010    0.000 {built-in method builtins.len}
+      7/6    0.010    0.001    0.010    0.002 {built-in method _imp.create_dynamic}
+     22/3    0.009    0.000    0.001    0.000 {method 'do_handshake' of '_ssl._SSLSocket' objects}
+  270/202    0.009    0.000    0.007    0.000 {built-in method _io.open_code}
+1540/1369    0.009    0.000    2.710    0.002 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/polars/series/series.py:293(__init__)
+        1    0.009    0.009    0.009    0.009 {method 'load_verify_locations' of '_ssl._SSLContext' objects}
+  1429/16    0.008    0.000    0.009    0.001 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/ssl.py:1301(recv_into)
+  403/148    0.008    0.000    1.056    0.007 {method 'read' of '_io.BufferedReader' objects}
+      270    0.008    0.000    0.047    0.000 <frozen importlib._bootstrap_external>:779(_compile_bytecode)
+    22995    0.006    0.000    0.006    0.000 {method 'append' of 'list' objects}
+  425/423    0.006    0.000    0.305    0.001 <frozen importlib._bootstrap_external>:1621(find_spec)
+  1429/16    0.006    0.000    0.631    0.039 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/socket.py:710(readinto)
+       71    0.005    0.000    0.020    0.000 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/polars/series/series.py:3504(filter)
+   755/62    0.005    0.000    0.218    0.004 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/re/_compiler.py:37(_compile)
+    12354    0.005    0.000    0.005    0.000 {method 'lstrip' of 'str' objects}
+3092/2835    0.005    0.000    0.011    0.000 {built-in method __new__ of type object at 0x14ebf90}
+11597/11482    0.005    0.000    0.006    0.000 {built-in method builtins.getattr}
+     1311    0.004    0.000    0.006    0.000 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/numpy/_core/_asarray.py:22(require)
+      525    0.004    0.000    1.733    0.003 {method 'cast' of 'builtins.PySeries' objects}
+  270/138    0.004    0.000    0.456    0.003 <frozen importlib._bootstrap_external>:1090(get_code)
+     2410    0.004    0.000    0.007    0.000 <frozen importlib._bootstrap_external>:131(_path_join)
+  540/514    0.004    0.000    0.011    0.000 <frozen importlib._bootstrap>:304(acquire)
+   797/14    0.004    0.000    0.171    0.012 <frozen importlib._bootstrap>:1349(_find_and_load)
+     3933    0.004    0.000    0.027    0.000 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/numpy/__init__.py:700(__getattr__)
+  307/306    0.004    0.000    0.392    0.001 <frozen importlib._bootstrap>:1240(_find_spec)
+       57    0.004    0.000    0.011    0.000 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/email/feedparser.py:472(_parse_headers)
+       57    0.004    0.000    1.044    0.018 /tmp/naxos/control/src/tif1/core_utils/helpers.py:480(_polars_typed_telemetry_frame)
+  1431/17    0.004    0.000    0.009    0.001 /home/harish/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/ssl.py:1141(read)
+       57    0.003    0.000    0.003    0.000 {method 'collect' of 'builtins.PyLazyFrame' objects}
+5488/5420    0.003    0.000    0.004    0.000 {method 'join' of 'str' objects}
+    12994    0.003    0.000    0.003    0.000 {method 'startswith' of 'str' objects}
+      229    0.003    0.000    0.876    0.004 /home/harish/Documents/tif1/.venv/lib/python3.13/site-packages/polars/_utils/construction/series.py:73(sequence_to_pyseries)
+
+

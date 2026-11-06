@@ -464,3 +464,20 @@ class TestPolarsDriverAheadFromCodes:
         monkeypatch.setitem(sys.modules, "pyarrow", None)
         series = _polars_typed_channel("DriverAhead", _encode(["4", None, "16"]))
         assert series.to_list() == ["4", None, "16"]
+
+    def test_long_code_arrays_index_the_series(self, monkeypatch):
+        """Past the Python lookup's bound the codes index the Series: the same Series (N8)."""
+        pytest.importorskip("polars")
+        from tif1.core_utils import helpers
+
+        helpers._ensure_polars_available()
+        values = ["4", None, "16", "81", None] * 1000
+        long = _polars_typed_channel("DriverAhead", _encode(values))
+        assert len(values) > helpers._STRINGS_LOOKUP_MAX
+        monkeypatch.setattr(helpers, "_STRINGS_LOOKUP_MAX", len(values))
+        looked_up = _polars_typed_channel("DriverAhead", _encode(values))
+        assert long.to_list() == looked_up.to_list() == values
+        assert long.equals(looked_up)
+        assert long.dtype == looked_up.dtype
+        assert long.flags == looked_up.flags
+        assert long.n_chunks() == looked_up.n_chunks() == 1

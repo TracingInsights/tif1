@@ -169,8 +169,8 @@ class NiquestsTransport:
         The columnar telemetry files (Gortyn G3) come through here. Until
         niquests is warm the request rides the first wave's stdlib
         connections, as a telemetry wave's JSON requests do (and, like them,
-        starts the niquests warm-up in the background); a ``404`` there is
-        final, anything else but a ``200`` goes to niquests.
+        counts toward the niquests warm-up of :func:`tif1.first_wave.bridge_open`);
+        a ``404`` there is final, anything else but a ``200`` goes to niquests.
 
         Raises:
             DataNotFoundError: HTTP 404.

@@ -250,7 +250,8 @@ async def _stdlib_served(
 
     A first-wave URL is handed over from its slot (and never fetched again
     over the stdlib when that failed); any other URL rides the stdlib
-    connections while niquests is not warm (:func:`tif1.first_wave.bridge_open`).
+    connections while niquests is not warm (:func:`tif1.first_wave.bridge_open`,
+    which starts the niquests warm-up only past one driver's wave of requests).
     Bridge requests are bounded by ``cdn_hedge_max_delay``: they are not
     hedged, so a stalled one goes to niquests (which hedges) after that.
     """
