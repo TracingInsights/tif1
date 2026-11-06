@@ -223,6 +223,13 @@ class Config:
             # remembered in the missing-payload tier, so a session without
             # files costs one request per session. False: per-lap JSON only.
             "telemetry_columnar": False,
+            # Corinth C10: a cold session asks for its bundle
+            # ({year}/{gp}/{session}/session.v1.bin: drivers.json, the
+            # laptimes, session_info.json, weather, race control and the
+            # Ergast classification in one zstd file) instead of one request
+            # per file; a 404 is remembered in the missing-payload tier and
+            # the files follow. False until the data repositories publish it.
+            "session_bundle": False,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
@@ -316,6 +323,7 @@ class Config:
             "TIF1_CDN_FIRST_WAVE": ("cdn_first_wave", _to_bool),
             "TIF1_SESSION_LOOKAHEAD": ("session_lookahead", _to_bool),
             "TIF1_TELEMETRY_COLUMNAR": ("telemetry_columnar", _to_bool),
+            "TIF1_SESSION_BUNDLE": ("session_bundle", _to_bool),
             "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),

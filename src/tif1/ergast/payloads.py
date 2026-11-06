@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -270,12 +271,34 @@ class ErgastPayloadLoader:
     # -- storage tiers -------------------------------------------------------
 
     def _read_entry(self, cache_key: str) -> tuple[float, Any] | None:
-        """``(fetched_at, payload)`` from the memo or the SQLite tier, else None."""
+        """``(fetched_at, payload)`` from the memo, the SQLite tier or a session bundle, else None.
+
+        A Stats file a session bundle carried (Corinth C10) counts as fetched
+        at the bundle's ``built_at``; it is taken (and written to the tiers)
+        only when the SQLite tier holds nothing newer.
+        """
         memo_entry = _memo.get(cache_key, ordered=False)
         if memo_entry is not None:
             return memo_entry
-        if not self.enable_cache:
-            return None
+        memo_entry = self._read_sqlite_entry(cache_key) if self.enable_cache else None
+        # Not imported: no bundle was decoded in this process (warm sessions).
+        bundles = sys.modules.get("tif1.session_bundle")
+        bundled = bundles.stats_entry(cache_key) if bundles is not None else None
+        if bundled is not None and (memo_entry is None or bundled[0] > memo_entry[0]):
+            from tif1.core_utils.json_utils import json_loads
+
+            try:
+                payload = json_loads(bundled[1])
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                self._write_entry(cache_key, payload, bundled[0])
+                return bundled[0], payload
+        if memo_entry is not None:
+            _memo.set(cache_key, memo_entry)
+        return memo_entry
+
+    def _read_sqlite_entry(self, cache_key: str) -> tuple[float, Any] | None:
         try:
             entry = get_cache().get_entry("json", cache_key)
         except (CacheError, OSError) as exc:
@@ -287,9 +310,7 @@ class ErgastPayloadLoader:
         if not isinstance(fetched_at, int | float):
             return None
         payload = entry.get("payload")
-        memo_entry = (float(fetched_at), payload if isinstance(payload, dict) else None)
-        _memo.set(cache_key, memo_entry)
-        return memo_entry
+        return float(fetched_at), payload if isinstance(payload, dict) else None
 
     def _write_entry(self, cache_key: str, payload: dict | None, fetched_at: float) -> None:
         _memo.set(cache_key, (fetched_at, payload))

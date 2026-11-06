@@ -73,13 +73,14 @@ BRIDGE_WARM_AFTER = 80
 
 
 class _Slot:
-    """One in-flight first-wave fetch: set ``done`` once ``body`` is final."""
+    """One in-flight first-wave fetch: set ``done`` once ``body`` and ``status`` are final."""
 
-    __slots__ = ("body", "deadline", "done")
+    __slots__ = ("body", "deadline", "done", "status")
 
     def __init__(self, deadline: float) -> None:
         self.done = threading.Event()
         self.body: bytes | None = None
+        self.status: int | None = None
         self.deadline = deadline
 
 
@@ -148,16 +149,27 @@ def take(url: str) -> bytes | None:
     None when ``url`` was not part of the wave, was handed over already, or
     did not arrive as a ``200`` with a decodable body by the wave's deadline.
     """
+    return take_status(url)[1]
+
+
+def take_status(url: str) -> tuple[int | None, bytes | None]:
+    """:func:`take` with the HTTP status: ``(200, body)``, ``(404, None)``, ...
+
+    ``(None, None)`` when ``url`` was not part of the wave, was handed over
+    already, failed at the transport level or missed the wave's deadline. The
+    session bundle (Corinth C10) reads its first-wave answer through it, so a
+    session without a bundle learns it from the 404 without another request.
+    """
     if not _slots:
-        return None
+        return None, None
     with _slots_lock:
         slot = _slots.pop(url, None)
     if slot is None:
-        return None
+        return None, None
     if not slot.done.wait(max(0.0, slot.deadline - time.monotonic())):
         logger.debug("First-wave fetch of %s missed its window", url)
-        return None
-    return slot.body
+        return None, None
+    return slot.status, slot.body
 
 
 def prefetch(urls: list[str], *, timeout: float) -> list[str]:
@@ -400,7 +412,9 @@ def _tls_context() -> Any:
 
 def _fetch_into(client: _StdlibClient, url: str, slot: _Slot, timeout: float) -> None:
     try:
-        slot.body = client.get(url, timeout)
+        status, body = client.get_with_status(url, timeout)
+        slot.status = status
+        slot.body = body if status == 200 else None
     except Exception as e:  # never surfaces: niquests fetches the file
         logger.debug("First-wave fetch of %s failed: %s", url, e)
     finally:

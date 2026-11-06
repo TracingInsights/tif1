@@ -1,0 +1,912 @@
+{
+ "lib": "pandas",
+ "args": {
+  "child": null,
+  "base": "",
+  "verify": false,
+  "lib": "pandas",
+  "reps": 8,
+  "cache": "/tmp/corinth/warm-C10",
+  "season_cache": "/tmp/corinth/season",
+  "control_src": "/tmp/corinth/control/src",
+  "candidate_src": "src",
+  "candidate_env": "TIF1_SESSION_BUNDLE=true",
+  "control_env": "",
+  "workloads": "laps_results,load,loop6",
+  "no_bundles": false,
+  "link_mbps": 8.0,
+  "conn_mbps": 6.0,
+  "rtt_ms": 15.0,
+  "log_paths": false,
+  "out": ".agents/perf-corinth/C10_cold_local_pandas_rtt15.json"
+ },
+ "summary": {
+  "laps_results": {
+   "control": {
+    "import": {
+     "median": 3.6,
+     "min": 3.4,
+     "p90": 4.2
+    },
+    "get_session": {
+     "median": 393.4,
+     "min": 357.3,
+     "p90": 431.9
+    },
+    "laps": {
+     "median": 35.9,
+     "min": 26.5,
+     "p90": 62.3
+    },
+    "results": {
+     "median": 45.1,
+     "min": 41.0,
+     "p90": 46.9
+    },
+    "in_process_total": {
+     "median": 488.2,
+     "min": 434.1,
+     "p90": 516.0
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 630.0,
+     "min": 594.5,
+     "p90": 642.6
+    },
+    "startup": {
+     "median": 98.5,
+     "min": 95.9,
+     "p90": 106.7
+    },
+    "exit_hooks": {
+     "median": 1.6,
+     "min": 1.0,
+     "p90": 3.4
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 3.7,
+     "min": 3.4,
+     "p90": 4.2
+    },
+    "get_session": {
+     "median": 397.7,
+     "min": 362.4,
+     "p90": 455.7
+    },
+    "laps": {
+     "median": 33.5,
+     "min": 26.6,
+     "p90": 44.0
+    },
+    "results": {
+     "median": 6.8,
+     "min": 6.4,
+     "p90": 12.6
+    },
+    "in_process_total": {
+     "median": 451.7,
+     "min": 418.5,
+     "p90": 501.5
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 606.5,
+     "min": 545.7,
+     "p90": 620.4
+    },
+    "startup": {
+     "median": 105.2,
+     "min": 96.9,
+     "p90": 128.9
+    },
+    "exit_hooks": {
+     "median": 1.2,
+     "min": 1.0,
+     "p90": 1.8
+    }
+   },
+   "candidate_faster_pairs": "6/8",
+   "traffic_control": {
+    "connections": 2,
+    "json": 4,
+    "json_bytes": 61962
+   },
+   "traffic_candidate": {
+    "connections": 1,
+    "bin": 1,
+    "bin_bytes": 48901
+   },
+   "runs_control": [
+    {
+     "import": 3.38,
+     "get_session": 384.68,
+     "laps": 67.23,
+     "results": 54.48,
+     "in_process_total": 509.82,
+     "pandas_imported": true,
+     "process_wall": 642.6,
+     "startup": 96.91,
+     "exit_hooks": 1.57
+    },
+    {
+     "import": 3.59,
+     "get_session": 388.39,
+     "laps": 35.56,
+     "results": 43.9,
+     "in_process_total": 471.47,
+     "pandas_imported": true,
+     "process_wall": 594.82,
+     "startup": 98.93,
+     "exit_hooks": 1.55
+    },
+    {
+     "import": 4.23,
+     "get_session": 485.1,
+     "laps": 37.58,
+     "results": 40.99,
+     "in_process_total": 567.94,
+     "pandas_imported": true,
+     "process_wall": 699.38,
+     "startup": 109.97,
+     "exit_hooks": 0.96
+    },
+    {
+     "import": 3.56,
+     "get_session": 367.22,
+     "laps": 62.32,
+     "results": 42.07,
+     "in_process_total": 475.21,
+     "pandas_imported": true,
+     "process_wall": 594.5,
+     "startup": 98.06,
+     "exit_hooks": 2.0
+    },
+    {
+     "import": 3.43,
+     "get_session": 398.5,
+     "laps": 27.02,
+     "results": 46.9,
+     "in_process_total": 475.89,
+     "pandas_imported": true,
+     "process_wall": 627.82,
+     "startup": 97.49,
+     "exit_hooks": 3.36
+    },
+    {
+     "import": 3.35,
+     "get_session": 424.31,
+     "laps": 26.57,
+     "results": 46.29,
+     "in_process_total": 500.56,
+     "pandas_imported": true,
+     "process_wall": 633.58,
+     "startup": 106.74,
+     "exit_hooks": 1.51
+    },
+    {
+     "import": 3.56,
+     "get_session": 431.85,
+     "laps": 36.26,
+     "results": 44.3,
+     "in_process_total": 516.01,
+     "pandas_imported": true,
+     "process_wall": 632.12,
+     "startup": 95.88,
+     "exit_hooks": 1.23
+    },
+    {
+     "import": 4.26,
+     "get_session": 357.28,
+     "laps": 26.49,
+     "results": 45.96,
+     "in_process_total": 434.05,
+     "pandas_imported": true,
+     "process_wall": 627.5,
+     "startup": 105.03,
+     "exit_hooks": 5.46
+    }
+   ],
+   "runs_candidate": [
+    {
+     "import": 3.37,
+     "get_session": 381.96,
+     "laps": 26.63,
+     "results": 6.46,
+     "in_process_total": 418.47,
+     "pandas_imported": true,
+     "process_wall": 572.78,
+     "startup": 126.97,
+     "exit_hooks": 1.04
+    },
+    {
+     "import": 3.51,
+     "get_session": 455.68,
+     "laps": 35.88,
+     "results": 6.37,
+     "in_process_total": 501.47,
+     "pandas_imported": true,
+     "process_wall": 619.19,
+     "startup": 97.15,
+     "exit_hooks": 1.19
+    },
+    {
+     "import": 3.89,
+     "get_session": 563.08,
+     "laps": 31.14,
+     "results": 6.86,
+     "in_process_total": 605.02,
+     "pandas_imported": true,
+     "process_wall": 799.88,
+     "startup": 170.19,
+     "exit_hooks": 1.14
+    },
+    {
+     "import": 3.39,
+     "get_session": 388.2,
+     "laps": 28.58,
+     "results": 6.54,
+     "in_process_total": 426.75,
+     "pandas_imported": true,
+     "process_wall": 545.73,
+     "startup": 96.93,
+     "exit_hooks": 1.06
+    },
+    {
+     "import": 4.36,
+     "get_session": 373.86,
+     "laps": 44.98,
+     "results": 12.56,
+     "in_process_total": 435.81,
+     "pandas_imported": true,
+     "process_wall": 596.52,
+     "startup": 100.12,
+     "exit_hooks": 1.8
+    },
+    {
+     "import": 4.24,
+     "get_session": 362.41,
+     "laps": 42.81,
+     "results": 25.94,
+     "in_process_total": 435.44,
+     "pandas_imported": true,
+     "process_wall": 620.36,
+     "startup": 128.93,
+     "exit_hooks": 5.85
+    },
+    {
+     "import": 3.51,
+     "get_session": 451.02,
+     "laps": 27.33,
+     "results": 6.78,
+     "in_process_total": 488.67,
+     "pandas_imported": true,
+     "process_wall": 612.61,
+     "startup": 103.46,
+     "exit_hooks": 1.07
+    },
+    {
+     "import": 4.21,
+     "get_session": 407.25,
+     "laps": 43.95,
+     "results": 12.12,
+     "in_process_total": 467.57,
+     "pandas_imported": true,
+     "process_wall": 600.39,
+     "startup": 106.99,
+     "exit_hooks": 1.69
+    }
+   ]
+  },
+  "load": {
+   "control": {
+    "import": {
+     "median": 4.2,
+     "min": 3.4,
+     "p90": 5.7
+    },
+    "get_session": {
+     "median": 401.9,
+     "min": 346.6,
+     "p90": 422.1
+    },
+    "load": {
+     "median": 55.7,
+     "min": 46.2,
+     "p90": 64.1
+    },
+    "results": {
+     "median": 44.0,
+     "min": 41.5,
+     "p90": 53.9
+    },
+    "t0_date": {
+     "median": 17.8,
+     "min": 17.3,
+     "p90": 18.4
+    },
+    "in_process_total": {
+     "median": 515.6,
+     "min": 477.7,
+     "p90": 584.0
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 677.6,
+     "min": 594.6,
+     "p90": 752.3
+    },
+    "startup": {
+     "median": 118.3,
+     "min": 93.7,
+     "p90": 155.6
+    },
+    "exit_hooks": {
+     "median": 1.7,
+     "min": 1.3,
+     "p90": 2.9
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 3.6,
+     "min": 3.4,
+     "p90": 4.2
+    },
+    "get_session": {
+     "median": 388.9,
+     "min": 375.8,
+     "p90": 420.9
+    },
+    "load": {
+     "median": 39.8,
+     "min": 34.2,
+     "p90": 45.8
+    },
+    "results": {
+     "median": 6.3,
+     "min": 6.2,
+     "p90": 7.8
+    },
+    "t0_date": {
+     "median": 0.4,
+     "min": 0.4,
+     "p90": 0.5
+    },
+    "in_process_total": {
+     "median": 439.7,
+     "min": 423.1,
+     "p90": 483.3
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 598.1,
+     "min": 559.3,
+     "p90": 614.8
+    },
+    "startup": {
+     "median": 116.0,
+     "min": 98.6,
+     "p90": 135.6
+    },
+    "exit_hooks": {
+     "median": 1.2,
+     "min": 1.1,
+     "p90": 1.8
+    }
+   },
+   "candidate_faster_pairs": "8/8",
+   "traffic_control": {
+    "connections": 2,
+    "json": 7,
+    "json_bytes": 66064
+   },
+   "traffic_candidate": {
+    "connections": 1,
+    "bin": 1,
+    "bin_bytes": 48901
+   },
+   "runs_control": [
+    {
+     "import": 4.34,
+     "get_session": 346.56,
+     "load": 63.63,
+     "results": 56.61,
+     "t0_date": 19.01,
+     "in_process_total": 490.21,
+     "pandas_imported": true,
+     "process_wall": 640.22,
+     "startup": 120.32,
+     "exit_hooks": 6.57
+    },
+    {
+     "import": 4.12,
+     "get_session": 381.68,
+     "load": 46.8,
+     "results": 41.57,
+     "t0_date": 17.31,
+     "in_process_total": 491.54,
+     "pandas_imported": true,
+     "process_wall": 624.11,
+     "startup": 111.96,
+     "exit_hooks": 1.34
+    },
+    {
+     "import": 4.13,
+     "get_session": 462.45,
+     "load": 52.8,
+     "results": 46.72,
+     "t0_date": 17.8,
+     "in_process_total": 583.96,
+     "pandas_imported": true,
+     "process_wall": 752.27,
+     "startup": 116.2,
+     "exit_hooks": 2.89
+    },
+    {
+     "import": 5.68,
+     "get_session": 385.18,
+     "load": 48.19,
+     "results": 42.38,
+     "t0_date": 17.87,
+     "in_process_total": 499.35,
+     "pandas_imported": true,
+     "process_wall": 680.53,
+     "startup": 155.63,
+     "exit_hooks": 1.67
+    },
+    {
+     "import": 11.68,
+     "get_session": 418.66,
+     "load": 100.95,
+     "results": 53.86,
+     "t0_date": 18.36,
+     "in_process_total": 603.59,
+     "pandas_imported": true,
+     "process_wall": 795.94,
+     "startup": 169.7,
+     "exit_hooks": 1.97
+    },
+    {
+     "import": 3.42,
+     "get_session": 418.52,
+     "load": 46.18,
+     "results": 45.53,
+     "t0_date": 18.12,
+     "in_process_total": 531.83,
+     "pandas_imported": true,
+     "process_wall": 674.6,
+     "startup": 93.65,
+     "exit_hooks": 1.64
+    },
+    {
+     "import": 5.58,
+     "get_session": 422.07,
+     "load": 64.07,
+     "results": 41.9,
+     "t0_date": 17.69,
+     "in_process_total": 551.37,
+     "pandas_imported": true,
+     "process_wall": 744.13,
+     "startup": 153.5,
+     "exit_hooks": 1.26
+    },
+    {
+     "import": 3.67,
+     "get_session": 356.32,
+     "load": 58.66,
+     "results": 41.45,
+     "t0_date": 17.54,
+     "in_process_total": 477.69,
+     "pandas_imported": true,
+     "process_wall": 594.64,
+     "startup": 96.74,
+     "exit_hooks": 1.39
+    }
+   ],
+   "runs_candidate": [
+    {
+     "import": 3.95,
+     "get_session": 387.32,
+     "load": 37.42,
+     "results": 6.19,
+     "t0_date": 0.4,
+     "in_process_total": 435.33,
+     "pandas_imported": true,
+     "process_wall": 588.75,
+     "startup": 129.92,
+     "exit_hooks": 1.14
+    },
+    {
+     "import": 4.19,
+     "get_session": 420.95,
+     "load": 51.56,
+     "results": 6.19,
+     "t0_date": 0.41,
+     "in_process_total": 483.34,
+     "pandas_imported": true,
+     "process_wall": 614.13,
+     "startup": 105.62,
+     "exit_hooks": 1.11
+    },
+    {
+     "import": 3.73,
+     "get_session": 455.76,
+     "load": 40.98,
+     "results": 6.41,
+     "t0_date": 0.45,
+     "in_process_total": 507.39,
+     "pandas_imported": true,
+     "process_wall": 639.51,
+     "startup": 109.92,
+     "exit_hooks": 1.24
+    },
+    {
+     "import": 3.45,
+     "get_session": 384.18,
+     "load": 44.17,
+     "results": 6.23,
+     "t0_date": 0.41,
+     "in_process_total": 438.5,
+     "pandas_imported": true,
+     "process_wall": 559.32,
+     "startup": 98.61,
+     "exit_hooks": 1.12
+    },
+    {
+     "import": 3.5,
+     "get_session": 415.06,
+     "load": 45.79,
+     "results": 8.15,
+     "t0_date": 0.52,
+     "in_process_total": 473.08,
+     "pandas_imported": true,
+     "process_wall": 614.81,
+     "startup": 99.06,
+     "exit_hooks": 1.81
+    },
+    {
+     "import": 5.64,
+     "get_session": 381.5,
+     "load": 34.24,
+     "results": 6.18,
+     "t0_date": 0.42,
+     "in_process_total": 428.02,
+     "pandas_imported": true,
+     "process_wall": 593.51,
+     "startup": 142.8,
+     "exit_hooks": 1.07
+    },
+    {
+     "import": 3.4,
+     "get_session": 375.81,
+     "load": 35.66,
+     "results": 7.72,
+     "t0_date": 0.51,
+     "in_process_total": 423.14,
+     "pandas_imported": true,
+     "process_wall": 602.71,
+     "startup": 135.61,
+     "exit_hooks": 1.83
+    },
+    {
+     "import": 3.42,
+     "get_session": 390.42,
+     "load": 38.68,
+     "results": 7.79,
+     "t0_date": 0.51,
+     "in_process_total": 440.87,
+     "pandas_imported": true,
+     "process_wall": 590.54,
+     "startup": 122.03,
+     "exit_hooks": 1.26
+    }
+   ]
+  },
+  "loop6": {
+   "control": {
+    "import": {
+     "median": 4.2,
+     "min": 3.4,
+     "p90": 5.7
+    },
+    "get_session": {
+     "median": 379.2,
+     "min": 350.6,
+     "p90": 393.1
+    },
+    "laps": {
+     "median": 303.7,
+     "min": 269.5,
+     "p90": 322.9
+    },
+    "results": {
+     "median": 162.2,
+     "min": 155.4,
+     "p90": 178.6
+    },
+    "in_process_total": {
+     "median": 871.5,
+     "min": 810.0,
+     "p90": 885.4
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 1006.7,
+     "min": 950.8,
+     "p90": 1066.8
+    },
+    "startup": {
+     "median": 118.0,
+     "min": 97.7,
+     "p90": 158.5
+    },
+    "exit_hooks": {
+     "median": 2.6,
+     "min": 2.5,
+     "p90": 2.6
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 3.6,
+     "min": 3.4,
+     "p90": 4.2
+    },
+    "get_session": {
+     "median": 387.7,
+     "min": 365.6,
+     "p90": 411.5
+    },
+    "laps": {
+     "median": 287.3,
+     "min": 240.4,
+     "p90": 300.8
+    },
+    "results": {
+     "median": 31.7,
+     "min": 23.0,
+     "p90": 34.1
+    },
+    "in_process_total": {
+     "median": 727.4,
+     "min": 652.0,
+     "p90": 737.6
+    },
+    "pandas_imported": {
+     "median": 1.0,
+     "min": 1,
+     "p90": 1
+    },
+    "process_wall": {
+     "median": 859.0,
+     "min": 784.2,
+     "p90": 876.8
+    },
+    "startup": {
+     "median": 104.3,
+     "min": 96.8,
+     "p90": 114.3
+    },
+    "exit_hooks": {
+     "median": 2.8,
+     "min": 2.5,
+     "p90": 2.8
+    }
+   },
+   "candidate_faster_pairs": "8/8",
+   "traffic_control": {
+    "connections": 2,
+    "json": 19,
+    "json_bytes": 331204
+   },
+   "traffic_candidate": {
+    "connections": 1,
+    "bin": 6,
+    "bin_bytes": 254471
+   },
+   "runs_control": [
+    {
+     "import": 4.25,
+     "get_session": 380.24,
+     "laps": 298.56,
+     "results": 156.31,
+     "in_process_total": 839.54,
+     "pandas_imported": true,
+     "process_wall": 972.12,
+     "startup": 108.61,
+     "exit_hooks": 2.48
+    },
+    {
+     "import": 5.72,
+     "get_session": 378.12,
+     "laps": 322.85,
+     "results": 178.56,
+     "in_process_total": 885.43,
+     "pandas_imported": true,
+     "process_wall": 1066.85,
+     "startup": 158.52,
+     "exit_hooks": 2.56
+    },
+    {
+     "import": 4.2,
+     "get_session": 393.1,
+     "laps": 343.71,
+     "results": 163.32,
+     "in_process_total": 904.5,
+     "pandas_imported": true,
+     "process_wall": 1042.85,
+     "startup": 108.98,
+     "exit_hooks": 2.64
+    },
+    {
+     "import": 4.1,
+     "get_session": 350.61,
+     "laps": 300.48,
+     "results": 172.27,
+     "in_process_total": 827.63,
+     "pandas_imported": true,
+     "process_wall": 971.02,
+     "startup": 118.66,
+     "exit_hooks": 2.61
+    },
+    {
+     "import": 3.44,
+     "get_session": 389.4,
+     "laps": 319.59,
+     "results": 155.43,
+     "in_process_total": 868.02,
+     "pandas_imported": true,
+     "process_wall": 991.93,
+     "startup": 97.72,
+     "exit_hooks": 2.63
+    },
+    {
+     "import": 5.65,
+     "get_session": 447.18,
+     "laps": 269.54,
+     "results": 161.04,
+     "in_process_total": 883.57,
+     "pandas_imported": true,
+     "process_wall": 1134.16,
+     "startup": 186.46,
+     "exit_hooks": 2.97
+    },
+    {
+     "import": 4.18,
+     "get_session": 365.11,
+     "laps": 279.88,
+     "results": 160.67,
+     "in_process_total": 810.0,
+     "pandas_imported": true,
+     "process_wall": 950.77,
+     "startup": 117.99,
+     "exit_hooks": 2.47
+    },
+    {
+     "import": 4.18,
+     "get_session": 377.69,
+     "laps": 306.99,
+     "results": 185.98,
+     "in_process_total": 875.02,
+     "pandas_imported": true,
+     "process_wall": 1021.39,
+     "startup": 117.97,
+     "exit_hooks": 2.53
+    }
+   ],
+   "runs_candidate": [
+    {
+     "import": 3.41,
+     "get_session": 389.07,
+     "laps": 318.03,
+     "results": 30.25,
+     "in_process_total": 740.92,
+     "pandas_imported": true,
+     "process_wall": 864.6,
+     "startup": 100.54,
+     "exit_hooks": 2.6
+    },
+    {
+     "import": 3.43,
+     "get_session": 386.35,
+     "laps": 300.79,
+     "results": 34.1,
+     "in_process_total": 724.85,
+     "pandas_imported": true,
+     "process_wall": 853.48,
+     "startup": 102.41,
+     "exit_hooks": 2.69
+    },
+    {
+     "import": 4.22,
+     "get_session": 400.17,
+     "laps": 292.3,
+     "results": 33.21,
+     "in_process_total": 730.02,
+     "pandas_imported": true,
+     "process_wall": 876.75,
+     "startup": 118.64,
+     "exit_hooks": 2.5
+    },
+    {
+     "import": 4.16,
+     "get_session": 381.65,
+     "laps": 243.0,
+     "results": 23.02,
+     "in_process_total": 651.96,
+     "pandas_imported": true,
+     "process_wall": 784.2,
+     "startup": 107.87,
+     "exit_hooks": 2.81
+    },
+    {
+     "import": 3.4,
+     "get_session": 411.48,
+     "laps": 282.23,
+     "results": 34.22,
+     "in_process_total": 731.47,
+     "pandas_imported": true,
+     "process_wall": 850.83,
+     "startup": 96.78,
+     "exit_hooks": 2.71
+    },
+    {
+     "import": 3.76,
+     "get_session": 365.62,
+     "laps": 298.57,
+     "results": 33.92,
+     "in_process_total": 702.04,
+     "pandas_imported": true,
+     "process_wall": 868.38,
+     "startup": 114.31,
+     "exit_hooks": 3.08
+    },
+    {
+     "import": 4.16,
+     "get_session": 380.53,
+     "laps": 275.22,
+     "results": 30.16,
+     "in_process_total": 690.22,
+     "pandas_imported": true,
+     "process_wall": 816.05,
+     "startup": 100.79,
+     "exit_hooks": 2.84
+    },
+    {
+     "import": 3.48,
+     "get_session": 470.46,
+     "laps": 240.36,
+     "results": 23.13,
+     "in_process_total": 737.56,
+     "pandas_imported": true,
+     "process_wall": 876.94,
+     "startup": 106.16,
+     "exit_hooks": 2.82
+    }
+   ]
+  }
+ }
+}

@@ -3987,8 +3987,16 @@ class Session:
         as the main thread would); a merge session keeps ``None`` because
         :meth:`_ergast_table_race` already degraded and logged. Inside
         :func:`tif1.ergast.payloads.cache_only` a lookup that needs a fetch
-        raises ``ErgastFetchNeeded`` and nothing is memoized.
+        raises ``ErgastFetchNeeded`` and nothing is memoized. A session bundle
+        download in flight (Corinth C10) is waited for first: its Stats
+        entries answer the lookups.
         """
+        bundles = sys.modules.get("tif1.session_bundle")
+        if bundles is not None and not self._ergast_loaded:
+            from .ergast.payloads import _CACHE_ONLY
+
+            if not _CACHE_ONLY.get():
+                bundles.wait(self.year, self.gp, self.session, float(config.get("timeout", 30)))
         with self._ergast_lock:
             if self._ergast_loaded:
                 if self._ergast_error is not None:
@@ -4048,6 +4056,12 @@ class Session:
             return
         if self._resolve_cached_ergast_payload():
             return
+        if not self._ergast_only:
+            # Corinth C10: the session's bundle carries the classification
+            # and the season index; the thread waits for it before fetching.
+            from . import session_bundle
+
+            session_bundle.start(self.year, self.gp, self.session, write_cache=self.enable_cache)
         try:
             threading.Thread(
                 target=self._prefetch_ergast_payload, name="tif1-ergast", daemon=True
@@ -8335,9 +8349,14 @@ def _preconnect_cdn(
                 urls = _ergast_first_wave_urls(year, gp_name, session_name)
                 wait_limit = float(timeout)
             else:
-                urls = [
-                    sources[0].format_url(year, gp, session, path) for path in _FIRST_WAVE_PATHS
-                ]
+                paths = _FIRST_WAVE_PATHS
+                if bool(config.get("session_bundle", False)):
+                    # Corinth C10: the session's bundle carries both first-wave
+                    # files (and the rest of its small files) in one request.
+                    from .core_utils.session_bundle import BUNDLE_FILE
+
+                    paths = (BUNDLE_FILE,)
+                urls = [sources[0].format_url(year, gp, session, path) for path in paths]
             if not urls:
                 pass
             elif bool(config.get("cdn_first_wave", True)):
