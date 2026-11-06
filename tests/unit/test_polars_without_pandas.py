@@ -14,8 +14,10 @@ faster than polars' own) and is not a read path.
 
 The ``numpy`` mode of the child (Delphi D10: numpy is ~55 ms on top of
 polars) reads the laps, results, drivers and state surfaces with a
-``session_info.json`` present and reports whether numpy was imported; the
-telemetry read after them must still work (numpy loads there).
+``session_info.json`` present and reports whether numpy was imported, then
+the lap telemetry reads (Elis E6), the ``pick_*`` family, ``iterlaps(require=)``
+and the driver lookups (Gortyn G4); the telemetry arithmetic after them must
+still work (numpy loads there).
 """
 
 from __future__ import annotations
@@ -280,14 +282,64 @@ if mode == "numpy":
         if "numpy" in sys.modules:
             break
     numpy_after_lap_telemetry = "numpy" in sys.modules
+    # Gortyn G4: the pick_* family (the notebook's eight picks first),
+    # iterlaps(require=...) and the driver lookups select with Series masks.
+    laps = session.laps
+
+    def lap_keys(frame):
+        return list(zip(frame["Driver"].to_list(), frame["LapNumber"].to_list()))
+
+    picks = {
+        "pick_driver": lambda: lap_keys(laps.pick_driver("VER")),
+        "pick_drivers": lambda: lap_keys(laps.pick_drivers(["VER", "LEC"])),
+        "pick_quicklaps": lambda: lap_keys(laps.pick_quicklaps()),
+        "pick_quicklaps_strict": lambda: lap_keys(laps.pick_quicklaps(1.0)),
+        "pick_fastest": lambda: [laps.pick_fastest()["Driver"], laps.pick_fastest()["LapNumber"]],
+        "pick_laps": lambda: lap_keys(laps.pick_laps([2, 3])),
+        "pick_compounds": lambda: lap_keys(laps.pick_compounds(["SOFT"])),
+        "pick_wo_box": lambda: lap_keys(laps.pick_wo_box()),
+        "pick_track_status": lambda: lap_keys(laps.pick_track_status("1")),
+        "pick_drivers_6": lambda: lap_keys(
+            laps.pick_drivers(["ver", "pia", "nor", "lec", "ham", "81"])
+        ),
+        "pick_track_status_contains": lambda: lap_keys(laps.pick_track_status("4", "contains")),
+        "pick_track_status_none": lambda: lap_keys(laps.pick_track_status("4", "none")),
+        "pick_team": lambda: lap_keys(laps.pick_team("McLaren")),
+        "pick_teams": lambda: lap_keys(laps.pick_teams(["McLaren", "Ferrari"])),
+        "pick_tyre": lambda: lap_keys(laps.pick_tyre("soft")),
+        "pick_box_laps": lambda: lap_keys(laps.pick_box_laps()),
+        "pick_not_deleted": lambda: lap_keys(laps.pick_not_deleted()),
+        "pick_accurate": lambda: lap_keys(laps.pick_accurate()),
+        "pick_lap": lambda: lap_keys(laps.pick_lap(2)),
+        "pick_laps_slice": lambda: lap_keys(laps.pick_laps(slice(2, None))),
+        "iterlaps_require": lambda: [i for i, _ in laps.iterlaps(require=["IsPersonalBest"])],
+        "iterlaps_require_none": lambda: [i for i, _ in laps.iterlaps(require=["PitInTime"])],
+        "driver_fastest_lap": lambda: session.get_driver("VER").get_fastest_lap()[
+            "LapNumber"
+        ].to_list(),
+        "driver_get_lap": lambda: session.get_driver("PIA").get_lap(3)["LapNumber"],
+    }
+    picks_seen = {}
+    for name, read in picks.items():
+        picks_seen[name] = read()
+        if "numpy" in sys.modules:
+            break
+    numpy_after_picks = "numpy" in sys.modules
     fastest_schema = {k: str(v) for k, v in session.get_fastest_lap_tel().schema.items()}
-    telemetry_rows = session.laps.pick_drivers("VER").pick_fastest().get_telemetry().height
+    fastest_telemetry = session.laps.pick_drivers("VER").pick_fastest().get_telemetry()
+    telemetry_rows = fastest_telemetry.height
+    numpy_after_get_telemetry = "numpy" in sys.modules
+    distance = fastest_telemetry.add_distance()["Distance"].to_list()
     print(
         json.dumps(
             {
                 "numpy_before_telemetry": numpy_before,
                 "numpy_after_lap_telemetry": numpy_after_lap_telemetry,
                 "lap_telemetry_seen": lap_telemetry_seen,
+                "numpy_after_picks": numpy_after_picks,
+                "picks_seen": picks_seen,
+                "numpy_after_get_telemetry": numpy_after_get_telemetry,
+                "distance": distance,
                 "fastest_schema": fastest_schema,
                 "numpy_after_telemetry": "numpy" in sys.modules,
                 "pandas": "pandas" in sys.modules,
@@ -391,9 +443,43 @@ def test_polars_laps_results_and_state_never_import_numpy(tmp_path):
     assert report["fastest_schema"]["nGear"] == "Int64"
     assert report["fastest_schema"]["Brake"] == "Boolean"
     assert report["fastest_schema"]["DriverAhead"] == "String"
-    # pick_fastest and the resampling of get_telemetry still load numpy, and work.
+    # Gortyn G4: the pick_* family, iterlaps(require=...) and the driver
+    # lookups leave numpy unloaded, and so does the fastest lap's merged
+    # get_telemetry(); the telemetry arithmetic (add_distance) loads it, and works.
+    assert report["numpy_after_picks"] is False, report["picks_seen"]
+    picks = report["picks_seen"]
+    assert len(picks) == 24
+    both = [["PIA", 1], ["PIA", 2], ["PIA", 3], ["VER", 1], ["VER", 2], ["VER", 3]]
+    ver, pia = both[3:], both[:3]
+    assert picks["pick_driver"] == ver
+    assert picks["pick_drivers"] == ver
+    assert picks["pick_quicklaps"] == both  # 94 s best, 96 s < 94 * 1.07
+    assert picks["pick_quicklaps_strict"] == []  # strictly below the best
+    assert picks["pick_fastest"] == ["PIA", 3]  # personal bests tie at 96 s: the first row
+    assert picks["pick_laps"] == [["PIA", 2], ["PIA", 3], ["VER", 2], ["VER", 3]]
+    assert picks["pick_compounds"] == both
+    assert picks["pick_wo_box"] == both
+    assert picks["pick_track_status"] == [["PIA", 1], ["PIA", 3], ["VER", 1], ["VER", 3]]
+    assert picks["pick_drivers_6"] == both  # codes upper-cased, "81" is PIA's number
+    assert picks["pick_track_status_contains"] == [["PIA", 2], ["VER", 2]]
+    assert picks["pick_track_status_none"] == [["PIA", 1], ["PIA", 3], ["VER", 1], ["VER", 3]]
+    assert picks["pick_team"] == pia
+    assert picks["pick_teams"] == pia
+    assert picks["pick_tyre"] == both
+    assert picks["pick_box_laps"] == []
+    assert picks["pick_not_deleted"] == both
+    assert picks["pick_accurate"] == both
+    assert picks["pick_lap"] == [["PIA", 2], ["VER", 2]]
+    assert picks["pick_laps_slice"] == [["PIA", 2], ["PIA", 3], ["VER", 2], ["VER", 3]]
+    assert picks["iterlaps_require"] == [0, 1, 2, 3, 4, 5]
+    assert picks["iterlaps_require_none"] == []  # PitInTime is all null
+    assert picks["driver_fastest_lap"] == [2]  # not deleted, 94 s
+    assert picks["driver_get_lap"] == 3
+    assert report["numpy_after_get_telemetry"] is False
     assert report["numpy_after_telemetry"] is True
     assert report["telemetry_rows"] == 9
+    assert report["distance"][0] == 0.0
+    assert report["distance"][-1] > 0.0
     # The frames themselves are the typed ones.
     assert report["points"] == [25.0]
     assert report["track_status"] == ["1", "2"]

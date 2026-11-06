@@ -72,6 +72,33 @@ It times fresh-process warm workloads against a cache seeded from
 When a change is meant to move a timing or a user-visible value, add
 `--write-baseline` and commit the rewritten files with the change.
 
+### Private upstream API (the upstream canary)
+
+Some fast paths use private API of pandas, polars, niquests, qh3 or CPython.
+Each one checks the private surface and falls back to the public route when
+it changed, so results stay correct, but the code gets slower without an
+error. `tests/unit/test_private_seams.py` lists every such seam (`SEAMS`: where
+it is used, the private names, the fallback, the upstream version it was
+verified against) and asserts the fast path is active on the installed versions.
+
+- New private API: add a `SEAMS` entry and a test that fails when the fast
+  path is not taken (a probe returning `False`, a fallback being called).
+- Lock bump of pandas, polars, niquests or qh3: `test_seam_table_follows_the_lock`
+  fails until you run the seam tests on the new lock and update `verified`.
+
+The `Upstream canary` workflow (`.github/workflows/upstream-canary.yml`, weekly
+and on manual dispatch, never a pull-request check) installs the newest releases
+and pre-releases of those packages (plus numpy, pyarrow and urllib3-future) over
+the locked environment. It then runs the seam tests, the unit suite and the
+performance gate. When something fails, it opens or updates one issue with the
+label `upstream-drift`, the installed versions and the failing tests, and the
+next green run closes that issue. The `nightly` dispatch channel also uses the
+scientific-python nightly wheels of pandas, numpy and pyarrow. To list what the
+canary would install:
+```bash
+uv run python tools/upstream_prereleases.py
+```
+
 ### Code Quality
 
 Run linting:

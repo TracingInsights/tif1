@@ -249,6 +249,25 @@ def telemetry_ref_from_path(path: str) -> tuple[str, int] | None:
     return driver, int(lap_part)
 
 
+# Gortyn G3: laps per columnar telemetry file. A driver's laps ``first ..
+# first + COLUMNAR_CHUNK_LAPS - 1`` (``first`` = 1, 11, 21...) share one
+# ``{driver}/tel.v1.{first}.bin`` (tif1.core_utils.columnar_telemetry), so a
+# reader derives every path from the lap numbers alone (no manifest) and a
+# 57-lap wave is 6 parallel requests. Here, not in the codec module, so the
+# fetch layer resolves paths without importing numpy.
+COLUMNAR_CHUNK_LAPS = 10
+
+
+def columnar_chunk_first_lap(lap: int) -> int:
+    """First lap number of the columnar telemetry file holding ``lap`` (1, 11, 21, ...)."""
+    return (int(lap) - 1) // COLUMNAR_CHUNK_LAPS * COLUMNAR_CHUNK_LAPS + 1
+
+
+def columnar_file_path(driver: str, first_lap: int) -> str:
+    """Session-relative CDN path of ``driver``'s columnar telemetry file starting at ``first_lap``."""
+    return f"{driver}/tel.v1.{first_lap}.bin"
+
+
 # Circuit, city and country names users type for an event, mapped to the
 # event names they mean, in priority order (the first one on that season's
 # calendar wins). Keys are normalised by ``tif1.events._event_alias_key``

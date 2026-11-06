@@ -7,6 +7,77 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
 
 ## [Unreleased]
 
+### Performance — Gortyn series (2026-11-03)
+
+- Lap selections on a polars session no longer import numpy. Every `pick_*`
+  method of `PolarsLaps`, `iterlaps(require=...)`, `get_driver()` and
+  `PolarsDriver.get_lap()` filter with eager polars Boolean Series masks
+  instead of numpy masks. They are 5-20% faster per call even with numpy
+  already loaded (the eight picks of the benchmark notebook: 1.67 -> 1.47
+  ms). A polars process that analyses lap times without telemetry
+  arithmetic skips the numpy import: a warm lap-time notebook (picks,
+  `iterlaps`, fastest laps, results) runs in 269 ms instead of 354 ms. A
+  notebook that later resamples or merges telemetry still imports numpy at
+  that point, so its total time is unchanged.
+- Warm pandas sessions decompress the frame tier's driver rows into
+  huge-page buffers when `tif1-native` 0.2.1 is installed on Linux.
+  `tif1_native.lz4_frame_decompress_into` decodes a row's lz4 frame with
+  liblz4 (the same decoder pyarrow's codec uses; 2.5% faster than it on the
+  rows, 1.7x faster than a pure-Rust decoder) and the GIL released, into an
+  anonymous private mapping advised `MADV_HUGEPAGE` (2 MB pages), instead
+  of 123 MB of fresh memory zero-filled one 4 KB fault at a time. Fresh
+  process, 2025 Bahrain race: `fetch_all_laps_telemetry()` takes 26 500
+  minor faults instead of 56 700, with 93 ms of system time instead of
+  147-155 ms and no extra user CPU. Per-lap `get_car_data()` over a driver:
+  27.2 -> 23.1 ms; `laps.pick_driver("VER").telemetry`: 26.1 -> 24.1 ms; the
+  `iterlaps()` telemetry loop 148 -> 142 ms; the whole `fetch_all` call is
+  unchanged within noise. Rows under 2 MB, Windows, macOS, Pyodide, THP
+  `never`, older wheels and `TIF1_DISABLE_NATIVE=1` keep the pyarrow codec.
+  Building `tif1-native` from source now needs a C compiler as well as Rust.
+
+### Added
+
+- Cold telemetry can come from per-driver columnar files when the data
+  repositories publish them: `{driver}/tel.v1.{first}.bin`, ten laps each,
+  typed columns in one zstd frame (`design/TELEMETRY_COLUMNAR_FORMAT.md`;
+  the encoder for the data pipeline is `tools/data/encode_driver_telemetry.py`,
+  whose `--verify` decodes every file back and compares each lap with the
+  JSON bit for bit). A race driver's laps are 6 requests and 2.7 MB instead
+  of 57 requests and 3.7 MB, and a race is 52.5 MB instead of 71.3 MB of
+  gzipped JSON. The decoded values are identical to the JSON's, so every
+  frame is unchanged. On a throttled local CDN (8 MB/s link),
+  `fetch_all_laps_telemetry()` took 8.5 s instead of 11.0 s and
+  `laps.pick_driver("VER").telemetry` 543 ms instead of 649 ms. Missing,
+  unreadable or incomplete files fall back to the lap JSON (a missing file
+  is remembered for the session for `missing_payloads_ttl_days`); a single
+  lap always reads its JSON. The reader is off by default
+  (`telemetry_columnar=False`, `TIF1_TELEMETRY_COLUMNAR`) until the
+  repositories carry the files, because a probe costs one 404 round trip
+  per session on today's CDN.
+- pandas 3.1 support, and the locked dependencies moved to the newest
+  releases (pandas 3.1.0, polars 2.1.0, numpy 2.5.4, pyarrow 26.0.1,
+  niquests 3.21.2, urllib3-future 2.25.905, qh3 2.1.0). On pandas 3.1 the
+  frame tier's lap-frame fast path silently fell back (3.1 gives Arrow
+  slices an empty `_cache` and its `TimedeltaArray` no `_freq`, which the
+  probes compared); the arrays are now built to the installed layout and
+  the probes stay the guard. `Distance`, `DifferentialDistance` and
+  `LapTimeSeconds` use `TimedeltaArray.total_seconds()` itself instead of a
+  copy of its 3.0 arithmetic, so they equal pandas' and fastf1's values on
+  every version (on 3.1 they move by at most 1.5 ulp). `Laps.to_sql(index=True)`
+  raised on pandas 3.1 because `Laps.reset_index` dropped the `level_0`
+  column pandas adds there; it drops it only when pandas named it, so a
+  user's own `level_0` column survives too. polars 2.1 imports about 8 ms
+  slower than 2.0; nothing in tif1 changes that.
+- Private upstream API is now tracked. `tests/unit/test_private_seams.py`
+  lists the 10 places where a fast path uses private pandas, polars,
+  niquests, qh3 or CPython API, with the version each was verified against,
+  and asserts that each fast path is the one taken, not its fallback, so a
+  drift fails a named test instead of making `iterlaps` or the frame tier
+  slower without an error. A weekly `Upstream canary` workflow (not a
+  pull-request check) runs those tests, the unit suite and the perf gate
+  against the newest releases and pre-releases of those packages, and opens
+  or updates one `upstream-drift` issue when something fails.
+
 ## [0.11.3] - 2026-11-03
 
 ### Summary

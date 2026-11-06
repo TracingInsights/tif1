@@ -43,8 +43,9 @@ from .exceptions import (
 if TYPE_CHECKING:
     import numpy as np
 else:
-    # The masks and gathers of the hot paths run on numpy, which loads on the
-    # first of them; reading ``session.laps`` back from the tier never does.
+    # The telemetry arithmetic (and the rare multi-driver joins) run on numpy,
+    # which loads on the first of them; reading ``session.laps`` back from the
+    # tier and the lap selections (Series masks) never do.
     np = lazy_module("numpy", globals(), "np")
 
 __all__ = [
@@ -323,6 +324,87 @@ def _valid_values(series: pl.Series) -> np.ndarray:
     return _present_values(series)
 
 
+# Boolean Series twins of the numpy mask helpers, for the selections of
+# ``PolarsLaps``/``PolarsSessionResults``/``PolarsDriver``: a polars process
+# that only selects laps never imports numpy (~55 ms; Gortyn G4). Only eager
+# kernels: comparisons, ``&``/``|``/``not_``, ``zip_with``, ``arg_min``/
+# ``arg_max``, ``to_list`` and ``pl.Series(list)``.
+
+
+def _filled(mask: pl.Series, value: bool = False) -> pl.Series:
+    """``mask.fill_null(value)`` for a Boolean Series (``zip_with`` picks ``other`` at a null)."""
+    if not mask.null_count():
+        return mask
+    falses = _full_series(mask.name, False, mask.len(), pl.Boolean)
+    if not value:
+        return mask.zip_with(mask, falses)
+    flipped = ~mask  # null stays null, so it becomes False and then True
+    return ~flipped.zip_with(flipped, falses)
+
+
+def _constant_mask(value: bool, length: int) -> pl.Series:
+    return _full_series("", value, length, pl.Boolean)
+
+
+def _present_series(series: pl.Series) -> pl.Series:
+    """``series.is_not_null()`` (``_present_values`` as a Boolean Series)."""
+    n = series.len()
+    nulls = series.null_count()
+    if not nulls:
+        return _constant_mask(True, n)
+    if nulls == n:
+        return _constant_mask(False, n)
+    if isinstance(series.dtype, _NESTED_DTYPES):
+        return series.is_not_null()
+    # ``x == x`` is null exactly where ``x`` is (polars: NaN equals NaN).
+    return _filled(series.eq(series))
+
+
+def _valid_series(series: pl.Series) -> pl.Series:
+    """``_valid_values`` as a Boolean Series: not null, and not NaN for floats."""
+    if series.dtype.is_float():
+        # polars orders NaN above +inf: ``x <= inf`` is False for NaN, null for null.
+        return _filled(series <= math.inf)
+    return _present_series(series)
+
+
+def _isin_series(series: pl.Series, values: list[Any]) -> pl.Series:
+    """``series.is_in(values).fill_null(False)`` (``_isin_values`` as a Boolean Series).
+
+    ``==`` per value for up to four values, else one membership test per row
+    on the Python values (a null, or a float NaN, matches nothing).
+    """
+    n = series.len()
+    if not values or not n:
+        return _constant_mask(False, n)
+    if len(values) <= 4:
+        hits = series == values[0]
+        for value in values[1:]:
+            hits = hits | (series == value)
+        return _filled(hits)
+    wanted = set(values)
+    return pl.Series([value in wanted for value in series.to_list()], dtype=pl.Boolean)
+
+
+def _text_test_series(series: pl.Series, test: Callable[[str], bool]) -> pl.Series:
+    """``test`` of each value of a text Series (null: False), once per distinct value."""
+    values = series.to_list()
+    outcome = {value: value is not None and test(value) for value in set(values)}
+    return pl.Series(list(map(outcome.__getitem__, values)), dtype=pl.Boolean)
+
+
+def _first_true(mask: pl.Series) -> int | None:
+    """Position of the first True of a Boolean Series (``None`` when there is none)."""
+    if not mask.any():  # nulls ignored: an all-null mask has no True
+        return None
+    return cast(int, mask.arg_max())
+
+
+def _true_positions(mask: pl.Series) -> list[int]:
+    """Positions of the True values of a Boolean Series (``np.flatnonzero``)."""
+    return [position for position, value in enumerate(mask.to_list()) if value]
+
+
 def _filter_rows(frame: pl.DataFrame, keep: np.ndarray | pl.Series) -> pl.DataFrame:
     """``frame.filter(keep)`` as a plain frame, column by column.
 
@@ -403,13 +485,6 @@ def _isin_values(series: pl.Series, values: list[Any]) -> np.ndarray:
     return np.fromiter((value in wanted for value in series.to_list()), dtype=bool, count=n)
 
 
-def _text_test_values(series: pl.Series, test: Callable[[str], bool]) -> np.ndarray:
-    """``test`` of each value of a text Series (null: False), once per distinct value."""
-    values = series.to_list()
-    outcome = {value: value is not None and test(value) for value in set(values)}
-    return np.fromiter(map(outcome.__getitem__, values), dtype=bool, count=len(values))
-
-
 def _distinct_present(series: pl.Series) -> tuple[int, Any]:
     """``(n, value)``: the number of distinct non-null values and the first of them.
 
@@ -424,7 +499,7 @@ def _distinct_present(series: pl.Series) -> tuple[int, Any]:
         return count, None
     if not nulls:
         return 1, series[0]
-    return 1, series[int(np.flatnonzero(_present_values(series))[0])]
+    return 1, series[cast(int, _first_true(_present_series(series)))]
 
 
 def _held(series: pl.Series, has_nan: bool) -> pl.Series:
@@ -2101,22 +2176,23 @@ class PolarsLaps(_TIF1Frame):
         codes = [_driver_identifier(identifier) for identifier in _identifier_items(identifiers)]
         names = [code.upper() for code in codes if not code.isdigit()]
         numbers = [code for code in codes if code.isdigit()]
-        keep = _isin_values(self.get_column("Driver").cast(pl.String), names)
+        keep = _isin_series(self.get_column("Driver").cast(pl.String), names)
         if numbers:
             keep = keep | self._driver_number_values(numbers)
         return self._rewrap(_filter_rows(self, keep))
 
-    def _driver_number_values(self, numbers: list[str]) -> np.ndarray:
+    def _driver_number_values(self, numbers: list[str]) -> pl.Series:
         """``DriverNumber`` (text or integer column) is one of ``numbers`` (digit strings)."""
         if "DriverNumber" not in self.columns:
-            return np.zeros(self.height, dtype=bool)
-        return _isin_values(self.get_column("DriverNumber").cast(pl.String), numbers)
+            return _constant_mask(False, self.height)
+        return _isin_series(self.get_column("DriverNumber").cast(pl.String), numbers)
 
     def pick_lap(self, lap_number: int) -> Self:
         """Laps with ``LapNumber == lap_number``."""
         column = self.get_column("LapNumber")
         if type(lap_number) is int and column.dtype.is_integer():
-            return self._rewrap(_filter_rows(self, _mask_values(column == lap_number)))
+            # A null lap number drops its row (``fill_null(False)``).
+            return self._rewrap(_filter_rows(self, column == lap_number))
         return self._rewrap(self.filter(pl.col("LapNumber") == lap_number))
 
     def pick_laps(self, lap_numbers: Any = None, *, laps: Any = None) -> Self:
@@ -2143,7 +2219,7 @@ class PolarsLaps(_TIF1Frame):
                 hits = values >= start
                 if stop is not None:
                     hits = hits & (values <= stop)
-                return self._rewrap(_filter_rows(self, _mask_values(hits)))
+                return self._rewrap(_filter_rows(self, hits))  # a null drops its row
             expr = column >= start
             if stop is not None:
                 expr = expr & (column <= stop)
@@ -2157,16 +2233,17 @@ class PolarsLaps(_TIF1Frame):
             numbers.append(int(value))
         dtype = self.schema["LapNumber"]
         if dtype.is_integer() or dtype.is_float():
-            # A null reads as NaN, which matches no number.
-            values = self.get_column("LapNumber").to_numpy()
-            return self._rewrap(_filter_rows(self, np.isin(values, numbers)))
+            # A null or a NaN matches no number.
+            return self._rewrap(
+                _filter_rows(self, _isin_series(self.get_column("LapNumber"), numbers))
+            )
         return self._rewrap(self.filter(column.is_in(numbers)))
 
     def pick_team(self, name: str) -> Self:
         """Laps of one team (fastf1's exact ``Team == name``)."""
         if isinstance(name, str):
-            keep = _mask_values(self.get_column("Team").cast(pl.String) == name)
-            return self._rewrap(_filter_rows(self, keep))
+            # A null team drops its row.
+            return self._rewrap(_filter_rows(self, self.get_column("Team").cast(pl.String) == name))
         return self._rewrap(self.filter(pl.col("Team").cast(pl.String) == name))
 
     def pick_teams(self, names: Any) -> Self:
@@ -2174,7 +2251,7 @@ class PolarsLaps(_TIF1Frame):
         if isinstance(names, str):
             return self.pick_team(names)
         wanted = [str(name) for name in names]
-        keep = _isin_values(self.get_column("Team").cast(pl.String), wanted)
+        keep = _isin_series(self.get_column("Team").cast(pl.String), wanted)
         return self._rewrap(_filter_rows(self, keep))
 
     def pick_fastest(self, only_by_time: bool = False) -> PolarsLap | None:
@@ -2203,21 +2280,26 @@ class PolarsLaps(_TIF1Frame):
         if self.height == 0 or "LapTime" not in self.columns:
             return None
         lap_time = self.get_column("LapTime")
-        valid = _valid_values(lap_time)
+        # Boolean Series masks without nulls (``None``: every lap is a candidate).
+        valid = (
+            _valid_series(lap_time) if lap_time.null_count() or lap_time.dtype.is_float() else None
+        )
+        flag = None
         if rule == "personal_best" and "IsPersonalBest" in self.columns:
-            flag = self.get_column("IsPersonalBest").cast(pl.Boolean, strict=False)
-            valid = valid & _mask_values(flag)
+            flag = _filled(self.get_column("IsPersonalBest").cast(pl.Boolean, strict=False))
         elif rule == "not_deleted" and "Deleted" in self.columns:
-            flag = self.get_column("Deleted").cast(pl.Boolean, strict=False)
-            valid = valid & ~_mask_values(flag)
-        if valid.all():
-            position = int(cast(int, lap_time.arg_min()))
+            flag = ~_filled(self.get_column("Deleted").cast(pl.Boolean, strict=False))
+        if flag is not None:
+            valid = flag if valid is None else valid & flag
+        if valid is None or valid.all():
+            position = lap_time.arg_min()
         else:
-            positions = np.flatnonzero(valid)
-            if positions.size == 0:
-                return None
-            times = lap_time.filter(pl.Series(valid))
-            position = int(positions[int(cast(int, times.arg_min()))])
+            # The first of the tied minima among the candidates (``arg_min``),
+            # mapped back to its row.
+            nth = lap_time.filter(valid).arg_min()
+            position = None if nth is None else pl.Series(range(self.height)).filter(valid)[nth]
+        if position is None:
+            return None
         return PolarsLap(self.slice(position, 1), session=self.session, name=position)
 
     def pick_quicklaps(self, threshold: float | None = None) -> Self:
@@ -2230,22 +2312,22 @@ class PolarsLaps(_TIF1Frame):
         best = lap_time_ns.min()
         if best is None:
             return self
-        # Int64 against a number: compared as float64, as polars does; a null
-        # (NaN here) is never quick.
-        keep = lap_time_ns.to_numpy() < cast(int, best) * threshold
+        # Int64 against a float: compared as float64, as numpy and the polars
+        # expression do; a null lap time (a null in the mask) is never quick.
+        keep = lap_time_ns < cast(int, best) * threshold
         return self._rewrap(_filter_rows(self, keep))
 
     def pick_tyre(self, compound: str) -> Self:
         """Laps on one compound (upper-cased, as fastf1 does)."""
-        keep = _mask_values(self.get_column("Compound").cast(pl.String) == str(compound).upper())
-        return self._rewrap(_filter_rows(self, keep))
+        keep = self.get_column("Compound").cast(pl.String) == str(compound).upper()
+        return self._rewrap(_filter_rows(self, keep))  # a null compound drops its row
 
     def pick_compounds(self, compounds: Any) -> Self:
         """Laps on the given compounds: a name or any iterable of names, upper-cased (fastf1)."""
         if isinstance(compounds, str):
             return self.pick_tyre(compounds)
         wanted = [str(compound).upper() for compound in compounds]
-        keep = _isin_values(self.get_column("Compound").cast(pl.String), wanted)
+        keep = _isin_series(self.get_column("Compound").cast(pl.String), wanted)
         return self._rewrap(_filter_rows(self, keep))
 
     def pick_track_status(self, status: Any, how: str = "equals") -> Self:
@@ -2263,11 +2345,11 @@ class PolarsLaps(_TIF1Frame):
         ):
             values = self.get_column("TrackStatus").cast(pl.String)
             if how == "equals":
-                keep = _mask_values(values == status)
+                keep = _filled(values == status)
             elif how in ("contains", "excludes"):
-                keep = _text_test_values(values, lambda value: status in value)
+                keep = _text_test_series(values, lambda value: status in value)
             else:  # any character of ``status`` (a regex class of literal characters)
-                keep = _text_test_values(values, lambda value: any(ch in value for ch in status))
+                keep = _text_test_series(values, lambda value: any(ch in value for ch in status))
             if how in ("excludes", "none"):
                 keep = ~keep  # a null status is kept, as ~fill_null(False) keeps it
             return self._rewrap(_filter_rows(self, keep))
@@ -2290,7 +2372,7 @@ class PolarsLaps(_TIF1Frame):
         """Laps that are neither in-laps nor out-laps."""
         if "PitInTime" not in self.columns or "PitOutTime" not in self.columns:
             return self
-        keep = ~_present_values(self.get_column("PitInTime")) & ~_present_values(
+        keep = ~_present_series(self.get_column("PitInTime")) & ~_present_series(
             self.get_column("PitOutTime")
         )
         return self._rewrap(_filter_rows(self, keep))
@@ -2300,11 +2382,11 @@ class PolarsLaps(_TIF1Frame):
         if "PitInTime" not in self.columns or "PitOutTime" not in self.columns:
             return self
         if which == "in":
-            keep = _present_values(self.get_column("PitInTime"))
+            keep = _present_series(self.get_column("PitInTime"))
         elif which == "out":
-            keep = _present_values(self.get_column("PitOutTime"))
+            keep = _present_series(self.get_column("PitOutTime"))
         elif which == "both":
-            keep = _present_values(self.get_column("PitInTime")) | _present_values(
+            keep = _present_series(self.get_column("PitInTime")) | _present_series(
                 self.get_column("PitOutTime")
             )
         else:
@@ -2316,7 +2398,7 @@ class PolarsLaps(_TIF1Frame):
         if "Deleted" not in self.columns:
             return self
         deleted = self.get_column("Deleted").cast(pl.Boolean, strict=False)
-        return self._rewrap(_filter_rows(self, ~_mask_values(deleted)))
+        return self._rewrap(_filter_rows(self, ~_filled(deleted)))
 
     def pick_accurate(self) -> Self:
         """Laps flagged ``IsAccurate``."""
@@ -2324,7 +2406,7 @@ class PolarsLaps(_TIF1Frame):
             return self
         accurate = self.get_column("IsAccurate")
         if accurate.dtype == pl.Boolean:
-            return self._rewrap(_filter_rows(self, _mask_values(accurate)))
+            return self._rewrap(_filter_rows(self, accurate))  # a null flag drops its row
         return self._rewrap(self.filter(pl.col("IsAccurate").fill_null(False)))
 
     # -- qualifying ---------------------------------------------------------
@@ -2433,11 +2515,11 @@ class PolarsLaps(_TIF1Frame):
         session = self.session
         positions: Iterable[int] = range(self.height)
         if required and self.height:
-            keep = _valid_values(self.get_column(required[0]))
+            keep = _valid_series(self.get_column(required[0]))
             for column in required[1:]:
-                keep = keep & _valid_values(self.get_column(column))
+                keep = keep & _valid_series(self.get_column(column))
             if not keep.all():
-                positions = np.flatnonzero(keep).tolist()
+                positions = _true_positions(keep)
         rows = self.rows(named=True)
         for position in positions:
             yield IterLapResult(
@@ -2873,24 +2955,26 @@ class PolarsSessionResults(_TIF1Frame):
         if not key:
             # A blank identifier names no driver (it would match blank names).
             return None
-        matches: np.ndarray | None = None
+        # Python lists over the ~20 result rows: cheaper than building masks.
+        matches: list[bool] | None = None
         upper, lower = key.upper(), key.lower()
         for column in self._IDENTIFIER_COLUMNS:
             if column not in self.columns:
                 continue
-            text = self.get_column(column).cast(pl.String)
+            values = self.get_column(column).cast(pl.String).to_list()
             if column == "Abbreviation":
-                hits = _text_test_values(text, lambda value: value.upper() == upper)
+                hits = [value is not None and value.upper() == upper for value in values]
             elif column == "DriverNumber":
-                hits = _mask_values(text == key)
+                hits = [value == key for value in values]
             else:
-                hits = _text_test_values(text, lambda value: value.lower() == lower)
-            matches = hits if matches is None else matches | hits
+                hits = [value is not None and value.lower() == lower for value in values]
+            matches = (
+                hits if matches is None else [a or b for a, b in zip(matches, hits, strict=True)]
+            )
         if matches is None:
             return None
-        positions = np.flatnonzero(matches)
-        if positions.size:
-            return int(positions[0])
+        if True in matches:
+            return matches.index(True)
         number, separator, code = key.partition("/")
         if (
             separator
@@ -2901,14 +2985,11 @@ class PolarsSessionResults(_TIF1Frame):
             # A shared car's later driver ("number/Abbreviation", the pandas
             # index label) against the raw car number polars keeps.
             wanted = code.strip().upper()
-            label = _mask_values(self.get_column("DriverNumber").cast(pl.String) == number)
-            label = label & _text_test_values(
-                self.get_column("Abbreviation").cast(pl.String),
-                lambda value: value.upper() == wanted,
-            )
-            positions = np.flatnonzero(label)
-            if positions.size:
-                return int(positions[0])
+            numbers = self.get_column("DriverNumber").cast(pl.String).to_list()
+            codes = self.get_column("Abbreviation").cast(pl.String).to_list()
+            for position, (car, abbreviation) in enumerate(zip(numbers, codes, strict=True)):
+                if car == number and abbreviation is not None and abbreviation.upper() == wanted:
+                    return position
         return None
 
     def row_for(self, identifier: Any) -> PolarsDriverResult:
@@ -3142,16 +3223,15 @@ class PolarsDriver(PolarsDriverResult):
         if isinstance(lap_number, bool) or not isinstance(lap_number, int) or lap_number < 1:
             raise ValueError(f"lap_number must be a positive integer, got {lap_number!r}")
         laps = self.laps
-        positions = (
-            np.flatnonzero(_mask_values(laps.get_column("LapNumber") == lap_number))
+        position = (
+            _first_true(laps.get_column("LapNumber") == lap_number)
             if "LapNumber" in laps.columns
-            else np.zeros(0, dtype=np.int64)
+            else None
         )
-        if positions.size == 0:
+        if position is None:
             raise LapNotFoundError(
                 lap_number=lap_number, driver=self.driver, **_session_context(self.session)
             )
-        position = int(positions[0])
         return PolarsLap(laps.slice(position, 1), session=self.session, name=position)
 
     def get_fastest_lap(self) -> PolarsLaps:

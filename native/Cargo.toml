@@ -1,6 +1,6 @@
 [package]
 name = "tif1_native"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Optional native accelerators for tif1 (telemetry payload decoder)"
 license = "MIT"
@@ -13,6 +13,10 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
 numpy = "0.29"
 fast-float2 = "0.2"
+# liblz4 (C source vendored by the crate, built by `cc` into the extension):
+# its block decoder is ~1.6x faster than lz4_flex and is the one pyarrow's
+# codec runs; tif1 calls only `LZ4_decompress_safe(_usingDict)`.
+lz4-sys = "1.11"
 
 [profile.release]
 opt-level = 3

@@ -654,8 +654,9 @@ class TestAddTrackStatus:
         table = self.TABLE.assign(Time=_td([0.0, 300.0, 302.0]))
         tel = Telemetry(
             {
-                "SessionTime": pd.to_timedelta([299.0, 300.0, 301.0, 302.0], unit="s"),
-                "Time": pd.to_timedelta([0.0, 1.0, 2.0, 3.0], unit="s"),
+                # pandas 3.1 infers ``us`` from float seconds: spell the unit out
+                "SessionTime": np.array([299, 300, 301, 302], dtype="m8[s]"),
+                "Time": np.array([0, 1, 2, 3], dtype="m8[s]"),
             },
             session=SimpleNamespace(track_status=table),
         )

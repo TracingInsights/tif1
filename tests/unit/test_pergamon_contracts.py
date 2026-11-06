@@ -1323,8 +1323,44 @@ def test_fast_lap_arrays_match_the_public_slicing_route():
     assert got.tolist() == reference.tolist()
     time_array = decoded[3]["Time"].array
     assert type(time_array) is pd.arrays.TimedeltaArray
-    assert time_array.freq is None
+    assert getattr(time_array, "freq", None) is None  # pandas 3.1 dropped ``freq``
+    assert vars(time_array) == vars(frames[3]["Time"].array[0:5])
     assert time_array.equals(frames[3]["Time"].array)
+
+
+@pytest.mark.parametrize("layout", [(True, False), (False, True)])
+def test_fast_lap_arrays_follow_the_installed_array_layout(monkeypatch, layout):
+    """pandas >= 3.1 slices carry ``_cache`` and its TimedeltaArray has no ``_freq``.
+
+    Either layout builds the same frames as the generic route; the hand-built
+    arrays carry exactly the optional attributes the layout names (the
+    generic route keeps the installed pandas' own layout).
+    """
+    frames = _q18_frames()
+    blob, _ = frame_codec.encode_driver_frames(list(frames.items()))
+    monkeypatch.setattr(frame_codec, "_ARRAY_LAYOUT", layout)
+    monkeypatch.setattr(frame_codec, "_FAST_ARRAYS", (True, True))
+    str_cache, td_freq = layout
+    # The block arrays as built (before any cached property fills ``_cache``).
+    for frame in frame_codec.decode_driver_frames(bytearray(blob)).values():
+        for block in frame._mgr.blocks:
+            values = block.values
+            if type(values) is pd.arrays.ArrowStringArray:
+                assert list(vars(values)) == [
+                    "_pa_array",
+                    "_dtype",
+                    *(["_cache"] * str_cache),
+                    "_readonly",
+                ]
+            elif type(values) is pd.arrays.TimedeltaArray:
+                assert ("_freq" in vars(values)) is td_freq
+    fast, generic = _decode_both(blob, monkeypatch)
+    for lap, frame in fast.items():
+        _same(frame, generic[lap])
+    ea = frames[3]["DriverAhead"].array
+    sliced = frame_codec._str_spans(ea, [(1, 3)])
+    assert list(vars(sliced)) == ["_pa_array", "_dtype", *(["_cache"] * str_cache), "_readonly"]
+    assert sliced.tolist() == ea[1:3].tolist()
 
 
 def test_fast_lap_frames_are_writable_and_mutation_isolated():

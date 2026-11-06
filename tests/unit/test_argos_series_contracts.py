@@ -114,7 +114,10 @@ class TestA1A2TypedFrames:
         assert huge.dtype.kind == "m"
         assert huge.iloc[1].total_seconds() == 1.0e10
         assert pd.isna(huge.iloc[2])
-        with pytest.raises(OverflowError):  # pandas' own behaviour for inf
+        # pandas' own behaviour for inf (OverflowError before 3.1, OutOfBoundsTimedelta since)
+        with pytest.raises((OverflowError, ValueError)) as theirs:
+            pd.to_timedelta(np.array([1.0, np.inf]), unit="s")
+        with pytest.raises(type(theirs.value)):
             _numeric_seconds_to_timedelta(pd.Series([1.0, np.inf]))
         # Telemetry Time beyond the ns range: integral seconds widen to a
         # coarser resolution through pandas; a mix with fractional seconds is

@@ -1,0 +1,154 @@
+name: Upstream canary
+
+# tif1's fast paths reach into private API of pandas, polars, niquests, qh3 and
+# CPython (tests/unit/test_private_seams.py lists every seam). Each one falls
+# back to the public route when it drifts, so a new upstream release cannot
+# break results, but it can silently put a hot path back on the slow route.
+# This job installs the newest releases and pre-releases of those packages over
+# the locked environment, runs the seam tests, the unit suite and the perf gate,
+# and opens (or updates) one issue labelled `upstream-drift` when anything
+# fails. It never gates a pull request.
+
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays 04:23 UTC
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: >-
+          pre: newest PyPI releases and pre-releases; nightly: also the
+          scientific-python nightly wheels (pandas, numpy, pyarrow)
+        type: choice
+        options: [pre, nightly]
+        default: pre
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-canary
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.10.2"
+  # Keep in sync with SEAMS in tests/unit/test_private_seams.py (a test checks
+  # that every seam package appears here) and tools/upstream_prereleases.py.
+  CANARY_PACKAGES: "pandas polars polars-runtime-32 numpy pyarrow niquests urllib3-future qh3"
+  CHANNEL: ${{ inputs.channel || 'pre' }}
+
+jobs:
+  canary:
+    # Forks get the schedule too; only the main repository files issues.
+    if: github.repository == 'TracingInsights/tif1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Install dependencies
+        run: python -m uv sync --all-extras
+
+      - name: Install the newest upstream releases and pre-releases
+        # Over the synced environment; later steps run with --no-sync so uv does
+        # not put the locked versions back. ``--python .venv/bin/python``: run as
+        # ``python -m uv``, ``uv pip`` would otherwise install into the hosted
+        # toolcache Python.
+        run: |
+          extra=()
+          if [ "${CHANNEL}" = "nightly" ]; then
+            extra=(--extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+                   --index-strategy unsafe-best-match)
+          fi
+          # shellcheck disable=SC2086
+          python -m uv pip install --python .venv/bin/python --prerelease allow --upgrade \
+            "${extra[@]}" ${CANARY_PACKAGES}
+          python -m uv run --no-sync python tools/upstream_prereleases.py --installed \
+            | tee canary-versions.txt
+
+      - name: Private seam tests
+        id: seams
+        continue-on-error: true
+        run: |
+          python -m uv run --no-sync pytest -o addopts='' -p no:cacheprovider -v -rfE \
+            tests/unit/test_private_seams.py --junitxml=canary-seams.xml
+
+      - name: Unit suite
+        id: unit
+        continue-on-error: true
+        run: |
+          python -m uv run --no-sync pytest -o addopts='' -o faulthandler_timeout=300 \
+            -p no:cacheprovider tests/unit -n auto --dist=loadfile -q -rfE \
+            -m "not slow and not integration and not benchmark and not perf_gate" \
+            --junitxml=canary-unit.xml
+
+      - name: Performance gate
+        # A seam that fell back shows here as an in-process phase regression; a
+        # parity digest can also move when a new pandas/polars changes a repr.
+        id: perf
+        continue-on-error: true
+        run: |
+          python -m uv run --no-sync pytest -o addopts='' -p no:xdist -p no:cacheprovider \
+            tests/perf_gate -m perf_gate -v -s --junitxml=canary-perf.xml
+
+      - name: Write the report
+        if: always()
+        run: |
+          python -m uv run --no-sync python tools/upstream_canary_report.py \
+            --versions canary-versions.txt \
+            --junit seams=canary-seams.xml --junit unit=canary-unit.xml \
+            --junit perf_gate=canary-perf.xml \
+            --outcome "seams=${{ steps.seams.outcome }}" \
+            --outcome "unit=${{ steps.unit.outcome }}" \
+            --outcome "perf_gate=${{ steps.perf.outcome }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --out canary-report.md
+          cat canary-report.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-canary-${{ env.CHANNEL }}
+          path: canary-*
+          if-no-files-found: ignore
+
+      - name: Open or update the upstream-drift issue
+        # One open issue at a time: a failing run rewrites its body and adds a
+        # comment; a green run closes it.
+        if: always() && github.repository == 'TracingInsights/tif1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: >-
+            ${{ steps.seams.outcome != 'success' || steps.unit.outcome != 'success'
+            || steps.perf.outcome != 'success' }}
+        run: |
+          title="Upstream canary: tif1 drifts on new upstream releases (${CHANNEL})"
+          number=$(gh issue list --label upstream-drift --state open --search "in:title ${CHANNEL}" \
+            --json number --jq '.[0].number // empty')
+          if [ "${FAILED}" = "true" ]; then
+            gh label create upstream-drift --color B60205 \
+              --description "Upstream release breaks a private seam or the perf gate" --force
+            if [ -n "${number}" ]; then
+              gh issue edit "${number}" --body-file canary-report.md
+              gh issue comment "${number}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            else
+              gh issue create --title "${title}" --label upstream-drift --body-file canary-report.md
+            fi
+          elif [ -n "${number}" ]; then
+            gh issue close "${number}" --comment "Green again on: $(tr '\n' ';' < canary-versions.txt)"
+          fi
+
+      - name: Fail when a step failed
+        if: steps.seams.outcome != 'success' || steps.unit.outcome != 'success' || steps.perf.outcome != 'success'
+        run: exit 1

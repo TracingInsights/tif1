@@ -163,6 +163,57 @@ class NiquestsTransport:
             raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
         return data
 
+    def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
+        """Fetch ``url`` and return the (content-decoded) body: binary payloads.
+
+        The columnar telemetry files (Gortyn G3) come through here. Until
+        niquests is warm the request rides the first wave's stdlib
+        connections, as a telemetry wave's JSON requests do (and, like them,
+        starts the niquests warm-up in the background); a ``404`` there is
+        final, anything else but a ``200`` goes to niquests.
+
+        Raises:
+            DataNotFoundError: HTTP 404.
+            NetworkError: Any other failure.
+        """
+        from . import first_wave
+        from .config import get_config
+
+        if timeout is None:
+            timeout = get_config().get("timeout", 30)
+        if first_wave.bridge_open():
+            status, content = first_wave.fetch_status(url, timeout=timeout)
+            if status == 200 and content is not None:
+                return content
+            if status == 404:
+                raise DataNotFoundError(url=url)
+
+        from .http_session import (
+            _response_reused_connection,
+            _track_request,
+            get_session,
+            wait_for_warm_connections,
+        )
+
+        niquests = _import_niquests()
+
+        wait_for_warm_connections()
+        try:
+            response = get_session().get(url, timeout=timeout)
+        except niquests.RequestException as e:
+            raise NetworkError(url=url, status_code=None) from e
+        _track_request(reused=_response_reused_connection(response))
+        if response.status_code == 404:
+            raise DataNotFoundError(url=url)
+        try:
+            response.raise_for_status()
+        except niquests.RequestException as e:
+            raise NetworkError(url=url, status_code=getattr(response, "status_code", None)) from e
+        content = response.content
+        if not isinstance(content, bytes):
+            raise NetworkError(url=url, status_code=response.status_code)
+        return content
+
 
 def _retry_after_seconds(response: Any) -> float | None:
     """Seconds from a ``Retry-After`` header (delay form only), or None."""
@@ -255,6 +306,18 @@ class InMemoryTransport:
     async def get_json_async(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
         """Async twin of :meth:`get_json` (same mapping, same ``calls`` log)."""
         return self.get_json(url, timeout=timeout)
+
+    def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
+        """Binary twin of :meth:`get_json`: the matched entry must be ``bytes``.
+
+        Raises:
+            DataNotFoundError: No mapping matched and no default was provided.
+            InvalidDataError: The matched entry is not ``bytes``.
+        """
+        entry = self.get_json(url, timeout=timeout)
+        if not isinstance(entry, bytes | bytearray):
+            raise InvalidDataError(reason=f"Expected bytes, got {type(entry).__name__}")
+        return bytes(entry)
 
 
 class PayloadLoader:
