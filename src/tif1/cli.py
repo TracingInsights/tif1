@@ -37,12 +37,18 @@ def _console():
 def _session_lib() -> Literal["pandas", "polars"]:
     """Backend of the sessions the table commands load: polars when it is installed.
 
+    A ``lib`` the user set (``TIF1_LIB`` or a ``.tif1rc`` file) wins. Otherwise
     ``find_spec`` only locates the package; polars itself is imported inside
     ``get_session``, after a cold session has started its first-wave fetches.
     Without polars the commands load pandas sessions, as before.
     """
     from importlib.util import find_spec
 
+    from .config import get_config
+
+    config = get_config()
+    if config.is_user_set("lib"):
+        return "polars" if config.get("lib") == "polars" else "pandas"
     return "polars" if find_spec("polars") is not None else "pandas"
 
 

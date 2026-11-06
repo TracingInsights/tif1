@@ -128,9 +128,36 @@ def test_fastest_ties_keep_pandas_quicksort_order(monkeypatch):
 
 
 def test_session_lib_prefers_polars(monkeypatch):
+    from tif1.config import get_config
+
+    monkeypatch.setattr(get_config(), "_user_keys", set())
     assert cli._session_lib() == "polars"
     monkeypatch.setattr("importlib.util.find_spec", lambda _name: None)
     assert cli._session_lib() == "pandas"
+
+
+@pytest.mark.parametrize("lib", ["pandas", "polars"])
+def test_session_lib_follows_a_user_set_lib(monkeypatch, lib):
+    from tif1.config import get_config
+
+    config = get_config()
+    monkeypatch.setattr(config, "_user_keys", {"lib"})
+    monkeypatch.setitem(config._config, "lib", lib)
+    assert cli._session_lib() == lib
+
+
+def test_config_records_keys_from_the_environment(monkeypatch, tmp_path):
+    from tif1.config import Config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("TIF1_LIB", "pandas")
+    monkeypatch.setattr(Config, "_instance", None)
+    fresh = Config()
+    assert fresh.is_user_set("lib")
+    assert not fresh.is_user_set("timeout")
+    fresh.set("timeout", 5)
+    assert not fresh.is_user_set("timeout")
 
 
 @pytest.mark.parametrize("seed", range(40))

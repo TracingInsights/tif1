@@ -149,7 +149,11 @@ Later fetches on both paths consult `is_known_missing()` after a cache miss and 
 
 ### Live schedule row
 
-`tif1.events` stores the raw `schedule_{year}.json` of a live season in the `json` tier under `f1schedule/schedule_{year}.json`, together with its fetch time. The row is re-fetched from the `theOehrly/f1schedule` repository once it is older than `schedule_ttl_hours` (default `6.0`); a failed refresh keeps serving the stale row. Session payloads never expire; this row and the negative verdicts are the two TTL-scoped entries.
+`tif1.events` stores the raw `schedule_{year}.json` of a live season in the `json` tier under `f1schedule/schedule_{year}.json`, together with its fetch time. The row is re-fetched from the `theOehrly/f1schedule` repository once it is older than `schedule_ttl_hours` (default `6.0`); a failed refresh keeps serving the stale row. When no niquests session exists, the fetch uses the standard-library client of the first wave (`cdn_first_wave`), so a refresh does not import niquests. Session payloads never expire.
+
+### Ergast tier
+
+`tif1.ergast` and the session classification store the Stats and Jolpica answers in the `json` tier with their fetch time. Past seasons' Stats files are kept permanently. The current season's Stats files and every Jolpica answer expire after `ergast_ttl_hours` (default `6.0`). Some current-season files are kept permanently, as a past season's are. These are the Stats classifications (`results`, `quali_results`, `sprint_results`) that tif1 fetched 14 days or more after the race. 14 days is the period for a review of a result, and the repository wrote each 2026 classification file one time. The latest rounds stay on the TTL, and so do missing or empty files. A correction made after the 14 days reaches the cache only after `tif1 cache-clear --ergast` or `get_cache().invalidate("ergast")`. The full table is in the [Ergast reference](/api-reference/ergast#freshness).
 
 ### Backend lap LRU
 
@@ -364,7 +368,7 @@ The first access that needs two or more of `drivers.json`, `weather.json`, and `
     A row that fails to decompress, parse, or unpickle is logged and treated as a miss. The row is not deleted. The next successful write for the same key replaces it.
   </Accordion>
   <Accordion title="No TTL on positive entries">
-    Payload rows, frame rows, and memory entries never expire. Only the negative-verdict tier (`missing_payloads_ttl_days`) and the live schedule row (`schedule_ttl_hours`) are TTL-scoped. Use `invalidate()` or `clear()` to remove data.
+    Session payload rows, frame rows, and memory entries never expire. Only the negative-verdict tier (`missing_payloads_ttl_days`), the live schedule row (`schedule_ttl_hours`) and the current season's Ergast answers (`ergast_ttl_hours`) are TTL-scoped. Use `invalidate()` or `clear()` to remove data.
   </Accordion>
   <Accordion title="Directory permissions">
     The cache directory is forced to mode `0o700`. Keep the directory private: the frame tier unpickles blobs from it and trusts their origin.

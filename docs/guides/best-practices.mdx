@@ -130,6 +130,19 @@ session = tif1.get_session(2024, "Belgian Grand Prix", "Race", enable_cache=Fals
 ```
 </CodeGroup>
 
+### Walk a season in round order
+
+A script can ask for round r of a season right after round r-1. Then `get_session()` fetches the small files of round r+1 in the background (`session_lookahead`). A cold loop over the rounds in order takes about 40% less time. A polars script can read the round numbers from `get_event_schedule(year, lib="polars")` without importing pandas.
+
+```python
+import tif1
+
+schedule = tif1.get_event_schedule(2025, include_testing=False, lib="polars")
+for round_number in schedule["RoundNumber"]:
+    session = tif1.get_session(2025, round_number, "R", lib="polars")
+    print(round_number, session.laps.height, session.results.height)
+```
+
 ---
 
 ## Code quality best practices

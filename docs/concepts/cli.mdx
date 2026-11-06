@@ -526,6 +526,8 @@ export TIF1_LIB=pandas
 
 No environment variable sets the log level. Use the `debug` command for debug logs.
 
+The `drivers`, `results` and `fastest` commands load polars sessions when polars is installed. If `TIF1_LIB` or a `.tif1rc` file sets `lib`, the commands use that backend. A polars session does not import pandas, so the command finishes about two times faster. The printed tables are the same as with pandas. Without polars, these commands load pandas sessions. Both backends read the same cached payloads. `standings` builds no frame.
+
 ### Configuration File
 
 Create a `.tif1rc` file in the home directory for persistent configuration:

@@ -306,6 +306,7 @@ With the polars backend, code can use these polars capabilities on the returned 
 - **Efficient string operations**: Driver name filtering and compound matching are faster
 - **Native Arrow**: Zero-copy interop with other Arrow-based tools
 - **fastf1 methods**: `session.laps` is a `PolarsLaps` and telemetry is a `PolarsTelemetry`. Both are `pl.DataFrame` subclasses with the `pick_*` and telemetry methods. A `filter`, `select`, `sort`, or `with_columns` returns a plain `pl.DataFrame`. Call the methods on it through the `df.f1` namespace, for example `laps.filter(...).f1.pick_fastest()`. Refer to the [Models API](/api-reference/models).
+- **Schedules without pandas**: `get_event_schedule(year, lib="polars")` and `get_events_remaining(lib="polars")` return a polars frame. A polars script that reads the schedule does not import pandas (about 0.3 s less per script). The default schedule stays the pandas `EventSchedule`. Refer to [Polars schedules](/api-reference/events#polars-schedules).
 
 ---
 

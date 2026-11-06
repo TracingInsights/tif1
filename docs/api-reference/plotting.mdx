@@ -38,6 +38,8 @@ This module is the primary interface for color management, style generation, and
 
 - **Caching and Performance**: Session-specific driver/team mappings are built once per session and cached in memory. Repeated color queries do not read the session DataFrames again.
 
+- **Import cost**: `import tif1.plotting` does not import matplotlib. The color, name and style lookups do not need it. A script that only reads team colors does not load matplotlib, and `import tif1.plotting` takes about 0.02 s instead of 0.5 s. `setup_mpl`, the legend and style helpers, and the module attributes `mpl`, `plt` and `cycler` import matplotlib at their first use. rapidfuzz loads only for a fuzzy driver or team lookup.
+
 ### Error Handling Philosophy
 
 The plotting module follows strict, fail-fast error handling principles designed to surface issues immediately rather than producing incorrect visualizations:

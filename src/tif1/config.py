@@ -236,6 +236,10 @@ class Config:
             "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
         }
 
+        # Keys a .tif1rc file or an environment variable set (not defaults, not
+        # Config.set): consumers that pick a value on their own respect these.
+        self._user_keys: set[str] = set()
+
         # Load from config file
         self._load_config()
 
@@ -268,6 +272,7 @@ class Config:
                         logger.warning(f"Config file {path} must contain a JSON object")
                         continue
                     self._config.update(user_config)
+                    self._user_keys.update(str(key) for key in user_config)
                     logger.info(f"Loaded config from {path}")
                     break
                 except Exception as e:
@@ -370,10 +375,12 @@ class Config:
                     key, converter = config_key
                     try:
                         self._config[key] = converter(value)
+                        self._user_keys.add(key)
                     except Exception as e:
                         logger.warning(f"Failed to convert {env_var}={value}: {e}")
                 else:
                     self._config[config_key] = value
+                    self._user_keys.add(config_key)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value with validation."""
@@ -469,6 +476,18 @@ class Config:
             return valid_cdns
 
         return value
+
+    def is_user_set(self, key: str) -> bool:
+        """Whether a ``.tif1rc`` file or an environment variable set ``key``.
+
+        Args:
+            key: Configuration key.
+
+        Returns:
+            True when the value came from the user's file or environment
+            rather than the built-in default.
+        """
+        return key in self._user_keys
 
     def set(self, key: str, value: Any):
         """Set configuration value."""
