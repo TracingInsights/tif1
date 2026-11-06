@@ -1,0 +1,6 @@
+- 16:30 started: read brief/hypothesis, profiling models_polars telemetry arithmetic
+- 16:39 profiled: analysis = numpy import ~100 ms + numpy.ma 22 ms (pl.Series(ndarray)) + resample 13 plans/call (first ~68 ms); found exact polars algorithms (Kahan group mean, interpolate slope formula, asof last-dup); implementing eager kernels
+- 16:58 eager kernels in place (analysis ops 157->22 ms, numpy never imported); finding: control's own resample is non-deterministic at 1 ulp (111/7632 surfaces differ control-vs-control); eager path uses Kahan bin means (candidate vs control 110 diffs, all resample)
+- 17:09 unit 4018 passed, ruff/ty clean; parity 0/131 polars; first A/B polars notebook 977->803 (7/8), analysis 196->28, fastest_dist_x4 629->454 (8/8); re-running untouched workloads (driver_tel etc. looked 2/8, likely noise)
+- 17:14 optimized resample bin means (Kahan loop per column); digest unchanged; perf gate 6 passed (polars telemetry_analysis_3 157.7->12.4 ms); final 10-pair A/B running
+- 17:19 DONE: SHIP. notebook 716->596 ms (13/16), analysis 162->18; parity 0/131; unit/ruff/ty green; report N3.md written; committing

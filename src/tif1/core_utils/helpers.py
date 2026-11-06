@@ -454,16 +454,26 @@ def _polars_typed_channel(name: str, values: Any) -> Any:
     return None
 
 
+#: Longest code array :func:`_polars_strings_from_codes` looks up in Python.
+_STRINGS_LOOKUP_MAX = 4096
+
+
 def _polars_strings_from_codes(name: str, categories: list[str], codes: np.ndarray) -> Any:
     """A polars ``String`` Series of ``categories[codes]`` (code -1: null), without pyarrow.
 
-    One gather from the categories with a null appended: polars counts a
-    negative index from the end, so every ``-1`` lands on that null slot.
-    ~60 us for a race lap where a pyarrow ``take`` cost ~120 us and, on a
-    polars session, the pyarrow import (and pandas, which ``pa.array`` of an
-    ndarray imports); the all-null case is handled by the caller.
+    The categories with a null appended, indexed by the codes: a negative
+    index counts from the end, so every ``-1`` lands on that null slot. A
+    lap's channel (~1k samples) is looked up in Python (~80 us), longer
+    arrays index the Series with the codes (an eager kernel). Both replace
+    ``Series.gather``, which polars 2 runs as a query plan: ~0.2 ms per lap
+    and ~20 ms for the first of a process, inside a cold one-driver wave's
+    frame build (Naxos N8). A pyarrow ``take`` would import pyarrow (and
+    pandas) on a polars session. The all-null case is handled by the caller.
     """
-    return pl.Series(name, [*categories, None], dtype=pl.String).gather(codes)
+    lookup = [*categories, None]
+    if len(codes) <= _STRINGS_LOOKUP_MAX:
+        return pl.Series(name, [lookup[code] for code in codes.tolist()], dtype=pl.String)
+    return pl.Series(name, lookup, dtype=pl.String)[codes]
 
 
 def _polars_constant_categorical(name: str, value: str, n: int) -> Any:

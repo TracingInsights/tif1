@@ -1035,7 +1035,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="telemetry_columnar" type="bool" default="False">
-  When a cold load needs two or more laps of one driver, ask first for that driver's columnar files. One file (`{driver}/tel.v1.{first}.bin`) holds ten laps. A file has the same values as the lap JSON files in about 26% fewer bytes. A driver's race telemetry takes 6 requests instead of 57. A missing file falls back to the lap JSON. tif1 remembers that the file is missing for `missing_payloads_ttl_days`, so a session without files costs one request. A single lap always uses its JSON file. The reader is off until the data repositories publish the files: a probe on a CDN without them costs one request per session. `TIF1_TELEMETRY_COLUMNAR=1` turns it on.
+  When a cold load needs two or more laps of one driver, ask first for that driver's columnar files. One file (`{driver}/tel.v2.{first}.bin`) holds ten laps. A file has the same values as the lap JSON files, bit for bit. It uses about 85% fewer bytes (a race: 10.8 MB instead of 71 MB). The reader needs the decoder kernels of `tif1-native` 0.3.0 or later; without them, tif1 reads the lap JSON. A driver's race telemetry takes 6 requests instead of 57. A missing file falls back to the lap JSON. tif1 remembers that the file is missing for `missing_payloads_ttl_days`, so a session without files costs one request. A single lap always uses its JSON file. The reader is off until the data repositories publish the files: a probe on a CDN without them costs one request per session. `TIF1_TELEMETRY_COLUMNAR=1` turns it on.
 
   ```python
   config.set("telemetry_columnar", True)  # ask for the columnar files first
@@ -1155,11 +1155,11 @@ config.set("pool_connections", 1024)
   ```
 </ResponseField>
 
-<ResponseField name="load_telemetry_lazy" type="bool" default="False">
-  When `True`, `session.load(telemetry=True)` has the effect of `session.load(telemetry="lazy")`. The load does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver.
+<ResponseField name="load_telemetry_lazy" type="bool" default="True">
+  When `True` (the default), `session.load()` and `session.load(telemetry=True)` have the effect of `session.load(telemetry="lazy")`. The load does not fetch telemetry. The telemetry of a driver is fetched when the code reads it. On a cold session, a first read of one lap fetches only that lap. Other reads fetch all the laps of the driver in one wave. When `False`, `telemetry=True` has the effect of `telemetry="eager"`: the load fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `False` before work without a network. The explicit values `"lazy"` and `"eager"` ignore this key. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
 
   ```python
-  config.set("load_telemetry_lazy", True)
+  config.set("load_telemetry_lazy", False)  # the fastf1 load() behavior
   ```
 </ResponseField>
 
@@ -1517,7 +1517,7 @@ The `.tif1rc` file is a JSON file with key-value pairs:
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
-  "load_telemetry_lazy": false,
+  "load_telemetry_lazy": true,
   "cdn_hedge": true,
   "cdn_hedge_max_delay": 4.0,
   "keepalive_timeout": 300,
@@ -2643,7 +2643,7 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http_disable_http3": true,
   "cdn_preconnect": true,
   "exit_gc_freeze": true,
-  "load_telemetry_lazy": false,
+  "load_telemetry_lazy": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],
   "cdn_use_minification": false,
   "validate_data": false,

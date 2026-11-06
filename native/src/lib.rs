@@ -32,12 +32,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use numpy::IntoPyArray;
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadwriteArray1};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 mod lz4;
+mod telcols;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList, PyTuple};
 
 enum Channel {
@@ -668,12 +669,126 @@ fn lz4_frame_decompress_into(
     result.map_err(|e| PyValueError::new_err(e.message()))
 }
 
+/// `tel.v2` `integ` column: ``values[rows[k]] = values[prev[k]] + increments[k]``
+/// moved by the zigzag ULP distance ``zigzag[k]``, row after row, in place.
+/// The GIL is released. Raises ``ValueError`` for inconsistent inputs.
+#[pyfunction]
+fn tel_integ<'py>(
+    py: Python<'py>,
+    mut values: PyReadwriteArray1<'py, f64>,
+    rows: PyReadonlyArray1<'py, i64>,
+    prev: PyReadonlyArray1<'py, i64>,
+    increments: PyReadonlyArray1<'py, f64>,
+    zigzag: PyReadonlyArray1<'py, u64>,
+) -> PyResult<()> {
+    let values = values.as_slice_mut()?;
+    let (rows, prev) = (rows.as_slice()?, prev.as_slice()?);
+    let (increments, zigzag) = (increments.as_slice()?, zigzag.as_slice()?);
+    py.detach(|| telcols::integ(values, rows, prev, increments, zigzag))
+        .map_err(PyValueError::new_err)
+}
+
+/// `tel.v2` residuals: ``predicted[k]`` moved by the zigzag ULP distance
+/// ``zigzag[k]``, in place. The GIL is released.
+#[pyfunction]
+fn tel_apply<'py>(
+    py: Python<'py>,
+    mut predicted: PyReadwriteArray1<'py, f64>,
+    zigzag: PyReadonlyArray1<'py, u64>,
+) -> PyResult<()> {
+    let (predicted, zigzag) = (predicted.as_slice_mut()?, zigzag.as_slice()?);
+    py.detach(|| telcols::apply(predicted, zigzag))
+        .map_err(PyValueError::new_err)
+}
+
+/// `tel.v2` `interp` column: ``values[rows[k]]`` = numpy.interp's formula
+/// between the anchor rows ``j0[k]`` and ``j1[k]`` over ``dates``, moved by
+/// ``zigzag[k]`` ULPs, in place. The GIL is released.
+#[pyfunction]
+fn tel_interp<'py>(
+    py: Python<'py>,
+    mut values: PyReadwriteArray1<'py, f64>,
+    dates: PyReadonlyArray1<'py, f64>,
+    rows: PyReadonlyArray1<'py, i64>,
+    j0: PyReadonlyArray1<'py, i64>,
+    j1: PyReadonlyArray1<'py, i64>,
+    zigzag: PyReadonlyArray1<'py, u64>,
+) -> PyResult<()> {
+    let values = values.as_slice_mut()?;
+    let (dates, rows, j0) = (dates.as_slice()?, rows.as_slice()?, j0.as_slice()?);
+    let (j1, zigzag) = (j1.as_slice()?, zigzag.as_slice()?);
+    py.detach(|| telcols::interp(values, dates, rows, j0, j1, zigzag))
+        .map_err(PyValueError::new_err)
+}
+
+/// `tel.v2` `accx` prediction: the longitudinal acceleration per lap
+/// (``lap_sizes``) from ``speed`` and ``time``. The GIL is released.
+#[pyfunction]
+fn tel_accx<'py>(
+    py: Python<'py>,
+    speed: PyReadonlyArray1<'py, f64>,
+    time: PyReadonlyArray1<'py, f64>,
+    lap_sizes: PyReadonlyArray1<'py, i64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let (speed, time, sizes) = (speed.as_slice()?, time.as_slice()?, lap_sizes.as_slice()?);
+    let out = py
+        .detach(|| telcols::accx(speed, time, sizes))
+        .map_err(PyValueError::new_err)?;
+    Ok(out.into_pyarray(py))
+}
+
+/// `tel.v2` `lat` prediction: the lateral (``other`` = y) or vertical
+/// (``other`` = z) acceleration per lap. The GIL is released.
+#[pyfunction]
+fn tel_lateral<'py>(
+    py: Python<'py>,
+    speed: PyReadonlyArray1<'py, f64>,
+    x: PyReadonlyArray1<'py, f64>,
+    other: PyReadonlyArray1<'py, f64>,
+    distance: PyReadonlyArray1<'py, f64>,
+    lap_sizes: PyReadonlyArray1<'py, i64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let (speed, x, other) = (speed.as_slice()?, x.as_slice()?, other.as_slice()?);
+    let (distance, sizes) = (distance.as_slice()?, lap_sizes.as_slice()?);
+    let out = py
+        .detach(|| telcols::lateral(speed, x, other, distance, sizes))
+        .map_err(PyValueError::new_err)?;
+    Ok(out.into_pyarray(py))
+}
+
+/// `tel.v2` `spline` prediction: per lap (``lap_sizes``), the quadratic
+/// interpolating spline through the rows flagged in ``points`` (x =
+/// ``dates``, y = ``values``) evaluated at the ascending rows ``targets``.
+/// The GIL is released.
+#[pyfunction]
+fn tel_spline<'py>(
+    py: Python<'py>,
+    dates: PyReadonlyArray1<'py, f64>,
+    values: PyReadonlyArray1<'py, f64>,
+    points: PyReadonlyArray1<'py, bool>,
+    targets: PyReadonlyArray1<'py, i64>,
+    lap_sizes: PyReadonlyArray1<'py, i64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let (dates, values, points) = (dates.as_slice()?, values.as_slice()?, points.as_slice()?);
+    let (targets, sizes) = (targets.as_slice()?, lap_sizes.as_slice()?);
+    let out = py
+        .detach(|| telcols::spline(dates, values, points, targets, sizes))
+        .map_err(PyValueError::new_err)?;
+    Ok(out.into_pyarray(py))
+}
+
 // The decoder keeps no state between calls, so free-threaded interpreters
 // (3.13t+) can run it without re-enabling the GIL on import.
 #[pymodule(gil_used = false)]
 fn tif1_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_telemetry, m)?)?;
     m.add_function(wrap_pyfunction!(lz4_frame_decompress_into, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_integ, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_apply, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_interp, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_accx, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_lateral, m)?)?;
+    m.add_function(wrap_pyfunction!(tel_spline, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

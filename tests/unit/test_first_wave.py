@@ -320,22 +320,53 @@ def test_telemetry_wave_starts_on_the_stdlib_while_niquests_warms(server, monkey
         {"Content-Encoding": "gzip"},
     )
     server.routes["2_tel.json"] = (200, orjson.dumps(TEL), {})
+    server.routes["3_tel.json"] = (200, orjson.dumps(TEL), {})
     (url,) = _start("drivers.json")
     assert first_wave.take(url) is not None
     _forbid_niquests(monkeypatch)
+    monkeypatch.setattr(first_wave, "BRIDGE_WARM_AFTER", 2)
     for path in ("VER/1_tel.json", "VER/2_tel.json"):
         data = _fetch_async(path)
         assert list(data["tel"]["speed"]) == [1.0, 2.0]
         assert list(data["tel"]["time"]) == [0.0, 0.1]
-    # niquests is warmed once, in a daemon thread, on the wave's URLs.
+    # Up to BRIDGE_WARM_AFTER bridged requests, niquests is not warmed (Naxos N8).
+    assert warm_ups.calls == []
+    assert list(_fetch_async("VER/3_tel.json")["tel"]["speed"]) == [1.0, 2.0]
+    # The next one warms niquests once, in a daemon thread, on the wave's URLs.
     assert warm_ups.called.wait(2)
     assert warm_ups.calls == [[url]]
     assert [target.rsplit("/", 1)[-1] for target, _ in server.requests] == [
         "drivers.json",
         "1_tel.json",
         "2_tel.json",
+        "3_tel.json",
     ]
     assert len(server.connections) == 1  # all on the wave's kept-alive connection
+
+
+def test_one_driver_wave_never_warms_niquests(server, monkeypatch, warm_ups):
+    """A wave of one driver's laps (at most ~80) runs on the bridge alone (Naxos N8)."""
+    server.routes["drivers.json"] = (200, orjson.dumps(DRIVERS), {})
+    for lap in range(1, first_wave.BRIDGE_WARM_AFTER + 1):
+        server.routes[f"{lap}_tel.json"] = (200, orjson.dumps(TEL), {})
+    (url,) = _start("drivers.json")
+    assert first_wave.take(url) is not None
+    _forbid_niquests(monkeypatch)
+    requests = [
+        (2025, GP, SESSION, f"VER/{lap}_tel.json")
+        for lap in range(1, first_wave.BRIDGE_WARM_AFTER + 1)
+    ]
+    results = asyncio.run(
+        async_fetch.fetch_multiple_async(
+            requests, use_cache=False, write_cache=False, validate_payload=False
+        )
+    )
+    assert all(list(r["tel"]["speed"]) == [1.0, 2.0] for r in results)
+    time.sleep(0.05)
+    assert warm_ups.calls == []
+    assert first_wave.bridge_open()  # the next request is past the bound: warm-up starts
+    assert warm_ups.called.wait(2)
+    assert warm_ups.calls == [[url]]
 
 
 def test_bridge_stays_open_until_the_niquests_warm_up_connected(server, monkeypatch, warm_ups):
@@ -387,6 +418,7 @@ def test_binary_requests_ride_the_bridge_and_its_404_is_final(server, monkeypatc
     (url,) = _start("drivers.json")
     assert first_wave.take(url) is not None
     monkeypatch.setattr(http_session, "_shared_session", None)
+    monkeypatch.setattr(first_wave, "BRIDGE_WARM_AFTER", 1)
 
     def _no_niquests() -> Any:
         raise AssertionError("niquests must not be imported")
@@ -402,7 +434,8 @@ def test_binary_requests_ride_the_bridge_and_its_404_is_final(server, monkeypatc
         first_wave.fetch_status(url.replace("drivers.json", "VER/tel.v1.11.bin"), timeout=5)[0]
         == 404
     )
-    assert len(warm_ups.calls) == 1  # the bridge started the niquests warm-up
+    assert warm_ups.called.wait(2)
+    assert len(warm_ups.calls) == 1  # the second bridged request started the warm-up
 
 
 def test_no_bridge_without_a_wave(monkeypatch, warm_ups):

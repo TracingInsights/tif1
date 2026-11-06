@@ -251,11 +251,13 @@ def telemetry_ref_from_path(path: str) -> tuple[str, int] | None:
 
 # Gortyn G3: laps per columnar telemetry file. A driver's laps ``first ..
 # first + COLUMNAR_CHUNK_LAPS - 1`` (``first`` = 1, 11, 21...) share one
-# ``{driver}/tel.v1.{first}.bin`` (tif1.core_utils.columnar_telemetry), so a
+# ``{driver}/tel.v2.{first}.bin`` (tif1.core_utils.columnar_telemetry), so a
 # reader derives every path from the lap numbers alone (no manifest) and a
 # 57-lap wave is 6 parallel requests. Here, not in the codec module, so the
-# fetch layer resolves paths without importing numpy.
+# fetch layer resolves paths without importing numpy. Naxos N7: version 2
+# (predicted channels) replaces version 1, which was never published.
 COLUMNAR_CHUNK_LAPS = 10
+COLUMNAR_FORMAT_VERSION = 2
 
 
 def columnar_chunk_first_lap(lap: int) -> int:
@@ -263,9 +265,14 @@ def columnar_chunk_first_lap(lap: int) -> int:
     return (int(lap) - 1) // COLUMNAR_CHUNK_LAPS * COLUMNAR_CHUNK_LAPS + 1
 
 
+def columnar_file_name(first_lap: int) -> str:
+    """File name of the columnar telemetry file starting at ``first_lap``."""
+    return f"tel.v{COLUMNAR_FORMAT_VERSION}.{first_lap}.bin"
+
+
 def columnar_file_path(driver: str, first_lap: int) -> str:
     """Session-relative CDN path of ``driver``'s columnar telemetry file starting at ``first_lap``."""
-    return f"{driver}/tel.v1.{first_lap}.bin"
+    return f"{driver}/{columnar_file_name(first_lap)}"
 
 
 # Circuit, city and country names users type for an event, mapped to the

@@ -68,7 +68,7 @@ laps = session.laps  # Fast - only laps fetched
 
 ```python Avoid - Loading Everything
 session = tif1.get_session(2024, "Belgian Grand Prix", "Race")
-session.load()  # Fetches laps, weather, messages, and the telemetry of every lap
+session.load(telemetry="eager")  # Fetches laps, weather, messages, and the telemetry of every lap
 laps = session.laps  # Slower - unnecessary data fetched
 ```
 </CodeGroup>

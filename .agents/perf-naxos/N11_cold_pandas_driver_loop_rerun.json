@@ -1,0 +1,338 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 8,
+ "summary": {
+  "driver_loop": {
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 13.8,
+     "min": 12.8,
+     "p90": 21.8
+    },
+    "get_session": {
+     "median": 510.4,
+     "min": 442.9,
+     "p90": 703.7
+    },
+    "get_session@": {
+     "median": 523.5,
+     "min": 455.8,
+     "p90": 742.1
+    },
+    "load": {
+     "median": 132.6,
+     "min": 99.2,
+     "p90": 271.0
+    },
+    "load@": {
+     "median": 778.4,
+     "min": 580.6,
+     "p90": 866.7
+    },
+    "driver_loop": {
+     "median": 904.1,
+     "min": 514.8,
+     "p90": 1274.1
+    },
+    "driver_loop@": {
+     "median": 1612.4,
+     "min": 1107.1,
+     "p90": 2140.8
+    },
+    "in_process_total": {
+     "median": 1612.4,
+     "min": 1107.1,
+     "p90": 2140.8
+    },
+    "process_wall": {
+     "median": 1831.1,
+     "min": 1263.1,
+     "p90": 2327.9
+    },
+    "exit_tail": {
+     "median": 199.3,
+     "min": 145.0,
+     "p90": 261.5
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 19.4,
+     "min": 12.8,
+     "p90": 23.1
+    },
+    "get_session": {
+     "median": 575.1,
+     "min": 398.9,
+     "p90": 668.7
+    },
+    "get_session@": {
+     "median": 590.7,
+     "min": 411.7,
+     "p90": 690.0
+    },
+    "load": {
+     "median": 128.1,
+     "min": 87.2,
+     "p90": 158.8
+    },
+    "load@": {
+     "median": 757.8,
+     "min": 498.9,
+     "p90": 798.0
+    },
+    "driver_loop": {
+     "median": 870.9,
+     "min": 619.4,
+     "p90": 1532.0
+    },
+    "driver_loop@": {
+     "median": 1805.5,
+     "min": 1118.3,
+     "p90": 2198.8
+    },
+    "in_process_total": {
+     "median": 1805.5,
+     "min": 1118.3,
+     "p90": 2198.8
+    },
+    "process_wall": {
+     "median": 1989.5,
+     "min": 1365.7,
+     "p90": 2363.3
+    },
+    "exit_tail": {
+     "median": 203.8,
+     "min": 160.5,
+     "p90": 247.4
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate_faster_pairs": "2/8",
+   "control_runs": [
+    {
+     "import": 17.66,
+     "get_session": 479.96,
+     "get_session@": 497.65,
+     "load": 217.78,
+     "load@": 715.45,
+     "driver_loop": 790.35,
+     "driver_loop@": 1505.82,
+     "in_process_total": 1505.83,
+     "process_wall": 1717.31,
+     "exit_tail": 211.48,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.36,
+     "get_session": 535.93,
+     "get_session@": 549.31,
+     "load": 317.35,
+     "load@": 866.67,
+     "driver_loop": 1274.08,
+     "driver_loop@": 2140.77,
+     "in_process_total": 2140.77,
+     "process_wall": 2327.9,
+     "exit_tail": 187.13,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.75,
+     "get_session": 484.82,
+     "get_session@": 497.59,
+     "load": 133.65,
+     "load@": 631.26,
+     "driver_loop": 1017.79,
+     "driver_loop@": 1649.07,
+     "in_process_total": 1649.08,
+     "process_wall": 1815.29,
+     "exit_tail": 166.21,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 21.8,
+     "get_session": 703.66,
+     "get_session@": 725.49,
+     "load": 131.63,
+     "load@": 857.15,
+     "driver_loop": 718.48,
+     "driver_loop@": 1575.66,
+     "in_process_total": 1575.67,
+     "process_wall": 1846.86,
+     "exit_tail": 271.19,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 51.92,
+     "get_session": 690.19,
+     "get_session@": 742.15,
+     "load": 99.16,
+     "load@": 841.33,
+     "driver_loop": 514.82,
+     "driver_loop@": 1356.17,
+     "in_process_total": 1356.18,
+     "process_wall": 1617.68,
+     "exit_tail": 261.5,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.96,
+     "get_session": 464.41,
+     "get_session@": 478.39,
+     "load": 122.98,
+     "load@": 601.38,
+     "driver_loop": 1360.66,
+     "driver_loop@": 1962.05,
+     "in_process_total": 1962.05,
+     "process_wall": 2107.01,
+     "exit_tail": 144.96,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.93,
+     "get_session": 442.86,
+     "get_session@": 455.8,
+     "load": 124.83,
+     "load@": 580.65,
+     "driver_loop": 526.41,
+     "driver_loop@": 1107.07,
+     "in_process_total": 1107.08,
+     "process_wall": 1263.06,
+     "exit_tail": 155.98,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.58,
+     "get_session": 1431.57,
+     "get_session@": 1445.19,
+     "load": 271.01,
+     "load@": 1716.27,
+     "driver_loop": 1061.27,
+     "driver_loop@": 2777.58,
+     "in_process_total": 2777.58,
+     "process_wall": 3002.6,
+     "exit_tail": 225.02,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 17.59,
+     "get_session": 630.48,
+     "get_session@": 648.09,
+     "load": 140.32,
+     "load@": 788.43,
+     "driver_loop": 857.62,
+     "driver_loop@": 1646.07,
+     "in_process_total": 1646.07,
+     "process_wall": 1849.25,
+     "exit_tail": 203.18,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 15.91,
+     "get_session": 510.66,
+     "get_session@": 526.59,
+     "load": 206.64,
+     "load@": 733.25,
+     "driver_loop": 1653.85,
+     "driver_loop@": 2387.12,
+     "in_process_total": 2387.12,
+     "process_wall": 2591.44,
+     "exit_tail": 204.32,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 21.25,
+     "get_session": 668.71,
+     "get_session@": 689.99,
+     "load": 108.04,
+     "load@": 798.05,
+     "driver_loop": 884.21,
+     "driver_loop@": 1682.28,
+     "in_process_total": 1682.28,
+     "process_wall": 1889.79,
+     "exit_tail": 207.51,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 23.09,
+     "get_session": 655.44,
+     "get_session@": 678.56,
+     "load": 103.67,
+     "load@": 782.25,
+     "driver_loop": 658.0,
+     "driver_loop@": 1440.26,
+     "in_process_total": 1440.27,
+     "process_wall": 1638.55,
+     "exit_tail": 198.28,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 21.35,
+     "get_session": 428.62,
+     "get_session@": 449.99,
+     "load": 158.79,
+     "load@": 608.79,
+     "driver_loop": 1319.82,
+     "driver_loop@": 1928.63,
+     "in_process_total": 1928.63,
+     "process_wall": 2089.14,
+     "exit_tail": 160.51,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.56,
+     "get_session": 519.69,
+     "get_session@": 533.27,
+     "load": 133.4,
+     "load@": 666.69,
+     "driver_loop": 1532.05,
+     "driver_loop@": 2198.75,
+     "in_process_total": 2198.78,
+     "process_wall": 2363.31,
+     "exit_tail": 164.53,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.83,
+     "get_session": 398.88,
+     "get_session@": 411.73,
+     "load": 87.17,
+     "load@": 498.92,
+     "driver_loop": 619.41,
+     "driver_loop@": 1118.35,
+     "in_process_total": 1118.35,
+     "process_wall": 1365.73,
+     "exit_tail": 247.38,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 25.12,
+     "get_session": 1120.84,
+     "get_session@": 1145.98,
+     "load": 122.87,
+     "load@": 1268.87,
+     "driver_loop": 795.36,
+     "driver_loop@": 2064.25,
+     "in_process_total": 2064.26,
+     "process_wall": 2315.61,
+     "exit_tail": 251.35,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}

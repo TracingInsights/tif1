@@ -180,6 +180,20 @@ tif1 exports `CacheError` but does not raise it. When SQLite cannot open or writ
 
 tif1 exports `SessionNotLoadedError` but does not raise it. Session data properties such as `session.laps` load their data on first access. Like every `TIF1Error`, it accepts keyword arguments as error context.
 
+### Telemetry errors
+
+A failed telemetry request does not raise. tif1 writes a warning to the log, and the lap gets an empty telemetry frame with the usual columns. With the default `session.load()`, this occurs when the code reads the lap, not in `load()`. A failed one-lap fetch on a cold session is sent again by the per-lap path, which writes the warning if it fails again. With `session.load(telemetry="eager")`, the warnings occur in `load()`. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
+
+```python
+import tif1
+
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+session.load()  # no telemetry request yet
+tel = session.laps.pick_drivers("VER").telemetry  # telemetry errors are logged here
+if tel.empty:
+    print("No telemetry for VER")
+```
+
 ## Error handling patterns
 
 ### Graceful Degradation

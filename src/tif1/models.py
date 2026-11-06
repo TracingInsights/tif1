@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, cast, 
 import numpy as np
 import pandas as pd
 
-from .cache import get_cache
+from .cache import _suspend_gc, get_cache
 from .core_utils.constants import (
     COL_DRIVER,
     COL_LAP_NUMBER,
@@ -530,35 +530,160 @@ def _interleaved_row(mgr: Any, i: int) -> np.ndarray | None:
     return result
 
 
-def _lap_from_row(values: np.ndarray, index: pd.Index, name: Any, session: Any) -> "Lap":
+def _lap_from_row(
+    values: np.ndarray,
+    index: pd.Index,
+    name: Any,
+    session: Any,
+    placement: Any = None,
+) -> "Lap":
     """``Lap(values, index=index, name=name)`` with ``session`` set, for a fresh array.
 
     ``values`` must be a 1-D object array nobody else holds (the constructor
     would copy it first). The steps are the Series constructor's own:
     ``sanitize_array`` (object-dtype inference included) then
-    ``SingleBlockManager.from_array``.
+    ``SingleBlockManager.from_array``. A ``placement`` (from
+    :func:`_object_row_placement`) says the row stays object dtype, so the
+    inference is skipped and the block is built over that shared placement.
     """
     if not _FAST_LAP_ROWS:
         lap = Lap(values, index=index, name=name)
         lap.session = session
         return lap
-    # ``sanitize_array`` on a 1-D object ndarray of the index's length is this
-    # inference call plus no-op ndim/str checks; any conversion (a row whose
-    # values are all timedeltas, all strings, ...) takes the full function.
-    array = _maybe_convert_objects(
-        values,
-        convert_numeric=False,
-        convert_non_numeric=True,
-        convert_to_nullable_dtype=False,
-        dtype_if_all_nat=_DTYPE_IF_ALL_NAT,
-    )
-    if array is not values:
-        array = _sanitize_array(values, index, None, False)
-    mgr = _SingleBlockManager.from_array(array, index)
+    if placement is not None:
+        mgr = _SingleBlockManager(_OBJECT_ROW_BLOCK_CLASS(values, placement, 1), index)
+    else:
+        # ``sanitize_array`` on a 1-D object ndarray of the index's length is
+        # this inference call plus no-op ndim/str checks; any conversion (a
+        # row whose values are all timedeltas, all strings, ...) takes the
+        # full function.
+        array = _maybe_convert_objects(
+            values,
+            convert_numeric=False,
+            convert_non_numeric=True,
+            convert_to_nullable_dtype=False,
+            dtype_if_all_nat=_DTYPE_IF_ALL_NAT,
+        )
+        if array is not values:
+            array = _sanitize_array(values, index, None, False)
+        mgr = _SingleBlockManager.from_array(array, index)
     lap = cast(Any, Lap)._from_mgr(mgr, axes=mgr.axes)
     object.__setattr__(lap, "_name", name)
     object.__setattr__(lap, "session", session)
     return lap
+
+
+# Naxos N6: ``sanitize_array``'s inference keeps a 1-D object row as it is
+# once the row holds a number or a bool (``convert_numeric=False``: numbers
+# are never converted, and a bool among other values never makes a bool
+# array). A frame with a non-nullable numpy int or bool column (the laps
+# table: ``LapNumber``, ``PitInLap`` ...) gives every row such a value, so
+# ``iterlaps`` skips the ~3 us inference per row and builds the row block
+# directly over one shared placement (``SingleBlockManager.from_array`` makes
+# a new one per row; pandas shares placements between blocks itself). The
+# rule is checked against the inference once per process (``_probe_object_rows``).
+_OBJECT_ROWS_OK: bool | None = None
+_OBJECT_ROW_BLOCK_CLASS: Any = None
+
+
+def _probe_object_rows() -> bool:
+    """Whether a row holding a number or a bool keeps its object array (and the direct block)."""
+    global _OBJECT_ROW_BLOCK_CLASS
+    if not _FAST_LAP_ROWS:
+        return False
+    try:
+        rows = (
+            [1, True, pd.Timedelta(1), pd.NaT, "VER", None, np.nan, pd.Timestamp(0)],
+            [True, pd.Timedelta(1), pd.Timedelta(2)],
+            [2, pd.NaT, pd.NaT],
+            [False, "a", "b"],
+            [7, pd.Timestamp(0), pd.NaT],
+            [True, False],
+            [3, 4],
+            [np.nan, 5],
+        )
+        for row in rows:
+            values = np.empty(len(row), dtype=object)
+            values[:] = row
+            kept = _maybe_convert_objects(
+                values,
+                convert_numeric=False,
+                convert_non_numeric=True,
+                convert_to_nullable_dtype=False,
+                dtype_if_all_nat=_DTYPE_IF_ALL_NAT,
+            )
+            if kept is not values:
+                return False
+        # An object Index: a ``str`` one would import pyarrow's pandas shim here.
+        index = pd.Index(["LapNumber", "Driver", "Time"], dtype=object)
+        values = np.array([5, "VER", pd.Timedelta(3)], dtype=object)
+        ref = _SingleBlockManager.from_array(values.copy(), index)
+        block_class = type(ref.blocks[0])
+        placement = _BlockPlacement(slice(0, len(index)))
+        got = _SingleBlockManager(block_class(values, placement, 1), index)
+        ok = (
+            type(got) is type(ref)
+            and type(got.blocks[0]) is block_class
+            and got.blocks[0].ndim == ref.blocks[0].ndim == 1
+            and got.blocks[0].mgr_locs.as_slice == ref.blocks[0].mgr_locs.as_slice
+            and got.blocks[0].values is values
+            and ref.blocks[0].values.dtype == values.dtype
+            and got.axes[0] is index
+            and ref.axes[0] is index
+        )
+    except Exception:  # pragma: no cover - pandas internals changed
+        return False
+    if ok:
+        _OBJECT_ROW_BLOCK_CLASS = block_class
+    return ok
+
+
+def _object_row_placement(frame: pd.DataFrame) -> Any:
+    """A shared row ``BlockPlacement`` when every row of ``frame`` stays object dtype, else None."""
+    global _OBJECT_ROWS_OK
+    blocks = frame._mgr.blocks
+    if not any(
+        isinstance(blk.values, np.ndarray) and blk.dtype.kind in "biu" and blk.shape[0]
+        for blk in blocks
+    ):
+        return None
+    ok = _OBJECT_ROWS_OK
+    if ok is None:
+        ok = _OBJECT_ROWS_OK = _probe_object_rows()
+    return _BlockPlacement(slice(0, frame.shape[1])) if ok else None
+
+
+# Naxos N6: ``(index, Driver position, LapNumber position)`` of the last lap
+# index read by ``_driver_and_lap_number``. An Index is immutable, and every
+# Lap of one ``iterlaps`` shares its frame's column Index, so a loop resolves
+# the two labels once instead of twice per lap through ``Series.get``.
+_LAP_KEY_LOCS: tuple[Any, Any, Any] = (None, None, None)
+
+
+def _driver_and_lap_number(lap: pd.Series) -> tuple[Any, Any]:
+    """``(lap.get("Driver"), lap.get("LapNumber"))``, read directly for unique labels.
+
+    ``Series.get`` of a label the index holds once is ``_values[get_loc]``
+    after ~1.5 us of indexer checks; anything else (a missing or duplicated
+    label, an index ``get_loc`` does not answer with an int) goes to ``get``.
+    """
+    global _LAP_KEY_LOCS
+    index = lap.index
+    cached_index, driver_loc, lap_loc = _LAP_KEY_LOCS
+    if index is not cached_index:
+        driver_loc = lap_loc = None
+        try:
+            driver_loc = index.get_loc("Driver")
+            lap_loc = index.get_loc("LapNumber")
+        except (KeyError, TypeError, ValueError):
+            pass
+        if type(driver_loc) is not int or type(lap_loc) is not int:
+            driver_loc = lap_loc = None
+        _LAP_KEY_LOCS = (index, driver_loc, lap_loc)
+    if driver_loc is None:
+        return lap.get("Driver"), lap.get("LapNumber")
+    values = lap._values
+    return values[driver_loc], values[lap_loc]
 
 
 class _IterLapResult(tuple):
@@ -1355,16 +1480,26 @@ class Laps(pd.DataFrame):
         # Argos A5 / Pergamon Q7: one object-array interleave for the frame
         # and each Lap built through the Series constructor's own steps
         # (``_lap_from_row``) on the shared, immutable column Index: the same
-        # Series as ``iterrows`` gives, several times cheaper.
-        row_values = self.to_numpy(dtype=object)
+        # Series as ``iterrows`` gives, several times cheaper. Naxos N6: the
+        # interleave boxes every timedelta/datetime cell (~14k GC-tracked
+        # scalars on a race) in one call, so cyclic GC waits until it returns
+        # instead of running ~7 young-generation passes over them mid-burst.
+        with _suspend_gc():
+            row_values = self.to_numpy(dtype=object)
         row_index = self.index
         session = self.session
+        if getattr(session, "_lazy_telemetry_refs", None) and "Driver" in columns:
+            drivers = self["Driver"]
+            if isinstance(drivers, pd.Series):  # not a duplicated column name
+                cast(Any, session)._note_lazy_telemetry_walk(drivers.tolist())
+        placement = _object_row_placement(self) if _FAST_LAP_ROWS and len(self) else None
         for position in range(len(self)):
             if skip_rows is not None and skip_rows[position]:
                 continue
             name = row_index[position]
             yield _IterLapResult(
-                name, _lap_from_row(row_values[position].copy(), columns, name, session)
+                name,
+                _lap_from_row(row_values[position].copy(), columns, name, session, placement),
             )
 
     def reset_index(self, drop=False, **kwargs):  # type: ignore[ty:invalid-method-override]
@@ -1427,8 +1562,7 @@ class Lap(pd.Series):
 
     @property
     def telemetry(self):
-        driver = self.get("Driver")
-        lap_num = self.get("LapNumber")
+        driver, lap_num = _driver_and_lap_number(self)
         if driver and lap_num is not None and hasattr(self, "session") and self.session:
             try:
                 ultra_cold = self.session._resolve_telemetry_ultra_cold_mode(None)

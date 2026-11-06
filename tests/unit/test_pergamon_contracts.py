@@ -732,7 +732,8 @@ def test_warm_load_falls_back_to_the_batch_path_for_laps_outside_the_tier(tmp_pa
         monkeypatch.setattr(
             session, "fetch_all_laps_telemetry", lambda **_k: calls.append("batch") or {}
         )
-        session.load(weather=False, messages=False)
+        # The eager load (fastf1's load(), not the lazy default) runs the batch.
+        session.load(telemetry="eager", weather=False, messages=False)
         assert calls == ["batch"]  # HAM lap 1 is not in the tier
         assert set(session._memo._telemetry_sources) == {(d, lap) for d, lap, _ in frames}
     finally:

@@ -635,7 +635,7 @@ def load(
 
 **Parameters:**
 - `laps` (bool): If True, fetch laps data. Default: True
-- `telemetry` (bool or `"lazy"`): If True, fetch telemetry for all laps. Automatically sets laps=True. `"lazy"` does not fetch telemetry now (see below). Default: True
+- `telemetry` (bool, `"lazy"` or `"eager"`): Default: True. `True` and `"lazy"` make the telemetry of every lap available, but do not fetch it now (see [Lazy telemetry](#lazy-telemetry)). `"eager"` fetches the telemetry of every lap now, as the fastf1 `load()` does. `False` registers no telemetry. Each lap then fetches its own file on first access. A telemetry value other than `False` also sets `laps=True`. The config key `load_telemetry_lazy` set to `False` gives `True` the effect of `"eager"`.
 - `weather` (bool): If True, fetch weather data. Default: True
 - `messages` (bool): If True, fetch race control messages. Default: True
 
@@ -644,9 +644,12 @@ def load(
 **Examples:**
 
 ```python
-# Load everything (default behavior)
+# Default: laps, weather and messages now; telemetry on first access
 session = tif1.get_session(2025, "Silverstone", "Race")
-session.load()  # Fetches laps, telemetry, weather, and messages
+session.load()
+
+# Fetch the telemetry of every lap now (the fastf1 load() behavior)
+session.load(telemetry="eager")
 
 # Load only laps and weather (skip telemetry and messages)
 session.load(laps=True, telemetry=False, weather=True, messages=False)
@@ -654,37 +657,110 @@ session.load(laps=True, telemetry=False, weather=True, messages=False)
 # Load only laps (minimal data)
 session.load(laps=True, telemetry=False, weather=False, messages=False)
 
-# Fetch each driver's telemetry when one of its laps is first read
-session.load(telemetry="lazy")
-
 # Method chaining
 session = tif1.get_session(2025, "Monaco", "Qualifying").load()
 fastest = session.get_fastest_laps()
 ```
 
 <Note>
-When `telemetry=True` is requested but `laps=False`, the method automatically sets `laps=True` because telemetry requires lap data to function properly.
+When `telemetry` is requested but `laps=False`, the method automatically sets `laps=True` because telemetry requires lap data to function properly.
 </Note>
 
 <Warning>
-Loading telemetry for all laps (`telemetry=True`) can be time-consuming and memory-intensive for race sessions. Such sessions have 20 drivers and 50+ laps each. Consider loading telemetry selectively using driver-specific or lap-specific methods instead.
+`telemetry="eager"` fetches the telemetry of every lap. A race has 20 drivers and 50+ laps each. On a cold cache, that is about 1100 files and 9 s, and the frames use a lot of memory. Use it only before work without a network, or when the code reads every lap.
 </Warning>
 
 #### Lazy telemetry
 
-`session.load(telemetry="lazy")` does not fetch telemetry. The first access of a lap of a driver fetches all the laps of that driver in one parallel wave. This includes `lap.telemetry`, `lap.get_car_data()`, `laps.pick_drivers(...).telemetry` and `get_fastest_lap_tel()`. `fetch_all_laps_telemetry()` fetches the drivers that are not loaded in one batch. The frames and the cache contents are the same as with `telemetry=True`.
+`session.load()` and `session.load(telemetry=True)` do not fetch telemetry. This is different from fastf1, where `load()` downloads the telemetry of every driver. The [migration guide](/migration-from-fastf1#lazy-telemetry-in-load) lists the differences.
 
-When the code reads the drivers in the order of the laps table, the session fetches the next driver in the background (`lazy_telemetry_lookahead`). On a cold cache, a loop over every lap of a race is then faster than `telemetry=True`. A notebook that reads four drivers takes 3 s instead of 10 s.
+The telemetry of a driver is fetched when the code reads it. A read that needs several laps of a driver fetches all the laps of that driver in one parallel wave. These calls start a wave:
+
+- `laps.telemetry` and `laps.get_telemetry()`, for example `session.laps.pick_drivers("VER").telemetry`
+- `session.car_data[number]` and `session.pos_data[number]`
+
+On a cold session, the first read of a driver that asks for one lap fetches only the file of that lap. These calls ask for one lap:
+
+- `lap.telemetry`, `lap.get_telemetry()`, `lap.get_car_data()` and `lap.get_pos_data()`
+- `pick_fastest().get_telemetry()`, for example `session.laps.pick_drivers("VER").pick_fastest().get_telemetry()`
+- `session.get_fastest_lap_tel()` and `session.get_driver("VER").get_fastest_lap_tel()`
+
+The next read of that driver fetches the other laps of the driver in one wave. These reads also start the wave at once, without the one-lap fetch:
+
+- An `iterlaps()` loop over two or more laps of the driver. The first lap of the loop starts the wave.
+- A read of the driver that the background fetch expects next (see below).
+- A read of a lap that the background fetch already holds.
+
+A session that the cache holds never fetches one lap alone.
+
+Later laps of that driver come from memory. `fetch_all_laps_telemetry()` fetches all the drivers that are not loaded in one batch. The frames are the same as the frames of `telemetry="eager"`. The cache contents are also the same for the drivers that were fetched. A lap that was fetched alone is the exception: it goes to the payload cache only (see [Cache and work without a network](#cache-and-work-without-a-network)).
 
 ```python
 session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
-session.load(telemetry="lazy")  # laps, weather, messages; no telemetry yet
-tel = session.laps.pick_drivers("VER").telemetry  # fetches VER's laps in one wave
+session.load()  # laps, weather, messages; no telemetry yet
+fastest = session.laps.pick_drivers("VER").pick_fastest().get_telemetry()  # one file
+tel = session.laps.pick_drivers("VER").telemetry  # the other VER laps in one wave
 ```
 
-<Note>
-With `"lazy"`, a network error in a telemetry fetch occurs at the first access of the lap, not in `load()`. The lap then has an empty telemetry frame, as with any failed lap. `load()` also does not put telemetry in the cache. Use `telemetry=True` before work without a network. The config key `load_telemetry_lazy` (environment variable `TIF1_LOAD_TELEMETRY_LAZY`) gives `telemetry=True` the effect of `"lazy"`.
-</Note>
+When the code reads the drivers in the order of the laps table, the session fetches the next driver in the background. The config key `lazy_telemetry_lookahead` sets the number of drivers (default 1, `-1` for all, `0` for none). The background requests use only the free request slots of the current wave (`lazy_telemetry_background_requests`, default 22). The background fetch runs on a daemon thread. Pyodide has no threads, so there each driver is fetched in its own wave only.
+
+Cold cache, 2025 Bahrain Grand Prix race, whole process:
+
+| Script | `telemetry="eager"` | Lazy (default) |
+| :--- | ---: | ---: |
+| `load()`, then laps and results only | 8.5 s in `load()` | 0.13 s in `load()` |
+| `load()`, then the telemetry of four drivers | 10.0 s | 3.0 s |
+| `load()`, then every lap of every driver | 10.3 s | 9.2 s |
+
+The one-lap fetch, cold cache, same race, whole process:
+
+| Script | Wave at the first read | One lap at the first read (default) |
+| :--- | ---: | ---: |
+| `load()`, then the fastest-lap telemetry of one driver (pandas) | 2.9 s | 1.05 s |
+| `load()`, then the fastest-lap telemetry of one driver (polars) | 2.8 s | 0.92 s |
+| `load()`, then the fastest-lap telemetry of four drivers (pandas) | 4.2 s | 1.1 s |
+| `load()`, then the fastest-lap telemetry of four drivers (polars) | 4.4 s | 1.5 s |
+
+On a warm cache, the work moves from `load()` to the first lap access. A pandas session reads each driver row on first access with either value. A polars session also does this with either value, when its frame cache holds every lap. The first two drivers read their rows alone. The third read takes the rows of all the drivers that are not read yet, in one batch. An `iterlaps()` loop reads the rows of all its drivers at once. A warm polars `load()` of a race takes 7 to 14 ms instead of 110 to 160 ms. The first lap loop then takes that time.
+
+##### Errors
+
+`load()` does not report telemetry errors. A telemetry error occurs at the first access of the lap:
+
+- A failed request writes a warning to the log, for example `Failed telemetry load for VER lap 12: ...`. After three failures for one driver, tif1 writes one more warning and then logs the failures of that driver at debug level.
+- The lap then has an empty telemetry frame with the usual columns. No exception is raised.
+- A failed background request writes `Lazy telemetry fetch failed for ...` to the log. The first access of the lap then sends the request again, with the usual CDN fallback and retries.
+- A failed one-lap fetch writes nothing at warning level. The per-lap path then sends the request again, with the usual retries. If that request also fails, the per-lap path writes the usual warning.
+
+`telemetry="eager"` has the same per-lap behavior. The difference is the time of the warning: the eager warning occurs in `load()`.
+
+##### Cache and work without a network
+
+`load()` puts no telemetry in the cache. The cache gets the telemetry of each driver when the code reads it. A later process reads those drivers from the cache and the other drivers from the CDN. A lap that was fetched alone goes to the payload cache, not to the frame cache. A later process builds the frame of that lap from its payload, without the network.
+
+In `offline_mode`, or without a network, a driver that was not read has no telemetry. Its first access writes a warning and gives an empty frame. To prepare work without a network, fetch all the telemetry while the network is available:
+
+```python
+session = tif1.get_session(2025, "Bahrain Grand Prix", "Race")
+session.load(telemetry="eager")  # or: session.load(); session.fetch_all_laps_telemetry()
+# Later, also in a new process with offline_mode=True: every lap comes from the cache
+```
+
+To get the eager load for every `load()` call, set the config key `load_telemetry_lazy` to `False`:
+
+```python
+tif1.get_config().set("load_telemetry_lazy", False)
+```
+
+The environment variable `TIF1_LOAD_TELEMETRY_LAZY=false` and the `.tif1rc` key `"load_telemetry_lazy": false` do the same.
+
+##### Other behavior
+
+- `load_async()` uses the same values. With `telemetry="eager"` it awaits `fetch_all_laps_telemetry_async()`.
+- A second `load()` call registers the drivers again. The telemetry that the session already holds stays in memory.
+- Sessions before 2018 have no telemetry, with any value.
+- At interpreter exit, tif1 cancels the background requests. A request that is already running can delay the exit by up to one request, about 0.2 to 0.5 s.
+- The strings `"lazy"` and `"eager"` are not case-sensitive. Other strings raise `ValueError`.
 
 ### get_driver()
 
@@ -995,6 +1071,8 @@ Circuit information is cached after the first call, so subsequent calls are inst
 ### fetch_all_laps_telemetry()
 
 Fetch telemetry for all laps of all drivers in parallel. `session.car_data[driver]` loads the same payloads for one driver and joins them into one DataFrame; this method returns one frame per lap.
+
+After the default lazy `load()`, this method fetches only the drivers that the code has not read yet, in one batch. It also takes the telemetry that the background fetch already holds. Call it while the network is available to put the telemetry of every lap in the cache before work without a network.
 
 **Signature:**
 ```python

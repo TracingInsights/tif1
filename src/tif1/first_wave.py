@@ -22,11 +22,13 @@ transport sends single requests over them (:func:`fetch`; the fastest lap's
 telemetry file, the Ergast classification), so a cold script that never
 starts a telemetry wave never imports niquests. The first telemetry wave
 starts on them too (Elis E9, :func:`bridge_open`): its requests go over
-stdlib connections while niquests imports and connects in a daemon thread
-(the main thread waits on the network meanwhile, so the import's CPU is
-hidden), and once niquests is warm the rest of the wave and every later one
-run on it (HTTP/2, hedging, the OCSP check). When the wave cannot run (a
-proxy, no ``wassima``), its thread warms niquests connections instead.
+stdlib connections, and once the bridge has served :data:`BRIDGE_WARM_AFTER`
+requests niquests imports and connects in a daemon thread (Naxos N8: a
+one-driver wave ends on the bridge before niquests could take it over, and
+the import's CPU slowed the wave's receive threads); once niquests is warm
+the rest of the wave and every later one run on it (HTTP/2, hedging, the
+OCSP check). When the wave cannot run (a proxy, no ``wassima``), its thread
+warms niquests connections instead.
 
 Security note: the stdlib requests verify the certificate chain and the host
 name against the same roots as niquests, but do not run niquests' OCSP
@@ -48,6 +50,16 @@ logger = logging.getLogger(__name__)
 #: healthy fetch of the first-wave files takes ~0.1-0.2 s; past this bound
 #: the request goes to niquests instead (the stdlib result is dropped).
 WAIT_LIMIT = 3.0
+
+#: Requests the bridge serves before it starts the niquests warm-up (Naxos
+#: N8). More than one driver's laps of any session (a race has at most ~80),
+#: so a one-driver telemetry wave (~0.5 s cold) runs on the stdlib alone: the
+#: warm-up (the niquests import, ~120-145 ms of CPU under the GIL, then the
+#: session and its OCSP-checked connections) never finished before such a
+#: wave did, and it slowed the wave's receive threads. A longer wave (a
+#: second driver, ``fetch_all``) starts the warm-up here and moves to
+#: niquests as before.
+BRIDGE_WARM_AFTER = 80
 
 
 class _Slot:
@@ -72,6 +84,8 @@ _connection_factory: Callable[..., Any] | None = None
 _warm_urls: list[str] = []
 _warm_timeout = 10.0
 _warm_started = False
+#: Requests the bridge has served (:func:`bridge_open` answered True).
+_bridged = 0
 
 
 def start(urls: list[str], *, timeout: float) -> None:
@@ -121,10 +135,10 @@ def take(url: str) -> bytes | None:
 def warm_niquests() -> None:
     """Import niquests and warm its connections in a daemon thread, once (Elis E9).
 
-    Called by the first request of a telemetry wave that the wave's stdlib
-    connections serve (:func:`bridge_open`): the import (~120 ms of CPU) and
-    the handshakes then run while the main thread waits on the network, and
-    the rest of a long wave (and every later one) moves to niquests once its
+    Called by the bridge (:func:`bridge_open`) once it has served
+    :data:`BRIDGE_WARM_AFTER` requests: the import (~120 ms of CPU) and the
+    handshakes then run while the main thread waits on the network, and the
+    rest of a long wave (and every later one) moves to niquests once its
     connections are warm. Not started when the wave did not run (its thread
     then warmed niquests already).
     """
@@ -147,16 +161,22 @@ def bridge_open() -> bool:
     """Whether a telemetry-wave request should go over the wave's stdlib connections.
 
     True while the wave's client exists and niquests is not ready (no
-    session yet, or its warm-up still connecting); starts the niquests
-    warm-up the first time (:func:`warm_niquests`). Never waits.
+    session yet, or its warm-up still connecting); each True counts as a
+    bridged request, and the one past :data:`BRIDGE_WARM_AFTER` starts the
+    niquests warm-up (:func:`warm_niquests`). Never waits.
     """
+    global _bridged
     if _client is None:
         return False
     from . import http_session
 
     if http_session._shared_session is not None and not http_session.warm_connections_pending():
         return False
-    warm_niquests()
+    with _slots_lock:
+        _bridged += 1
+        bridged = _bridged
+    if bridged > BRIDGE_WARM_AFTER:
+        warm_niquests()
     return True
 
 
@@ -173,9 +193,10 @@ def _run_niquests_warmup(urls: list[str], timeout: float) -> None:
 
 def reset() -> None:
     """Forget every slot and the wave's client (tests)."""
-    global _client, _warm_started, _warm_urls
+    global _bridged, _client, _warm_started, _warm_urls
     _warm_started = False
     _warm_urls = []
+    _bridged = 0
     with _slots_lock:
         _slots.clear()
     client, _client = _client, None

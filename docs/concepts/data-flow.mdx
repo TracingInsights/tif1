@@ -2080,8 +2080,10 @@ laps = session.laps
 # Weather loads on its first access, not before
 weather = session.weather
 
-# session.load() with its defaults (telemetry=True) also fetches the telemetry
-# of every lap: one file per lap, more than a thousand files for a race
+# session.load() with its defaults fetches no telemetry. A driver's telemetry is
+# fetched when the code reads it (on a cold session, one lap alone for a first
+# one-lap read; else all its laps in one wave). telemetry="eager" fetches every
+# lap in load(): one file per lap, more than a thousand files for a race
 ```
 
 ### 3. Categorical Data Type Optimization
@@ -3430,9 +3432,9 @@ tif1.get_config().set("timeout", int(adaptive_timeout.get_timeout()))
 Load only the required data.
 
 ```python
-# Bad: Load everything. telemetry=True fetches one telemetry file per lap
+# Bad: Load everything. telemetry="eager" fetches one telemetry file per lap
 # of every driver (more than a thousand files for a race):
-#   session.load()  # laps, telemetry of every lap, weather, messages
+#   session.load(telemetry="eager")  # laps, telemetry of every lap, weather, messages
 
 # Good: Load selectively
 session = tif1.get_session(2025, "Monaco", "Race")

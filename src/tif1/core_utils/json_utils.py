@@ -97,6 +97,36 @@ NATIVE_TELEMETRY_DECODER_AVAILABLE = _native_decode_telemetry is not None
 #: ``tif1_native.lz4_frame_decompress_into(src, dst) -> int`` (tif1-native >= 0.2.1:
 #: an lz4 frame decoded into a caller-owned buffer, GIL released), or None.
 NATIVE_LZ4_DECOMPRESS_INTO: Any = getattr(_native_module, "lz4_frame_decompress_into", None)
+#: ``tif1_native.tel_integ`` / ``tel_accx`` / ``tel_lateral`` / ``tel_spline`` /
+#: ``tel_interp`` / ``tel_apply`` (Naxos N7: the ``tel.v2`` columnar file
+#: predictions and residuals, GIL released), or None each when the installed
+#: build predates them; the codec then runs its numpy twins.
+NATIVE_TEL_INTEG: Any = getattr(_native_module, "tel_integ", None)
+NATIVE_TEL_ACCX: Any = getattr(_native_module, "tel_accx", None)
+NATIVE_TEL_LATERAL: Any = getattr(_native_module, "tel_lateral", None)
+NATIVE_TEL_SPLINE: Any = getattr(_native_module, "tel_spline", None)
+NATIVE_TEL_INTERP: Any = getattr(_native_module, "tel_interp", None)
+NATIVE_TEL_APPLY: Any = getattr(_native_module, "tel_apply", None)
+
+
+def native_columnar_decoder_available() -> bool:
+    """Whether every ``tel.v2`` kernel is native (read at call time).
+
+    The numpy twins decode the same bits ~6x slower per file (25 vs 4.1 ms
+    for a ten-lap race file), so the reader asks for the columnar files only
+    with the kernels.
+    """
+    kernels = (
+        NATIVE_TEL_INTEG,
+        NATIVE_TEL_ACCX,
+        NATIVE_TEL_LATERAL,
+        NATIVE_TEL_SPLINE,
+        NATIVE_TEL_INTERP,
+        NATIVE_TEL_APPLY,
+    )
+    return None not in kernels
+
+
 # Raw payload keys of the numeric-by-contract channels: an all-sentinel
 # channel among them decodes to a float64 NaN array, any other all-sentinel
 # channel stays a list of tokens (what a generic parser would hand over).

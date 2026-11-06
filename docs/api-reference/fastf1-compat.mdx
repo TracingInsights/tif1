@@ -493,7 +493,7 @@ While tif1 maintains API compatibility, there are some differences to be aware o
 | `Cache.clear_cache()` | ✅ | ✅ | Same signature |
 | `set_log_level()` | ✅ | ✅ | Same call |
 | `get_session()` | ✅ | ✅ | Same call, with the fastf1 `identifier=`, `exact_match=`, and `backend=` keywords; tif1 adds `enable_cache`, `lib`, `ergast`, and `force_ergast` (a deprecated tif1 alias of `backend="ergast"`) |
-| `Session.load()` | ✅ | ✅ | `laps`, `telemetry`, `weather`, `messages` flags. `livedata` raises `NotImplementedError` |
+| `Session.load()` | ✅ | ✅ | `laps`, `telemetry`, `weather`, `messages` flags. `telemetry=True` fetches telemetry per driver at the first lap access, not in `load()`; `telemetry="eager"` is the fastf1 behavior ([Lazy telemetry](/concepts/sessions#lazy-telemetry)). `livedata` raises `NotImplementedError` |
 | `Session.laps` | ✅ | ✅ | Same call |
 | `Session.get_driver()` | ✅ | ✅ | Same call; returns the `results` row of the driver. An unknown identifier raises `DriverNotFoundError`, a `ValueError` as in fastf1 |
 | `Session.track_status`, `session_status`, `session_info` | ✅ | ✅ | Derived from race control messages and the schedule |

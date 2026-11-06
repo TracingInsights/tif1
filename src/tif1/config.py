@@ -198,9 +198,12 @@ class Config:
             "prefetch_all_telemetry_on_first_lap_request": False,
             "prefetch_all_telemetry_after_laps_load": False,
             "telemetry_prefetch_max_concurrent_requests": 32,
-            # load(telemetry=True) means telemetry="lazy": a driver's laps are
-            # fetched in one wave on the first access of any of them.
-            "load_telemetry_lazy": False,
+            # load(telemetry=True) means telemetry="lazy" (the default): a
+            # driver's laps are fetched in one wave when it is first read (on
+            # a cold session a first one-lap read fetches that lap alone).
+            # False makes load() fetch every lap's telemetry, as
+            # fastf1's load() does (telemetry="eager" asks for that per call).
+            "load_telemetry_lazy": True,
             # Cold lazy loads: after a driver's wave, the next N pending drivers
             # (laps-row order) are fetched in the background slots of the same
             # stream; -1 fetches every pending driver, 0 turns the stream off.
@@ -208,11 +211,12 @@ class Config:
             # Background requests of that stream in flight at most (they only
             # start while no foreground lap is queued).
             "lazy_telemetry_background_requests": 22,
-            # Gortyn G3: a cold wave of two or more laps of one driver asks for
-            # the driver's columnar file ({driver}/tel.v1.bin, one request,
-            # ~26% fewer bytes) before the per-lap JSON; a 404 is remembered in
-            # the missing-payload tier, so a session without files costs one
-            # request per driver. False: per-lap JSON only.
+            # Gortyn G3 / Naxos N7: a cold wave of two or more laps of one
+            # driver asks for the driver's columnar files
+            # ({driver}/tel.v2.{first}.bin, ten laps each, ~68% fewer bytes
+            # than the gzipped lap JSON) before the per-lap JSON; a 404 is
+            # remembered in the missing-payload tier, so a session without
+            # files costs one request per session. False: per-lap JSON only.
             "telemetry_columnar": False,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.

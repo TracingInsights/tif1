@@ -20,7 +20,8 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   notebook that later resamples or merges telemetry still imports numpy at
   that point, so its total time is unchanged.
 - Warm pandas sessions decompress the frame tier's driver rows into
-  huge-page buffers when `tif1-native` 0.2.1 is installed on Linux.
+  huge-page buffers on Linux with `tif1-native` 0.2.1 (now the minimum
+  version, see Changed).
   `tif1_native.lz4_frame_decompress_into` decodes a row's lz4 frame with
   liblz4 (the same decoder pyarrow's codec uses; 2.5% faster than it on the
   rows, 1.7x faster than a pure-Rust decoder) and the GIL released, into an
@@ -42,25 +43,188 @@ The project uses semantic versioning. Release dates are listed in `YYYY-MM-DD` f
   resamples or merges telemetry imports numpy at that point, so its total
   time is unchanged.
 
+### Performance — Naxos series (2026-11-06)
+
+Combined effect, fresh process, warm cache, 2025 Bahrain race, interleaved
+against the Gortyn tree: pandas (10 pairs, quiet box) `get_session()` is
+~25 ms faster in every script, `fetch_all_laps_telemetry()` 658 -> 557 ms,
+the benchmark notebook 762 -> 711 ms, `laps` 453 -> 426 ms, 8-10 of 10 pairs
+on every workload except one driver's merged telemetry (even); polars (8
+pairs) the notebook 557 -> 403 ms, `load()` then laps and results 365 -> 212
+ms, every workload faster in 6-8 of 8 pairs. Every user-visible surface of
+both backends is unchanged (133 pandas, 131 polars).
+
+- Warm sessions no longer pay for cyclic-GC passes that free nothing. A
+  pandas `fetch_all_laps_telemetry()` builds a race's 1128 lap frames with GC
+  paused, and the first young collection afterwards used to traverse all
+  ~55 000 of their containers (9-10 ms) and find no garbage; `import pandas`
+  ran ~50 such collections (26-33 ms of a warm pandas `get_session()`, 11 ms
+  with polars). These bursts (the read-side frame builds and the first
+  import of pandas, numpy, polars and `tif1.core`) now run with GC paused and
+  end with `gc.freeze(); gc.unfreeze()`, which moves their survivors into the
+  oldest generation in O(1); full collections still visit them. GC inside
+  `get_session()`: 26-33 -> 0 ms; pandas `fetch_all_laps_telemetry()` 161 ->
+  133 ms on a loaded box (whole script 866 -> 759 ms, 10/12 pairs); polars
+  `laps`, `fetch_all` and notebook scripts 5-10% faster. Applies to GIL
+  builds of CPython 3.11-3.13; skipped on free-threaded builds, on 3.14+
+  (incremental collector) and in a process that froze objects itself.
+- The polars `PolarsTelemetry` arithmetic no longer imports numpy or runs
+  query plans on a lap. `add_distance`, `add_differential_distance` and
+  `add_relative_distance` use Series arithmetic (full-length divisors, so the
+  values match numpy bit for bit) and an `itertools.accumulate` cumulative
+  sum; `fill_missing`, `slice_by_time`, `slice_by_lap`, `slice_by_mask` and
+  `merge_channels` use Boolean masks, `bisect` and list kernels;
+  `resample_channels(rule=)` bins, averages, interpolates and holds values on
+  Series and lists for frames up to 20 000 rows (larger or unusual frames
+  keep the query plan). A polars process no longer pays numpy's import
+  (~100 ms) plus `numpy.ma` (~22 ms) at its first `add_distance`, and a
+  0.1 s resample of a lap takes ~3 ms instead of ~9 ms (~56 ms for the first
+  of a process). The warm polars notebook's four-lap analysis drops from 162
+  to 18 ms and the whole notebook from 716 to 596 ms (13/16 pairs).
+  Resampled values are now deterministic: on bins of three or more samples
+  they can differ by one ulp from the previous query plan, whose grouped
+  mean varied from run to run by the same amount.
+- A warm polars `load(telemetry="eager")` (or `load_telemetry_lazy=False`)
+  no longer reads every driver's telemetry frame-tier row: those reads were
+  ~115 ms of the ~130 ms `load()` of a race. When the frame tier holds every
+  lap, `load()` reads the rows' lap spans only and leaves each row to the
+  first access of its driver, as pandas has done since 0.11.3. `load()` then
+  laps and results: 444 -> 292 ms per process; `load()` then one driver's
+  fastest-lap car data 373 -> 254 ms. The first two drivers touched read
+  their rows alone, the third reads every remaining row in one batch, and an
+  `iterlaps()` loop reads all its drivers' rows at its first telemetry
+  access (the read `load()` used to do), so a notebook that loops over the
+  laps is unchanged. Scripts that touch three or more drivers outside such a
+  loop pay two single-row reads on top of that batch (+20-50 ms). The lazy
+  default `load()` has the same row reads.
+- A cold lazy session fetches one lap alone when a driver's first read asks
+  for one lap: `lap.telemetry`, `lap.get_car_data()`,
+  `pick_fastest().get_telemetry()`, `get_fastest_lap_tel()`. The driver's
+  next read brings the rest of its laps in one wave. Before, the first read
+  fetched the driver's whole wave (~57 files of a race and their frames and
+  cache writes) for one lap. 2025 Bahrain race, whole process, 8/8 pairs on
+  each: one driver's fastest-lap telemetry 2.9 -> 1.05 s (pandas), 2.8 ->
+  0.92 s (polars); the fastest laps of four drivers 4.2 -> 1.1 s (pandas),
+  4.4 -> 1.5 s (polars). An `iterlaps()` loop over two or more laps of a
+  driver takes that driver's wave at its first lap, so a loop over a
+  driver's laps does not pay an extra round trip (cold, every VER lap: 1251
+  -> 1182 ms pandas, 1093 -> 1043 ms polars, against the one-lap rule
+  without this exception). The lap's payload goes to the payload tier, not
+  the frame tier; a failed one-lap fetch is retried by the per-lap path,
+  which logs the usual warning if it fails again. Sessions the cache holds
+  never fetch one lap alone.
+- A cold script's first telemetry wave of one driver no longer imports the
+  HTTP library. The first request of a wave on the standard-library bridge
+  connections started the niquests import and connection warm-up in a
+  background thread (~250 modules, 120-145 ms of CPU under the GIL) that
+  never finished before the wave did and slowed its receive threads. The
+  warm-up now starts after 80 bridged requests, more than one driver's laps
+  in any session, so a one-driver wave runs on the standard library alone
+  and longer waves move to niquests as before. Cold
+  `laps.pick_driver("VER").telemetry`, pandas, 24 pairs on a shared link:
+  1926 -> 1582 ms median (p90 3563 -> 2397 ms); polars 2150 -> 1871 ms, and
+  a second driver's wave 803 -> 650 ms. polars also turns a lap's
+  `DriverAhead` codes into strings with a list lookup instead of a
+  `Series.gather` query plan: one driver's 57 lap frames build in 63 ms
+  instead of 82 ms.
+- A cold `fetch_all_laps_telemetry()` (and an eager `load()`) writes the
+  telemetry payloads to the SQLite cache while the download is running,
+  instead of in one flush after the last file. On a ~10 MB/s link the
+  1128-file wave of a race leaves the CPU mostly idle, while the flush
+  (orjson, zstd and SQLite, ~1.35 s of CPU for a race) fought the frame
+  build for the GIL after the wave and was joined again at exit. The work
+  after the last byte drops from 3.9 to 2.5 s (pandas) and from 4.3 to 2.2 s
+  (polars), median of 8 interleaved cold runs; a cold polars notebook goes
+  from 9.4 to 8.6 s (8/8). The cached rows are unchanged. Without threads
+  (Pyodide) the flush still runs after the download.
+- `Laps.iterlaps()` builds each `Lap` row directly over one shared block
+  placement and skips the Series constructor's object inference when the
+  frame has a non-nullable int or bool column (the laps table always does),
+  since such a row always stays object dtype; the rule is checked against
+  pandas once per process and any drift restores the inference. The
+  frame's object interleave runs with GC paused, and `Lap.telemetry` reads
+  `Driver`/`LapNumber` by position. Building the 1128 rows of a race takes
+  ~4 ms instead of 10-12 ms; a loop over every lap's telemetry after
+  `load()` is ~7-10 ms faster (~140 -> ~132 ms).
+
+### Changed
+
+- **`session.load()` no longer fetches telemetry by default** (different
+  from fastf1). The `load_telemetry_lazy` config key now defaults to `True`,
+  so `load()` and `load(telemetry=True)` mean `load(telemetry="lazy")`: laps,
+  weather and race control messages are fetched, and a driver's telemetry is
+  fetched when the script first reads it: in one parallel wave for a read of
+  several laps (`laps.telemetry`, `car_data[n]`, ...), and on a cold session
+  as one lap's file for a first read of one lap (`lap.telemetry`,
+  `get_car_data()`, `pick_fastest().get_telemetry()`,
+  `get_fastest_lap_tel()`), the rest of the driver's laps following in one
+  wave at its next read (see Performance — Naxos series). The frames are
+  identical to the eager load.
+  Cold 2025 Bahrain race, whole process: `load()` then laps and results 8.5 s
+  -> 0.13 s in `load()`; `load()` then four drivers' telemetry 10.0 -> 3.0 s;
+  `load()` then every lap of every driver 10.3 -> 9.2 s. A warm polars
+  `load()` takes ~7 ms instead of 110-160 ms; the first lap loop pays the
+  driver-row reads instead.
+  What changes for a script:
+  - A telemetry network failure is logged when the lap is first read, not in
+    `load()`; the lap gets an empty telemetry frame (as an eager load's
+    failed lap did). A failed background request is retried at that access.
+  - `load()` writes no telemetry to the cache, so a driver the script never
+    read is not available offline. Before work without a network, run
+    `session.load(telemetry="eager")` or `session.fetch_all_laps_telemetry()`.
+  - fastf1's behaviour for every call: `load_telemetry_lazy=False`
+    (`TIF1_LOAD_TELEMETRY_LAZY=false`, or `.tif1rc`).
+  `COMPATIBILITY.md` ("Lazy telemetry in `load()`") and the migration guide
+  list every difference.
+- `load()` / `load_async()` accept `telemetry="eager"`: the telemetry of every
+  lap now, whatever `load_telemetry_lazy` says (`"lazy"` and `"eager"` are
+  case-insensitive; other strings raise `ValueError`).
+- A lazy `load()` of a session without laps registers nothing (it raised
+  `KeyError: 'Driver'` when the laps table had no `Driver` column), and
+  `fetch_all_laps_telemetry()` after a lazy load on a warm polars session
+  returns its map in laps-row order (the touched driver came first).
+- The perf gate's `notebook` workload loads with `telemetry="eager"`, the
+  path its baseline was measured on.
+- Dependencies: the `tif1-native` requirement is now `>=0.2.1,<0.4`
+  (`uv.lock` 0.2.0 -> 0.2.1). 0.2.1 is the release with the liblz4 decoder
+  and the huge-page buffers above. The `tel.v2` decoder kernels
+  (`tel_integ`, `tel_accx`, `tel_lateral`, `tel_spline`, `tel_interp`,
+  `tel_apply`) are in `native/` (crate version 0.3.0) but not released:
+  they ship in `tif1-native` 0.3.0, and until it is installed the columnar
+  reader stays on the lap JSON.
+
 ### Added
 
 - Cold telemetry can come from per-driver columnar files when the data
-  repositories publish them: `{driver}/tel.v1.{first}.bin`, ten laps each,
+  repositories publish them: `{driver}/tel.v2.{first}.bin`, ten laps each,
   typed columns in one zstd frame (`design/TELEMETRY_COLUMNAR_FORMAT.md`;
   the encoder for the data pipeline is `tools/data/encode_driver_telemetry.py`,
-  whose `--verify` decodes every file back and compares each lap with the
-  JSON bit for bit). A race driver's laps are 6 requests and 2.7 MB instead
-  of 57 requests and 3.7 MB, and a race is 52.5 MB instead of 71.3 MB of
-  gzipped JSON. The decoded values are identical to the JSON's, so every
-  frame is unchanged. On a throttled local CDN (8 MB/s link),
-  `fetch_all_laps_telemetry()` took 8.5 s instead of 11.0 s and
-  `laps.pick_driver("VER").telemetry` 543 ms instead of 649 ms. Missing,
+  whose `--verify` decodes every file back with the native and the numpy
+  decoder and compares each lap with the JSON bit for bit). The channels
+  fastf1 and the data pipeline compute from other channels are stored as the
+  difference, in units in the last place, from a prediction made with plain
+  IEEE arithmetic: the car channels interpolated at the position rows
+  (`numpy.interp` over the laps' nanosecond dates), the position channels and
+  `distance` through a quadratic spline, `distance`'s integration,
+  `rel_distance` and `acc_x/y/z`; a channel whose prediction does not fit is
+  stored as plain values, so a file is always exact, only larger. The 2025
+  Bahrain race is 10.8 MB instead of 71.3 MB of gzipped JSON (the
+  unpublished first format: 52.5 MB), qualifying 4.5 MB; a race driver's
+  laps are 6 requests instead of 57. The decoded values are identical to the
+  JSON's, so every frame is unchanged. On a throttled local CDN (8 MB/s),
+  `fetch_all_laps_telemetry()` takes 3.0 s instead of 8.2 s with the first
+  format (whole process 4.3 s instead of 9.5 s, 8/8 pairs on both backends),
+  a cold four-driver notebook 1.7 s instead of 2.75 s, and
+  `laps.pick_driver("VER").telemetry` 215 ms instead of 478 ms; on a
+  100 MB/s link `fetch_all_laps_telemetry()` is 2.3 s instead of 2.5 s. A
+  file decodes in ~4 ms (the predictions run in `tif1-native`'s `tel_*`
+  kernels, GIL released; without them tif1 reads the lap JSON). Missing,
   unreadable or incomplete files fall back to the lap JSON (a missing file
   is remembered for the session for `missing_payloads_ttl_days`); a single
   lap always reads its JSON. The reader is off by default
   (`telemetry_columnar=False`, `TIF1_TELEMETRY_COLUMNAR`) until the
-  repositories carry the files, because a probe costs one 404 round trip
-  per session on today's CDN.
+  repositories carry the files and `tif1-native` 0.3.0 is released, because
+  a probe costs one 404 round trip per session on today's CDN.
 - pandas 3.1 support, and the locked dependencies moved to the newest
   releases (pandas 3.1.0, polars 2.1.0, numpy 2.5.4, pyarrow 26.0.1,
   niquests 3.21.2, urllib3-future 2.25.905, qh3 2.1.0). On pandas 3.1 the
