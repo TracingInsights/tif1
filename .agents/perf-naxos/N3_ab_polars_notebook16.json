@@ -1,0 +1,108 @@
+{
+ "lib": "polars",
+ "pairs": 16,
+ "control_src": "/tmp/naxos/control/src",
+ "candidate_src": "/tmp/naxos/N3/src",
+ "summary": {
+  "notebook": {
+   "import": {
+    "control_median": 18.1,
+    "candidate_median": 15.7,
+    "control_min": 13.0,
+    "candidate_min": 12.8,
+    "candidate_faster_pairs": "11/16"
+   },
+   "get_session": {
+    "control_median": 180.0,
+    "candidate_median": 161.0,
+    "control_min": 140.2,
+    "candidate_min": 139.3,
+    "candidate_faster_pairs": "8/16"
+   },
+   "load": {
+    "control_median": 148.4,
+    "candidate_median": 142.7,
+    "control_min": 108.5,
+    "candidate_min": 113.2,
+    "candidate_faster_pairs": "8/16"
+   },
+   "picks_x8": {
+    "control_median": 3.9,
+    "candidate_median": 3.8,
+    "control_min": 3.1,
+    "candidate_min": 3.1,
+    "candidate_faster_pairs": "7/16"
+   },
+   "iterlaps_tel_loop": {
+    "control_median": 48.0,
+    "candidate_median": 59.1,
+    "control_min": 40.7,
+    "candidate_min": 40.9,
+    "candidate_faster_pairs": "6/16"
+   },
+   "iloc_200": {
+    "control_median": 3.3,
+    "candidate_median": 4.2,
+    "control_min": 2.9,
+    "candidate_min": 2.9,
+    "candidate_faster_pairs": "5/16"
+   },
+   "driver_merged_x4": {
+    "control_median": 9.9,
+    "candidate_median": 12.1,
+    "control_min": 8.5,
+    "candidate_min": 8.6,
+    "candidate_faster_pairs": "6/16"
+   },
+   "telemetry_analysis_4": {
+    "control_median": 162.3,
+    "candidate_median": 18.3,
+    "control_min": 148.5,
+    "candidate_min": 16.3,
+    "candidate_faster_pairs": "16/16"
+   },
+   "fastest_lap_tel": {
+    "control_median": 1.7,
+    "candidate_median": 1.7,
+    "control_min": 1.5,
+    "candidate_min": 1.4,
+    "candidate_faster_pairs": "8/16"
+   },
+   "driver_fastest_lap_x4": {
+    "control_median": 14.1,
+    "candidate_median": 11.1,
+    "control_min": 10.9,
+    "candidate_min": 9.9,
+    "candidate_faster_pairs": "10/16"
+   },
+   "results": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "control_min": 0.0,
+    "candidate_min": 0.0,
+    "candidate_faster_pairs": "0/16"
+   },
+   "weather": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "control_min": 0.0,
+    "candidate_min": 0.0,
+    "candidate_faster_pairs": "2/16"
+   },
+   "in_process_total": {
+    "control_median": 614.9,
+    "candidate_median": 495.1,
+    "control_min": 494.2,
+    "candidate_min": 357.5,
+    "candidate_faster_pairs": "14/16"
+   },
+   "process_wall": {
+    "control_median": 716.5,
+    "candidate_median": 596.0,
+    "control_min": 578.9,
+    "candidate_min": 436.5,
+    "candidate_faster_pairs": "13/16"
+   }
+  }
+ }
+}

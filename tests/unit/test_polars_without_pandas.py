@@ -16,8 +16,8 @@ The ``numpy`` mode of the child (Delphi D10: numpy is ~55 ms on top of
 polars) reads the laps, results, drivers and state surfaces with a
 ``session_info.json`` present and reports whether numpy was imported, then
 the lap telemetry reads (Elis E6), the ``pick_*`` family, ``iterlaps(require=)``
-and the driver lookups (Gortyn G4); the telemetry arithmetic after them must
-still work (numpy loads there).
+and the driver lookups (Gortyn G4), and the telemetry arithmetic of a notebook's
+analysis (Naxos N3: distances, resampling, fills, slices, merges).
 """
 
 from __future__ import annotations
@@ -330,6 +330,25 @@ if mode == "numpy":
     telemetry_rows = fastest_telemetry.height
     numpy_after_get_telemetry = "numpy" in sys.modules
     distance = fastest_telemetry.add_distance()["Distance"].to_list()
+    # Naxos N3: the telemetry arithmetic of the notebook's analysis runs on
+    # Series kernels and lists too (numpy and its ``numpy.ma`` were ~120 ms).
+    tel = fastest_telemetry.add_distance().add_differential_distance()
+    other = session.laps.pick_drivers("PIA").pick_fastest().get_telemetry()
+    start, end = tel["SessionTime"][1], tel["SessionTime"][6]
+    lap = session.laps.pick_drivers("VER").pick_fastest()
+    analysis = {
+        "relative": tel.add_relative_distance()["RelativeDistance"].to_list()[-1],
+        "differential": tel["DifferentialDistance"].to_list()[:3],
+        "resample": tel.resample_channels(rule="0.1s").height,
+        "resample_1s": tel.resample_channels()["Speed"].to_list(),
+        "fill": tel.fill_missing().height,
+        "slice": tel.slice_by_time(start, end).height,
+        "slice_pad": tel.slice_by_time(start, end, pad=1).height,
+        "slice_edges": tel.slice_by_time(start, end, interpolate_edges=True).height,
+        "slice_lap": tel.slice_by_lap(lap).height,
+        "merge": tel.merge_channels(other).width,
+        "first_non_zero": tel.get_first_non_zero_time_index(),
+    }
     print(
         json.dumps(
             {
@@ -340,6 +359,7 @@ if mode == "numpy":
                 "picks_seen": picks_seen,
                 "numpy_after_get_telemetry": numpy_after_get_telemetry,
                 "distance": distance,
+                "analysis": analysis,
                 "fastest_schema": fastest_schema,
                 "numpy_after_telemetry": "numpy" in sys.modules,
                 "pandas": "pandas" in sys.modules,
@@ -445,7 +465,7 @@ def test_polars_laps_results_and_state_never_import_numpy(tmp_path):
     assert report["fastest_schema"]["DriverAhead"] == "String"
     # Gortyn G4: the pick_* family, iterlaps(require=...) and the driver
     # lookups leave numpy unloaded, and so does the fastest lap's merged
-    # get_telemetry(); the telemetry arithmetic (add_distance) loads it, and works.
+    # get_telemetry(); Naxos N3: so does the telemetry arithmetic after it.
     assert report["numpy_after_picks"] is False, report["picks_seen"]
     picks = report["picks_seen"]
     assert len(picks) == 24
@@ -476,10 +496,24 @@ def test_polars_laps_results_and_state_never_import_numpy(tmp_path):
     assert picks["driver_fastest_lap"] == [2]  # not deleted, 94 s
     assert picks["driver_get_lap"] == 3
     assert report["numpy_after_get_telemetry"] is False
-    assert report["numpy_after_telemetry"] is True
+    assert report["numpy_after_telemetry"] is False, report["analysis"]
     assert report["telemetry_rows"] == 9
     assert report["distance"][0] == 0.0
+    # 0.25 s samples at 200 + i km/h: the first sample drove nothing.
+    assert report["distance"][1] == 201.0 / 3.6 * 0.25
     assert report["distance"][-1] > 0.0
+    analysis = report["analysis"]
+    assert analysis["relative"] == 1.0
+    assert analysis["differential"] == [0.0, 201.0 / 3.6 * 0.25, 202.0 / 3.6 * 0.25]
+    assert analysis["resample"] == 21  # 2 s of samples in 0.1 s bins
+    assert analysis["resample_1s"] == [201.5, 205.5, 208.0]  # means of 4, 4 and 1 samples
+    assert analysis["fill"] == 9
+    assert analysis["slice"] == 6
+    assert analysis["slice_pad"] == 8
+    assert analysis["slice_edges"] == 6  # both edges are sampled instants
+    assert analysis["slice_lap"] == 9
+    assert analysis["merge"] > 23
+    assert analysis["first_non_zero"] == 1
     # The frames themselves are the typed ones.
     assert report["points"] == [25.0]
     assert report["track_status"] == ["1", "2"]

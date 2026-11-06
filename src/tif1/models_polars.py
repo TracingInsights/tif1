@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
+import itertools
 import math
 import re
 import sys
@@ -43,9 +44,10 @@ from .exceptions import (
 if TYPE_CHECKING:
     import numpy as np
 else:
-    # The telemetry arithmetic (and the rare multi-driver joins) run on numpy,
-    # which loads on the first of them; reading ``session.laps`` back from the
-    # tier and the lap selections (Series masks) never do.
+    # numpy loads on the first rare path that needs it (multi-driver joins,
+    # track status, unsorted clocks, frames above ``_LIST_KERNEL_MAX_ROWS``);
+    # the laps read back from the tier, the lap selections (Series masks) and
+    # the common telemetry arithmetic (Series kernels and lists) never do.
     np = lazy_module("numpy", globals(), "np")
 
 __all__ = [
@@ -62,6 +64,7 @@ __all__ = [
 ]
 
 _DURATION_NS = pl.Duration("ns")
+_INDEX_DTYPE = pl.get_index_type()
 #: Telemetry columns that are metadata, not channels: never dropped by
 #: ``drop_unknown_channels`` (pandas ``Telemetry`` parity).
 _TELEMETRY_META_COLUMNS = ("Driver", "LapNumber")
@@ -431,12 +434,28 @@ def _filter_rows(frame: pl.DataFrame, keep: np.ndarray | pl.Series) -> pl.DataFr
 
 
 def _take_rows(frame: pl.DataFrame, positions: np.ndarray | list[int]) -> pl.DataFrame:
-    """``frame.select(pl.all().gather(positions))`` column by column (positions in range)."""
+    """``frame.select(pl.all().gather(positions))`` column by column (positions in range).
+
+    A list of positions is gathered without numpy.
+    """
     columns = frame.get_columns()
     if not columns:
         return frame.select(pl.all().gather(positions))
-    index = np.asarray(positions, dtype=np.int64)
+    index = (
+        _index_series(positions)
+        if isinstance(positions, list)
+        else np.asarray(positions, dtype=np.int64)
+    )
     return pl.DataFrame([column[index] for column in columns])
+
+
+def _index_series(positions: list[int] | list[int | None]) -> pl.Series:
+    """Row positions as a gather index (``series[index]``; a ``None`` gathers a null).
+
+    Built in polars' index dtype, which ``Series.__getitem__`` uses as it is
+    (an Int64 index is range-checked and cast first).
+    """
+    return pl.Series("", positions, dtype=_INDEX_DTYPE)
 
 
 def _with_columns(frame: pl.DataFrame, *columns: pl.Series) -> pl.DataFrame:
@@ -509,15 +528,149 @@ def _held(series: pl.Series, has_nan: bool) -> pl.Series:
     it. A channel without any value is returned as it is, all NaN when it
     held NaN (``fill_null(nan)``).
     """
-    valid = _valid_values(series)
+    valid = _valid_series(series)
     if not valid.any():
         return (
             _full_series(series.name, math.nan, series.len(), series.dtype) if has_nan else series
         )
-    positions = np.where(valid, np.arange(valid.size), -1)
-    np.maximum.accumulate(positions, out=positions)
-    positions[positions < 0] = np.argmax(valid)
-    return series[positions]
+    if _numpy_kernels(series.len()):
+        flags = valid.to_numpy()
+        positions = np.where(flags, np.arange(flags.size), -1)
+        np.maximum.accumulate(positions, out=positions)
+        positions[positions < 0] = np.argmax(flags)
+        return series[positions]
+    flags = valid.to_list()
+    held = flags.index(True)  # the first value also fills the samples before it
+    rows: list[int] = []
+    for row, flag in enumerate(flags):
+        if flag:
+            held = row
+        rows.append(held)
+    return series[_index_series(rows)]
+
+
+#: Telemetry kernels without an eager polars twin (a cumulative sum, sorted
+#: searches, fills) run on Python lists up to this many rows. A lap (~700
+#: rows) costs well under a millisecond and a driver's race (~40k) a few,
+#: against numpy's import in a polars process that has not loaded it yet
+#: (~100 ms, plus ~22 ms for ``numpy.ma`` on the first array polars converts).
+_LIST_KERNEL_MAX_ROWS = 200_000
+#: With ``numpy.ma`` already loaded (a plotting notebook), numpy runs the
+#: kernels of frames above this many rows instead: it is free to call then.
+_LIST_KERNEL_NUMPY_LOADED_ROWS = 4_096
+
+
+def _numpy_kernels(rows: int) -> bool:
+    """True when a telemetry kernel over ``rows`` rows should run on numpy, not lists.
+
+    Both give the same values: the list kernels repeat numpy's arithmetic
+    in the same order.
+    """
+    if rows > _LIST_KERNEL_MAX_ROWS:
+        return True
+    return rows > _LIST_KERNEL_NUMPY_LOADED_ROWS and "numpy.ma" in sys.modules
+
+
+#: Frames up to this many rows are interpolated and resampled on Series
+#: kernels and Python lists (a lap: ~1 ms); larger ones (a driver's race)
+#: keep the query plans, whose fixed cost (~0.5 ms each, ~5-25 ms for the
+#: first of a process) is small next to the work there.
+_EAGER_RESAMPLE_MAX_ROWS = 20_000
+#: ... and resample onto at most this many bins (a fine rule over a long
+#: frame goes to the query plan).
+_EAGER_RESAMPLE_MAX_BINS = 200_000
+
+
+class _LinearFill(NamedTuple):
+    """How :func:`_linear_fill` spreads ``m`` values onto ``length`` slots.
+
+    ``order[slot]`` is the value at that slot (``j < m``) or the ``j - m``-th
+    interpolated one, which lies ``step`` of ``steps`` slots from value
+    ``lo`` towards value ``hi`` (``order`` is None when every slot holds a
+    value; ``lo`` is None when none is interpolated).
+    """
+
+    order: pl.Series | None
+    lo: pl.Series | None
+    hi: pl.Series | None
+    step: pl.Series | None
+    steps: pl.Series | None
+
+
+def _linear_fill_plan(positions: list[int], length: int) -> _LinearFill:
+    """``interpolate().forward_fill().backward_fill()`` of values at ``positions``.
+
+    ``positions`` (ascending, at least one) are the slots of ``length`` that
+    hold a value; the others are interpolated linearly between the values
+    around them, or take the first/last value beyond them.
+    """
+    m = len(positions)
+    if m == length:
+        return _LinearFill(None, None, None, None, None)
+    order = [0] * positions[0]
+    lo: list[int] = []  # the value before each interpolated slot (the one after is lo + 1)
+    step: list[int] = []
+    steps: list[int] = []
+    previous = positions[0]
+    for j, slot in enumerate(positions):
+        gap = slot - previous
+        if gap == 2:  # one empty slot, the common case
+            order.append(m + len(lo))
+            lo.append(j - 1)
+            step.append(1)
+            steps.append(2)
+        elif gap > 2:
+            order.extend(range(m + len(lo), m + len(lo) + gap - 1))
+            lo.extend([j - 1] * (gap - 1))
+            step.extend(range(1, gap))
+            steps.extend([gap] * (gap - 1))
+        order.append(j)
+        previous = slot
+    order.extend([m - 1] * (length - 1 - positions[-1]))
+    if not lo:
+        return _LinearFill(_index_series(order), None, None, None, None)
+    return _LinearFill(
+        _index_series(order),
+        _index_series(lo),
+        _index_series([j + 1 for j in lo]),
+        pl.Series("", step, dtype=pl.Float64),
+        pl.Series("", steps, dtype=pl.Float64),
+    )
+
+
+def _linear_fill(values: pl.Series, plan: _LinearFill) -> pl.Series:
+    """``values`` (Float64, no nulls) spread by ``plan`` (see :func:`_linear_fill_plan`).
+
+    polars' linear ``interpolate`` computes ``low + step * ((high - low) /
+    steps)`` per missing slot; the same operations on Series give the same
+    values.
+    """
+    if plan.order is None:
+        return values  # every slot holds a value
+    if plan.lo is not None:
+        low = values[plan.lo]
+        high = values[cast(pl.Series, plan.hi)]
+        slopes = (high - low) / cast(pl.Series, plan.steps)
+        values = pl.concat([values, low + slopes * cast(pl.Series, plan.step)], rechunk=False)
+    return values[plan.order]
+
+
+def _interpolated(series: pl.Series, has_nan: bool) -> pl.Series | None:
+    """``fill_nan(None).interpolate().forward_fill().backward_fill()`` on eager kernels.
+
+    A channel without any value comes back all NaN when it held NaN, else
+    all null (``fill_null(nan)``), as the expression gives. None for
+    anything but a Float64 Series of at most :data:`_EAGER_RESAMPLE_MAX_ROWS`
+    rows (the expression path answers those).
+    """
+    n = series.len()
+    if series.dtype != pl.Float64 or n > _EAGER_RESAMPLE_MAX_ROWS:
+        return None
+    valid = _valid_series(series)
+    positions = _true_positions(valid)
+    if not positions:
+        return _full_series(series.name, math.nan if has_nan else None, n, pl.Float64)
+    return _linear_fill(series.filter(valid), _linear_fill_plan(positions, n)).alias(series.name)
 
 
 def _int_values(series: pl.Series) -> tuple[np.ndarray, np.ndarray]:
@@ -1075,8 +1228,8 @@ class PolarsTelemetry(_TIF1Frame):
     def _get_lap_numbers(self) -> list[int]:
         if "LapNumber" not in self.columns:
             return []
-        numbers, present = _int_values(self.get_column("LapNumber").cast(pl.Int64, strict=False))
-        return [int(value) for value in np.unique(numbers[present])]
+        numbers = self.get_column("LapNumber").cast(pl.Int64, strict=False).to_list()
+        return sorted({number for number in numbers if number is not None})
 
     def _time_reference_column(self, other: pl.DataFrame | None = None) -> str | None:
         for column in ("SessionTime", "Time"):
@@ -1088,8 +1241,8 @@ class PolarsTelemetry(_TIF1Frame):
         """Position of the first sample whose ``Time`` is above zero (``0`` if none)."""
         if "Time" not in self.columns or self.height == 0:
             return 0
-        positions = np.flatnonzero(_mask_values(_ns_series(self, "Time") > 0))
-        return int(positions[0]) if positions.size else 0
+        first = _first_true(_filled(_ns_series(self, "Time") > 0))
+        return 0 if first is None else first
 
     # -- missing values -----------------------------------------------------
 
@@ -1118,6 +1271,10 @@ class PolarsTelemetry(_TIF1Frame):
             if not nulls and not has_nan:
                 continue
             if rule == "interpolate":
+                interpolated = _interpolated(series, has_nan)
+                if interpolated is not None:
+                    filled.append(interpolated)
+                    continue
                 expr = pl.col(column)
                 if has_nan:
                     expr = expr.fill_nan(None)
@@ -1130,7 +1287,7 @@ class PolarsTelemetry(_TIF1Frame):
                     exprs.append(pl.col(column).fill_null(pl.lit("interpolation").cast(dtype)))
                     continue
                 gaps = _full_series(column, "interpolation", self.height, pl.String).cast(dtype)
-                filled.append(series.zip_with(pl.Series(_present_values(series)), gaps))
+                filled.append(series.zip_with(_present_series(series), gaps))
             else:
                 filled.append(_held(series, has_nan))
         if not exprs and not filled:
@@ -1140,34 +1297,40 @@ class PolarsTelemetry(_TIF1Frame):
 
     # -- distance -----------------------------------------------------------
 
-    def _differential_distance_values(self) -> np.ndarray:
+    def _differential_distance_values(self) -> pl.Series:
         """``Speed / 3.6 * dt`` per sample, the pandas class's arithmetic bit for bit.
 
-        numpy arrays: element-wise division (polars evaluates a division by a
-        scalar as a multiplication by its reciprocal, 1 ulp from numpy).
+        Element-wise Series arithmetic, no numpy: the divisors are full-length
+        Series because polars evaluates a division by a scalar as a
+        multiplication by its reciprocal (1 ulp from numpy's division).
         """
-        speed = self.get_column("Speed").cast(pl.Float64, strict=False).to_numpy()
-        speed_ms = np.where(np.isnan(speed), 0.0, speed) / 3.6  # NaN and null count as 0
+        speed = self.get_column("Speed").cast(pl.Float64, strict=False)
+        n = speed.len()
+        zeros = _full_series("", 0.0, n, pl.Float64)
+        speed = speed.zip_with(_valid_series(speed), zeros)  # NaN and null count as 0
+        speed_ms = speed / _full_series("", 3.6, n, pl.Float64)
         if "Time" not in self.columns:
             return speed_ms * 0.0
-        nanoseconds = _series_ns(self.get_column("Time")).cast(pl.Float64).to_numpy()
-        seconds = nanoseconds / float(_NS_PER_SECOND)
-        seconds[np.isnan(seconds)] = 0.0  # a missing clock counts as 0
-        delta = np.zeros(seconds.size)
-        np.maximum(np.diff(seconds), 0.0, out=delta[1:])
+        nanoseconds = _series_ns(self.get_column("Time")).cast(pl.Float64)
+        seconds = nanoseconds / _full_series("", float(_NS_PER_SECOND), n, pl.Float64)
+        if seconds.null_count():
+            seconds = seconds.zip_with(_present_series(seconds), zeros)  # a missing clock is 0
+        # ``max(diff, 0)`` after a leading 0: the first sample drove no distance.
+        step = seconds - _shift_down(seconds)
+        delta = step.zip_with(_filled(step > 0.0), zeros)
         return speed_ms * delta
 
     def calculate_differential_distance(self) -> pl.Series:
         """Distance driven between subsequent samples in metres (``Speed * dt``)."""
         if self.height == 0 or "Speed" not in self.columns:
             return pl.Series("DifferentialDistance", [], dtype=pl.Float64)
-        return pl.Series("DifferentialDistance", self._differential_distance_values())
+        return self._differential_distance_values().alias("DifferentialDistance")
 
     def integrate_distance(self) -> pl.Series:
         """Distance driven since the first sample in metres (cumulative sum)."""
         if self.height == 0 or "Speed" not in self.columns:
             return pl.Series("Distance", [], dtype=pl.Float64)
-        return pl.Series("Distance", np.cumsum(self._differential_distance_values()))
+        return _cumulative_sum(self._differential_distance_values()).alias("Distance")
 
     def _with_float_column(self, name: str, values: pl.Series | None) -> Self:
         """A copy with ``name`` set to ``values`` (all null when None), in place or appended."""
@@ -1219,8 +1382,8 @@ class PolarsTelemetry(_TIF1Frame):
         # Divided element by element by a Series: polars turns a division by
         # a scalar into a multiplication by its reciprocal (1 ulp off numpy).
         last = distance[-1] if distance.len() else None
-        divisor = np.full(distance.len(), math.nan if last is None else last, dtype=np.float64)
-        relative = distance / pl.Series(divisor)
+        divisor = _full_series("", math.nan if last is None else last, distance.len(), pl.Float64)
+        relative = distance / divisor
         return self._rewrap(_with_columns(self, relative.alias("RelativeDistance")))
 
     # -- driver ahead -------------------------------------------------------
@@ -1330,18 +1493,20 @@ class PolarsTelemetry(_TIF1Frame):
             series = series.cast(pl.Boolean)
         if series.len() != self.height:
             raise ValueError("Mask length must match telemetry length.")
-        keep = _mask_values(series)
+        keep = _filled(series)
         if pad and keep.any():
-            positions = np.flatnonzero(keep)
-            first = int(positions[0])
-            last = int(positions[-1])
+            positions = _true_positions(keep)
+            first = positions[0]
+            last = positions[-1]
             if pad_side in ("both", "before"):
                 first = max(0, first - int(pad))
             if pad_side in ("both", "after"):
                 last = min(self.height - 1, last + int(pad))
             if first <= last:
-                keep = keep.copy()
-                keep[first : last + 1] = True
+                window = _constant_mask(False, first)
+                window.append(_constant_mask(True, last - first + 1))
+                window.append(_constant_mask(False, self.height - 1 - last))
+                keep = keep | window
         return self._rewrap(_filter_rows(self, keep))
 
     def _slice_with_edges(
@@ -1362,10 +1527,10 @@ class PolarsTelemetry(_TIF1Frame):
             order = _stable_order(times)
             frame = _take_rows(self, order)
             times = times[order]
-        clock = times.head(times.len() - times.null_count()).to_numpy()
-        n_valid = clock.size
-        lo = int(np.searchsorted(clock, start_ns, side="left"))
-        hi = int(np.searchsorted(clock, end_ns, side="right"))
+        clock = times.head(times.len() - times.null_count()).to_list()
+        n_valid = len(clock)
+        lo = bisect.bisect_left(clock, start_ns)
+        hi = bisect.bisect_right(clock, end_ns)
         first, last = lo, hi
         if pad and pad_side in ("both", "before"):
             first = max(0, lo - pad)
@@ -1406,8 +1571,9 @@ class PolarsTelemetry(_TIF1Frame):
             )
         else:
             times = _ns_series(self, reference)
-            mask = pl.Series(_mask_values((times >= start_ns) & (times <= end_ns)))
-            data = self.slice_by_mask(mask, pad, pad_side)
+            data = self.slice_by_mask(
+                _filled((times >= start_ns) & (times <= end_ns)), pad, pad_side
+            )
         if data.height:
             # Time restarts at the slice start so laps can overlap (fastf1).
             time = (_ns_series(data, reference) - start_ns).cast(_DURATION_NS)
@@ -1470,11 +1636,11 @@ class PolarsTelemetry(_TIF1Frame):
             )
         lap_numbers = _ref_lap_numbers(ref_laps)
         if "SessionTime" not in self.columns and "LapNumber" in self.columns and lap_numbers:
-            keep = self._lap_number_values(lap_numbers)
+            keep = self._lap_number_mask(lap_numbers)
             drivers = _ref_lap_drivers(ref_laps)
             if drivers and "Driver" in self.columns:
-                keep = keep & _isin_values(self.get_column("Driver").cast(pl.String), drivers)
-            return self.slice_by_mask(pl.Series(keep), pad=pad, pad_side=pad_side)
+                keep = keep & _isin_series(self.get_column("Driver").cast(pl.String), drivers)
+            return self.slice_by_mask(keep, pad=pad, pad_side=pad_side)
         start_ns, end_ns = _ref_lap_window(ref_laps)
         if start_ns is not None and end_ns is not None:
             return self._slice_by_time_ns(start_ns, end_ns, pad, pad_side, interpolate_edges)
@@ -1482,16 +1648,14 @@ class PolarsTelemetry(_TIF1Frame):
             return self._rewrap(self.clone())
         if not lap_numbers:
             return self._rewrap(self.clear())
-        keep = self._lap_number_values(lap_numbers)
-        return self.slice_by_mask(pl.Series(keep), pad=pad, pad_side=pad_side)
+        return self.slice_by_mask(self._lap_number_mask(lap_numbers), pad=pad, pad_side=pad_side)
 
-    def _lap_number_values(self, lap_numbers: list[int]) -> np.ndarray:
-        """``LapNumber.is_in(lap_numbers).fill_null(False)`` as numpy."""
+    def _lap_number_mask(self, lap_numbers: list[int]) -> pl.Series:
+        """``LapNumber.is_in(lap_numbers).fill_null(False)`` (a null or NaN matches nothing)."""
         column = self.get_column("LapNumber")
         if column.dtype.is_integer() or column.dtype.is_float():
-            return np.isin(column.to_numpy(), lap_numbers)  # a null reads as NaN: no match
-        hits = self.select(pl.col("LapNumber").is_in(lap_numbers).fill_null(False)).to_series()
-        return hits.to_numpy()
+            return _isin_series(column, lap_numbers)
+        return self.select(pl.col("LapNumber").is_in(lap_numbers).fill_null(False)).to_series()
 
     # -- merging and resampling --------------------------------------------
 
@@ -1766,6 +1930,17 @@ def _join_one_driver_laps(
     return _filter_rows(frame, pl.Series([True]).append(same.not_()))
 
 
+def _cumulative_sum(values: pl.Series) -> pl.Series:
+    """``numpy.cumsum`` of a Float64 Series without nulls, bit for bit.
+
+    numpy accumulates sequentially, so a running Python float sum gives
+    the same values; :func:`_numpy_kernels` picks numpy for large frames.
+    """
+    if _numpy_kernels(values.len()):
+        return pl.Series(values.name, np.cumsum(values.to_numpy()))
+    return pl.Series(values.name, list(itertools.accumulate(values.to_list())), dtype=pl.Float64)
+
+
 def _series_ns(series: pl.Series) -> pl.Series:
     """A clock Series as integer nanoseconds (``_ns_expr`` on a Series; numbers are seconds)."""
     native = _ns_native(series)
@@ -1807,7 +1982,7 @@ def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.Data
     clock (or an empty ``right``) gets nulls. ``right``'s columns already in
     ``left`` get an ``_other`` suffix.
     """
-    # numpy searches and column-by-column gathers: no query plan (an
+    # Sorted searches and column-by-column gathers: no query plan (an
     # expression pass over a frame of ~60 concatenated chunks costs ~1.5 ms).
     left_ns = _series_ns(left.get_column(key))
     if left_ns.null_count() or not left_ns.is_sorted():
@@ -1816,9 +1991,9 @@ def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.Data
         left_ns = left_ns[order]
     right_ns = _series_ns(right.get_column(key))
     if right_ns.null_count():
-        present = _present_values(right_ns)
+        present = _present_series(right_ns)
         right = _filter_rows(right, present)
-        right_ns = right_ns.filter(pl.Series(present))
+        right_ns = right_ns.filter(present)
     if not right_ns.is_sorted():
         order = _stable_order(right_ns)
         right = _take_rows(right, order)
@@ -1834,15 +2009,7 @@ def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.Data
     known = height - left_ns.null_count()  # null clocks sort last
     if n == 0 or known == 0:
         return left.hstack([_full_series(c.name, None, height, c.dtype) for c in part])
-    x = left_ns.head(known).to_numpy()
-    keys = right_ns.to_numpy()
-    # The first sample after each clock, and the last one at or before it.
-    after = np.searchsorted(keys, x, side="right")
-    before = after - 1
-    gap_before = x - keys[np.maximum(before, 0)]
-    gap_after = keys[np.minimum(after, n - 1)] - x
-    take_after = (after < n) & ((before < 0) | (gap_after < gap_before))
-    index = np.where(take_after, after, before)  # never -1: n > 0
+    index = _nearest_rows(left_ns.head(known), right_ns)
     gathered = [column[index] for column in part]
     if known < height:  # rows without a clock get nulls
         gathered = [
@@ -1850,6 +2017,37 @@ def _merge_nearest(left: pl.DataFrame, right: pl.DataFrame, key: str) -> pl.Data
             for column in gathered
         ]
     return left.hstack(gathered)
+
+
+def _nearest_rows(clocks: pl.Series, keys: pl.Series) -> np.ndarray | pl.Series:
+    """Row of sorted ``keys`` nearest each of ``clocks`` (both Int64, no nulls, ``keys`` non-empty).
+
+    The earlier row on a tie, the last of equal keys on an exact match.
+    """
+    n = keys.len()
+    if _numpy_kernels(max(clocks.len(), n)):
+        x = clocks.to_numpy()
+        values = keys.to_numpy()
+        # The first sample after each clock, and the last one at or before it.
+        after = np.searchsorted(values, x, side="right")
+        before = after - 1
+        gap_before = x - values[np.maximum(before, 0)]
+        gap_after = values[np.minimum(after, n - 1)] - x
+        take_after = (after < n) & ((before < 0) | (gap_after < gap_before))
+        return np.where(take_after, after, before)  # never -1: n > 0
+    sorted_keys = keys.to_list()
+    last = n - 1
+    rows: list[int] = []
+    for clock in clocks.to_list():
+        after = bisect.bisect_right(sorted_keys, clock)
+        if after == 0:
+            rows.append(0)
+        elif after > last:
+            rows.append(last)
+        else:
+            closer_after = sorted_keys[after] - clock < clock - sorted_keys[after - 1]
+            rows.append(after if closer_after else after - 1)
+    return _index_series(rows)
 
 
 def _edge_linear(
@@ -1872,7 +2070,7 @@ def _as_float(value: Any) -> float:
 
 
 def _edge_samples(
-    frame: pl.DataFrame, clock: np.ndarray, reference: str, times: list[int]
+    frame: pl.DataFrame, clock: list[int], reference: str, times: list[int]
 ) -> pl.DataFrame:
     """Samples of ``frame`` at ``times`` ns on ``reference`` (none a sampled instant).
 
@@ -1883,15 +2081,15 @@ def _edge_samples(
     sample before the edge, else the one after). pandas
     ``Telemetry._edge_samples`` parity.
     """
-    n = clock.size
-    after = [int(a) for a in np.searchsorted(clock, times, side="right")]
+    n = len(clock)
+    after = [bisect.bisect_right(clock, t) for t in times]
     prevs = [a - 1 if a > 0 else -1 for a in after]
     nexts = [a if a < n else -1 for a in after]
     # One gather of every neighbour: rows [prev..., next...], -1 read as row 0.
     rows = [max(p, 0) for p in (*prevs, *nexts)]
     neighbours = _take_rows(frame, rows)
     k = len(times)
-    refs = clock[rows].tolist()
+    refs = [clock[row] for row in rows]
     held_at = [i if prevs[i] >= 0 else k + i for i in range(k)]
     series: list[pl.Series] = []
     for column, dtype in neighbours.schema.items():
@@ -1928,7 +2126,7 @@ def _edge_samples(
             else:
                 series.append(pl.Series(column, interpolated, dtype=pl.Float64).cast(dtype))
         else:
-            series.append(neighbours.get_column(column)[np.asarray(held_at, dtype=np.int64)])
+            series.append(neighbours.get_column(column)[_index_series(held_at)])
     return pl.DataFrame(series)
 
 
@@ -1989,6 +2187,9 @@ def _resample_by_rule(frame: pl.DataFrame, step: int) -> pl.DataFrame:
     axis = _first_present(frame, *_TIME_AXIS_COLUMNS)
     if axis is None or frame.height == 0:
         return frame.clone()
+    eager = _resample_eager(frame, axis, step)
+    if eager is not None:
+        return eager
     base = (
         frame.with_columns(_ns_expr(frame, axis).alias("__x"))
         .drop_nulls("__x")
@@ -2035,6 +2236,159 @@ def _resample_by_rule(frame: pl.DataFrame, step: int) -> pl.DataFrame:
             value = pl.col("__bin") * step + int(origin)
         clock_exprs.append(_clock_from_ns(value, schema[column]).alias(column))
     return result.with_columns(clock_exprs).select(frame.columns)
+
+
+def _bin_mean(values: list[Any], start: int, stop: int) -> float | None:
+    """Mean of ``values[start:stop]``, null and NaN skipped (None: none left).
+
+    A one-row bin is its value; a larger one a Kahan sum of its values, in
+    row order, over their count: what the query plan's ``group_by(...)
+    .agg(pl.col(c).fill_nan(None).mean())`` computes (polars 2.1). The plan
+    is not deterministic on every frame: on some sizes it adds a bin's rows
+    plainly, in an order that depends on its threads, so the same call can
+    differ by an ulp from run to run; this one always gives the Kahan mean.
+    """
+    if stop - start == 1:
+        value = values[start]
+        return None if value is None or math.isnan(value) else value
+    total = compensation = 0.0
+    count = 0
+    for value in values[start:stop]:
+        if value is None or math.isnan(value):
+            continue
+        adjusted = value - compensation
+        running = total + adjusted
+        compensation = (running - total) - adjusted
+        total = running
+        count += 1
+    return total / count if count else None
+
+
+def _kahan_means(values: list[float], bounds: list[tuple[int, int]]) -> list[float]:
+    """:func:`_bin_mean` of each ``values[start:stop]`` of two rows or more, none missing."""
+    means: list[float] = []
+    for start, stop in bounds:
+        total = compensation = 0.0
+        for value in values[start:stop]:
+            adjusted = value - compensation
+            running = total + adjusted
+            compensation = (running - total) - adjusted
+            total = running
+        means.append(total / (stop - start))
+    return means
+
+
+def _resample_eager(frame: pl.DataFrame, axis: str, step: int) -> pl.DataFrame | None:
+    """:func:`_resample_by_rule` on Series kernels and Python lists (no query plan).
+
+    Answers frames of at most :data:`_EAGER_RESAMPLE_MAX_ROWS` rows whose
+    clocks are nanosecond durations/datetimes and whose ``axis`` is sorted
+    without nulls (every telemetry frame tif1 builds); None for anything
+    else. Each step computes what the plan's computes, operation for
+    operation: the bin means (:func:`_bin_mean`; a bin of three or more
+    rows can be an ulp from the plan's, which itself varies from run to
+    run there), the linear interpolation across empty bins and the fills
+    beyond them (:func:`_linear_fill`), the value in force at each bin start
+    (``join_asof`` backward: the last of equal timestamps, after a forward
+    fill, then a backward fill), and the clocks advancing with the bins.
+    """
+    schema = frame.schema
+    if frame.height > _EAGER_RESAMPLE_MAX_ROWS or "__x" in schema or "__bin" in schema:
+        return None
+    clocks = [column for column in _TIME_AXIS_COLUMNS if column in schema]
+    for column in clocks:
+        dtype = schema[column]
+        if not isinstance(dtype, pl.Duration | pl.Datetime) or dtype.time_unit != "ns":
+            return None
+    axis_ns = _ns_native(frame.get_column(axis))
+    if axis_ns is None or axis_ns.null_count() or not axis_ns.is_sorted():
+        return None
+    x = axis_ns.to_list()
+    origin = x[0]
+    n_bins = (x[-1] - origin) // step + 1
+    if n_bins > _EAGER_RESAMPLE_MAX_BINS:
+        return None
+    # The non-empty bins in order: bin ``bins[j]`` holds rows ``starts[j]:starts[j + 1]``.
+    ids = [(value - origin) // step for value in x]
+    starts = [0, *(row for row in range(1, len(x)) if ids[row] != ids[row - 1])]
+    bins = [ids[row] for row in starts]
+    starts.append(len(x))
+    runs = len(bins)
+    multi = [j for j in range(runs) if starts[j + 1] - starts[j] > 1]
+    multi_bounds = [(starts[j], starts[j + 1]) for j in multi]
+
+    out: dict[str, pl.Series] = {}
+    # Channels without a missing value have a mean in every non-empty bin:
+    # they share one fill plan, and their one-row bins are a gather.
+    shared_plan: _LinearFill | None = None
+    mean_rows: pl.Series | None = None
+    for column, dtype in schema.items():
+        if column in clocks or not _is_continuous(column, dtype):
+            continue
+        series = frame.get_column(column).cast(pl.Float64)
+        if series.null_count() or (series > math.inf).any():  # null or NaN samples
+            values = series.to_list()
+            means = [_bin_mean(values, starts[j], starts[j + 1]) for j in range(runs)]
+            positions = [bins[j] for j in range(runs) if means[j] is not None]
+            if not positions:
+                out[column] = _full_series(column, None, n_bins, pl.Float64)
+                continue
+            present = pl.Series(column, [m for m in means if m is not None], dtype=pl.Float64)
+            out[column] = _linear_fill(present, _linear_fill_plan(positions, n_bins)).alias(column)
+            continue
+        if not multi:
+            means_series = series
+        else:
+            multi_means = pl.Series(
+                column, _kahan_means(series.to_list(), multi_bounds), pl.Float64
+            )
+            if len(multi) == runs:
+                means_series = multi_means
+            else:
+                if mean_rows is None:
+                    # Row of each bin's mean in ``series`` + ``multi_means``.
+                    slot = dict(zip(multi, range(len(x), len(x) + len(multi)), strict=True))
+                    mean_rows = _index_series([slot.get(j, starts[j]) for j in range(runs)])
+                means_series = pl.concat([series, multi_means], rechunk=False)[mean_rows]
+        if shared_plan is None:
+            shared_plan = _linear_fill_plan(bins, n_bins)
+        out[column] = _linear_fill(means_series, shared_plan).alias(column)
+
+    held = [c for c in schema if c not in clocks and c not in out]
+    if held:
+        # The last row at or before each bin start (the first bin starts at row 0).
+        rows = [bisect.bisect_right(x, edge) - 1 for edge in range(origin, x[-1] + 1, step)]
+        index = _index_series(rows)
+        for column in held:
+            series = frame.get_column(column)
+            if not series.null_count():
+                out[column] = series[index]
+                continue
+            last: int | None = None
+            in_force: list[int | None] = []
+            for row, flag in enumerate(_present_series(series).to_list()):
+                if flag:
+                    last = row
+                in_force.append(last)
+            picks = [in_force[row] for row in rows]
+            following: int | None = None
+            for slot in range(n_bins - 1, -1, -1):  # backward fill across the bins
+                if picks[slot] is None:
+                    picks[slot] = following
+                else:
+                    following = picks[slot]
+            out[column] = series[_index_series(picks)]
+
+    for column in clocks:
+        dtype = schema[column]
+        start = 0 if column == "Time" else cast(pl.Series, _ns_native(frame[column]))[0]
+        if start is None:
+            out[column] = _full_series(column, None, n_bins, dtype)
+            continue
+        ns = pl.Series(column, list(range(start, start + n_bins * step, step)), dtype=pl.Int64)
+        unit = _DATETIME_NS if isinstance(dtype, pl.Datetime) else _DURATION_NS
+        out[column] = ns.cast(unit).cast(dtype)
+    return pl.DataFrame([out[column] for column in frame.columns])
 
 
 def _ref_lap_numbers(ref_laps: Any) -> list[int]:
