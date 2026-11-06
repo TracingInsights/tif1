@@ -8,7 +8,7 @@ import time
 import tif1
 
 session = tif1.get_session(2025, "Bahrain Grand Prix", "Race", lib="pandas")
-session.laps
+_ = session.laps
 before = set(sys.modules)
 from tif1.core_utils import frame_codec, pandas_blocks  # noqa: E402
 

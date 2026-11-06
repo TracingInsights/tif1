@@ -24,8 +24,14 @@ from tif1.cache import Cache, _suspend_gc
 from tif1.core_utils import gc_control
 from tif1.core_utils.gc_control import gc_promote_ok, promote_young_objects
 
+# CPython 3.12 starts with interpreter objects in the permanent generation
+# (375 on 3.12.14, before any import); tif1 never promotes in a process with
+# frozen objects, so the promotion tests only run where the count starts at 0.
+_FROZEN_AT_START = gc.get_freeze_count()
+
 needs_promotion = pytest.mark.skipif(
-    not gc_promote_ok(), reason="gc.freeze is not an O(1) promotion on this interpreter"
+    not gc_promote_ok() or _FROZEN_AT_START != 0,
+    reason="no O(1) gc.freeze promotion here, or the interpreter starts with frozen objects",
 )
 
 
@@ -52,11 +58,12 @@ def _in_oldest_generation(obj: object) -> bool:
 @pytest.fixture(autouse=True)
 def _clean_gc_state():
     assert gc.isenabled()
-    assert gc.get_freeze_count() == 0
+    assert gc.get_freeze_count() == _FROZEN_AT_START
     gc.collect()
     yield
     gc.enable()
-    gc.unfreeze()
+    if _FROZEN_AT_START == 0:  # never thaw the interpreter's own frozen objects
+        gc.unfreeze()
 
 
 @needs_promotion

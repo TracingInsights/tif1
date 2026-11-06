@@ -32,7 +32,7 @@ for driver, raw in rows.items():
                 print("   Int64c", spec[1], len(spec[2]))
             else:
                 print("  ", spec[:4] if spec[0] == "np" else spec[:2])
-    import pyarrow
+    __import__("pyarrow")  # load pyarrow before the timed decode
 
     t0 = time.perf_counter()
     frame_codec._writable_body(raw)
