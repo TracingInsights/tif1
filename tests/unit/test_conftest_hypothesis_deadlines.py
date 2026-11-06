@@ -1,6 +1,7 @@
 """The Windows deadline override in ``tests/conftest.py`` reaches Hypothesis.
 
-``drop_hypothesis_deadline`` replaces a private Hypothesis attribute; this
+``drop_hypothesis_deadline`` (through the ``hypothesis_deadline_dropper``
+fixture) replaces a private Hypothesis attribute; this
 test fails when a Hypothesis release stops reading it, so the override never
 breaks silently.
 """
@@ -13,8 +14,6 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.errors import DeadlineExceeded
-
-from tests.conftest import drop_hypothesis_deadline
 
 
 def _slow_property():
@@ -31,14 +30,14 @@ def test_the_deadline_applies_without_the_override() -> None:
         _slow_property()()
 
 
-def test_the_override_removes_the_deadline() -> None:
+def test_the_override_removes_the_deadline(hypothesis_deadline_dropper) -> None:
     slow = _slow_property()
-    assert drop_hypothesis_deadline(slow)
+    assert hypothesis_deadline_dropper(slow)
     slow()  # 50 ms against a 1 ms deadline: passes only without one
 
 
-def test_a_plain_function_is_left_alone() -> None:
+def test_a_plain_function_is_left_alone(hypothesis_deadline_dropper) -> None:
     def plain() -> None:
         pass
 
-    assert not drop_hypothesis_deadline(plain)
+    assert not hypothesis_deadline_dropper(plain)

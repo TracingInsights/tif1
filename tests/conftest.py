@@ -46,6 +46,12 @@ def drop_hypothesis_deadline(test: Any) -> bool:
     return True
 
 
+@pytest.fixture
+def hypothesis_deadline_dropper() -> Any:
+    """:func:`drop_hypothesis_deadline`, for its own test (``tests`` is not a package)."""
+    return drop_hypothesis_deadline
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Drop the Hypothesis deadlines on Windows (see ``_NO_HYPOTHESIS_DEADLINES``)."""
     if not _NO_HYPOTHESIS_DEADLINES:
