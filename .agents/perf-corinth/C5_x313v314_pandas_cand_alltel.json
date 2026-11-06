@@ -1,0 +1,730 @@
+{
+ "lib": "pandas",
+ "pairs": 10,
+ "python": "/tmp/corinth/venv314/bin/python",
+ "summary": {
+  "all_tel": {
+   "import": {
+    "control_median": 12.695,
+    "candidate_median": 13.555,
+    "candidate_faster_pairs": "1/10"
+   },
+   "get_session": {
+    "control_median": 354.71500000000003,
+    "candidate_median": 363.745,
+    "candidate_faster_pairs": "5/10"
+   },
+   "get_session.cpu": {
+    "control_median": 305.45000000000005,
+    "candidate_median": 310.26,
+    "candidate_faster_pairs": "3/10"
+   },
+   "get_session.gc": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "candidate_faster_pairs": "0/10"
+   },
+   "laps": {
+    "control_median": 3.2199999999999998,
+    "candidate_median": 3.1500000000000004,
+    "candidate_faster_pairs": "8/10"
+   },
+   "laps.cpu": {
+    "control_median": 3.225,
+    "candidate_median": 3.16,
+    "candidate_faster_pairs": "8/10"
+   },
+   "laps.gc": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "candidate_faster_pairs": "0/10"
+   },
+   "all_tel": {
+    "control_median": 88.285,
+    "candidate_median": 92.825,
+    "candidate_faster_pairs": "4/10"
+   },
+   "all_tel.cpu": {
+    "control_median": 70.035,
+    "candidate_median": 77.97999999999999,
+    "candidate_faster_pairs": "4/10"
+   },
+   "all_tel.gc": {
+    "control_median": 0.21500000000000002,
+    "candidate_median": 0.2,
+    "candidate_faster_pairs": "3/10"
+   },
+   "in_process_total": {
+    "control_median": 460.30499999999995,
+    "candidate_median": 472.85,
+    "candidate_faster_pairs": "5/10"
+   },
+   "in_process_total.cpu": {
+    "control_median": 394.315,
+    "candidate_median": 399.65,
+    "candidate_faster_pairs": "4/10"
+   },
+   "in_process_total.gc": {
+    "control_median": 0.87,
+    "candidate_median": 3.6399999999999997,
+    "candidate_faster_pairs": "0/10"
+   },
+   "process_wall": {
+    "control_median": 543.815,
+    "candidate_median": 575.4449999999999,
+    "candidate_faster_pairs": "2/10"
+   }
+  },
+  "laps": {
+   "import": {
+    "control_median": 12.52,
+    "candidate_median": 13.585,
+    "candidate_faster_pairs": "0/10"
+   },
+   "get_session": {
+    "control_median": 352.975,
+    "candidate_median": 361.645,
+    "candidate_faster_pairs": "2/10"
+   },
+   "get_session.cpu": {
+    "control_median": 298.385,
+    "candidate_median": 294.425,
+    "candidate_faster_pairs": "6/10"
+   },
+   "get_session.gc": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "candidate_faster_pairs": "0/10"
+   },
+   "laps": {
+    "control_median": 3.12,
+    "candidate_median": 3.1,
+    "candidate_faster_pairs": "5/10"
+   },
+   "laps.cpu": {
+    "control_median": 3.13,
+    "candidate_median": 3.1,
+    "candidate_faster_pairs": "5/10"
+   },
+   "laps.gc": {
+    "control_median": 0.0,
+    "candidate_median": 0.0,
+    "candidate_faster_pairs": "0/10"
+   },
+   "in_process_total": {
+    "control_median": 368.725,
+    "candidate_median": 378.235,
+    "candidate_faster_pairs": "2/10"
+   },
+   "in_process_total.cpu": {
+    "control_median": 314.125,
+    "candidate_median": 311.04499999999996,
+    "candidate_faster_pairs": "6/10"
+   },
+   "in_process_total.gc": {
+    "control_median": 0.635,
+    "candidate_median": 3.38,
+    "candidate_faster_pairs": "0/10"
+   },
+   "process_wall": {
+    "control_median": 437.095,
+    "candidate_median": 467.555,
+    "candidate_faster_pairs": "0/10"
+   }
+  }
+ },
+ "raw": {
+  "all_tel": {
+   "control": [
+    {
+     "import": 21.25,
+     "get_session": 478.81,
+     "get_session.cpu": 395.19,
+     "get_session.gc": 0.0,
+     "laps": 5.48,
+     "laps.cpu": 5.49,
+     "laps.gc": 0.0,
+     "all_tel": 106.87,
+     "all_tel.cpu": 94.2,
+     "all_tel.gc": 0.3,
+     "in_process_total": 612.5,
+     "in_process_total.cpu": 516.19,
+     "in_process_total.gc": 1.3,
+     "process_wall": 715.81
+    },
+    {
+     "import": 12.95,
+     "get_session": 347.19,
+     "get_session.cpu": 301.04,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.1,
+     "laps.gc": 0.0,
+     "all_tel": 86.73,
+     "all_tel.cpu": 67.06,
+     "all_tel.gc": 0.27,
+     "in_process_total": 450.04,
+     "in_process_total.cpu": 384.13,
+     "in_process_total.gc": 0.96,
+     "process_wall": 549.15
+    },
+    {
+     "import": 12.56,
+     "get_session": 366.76,
+     "get_session.cpu": 309.86,
+     "get_session.gc": 0.0,
+     "laps": 3.23,
+     "laps.cpu": 3.24,
+     "laps.gc": 0.0,
+     "all_tel": 81.94,
+     "all_tel.cpu": 68.39,
+     "all_tel.gc": 0.17,
+     "in_process_total": 464.57,
+     "in_process_total.cpu": 394.1,
+     "in_process_total.gc": 0.81,
+     "process_wall": 552.55
+    },
+    {
+     "import": 12.48,
+     "get_session": 371.78,
+     "get_session.cpu": 296.94,
+     "get_session.gc": 0.0,
+     "laps": 3.19,
+     "laps.cpu": 3.19,
+     "laps.gc": 0.0,
+     "all_tel": 89.84,
+     "all_tel.cpu": 71.68,
+     "all_tel.gc": 0.28,
+     "in_process_total": 477.34,
+     "in_process_total.cpu": 384.33,
+     "in_process_total.gc": 0.92,
+     "process_wall": 556.96
+    },
+    {
+     "import": 12.34,
+     "get_session": 343.67,
+     "get_session.cpu": 338.16,
+     "get_session.gc": 0.0,
+     "laps": 3.27,
+     "laps.cpu": 3.28,
+     "laps.gc": 0.0,
+     "all_tel": 100.0,
+     "all_tel.cpu": 83.32,
+     "all_tel.gc": 0.17,
+     "in_process_total": 459.34,
+     "in_process_total.cpu": 437.13,
+     "in_process_total.gc": 0.78,
+     "process_wall": 533.3
+    },
+    {
+     "import": 12.79,
+     "get_session": 355.83,
+     "get_session.cpu": 299.98,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.11,
+     "laps.gc": 0.0,
+     "all_tel": 81.21,
+     "all_tel.cpu": 67.11,
+     "all_tel.gc": 0.27,
+     "in_process_total": 452.99,
+     "in_process_total.cpu": 382.93,
+     "in_process_total.gc": 0.96,
+     "process_wall": 532.85
+    },
+    {
+     "import": 12.86,
+     "get_session": 366.03,
+     "get_session.cpu": 298.07,
+     "get_session.gc": 0.0,
+     "laps": 3.21,
+     "laps.cpu": 3.22,
+     "laps.gc": 0.0,
+     "all_tel": 79.11,
+     "all_tel.cpu": 65.88,
+     "all_tel.gc": 0.17,
+     "in_process_total": 461.27,
+     "in_process_total.cpu": 380.06,
+     "in_process_total.gc": 0.79,
+     "process_wall": 540.05
+    },
+    {
+     "import": 12.65,
+     "get_session": 353.6,
+     "get_session.cpu": 297.44,
+     "get_session.gc": 0.0,
+     "laps": 3.15,
+     "laps.cpu": 3.16,
+     "laps.gc": 0.0,
+     "all_tel": 97.74,
+     "all_tel.cpu": 81.24,
+     "all_tel.gc": 0.17,
+     "in_process_total": 467.2,
+     "in_process_total.cpu": 394.53,
+     "in_process_total.gc": 0.82,
+     "process_wall": 547.58
+    },
+    {
+     "import": 12.36,
+     "get_session": 339.49,
+     "get_session.cpu": 329.08,
+     "get_session.gc": 0.0,
+     "laps": 3.24,
+     "laps.cpu": 3.24,
+     "laps.gc": 0.0,
+     "all_tel": 90.67,
+     "all_tel.cpu": 73.54,
+     "all_tel.gc": 0.17,
+     "in_process_total": 445.82,
+     "in_process_total.cpu": 418.26,
+     "in_process_total.gc": 0.8,
+     "process_wall": 528.42
+    },
+    {
+     "import": 12.74,
+     "get_session": 336.4,
+     "get_session.cpu": 333.66,
+     "get_session.gc": 0.0,
+     "laps": 3.23,
+     "laps.cpu": 3.23,
+     "laps.gc": 0.0,
+     "all_tel": 79.5,
+     "all_tel.cpu": 67.74,
+     "all_tel.gc": 0.26,
+     "in_process_total": 431.94,
+     "in_process_total.cpu": 417.42,
+     "in_process_total.gc": 0.92,
+     "process_wall": 514.97
+    }
+   ],
+   "candidate": [
+    {
+     "import": 13.54,
+     "get_session": 441.03,
+     "get_session.cpu": 430.07,
+     "get_session.gc": 0.0,
+     "laps": 3.41,
+     "laps.cpu": 3.42,
+     "laps.gc": 0.0,
+     "all_tel": 134.54,
+     "all_tel.cpu": 115.88,
+     "all_tel.gc": 0.2,
+     "in_process_total": 592.61,
+     "in_process_total.cpu": 562.96,
+     "in_process_total.gc": 3.65,
+     "process_wall": 705.03
+    },
+    {
+     "import": 23.29,
+     "get_session": 322.84,
+     "get_session.cpu": 321.67,
+     "get_session.gc": 0.0,
+     "laps": 3.16,
+     "laps.cpu": 3.17,
+     "laps.gc": 0.0,
+     "all_tel": 84.1,
+     "all_tel.cpu": 66.5,
+     "all_tel.gc": 0.19,
+     "in_process_total": 433.47,
+     "in_process_total.cpu": 414.67,
+     "in_process_total.gc": 5.67,
+     "process_wall": 571.99
+    },
+    {
+     "import": 13.31,
+     "get_session": 329.27,
+     "get_session.cpu": 327.53,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.11,
+     "laps.gc": 0.0,
+     "all_tel": 79.56,
+     "all_tel.cpu": 65.28,
+     "all_tel.gc": 0.2,
+     "in_process_total": 425.3,
+     "in_process_total.cpu": 409.27,
+     "in_process_total.gc": 3.56,
+     "process_wall": 525.17
+    },
+    {
+     "import": 13.56,
+     "get_session": 371.22,
+     "get_session.cpu": 314.53,
+     "get_session.gc": 0.0,
+     "laps": 3.14,
+     "laps.cpu": 3.15,
+     "laps.gc": 0.0,
+     "all_tel": 81.52,
+     "all_tel.cpu": 67.13,
+     "all_tel.gc": 0.19,
+     "in_process_total": 469.49,
+     "in_process_total.cpu": 398.36,
+     "in_process_total.gc": 3.55,
+     "process_wall": 566.8
+    },
+    {
+     "import": 13.7,
+     "get_session": 362.28,
+     "get_session.cpu": 287.78,
+     "get_session.gc": 0.0,
+     "laps": 3.12,
+     "laps.cpu": 3.13,
+     "laps.gc": 0.0,
+     "all_tel": 100.23,
+     "all_tel.cpu": 85.72,
+     "all_tel.gc": 0.31,
+     "in_process_total": 479.4,
+     "in_process_total.cpu": 390.36,
+     "in_process_total.gc": 3.68,
+     "process_wall": 584.24
+    },
+    {
+     "import": 13.64,
+     "get_session": 343.86,
+     "get_session.cpu": 324.66,
+     "get_session.gc": 0.0,
+     "laps": 3.08,
+     "laps.cpu": 3.08,
+     "laps.gc": 0.0,
+     "all_tel": 99.9,
+     "all_tel.cpu": 84.27,
+     "all_tel.gc": 0.31,
+     "in_process_total": 460.53,
+     "in_process_total.cpu": 425.69,
+     "in_process_total.gc": 3.9,
+     "process_wall": 564.86
+    },
+    {
+     "import": 13.73,
+     "get_session": 379.98,
+     "get_session.cpu": 305.99,
+     "get_session.gc": 0.0,
+     "laps": 3.19,
+     "laps.cpu": 3.2,
+     "laps.gc": 0.0,
+     "all_tel": 81.24,
+     "all_tel.cpu": 67.25,
+     "all_tel.gc": 0.2,
+     "in_process_total": 478.2,
+     "in_process_total.cpu": 390.2,
+     "in_process_total.gc": 3.6,
+     "process_wall": 581.93
+    },
+    {
+     "import": 13.55,
+     "get_session": 355.52,
+     "get_session.cpu": 298.5,
+     "get_session.gc": 0.0,
+     "laps": 3.31,
+     "laps.cpu": 3.32,
+     "laps.gc": 0.0,
+     "all_tel": 91.36,
+     "all_tel.cpu": 77.85,
+     "all_tel.gc": 0.31,
+     "in_process_total": 463.81,
+     "in_process_total.cpu": 393.24,
+     "in_process_total.gc": 3.63,
+     "process_wall": 567.1
+    },
+    {
+     "import": 13.49,
+     "get_session": 365.21,
+     "get_session.cpu": 290.56,
+     "get_session.gc": 0.0,
+     "laps": 3.16,
+     "laps.cpu": 3.17,
+     "laps.gc": 0.0,
+     "all_tel": 94.29,
+     "all_tel.cpu": 78.11,
+     "all_tel.gc": 0.2,
+     "in_process_total": 476.21,
+     "in_process_total.cpu": 385.37,
+     "in_process_total.gc": 3.54,
+     "process_wall": 578.9
+    },
+    {
+     "import": 13.51,
+     "get_session": 376.88,
+     "get_session.cpu": 302.84,
+     "get_session.gc": 0.0,
+     "laps": 3.11,
+     "laps.cpu": 3.12,
+     "laps.gc": 0.0,
+     "all_tel": 95.24,
+     "all_tel.cpu": 81.44,
+     "all_tel.gc": 0.3,
+     "in_process_total": 488.8,
+     "in_process_total.cpu": 400.94,
+     "in_process_total.gc": 3.65,
+     "process_wall": 591.6
+    }
+   ]
+  },
+  "laps": {
+   "control": [
+    {
+     "import": 12.45,
+     "get_session": 309.53,
+     "get_session.cpu": 306.51,
+     "get_session.gc": 0.0,
+     "laps": 3.19,
+     "laps.cpu": 3.2,
+     "laps.gc": 0.0,
+     "in_process_total": 325.2,
+     "in_process_total.cpu": 322.15,
+     "in_process_total.gc": 0.65,
+     "process_wall": 393.21
+    },
+    {
+     "import": 12.51,
+     "get_session": 368.5,
+     "get_session.cpu": 294.34,
+     "get_session.gc": 0.0,
+     "laps": 3.05,
+     "laps.cpu": 3.06,
+     "laps.gc": 0.0,
+     "in_process_total": 384.1,
+     "in_process_total.cpu": 309.84,
+     "in_process_total.gc": 0.62,
+     "process_wall": 450.63
+    },
+    {
+     "import": 12.94,
+     "get_session": 352.9,
+     "get_session.cpu": 296.98,
+     "get_session.gc": 0.0,
+     "laps": 3.08,
+     "laps.cpu": 3.09,
+     "laps.gc": 0.0,
+     "in_process_total": 368.97,
+     "in_process_total.cpu": 313.04,
+     "in_process_total.gc": 0.63,
+     "process_wall": 435.65
+    },
+    {
+     "import": 12.98,
+     "get_session": 335.39,
+     "get_session.cpu": 309.13,
+     "get_session.gc": 0.0,
+     "laps": 3.14,
+     "laps.cpu": 3.15,
+     "laps.gc": 0.0,
+     "in_process_total": 351.56,
+     "in_process_total.cpu": 325.29,
+     "in_process_total.gc": 0.65,
+     "process_wall": 425.74
+    },
+    {
+     "import": 12.63,
+     "get_session": 354.14,
+     "get_session.cpu": 298.46,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.11,
+     "laps.gc": 0.0,
+     "in_process_total": 369.91,
+     "in_process_total.cpu": 314.22,
+     "in_process_total.gc": 0.64,
+     "process_wall": 438.54
+    },
+    {
+     "import": 12.38,
+     "get_session": 327.77,
+     "get_session.cpu": 322.34,
+     "get_session.gc": 0.0,
+     "laps": 3.17,
+     "laps.cpu": 3.18,
+     "laps.gc": 0.0,
+     "in_process_total": 343.36,
+     "in_process_total.cpu": 337.93,
+     "in_process_total.gc": 0.63,
+     "process_wall": 409.78
+    },
+    {
+     "import": 12.33,
+     "get_session": 353.05,
+     "get_session.cpu": 294.48,
+     "get_session.gc": 0.0,
+     "laps": 3.07,
+     "laps.cpu": 3.07,
+     "laps.gc": 0.0,
+     "in_process_total": 368.49,
+     "in_process_total.cpu": 309.91,
+     "in_process_total.gc": 0.66,
+     "process_wall": 441.95
+    },
+    {
+     "import": 12.55,
+     "get_session": 353.22,
+     "get_session.cpu": 298.31,
+     "get_session.gc": 0.0,
+     "laps": 3.14,
+     "laps.cpu": 3.15,
+     "laps.gc": 0.0,
+     "in_process_total": 368.96,
+     "in_process_total.cpu": 314.03,
+     "in_process_total.gc": 0.65,
+     "process_wall": 443.78
+    },
+    {
+     "import": 12.53,
+     "get_session": 366.09,
+     "get_session.cpu": 292.41,
+     "get_session.gc": 0.0,
+     "laps": 3.15,
+     "laps.cpu": 3.16,
+     "laps.gc": 0.0,
+     "in_process_total": 381.81,
+     "in_process_total.cpu": 308.03,
+     "in_process_total.gc": 0.63,
+     "process_wall": 453.08
+    },
+    {
+     "import": 12.48,
+     "get_session": 312.01,
+     "get_session.cpu": 307.21,
+     "get_session.gc": 0.0,
+     "laps": 3.06,
+     "laps.cpu": 3.07,
+     "laps.gc": 0.0,
+     "in_process_total": 327.59,
+     "in_process_total.cpu": 322.78,
+     "in_process_total.gc": 0.62,
+     "process_wall": 397.54
+    }
+   ],
+   "candidate": [
+    {
+     "import": 13.42,
+     "get_session": 351.35,
+     "get_session.cpu": 292.12,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.1,
+     "laps.gc": 0.0,
+     "in_process_total": 367.91,
+     "in_process_total.cpu": 308.67,
+     "in_process_total.gc": 3.4,
+     "process_wall": 464.66
+    },
+    {
+     "import": 13.21,
+     "get_session": 364.73,
+     "get_session.cpu": 298.58,
+     "get_session.gc": 0.0,
+     "laps": 3.08,
+     "laps.cpu": 3.09,
+     "laps.gc": 0.0,
+     "in_process_total": 381.06,
+     "in_process_total.cpu": 314.91,
+     "in_process_total.gc": 3.21,
+     "process_wall": 470.45
+    },
+    {
+     "import": 13.43,
+     "get_session": 363.71,
+     "get_session.cpu": 289.57,
+     "get_session.gc": 0.0,
+     "laps": 3.11,
+     "laps.cpu": 3.12,
+     "laps.gc": 0.0,
+     "in_process_total": 380.29,
+     "in_process_total.cpu": 306.14,
+     "in_process_total.gc": 3.27,
+     "process_wall": 464.22
+    },
+    {
+     "import": 13.85,
+     "get_session": 365.62,
+     "get_session.cpu": 291.27,
+     "get_session.gc": 0.0,
+     "laps": 3.09,
+     "laps.cpu": 3.1,
+     "laps.gc": 0.0,
+     "in_process_total": 382.6,
+     "in_process_total.cpu": 308.24,
+     "in_process_total.gc": 3.38,
+     "process_wall": 470.8
+    },
+    {
+     "import": 13.67,
+     "get_session": 403.61,
+     "get_session.cpu": 340.98,
+     "get_session.gc": 0.0,
+     "laps": 3.12,
+     "laps.cpu": 3.13,
+     "laps.gc": 0.0,
+     "in_process_total": 420.43,
+     "in_process_total.cpu": 357.8,
+     "in_process_total.gc": 3.38,
+     "process_wall": 517.06
+    },
+    {
+     "import": 13.42,
+     "get_session": 359.58,
+     "get_session.cpu": 296.69,
+     "get_session.gc": 0.0,
+     "laps": 3.14,
+     "laps.cpu": 3.15,
+     "laps.gc": 0.0,
+     "in_process_total": 376.18,
+     "in_process_total.cpu": 313.25,
+     "in_process_total.gc": 3.33,
+     "process_wall": 471.79
+    },
+    {
+     "import": 13.73,
+     "get_session": 355.15,
+     "get_session.cpu": 352.12,
+     "get_session.gc": 0.0,
+     "laps": 3.07,
+     "laps.cpu": 3.07,
+     "laps.gc": 0.0,
+     "in_process_total": 371.99,
+     "in_process_total.cpu": 368.95,
+     "in_process_total.gc": 3.41,
+     "process_wall": 464.14
+    },
+    {
+     "import": 13.54,
+     "get_session": 346.7,
+     "get_session.cpu": 292.16,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.1,
+     "laps.gc": 0.0,
+     "in_process_total": 363.38,
+     "in_process_total.cpu": 308.78,
+     "in_process_total.gc": 3.55,
+     "process_wall": 448.21
+    },
+    {
+     "import": 13.63,
+     "get_session": 376.23,
+     "get_session.cpu": 300.96,
+     "get_session.gc": 0.0,
+     "laps": 3.1,
+     "laps.cpu": 3.1,
+     "laps.gc": 0.0,
+     "in_process_total": 393.0,
+     "in_process_total.cpu": 317.73,
+     "in_process_total.gc": 3.36,
+     "process_wall": 480.42
+    },
+    {
+     "import": 13.88,
+     "get_session": 347.54,
+     "get_session.cpu": 291.67,
+     "get_session.gc": 0.0,
+     "laps": 3.26,
+     "laps.cpu": 3.27,
+     "laps.gc": 0.0,
+     "in_process_total": 364.73,
+     "in_process_total.cpu": 308.84,
+     "in_process_total.gc": 3.69,
+     "process_wall": 456.82
+    }
+   ]
+  }
+ }
+}

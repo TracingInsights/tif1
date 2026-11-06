@@ -1525,19 +1525,31 @@ class SessionMemo:
             return None
         if isinstance(source, LazyDriverFrameSource) and not source.hydrated:
             self._hydrate_for(source)
-        try:
-            frame = source.frame(key[1])
-        except KeyError:
+        # Corinth C5: a loop over the laps builds one memoized frame per lap
+        # (~50 containers each); the young collections those builds trigger
+        # (~30 over a race, two of them gen-1 passes: 8-9 ms of the notebook's
+        # iterlaps loop) free nothing. The build runs with GC paused and hands
+        # its survivors to the oldest generation once the young generation has
+        # crossed its threshold, as the batch build in materialize_telemetry.
+        missing = False
+        frame = None
+        with _suspend_gc(promote=True):
+            try:
+                frame = source.frame(key[1])
+            except KeyError:
+                missing = True
+            else:
+                adopt = self.frame_adopter
+                if adopt is not None:
+                    adopted = adopt(frame, key[0])
+                    if adopted is not None:
+                        frame = adopted
+        if missing:
             # Delphi D5: a lazy source whose row is gone or corrupt serves
             # nothing; its other laps are forgotten too and every one of them
             # takes the ordinary tier/payload path as a plain memo miss.
             self._drop_telemetry_source(source)
             return None
-        adopt = self.frame_adopter
-        if adopt is not None:
-            adopted = adopt(frame, key[0])
-            if adopted is not None:
-                frame = adopted
         self._telemetry_dfs[key] = frame
         return frame
 

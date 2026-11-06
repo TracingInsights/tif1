@@ -20,15 +20,34 @@ from collections.abc import Iterator
 _GC_PROMOTE_OK: bool | None = None  # resolved by ``gc_promote_ok`` on first use
 
 
+def generational_gc(version: tuple) -> bool:
+    """Whether a CPython ``version`` runs the three-generation collector of 3.11-3.13.
+
+    CPython 3.14.0-3.14.4 shipped an incremental collector (two generations,
+    ``gc.freeze`` re-marks the lists it moves). 3.14.5 reverted it to the
+    generational collector of 3.13, and so did 3.15 before its first beta
+    (https://discuss.python.org/t/107014, gh-142516; the 3.14.8 headers carry
+    ``generations[NUM_GENERATIONS]`` again). 3.16 and later stay off until
+    measured: the incremental collector may return there through a PEP.
+    """
+    minor = tuple(version[:2])
+    if minor == (3, 14):
+        return tuple(version[:3]) >= (3, 14, 5)
+    if minor == (3, 15):
+        return tuple(version[:4]) >= (3, 15, 0, "beta")
+    return minor < (3, 14)
+
+
 def gc_promote_ok() -> bool:
     """Whether ``gc.freeze(); gc.unfreeze()`` is an O(1) move into the oldest generation.
 
-    True on GIL builds of CPython 3.11-3.13, whose generational collector
-    splices its generation lists into the permanent one and back. The
-    free-threaded collector walks the whole heap on both calls and the
-    incremental collector of 3.14 re-marks the lists it moves, so neither
-    takes this route. Resolved after the first promoted burst, which is the
-    pandas or polars import: both import :mod:`sysconfig` (3 ms on its own).
+    True on GIL builds of CPython whose collector is generational
+    (:func:`generational_gc`: 3.11-3.13, 3.14.5+, 3.15), which splices its
+    generation lists into the permanent one and back. The free-threaded
+    collector walks the whole heap on both calls and the incremental
+    collector of 3.14.0-3.14.4 re-marks the lists it moves, so neither takes
+    this route. Resolved after the first promoted burst, which is the pandas
+    or polars import: both import :mod:`sysconfig` (3 ms on its own).
     """
     global _GC_PROMOTE_OK
     ok = _GC_PROMOTE_OK
@@ -37,7 +56,7 @@ def gc_promote_ok() -> bool:
 
         ok = _GC_PROMOTE_OK = bool(
             sys.implementation.name == "cpython"
-            and sys.version_info < (3, 14)
+            and generational_gc(sys.version_info)
             and not sysconfig.get_config_var("Py_GIL_DISABLED")
             and hasattr(gc, "freeze")
         )
@@ -96,4 +115,4 @@ def suspend_gc(*, promote: bool = False) -> Iterator[None]:
         yield
 
 
-__all__ = ["gc_promote_ok", "promote_young_objects", "suspend_gc"]
+__all__ = ["gc_promote_ok", "generational_gc", "promote_young_objects", "suspend_gc"]
