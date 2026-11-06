@@ -396,7 +396,9 @@ class TestCacheCleanupIdempotence:
     @given(num_close_calls=st.integers(min_value=1, max_value=10))
     @settings(
         max_examples=30,
-        deadline=2000,
+        # Correctness, not speed: a loaded Windows runner took 2.7 s for one
+        # example (PR #127).
+        deadline=None,
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_cache_close_idempotence(self, num_close_calls: int, tmp_path):
