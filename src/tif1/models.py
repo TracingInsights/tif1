@@ -1488,6 +1488,10 @@ class Laps(pd.DataFrame):
             row_values = self.to_numpy(dtype=object)
         row_index = self.index
         session = self.session
+        if getattr(session, "_lazy_telemetry_refs", None) and "Driver" in columns:
+            drivers = self["Driver"]
+            if isinstance(drivers, pd.Series):  # not a duplicated column name
+                cast(Any, session)._note_lazy_telemetry_walk(drivers.tolist())
         placement = _object_row_placement(self) if _FAST_LAP_ROWS and len(self) else None
         for position in range(len(self)):
             if skip_rows is not None and skip_rows[position]:

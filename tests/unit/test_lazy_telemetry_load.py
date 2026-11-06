@@ -42,8 +42,9 @@ def _telemetry_batches(cdn: _Cdn) -> list[list[str]]:
 
 
 def _lap(session: core.Session, driver: str, number: int) -> Any:
-    laps = session.laps.pick_drivers(driver)
-    return next(lap for _, lap in laps.iterlaps() if int(lap["LapNumber"]) == number)
+    # Not through iterlaps(): a loop over a driver's laps takes its wave on the
+    # first touch (Naxos), and these tests reach single laps.
+    return session.get_driver(driver).get_lap(number)
 
 
 def _assert_same_frame(left: Any, right: Any, lib: str) -> None:

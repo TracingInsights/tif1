@@ -1741,6 +1741,30 @@ class Session:
             self._lazy_telemetry_waves += 1
             self._fetch_lazy_telemetry_wave(wave)
 
+    def _note_lazy_telemetry_walk(self, drivers: Iterable[Any]) -> None:
+        """An ``iterlaps()`` loop starts over laps of ``drivers`` (one entry per lap).
+
+        Naxos: a driver with two or more laps in the loop takes its wave on
+        the first touch instead of a lone lap (:meth:`_lazy_lone_lap`), so a
+        loop over a driver's laps pays one wave, not a lone round trip and
+        then the wave. A loop with one lap per driver keeps the lone fetch.
+        """
+        lazy = getattr(self, "_lazy_telemetry_refs", None)
+        if not lazy:
+            return
+        counts: dict[str, int] = {}
+        for driver in drivers:
+            code = str(driver)
+            if code in lazy:
+                counts[code] = counts.get(code, 0) + 1
+        walked = {code for code, count in counts.items() if count > 1}
+        if not walked:
+            return
+        lone_drivers = getattr(self, "_lazy_lone_drivers", None)
+        if lone_drivers is None:  # a Session built without __init__ (test doubles)
+            lone_drivers = self._lazy_lone_drivers = set()
+        lone_drivers.update(walked)
+
     def _ensure_lazy_telemetry_walk(
         self, walk_refs: Callable[[], list[tuple[str, int]]], driver: str
     ) -> None:

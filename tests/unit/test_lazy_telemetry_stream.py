@@ -177,8 +177,9 @@ def _telemetry_paths(cdn: _Cdn) -> list[str]:
 
 
 def _lap(session: core.Session, driver: str, number: int) -> Any:
-    laps = session.laps.pick_drivers(driver)
-    return next(lap for _, lap in laps.iterlaps() if int(lap["LapNumber"]) == number)
+    # Not through iterlaps(): a loop over a driver's laps takes its wave on the
+    # first touch (Naxos), and these tests reach single laps.
+    return session.get_driver(driver).get_lap(number)
 
 
 def _assert_same_frame(left: Any, right: Any, lib: str) -> None:
@@ -325,6 +326,25 @@ class TestLoneFirstTouch:
             eager.laps.pick_drivers("HAM").telemetry, lazy.laps.pick_drivers("HAM").telemetry, lib
         )
         assert _lone_paths(cdn) == ["HAM/3_tel.json", "VER/2_tel.json"]
+
+    def test_a_loop_over_a_drivers_laps_takes_the_wave_first(self, cdn, lib):
+        session = _lazy_session(cdn, lib, predicted=None)
+        for _, lap in session.laps.pick_drivers("VER").iterlaps():
+            _ = lap.telemetry
+        assert _lone_paths(cdn) == []
+        assert sorted(_telemetry_paths(cdn)) == [
+            "VER/1_tel.json",
+            "VER/2_tel.json",
+            "VER/3_tel.json",
+        ]
+
+    def test_a_loop_with_one_lap_per_driver_keeps_the_lone_fetch(self, cdn, lib):
+        session = _lazy_session(cdn, lib, predicted=None)
+        one_lap_each = session.laps.pick_laps(2)
+        for _, lap in one_lap_each.iterlaps():
+            _ = lap.telemetry
+        assert sorted(_lone_paths(cdn)) == ["HAM/2_tel.json", "VER/2_tel.json"]
+        assert _telemetry_paths(cdn) == []
 
     def test_the_predicted_driver_takes_the_wave(self, cdn, lib):
         session = _lazy_session(cdn, lib, predicted="VER")

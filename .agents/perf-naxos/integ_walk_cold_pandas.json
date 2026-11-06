@@ -1,0 +1,825 @@
+{
+ "lib": "pandas",
+ "label": "",
+ "reps": 8,
+ "summary": {
+  "driver_loop": {
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.9,
+     "min": 12.6,
+     "p90": 15.6
+    },
+    "get_session": {
+     "median": 396.9,
+     "min": 361.7,
+     "p90": 419.5
+    },
+    "get_session@": {
+     "median": 409.6,
+     "min": 374.3,
+     "p90": 432.1
+    },
+    "load": {
+     "median": 62.8,
+     "min": 58.9,
+     "p90": 69.8
+    },
+    "load@": {
+     "median": 475.8,
+     "min": 439.0,
+     "p90": 496.5
+    },
+    "driver_loop": {
+     "median": 620.3,
+     "min": 533.4,
+     "p90": 644.3
+    },
+    "driver_loop@": {
+     "median": 1088.5,
+     "min": 972.4,
+     "p90": 1130.2
+    },
+    "in_process_total": {
+     "median": 1088.5,
+     "min": 972.4,
+     "p90": 1130.2
+    },
+    "process_wall": {
+     "median": 1250.8,
+     "min": 1111.9,
+     "p90": 1263.1
+    },
+    "exit_tail": {
+     "median": 135.3,
+     "min": 121.9,
+     "p90": 156.6
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.6,
+     "min": 12.5,
+     "p90": 12.9
+    },
+    "get_session": {
+     "median": 401.8,
+     "min": 354.0,
+     "p90": 446.7
+    },
+    "get_session@": {
+     "median": 414.9,
+     "min": 366.8,
+     "p90": 459.4
+    },
+    "load": {
+     "median": 61.6,
+     "min": 57.6,
+     "p90": 62.3
+    },
+    "load@": {
+     "median": 481.2,
+     "min": 425.5,
+     "p90": 521.7
+    },
+    "driver_loop": {
+     "median": 512.1,
+     "min": 481.2,
+     "p90": 633.0
+    },
+    "driver_loop@": {
+     "median": 1023.2,
+     "min": 907.7,
+     "p90": 1097.4
+    },
+    "in_process_total": {
+     "median": 1023.2,
+     "min": 907.7,
+     "p90": 1097.4
+    },
+    "process_wall": {
+     "median": 1181.7,
+     "min": 1041.0,
+     "p90": 1232.8
+    },
+    "exit_tail": {
+     "median": 137.6,
+     "min": 129.5,
+     "p90": 160.4
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate_faster_pairs": "5/8",
+   "control_runs": [
+    {
+     "import": 15.63,
+     "get_session": 484.07,
+     "get_session@": 499.72,
+     "load": 58.89,
+     "load@": 558.62,
+     "driver_loop": 646.08,
+     "driver_loop@": 1204.72,
+     "in_process_total": 1204.72,
+     "process_wall": 1332.58,
+     "exit_tail": 127.86,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.65,
+     "get_session": 394.7,
+     "get_session@": 407.37,
+     "load": 69.83,
+     "load@": 477.21,
+     "driver_loop": 644.33,
+     "driver_loop@": 1121.56,
+     "in_process_total": 1121.56,
+     "process_wall": 1249.4,
+     "exit_tail": 127.84,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.6,
+     "get_session": 361.7,
+     "get_session@": 374.32,
+     "load": 97.8,
+     "load@": 472.13,
+     "driver_loop": 585.32,
+     "driver_loop@": 1057.47,
+     "in_process_total": 1057.47,
+     "process_wall": 1204.4,
+     "exit_tail": 146.93,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.58,
+     "get_session": 399.19,
+     "get_session@": 411.78,
+     "load": 62.68,
+     "load@": 474.48,
+     "driver_loop": 626.9,
+     "driver_loop@": 1101.39,
+     "in_process_total": 1101.4,
+     "process_wall": 1258.02,
+     "exit_tail": 156.62,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.13,
+     "get_session": 409.93,
+     "get_session@": 423.08,
+     "load": 63.0,
+     "load@": 486.09,
+     "driver_loop": 544.14,
+     "driver_loop@": 1030.25,
+     "in_process_total": 1030.26,
+     "process_wall": 1161.48,
+     "exit_tail": 131.22,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.56,
+     "get_session": 419.52,
+     "get_session@": 432.11,
+     "load": 64.38,
+     "load@": 496.5,
+     "driver_loop": 633.71,
+     "driver_loop@": 1130.23,
+     "in_process_total": 1130.23,
+     "process_wall": 1252.13,
+     "exit_tail": 121.9,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.92,
+     "get_session": 386.23,
+     "get_session@": 400.17,
+     "load": 61.69,
+     "load@": 461.87,
+     "driver_loop": 613.69,
+     "driver_loop@": 1075.58,
+     "in_process_total": 1075.58,
+     "process_wall": 1263.07,
+     "exit_tail": 187.49,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 15.58,
+     "get_session": 362.62,
+     "get_session@": 378.22,
+     "load": 60.73,
+     "load@": 438.96,
+     "driver_loop": 533.43,
+     "driver_loop@": 972.4,
+     "in_process_total": 972.41,
+     "process_wall": 1111.88,
+     "exit_tail": 139.47,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.62,
+     "get_session": 446.74,
+     "get_session@": 459.37,
+     "load": 62.3,
+     "load@": 521.69,
+     "driver_loop": 575.69,
+     "driver_loop@": 1097.4,
+     "in_process_total": 1097.4,
+     "process_wall": 1232.82,
+     "exit_tail": 135.42,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.5,
+     "get_session": 418.3,
+     "get_session@": 430.81,
+     "load": 60.57,
+     "load@": 491.39,
+     "driver_loop": 509.95,
+     "driver_loop@": 1001.36,
+     "in_process_total": 1001.36,
+     "process_wall": 1130.89,
+     "exit_tail": 129.53,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.5,
+     "get_session": 356.39,
+     "get_session@": 368.91,
+     "load": 57.6,
+     "load@": 426.52,
+     "driver_loop": 481.19,
+     "driver_loop@": 907.72,
+     "in_process_total": 907.73,
+     "process_wall": 1040.97,
+     "exit_tail": 133.24,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.77,
+     "get_session": 353.99,
+     "get_session@": 366.78,
+     "load": 58.73,
+     "load@": 425.52,
+     "driver_loop": 632.98,
+     "driver_loop@": 1058.51,
+     "in_process_total": 1058.51,
+     "process_wall": 1218.92,
+     "exit_tail": 160.41,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.54,
+     "get_session": 399.79,
+     "get_session@": 412.35,
+     "load": 60.91,
+     "load@": 473.27,
+     "driver_loop": 507.06,
+     "driver_loop@": 980.35,
+     "in_process_total": 980.35,
+     "process_wall": 1182.77,
+     "exit_tail": 202.42,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.57,
+     "get_session": 455.79,
+     "get_session@": 468.38,
+     "load": 62.33,
+     "load@": 530.72,
+     "driver_loop": 514.21,
+     "driver_loop@": 1044.94,
+     "in_process_total": 1044.95,
+     "process_wall": 1180.61,
+     "exit_tail": 135.66,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.91,
+     "get_session": 398.57,
+     "get_session@": 411.49,
+     "load": 71.29,
+     "load@": 482.79,
+     "driver_loop": 679.96,
+     "driver_loop@": 1162.77,
+     "in_process_total": 1162.77,
+     "process_wall": 1302.23,
+     "exit_tail": 139.46,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.52,
+     "get_session": 403.9,
+     "get_session@": 417.44,
+     "load": 62.23,
+     "load@": 479.68,
+     "driver_loop": 498.83,
+     "driver_loop@": 978.52,
+     "in_process_total": 978.53,
+     "process_wall": 1122.87,
+     "exit_tail": 144.34,
+     "stderr_warnings": 0
+    }
+   ]
+  },
+  "fastest4": {
+   "control_env": {},
+   "candidate_env": {},
+   "control": {
+    "import": {
+     "median": 12.6,
+     "min": 12.5,
+     "p90": 12.7
+    },
+    "get_session": {
+     "median": 393.8,
+     "min": 360.1,
+     "p90": 401.3
+    },
+    "get_session@": {
+     "median": 406.4,
+     "min": 372.7,
+     "p90": 413.9
+    },
+    "load": {
+     "median": 61.8,
+     "min": 58.3,
+     "p90": 63.1
+    },
+    "load@": {
+     "median": 469.5,
+     "min": 435.1,
+     "p90": 473.0
+    },
+    "fastest_VER": {
+     "median": 64.4,
+     "min": 51.7,
+     "p90": 68.4
+    },
+    "fastest_VER@": {
+     "median": 526.2,
+     "min": 500.2,
+     "p90": 539.5
+    },
+    "fastest_LEC": {
+     "median": 46.3,
+     "min": 40.0,
+     "p90": 49.8
+    },
+    "fastest_LEC@": {
+     "median": 570.0,
+     "min": 546.5,
+     "p90": 583.2
+    },
+    "fastest_NOR": {
+     "median": 47.5,
+     "min": 45.2,
+     "p90": 49.8
+    },
+    "fastest_NOR@": {
+     "median": 615.9,
+     "min": 596.2,
+     "p90": 634.2
+    },
+    "fastest_PIA": {
+     "median": 44.5,
+     "min": 37.1,
+     "p90": 45.6
+    },
+    "fastest_PIA@": {
+     "median": 660.2,
+     "min": 643.1,
+     "p90": 676.7
+    },
+    "in_process_total": {
+     "median": 660.2,
+     "min": 643.1,
+     "p90": 676.7
+    },
+    "process_wall": {
+     "median": 731.4,
+     "min": 719.7,
+     "p90": 753.8
+    },
+    "exit_tail": {
+     "median": 75.2,
+     "min": 69.8,
+     "p90": 77.5
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 12.8,
+     "min": 12.6,
+     "p90": 16.0
+    },
+    "get_session": {
+     "median": 388.0,
+     "min": 356.1,
+     "p90": 392.6
+    },
+    "get_session@": {
+     "median": 403.2,
+     "min": 368.7,
+     "p90": 409.0
+    },
+    "load": {
+     "median": 61.7,
+     "min": 58.5,
+     "p90": 64.3
+    },
+    "load@": {
+     "median": 465.6,
+     "min": 431.9,
+     "p90": 470.0
+    },
+    "fastest_VER": {
+     "median": 58.0,
+     "min": 45.4,
+     "p90": 63.5
+    },
+    "fastest_VER@": {
+     "median": 512.6,
+     "min": 486.5,
+     "p90": 538.4
+    },
+    "fastest_LEC": {
+     "median": 42.7,
+     "min": 40.4,
+     "p90": 48.1
+    },
+    "fastest_LEC@": {
+     "median": 556.9,
+     "min": 534.6,
+     "p90": 579.9
+    },
+    "fastest_NOR": {
+     "median": 48.3,
+     "min": 41.7,
+     "p90": 50.5
+    },
+    "fastest_NOR@": {
+     "median": 602.6,
+     "min": 581.5,
+     "p90": 626.8
+    },
+    "fastest_PIA": {
+     "median": 42.6,
+     "min": 38.4,
+     "p90": 45.0
+    },
+    "fastest_PIA@": {
+     "median": 643.5,
+     "min": 624.0,
+     "p90": 676.9
+    },
+    "in_process_total": {
+     "median": 643.5,
+     "min": 624.0,
+     "p90": 676.9
+    },
+    "process_wall": {
+     "median": 718.0,
+     "min": 701.0,
+     "p90": 747.6
+    },
+    "exit_tail": {
+     "median": 74.5,
+     "min": 70.7,
+     "p90": 78.0
+    },
+    "stderr_warnings": {
+     "median": 0.0,
+     "min": 0,
+     "p90": 0
+    }
+   },
+   "candidate_faster_pairs": "5/8",
+   "control_runs": [
+    {
+     "import": 12.64,
+     "get_session": 397.45,
+     "get_session@": 410.11,
+     "load": 60.56,
+     "load@": 470.68,
+     "fastest_VER": 70.32,
+     "fastest_VER@": 541.03,
+     "fastest_LEC": 51.79,
+     "fastest_LEC@": 592.83,
+     "fastest_NOR": 48.42,
+     "fastest_NOR@": 641.26,
+     "fastest_PIA": 45.6,
+     "fastest_PIA@": 686.87,
+     "in_process_total": 686.88,
+     "process_wall": 764.4,
+     "exit_tail": 77.52,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.61,
+     "get_session": 390.06,
+     "get_session@": 402.69,
+     "load": 65.65,
+     "load@": 468.35,
+     "fastest_VER": 68.39,
+     "fastest_VER@": 536.76,
+     "fastest_LEC": 46.44,
+     "fastest_LEC@": 583.22,
+     "fastest_NOR": 50.94,
+     "fastest_NOR@": 634.17,
+     "fastest_PIA": 42.51,
+     "fastest_PIA@": 676.7,
+     "in_process_total": 676.7,
+     "process_wall": 753.75,
+     "exit_tail": 77.05,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.58,
+     "get_session": 360.06,
+     "get_session@": 372.66,
+     "load": 62.48,
+     "load@": 435.15,
+     "fastest_VER": 65.02,
+     "fastest_VER@": 500.18,
+     "fastest_LEC": 46.26,
+     "fastest_LEC@": 546.45,
+     "fastest_NOR": 49.78,
+     "fastest_NOR@": 596.24,
+     "fastest_PIA": 46.83,
+     "fastest_PIA@": 643.09,
+     "in_process_total": 643.09,
+     "process_wall": 719.74,
+     "exit_tail": 76.65,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.74,
+     "get_session": 372.16,
+     "get_session@": 384.92,
+     "load": 63.15,
+     "load@": 448.08,
+     "fastest_VER": 55.75,
+     "fastest_VER@": 503.84,
+     "fastest_LEC": 49.84,
+     "fastest_LEC@": 553.69,
+     "fastest_NOR": 46.37,
+     "fastest_NOR@": 600.07,
+     "fastest_PIA": 45.41,
+     "fastest_PIA@": 645.5,
+     "in_process_total": 645.5,
+     "process_wall": 724.42,
+     "exit_tail": 78.92,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 15.67,
+     "get_session": 371.34,
+     "get_session@": 387.03,
+     "load": 61.81,
+     "load@": 448.85,
+     "fastest_VER": 63.75,
+     "fastest_VER@": 512.62,
+     "fastest_LEC": 45.45,
+     "fastest_LEC@": 558.08,
+     "fastest_NOR": 48.29,
+     "fastest_NOR@": 606.38,
+     "fastest_PIA": 41.87,
+     "fastest_PIA@": 648.26,
+     "in_process_total": 648.26,
+     "process_wall": 721.92,
+     "exit_tail": 73.66,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.59,
+     "get_session": 403.76,
+     "get_session@": 416.37,
+     "load": 58.34,
+     "load@": 474.72,
+     "fastest_VER": 51.7,
+     "fastest_VER@": 526.44,
+     "fastest_LEC": 39.97,
+     "fastest_LEC@": 566.42,
+     "fastest_NOR": 45.2,
+     "fastest_NOR@": 611.63,
+     "fastest_PIA": 44.24,
+     "fastest_PIA@": 655.88,
+     "in_process_total": 655.89,
+     "process_wall": 728.35,
+     "exit_tail": 72.46,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.74,
+     "get_session": 398.12,
+     "get_session@": 410.88,
+     "load": 61.73,
+     "load@": 472.62,
+     "fastest_VER": 66.89,
+     "fastest_VER@": 539.52,
+     "fastest_LEC": 41.18,
+     "fastest_LEC@": 580.71,
+     "fastest_NOR": 46.63,
+     "fastest_NOR@": 627.35,
+     "fastest_PIA": 37.15,
+     "fastest_PIA@": 664.52,
+     "in_process_total": 664.52,
+     "process_wall": 734.36,
+     "exit_tail": 69.84,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.54,
+     "get_session": 401.32,
+     "get_session@": 413.87,
+     "load": 59.15,
+     "load@": 473.03,
+     "fastest_VER": 52.83,
+     "fastest_VER@": 525.88,
+     "fastest_LEC": 47.8,
+     "fastest_LEC@": 573.68,
+     "fastest_NOR": 46.39,
+     "fastest_NOR@": 620.08,
+     "fastest_PIA": 44.76,
+     "fastest_PIA@": 664.85,
+     "in_process_total": 664.86,
+     "process_wall": 737.79,
+     "exit_tail": 72.93,
+     "stderr_warnings": 0
+    }
+   ],
+   "candidate_runs": [
+    {
+     "import": 12.56,
+     "get_session": 356.08,
+     "get_session@": 368.66,
+     "load": 64.32,
+     "load@": 432.99,
+     "fastest_VER": 60.63,
+     "fastest_VER@": 493.64,
+     "fastest_LEC": 41.25,
+     "fastest_LEC@": 534.9,
+     "fastest_NOR": 46.59,
+     "fastest_NOR@": 581.5,
+     "fastest_PIA": 43.58,
+     "fastest_PIA@": 625.1,
+     "in_process_total": 625.1,
+     "process_wall": 704.34,
+     "exit_tail": 79.24,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.87,
+     "get_session": 392.55,
+     "get_session@": 405.44,
+     "load": 61.83,
+     "load@": 467.28,
+     "fastest_VER": 55.47,
+     "fastest_VER@": 522.77,
+     "fastest_LEC": 49.26,
+     "fastest_LEC@": 572.04,
+     "fastest_NOR": 50.51,
+     "fastest_NOR@": 622.56,
+     "fastest_PIA": 44.97,
+     "fastest_PIA@": 667.55,
+     "in_process_total": 667.55,
+     "process_wall": 742.96,
+     "exit_tail": 75.41,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 13.09,
+     "get_session": 357.89,
+     "get_session@": 371.01,
+     "load": 60.98,
+     "load@": 432.0,
+     "fastest_VER": 54.45,
+     "fastest_VER@": 486.47,
+     "fastest_LEC": 48.11,
+     "fastest_LEC@": 534.59,
+     "fastest_NOR": 50.08,
+     "fastest_NOR@": 584.68,
+     "fastest_PIA": 39.34,
+     "fastest_PIA@": 624.04,
+     "in_process_total": 624.05,
+     "process_wall": 702.01,
+     "exit_tail": 77.96,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.76,
+     "get_session": 357.55,
+     "get_session@": 370.33,
+     "load": 61.56,
+     "load@": 431.9,
+     "fastest_VER": 63.52,
+     "fastest_VER@": 495.44,
+     "fastest_LEC": 41.31,
+     "fastest_LEC@": 536.77,
+     "fastest_NOR": 51.25,
+     "fastest_NOR@": 588.03,
+     "fastest_PIA": 39.5,
+     "fastest_PIA@": 627.55,
+     "in_process_total": 627.55,
+     "process_wall": 701.05,
+     "exit_tail": 73.5,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.61,
+     "get_session": 391.83,
+     "get_session@": 404.45,
+     "load": 65.51,
+     "load@": 469.97,
+     "fastest_VER": 68.39,
+     "fastest_VER@": 538.37,
+     "fastest_LEC": 41.51,
+     "fastest_LEC@": 579.9,
+     "fastest_NOR": 46.92,
+     "fastest_NOR@": 626.84,
+     "fastest_PIA": 50.01,
+     "fastest_PIA@": 676.86,
+     "in_process_total": 676.87,
+     "process_wall": 747.61,
+     "exit_tail": 70.74,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 18.89,
+     "get_session": 390.12,
+     "get_session@": 409.02,
+     "load": 60.93,
+     "load@": 469.97,
+     "fastest_VER": 45.94,
+     "fastest_VER@": 515.92,
+     "fastest_LEC": 44.72,
+     "fastest_LEC@": 560.66,
+     "fastest_NOR": 49.66,
+     "fastest_NOR@": 610.33,
+     "fastest_PIA": 43.51,
+     "fastest_PIA@": 653.85,
+     "in_process_total": 653.85,
+     "process_wall": 731.22,
+     "exit_tail": 77.37,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 12.74,
+     "get_session": 443.01,
+     "get_session@": 455.77,
+     "load": 58.48,
+     "load@": 514.26,
+     "fastest_VER": 62.57,
+     "fastest_VER@": 576.85,
+     "fastest_LEC": 40.44,
+     "fastest_LEC@": 617.3,
+     "fastest_NOR": 41.68,
+     "fastest_NOR@": 659.0,
+     "fastest_PIA": 41.66,
+     "fastest_PIA@": 700.67,
+     "in_process_total": 700.68,
+     "process_wall": 773.4,
+     "exit_tail": 72.72,
+     "stderr_warnings": 0
+    },
+    {
+     "import": 16.02,
+     "get_session": 385.86,
+     "get_session@": 401.9,
+     "load": 61.95,
+     "load@": 463.86,
+     "fastest_VER": 45.37,
+     "fastest_VER@": 509.25,
+     "fastest_LEC": 43.83,
+     "fastest_LEC@": 553.1,
+     "fastest_NOR": 41.67,
+     "fastest_NOR@": 594.78,
+     "fastest_PIA": 38.44,
+     "fastest_PIA@": 633.23,
+     "in_process_total": 633.24,
+     "process_wall": 704.79,
+     "exit_tail": 71.55,
+     "stderr_warnings": 0
+    }
+   ]
+  }
+ }
+}
