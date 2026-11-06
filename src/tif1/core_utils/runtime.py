@@ -12,8 +12,9 @@ every other module consults this one instead of probing on its own:
   synchronous API bridges to its coroutine through :func:`run_sync_in_browser`
   (JavaScript Promise Integration, when the runtime offers it).
 
-The module imports only the standard library so ``import tif1`` can use it
-without cost; the two constants are evaluated once at import.
+The module imports only the standard library (and the stdlib-only
+:mod:`tif1.core_utils.gc_control`) so ``import tif1`` can use it without
+cost; the two constants are evaluated once at import.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from collections.abc import Callable, Coroutine
 from types import ModuleType
 from typing import Any, Final, TypeVar
 
+from tif1.core_utils.gc_control import suspend_gc
 from tif1.exceptions import AsyncRequiredError
 
 logger = logging.getLogger(__name__)
@@ -100,7 +102,11 @@ def import_supported_polars() -> ModuleType | None:
     """
     global _polars_warned
     try:
-        import polars as pl
+        # Naxos N10: the first import runs without young GC collections and
+        # its module objects go to the oldest generation (see
+        # :func:`tif1.core_utils.lazy_import.import_promoted`).
+        with suspend_gc(promote=True):
+            import polars as pl
     except ImportError:
         return None
     version = getattr(pl, "__version__", "")

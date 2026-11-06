@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import atexit
 import contextlib
-import gc
 import importlib
 import logging
 import os
@@ -42,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote, unquote
 
 from .core_utils.constants import MAX_CACHE_SIZE
+from .core_utils.gc_control import suspend_gc as _suspend_gc
 from .core_utils.json_utils import (
     NATIVE_LZ4_DECOMPRESS_INTO,
     NATIVE_TELEMETRY_DECODER_AVAILABLE,
@@ -1061,26 +1061,6 @@ _LAPS_FRAME_TABLES: dict[str, str] = {
 }
 
 
-@contextlib.contextmanager
-def _suspend_gc():
-    """Pause cyclic GC for a short-lived burst of container allocations.
-
-    Batch frame reads/writes allocate ~100 MB of short-lived objects in a
-    tight loop; the resulting gen-0 collections cost ~40% of the unpickle
-    loop (Rhodes R3: 470 -> 264 ms on the Monaco 1452-frame set) while no
-    reference cycles are created. Restores the prior GC state, so nesting
-    and callers that disabled GC themselves are safe.
-    """
-    if gc.isenabled():
-        gc.disable()
-        try:
-            yield
-        finally:
-            gc.enable()
-    else:
-        yield
-
-
 def _encode_sqlite_value(blob: bytes) -> bytes | str:
     """Serialize a JSON blob for the SQLite tier (compress large payloads)."""
     if len(blob) >= _SQLITE_COMPRESS_MIN_BYTES:
@@ -1344,7 +1324,7 @@ class LazyDriverFrameSource:
         from .core_utils.frame_codec import DriverFrameSource
 
         try:
-            with _suspend_gc():
+            with _suspend_gc(promote=True):
                 real = DriverFrameSource(raw, self._frame_class)
         except (AttributeError, TypeError, ValueError) as e:
             logger.debug("Corrupt driver frame row skipped: %s: %s", self.driver, e)
@@ -1677,7 +1657,7 @@ class SessionMemo:
             self._lazy_hydrated_drivers.update(source.driver for source in lazy.values())
         frames = self._telemetry_dfs
         adopt = self.frame_adopter
-        with _suspend_gc():
+        with _suspend_gc(promote=True):
             for (driver, lap), source in list(pending.items()):
                 try:
                     frame = source.frame(lap)
@@ -2785,7 +2765,7 @@ class Cache:
             from .core_utils.frame_codec import FRAME_CODEC_MAGIC, decode_frame
         else:
             FRAME_CODEC_MAGIC, decode_frame = b"", None
-        with _suspend_gc():
+        with _suspend_gc(promote=True):
             for chunk in _decompress_frame_rows(rows):
                 for driver_code, lap_num, raw in chunk:
                     try:
@@ -2961,7 +2941,7 @@ class Cache:
             return results
         from .core_utils.frame_codec import decode_driver_frames
 
-        with _suspend_gc():
+        with _suspend_gc(promote=True):
             for driver, raw in _completed_frame_rows(pending):
                 try:
                     frames = decode_driver_frames(
@@ -2996,7 +2976,7 @@ class Cache:
         from .core_utils.frame_codec import DriverFrameSource
 
         sources: dict[str, Any] = {}
-        with _suspend_gc():
+        with _suspend_gc(promote=True):
             for driver, raw in rows:
                 try:
                     sources[driver] = DriverFrameSource(raw, frame_class)

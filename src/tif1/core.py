@@ -7464,7 +7464,7 @@ class Session:
                 defer_telemetry_writes=True,
             )
 
-            with _suspend_gc():
+            with _suspend_gc(promote=True):
                 for (driver, lap_num), result in zip(lap_info, results):
                     if result is not None and isinstance(result, dict):
                         tel_data = result.get("tel", {})
@@ -7510,7 +7510,7 @@ class Session:
         await.
         """
         materialized_frames: list[tuple[str, int, DataFrame]] = []
-        with _suspend_gc():
+        with _suspend_gc(promote=True):
             for driver, lap_num, tel_payload in cached_tels:
                 tel_df = _create_telemetry_df(
                     tel_payload, driver, lap_num, self.lib, clock=self._lap_clock(driver, lap_num)

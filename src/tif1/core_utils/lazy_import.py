@@ -19,6 +19,8 @@ import sys
 from types import ModuleType
 from typing import Any
 
+from .gc_control import suspend_gc
+
 
 class LazyModule(ModuleType):
     """Proxy for module ``target`` bound to ``alias`` in ``namespace``.
@@ -35,7 +37,7 @@ class LazyModule(ModuleType):
         self.__dict__["_lazy_alias"] = alias
 
     def _lazy_load(self) -> ModuleType:
-        module = importlib.import_module(self.__dict__["_lazy_target"])
+        module = import_promoted(self.__dict__["_lazy_target"])
         namespace = self.__dict__["_lazy_namespace"]
         alias = self.__dict__["_lazy_alias"]
         if namespace.get(alias) is self:
@@ -50,6 +52,26 @@ class LazyModule(ModuleType):
 
     def __repr__(self) -> str:
         return f"<lazy module {self.__dict__['_lazy_target']!r}>"
+
+
+def import_promoted(target: str) -> ModuleType:
+    """``importlib.import_module(target)``, the first import without young GC collections.
+
+    Naxos N10: ``import pandas`` creates ~150 000 GC-tracked containers
+    (modules, classes, functions, their dicts) that live as long as the
+    process. With cyclic GC on, the import ran ~50 young collections that
+    freed nothing and left every object for the collections after it to
+    traverse again; it now runs with GC suspended and its objects go
+    straight to the oldest generation (:func:`suspend_gc` with ``promote``):
+    fresh ``import pandas`` 424 -> 390 ms, and the young collections of the
+    work that follows half as long. A module already imported is returned
+    as is.
+    """
+    module = sys.modules.get(target)
+    if module is not None:
+        return module
+    with suspend_gc(promote=True):
+        return importlib.import_module(target)
 
 
 def lazy_module(target: str, namespace: dict[str, Any], alias: str) -> Any:
@@ -136,6 +158,7 @@ def is_pandas_series(obj: Any) -> bool:
 __all__ = [
     "LazyModule",
     "LazyPattern",
+    "import_promoted",
     "is_pandas_frame",
     "is_pandas_series",
     "lazy_module",

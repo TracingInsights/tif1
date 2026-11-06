@@ -15,12 +15,18 @@ CHILD = textwrap.dedent(
     import atexit, gc, os, sys
 
     calls = []
+    exiting = []
     real_freeze = gc.freeze
 
     def spy_freeze():
         # CPython 3.12 freezes a few hundred objects of its own at exit, so the
         # freeze count alone cannot tell whether tif1's hook ran: its call is
-        # counted here instead.
+        # counted here instead. Only calls made once exit began count: tif1's
+        # imports promote their objects with gc.freeze(); gc.unfreeze() at
+        # runtime (Naxos N10).
+        if not exiting:
+            real_freeze()
+            return
         calls.append(1)
         if os.environ.get("CHILD_USE_CACHE") == "1":
             import tif1.cache as cache_module
@@ -43,6 +49,8 @@ CHILD = textwrap.dedent(
         get_cache().set("probe/key", {"x": 1})
     if os.environ.get("CHILD_SET_CONFIG") == "1":
         tif1.get_config().set("exit_gc_freeze", False)
+    # Registered last, so it runs first at exit: before tif1's hooks.
+    atexit.register(lambda: exiting.append(1))
     """
 )
 

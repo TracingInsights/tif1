@@ -251,11 +251,15 @@ def __getattr__(name: str) -> Any:
     if target is None:
         raise AttributeError(f"module 'tif1' has no attribute {name!r}")
 
+    # Naxos N10: the first import of a heavy export (``tif1.core`` and the
+    # stdlib modules it pulls in) runs without young GC collections.
+    from .core_utils.lazy_import import import_promoted
+
     module_name, attr_name = target
     if attr_name is None:
-        value = import_module(module_name)
+        value = import_promoted(module_name)
     else:
-        value = getattr(import_module(module_name), attr_name)
+        value = getattr(import_promoted(module_name), attr_name)
     globals()[name] = value
     return value
 
