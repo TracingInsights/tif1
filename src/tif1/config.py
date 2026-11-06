@@ -210,11 +210,12 @@ class Config:
             # Background requests of that stream in flight at most (they only
             # start while no foreground lap is queued).
             "lazy_telemetry_background_requests": 22,
-            # Gortyn G3: a cold wave of two or more laps of one driver asks for
-            # the driver's columnar file ({driver}/tel.v1.bin, one request,
-            # ~26% fewer bytes) before the per-lap JSON; a 404 is remembered in
-            # the missing-payload tier, so a session without files costs one
-            # request per driver. False: per-lap JSON only.
+            # Gortyn G3 / Naxos N7: a cold wave of two or more laps of one
+            # driver asks for the driver's columnar files
+            # ({driver}/tel.v2.{first}.bin, ten laps each, ~68% fewer bytes
+            # than the gzipped lap JSON) before the per-lap JSON; a 404 is
+            # remembered in the missing-payload tier, so a session without
+            # files costs one request per session. False: per-lap JSON only.
             "telemetry_columnar": False,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.

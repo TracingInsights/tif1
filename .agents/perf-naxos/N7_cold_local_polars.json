@@ -1,0 +1,226 @@
+{
+ "lib": "polars",
+ "args": {
+  "child": null,
+  "base": "",
+  "verify": false,
+  "lib": "polars",
+  "reps": 8,
+  "cache": "/tmp/naxos/warm-N7",
+  "control_src": "/tmp/naxos/control/src",
+  "candidate_src": "/tmp/naxos/N7/src",
+  "workloads": "driver_tel,notebook4,all_tel",
+  "no_files": false,
+  "link_mbps": 8.0,
+  "conn_mbps": 6.0,
+  "rtt_ms": 30.0,
+  "level": 19,
+  "log_paths": false,
+  "out": ".agents/perf-naxos/N7_cold_local_polars.json",
+  "encode_out": null,
+  "candidate_python": null
+ },
+ "summary": {
+  "driver_tel": {
+   "control": {
+    "import": {
+     "median": 6.8,
+     "min": 4.7
+    },
+    "get_session": {
+     "median": 469.3,
+     "min": 295.8
+    },
+    "laps": {
+     "median": 103.8,
+     "min": 86.7
+    },
+    "driver_tel": {
+     "median": 797.9,
+     "min": 668.1
+    },
+    "in_process_total": {
+     "median": 1433.7,
+     "min": 1094.1
+    },
+    "process_wall": {
+     "median": 1793.9,
+     "min": 1446.6
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 7.2,
+     "min": 5.2
+    },
+    "get_session": {
+     "median": 409.3,
+     "min": 299.6
+    },
+    "laps": {
+     "median": 97.9,
+     "min": 89.8
+    },
+    "driver_tel": {
+     "median": 539.1,
+     "min": 418.8
+    },
+    "in_process_total": {
+     "median": 1002.7,
+     "min": 899.3
+    },
+    "process_wall": {
+     "median": 1367.9,
+     "min": 1249.1
+    }
+   },
+   "candidate_faster_pairs": "7/8",
+   "traffic_control": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 6,
+    "bin_bytes": 2670774
+   },
+   "traffic_candidate": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 6,
+    "bin_bytes": 561617
+   }
+  },
+  "notebook4": {
+   "control": {
+    "import": {
+     "median": 7.9,
+     "min": 6.0
+    },
+    "get_session": {
+     "median": 439.1,
+     "min": 347.4
+    },
+    "load": {
+     "median": 109.6,
+     "min": 96.5
+    },
+    "driver_tel_x4": {
+     "median": 2632.8,
+     "min": 2386.3
+    },
+    "in_process_total": {
+     "median": 3173.4,
+     "min": 2911.8
+    },
+    "process_wall": {
+     "median": 3573.8,
+     "min": 3232.5
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 6.6,
+     "min": 5.2
+    },
+    "get_session": {
+     "median": 340.2,
+     "min": 308.5
+    },
+    "load": {
+     "median": 105.2,
+     "min": 89.9
+    },
+    "driver_tel_x4": {
+     "median": 1769.4,
+     "min": 1432.2
+    },
+    "in_process_total": {
+     "median": 2277.6,
+     "min": 1848.0
+    },
+    "process_wall": {
+     "median": 2559.0,
+     "min": 2153.6
+    }
+   },
+   "candidate_faster_pairs": "7/8",
+   "traffic_control": {
+    "json": 6,
+    "json_bytes": 117466,
+    "bin": 24,
+    "bin_bytes": 10411031
+   },
+   "traffic_candidate": {
+    "json": 6,
+    "json_bytes": 117466,
+    "bin": 24,
+    "bin_bytes": 2105097
+   }
+  },
+  "all_tel": {
+   "control": {
+    "import": {
+     "median": 4.9,
+     "min": 4.0
+    },
+    "get_session": {
+     "median": 306.6,
+     "min": 254.1
+    },
+    "laps": {
+     "median": 92.8,
+     "min": 81.5
+    },
+    "all_tel": {
+     "median": 9062.1,
+     "min": 8402.8
+    },
+    "in_process_total": {
+     "median": 9507.9,
+     "min": 8757.9
+    },
+    "process_wall": {
+     "median": 10852.7,
+     "min": 9436.6
+    }
+   },
+   "candidate": {
+    "import": {
+     "median": 5.3,
+     "min": 4.2
+    },
+    "get_session": {
+     "median": 346.7,
+     "min": 241.7
+    },
+    "laps": {
+     "median": 89.2,
+     "min": 77.8
+    },
+    "all_tel": {
+     "median": 4792.6,
+     "min": 3352.8
+    },
+    "in_process_total": {
+     "median": 5249.4,
+     "min": 3693.2
+    },
+    "process_wall": {
+     "median": 6423.1,
+     "min": 4375.6
+    }
+   },
+   "candidate_faster_pairs": "8/8",
+   "traffic_control": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 119,
+    "bin_bytes": 52498148
+   },
+   "traffic_candidate": {
+    "json": 4,
+    "json_bytes": 113842,
+    "bin": 119,
+    "bin_bytes": 10790172
+   }
+  }
+ }
+}

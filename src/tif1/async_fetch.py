@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
 from . import first_wave
+from .core_utils import json_utils
 from .core_utils.constants import (
+    COLUMNAR_FORMAT_VERSION,
     columnar_chunk_first_lap,
     columnar_file_path,
     telemetry_ref_from_path,
@@ -532,7 +534,7 @@ def _flush_telemetry_writes(cache: Any, entries: list[tuple[Any, ...]]) -> None:
 # -- per-driver columnar telemetry files (Gortyn G3) ------------------------------
 #
 # A cold wave of a driver's laps asks for the driver's columnar files
-# (``{driver}/tel.v1.{first}.bin``, ten laps each,
+# (``{driver}/tel.v2.{first}.bin``, ten laps each,
 # :mod:`tif1.core_utils.columnar_telemetry`) once; every lap request of the
 # wave awaits the download of its file and takes its lap from it, or falls
 # back to its ``_tel.json`` when the file is missing, unreadable or lacks the
@@ -549,7 +551,7 @@ _sessions_without_files: set[tuple[Any, ...]] = set()
 # Decoded files kept for their unread laps, oldest dropped first.
 _DRIVER_FILES_CAP = 256
 # Missing-payload key of a session without columnar files (no such path is fetched).
-COLUMNAR_SESSION_MARKER = "tel.v1.session"
+COLUMNAR_SESSION_MARKER = f"tel.v{COLUMNAR_FORMAT_VERSION}.session"
 
 
 def _columnar_enabled(config: Any, validate_payload: bool) -> bool:
@@ -557,7 +559,8 @@ def _columnar_enabled(config: Any, validate_payload: bool) -> bool:
 
     Off with ``telemetry_columnar=False``, when telemetry payloads are
     validated (the validator reads the JSON lists), in the browser (no
-    thread pool) and offline.
+    thread pool), offline, and without tif1-native's ``tel.v2`` kernels
+    (the numpy decoder is ~6x slower per file than the native one).
     """
     return (
         bool(config.get("telemetry_columnar", False))
@@ -565,6 +568,7 @@ def _columnar_enabled(config: Any, validate_payload: bool) -> bool:
         and THREADS_AVAILABLE
         and not IS_EMSCRIPTEN
         and not bool(config.get("offline_mode", False))
+        and json_utils.native_columnar_decoder_available()
     )
 
 

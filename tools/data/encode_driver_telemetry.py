@@ -1,8 +1,8 @@
-"""Encode a session's lap telemetry JSON into per-driver columnar files (``tel.v1``).
+"""Encode a session's lap telemetry JSON into per-driver columnar files (``tel.v2``).
 
 The data repositories (``TracingInsights/{year}``) publish one
 ``{driver}/{lap}_tel.json`` per lap. This tool writes, next to them, the
-files ``{driver}/tel.v1.{first}.bin`` (ten laps each, ``first`` = 1, 11,
+files ``{driver}/tel.v2.{first}.bin`` (ten laps each, ``first`` = 1, 11,
 21...) that tif1 reads first on a cold telemetry wave (format:
 ``design/TELEMETRY_COLUMNAR_FORMAT.md``, codec:
 ``tif1.core_utils.columnar_telemetry``).
@@ -14,9 +14,11 @@ Sources:
 - ``--cache DIR --year Y --gp GP --session S``: the ``telemetry_cache`` tier of a
   tif1 cache (the payloads tif1 fetched, re-serialized by orjson).
 
-``--verify`` decodes every file written and checks, lap by lap, that the
-decoded mapping equals the JSON decode bit for bit and that the pandas and
-polars frames built from it equal the frames built from the JSON
+``--verify`` decodes every file written, once with the native prediction
+kernels of ``tif1-native`` (when the installed build has them) and once with
+the codec's numpy twins, and checks, lap by lap, that both decoded mappings
+equal the JSON decode bit for bit and that the pandas and polars frames built
+from them equal the frames built from the JSON
 (``assert_frame_equal(check_exact=True)`` / ``DataFrame.equals``). The tool
 needs ``tif1-native``: the files hold what the native decoder returns
 (int64/float64 arrays, dictionary ``DriverAhead``), and the round trip is
@@ -126,6 +128,21 @@ def _verify_lap(driver: str, lap: int, expected: dict[str, Any], actual: dict[st
             raise AssertionError(f"{driver} lap {lap}: polars frames differ")
 
 
+_NATIVE_KERNELS = tuple(name for name in dir(json_utils) if name.startswith("NATIVE_TEL_"))
+
+
+def _decode_with_numpy(blob: bytes) -> dict[int, dict[str, Any]]:
+    """Decode with the codec's numpy predictions (the client without the native kernels)."""
+    saved = {name: getattr(json_utils, name) for name in _NATIVE_KERNELS}
+    try:
+        for name in _NATIVE_KERNELS:
+            setattr(json_utils, name, None)
+        return decode_driver_file(blob)
+    finally:
+        for name, kernel in saved.items():
+            setattr(json_utils, name, kernel)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     source = parser.add_mutually_exclusive_group(required=True)
@@ -134,7 +151,7 @@ def main() -> int:
     parser.add_argument("--year", type=int)
     parser.add_argument("--gp", help="event name (as in the CDN path)")
     parser.add_argument("--session", help="session name (as in the CDN path)")
-    parser.add_argument("--out-dir", type=Path, help="write {driver}/tel.v1.{first}.bin here")
+    parser.add_argument("--out-dir", type=Path, help="write {driver}/tel.v2.{first}.bin here")
     parser.add_argument("--level", type=int, default=19, help="zstd level (default 19)")
     parser.add_argument("--verify", action="store_true", help="decode and compare every lap")
     args = parser.parse_args()
@@ -168,8 +185,9 @@ def main() -> int:
                 (target / name).write_bytes(blob)
         if args.verify:
             for blob in files.values():
-                for lap, decoded in decode_driver_file(blob).items():
-                    _verify_lap(driver, lap, tels[lap], decoded)
+                for decode in (decode_driver_file, _decode_with_numpy):
+                    for lap, decoded in decode(blob).items():
+                        _verify_lap(driver, lap, tels[lap], decoded)
     print(
         f"{len(raw_laps)} drivers, {n_laps} laps -> {n_files} files, "
         f"{file_bytes / 1e6:.2f} MB (JSON {json_bytes / 1e6:.2f} MB uncompressed)"

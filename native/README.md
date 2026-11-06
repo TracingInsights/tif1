@@ -20,6 +20,17 @@ decoder pyarrow's lz4 codec runs), vendored by the `lz4-sys` crate and
 compiled into the extension; the frame header is parsed in Rust
 (`src/lz4.rs`), which rejects checksummed frames and dictionary ids.
 
+The next release adds the prediction kernels of the `tel.v2` columnar
+telemetry files (`src/telcols.rs`, `design/TELEMETRY_COLUMNAR_FORMAT.md`):
+`tel_integ` (the `distance` integration, in place), `tel_accx` and
+`tel_lateral` (the pipeline's accelerations), `tel_spline` (the quadratic
+interpolating spline of fastf1's position channels), `tel_interp`
+(`numpy.interp`'s formula over the row dates, residuals applied, in place)
+and `tel_apply` (residuals applied in place), all with the GIL released. They compute the same bits as the numpy twins in
+`tif1.core_utils.columnar_telemetry` (IEEE `+ - * /` and `fmod` only: no
+libm transcendental, no fused multiply-add); tif1 uses the twins with an
+older build.
+
 `TIF1_DISABLE_NATIVE=1` makes tif1 ignore an installed extension.
 
 ## Build locally
