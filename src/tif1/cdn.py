@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from .exceptions import DataNotFoundError, InvalidDataError, NetworkError, TIF1Error
+from .session_lookahead import note_fetch
 
 if TYPE_CHECKING:
     import asyncio
@@ -346,6 +347,7 @@ class CDNManager:
 
         if not sources:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+        note_fetch(year, gp, session, path)
 
         last_exception = None
         statuses: list[int | None] = []
@@ -482,6 +484,7 @@ class CDNManager:
 
         if not sources:
             raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+        note_fetch(year, gp, session, path)
 
         last_exception = None
         statuses: list[int | None] = []

@@ -459,3 +459,94 @@ def test_sync_transport_refused_single_request_goes_to_niquests(server, monkeypa
     missing = url.replace("drivers.json", "results.json")  # 404 on the fake CDN
     assert payload_loader.NiquestsTransport().get_json(missing) == {"from": "niquests"}
     assert fake.urls == [missing]
+
+
+# -- Corinth C4: the stdlib client built on demand for single requests ---------
+
+
+@pytest.fixture
+def on_demand(server, monkeypatch):
+    """The on-demand client allowed (the suite's conftest turns it off)."""
+    monkeypatch.setattr(first_wave, "_on_demand", True)
+    monkeypatch.setattr(http_session, "_shared_session", None)
+    return server
+
+
+def test_single_request_without_a_wave_builds_the_client_once(on_demand, monkeypatch):
+    on_demand.routes["results.json"] = (200, orjson.dumps({"MRData": {}}), {})
+    contexts: list[str] = []
+
+    def _context() -> str:
+        contexts.append("built")
+        return "tls-context"
+
+    monkeypatch.setattr(first_wave, "_tls_context", _context)
+    _forbid_niquests(monkeypatch)
+    transport = payload_loader.NiquestsTransport()
+    url = _url("results.json")
+    assert not first_wave.has_client()
+    assert transport.get_json(url) == {"MRData": {}}
+    assert transport.get_json(url) == {"MRData": {}}
+    # The shared client serves single requests; only a wave opens the bridge.
+    assert first_wave._shared is not None
+    assert not first_wave.has_client()
+    assert not first_wave.bridge_open()
+    assert contexts == ["built"]
+    assert len(on_demand.connections) == 1  # kept alive between the two requests
+
+
+def test_first_wave_reuses_the_on_demand_client(on_demand, monkeypatch):
+    on_demand.routes["drivers.json"] = (200, orjson.dumps(DRIVERS), {})
+    assert first_wave.ensure_client()
+    client = first_wave._shared
+
+    def _built_twice() -> None:
+        pytest.fail("the TLS context was built twice")
+
+    monkeypatch.setattr(first_wave, "_tls_context", _built_twice)
+    (url,) = _start("drivers.json")
+    assert orjson.loads(first_wave.take(url) or b"") == DRIVERS
+    assert first_wave._client is client
+
+
+def test_on_demand_client_respects_the_switches(on_demand, monkeypatch):
+    from tif1.config import get_config
+
+    monkeypatch.setitem(get_config()._config, "cdn_first_wave", False)
+    assert not first_wave.ensure_client()
+    monkeypatch.setitem(get_config()._config, "cdn_first_wave", True)
+    monkeypatch.setattr(first_wave, "_on_demand", False)
+    assert not first_wave.ensure_client()
+    monkeypatch.setattr(first_wave, "_on_demand", True)
+    # A proxy or no trust store: niquests takes the requests, and the
+    # verdict is kept for the process.
+    calls: list[int] = []
+
+    def _no_context() -> None:
+        calls.append(1)
+
+    monkeypatch.setattr(first_wave, "_tls_context", _no_context)
+    assert not first_wave.ensure_client()
+    assert not first_wave.ensure_client()
+    assert calls == [1]
+    assert not first_wave.has_client()
+
+
+def test_on_demand_refusal_goes_to_niquests(on_demand, monkeypatch):
+    fake = _FakeNiquestsSession()
+    monkeypatch.setattr(http_session, "get_session", lambda: fake)
+    monkeypatch.setattr(payload_loader, "_import_niquests", lambda: _FAKE_NIQUESTS)
+    missing = _url("missing.json")  # 404 on the fake CDN
+    assert payload_loader.NiquestsTransport().get_json(missing) == {"from": "niquests"}
+    assert fake.urls == [missing]
+
+
+def test_no_on_demand_client_once_niquests_is_up(on_demand, monkeypatch):
+    fake = _FakeNiquestsSession()
+    monkeypatch.setattr(http_session, "_shared_session", fake)
+    monkeypatch.setattr(http_session, "get_session", lambda: fake)
+    monkeypatch.setattr(payload_loader, "_import_niquests", lambda: _FAKE_NIQUESTS)
+    url = _url("results.json")
+    assert payload_loader.NiquestsTransport().get_json(url) == {"from": "niquests"}
+    assert not first_wave.has_client()
+    assert on_demand.connections == []

@@ -175,6 +175,11 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
     # values can never leak into later tests of the same worker process.
     monkeypatch.setitem(config._config, "cache_dir", str(cache_dir))
     monkeypatch.setitem(config._config, "cdn_preconnect", False)
+    # Corinth C4: single requests never build the stdlib client here (its
+    # sockets are blocked); the first-wave tests turn it back on.
+    from tif1 import first_wave
+
+    monkeypatch.setattr(first_wave, "_on_demand", False)
     # The Ergast classification merge reaches a CDN; the socket-blocked unit
     # suite keeps it off unless a test opts in (config.set("ergast_results", True)).
     monkeypatch.setitem(config._config, "ergast_results", False)
@@ -199,6 +204,7 @@ def reset_global_state():
     from tif1 import async_fetch as async_fetch_module
     from tif1 import browser as browser_module
     from tif1 import payload_loader as payload_loader_module
+    from tif1 import session_lookahead as session_lookahead_module
     from tif1.cdn import get_cdn_manager
     from tif1.retry import reset_circuit_breaker
 
@@ -216,6 +222,7 @@ def reset_global_state():
         reset_circuit_breaker()
         browser_module._reset_pyodide_transport()
         payload_loader_module._url_loader = None
+        session_lookahead_module.reset()
 
     # Reset before test
     _reset()

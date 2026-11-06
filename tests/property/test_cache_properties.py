@@ -73,7 +73,9 @@ class TestCacheReadParallelism:
     )
     @settings(
         max_examples=30,
-        deadline=10000,
+        # Correctness, not speed: a loaded Windows runner took 14 s for one
+        # example of SQLite reads across threads (PR #127).
+        deadline=None,
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_concurrent_reads_multiple_keys_parallel(

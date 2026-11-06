@@ -171,6 +171,11 @@ class Config:
             # but skip niquests' OCSP check; TIF1_CDN_FIRST_WAVE=false sends
             # them through niquests as before.
             "cdn_first_wave": True,
+            # Corinth C1: when get_session() asks for round r of a season right
+            # after round r-1 (same session), fetch the files round r-1 fetched
+            # for round r+1 in the background, over the first wave's stdlib
+            # connections. TIF1_SESSION_LOOKAHEAD=false turns it off.
+            "session_lookahead": True,
             # Delphi D1: freeze the heap in an atexit hook so CPython's final
             # garbage collections skip the ~300k objects pandas/numpy/pyarrow
             # (or polars) built at import: 40-80 ms off every script's exit.
@@ -218,11 +223,22 @@ class Config:
             # remembered in the missing-payload tier, so a session without
             # files costs one request per session. False: per-lap JSON only.
             "telemetry_columnar": False,
+            # Corinth C10: a cold session asks for its bundle
+            # ({year}/{gp}/{session}/session.v1.bin: drivers.json, the
+            # laptimes, session_info.json, weather, race control and the
+            # Ergast classification in one zstd file) instead of one request
+            # per file; a 404 is remembered in the missing-payload tier and
+            # the files follow. False until the data repositories publish it.
+            "session_bundle": False,
             # Process-pool JSON parsing hurts telemetry-heavy cold starts due to IPC overhead.
             # Keep disabled by default; advanced users can still enable via config/env.
             "json_parse_workers": 0,
             "http_resolvers": ["standard", "doh+cloudflare://", "doh+google://"],
         }
+
+        # Keys a .tif1rc file or an environment variable set (not defaults, not
+        # Config.set): consumers that pick a value on their own respect these.
+        self._user_keys: set[str] = set()
 
         # Load from config file
         self._load_config()
@@ -256,6 +272,7 @@ class Config:
                         logger.warning(f"Config file {path} must contain a JSON object")
                         continue
                     self._config.update(user_config)
+                    self._user_keys.update(str(key) for key in user_config)
                     logger.info(f"Loaded config from {path}")
                     break
                 except Exception as e:
@@ -309,7 +326,9 @@ class Config:
             "TIF1_HTTP_REVOCATION_CACHE": ("http_revocation_cache", _to_bool),
             "TIF1_CDN_PRECONNECT": ("cdn_preconnect", _to_bool),
             "TIF1_CDN_FIRST_WAVE": ("cdn_first_wave", _to_bool),
+            "TIF1_SESSION_LOOKAHEAD": ("session_lookahead", _to_bool),
             "TIF1_TELEMETRY_COLUMNAR": ("telemetry_columnar", _to_bool),
+            "TIF1_SESSION_BUNDLE": ("session_bundle", _to_bool),
             "TIF1_EXIT_GC_FREEZE": ("exit_gc_freeze", _to_bool),
             "TIF1_CDN_HEDGE": ("cdn_hedge", _to_bool),
             "TIF1_CDN_HEDGE_MAX_DELAY": ("cdn_hedge_max_delay", float),
@@ -356,10 +375,12 @@ class Config:
                     key, converter = config_key
                     try:
                         self._config[key] = converter(value)
+                        self._user_keys.add(key)
                     except Exception as e:
                         logger.warning(f"Failed to convert {env_var}={value}: {e}")
                 else:
                     self._config[config_key] = value
+                    self._user_keys.add(config_key)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value with validation."""
@@ -455,6 +476,18 @@ class Config:
             return valid_cdns
 
         return value
+
+    def is_user_set(self, key: str) -> bool:
+        """Whether a ``.tif1rc`` file or an environment variable set ``key``.
+
+        Args:
+            key: Configuration key.
+
+        Returns:
+            True when the value came from the user's file or environment
+            rather than the built-in default.
+        """
+        return key in self._user_keys
 
     def set(self, key: str, value: Any):
         """Set configuration value."""

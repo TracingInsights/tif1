@@ -45,6 +45,8 @@ from .core_utils.constants import (
     COL_LAP_TIME,
     COL_LAP_TIME_SECONDS,
     COL_TEAM,
+    ERGAST_FIRST_LAPS_SEASON,
+    ERGAST_FIRST_PIT_STOPS_SEASON,
     ERGAST_LOADABLE_SESSIONS,
     EVENT_NAME_ALIASES,
     F1_API_FIRST_YEAR,
@@ -556,6 +558,17 @@ _EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001 - naive UTC, as pandas' Timesta
 _MICROSECOND = dt.timedelta(microseconds=1)
 _UNSET: Any = object()
 _ERGAST_TABLE_ENDPOINTS = ("results", "qualifying", "sprint", "laps", "pitstops")
+
+
+def _ergast_table_covers(endpoint: str, year: int) -> bool:
+    """Whether Ergast can hold ``endpoint`` rows for ``year`` (lap timings 1996-, stops 2011-)."""
+    if endpoint == "laps":
+        return year >= ERGAST_FIRST_LAPS_SEASON
+    if endpoint == "pitstops":
+        return year >= ERGAST_FIRST_PIT_STOPS_SEASON
+    return True
+
+
 # Serializes background frame-tier materialization writes (Pergamon Q15).
 _FRAME_MATERIALIZATION_LOCK = threading.Lock()
 
@@ -3885,6 +3898,8 @@ class Session:
         """``Races[0]`` of an Ergast table for this round (Stats first, Jolpica fallback)."""
         if endpoint not in _ERGAST_TABLE_ENDPOINTS:
             raise ValueError(f"Unknown Ergast table {endpoint!r}")
+        if not _ergast_table_covers(endpoint, self.year):
+            return None
         round_number = self._ergast_round_number()
         if round_number is None:
             return None
@@ -3926,6 +3941,43 @@ class Session:
             return None
         return StatsSource.first_race(executed.payload)
 
+    def _prefetch_ergast_tables(self, endpoints: tuple[str, ...]) -> None:
+        """Fetch this round's Stats files of ``endpoints`` in one parallel wave.
+
+        Corinth C2: the race classification, the lap timings and the pit stops
+        of a round do not depend on each other, but :meth:`_ergast_table_race`
+        reads them one after another (three round trips, ~0.2-2 s each from
+        a cold jsDelivr edge). This only fills the Ergast payload memo; the
+        readers then answer from it with the same Stats-then-Jolpica routing.
+        Tables the season cannot have, the classification once it is
+        memoized, and fresh cache entries are skipped; failures are left to
+        the readers, which raise or degrade as before.
+        """
+        wanted = [
+            endpoint
+            for endpoint in endpoints
+            if _ergast_table_covers(endpoint, self.year)
+            and not (endpoint == self._ergast_endpoint() and self._ergast_loaded)
+        ]
+        if len(wanted) < 2 or bool(config.get("offline_mode", False)):
+            return
+        round_number = self._ergast_round_number()
+        if round_number is None:
+            return
+        from .ergast.stats import STATS_FILES, get_stats_source
+
+        stats = get_stats_source()
+        try:
+            info = stats.round_info(self.year, round_number)
+        except TIF1Error as exc:  # the readers report it
+            logger.debug("Ergast prefetch skipped for %s/%s: %s", self.year, self.event_name, exc)
+            return
+        if info is None:
+            return
+        stats.loader.stats_payloads(
+            [(self.year, info.slug, STATS_FILES[endpoint]) for endpoint in wanted]
+        )
+
     def _load_ergast_payload(self) -> dict[str, Any] | None:
         """Fetch (once) the Ergast race record that classifies this session.
 
@@ -3935,8 +3987,16 @@ class Session:
         as the main thread would); a merge session keeps ``None`` because
         :meth:`_ergast_table_race` already degraded and logged. Inside
         :func:`tif1.ergast.payloads.cache_only` a lookup that needs a fetch
-        raises ``ErgastFetchNeeded`` and nothing is memoized.
+        raises ``ErgastFetchNeeded`` and nothing is memoized. A session bundle
+        download in flight (Corinth C10) is waited for first: its Stats
+        entries answer the lookups.
         """
+        bundles = sys.modules.get("tif1.session_bundle")
+        if bundles is not None and not self._ergast_loaded:
+            from .ergast.payloads import _CACHE_ONLY
+
+            if not _CACHE_ONLY.get():
+                bundles.wait(self.year, self.gp, self.session, float(config.get("timeout", 30)))
         with self._ergast_lock:
             if self._ergast_loaded:
                 if self._ergast_error is not None:
@@ -3963,6 +4023,12 @@ class Session:
                         self.session_name,
                         exc,
                     )
+                if payload is not None:
+                    # Corinth C1: the next round of a season loop fetches its
+                    # classification ahead of time.
+                    from .session_lookahead import note_classification
+
+                    note_classification(self.year, self.gp, self.session, self._ergast_endpoint())
             self._ergast_payload = payload
             self._ergast_loaded = True
             return payload
@@ -3990,6 +4056,12 @@ class Session:
             return
         if self._resolve_cached_ergast_payload():
             return
+        if not self._ergast_only:
+            # Corinth C10: the session's bundle carries the classification
+            # and the season index; the thread waits for it before fetching.
+            from . import session_bundle
+
+            session_bundle.start(self.year, self.gp, self.session, write_cache=self.enable_cache)
         try:
             threading.Thread(
                 target=self._prefetch_ergast_payload, name="tif1-ergast", daemon=True
@@ -4003,8 +4075,9 @@ class Session:
         A thread costs a warm session more than the lookup it would run (GIL
         handoffs on top of a few cache reads), so the payload is resolved
         here whenever the memo/SQLite tiers hold everything it needs and
-        are fresh (the same TTL rules as any lookup). The season index is
-        checked first so a cold cache starts the fetch without delay.
+        are fresh (the same TTL rules as any lookup; a finished round needs
+        only the stored season index, fresh or not: Corinth C4). The season
+        index is checked first so a cold cache starts the fetch without delay.
 
         Returns:
             True when the outcome (payload, ``None`` or the stored error of an
@@ -4014,7 +4087,7 @@ class Session:
         from .ergast.stats import get_stats_source
 
         try:
-            if not get_stats_source().season_index_cached(self.year):
+            if not get_stats_source().season_index_stored(self.year):
                 return False
             with cache_only():
                 self._load_ergast_payload()
@@ -4060,6 +4133,7 @@ class Session:
         """Laps built from Ergast lap timings (races from 1996; empty otherwise)."""
         if self.session_name != "Race":
             return _create_empty_df(self.lib)
+        self._prefetch_ergast_tables(("results", "laps", "pitstops"))
         classification = _er.ergast_rows(self._ergast_race(), "results")
         laps_race = self._ergast_table_race("laps")
         stops_race = self._ergast_table_race("pitstops") if laps_race is not None else None
@@ -8160,6 +8234,19 @@ def get_session(
     # session imports pandas or polars, so the HTTP-stack import, DNS and TLS
     # overlap that import instead of delaying the first payload request.
     cache_probe = _preconnect_cdn(year, gp_name, session_name, enable_cache)
+    # Corinth C1: round r right after round r-1 fetches round r+1's files in
+    # the background (a season loop); otherwise it only notes the session.
+    from .session_lookahead import on_get_session
+
+    lookahead_probe = on_get_session(
+        year,
+        gp_name,
+        session_name,
+        backend,
+        _resolve_enable_cache(enable_cache, log_warnings=False),
+    )
+    if cache_probe is None:
+        cache_probe = lookahead_probe
     if (lib if lib is not None else config.get("lib", "pandas")) != "polars":
         # A pandas session imports pandas and the model family here, where
         # importing tif1.core used to (a polars session never imports them).
@@ -8210,7 +8297,10 @@ def _preconnect_cdn(
     returns after the probe:
     no HTTP-stack import, no thread. An Ergast-only season counts as cached
     when the Stats tier holds its classification; the session's own probe
-    (handed back) only covers the timing-data tier.
+    (handed back) only covers the timing-data tier. An uncached Ergast-only
+    session's wave fetches the Stats files it reads instead of the timing
+    files, which do not exist before ``F1_API_FIRST_YEAR`` (Corinth C2,
+    :func:`_ergast_first_wave_urls`).
 
     Returns:
         The persistent-cache probe of the session when this call ran it
@@ -8251,12 +8341,31 @@ def _preconnect_cdn(
     try:
         sources = get_cdn_manager().get_sources()
         if sources:
-            urls = [sources[0].format_url(year, gp, session, path) for path in _FIRST_WAVE_PATHS]
             timeout = max(1, config.get("timeout", 10))
-            if bool(config.get("cdn_first_wave", True)):
+            wait_limit = None
+            if year < F1_API_FIRST_YEAR:
+                # Corinth C2: no timing files exist before F1_API_FIRST_YEAR;
+                # the session reads the round's Stats files, all at once here.
+                urls = _ergast_first_wave_urls(year, gp_name, session_name)
+                wait_limit = float(timeout)
+            else:
+                paths = _FIRST_WAVE_PATHS
+                if bool(config.get("session_bundle", False)):
+                    # Corinth C10: the session's bundle carries both first-wave
+                    # files (and the rest of its small files) in one request.
+                    from .core_utils.session_bundle import BUNDLE_FILE
+
+                    paths = (BUNDLE_FILE,)
+                urls = [sources[0].format_url(year, gp, session, path) for path in paths]
+            if not urls:
+                pass
+            elif bool(config.get("cdn_first_wave", True)):
                 from . import first_wave
 
-                first_wave.start(urls, timeout=timeout)
+                if wait_limit is None:
+                    first_wave.start(urls, timeout=timeout)
+                else:
+                    first_wave.start(urls, timeout=timeout, wait_limit=wait_limit)
             else:
                 # The Olympia pre-connect: niquests (and its OCSP check) for
                 # every request, its import on this thread.
@@ -8266,6 +8375,31 @@ def _preconnect_cdn(
     except Exception as e:  # best effort, never surfaces
         logger.debug("CDN pre-connect skipped: %s", e)
     return cache_probe
+
+
+def _ergast_first_wave_urls(year: int, gp_name: str, session_name: str) -> list[str]:
+    """Primary-mirror URLs of the Stats files an Ergast-only session reads (Corinth C2).
+
+    The season index (``events.json``, which resolves the round's folder), the
+    classification and, for a race, the lap timings and pit stops the season
+    can have. The folder is the event name's slug, the rule
+    :func:`_ergast_session_cached` uses: a renamed folder only leaves its
+    bodies untaken (the session then fetches the right ones as before).
+    """
+    from .ergast.payloads import ErgastPayloadLoader, stats_path
+    from .ergast.stats import EVENTS_FILE, STATS_FILES, race_slug
+
+    repo, branch = ErgastPayloadLoader.repo()
+    sources = [source for source in get_cdn_manager().get_sources() if source.serves(repo)]
+    if not sources:
+        return []
+    slug = race_slug(gp_name)
+    endpoints = [_er.ergast_endpoint(session_name)]
+    if session_name == "Race":
+        endpoints += [e for e in ("laps", "pitstops") if _ergast_table_covers(e, year)]
+    paths = [stats_path(year, "", EVENTS_FILE)]
+    paths += [stats_path(year, slug, STATS_FILES[endpoint]) for endpoint in endpoints]
+    return [sources[0].format_repo_url(repo, branch, path) for path in paths]
 
 
 def _ergast_session_cached(cache: Any, year: int, gp_name: str, session_name: str) -> bool:

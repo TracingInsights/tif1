@@ -107,6 +107,11 @@ NATIVE_TEL_LATERAL: Any = getattr(_native_module, "tel_lateral", None)
 NATIVE_TEL_SPLINE: Any = getattr(_native_module, "tel_spline", None)
 NATIVE_TEL_INTERP: Any = getattr(_native_module, "tel_interp", None)
 NATIVE_TEL_APPLY: Any = getattr(_native_module, "tel_apply", None)
+#: ``tif1_native.tel_decode_file(body, dict_factory) -> {lap: tel}`` (Corinth C8:
+#: a whole ``tel.v2`` file body decoded in one call, GIL released except for
+#: the result objects), or None when the installed build predates it; the
+#: codec then decodes column by column around the kernels above.
+NATIVE_TEL_DECODE_FILE: Any = getattr(_native_module, "tel_decode_file", None)
 
 
 def native_columnar_decoder_available() -> bool:

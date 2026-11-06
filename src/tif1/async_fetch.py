@@ -10,7 +10,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from . import cache as _cache
-from . import first_wave
+from . import first_wave, session_bundle
 from .core_utils import json_utils
 from .core_utils.constants import (
     COLUMNAR_FORMAT_VERSION,
@@ -679,6 +679,51 @@ async def _columnar_lap(
     return {"tel": tel} if tel else None
 
 
+async def _bundle_member(
+    year: int,
+    gp: str,
+    session: str,
+    path: str,
+    loop: Any,
+    executor: Any,
+    cache: Any,
+    cache_key: str,
+    validate_payload: bool,
+    write_cache: bool,
+) -> dict[str, Any] | None:
+    """A session file from the session's bundle (Corinth C10), or None (fetch the file).
+
+    Parsed off the event loop and validated as a fetched file is. The cache
+    write-back is the bundle's own writer (:mod:`tif1.session_bundle`), which
+    stores every member as a fetch would. A member the bundle lists as absent
+    gets the all-404 verdict and raises, as the CDN walk would have.
+
+    Raises:
+        DataNotFoundError: The bundle lists ``path`` as absent.
+        InvalidDataError: The member is not a JSON object or fails validation.
+    """
+    body = await session_bundle.member_async(year, gp, session, path, write_cache=write_cache)
+    if body is None:
+        return None
+    if body is session_bundle.ABSENT:
+        record_missing = getattr(cache, "record_missing", None)
+        if callable(record_missing):
+            record_missing(cache_key)
+        raise DataNotFoundError(year=year, event=gp, session=session)
+    try:
+        data = await loop.run_in_executor(executor, json_loads, body)
+    except (ValueError, TypeError) as e:
+        raise InvalidDataError(reason=f"JSON parsing failed: {e}") from e
+    if not isinstance(data, dict):
+        raise InvalidDataError(reason=f"Expected dict, got {type(data).__name__}")
+    if validate_payload:
+        from .config import get_config
+
+        data = _validate_json_payload(path, data, get_config())
+    logger.debug("Session bundle served %s", cache_key)
+    return data
+
+
 async def _persist_telemetry_payload(
     cache: Any,
     loop: Any,
@@ -840,6 +885,13 @@ async def fetch_json_async(
 
     if bool(config.get("offline_mode", False)):
         raise NetworkError(url=f"{year}/{gp}/{session}/{path}", status_code=None)
+
+    if session_bundle.is_member(path) and session_bundle.enabled():
+        bundled = await _bundle_member(
+            year, gp, session, path, loop, executor, cache, cache_key, validate_payload, write_cache
+        )
+        if bundled is not None:
+            return bundled
 
     if path.endswith("_tel.json") and _columnar_enabled(config, validate_payload):
         columnar = await _columnar_lap(

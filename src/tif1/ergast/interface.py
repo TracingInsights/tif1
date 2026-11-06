@@ -22,19 +22,24 @@ Differences from fastf1 (all additive):
 
 from __future__ import annotations
 
+import contextvars
 import copy
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
+import sys
+import threading
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-import pandas as pd
-
+from tif1.core_utils.lazy_import import import_promoted
+from tif1.core_utils.runtime import THREADS_AVAILABLE
 from tif1.ergast import structure
 from tif1.ergast.jolpica import DEFAULT_BASE_URL, JolpicaClient, build_url
-from tif1.ergast.router import QueryPlan, execute
+from tif1.ergast.router import ExecutedQuery, QueryPlan, execute, routes_to_stats
 from tif1.http_session import user_agent
 from tif1.types import ErgastResultType, ErgastSourceType
 
 if TYPE_CHECKING:
     import polars as pl
+
+    from tif1.ergast.frames import ErgastResultFrame, ErgastResultSeries, ErgastSimpleResponse
 
 BASE_URL = DEFAULT_BASE_URL
 TIMEOUT = 5.0
@@ -138,69 +143,89 @@ class ErgastResponseMixin:
         )
 
 
-class ErgastResultFrame(pd.DataFrame):
-    """A pandas ``DataFrame`` built from flattened Ergast response data.
+#: The pandas response classes, defined in :mod:`tif1.ergast.frames` (Corinth
+#: C3): importing this module does not import pandas.
+_FRAME_CLASSES = frozenset({"ErgastResultFrame", "ErgastResultSeries", "ErgastSimpleResponse"})
 
-    Args:
-        data: Passed to the DataFrame constructor (``None`` when ``response`` is given).
-        category: A category from ``tif1.ergast.structure`` describing ``response``.
-        response: JSON-like Ergast response data to flatten into ``data``.
-        auto_cast: Cast values from their string form to the matching type.
+
+#: Modules whose import is worth overlapping with a query (the frame classes
+#: themselves import in ~1 ms once pandas is loaded).
+_PANDAS_BUILD_MODULES = frozenset({"pandas"})
+_POLARS_BUILD_MODULES = frozenset({"pandas", "polars", "pyarrow"})
+
+
+def _frames() -> Any:
+    """:mod:`tif1.ergast.frames` (imports pandas on first use, GC-promoted: Naxos N10)."""
+    frames = sys.modules.get("tif1.ergast.frames")
+    if frames is None:
+        import_promoted("pandas")
+        from tif1.ergast import frames
+    return frames
+
+
+def _import_frame_modules(result_type: str) -> None:
+    """Import what building a ``result_type`` answer needs (pandas; polars and pyarrow)."""
+    _frames()
+    if result_type != "polars":
+        return
+    try:
+        import_promoted("polars")
+        from tif1.core_utils.backend_conversion import _ensure_polars_bound
+
+        if _ensure_polars_bound():
+            # pl.from_pandas converts through Arrow.
+            import_promoted("pyarrow")
+    except ImportError:
+        # The build raises the same error after the query, as before.
+        pass
+
+
+def _frame_modules_pending(result_type: str) -> bool:
+    """Whether building a ``result_type`` answer still has a module to import."""
+    if result_type == "raw":
+        return False
+    needed = _POLARS_BUILD_MODULES if result_type == "polars" else _PANDAS_BUILD_MODULES
+    return not needed <= sys.modules.keys()
+
+
+def _execute_overlapped(plan: QueryPlan, result_type: str) -> ExecutedQuery:
+    """:func:`execute` ``plan``; in a fresh process, while the frame modules import.
+
+    Corinth C3: the first pandas/polars answer of a process imports pandas
+    (~340-390 ms of CPU, and polars/pyarrow for ``result_type="polars"``),
+    and a cold query waits ~250-500 ms on the network. The query then runs in
+    a daemon thread (its fan-out threads and sockets wait on I/O) while this
+    thread imports; its answer or exception is handed back unchanged. A warm
+    module set runs the query inline. A query routed to Jolpica (or a
+    runtime without threads) imports first and then runs the query, the order
+    of the eager import it replaces: its niquests import and handshakes beside
+    the pandas import measured 0.8 s instead of 0.3 (GIL and import-lock
+    contention), while the Stats files go over the stdlib client.
     """
+    if not _frame_modules_pending(result_type):
+        return execute(plan)
+    if not THREADS_AVAILABLE or not routes_to_stats(plan):
+        _import_frame_modules(result_type)
+        return execute(plan)
+    context = contextvars.copy_context()
+    outcome: list[Any] = []
 
-    _metadata: ClassVar[list[str]] = []
+    def run() -> None:
+        try:
+            outcome.append((True, context.run(execute, plan)))
+        except BaseException as exc:  # handed to the caller below
+            outcome.append((False, exc))
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> Self:  # noqa: ARG004
-        """Allow DataFrame-style subclass construction with the ``response`` keywords."""
-        return super().__new__(cls)
-
-    def __init__(
-        self,
-        data: Any = None,
-        *,
-        category: dict | None = None,
-        response: list | None = None,
-        auto_cast: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        if data is not None and response is not None:
-            raise ValueError(f"Cannot initialize {type(self)} with `data` and `response`.")
-        if data is None and response is not None:
-            if category is None:
-                raise ValueError("`category` is required to build a frame from `response`.")
-            data = self._prepare_response(response, category, auto_cast)
-        cast(Any, super()).__init__(data, **kwargs)
-
-    @classmethod
-    def _prepare_response(cls, response: list, category: dict, auto_cast: bool) -> dict[str, list]:
-        return structure.flatten_rows(response, category, auto_cast)
-
-    @property
-    def _constructor(self):
-        return ErgastResultFrame
-
-    @property
-    def _constructor_sliced(self):
-        return ErgastResultSeries
-
-    @property
-    def base_class_view(self) -> pd.DataFrame:
-        """The same data as a plain :class:`pandas.DataFrame` (fastf1 parity)."""
-        return pd.DataFrame(self)
-
-
-class ErgastResultSeries(pd.Series):
-    """A pandas ``Series`` row/column of an :class:`ErgastResultFrame`."""
-
-    _metadata: ClassVar[list[str]] = []
-
-    @property
-    def _constructor(self):
-        return ErgastResultSeries
-
-    @property
-    def _constructor_expanddim(self):
-        return ErgastResultFrame
+    worker = threading.Thread(target=run, name="tif1-ergast-query", daemon=True)
+    worker.start()
+    try:
+        _import_frame_modules(result_type)
+    finally:
+        worker.join()
+    ok, value = outcome[0]
+    if not ok:
+        raise value
+    return value
 
 
 class ErgastRawResponse(ErgastResponseMixin, list):
@@ -220,21 +245,6 @@ class ErgastRawResponse(ErgastResponseMixin, list):
         if auto_cast:
             query_result = structure.auto_cast(query_result, category)
         super().__init__(query_result, **kwargs)
-
-
-class ErgastSimpleResponse(ErgastResponseMixin, ErgastResultFrame):
-    """Simple Ergast result data as a pandas ``DataFrame`` with paging."""
-
-    _internal_names: ClassVar[list[str]] = [
-        *getattr(pd.DataFrame, "_internal_names", []),
-        *ErgastResponseMixin._internal_names,
-    ]
-    _internal_names_set: ClassVar[set[str]] = set(_internal_names)
-
-    @property
-    def _constructor(self) -> type[ErgastResultFrame]:
-        # A slice is no longer a full response: drop the paging mixin.
-        return ErgastResultFrame
 
 
 _POLARS_RESPONSE: type | None = None
@@ -269,6 +279,10 @@ def _polars_response_type() -> type:
 def __getattr__(name: str) -> Any:
     if name == "ErgastPolarsResponse":
         return _polars_response_type()
+    if name in _FRAME_CLASSES:
+        value = getattr(_frames(), name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -300,20 +314,21 @@ class ErgastMultiResponse(ErgastResponseMixin):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        description = ErgastResultFrame(
+        frame_type = _frames().ErgastResultFrame
+        description = frame_type(
             response=response_description, category=category, auto_cast=auto_cast
         )
         content = [
-            ErgastResultFrame(response=elem, category=subcategory, auto_cast=auto_cast)
+            frame_type(response=elem, category=subcategory, auto_cast=auto_cast)
             for elem in response_data
         ]
         if lib == "polars":
+            import pandas as pd
+
             from tif1.core_utils.backend_conversion import pandas_to_polars
 
-            self._description: Any = pandas_to_polars(pd.DataFrame(cast(Any, description)))
-            self._content: list[Any] = [
-                pandas_to_polars(pd.DataFrame(cast(Any, c))) for c in content
-            ]
+            self._description: Any = pandas_to_polars(pd.DataFrame(description))
+            self._content: list[Any] = [pandas_to_polars(pd.DataFrame(c)) for c in content]
         else:
             self._description = description
             self._content = content
@@ -422,18 +437,17 @@ class Ergast:
         auto_cast = True if auto_cast is None else auto_cast
         source = source or self._source
 
-        executed = execute(
-            QueryPlan(
-                endpoint=endpoint,
-                table=table,
-                category=category,
-                subcategory=subcategory,
-                selectors=selectors,
-                limit=limit,
-                offset=offset,
-                source=source,
-            )
+        plan = QueryPlan(
+            endpoint=endpoint,
+            table=table,
+            category=category,
+            subcategory=subcategory,
+            selectors=selectors,
+            limit=limit,
+            offset=offset,
+            source=source,
         )
+        executed = _execute_overlapped(plan, result_type)
         mrdata = executed.payload["MRData"]
         body = mrdata.get(table, {})
         response_headers = {k: v for k, v in mrdata.items() if k != table}
@@ -476,13 +490,18 @@ class Ergast:
                 lib=lib,
                 **common,
             )
+        frames = _frames()
         if lib == "polars":
+            import pandas as pd
+
             from tif1.core_utils.backend_conversion import pandas_to_polars
 
-            frame = ErgastResultFrame(response=query_result, category=category, auto_cast=auto_cast)
-            polars_frame = pandas_to_polars(pd.DataFrame(cast(Any, frame)))
+            frame = frames.ErgastResultFrame(
+                response=query_result, category=category, auto_cast=auto_cast
+            )
+            polars_frame = pandas_to_polars(pd.DataFrame(frame))
             return _polars_response_type()(polars_frame, **common)
-        return ErgastSimpleResponse(
+        return frames.ErgastSimpleResponse(
             response=query_result, category=category, auto_cast=auto_cast, **common
         )
 

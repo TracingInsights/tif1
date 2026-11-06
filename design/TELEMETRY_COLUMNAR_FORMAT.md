@@ -239,8 +239,12 @@ decoded values would differ, not fail.
 - One download per file per process (`concurrent.futures.Future` in the fetch
   pool), shared by the wave's lap requests on any event loop. Each lap is
   handed out once; it then lives in the payload/frame tiers as before.
-- Decoding: the native kernels (GIL released), ~4.1 ms per ten-lap race file
-  against 2.3 ms for v1. The reader asks for the files only when the
+- Decoding: `tif1_native.tel_decode_file` decodes the whole body in one call
+  with the GIL released (Corinth C8: ~2.6 ms per ten-lap race file on one
+  thread, and the fetch threads decode files in parallel); a build without it
+  decodes column by column around the native kernels (~4.1 ms per file
+  against 2.3 ms for v1, GIL-bound between kernel calls). Both give the same
+  bits. The reader asks for the files only when the
   installed `tif1-native` has the kernels
   (`json_utils.native_columnar_decoder_available()`); the numpy twins decode
   the same bits in ~25 ms per file (the spline's tridiagonal solve runs in

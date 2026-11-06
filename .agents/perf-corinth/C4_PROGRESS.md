@@ -1,0 +1,5 @@
+- 18:54 started: read brief/hypotheses/DO_NOT_RETRY/AGENTS.md; no handoff; tracing the refresh path next
+- 19:00 traced: expired pandas 996 ms vs warm 370 (bg schedule refresh imports niquests + 246 KB LE CRL under GIL: get_session 346->835; Ergast events.json then results.json in series: results 14->152). Cold get_session 1022 (same niquests+CRL on main thread). Stats history: every 2026 round's results/quali/sprint file has exactly one commit (0-22 d after race). Implementing: stdlib client on demand, stale index for finished rounds, finality after 14 d
+- 19:08 implemented stdlib-on-demand client + settled classification + stored index; parity digests 16/16 identical; unit suite green (4121); new tests 15; starting A/B
+- 19:20 done: A/B expired pandas Mexico wall 1145->854 (7/8), British 897->582 (8/8); cold pandas 1717->922 (6/6), polars 1140->593 (6/6); parity 16/16 + 0/133 + 0/131; unit 4136 pass, ruff/ty clean, perf gate pass; verdict SHIP; report C4.md
+- 19:21 pandas British warm rerun 12 pairs: tie 6/12 (load 43); in-process warm results micro: control 3.40/3.75 ms vs candidate 3.46/3.35 ms median, equal; report updated

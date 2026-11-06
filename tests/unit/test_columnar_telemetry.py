@@ -281,6 +281,198 @@ def test_numpy_decoder_equals_the_native_kernels(monkeypatch):
         _assert_same_tel(tel, fallback[lap])
 
 
+_NATIVE_FILE = pytest.mark.skipif(
+    json_utils.NATIVE_TEL_DECODE_FILE is None,
+    reason="the installed tif1-native has no tel_decode_file",
+)
+
+
+def _column_decode(blob: bytes, monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    """The column-by-column decoder (the native kernels without ``tel_decode_file``)."""
+    with monkeypatch.context() as patch:
+        patch.setattr(json_utils, "NATIVE_TEL_DECODE_FILE", None)
+        return ct.decode_driver_file(blob)
+
+
+def _plain_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    laps = {lap: _lap(lap) for lap in (1, 2, 3, 7)}
+    laps[2] = dict(reversed(list(laps[2].items())))
+    del laps[3]["rpm"]
+    return laps
+
+
+def _merged_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    return {lap: _merged_lap(lap + 50) for lap in range(1, 5)}
+
+
+def _unshared_spline_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    """``y``/``z`` whole at a car row in some laps: their points differ from ``x``'s there."""
+    laps = _merged_laps(monkeypatch)
+    for lap, key in ((2, "y"), (3, "z"), (3, "y")):
+        car_row = int(np.flatnonzero(~ct._whole(laps[lap][key]))[7])
+        laps[lap][key][car_row] = np.round(laps[lap][key][car_row])
+    return laps
+
+
+def _head(tel: dict[str, Any], n: int) -> dict[str, Any]:
+    """The first ``n`` samples of a lap."""
+    out: dict[str, Any] = {}
+    for key, value in tel.items():
+        if isinstance(value, np.ndarray):
+            out[key] = value[:n].copy()
+        elif isinstance(value, DictionaryChannel):
+            out[key] = DictionaryChannel(value.codes[:n].copy(), value.categories)
+        else:
+            out[key] = value
+    return out
+
+
+def _short_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    laps = {1: _head(_merged_lap(60), 1), 2: _head(_merged_lap(61), 6), 3: _merged_lap(62)}
+    laps[2]["time"][2] = laps[2]["time"][1]  # a repeated date: the lap's spline predicts 0
+    return laps
+
+
+def _lerp_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    monkeypatch.setitem(ct._PREDICTED, "speed", [("lerp", {"ref": "rpm"})])
+    monkeypatch.setitem(ct._PREDICTED, "throttle", [("lerp", {"ref": "rpm"})])
+    return {lap: _merged_lap(lap + 70) for lap in (1, 2)}
+
+
+def _integ_laps(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, Any]]:
+    monkeypatch.setitem(ct._PREDICTED, "distance", [("integ", {"speed": "speed", "time": "time"})])
+    laps = {lap: _merged_lap(lap + 80) for lap in (1, 2)}
+    laps[1]["distance"][40:44] = np.nan
+    return laps
+
+
+@_NATIVE_FILE
+@pytest.mark.parametrize(
+    "make",
+    [_plain_laps, _merged_laps, _unshared_spline_laps, _short_laps, _lerp_laps, _integ_laps],
+    ids=["plain", "merged", "unshared-splines", "short-laps", "lerp", "integ"],
+)
+def test_whole_file_decoder_equals_the_column_decoder(monkeypatch, make):
+    """``tif1_native.tel_decode_file`` decodes the bits the column-by-column decoder does."""
+    laps = make(monkeypatch)
+    blob = ct.encode_driver_file(laps, level=3)
+    if make is _lerp_laps:
+        assert _encodings(blob)[("speed", "f8")] == "lerp"
+    if make is _integ_laps:
+        assert _encodings(blob)[("distance", "f8")] == "integ"
+    if make is _unshared_spline_laps:
+        assert {_encodings(blob)[(key, "f8")] for key in "xyz"} == {"spline"}
+    native = ct.decode_driver_file(blob)
+    columns = _column_decode(blob, monkeypatch)
+    assert list(native) == list(columns)
+    for lap, tel in laps.items():
+        _assert_same_tel(tel, native[lap])
+        _assert_same_tel(columns[lap], native[lap])
+        for key, value in native[lap].items():
+            if isinstance(value, np.ndarray):
+                assert value.flags.writeable, key
+
+
+def _split_body(blob: bytes) -> tuple[dict[str, Any], bytes]:
+    body = ct._decompress(blob)
+    (size,) = ct._HEADER_SIZE.unpack_from(body, 0)
+    start = 4 + size + (-(4 + size) % 8)
+    return orjson.loads(bytes(body[4 : 4 + size])), bytes(body[start:])
+
+
+def _file_of(header: dict[str, Any], buffers: bytes) -> tuple[bytes, bytes]:
+    """(body, file) of ``header`` over ``buffers``."""
+    head = orjson.dumps(header)
+    body = ct._HEADER_SIZE.pack(len(head)) + head
+    body += b"\0" * (-len(body) % 8) + buffers
+    return body, ct.MAGIC + ct._RAW_SIZE.pack(len(body)) + ct._zstd_compress_level(body, 3)
+
+
+def _column(header: dict[str, Any], key: str) -> dict[str, Any]:
+    return next(column for column in header["columns"] if column["key"] == key)
+
+
+def _big_endian_time(header: dict[str, Any]) -> dict[str, Any]:
+    buf = _column(header, "time")["buf"]
+    assert buf[0].startswith("<")
+    buf[0] = ">" + buf[0][1:]
+    return header
+
+
+def _int_delta(header: dict[str, Any]) -> dict[str, Any]:
+    column = _column(header, "time")
+    column["delta"] = int(column["delta"])  # 0 or 1: the same truth value
+    return header
+
+
+def _column_twice(header: dict[str, Any]) -> dict[str, Any]:
+    header["columns"].append(dict(header["columns"][-1]))
+    return header
+
+
+def _float_lap_number(header: dict[str, Any]) -> dict[str, Any]:
+    header["laps"][0]["lap"] = 1.0
+    return header
+
+
+def _unknown_encoding(header: dict[str, Any]) -> dict[str, Any]:
+    _column(header, "acc_x")["enc"] = "fft"
+    return header
+
+
+def _missing_reference(header: dict[str, Any]) -> dict[str, Any]:
+    _column(header, "acc_y")["x"] = "nope"
+    return header
+
+
+@_NATIVE_FILE
+@pytest.mark.parametrize(
+    ("edit", "reason"),
+    [
+        (_big_endian_time, "dtype"),
+        (_int_delta, "not a boolean"),
+        (_column_twice, "listed twice"),
+        (_float_lap_number, "expected an integer"),
+        (_unknown_encoding, "unknown column encoding"),
+        (_missing_reference, "without its reference"),
+    ],
+    ids=["big-endian", "int-delta", "column-twice", "float-lap", "unknown-enc", "missing-ref"],
+)
+def test_the_column_decoder_decides_what_the_whole_file_decoder_declines(monkeypatch, edit, reason):
+    """Layouts the encoder does not write: the native decoder declines, the codec decides."""
+    laps = {lap: _merged_lap(lap + 90) for lap in (1, 2)}
+    header, buffers = _split_body(ct.encode_driver_file(laps, level=3))
+    body, blob = _file_of(edit(header), buffers)
+    with pytest.raises(ValueError, match=reason):
+        json_utils.NATIVE_TEL_DECODE_FILE(body, DictionaryChannel)
+    try:
+        expected = _column_decode(blob, monkeypatch)
+    except ct.ColumnarFormatError:
+        with pytest.raises(ct.ColumnarFormatError):
+            ct.decode_driver_file(blob)
+        return
+    decoded = ct.decode_driver_file(blob)
+    assert list(decoded) == list(expected)
+    for lap, tel in expected.items():
+        _assert_same_tel(tel, decoded[lap])
+
+
+@_NATIVE_FILE
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (b"", "shorter than its header"),
+        (b"\x05\x00\x00\x00{nope", "expected a key"),
+        (b"\x02\x00\x00\x00{}", "missing"),
+        (b"\x07\x00\x00\x00[1,2,3]", "missing"),
+        (b"\x07\x00\x00\x00{} x", "truncated header"),
+    ],
+)
+def test_the_whole_file_decoder_rejects_a_malformed_body(body, reason):
+    with pytest.raises(ValueError, match=reason):
+        json_utils.NATIVE_TEL_DECODE_FILE(body, DictionaryChannel)
+
+
 def test_native_kernels_compute_the_numpy_predictions(monkeypatch):
     if json_utils.NATIVE_TEL_SPLINE is None:
         pytest.skip("the installed tif1-native has no tel.v2 kernels")

@@ -241,6 +241,18 @@ export TIF1_TELEMETRY_COLUMNAR=true
   Type: `bool`. Default: `false`
 </Info>
 
+### TIF1_SESSION_BUNDLE
+
+When `true`, a cold session asks for its bundle file (`session.v1.bin`) instead of one request per small file. The bundle holds `drivers.json`, the session lap times, `session_info.json`, weather, race control and the Ergast classification, byte for byte, in one zstd file. A session without a bundle costs one request, and tif1 remembers the 404. The bundles are off until the data repositories publish them.
+
+```bash
+export TIF1_SESSION_BUNDLE=true
+```
+
+<Info>
+  Type: `bool`. Default: `false`
+</Info>
+
 ### TIF1_LOAD_TELEMETRY_LAZY
 
 When `true` (the default), `session.load()` does not fetch telemetry. The telemetry of a driver is fetched when the code reads it. On a cold session, a first read of one lap fetches only that lap. Other reads fetch all the laps of the driver in one wave. When `false`, `session.load()` fetches the telemetry of every lap, as the fastf1 `load()` does. Set it to `false` before work without a network. Refer to [Lazy telemetry](/concepts/sessions#lazy-telemetry).
@@ -373,19 +385,31 @@ export TIF1_CDN_PRECONNECT=false
 
 ### TIF1_CDN_FIRST_WAVE
 
-Fetch the first files of a cold load with the Python standard library. When `TIF1_CDN_PRECONNECT` is on and the session is not cached yet, `get_session()` gets `drivers.json` and the session lap times over `http.client` while pandas or polars loads. The HTTP client (niquests) loads only when a telemetry request needs it. Until niquests has an open connection, single requests and the first telemetry requests also use the standard-library connections. niquests then loads and connects in a background thread. A response other than `200` with a JSON object goes through niquests, so the CDN fallback is the same. Set to `false` to send every request through niquests.
+Fetch the first files of a cold load with the Python standard library. When `TIF1_CDN_PRECONNECT` is on and the session is not cached yet, `get_session()` gets `drivers.json` and the session lap times over `http.client` while pandas or polars loads. The HTTP client (niquests) loads only when a telemetry request needs it. Until niquests has an open connection, single requests and the first telemetry requests also use the standard-library connections. niquests then loads and connects in a background thread. A process that has not loaded niquests also sends its single requests over the standard library. These include the calendar of the current season (on a cold `get_session()` and at its refresh). They also include the current season's Ergast refreshes and the Stats files of a `tif1.ergast` query. A response other than `200` with a JSON object goes through niquests, so the CDN fallback is the same. Set to `false` to send every request through niquests.
 
 ```bash
 export TIF1_CDN_FIRST_WAVE=false
 ```
 
 <Info>
-  Type: `bool`. Default: `true`. Has no effect when `TIF1_CDN_PRECONNECT` is off.
+  Type: `bool`. Default: `true`. The cold-load part has no effect when `TIF1_CDN_PRECONNECT` is off.
 </Info>
 
 <Warning>
   The standard-library requests verify the certificate chain and the host name with the same root certificates as niquests. They do not do the revocation check (`TIF1_HTTP_REVOCATION_CHECK`). To do that check on each request, set `TIF1_CDN_FIRST_WAVE=false`.
 </Warning>
+
+### TIF1_SESSION_LOOKAHEAD
+
+Fetch the next round's small files while a script works on the current round. Sometimes `get_session()` asks for round r of a season right after round r-1, with the same session. Then tif1 fetches the files of round r+1 that round r-1 fetched from the network. These are `drivers.json` and the session lap times, the weather and race-control files after `load()`, and the Ergast classification after `results`. The fetch uses the standard-library connections of the first wave (`TIF1_CDN_FIRST_WAVE`). tif1 never fetches telemetry ahead, fetches at most one round ahead, and fetches nothing for a cached session or a session that has not started. Set to `false` to fetch one round at a time.
+
+```bash
+export TIF1_SESSION_LOOKAHEAD=false
+```
+
+<Info>
+  Type: `bool`. Default: `true`. Off in offline and CI mode, when `TIF1_CDN_PRECONNECT` is off, and for seasons before 2018.
+</Info>
 
 ### TIF1_CDN_HEDGE
 

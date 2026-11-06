@@ -1,0 +1,203 @@
+{
+ "pairs": 10,
+ "cold": false,
+ "control_src": "/tmp/corinth/control/src",
+ "candidate_src": "/tmp/corinth/C9/src",
+ "cache": "/tmp/corinth/C9/.agents/perf-corinth/scratch/season",
+ "summary": {
+  "season_polars": {
+   "phases": {
+    "import": {
+     "control_median": 13.7,
+     "candidate_median": 15.9,
+     "control_p90": 16.2,
+     "candidate_p90": 25.2,
+     "control_min": 12.2,
+     "candidate_min": 11.9,
+     "candidate_faster_pairs": "2/10"
+    },
+    "schedule": {
+     "control_median": 438.8,
+     "candidate_median": 145.2,
+     "control_p90": 641.5,
+     "candidate_p90": 247.1,
+     "control_min": 396.0,
+     "candidate_min": 121.0,
+     "candidate_faster_pairs": "10/10"
+    },
+    "loop_laps_results": {
+     "control_median": 170.6,
+     "candidate_median": 100.9,
+     "control_p90": 309.4,
+     "candidate_p90": 136.5,
+     "control_min": 164.8,
+     "candidate_min": 83.7,
+     "candidate_faster_pairs": "10/10"
+    },
+    "laps_rows": {
+     "control_median": 26692.0,
+     "candidate_median": 26692.0,
+     "control_p90": 26692,
+     "candidate_p90": 26692,
+     "control_min": 26692,
+     "candidate_min": 26692,
+     "candidate_faster_pairs": "0/10"
+    },
+    "rounds": {
+     "control_median": 24.0,
+     "candidate_median": 24.0,
+     "control_p90": 24,
+     "candidate_p90": 24,
+     "control_min": 24,
+     "candidate_min": 24,
+     "candidate_faster_pairs": "0/10"
+    },
+    "in_process_total": {
+     "control_median": 642.7,
+     "candidate_median": 268.1,
+     "control_p90": 933.6,
+     "candidate_p90": 409.0,
+     "control_min": 573.4,
+     "candidate_min": 216.6,
+     "candidate_faster_pairs": "10/10"
+    },
+    "process_wall": {
+     "control_median": 725.7,
+     "candidate_median": 368.2,
+     "control_p90": 1038.2,
+     "candidate_p90": 548.7,
+     "control_min": 652.2,
+     "candidate_min": 276.4,
+     "candidate_faster_pairs": "10/10"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ],
+     "laps_rows": [
+      "26692"
+     ],
+     "rounds": [
+      "24"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "polars"
+     ],
+     "pandas_imported": [
+      "False"
+     ],
+     "laps_rows": [
+      "26692"
+     ],
+     "rounds": [
+      "24"
+     ]
+    }
+   }
+  },
+  "season_pandas": {
+   "phases": {
+    "import": {
+     "control_median": 27.9,
+     "candidate_median": 15.4,
+     "control_p90": 52.0,
+     "candidate_p90": 29.4,
+     "control_min": 21.6,
+     "candidate_min": 12.1,
+     "candidate_faster_pairs": "8/10"
+    },
+    "schedule": {
+     "control_median": 656.1,
+     "candidate_median": 554.4,
+     "control_p90": 762.8,
+     "candidate_p90": 729.7,
+     "control_min": 357.9,
+     "candidate_min": 402.5,
+     "candidate_faster_pairs": "8/10"
+    },
+    "loop_laps_results": {
+     "control_median": 237.4,
+     "candidate_median": 200.6,
+     "control_p90": 307.3,
+     "candidate_p90": 325.5,
+     "control_min": 125.8,
+     "candidate_min": 127.8,
+     "candidate_faster_pairs": "5/10"
+    },
+    "laps_rows": {
+     "control_median": 26692.0,
+     "candidate_median": 26692.0,
+     "control_p90": 26692,
+     "candidate_p90": 26692,
+     "control_min": 26692,
+     "candidate_min": 26692,
+     "candidate_faster_pairs": "0/10"
+    },
+    "rounds": {
+     "control_median": 24.0,
+     "candidate_median": 24.0,
+     "control_p90": 24,
+     "candidate_p90": 24,
+     "control_min": 24,
+     "candidate_min": 24,
+     "candidate_faster_pairs": "0/10"
+    },
+    "in_process_total": {
+     "control_median": 923.3,
+     "candidate_median": 761.0,
+     "control_p90": 1083.2,
+     "candidate_p90": 1037.1,
+     "control_min": 514.6,
+     "candidate_min": 542.8,
+     "candidate_faster_pairs": "7/10"
+    },
+    "process_wall": {
+     "control_median": 1060.9,
+     "candidate_median": 890.7,
+     "control_p90": 1269.4,
+     "candidate_p90": 1248.5,
+     "control_min": 680.5,
+     "candidate_min": 621.0,
+     "candidate_faster_pairs": "7/10"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ],
+     "laps_rows": [
+      "26692"
+     ],
+     "rounds": [
+      "24"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ],
+     "laps_rows": [
+      "26692"
+     ],
+     "rounds": [
+      "24"
+     ]
+    }
+   }
+  }
+ }
+}

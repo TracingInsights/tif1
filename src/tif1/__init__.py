@@ -234,16 +234,13 @@ def __getattr__(name: str) -> Any:
     ``__version__`` is resolved here too: the eager ``importlib.metadata``
     lookup cost ~37 ms of the ~47 ms ``import tif1`` (importlib.metadata
     imports email/parser machinery); the lookup runs once on first access
-    and is cached in module globals.
+    and is cached in module globals. It reads the ``dist-info`` header
+    directly (:mod:`tif1.core_utils.dist_version`, ~1 ms instead of ~25).
     """
     if name == "__version__":
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as _version
+        from .core_utils.dist_version import tif1_version
 
-        try:
-            value = _version("tif1")
-        except PackageNotFoundError:
-            value = "0.0.0"
+        value = tif1_version()
         globals()["__version__"] = value
         return value
 

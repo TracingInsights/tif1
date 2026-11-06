@@ -43,13 +43,15 @@ fn canonical(v: f64) -> f64 {
     }
 }
 
-/// `predicted[k]` moved by `zigzag[k]` ULPs, in place.
+/// `predicted[k]` moved by `zigzag[k]` ULPs, in place. Branch-free: a zero
+/// distance maps the key back to the same bits (`ordered` is an involution).
 pub fn apply(predicted: &mut [f64], zigzag: &[u64]) -> Result<(), &'static str> {
     if predicted.len() != zigzag.len() {
         return Err("residuals do not match their predictions");
     }
     for (p, &zz) in predicted.iter_mut().zip(zigzag) {
-        *p = apply_residual(*p, zz);
+        let diff = ((zz >> 1) as i64) ^ -((zz & 1) as i64);
+        *p = from_ordered(ordered(*p).wrapping_add(diff));
     }
     Ok(())
 }
@@ -280,7 +282,9 @@ pub fn lateral(speed: &[f64], x: &[f64], other: &[f64], distance: &[f64], sizes:
         let mut correction_sum = 0.0f64;
         for i in 0..n - 1 {
             let dd = theta[i + 1] - theta[i];
-            let mut m = (dd + PI) % two_pi;
+            let shifted = dd + PI;
+            // fmod(a, b) is `a` itself when |a| < |b| (exact): skip the libm call.
+            let mut m = if shifted.abs() < two_pi { shifted } else { shifted % two_pi };
             if m < 0.0 {
                 m += two_pi;
             }
@@ -366,64 +370,113 @@ fn interval(t: &[f64], x: f64, n: usize, hint: usize) -> usize {
     (upper as i64 - 1).clamp(2, n as i64 - 1) as usize
 }
 
-/// Quadratic interpolating spline through `(xd, yd)` evaluated at `xe`
-/// (see `_spline_lap` in the Python codec: same knots, same operations).
-fn spline_lap(xd: &[f64], yd: &[f64], xe: &[f64], out: &mut [f64]) {
-    let n = xd.len();
-    for v in out.iter_mut() {
-        *v = 0.0;
-    }
-    if n < 3 || xd.iter().any(|v| v.is_nan()) || xd.windows(2).any(|w| !(w[1] > w[0])) {
-        return;
-    }
-    let mut t = Vec::with_capacity(n + 3);
-    t.extend_from_slice(&[xd[0]; 3]);
-    for i in 1..n - 2 {
-        t.push((xd[i + 1] + xd[i]) / 2.0);
-    }
-    t.extend_from_slice(&[xd[n - 1]; 3]);
-    let (mut sub, mut diag, mut sup) = (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
-    let mut hint = usize::MAX;
-    for i in 0..n {
-        let l = interval(&t, xd[i], n, hint);
-        hint = l;
-        let h = de_boor2(&t, xd[i], l);
-        let offset = l as i64 - 2 - i as i64;
-        for (c, &value) in h.iter().enumerate() {
-            match offset + c as i64 {
-                -1 => sub[i] = value,
-                0 => diag[i] = value,
-                1 => sup[i] = value,
-                _ => {
-                    if value != 0.0 {
-                        return;
+/// The part of a lap's quadratic interpolating spline that depends on the
+/// dates only (`xd` through the points, `xe` at the targets): the knots'
+/// collocation matrix after elimination and each target's B-spline values.
+/// Channels whose points share the dates (`x`, `y`, `z` of most laps) share
+/// it; [`Basis::evaluate`] then runs the same operations as one pass would.
+pub struct Basis {
+    /// False: the lap predicts 0 (fewer than three points, a NaN or a
+    /// non-increasing date, a collocation entry outside the three diagonals).
+    usable: bool,
+    sup: Vec<f64>,
+    /// The diagonal after elimination.
+    diag: Vec<f64>,
+    /// `factor[i]` (i >= 1): the multiple of row `i - 1` taken from row `i`.
+    factor: Vec<f64>,
+    /// Per target: its knot interval and B-spline values (`l` = usize::MAX: a NaN target).
+    targets: Vec<(usize, [f64; 3])>,
+}
+
+impl Basis {
+    /// See `_spline_lap` in the Python codec: same knots, same operations.
+    pub fn new(xd: &[f64], xe: &[f64]) -> Basis {
+        let n = xd.len();
+        let unusable = Basis {
+            usable: false,
+            sup: Vec::new(),
+            diag: Vec::new(),
+            factor: Vec::new(),
+            targets: Vec::new(),
+        };
+        if n < 3 || xd.iter().any(|v| v.is_nan()) || xd.windows(2).any(|w| !(w[1] > w[0])) {
+            return unusable;
+        }
+        let mut t = Vec::with_capacity(n + 3);
+        t.extend_from_slice(&[xd[0]; 3]);
+        for i in 1..n - 2 {
+            t.push((xd[i + 1] + xd[i]) / 2.0);
+        }
+        t.extend_from_slice(&[xd[n - 1]; 3]);
+        let (mut sub, mut diag, mut sup) = (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
+        let mut hint = usize::MAX;
+        for i in 0..n {
+            let l = interval(&t, xd[i], n, hint);
+            hint = l;
+            let h = de_boor2(&t, xd[i], l);
+            let offset = l as i64 - 2 - i as i64;
+            for (c, &value) in h.iter().enumerate() {
+                match offset + c as i64 {
+                    -1 => sub[i] = value,
+                    0 => diag[i] = value,
+                    1 => sup[i] = value,
+                    _ => {
+                        if value != 0.0 {
+                            return unusable;
+                        }
                     }
                 }
             }
         }
-    }
-    let mut r = yd.to_vec();
-    for i in 1..n {
-        let factor = sub[i] / diag[i - 1];
-        diag[i] = diag[i] - factor * sup[i - 1];
-        r[i] = r[i] - factor * r[i - 1];
-    }
-    let mut coef = vec![0.0f64; n];
-    coef[n - 1] = r[n - 1] / diag[n - 1];
-    for i in (0..n - 1).rev() {
-        coef[i] = (r[i] - sup[i] * coef[i + 1]) / diag[i];
-    }
-    let mut hint = usize::MAX;
-    for (slot, &x) in out.iter_mut().zip(xe) {
-        if x.is_nan() {
-            *slot = f64::NAN;
-            continue;
+        let mut factor = vec![0.0f64; n];
+        for i in 1..n {
+            factor[i] = sub[i] / diag[i - 1];
+            diag[i] = diag[i] - factor[i] * sup[i - 1];
         }
-        let l = interval(&t, x, n, hint);
-        hint = l;
-        let h = de_boor2(&t, x, l);
-        *slot = ((0.0 + coef[l - 2] * h[0]) + coef[l - 1] * h[1]) + coef[l] * h[2];
+        let mut targets = Vec::with_capacity(xe.len());
+        let mut hint = usize::MAX;
+        for &x in xe {
+            if x.is_nan() {
+                targets.push((usize::MAX, [0.0; 3]));
+                continue;
+            }
+            let l = interval(&t, x, n, hint);
+            hint = l;
+            targets.push((l, de_boor2(&t, x, l)));
+        }
+        Basis { usable: true, sup, diag, factor, targets }
     }
+
+    /// The spline through `(xd, yd)` at the targets, into `out` (one per target).
+    pub fn evaluate(&self, yd: &[f64], out: &mut [f64]) {
+        if !self.usable {
+            out.fill(0.0);
+            return;
+        }
+        let n = yd.len();
+        let mut r = yd.to_vec();
+        for i in 1..n {
+            r[i] = r[i] - self.factor[i] * r[i - 1];
+        }
+        let mut coef = vec![0.0f64; n];
+        coef[n - 1] = r[n - 1] / self.diag[n - 1];
+        for i in (0..n - 1).rev() {
+            coef[i] = (r[i] - self.sup[i] * coef[i + 1]) / self.diag[i];
+        }
+        for (slot, &(l, h)) in out.iter_mut().zip(&self.targets) {
+            *slot = if l == usize::MAX {
+                f64::NAN
+            } else {
+                ((0.0 + coef[l - 2] * h[0]) + coef[l - 1] * h[1]) + coef[l] * h[2]
+            };
+        }
+    }
+}
+
+/// Quadratic interpolating spline through `(xd, yd)` evaluated at `xe`
+/// (see `_spline_lap` in the Python codec: same knots, same operations).
+fn spline_lap(xd: &[f64], yd: &[f64], xe: &[f64], out: &mut [f64]) {
+    Basis::new(xd, xe).evaluate(yd, out);
 }
 
 /// Per lap, the spline through the rows flagged in `points` evaluated at the

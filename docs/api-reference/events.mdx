@@ -130,7 +130,7 @@ A year without schedule data does not raise: when the repository has no file for
 - **Caching**: The raw schedule data is cached in memory after the first request. Later calls for the same year make no network requests until `schedule_ttl_hours` have passed for a live season, but each call builds a new `EventSchedule`.
 - **Data Source**: The current and future seasons come from the live `theOehrly/f1schedule` repository (`raw.githubusercontent.com`, the same file FastF1 reads). tif1 fetches the file again once the cached copy is older than `schedule_ttl_hours` (default 6). Past seasons come from the vendored JSON files (2018 onwards); earlier years fall back to the repository.
 - **Testing Events**: By default, `get_events()` includes all events including pre-season testing. Testing rows have `RoundNumber` 0 and come after the race weekends. Use `get_event_schedule(year, include_testing=False)` to exclude them.
-- **Performance**: A call takes a few milliseconds for vendored or cached data, because it builds one `Event` per row. Only the first fetch of a live season into an empty cache directory adds the network time. A later refresh runs in a background thread while the cached copy is served.
+- **Performance**: A call takes about 2 ms for vendored or cached data once pandas is imported. Only the first fetch of a live season into an empty cache directory adds the network time. A later refresh runs in a background thread while the cached copy is served. The pandas import itself is about 340 ms; `lib="polars"` does not import pandas (refer to [Polars schedules](#polars-schedules)).
 
 **Example Usage:**
 
@@ -193,8 +193,47 @@ print(f"\nEvents in all {len(years)} years: {len(consistent_events)}")
 ```
 
 <Tip>
-  Use `get_events()` to work with the complete season schedule as a DataFrame. For a single event by name, `get_event_by_name()` is the quickest lookup, because it does not build the schedule.
+  Use `get_events()` to work with the complete season schedule as a DataFrame. For a single event, `get_event()`, `get_event_by_name()` and `get_event_by_round()` are the quickest lookups, because they do not build the schedule.
 </Tip>
+
+### Polars schedules
+
+```python
+def get_event_schedule(year: int, include_testing: bool = True, *, backend=None, lib="polars") -> polars.DataFrame
+def get_events_remaining(dt=None, *, include_testing: bool = True, backend=None, lib="polars") -> polars.DataFrame
+```
+
+`get_event_schedule()` and `get_events_remaining()` accept `lib="polars"`. They then return a plain `polars.DataFrame` with the same rows and columns, in the same order, as the pandas `EventSchedule`. tif1 builds this frame without pandas, numpy or pyarrow. A polars script that reads the schedule and then loads `lib="polars"` sessions does not import pandas (about 340 ms). The default stays `lib="pandas"`: fastf1 returns an `EventSchedule`.
+
+The column types:
+
+| Column | pandas `EventSchedule` | polars frame |
+| --- | --- | --- |
+| `RoundNumber` | `int64` | `Int64` |
+| `EventDate`, `Session{i}DateUtc` | naive `datetime64[us]` | naive `Datetime("us")` |
+| `Session{i}Date` | `object`: datetimes with the UTC offset of the circuit | naive `Datetime("us")`: the same local time without the offset (the offset is in `GmtOffset`) |
+| `F1ApiSupport` | `bool` | `Boolean` |
+| `CircuitLatitude`, `CircuitLongitude` | `float64` | `Float64` |
+| other columns | `str` | `String` |
+
+A missing value is null in the polars frame (`NaN`, `NaT` or `None` in pandas). The polars frame has no `year` or `backend` attribute and no event methods. Filter it with polars expressions, or use `get_event()` for an `Event`. If polars is not installed, the functions log a warning and return the pandas `EventSchedule`.
+
+```python
+import polars as pl
+
+import tif1
+
+schedule = tif1.get_event_schedule(2025, include_testing=False, lib="polars")
+for row in schedule.select("RoundNumber", "EventName", "Session5DateUtc").iter_rows():
+    print(row)
+
+sprints = schedule.filter(pl.col("EventFormat") == "sprint_qualifying")
+print(sprints["EventName"].to_list())
+
+for round_number in schedule["RoundNumber"]:
+    session = tif1.get_session(2025, round_number, "R", lib="polars")
+    print(round_number, session.laps.height)
+```
 
 ---
 

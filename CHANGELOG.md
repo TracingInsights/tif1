@@ -147,6 +147,120 @@ both backends is unchanged (133 pandas, 131 polars).
   ~4 ms instead of 10-12 ms; a loop over every lap's telemetry after
   `load()` is ~7-10 ms faster (~140 -> ~132 ms).
 
+### Performance — Corinth series (2026-11-06)
+
+Combined effect, fresh process, empty cache, live CDN, 3 interleaved runs
+against the Naxos tree: a 24-race season loop of `laps` and `results`
+3673 -> 2225 ms on pandas (-39%) and 2844 -> 2017 ms on polars (-29%); the
+1998 Monaco race (`get_session`, `laps`, `results`) 2023 -> 559 ms on pandas
+(-72%) and 2304 -> 478 ms on polars (-79%); three `tif1.ergast` queries
+1358 -> 630 ms (-54%); a 2026 race (`get_session`, `laps`, `results`)
+1203 -> 585 ms on pandas (-51%) and 960 -> 367 ms on polars (-62%). Every
+run won except one schedule run. The warm workloads are unchanged (a
+12-pair recheck is within noise), every user-visible surface of both
+backends is unchanged (133 pandas, 131 polars), and the perf gate passes
+(0 of 120 phases slower).
+
+- A script that walks a season (`get_session(year, r, ...)` for r = 1, 2,
+  3, ...) fetches the next round's files while it works on the current one.
+  When `get_session` is asked for round r right after round r-1 (same
+  season, session and schedule backend), it fetches in the background, over
+  the first wave's kept-alive connections, the session files round r-1
+  fetched (laptimes and drivers, plus weather and race control after
+  `load()`) and the Ergast classification, for round r+1. The next round's
+  load takes the bodies instead of requesting them. One round ahead,
+  nothing for cached or future sessions, never telemetry. A cold 24-race
+  loop of `.laps` and `.results` went from 4.2 s to 2.5 s (pandas) and 4.7 s
+  to 3.0 s (polars); a fastf1-style `load()` loop over 8 races from 3.2 s to
+  2.3 s. Single sessions and warm loads are unchanged.
+  `session_lookahead=False` (`TIF1_SESSION_LOOKAHEAD`) turns it off.
+- Cold pre-2018 (Ergast-only) sessions load 2-5x faster: 1998 Monaco
+  `get_session` + `laps` + `results` 2.06 s -> 0.72 s on pandas, 2.81 s ->
+  0.52 s on polars, and the same on 2010 Monza, 1975 British and 1955
+  Monaco. A session no longer asks for lap timings before 1996 or pit stops
+  before 2011, which Ergast does not have: each such lookup was a jsDelivr
+  404/403, a StaticDelivr 404 and an empty Jolpica page (1.2-3.6 s), and a
+  warm cache could not answer it offline. `get_session` starts the round's
+  Stats files (season index, classification, lap timings, pit stops) while
+  pandas or polars imports, and the lap timings and pit stops of a round
+  come in one parallel wave. Fuzzy event-name matching no longer imports
+  numpy: a polars `get_session(1975, "British", "R")` is 394 -> 282 ms warm.
+- Cold `tif1.ergast` queries are 34-46% faster on pandas (fresh process,
+  empty cache; `get_race_results(season=2024)` 1084 -> 638 ms,
+  `get_qualifying_results(2023, 5)` 799 -> 487 ms) and 28-39% on polars.
+  `from tif1.ergast import Ergast` no longer imports pandas, and a query
+  answered from the Stats repository fetches while pandas (and polars or
+  pyarrow for `result_type="polars"`) imports. Its files go over the
+  standard-library client of the first wave instead of importing niquests.
+  When a season's `events.json` is not cached, it comes in one parallel
+  wave with the round files the query reads, predicted from the packaged
+  schedule. With pandas already imported, the query itself is 55-69%
+  faster (583 -> 261 ms for a season of race results). Answers are
+  unchanged.
+- Current-season scripts no longer pay for cache refreshes. The calendar
+  fetch of a cold `get_session()`, its background refresh after
+  `schedule_ttl_hours`, and the Ergast Stats refreshes after
+  `ergast_ttl_hours` use the standard-library HTTPS client of the first wave
+  when niquests is not loaded. Through niquests they paid its import and a
+  246 KB certificate revocation list for raw.githubusercontent.com (~0.5 s
+  under the GIL beside the pandas import), and the background refresh often
+  did not finish before a short script ended. A one-round lookup of a
+  finished round no longer fetches the season's `events.json` again. A 2026
+  race script (`get_session`, `laps`, `results`), whole process, 6 h after
+  the last refresh: pandas 1145 -> 854 ms on the latest round and 897 -> 582
+  ms on an earlier one (polars 764 -> 659, 918 -> 514); cold, pandas 1717 ->
+  922 ms and polars 1140 -> 593 ms. Warm and offline runs are unchanged.
+- Warm sessions on Python 3.14.5+ and 3.15 get the GC promotion that
+  3.11-3.13 already had (Naxos). It was off for every 3.14 because 3.14.0
+  shipped an incremental collector; CPython 3.14.5 (and 3.15 before its
+  first beta) went back to the generational collector, where
+  `gc.freeze(); gc.unfreeze()` is an O(1) move. It stays off on
+  3.14.0-3.14.4, the 3.15 alphas and 3.16+. A pandas `get_session()` on 3.14
+  spent 18-35 ms in a collection that freed nothing. Fresh process, warm
+  cache: pandas `fetch_all_laps_telemetry()` script 597 -> 557 ms (12/12
+  pairs), the benchmark notebook 675 -> 636 ms, polars `laps` 245 -> 218 ms;
+  a warm pandas `laps` script now takes the same time on 3.14 as on 3.13.
+  A loop over the laps' telemetry also builds each lap's frame with GC
+  paused (the ~30 young collections such a loop triggered freed nothing):
+  the notebook's `iterlaps()` loop 141 -> 124 ms on 3.13 and 143 -> 116 ms
+  on 3.14.
+- `import tif1.plotting` no longer imports matplotlib (0.5 -> 0.02 s): the
+  color, name and style lookups need none, and `setup_mpl`, the legend and
+  style helpers and the `mpl`/`plt`/`cycler` attributes import it on first
+  use. rapidfuzz loads only for a fuzzy driver or team lookup. A script that
+  only reads team colors takes 0.55 s instead of 0.90 s.
+  `plot_driver_laptimes` draws its compound scatter with matplotlib
+  directly, with the calls seaborn's `scatterplot` made and the same figure
+  down to the pixels, so it no longer imports seaborn and `scipy.stats`: the
+  first chart of a process takes 1.3 s instead of 2.4 s.
+- The CLI's session tables no longer import pandas. `tif1 results`,
+  `drivers` and `fastest` load polars sessions when polars is installed and
+  print the same tables; `tif1 standings` prints the rows without building
+  a frame. Warm 2025 Bahrain cache: `drivers`, `results`, `fastest` and
+  `fastest -d` 567-618 -> ~316 ms, `standings` 518 -> 165 ms; cold `results`
+  705 -> 453 ms and `fastest` 770 -> 448 ms. `tif1.__version__` and the
+  User-Agent read the dist-info `Version` header directly instead of
+  importing `importlib.metadata`, and `tif1 version` takes 112 ms instead of
+  132 ms.
+- The pandas `EventSchedule` is built from its row dicts instead of one
+  `Event` Series per event (27.7 -> 18.5 ms after the pandas import, 7.4 ->
+  2.2 ms per later call), `get_events_remaining` reads whole columns instead
+  of `iterrows` (33.7 -> 24.1 ms), and `get_event`/`get_event_by_round`
+  resolve on the schedule payload and build only the matched `Event` (30.1
+  -> 18.7 ms by name, 12.6 -> 0.5 ms by round). The frames are unchanged (568
+  schedule surfaces, 1950-2026, every backend).
+- A `tel.v2` columnar telemetry file decodes in one tif1-native call,
+  `tel_decode_file`, with the GIL released, instead of a column-by-column
+  numpy decoder around the prediction kernels; the decoded laps are the same
+  bits. One thread decodes the 2025 Bahrain race's 119 files in ~315 ms
+  instead of ~490 ms (qualifying 165 instead of 238), and the fetch threads
+  decode files in parallel (8 threads: ~80 ms instead of ~330 ms). On a
+  100 MB/s local CDN a cold `fetch_all_laps_telemetry()` takes 2.48 s instead
+  of 3.07 s with pandas and 2.35 s instead of 2.92 s with polars; on an
+  8 MB/s link the transfer still dominates. Needs `tif1-native` 0.3.0 and the
+  published `tel.v2` files (the reader stays off by default); without
+  `tel_decode_file` the column decoder is used as before.
+
 ### Changed
 
 - **`session.load()` no longer fetches telemetry by default** (different
@@ -176,6 +290,28 @@ both backends is unchanged (133 pandas, 131 polars).
     (`TIF1_LOAD_TELEMETRY_LAZY=false`, or `.tif1rc`).
   `COMPATIBILITY.md` ("Lazy telemetry in `load()`") and the migration guide
   list every difference.
+- A current-season Ergast classification (`results`, `quali_results`,
+  `sprint_results` of the Stats repository) that tif1 fetched 14 days or
+  more after the race is kept in the cache permanently, as a past season's
+  is, instead of expiring after `ergast_ttl_hours`. 14 days is the period
+  for a review of a result, and the repository wrote each 2026
+  classification file one time and did not change it. The latest rounds,
+  missing or empty files, laps, pit stops, standings and every Jolpica
+  answer keep the TTL. A correction made after the 14 days reaches the cache
+  only after `tif1 cache-clear --ergast` (or `get_cache().invalidate("ergast")`).
+- More requests go over the standard-library HTTPS client when niquests is
+  not loaded: the current season's calendar (cold `get_session()` and its
+  refresh), the current season's Ergast refreshes, and the Stats files of a
+  `tif1.ergast` query. Like the first wave, these verify the certificate
+  chain and host name but skip niquests' revocation check;
+  `cdn_first_wave=False` sends every request through niquests.
+- `tif1 drivers`, `results` and `fastest` load polars sessions when polars
+  is installed, unless `TIF1_LIB` or a `.tif1rc` file sets `lib`; the printed
+  tables are the same.
+  `tif1 fastest` no longer raises `TypeError` when the configured backend is
+  polars, and it lists drivers with exactly equal lap times in the
+  session's order on both backends (a stable sort; numpy's default
+  quicksort leaves such ties in no defined order).
 - `load()` / `load_async()` accept `telemetry="eager"`: the telemetry of every
   lap now, whatever `load_telemetry_lazy` says (`"lazy"` and `"eager"` are
   case-insensitive; other strings raise `ValueError`).
@@ -195,6 +331,35 @@ both backends is unchanged (133 pandas, 131 polars).
 
 ### Added
 
+- `get_event_schedule()` and `get_events_remaining()` take `lib="polars"`
+  and return a polars frame with the `EventSchedule`'s rows and columns,
+  built from Python lists with no pandas, numpy, pyarrow or query plan
+  (local session times are naive `Datetime` values with the offset in
+  `GmtOffset`; missing values are null). The default stays fastf1's pandas
+  `EventSchedule`. Warm, fresh process: a 2025 schedule 605 -> 270 ms,
+  `get_events_remaining` 611 -> 285 ms, a 24-race polars season loop
+  (schedule, laps, results) 726 -> 368 ms; cold current season 2.6-2.9 s ->
+  1.1-1.2 s.
+- `session_lookahead` (`TIF1_SESSION_LOOKAHEAD`, default on): the next
+  round's small files in the background during a season loop (see
+  Performance — Corinth series).
+- Session bundles, off by default until the data repositories publish them:
+  `{year}/{gp}/{session}/session.v1.bin` holds a session's small files byte
+  for byte in one zstd file (`drivers.json`, the session laptimes,
+  `session_info.json`, weather, race control, and the Ergast classification
+  with its season index; `design/SESSION_BUNDLE_FORMAT.md`). With
+  `session_bundle=True` (`TIF1_SESSION_BUNDLE`), a cold session asks for it
+  in the first wave instead of `drivers.json` and the laptimes, and every
+  later read of those files is answered from it. On a local HTTPS CDN with a
+  40 ms first-byte delay and an 8 MB/s link, `load()` + `results` +
+  `t0_date` takes 981 ms instead of 1148 ms (pandas) and 470 ms instead of
+  787 ms (polars), and a six-race `laps` + `results` loop 1393 ms instead of
+  1778 ms (polars 889 instead of 1172). The 2025 Bahrain race's bundle is
+  48.9 KB against 66.1 KB for the same files gzipped one by one. A session
+  without a bundle costs one request (the 404 is remembered in the
+  missing-payload tier). Members are validated and cached exactly as fetched
+  files. `tools/data/encode_session_bundle.py --verify` writes and checks the
+  files.
 - Cold telemetry can come from per-driver columnar files when the data
   repositories publish them: `{driver}/tel.v2.{first}.bin`, ten laps each,
   typed columns in one zstd frame (`design/TELEMETRY_COLUMNAR_FORMAT.md`;

@@ -42,17 +42,18 @@ def user_agent() -> str:
     """``tif1/{version} (+homepage)``: the User-Agent of every tif1 request.
 
     The Jolpica API refuses requests without a descriptive User-Agent; the
-    CDNs ignore it. The version lookup (importlib.metadata) runs once.
+    CDNs ignore it. The version lookup (the dist-info header, without
+    importlib.metadata: :mod:`tif1.core_utils.dist_version`) runs once.
     """
     global _user_agent_value
     if _user_agent_value is None:
         try:
-            from importlib.metadata import version
+            from .core_utils.dist_version import tif1_version
 
-            tif1_version = version("tif1")
+            version = tif1_version()
         except Exception:
-            tif1_version = "0.0.0"
-        _user_agent_value = f"tif1/{tif1_version} (+https://github.com/TracingInsights/tif1)"
+            version = "0.0.0"
+        _user_agent_value = f"tif1/{version} (+https://github.com/TracingInsights/tif1)"
     return _user_agent_value
 
 

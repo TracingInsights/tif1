@@ -105,8 +105,10 @@ class NiquestsTransport:
         A cold load's first-wave file the stdlib fetch of ``get_session``
         brought (Elis E2) is handed over without touching niquests, and until
         a niquests session exists and has connected (Elis E9) a request rides
-        the wave's kept-alive stdlib connections; any answer but a ``200``
-        with a JSON object goes to niquests as before.
+        the wave's kept-alive stdlib connections, which a process that ran no
+        wave builds on demand (Corinth C4: the calendar and the Ergast files
+        of a warm session past their TTL); any answer but a ``200`` with a
+        JSON object goes to niquests as before.
         """
         from . import first_wave, http_session
         from .config import get_config
@@ -115,8 +117,8 @@ class NiquestsTransport:
             timeout = get_config().get("timeout", 30)
         if first_wave.pending(url):
             content = first_wave.take(url)
-        elif first_wave.has_client() and (
-            http_session._shared_session is None or http_session.warm_connections_pending()
+        elif (http_session._shared_session is None and first_wave.ensure_client()) or (
+            first_wave.has_client() and http_session.warm_connections_pending()
         ):
             content = first_wave.fetch(url, timeout=timeout)
         else:
@@ -627,6 +629,9 @@ class PayloadLoader:
         """
         from .config import get_config
 
+        bundled = self._bundle_member(path)
+        if bundled is not None:
+            return bundled
         config = get_config()
         timeout = config.get("timeout", 30)
         transport = self.transport
@@ -651,6 +656,29 @@ class PayloadLoader:
 
         year, gp, session = self._session_context()
         return self.cdn_manager.try_sources(year, gp, session, path, fetch)
+
+    def _bundle_member(self, path: str) -> dict[str, Any] | None:
+        """``path`` from the session's bundle (Corinth C10), or None (fetch the file).
+
+        Raises:
+            DataNotFoundError: The bundle lists ``path`` as absent (the caller
+                records the all-404 verdict, as after a CDN walk).
+        """
+        from . import session_bundle
+
+        if self.year is None or not session_bundle.is_member(path) or not session_bundle.enabled():
+            return None
+        year, gp, session = self._session_context()
+        body = session_bundle.member(year, gp, session, path, write_cache=self.enable_cache)
+        if body is None:
+            return None
+        if body is session_bundle.ABSENT:
+            raise DataNotFoundError(year=year, event=gp, session=session)
+        try:
+            data = json_loads(body)
+        except (ValueError, TypeError):
+            return None  # the file itself answers
+        return data if isinstance(data, dict) else None
 
     async def get_many(
         self,

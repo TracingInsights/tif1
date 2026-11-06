@@ -1,0 +1,265 @@
+{
+ "pairs": 20,
+ "cold": false,
+ "control_src": "/tmp/corinth/control/src",
+ "candidate_src": "/tmp/corinth/C9/src",
+ "cache": "/tmp/corinth/warm-C9",
+ "summary": {
+  "schedule_pandas_preimported": {
+   "phases": {
+    "import": {
+     "control_median": 16.0,
+     "candidate_median": 16.4,
+     "control_p90": 22.4,
+     "candidate_p90": 23.1,
+     "control_min": 12.1,
+     "candidate_min": 12.2,
+     "candidate_faster_pairs": "8/20"
+    },
+    "import_pandas": {
+     "control_median": 468.4,
+     "candidate_median": 428.5,
+     "control_p90": 596.6,
+     "candidate_p90": 597.5,
+     "control_min": 363.1,
+     "candidate_min": 344.0,
+     "candidate_faster_pairs": "11/20"
+    },
+    "schedule": {
+     "control_median": 27.7,
+     "candidate_median": 18.5,
+     "control_p90": 50.7,
+     "candidate_p90": 34.4,
+     "control_min": 22.9,
+     "candidate_min": 17.3,
+     "candidate_faster_pairs": "16/20"
+    },
+    "in_process_total": {
+     "control_median": 518.9,
+     "candidate_median": 468.1,
+     "control_p90": 660.5,
+     "candidate_p90": 654.4,
+     "control_min": 402.3,
+     "candidate_min": 377.7,
+     "candidate_faster_pairs": "11/20"
+    },
+    "process_wall": {
+     "control_median": 608.4,
+     "candidate_median": 566.9,
+     "control_p90": 765.3,
+     "candidate_p90": 766.6,
+     "control_min": 473.0,
+     "candidate_min": 475.2,
+     "candidate_faster_pairs": "11/20"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  },
+  "remaining_pandas_preimported": {
+   "phases": {
+    "import": {
+     "control_median": 15.8,
+     "candidate_median": 15.8,
+     "control_p90": 22.5,
+     "candidate_p90": 22.6,
+     "control_min": 11.9,
+     "candidate_min": 12.1,
+     "candidate_faster_pairs": "9/20"
+    },
+    "import_pandas": {
+     "control_median": 444.4,
+     "candidate_median": 452.9,
+     "control_p90": 671.5,
+     "candidate_p90": 688.5,
+     "control_min": 375.1,
+     "candidate_min": 331.9,
+     "candidate_faster_pairs": "8/20"
+    },
+    "remaining": {
+     "control_median": 33.7,
+     "candidate_median": 24.1,
+     "control_p90": 69.0,
+     "candidate_p90": 43.0,
+     "control_min": 26.8,
+     "candidate_min": 20.0,
+     "candidate_faster_pairs": "15/20"
+    },
+    "in_process_total": {
+     "control_median": 484.5,
+     "candidate_median": 494.1,
+     "control_p90": 732.3,
+     "candidate_p90": 755.2,
+     "control_min": 417.9,
+     "candidate_min": 403.5,
+     "candidate_faster_pairs": "8/20"
+    },
+    "process_wall": {
+     "control_median": 593.2,
+     "candidate_median": 591.6,
+     "control_p90": 842.8,
+     "candidate_p90": 877.4,
+     "control_min": 494.3,
+     "candidate_min": 480.5,
+     "candidate_faster_pairs": "10/20"
+    }
+   },
+   "info": {
+    "control": {
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  },
+  "get_event_preimported": {
+   "phases": {
+    "import": {
+     "control_median": 16.4,
+     "candidate_median": 15.5,
+     "control_p90": 26.7,
+     "candidate_p90": 22.2,
+     "control_min": 11.9,
+     "candidate_min": 12.2,
+     "candidate_faster_pairs": "11/20"
+    },
+    "import_pandas": {
+     "control_median": 463.9,
+     "candidate_median": 488.4,
+     "control_p90": 612.2,
+     "candidate_p90": 594.2,
+     "control_min": 380.1,
+     "candidate_min": 333.6,
+     "candidate_faster_pairs": "11/20"
+    },
+    "get_event_name": {
+     "control_median": 30.1,
+     "candidate_median": 18.7,
+     "control_p90": 135.4,
+     "candidate_p90": 53.0,
+     "control_min": 24.2,
+     "candidate_min": 15.1,
+     "candidate_faster_pairs": "18/20"
+    },
+    "get_event_round": {
+     "control_median": 12.6,
+     "candidate_median": 0.5,
+     "control_p90": 29.8,
+     "candidate_p90": 0.8,
+     "control_min": 9.6,
+     "candidate_min": 0.4,
+     "candidate_faster_pairs": "20/20"
+    },
+    "in_process_total": {
+     "control_median": 519.7,
+     "candidate_median": 528.3,
+     "control_p90": 745.5,
+     "candidate_p90": 649.0,
+     "control_min": 430.3,
+     "candidate_min": 371.3,
+     "candidate_faster_pairs": "13/20"
+    },
+    "process_wall": {
+     "control_median": 615.8,
+     "candidate_median": 628.5,
+     "control_p90": 987.2,
+     "candidate_p90": 765.4,
+     "control_min": 503.1,
+     "candidate_min": 453.8,
+     "candidate_faster_pairs": "12/20"
+    }
+   },
+   "info": {
+    "control": {
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  },
+  "schedule_pandas": {
+   "phases": {
+    "import": {
+     "control_median": 14.3,
+     "candidate_median": 14.0,
+     "control_p90": 22.2,
+     "candidate_p90": 28.0,
+     "control_min": 11.9,
+     "candidate_min": 12.0,
+     "candidate_faster_pairs": "9/20"
+    },
+    "schedule": {
+     "control_median": 477.3,
+     "candidate_median": 471.5,
+     "control_p90": 551.0,
+     "candidate_p90": 625.4,
+     "control_min": 370.8,
+     "candidate_min": 365.6,
+     "candidate_faster_pairs": "10/20"
+    },
+    "in_process_total": {
+     "control_median": 494.4,
+     "candidate_median": 492.4,
+     "control_p90": 571.5,
+     "candidate_p90": 647.5,
+     "control_min": 382.8,
+     "candidate_min": 377.7,
+     "candidate_faster_pairs": "9/20"
+    },
+    "process_wall": {
+     "control_median": 572.9,
+     "candidate_median": 588.2,
+     "control_p90": 696.5,
+     "candidate_p90": 756.2,
+     "control_min": 485.8,
+     "candidate_min": 457.4,
+     "candidate_faster_pairs": "9/20"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    }
+   }
+  }
+ }
+}

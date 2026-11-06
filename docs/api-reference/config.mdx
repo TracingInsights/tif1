@@ -1027,10 +1027,18 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="cdn_first_wave" type="bool" default="True">
-  Fetch the first files of a cold load (`drivers.json`, the session lap times) with the Python standard library while pandas or polars loads. niquests loads only when a telemetry request needs it, and the first telemetry requests use the standard-library connections until niquests has an open connection. These requests verify the certificate chain and the host name, but they do not do the revocation check (`http_revocation_check`). Has no effect when `cdn_preconnect` is off. Set it to `False` to send every request through niquests.
+  Fetch the first files of a cold load (`drivers.json`, the session lap times) with the Python standard library while pandas or polars loads. niquests loads only when a telemetry request needs it, and the first telemetry requests use the standard-library connections until niquests has an open connection. A process that has not loaded niquests also sends its single requests with the standard library. These include the calendar of the current season (on a cold `get_session()` and at its refresh). They also include the current season's Ergast refreshes and the Stats files of a `tif1.ergast` query. These requests verify the certificate chain and the host name, but they do not do the revocation check (`http_revocation_check`). The cold-load part has no effect when `cdn_preconnect` is off. Set it to `False` to send every request through niquests.
 
   ```python
   config.set("cdn_first_wave", False)  # every request through niquests
+  ```
+</ResponseField>
+
+<ResponseField name="session_lookahead" type="bool" default="True">
+  Fetch the next round's small files while a script works on the current round. Sometimes `get_session()` asks for round r of a season right after round r-1, with the same session and schedule backend. Then tif1 fetches the files of round r+1 that round r-1 fetched from the network. These are `drivers.json` and the session lap times, the weather and race-control files after `load()`, and the Ergast classification after `results`. The fetch runs in a background thread on the standard-library connections of the first wave (`cdn_first_wave`). The next `get_session()` uses those answers and sends no request for them. tif1 never fetches telemetry ahead. It fetches at most one round ahead, and nothing for a session that is in the cache or has not started yet. A script that stops early leaves at most one round of files unused (about 0.4 MB). Off in offline and CI mode, when `cdn_preconnect` is off, and for seasons before 2018. A cold 24-race loop of `laps` and `results` takes about 40% less time.
+
+  ```python
+  config.set("session_lookahead", False)  # one round at a time, no background fetch
   ```
 </ResponseField>
 
@@ -1039,6 +1047,14 @@ config.set("pool_connections", 1024)
 
   ```python
   config.set("telemetry_columnar", True)  # ask for the columnar files first
+  ```
+</ResponseField>
+
+<ResponseField name="session_bundle" type="bool" default="False">
+  Ask a cold session for its bundle file (`{year}/{gp}/{session}/session.v1.bin`) instead of one request per small file. The bundle is one zstd file. It holds, byte for byte, `drivers.json`, the session lap times, `session_info.json`, weather, race control and the Ergast classification with its season index. tif1 validates and caches each file of the bundle as if it fetched that file alone. A session without a bundle costs one request: tif1 remembers the 404 for `missing_payloads_ttl_days` and then reads the files as before. The format is in `design/SESSION_BUNDLE_FORMAT.md`. Off until the data repositories publish the bundles. `TIF1_SESSION_BUNDLE=1` turns it on.
+
+  ```python
+  config.set("session_bundle", True)  # one request for a session's small files
   ```
 </ResponseField>
 
@@ -2642,6 +2658,9 @@ Legend: ↑ = Increases, ↓ = Decreases
   "http_multiplexed": true,
   "http_disable_http3": true,
   "cdn_preconnect": true,
+  "cdn_first_wave": true,
+  "session_lookahead": true,
+  "session_bundle": false,
   "exit_gc_freeze": true,
   "load_telemetry_lazy": true,
   "cdns": ["https://cdn.jsdelivr.net/gh/TracingInsights", "https://huggingface.co/buckets/tracinginsights", "https://cdn.staticdelivr.com/gh/TracingInsights"],

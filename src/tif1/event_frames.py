@@ -19,6 +19,49 @@ from . import events as _events
 from .types import ScheduleBackend
 
 
+def _event_data(
+    year: int, name: str, metadata: dict | None, backend: ScheduleBackend | None
+) -> dict[str, Any]:
+    """The labels and values of an :class:`Event`, in order, without building the Series.
+
+    ``get_event_schedule`` builds its rows from these dicts directly: a Series
+    per event (and its ``to_dict()``) was ~1 ms each, most of a schedule.
+    """
+    from datetime import timezone as tz
+
+    sessions = _events.get_sessions(year, name, backend=backend)
+    data: dict[str, Any] = {
+        "RoundNumber": 0,
+        "Country": "",
+        "Location": _events._derive_location(name),
+        "OfficialEventName": name,
+        "EventDate": pd.NaT,
+        "EventName": name,
+        "EventFormat": "conventional",
+    }
+
+    for i, session in enumerate(sessions, 1):
+        data[f"Session{i}"] = session
+        data[f"Session{i}Date"] = None
+        data[f"Session{i}DateUtc"] = pd.NaT
+
+    data["F1ApiSupport"] = True
+
+    if metadata:
+        gmt_offset = _events._parse_gmt_offset(metadata.get("GmtOffset"))
+        for key, value in metadata.items():
+            if key == "EventDate" and value:
+                data[key] = pd.Timestamp(value.split("T")[0])
+            elif key.endswith("DateUtc") and value:
+                data[key] = pd.Timestamp(value)
+            elif key.endswith("Date") and value and gmt_offset is not None:
+                # Local track time, made tz-aware with the event's GMT offset
+                data[key] = datetime.fromisoformat(value).replace(tzinfo=tz(gmt_offset))
+            else:
+                data[key] = value
+    return data
+
+
 class Event(pd.Series):
     __module__ = "tif1.events"
     _metadata: ClassVar[list[str]] = ["_name", "_year", "_event_name", "_backend"]
@@ -38,39 +81,7 @@ class Event(pd.Series):
         *,
         backend: ScheduleBackend | None = None,
     ):
-        from datetime import timezone as tz
-
-        sessions = _events.get_sessions(year, name, backend=backend)
-        data = {
-            "RoundNumber": 0,
-            "Country": "",
-            "Location": self._derive_location(name),
-            "OfficialEventName": name,
-            "EventDate": pd.NaT,
-            "EventName": name,
-            "EventFormat": "conventional",
-        }
-
-        for i, session in enumerate(sessions, 1):
-            data[f"Session{i}"] = session
-            data[f"Session{i}Date"] = None
-            data[f"Session{i}DateUtc"] = pd.NaT
-
-        data["F1ApiSupport"] = True
-
-        if metadata:
-            gmt_offset = _events._parse_gmt_offset(metadata.get("GmtOffset"))
-            for key, value in metadata.items():
-                if key == "EventDate" and value:
-                    data[key] = pd.Timestamp(value.split("T")[0])
-                elif key.endswith("DateUtc") and value:
-                    data[key] = pd.Timestamp(value)
-                elif key.endswith("Date") and value and gmt_offset is not None:
-                    # Local track time, made tz-aware with the event's GMT offset
-                    data[key] = datetime.fromisoformat(value).replace(tzinfo=tz(gmt_offset))
-                else:
-                    data[key] = value
-
+        data = _event_data(year, name, metadata, backend)
         super().__init__(data=data, name=data.get("RoundNumber", 0))  # type: ignore[ty:unknown-argument]
         self._year = year
         self._event_name = name

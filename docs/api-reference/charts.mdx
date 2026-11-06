@@ -400,6 +400,8 @@ def plot_driver_laptimes(
 
 Scatter of lap times per lap, colored by tire compound. The lap time axis is inverted, so the fastest laps sit at the top. Defaults to the top-3 finishers; pass `drivers=["ALO"]` for a single-driver view.
 
+The scatter is drawn with matplotlib directly. It makes the same calls as seaborn's `scatterplot` and gives the same figure, so the chart does not import seaborn or scipy. A test compares the figure with seaborn's on each run.
+
 ```python
 tif1.plot_driver_laptimes(2023, "Azerbaijan Grand Prix", "R", drivers=["ALO"])
 ```

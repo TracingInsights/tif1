@@ -6,7 +6,8 @@ after the burst no longer traverses the containers it built (a race's lap
 frames: 9 ms of a warm pandas ``fetch_all_laps_telemetry()``). The move is
 skipped below the young-collection threshold, when the process froze objects
 itself, when the caller had GC off, on an exception, and where the move is not
-O(1) (free-threaded builds, CPython 3.14+). The imports are covered by
+O(1) (free-threaded builds, the incremental collector of CPython 3.14.0-3.14.4
+and the 3.15 alphas, 3.16+ until measured). The imports are covered by
 ``test_naxos_n10_import_gc.py``.
 """
 
@@ -145,7 +146,21 @@ def test_no_promotion_on_an_exception(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     ("gil_disabled", "version", "expected"),
-    [(0, (3, 13), True), (1, (3, 13), False), (0, (3, 14), False), (0, (3, 11), True)],
+    [
+        (0, (3, 13, 0, "final", 0), True),
+        (1, (3, 13, 0, "final", 0), False),
+        (0, (3, 11, 0, "final", 0), True),
+        # Corinth C5: 3.14.0-3.14.4 ran the incremental collector, 3.14.5 reverted it.
+        (0, (3, 14, 0, "final", 0), False),
+        (0, (3, 14, 4, "final", 0), False),
+        (0, (3, 14, 5, "final", 0), True),
+        (0, (3, 14, 8, "final", 0), True),
+        (1, (3, 14, 8, "final", 0), False),
+        (0, (3, 15, 0, "alpha", 8), False),
+        (0, (3, 15, 0, "beta", 1), True),
+        (0, (3, 15, 2, "final", 0), True),
+        (0, (3, 16, 0, "final", 0), False),
+    ],
 )
 def test_promotion_gate(monkeypatch, gil_disabled, version, expected) -> None:
     import sysconfig
@@ -158,7 +173,7 @@ def test_promotion_gate(monkeypatch, gil_disabled, version, expected) -> None:
         "get_config_var",
         lambda name: gil_disabled if name == "Py_GIL_DISABLED" else real(name),
     )
-    monkeypatch.setattr(gc_control.sys, "version_info", (*version, 0, "final", 0))
+    monkeypatch.setattr(gc_control.sys, "version_info", version)
     monkeypatch.setattr(gc_control, "_GC_PROMOTE_OK", None)
     assert gc_promote_ok() is expected
     monkeypatch.setattr(gc_control, "_GC_PROMOTE_OK", False)
@@ -204,3 +219,53 @@ def test_frame_tier_batch_read_promotes_its_frames(tmp_path, monkeypatch) -> Non
     finally:
         cache.close()
     assert cache_mod._suspend_gc is gc_control.suspend_gc
+
+
+class _PendingSource:
+    """A pending lap source that records whether GC was on while it built a frame."""
+
+    def __init__(self, frames: dict[int, pd.DataFrame]) -> None:
+        self.frames = frames
+        self.laps = list(frames)
+        self.gc_on: list[bool] = []
+
+    def frame(self, lap: int) -> pd.DataFrame:
+        self.gc_on.append(gc.isenabled())
+        return self.frames[lap]
+
+
+def test_per_lap_materialization_runs_under_promotion(monkeypatch) -> None:
+    """Corinth C5: the lazy per-lap frame build (an iterlaps loop) pauses GC and promotes."""
+    from tif1.cache import SessionMemo
+
+    calls: list[int] = []
+    real = gc_control.promote_young_objects
+    monkeypatch.setattr(gc_control, "promote_young_objects", lambda: (calls.append(1), real()))
+    frames = {lap: _driver_frame("VER", lap, 4) for lap in (1, 2)}
+    source = _PendingSource(frames)
+    memo = SessionMemo()
+    adopted: list[bool] = []
+    memo.frame_adopter = lambda _frame, _driver: adopted.append(gc.isenabled())
+    assert memo.add_telemetry_source("VER", source) == [("VER", 1), ("VER", 2)]
+    assert memo.get("telemetry_df", ("VER", 1)) is frames[1]
+    assert source.gc_on == [False]
+    assert adopted == [False]  # the adopter runs inside the paused span too
+    assert calls == [1]
+    assert gc.isenabled()
+    assert memo.get("telemetry_df", ("VER", 1)) is frames[1]  # memoized, built once
+    assert source.gc_on == [False]
+
+
+def test_per_lap_materialization_missing_lap_drops_the_source() -> None:
+    """A source that cannot serve its lap is dropped as before (Delphi D5), GC back on."""
+    from tif1.cache import SessionMemo
+
+    class _Broken(_PendingSource):
+        def frame(self, lap: int) -> pd.DataFrame:
+            raise KeyError(lap)
+
+    memo = SessionMemo()
+    memo.add_telemetry_source("VER", _Broken({1: _driver_frame("VER", 1, 3)}))
+    assert memo.get("telemetry_df", ("VER", 1)) is None
+    assert not memo._telemetry_sources
+    assert gc.isenabled()

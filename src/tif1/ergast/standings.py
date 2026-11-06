@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from tif1.core_utils.ergast_results import build_standings_frame
+from tif1.core_utils.ergast_results import build_standings_frame, standings_records
 from tif1.ergast import structure
 from tif1.ergast.router import QueryPlan, execute
 
@@ -97,6 +97,28 @@ def get_constructor_standings(
     return _as_lib(
         build_standings_frame(_standings_payload("constructor", year, round), "constructor"), lib
     )
+
+
+def standings_rows(
+    kind: Literal["driver", "constructor"],
+    year: int,
+    round: int | None = None,  # noqa: A002
+) -> list[dict[str, Any]]:
+    """The rows of :func:`get_driver_standings`/:func:`get_constructor_standings` as dicts.
+
+    Same values in the same order, without building a frame (no pandas or
+    polars import; ``DateOfBirth`` is a ``datetime`` or ``None``). The
+    ``tif1 standings`` command prints them.
+
+    Args:
+        kind: ``"driver"`` or ``"constructor"``.
+        year: Championship year.
+        round: Championship round (default: last completed round).
+
+    Returns:
+        One dict per standings row, keyed by the frame's column names.
+    """
+    return standings_records(_standings_payload(kind, year, round), kind, native=True)
 
 
 __all__ = ["get_constructor_standings", "get_driver_standings"]

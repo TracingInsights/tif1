@@ -14,9 +14,12 @@ class TestCacheGates:
     def test_frame_writer_runs_inline(self, monkeypatch):
         monkeypatch.setattr(cache_module, "THREADS_AVAILABLE", False)
         ran: list[str] = []
+        # Another test's background writer may still be listed on this worker:
+        # the inline path must add none.
+        before = list(cache_module._frame_writers)
         cache_module.register_frame_writer(lambda: ran.append("written"))
         assert ran == ["written"]
-        assert cache_module._frame_writers == []
+        assert cache_module._frame_writers == before
 
     def test_pools_report_a_single_worker(self, monkeypatch):
         monkeypatch.setattr(cache_module, "THREADS_AVAILABLE", False)

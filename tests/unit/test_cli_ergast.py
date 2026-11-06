@@ -118,9 +118,12 @@ class TestStandingsCommand:
         assert "NOR" in result.output
 
     def test_missing_standings_exit_code(self, monkeypatch):
-        monkeypatch.setattr(tif1, "get_driver_standings", lambda *_a, **_k: pd.DataFrame())
+        from tif1.ergast import standings as standings_mod
+
+        monkeypatch.setattr(standings_mod, "standings_rows", lambda *_a, **_k: [])
         result = CliRunner().invoke(app, ["standings", "1900"])
         assert result.exit_code == 1
+        assert "No standings for 1900" in result.output
 
 
 class TestCacheClear:

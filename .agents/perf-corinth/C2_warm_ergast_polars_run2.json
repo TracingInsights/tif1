@@ -1,0 +1,988 @@
+{
+ "mode": "warm",
+ "lib": "polars",
+ "summary": {
+  "1998 Monaco R": {
+   "wall": {
+    "control": 377.3,
+    "candidate": 328.35,
+    "won": "6/8",
+    "control_p90": 526.8,
+    "candidate_p90": 397.0
+   },
+   "get_session": {
+    "control": 219.3,
+    "candidate": 164.8,
+    "won": "7/8",
+    "control_p90": 279.1,
+    "candidate_p90": 238.5
+   },
+   "laps": {
+    "control": 41.2,
+    "candidate": 28.700000000000003,
+    "won": "7/8",
+    "control_p90": 82.3,
+    "candidate_p90": 38.8
+   },
+   "results": {
+    "control": 3.0,
+    "candidate": 2.1500000000000004,
+    "won": "7/8",
+    "control_p90": 4.1,
+    "candidate_p90": 3.0
+   }
+  },
+  "2010 Monza R": {
+   "wall": {
+    "control": 300.95,
+    "candidate": 317.8,
+    "won": "4/8",
+    "control_p90": 415.3,
+    "candidate_p90": 404.1
+   },
+   "get_session": {
+    "control": 158.3,
+    "candidate": 171.89999999999998,
+    "won": "3/8",
+    "control_p90": 242.0,
+    "candidate_p90": 230.0
+   },
+   "laps": {
+    "control": 28.5,
+    "candidate": 42.95,
+    "won": "1/8",
+    "control_p90": 42.6,
+    "candidate_p90": 65.0
+   },
+   "results": {
+    "control": 2.6500000000000004,
+    "candidate": 3.45,
+    "won": "2/8",
+    "control_p90": 3.7,
+    "candidate_p90": 5.7
+   }
+  },
+  "1975 British R": {
+   "wall": {
+    "control": 444.65,
+    "candidate": 521.55,
+    "won": "4/8",
+    "control_p90": 695.2,
+    "candidate_p90": 590.0
+   },
+   "get_session": {
+    "control": 344.0,
+    "candidate": 346.35,
+    "won": "4/8",
+    "control_p90": 561.9,
+    "candidate_p90": 406.0
+   },
+   "laps": {
+    "control": 6.1,
+    "candidate": 7.449999999999999,
+    "won": "4/8",
+    "control_p90": 14.0,
+    "candidate_p90": 9.1
+   },
+   "results": {
+    "control": 2.4,
+    "candidate": 3.2,
+    "won": "3/8",
+    "control_p90": 5.8,
+    "candidate_p90": 4.2
+   }
+  },
+  "1955 Monaco R": {
+   "wall": {
+    "control": 265.4,
+    "candidate": 307.45,
+    "won": "4/8",
+    "control_p90": 410.9,
+    "candidate_p90": 370.9
+   },
+   "get_session": {
+    "control": 161.05,
+    "candidate": 195.10000000000002,
+    "won": "5/8",
+    "control_p90": 235.6,
+    "candidate_p90": 270.2
+   },
+   "laps": {
+    "control": 6.550000000000001,
+    "candidate": 6.25,
+    "won": "4/8",
+    "control_p90": 10.0,
+    "candidate_p90": 9.8
+   },
+   "results": {
+    "control": 2.45,
+    "candidate": 2.55,
+    "won": "3/8",
+    "control_p90": 3.1,
+    "candidate_p90": 3.7
+   }
+  },
+  "1998 Monaco Q": {
+   "wall": {
+    "control": 366.15,
+    "candidate": 309.9,
+    "won": "6/8",
+    "control_p90": 404.5,
+    "candidate_p90": 346.2
+   },
+   "get_session": {
+    "control": 230.3,
+    "candidate": 185.55,
+    "won": "6/8",
+    "control_p90": 266.4,
+    "candidate_p90": 214.4
+   },
+   "laps": {
+    "control": 5.15,
+    "candidate": 3.5999999999999996,
+    "won": "6/8",
+    "control_p90": 5.5,
+    "candidate_p90": 4.1
+   },
+   "results": {
+    "control": 5.4,
+    "candidate": 3.7,
+    "won": "6/8",
+    "control_p90": 5.9,
+    "candidate_p90": 4.2
+   }
+  }
+ },
+ "runs": {
+  "1998 Monaco R": {
+   "control": [
+    {
+     "phases": {
+      "get_session": 126.8,
+      "laps": 29.1,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 170.5
+     },
+     "wall": 248.2
+    },
+    {
+     "phases": {
+      "get_session": 142.1,
+      "laps": 22.0,
+      "results": 1.7,
+      "drivers": 0.0,
+      "total": 185.5
+     },
+     "wall": 275.6
+    },
+    {
+     "phases": {
+      "get_session": 345.0,
+      "laps": 54.9,
+      "results": 4.1,
+      "drivers": 0.0,
+      "total": 449.3
+     },
+     "wall": 631.4
+    },
+    {
+     "phases": {
+      "get_session": 197.5,
+      "laps": 28.6,
+      "results": 2.7,
+      "drivers": 0.0,
+      "total": 249.3
+     },
+     "wall": 345.8
+    },
+    {
+     "phases": {
+      "get_session": 229.6,
+      "laps": 40.4,
+      "results": 3.1,
+      "drivers": 0.0,
+      "total": 293.5
+     },
+     "wall": 390.3
+    },
+    {
+     "phases": {
+      "get_session": 277.5,
+      "laps": 82.3,
+      "results": 6.3,
+      "drivers": 0.0,
+      "total": 392.4
+     },
+     "wall": 526.8
+    },
+    {
+     "phases": {
+      "get_session": 209.0,
+      "laps": 42.0,
+      "results": 2.9,
+      "drivers": 0.0,
+      "total": 270.1
+     },
+     "wall": 364.3
+    },
+    {
+     "phases": {
+      "get_session": 279.1,
+      "laps": 88.5,
+      "results": 3.8,
+      "drivers": 0.0,
+      "total": 391.6
+     },
+     "wall": 481.0
+    }
+   ],
+   "candidate": [
+    {
+     "phases": {
+      "get_session": 124.0,
+      "laps": 22.0,
+      "results": 1.6,
+      "drivers": 0.0,
+      "total": 159.6
+     },
+     "wall": 239.3
+    },
+    {
+     "phases": {
+      "get_session": 126.2,
+      "laps": 24.5,
+      "results": 2.9,
+      "drivers": 0.0,
+      "total": 165.7
+     },
+     "wall": 222.5
+    },
+    {
+     "phases": {
+      "get_session": 190.3,
+      "laps": 31.6,
+      "results": 2.2,
+      "drivers": 0.0,
+      "total": 246.6
+     },
+     "wall": 368.0
+    },
+    {
+     "phases": {
+      "get_session": 158.6,
+      "laps": 26.5,
+      "results": 1.9,
+      "drivers": 0.0,
+      "total": 203.7
+     },
+     "wall": 288.7
+    },
+    {
+     "phases": {
+      "get_session": 238.5,
+      "laps": 38.8,
+      "results": 1.9,
+      "drivers": 0.0,
+      "total": 301.0
+     },
+     "wall": 397.0
+    },
+    {
+     "phases": {
+      "get_session": 274.2,
+      "laps": 46.9,
+      "results": 3.5,
+      "drivers": 0.0,
+      "total": 352.0
+     },
+     "wall": 516.9
+    },
+    {
+     "phases": {
+      "get_session": 171.0,
+      "laps": 28.8,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 226.6
+     },
+     "wall": 370.4
+    },
+    {
+     "phases": {
+      "get_session": 146.6,
+      "laps": 28.6,
+      "results": 3.0,
+      "drivers": 0.0,
+      "total": 192.1
+     },
+     "wall": 267.7
+    }
+   ]
+  },
+  "2010 Monza R": {
+   "control": [
+    {
+     "phases": {
+      "get_session": 141.3,
+      "laps": 21.9,
+      "results": 1.8,
+      "drivers": 0.0,
+      "total": 179.9
+     },
+     "wall": 255.4
+    },
+    {
+     "phases": {
+      "get_session": 123.9,
+      "laps": 22.0,
+      "results": 1.8,
+      "drivers": 0.0,
+      "total": 159.7
+     },
+     "wall": 223.5
+    },
+    {
+     "phases": {
+      "get_session": 147.7,
+      "laps": 28.2,
+      "results": 3.7,
+      "drivers": 0.0,
+      "total": 193.6
+     },
+     "wall": 276.7
+    },
+    {
+     "phases": {
+      "get_session": 161.0,
+      "laps": 27.5,
+      "results": 2.2,
+      "drivers": 0.0,
+      "total": 205.5
+     },
+     "wall": 277.5
+    },
+    {
+     "phases": {
+      "get_session": 242.0,
+      "laps": 45.7,
+      "results": 3.1,
+      "drivers": 0.0,
+      "total": 314.1
+     },
+     "wall": 415.3
+    },
+    {
+     "phases": {
+      "get_session": 242.3,
+      "laps": 35.5,
+      "results": 3.6,
+      "drivers": 0.0,
+      "total": 304.0
+     },
+     "wall": 428.6
+    },
+    {
+     "phases": {
+      "get_session": 155.6,
+      "laps": 28.8,
+      "results": 2.2,
+      "drivers": 0.0,
+      "total": 200.9
+     },
+     "wall": 324.4
+    },
+    {
+     "phases": {
+      "get_session": 205.3,
+      "laps": 42.6,
+      "results": 3.7,
+      "drivers": 0.0,
+      "total": 270.8
+     },
+     "wall": 371.8
+    }
+   ],
+   "candidate": [
+    {
+     "phases": {
+      "get_session": 135.0,
+      "laps": 22.7,
+      "results": 2.3,
+      "drivers": 0.0,
+      "total": 172.2
+     },
+     "wall": 240.7
+    },
+    {
+     "phases": {
+      "get_session": 130.5,
+      "laps": 25.2,
+      "results": 3.4,
+      "drivers": 0.0,
+      "total": 171.1
+     },
+     "wall": 252.4
+    },
+    {
+     "phases": {
+      "get_session": 162.1,
+      "laps": 26.0,
+      "results": 2.2,
+      "drivers": 0.0,
+      "total": 206.9
+     },
+     "wall": 285.5
+    },
+    {
+     "phases": {
+      "get_session": 181.7,
+      "laps": 45.3,
+      "results": 4.0,
+      "drivers": 0.0,
+      "total": 245.9
+     },
+     "wall": 322.1
+    },
+    {
+     "phases": {
+      "get_session": 230.0,
+      "laps": 47.6,
+      "results": 2.9,
+      "drivers": 0.1,
+      "total": 296.6
+     },
+     "wall": 371.7
+    },
+    {
+     "phases": {
+      "get_session": 185.4,
+      "laps": 70.1,
+      "results": 10.2,
+      "drivers": 0.0,
+      "total": 282.3
+     },
+     "wall": 404.1
+    },
+    {
+     "phases": {
+      "get_session": 155.7,
+      "laps": 40.6,
+      "results": 3.5,
+      "drivers": 0.0,
+      "total": 214.6
+     },
+     "wall": 313.5
+    },
+    {
+     "phases": {
+      "get_session": 323.4,
+      "laps": 65.0,
+      "results": 5.7,
+      "drivers": 0.1,
+      "total": 419.2
+     },
+     "wall": 527.0
+    }
+   ]
+  },
+  "1975 British R": {
+   "control": [
+    {
+     "phases": {
+      "get_session": 237.9,
+      "laps": 5.3,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 257.3
+     },
+     "wall": 317.1
+    },
+    {
+     "phases": {
+      "get_session": 236.5,
+      "laps": 5.3,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 255.8
+     },
+     "wall": 332.3
+    },
+    {
+     "phases": {
+      "get_session": 561.9,
+      "laps": 14.0,
+      "results": 5.6,
+      "drivers": 0.1,
+      "total": 599.2
+     },
+     "wall": 691.1
+    },
+    {
+     "phases": {
+      "get_session": 367.5,
+      "laps": 6.3,
+      "results": 2.5,
+      "drivers": 0.0,
+      "total": 393.3
+     },
+     "wall": 473.4
+    },
+    {
+     "phases": {
+      "get_session": 499.4,
+      "laps": 14.4,
+      "results": 5.8,
+      "drivers": 0.1,
+      "total": 555.8
+     },
+     "wall": 695.2
+    },
+    {
+     "phases": {
+      "get_session": 704.6,
+      "laps": 13.2,
+      "results": 5.8,
+      "drivers": 0.1,
+      "total": 746.7
+     },
+     "wall": 921.4
+    },
+    {
+     "phases": {
+      "get_session": 320.5,
+      "laps": 5.9,
+      "results": 2.3,
+      "drivers": 0.0,
+      "total": 344.1
+     },
+     "wall": 415.9
+    },
+    {
+     "phases": {
+      "get_session": 296.9,
+      "laps": 5.5,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 318.2
+     },
+     "wall": 383.0
+    }
+   ],
+   "candidate": [
+    {
+     "phases": {
+      "get_session": 246.2,
+      "laps": 5.1,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 265.6
+     },
+     "wall": 331.1
+    },
+    {
+     "phases": {
+      "get_session": 248.0,
+      "laps": 5.3,
+      "results": 2.4,
+      "drivers": 0.0,
+      "total": 267.8
+     },
+     "wall": 336.5
+    },
+    {
+     "phases": {
+      "get_session": 311.0,
+      "laps": 5.6,
+      "results": 2.3,
+      "drivers": 0.0,
+      "total": 367.2
+     },
+     "wall": 489.5
+    },
+    {
+     "phases": {
+      "get_session": 406.0,
+      "laps": 8.7,
+      "results": 3.9,
+      "drivers": 0.0,
+      "total": 442.9
+     },
+     "wall": 553.6
+    },
+    {
+     "phases": {
+      "get_session": 407.8,
+      "laps": 9.1,
+      "results": 4.9,
+      "drivers": 0.1,
+      "total": 448.8
+     },
+     "wall": 590.0
+    },
+    {
+     "phases": {
+      "get_session": 404.2,
+      "laps": 9.6,
+      "results": 4.2,
+      "drivers": 0.0,
+      "total": 446.5
+     },
+     "wall": 601.4
+    },
+    {
+     "phases": {
+      "get_session": 256.7,
+      "laps": 6.2,
+      "results": 2.6,
+      "drivers": 0.0,
+      "total": 285.9
+     },
+     "wall": 378.6
+    },
+    {
+     "phases": {
+      "get_session": 381.7,
+      "laps": 8.7,
+      "results": 3.8,
+      "drivers": 0.0,
+      "total": 429.3
+     },
+     "wall": 589.6
+    }
+   ]
+  },
+  "1955 Monaco R": {
+   "control": [
+    {
+     "phases": {
+      "get_session": 147.4,
+      "laps": 5.4,
+      "results": 2.0,
+      "drivers": 0.0,
+      "total": 166.8
+     },
+     "wall": 225.5
+    },
+    {
+     "phases": {
+      "get_session": 193.7,
+      "laps": 5.3,
+      "results": 2.0,
+      "drivers": 0.0,
+      "total": 213.4
+     },
+     "wall": 274.3
+    },
+    {
+     "phases": {
+      "get_session": 135.3,
+      "laps": 6.4,
+      "results": 2.5,
+      "drivers": 0.0,
+      "total": 156.6
+     },
+     "wall": 226.5
+    },
+    {
+     "phases": {
+      "get_session": 156.7,
+      "laps": 6.7,
+      "results": 2.4,
+      "drivers": 0.0,
+      "total": 181.2
+     },
+     "wall": 258.0
+    },
+    {
+     "phases": {
+      "get_session": 429.8,
+      "laps": 11.7,
+      "results": 4.7,
+      "drivers": 0.1,
+      "total": 489.8
+     },
+     "wall": 711.2
+    },
+    {
+     "phases": {
+      "get_session": 235.6,
+      "laps": 10.0,
+      "results": 3.1,
+      "drivers": 0.0,
+      "total": 274.7
+     },
+     "wall": 410.9
+    },
+    {
+     "phases": {
+      "get_session": 165.4,
+      "laps": 7.6,
+      "results": 2.9,
+      "drivers": 0.0,
+      "total": 190.8
+     },
+     "wall": 272.8
+    },
+    {
+     "phases": {
+      "get_session": 129.5,
+      "laps": 5.3,
+      "results": 2.0,
+      "drivers": 0.0,
+      "total": 149.4
+     },
+     "wall": 208.2
+    }
+   ],
+   "candidate": [
+    {
+     "phases": {
+      "get_session": 126.0,
+      "laps": 5.1,
+      "results": 2.0,
+      "drivers": 0.0,
+      "total": 145.3
+     },
+     "wall": 204.1
+    },
+    {
+     "phases": {
+      "get_session": 270.2,
+      "laps": 6.1,
+      "results": 2.7,
+      "drivers": 0.0,
+      "total": 294.3
+     },
+     "wall": 370.9
+    },
+    {
+     "phases": {
+      "get_session": 127.6,
+      "laps": 5.2,
+      "results": 2.1,
+      "drivers": 0.0,
+      "total": 147.0
+     },
+     "wall": 226.2
+    },
+    {
+     "phases": {
+      "get_session": 228.5,
+      "laps": 9.8,
+      "results": 3.7,
+      "drivers": 0.1,
+      "total": 262.6
+     },
+     "wall": 359.5
+    },
+    {
+     "phases": {
+      "get_session": 386.1,
+      "laps": 24.0,
+      "results": 10.2,
+      "drivers": 0.2,
+      "total": 448.1
+     },
+     "wall": 584.5
+    },
+    {
+     "phases": {
+      "get_session": 168.3,
+      "laps": 5.1,
+      "results": 2.0,
+      "drivers": 0.0,
+      "total": 195.4
+     },
+     "wall": 307.4
+    },
+    {
+     "phases": {
+      "get_session": 158.5,
+      "laps": 6.4,
+      "results": 2.4,
+      "drivers": 0.0,
+      "total": 184.1
+     },
+     "wall": 274.7
+    },
+    {
+     "phases": {
+      "get_session": 221.9,
+      "laps": 8.2,
+      "results": 3.6,
+      "drivers": 0.0,
+      "total": 245.9
+     },
+     "wall": 307.5
+    }
+   ]
+  },
+  "1998 Monaco Q": {
+   "control": [
+    {
+     "phases": {
+      "get_session": 128.6,
+      "laps": 3.1,
+      "results": 3.0,
+      "drivers": 0.0,
+      "total": 146.9
+     },
+     "wall": 210.5
+    },
+    {
+     "phases": {
+      "get_session": 290.0,
+      "laps": 8.7,
+      "results": 8.7,
+      "drivers": 0.0,
+      "total": 327.8
+     },
+     "wall": 426.7
+    },
+    {
+     "phases": {
+      "get_session": 192.8,
+      "laps": 4.5,
+      "results": 4.7,
+      "drivers": 0.0,
+      "total": 219.1
+     },
+     "wall": 303.6
+    },
+    {
+     "phases": {
+      "get_session": 226.5,
+      "laps": 3.4,
+      "results": 3.5,
+      "drivers": 0.0,
+      "total": 254.1
+     },
+     "wall": 345.4
+    },
+    {
+     "phases": {
+      "get_session": 234.1,
+      "laps": 5.2,
+      "results": 5.6,
+      "drivers": 0.0,
+      "total": 267.8
+     },
+     "wall": 386.9
+    },
+    {
+     "phases": {
+      "get_session": 259.7,
+      "laps": 5.3,
+      "results": 5.9,
+      "drivers": 0.0,
+      "total": 290.9
+     },
+     "wall": 390.5
+    },
+    {
+     "phases": {
+      "get_session": 266.4,
+      "laps": 5.5,
+      "results": 5.8,
+      "drivers": 0.0,
+      "total": 299.7
+     },
+     "wall": 404.5
+    },
+    {
+     "phases": {
+      "get_session": 173.8,
+      "laps": 5.1,
+      "results": 5.2,
+      "drivers": 0.0,
+      "total": 197.4
+     },
+     "wall": 275.6
+    }
+   ],
+   "candidate": [
+    {
+     "phases": {
+      "get_session": 124.6,
+      "laps": 2.8,
+      "results": 2.9,
+      "drivers": 0.0,
+      "total": 142.1
+     },
+     "wall": 204.0
+    },
+    {
+     "phases": {
+      "get_session": 124.6,
+      "laps": 2.9,
+      "results": 3.0,
+      "drivers": 0.0,
+      "total": 142.4
+     },
+     "wall": 231.1
+    },
+    {
+     "phases": {
+      "get_session": 214.4,
+      "laps": 4.0,
+      "results": 4.2,
+      "drivers": 0.0,
+      "total": 245.4
+     },
+     "wall": 346.2
+    },
+    {
+     "phases": {
+      "get_session": 199.3,
+      "laps": 4.1,
+      "results": 4.2,
+      "drivers": 0.0,
+      "total": 228.6
+     },
+     "wall": 327.8
+    },
+    {
+     "phases": {
+      "get_session": 331.2,
+      "laps": 14.8,
+      "results": 7.4,
+      "drivers": 0.0,
+      "total": 375.2
+     },
+     "wall": 467.1
+    },
+    {
+     "phases": {
+      "get_session": 182.7,
+      "laps": 3.0,
+      "results": 3.1,
+      "drivers": 0.0,
+      "total": 209.1
+     },
+     "wall": 299.2
+    },
+    {
+     "phases": {
+      "get_session": 188.4,
+      "laps": 3.4,
+      "results": 3.5,
+      "drivers": 0.0,
+      "total": 217.4
+     },
+     "wall": 320.6
+    },
+    {
+     "phases": {
+      "get_session": 147.3,
+      "laps": 3.8,
+      "results": 3.9,
+      "drivers": 0.0,
+      "total": 167.1
+     },
+     "wall": 252.8
+    }
+   ]
+  }
+ }
+}

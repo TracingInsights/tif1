@@ -18,6 +18,10 @@ polars) reads the laps, results, drivers and state surfaces with a
 the lap telemetry reads (Elis E6), the ``pick_*`` family, ``iterlaps(require=)``
 and the driver lookups (Gortyn G4), and the telemetry arithmetic of a notebook's
 analysis (Naxos N3: distances, resampling, fills, slices, merges).
+
+A third child reads the schedules with ``lib="polars"`` (Corinth C9: the
+pandas ``EventSchedule`` imported pandas into polars scripts, ~400 ms) and
+reports whether pandas, numpy or pyarrow was imported.
 """
 
 from __future__ import annotations
@@ -528,3 +532,56 @@ def test_polars_laps_results_and_state_never_import_numpy(tmp_path):
         "WindSpeed": "Float64",
     }
     assert report["wind"] == [200, 210, 220]
+
+
+_SCHEDULE_CHILD = r"""
+import json
+import sys
+from datetime import datetime
+
+import tif1
+
+schedule = tif1.get_event_schedule(2025, lib="polars")
+remaining = tif1.get_events_remaining(datetime(2025, 7, 1), lib="polars")
+old = tif1.get_event_schedule(1998, include_testing=False, lib="polars")
+print(
+    json.dumps(
+        {
+            "modules": {m: m in sys.modules for m in ("pandas", "numpy", "pyarrow")},
+            "frames": [type(f).__name__ for f in (schedule, remaining, old)],
+            "rounds": schedule["RoundNumber"].to_list(),
+            "remaining": remaining["EventName"].to_list()[:2],
+            "old": old.height,
+        }
+    )
+)
+"""
+
+
+def test_polars_schedule_never_imports_pandas_numpy_or_pyarrow(tmp_path):
+    """``lib="polars"`` schedules (vendored seasons, offline) leave pandas/numpy/pyarrow unloaded."""
+    package_root = str(Path(tif1.__file__).resolve().parent.parent)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([package_root, *filter(None, [env.get("PYTHONPATH")])])
+    env["HOME"] = str(tmp_path)
+    env["USERPROFILE"] = str(tmp_path)
+    env["TIF1_CACHE_DIR"] = str(tmp_path / "cache")
+    env["TIF1_OFFLINE_MODE"] = "true"
+    env["TIF1_PRELOAD_IMPORTS"] = "0"
+    completed = subprocess.run(
+        [sys.executable, "-c", _SCHEDULE_CHILD],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        cwd=tmp_path,
+        timeout=300,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert report["modules"] == {"pandas": False, "numpy": False, "pyarrow": False}
+    assert report["frames"] == ["DataFrame", "DataFrame", "DataFrame"]
+    assert report["rounds"] == [*range(1, 25), 0]
+    assert report["remaining"] == ["British Grand Prix", "Belgian Grand Prix"]
+    assert report["old"] == 16

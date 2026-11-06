@@ -1,0 +1,67 @@
+{
+ "pairs": 10,
+ "cold": false,
+ "control_src": "/tmp/corinth/control/src",
+ "candidate_src": "/tmp/corinth/C9/src",
+ "cache": "/tmp/corinth/warm-C9",
+ "summary": {
+  "current_schedule": {
+   "phases": {
+    "import": {
+     "control_median": 21.6,
+     "candidate_median": 25.1,
+     "control_p90": 37.0,
+     "candidate_p90": 37.1,
+     "control_min": 13.9,
+     "candidate_min": 16.3,
+     "candidate_faster_pairs": "2/10"
+    },
+    "schedule": {
+     "control_median": 652.9,
+     "candidate_median": 278.7,
+     "control_p90": 818.5,
+     "candidate_p90": 321.0,
+     "control_min": 496.4,
+     "candidate_min": 151.2,
+     "candidate_faster_pairs": "10/10"
+    },
+    "in_process_total": {
+     "control_median": 676.4,
+     "candidate_median": 299.3,
+     "control_p90": 855.2,
+     "candidate_p90": 362.5,
+     "control_min": 516.4,
+     "candidate_min": 170.7,
+     "candidate_faster_pairs": "10/10"
+    },
+    "process_wall": {
+     "control_median": 793.0,
+     "candidate_median": 410.2,
+     "control_p90": 1038.5,
+     "candidate_p90": 445.9,
+     "control_min": 614.1,
+     "candidate_min": 240.8,
+     "candidate_faster_pairs": "10/10"
+    }
+   },
+   "info": {
+    "control": {
+     "kind": [
+      "pandas"
+     ],
+     "pandas_imported": [
+      "True"
+     ]
+    },
+    "candidate": {
+     "kind": [
+      "polars"
+     ],
+     "pandas_imported": [
+      "False"
+     ]
+    }
+   }
+  }
+ }
+}
