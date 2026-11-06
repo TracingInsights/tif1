@@ -39,6 +39,37 @@ def test_importing_charts_does_not_import_seaborn_or_scipy():
     assert out == "[]"
 
 
+def test_importing_plotting_does_not_import_matplotlib():
+    # Corinth C6: the color/name/style lookups need no matplotlib (~0.4 s) and
+    # an exact match needs no rapidfuzz; the helpers that draw import them.
+    out = _run(
+        "import sys, tif1.plotting as p; "
+        "p.get_compound_mapping(None); p.team_color_mapping(2025); p.get_plot_style('dark'); "
+        "print(sorted(m for m in ('matplotlib', 'matplotlib.pyplot', 'rapidfuzz', 'seaborn') "
+        "if m in sys.modules))"
+    )
+    assert out == "[]"
+
+
+def test_plotting_matplotlib_attributes_resolve_lazily():
+    out = _run(
+        "import sys, tif1.plotting as p; before = 'matplotlib' in sys.modules; "
+        "import matplotlib, matplotlib.pyplot; "
+        "print(before, p.mpl is matplotlib, p.plt is matplotlib.pyplot, "
+        "p.cycler is matplotlib.cycler)"
+    )
+    assert out == "False True True True"
+
+
+def test_setup_mpl_writes_rcparams_without_pyplot():
+    out = _run(
+        "import sys, tif1.plotting as p; p.setup_mpl(mpl_timedelta_support=False, "
+        "color_scheme='fastf1'); import matplotlib; "
+        "print(matplotlib.rcParams['figure.facecolor'], 'matplotlib.pyplot' in sys.modules)"
+    )
+    assert out == "#292625 False"
+
+
 def test_seaborn_colormap_names_are_registered_on_demand():
     out = _run(
         "import sys; from tif1.charts import _common; "

@@ -1,4 +1,13 @@
-"""Plotting utilities for tif1, compatible with fastf1.plotting."""
+"""Plotting utilities for tif1, compatible with fastf1.plotting.
+
+matplotlib is imported by the helpers that touch it (``setup_mpl``,
+``apply_plot_style``, ``load_custom_font``, ``add_sorted_driver_legend``),
+not when this module is imported: the color, name and style lookups need no
+matplotlib, and its import (~0.4 s) is most of ``import tif1.plotting``.
+fastf1 imports pyplot with ``fastf1.plotting``; a script that draws imports
+it itself, so only scripts that never draw skip it. The former module
+attributes ``mpl``, ``plt`` and ``cycler`` resolve on first access.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +19,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import matplotlib as mpl
-import matplotlib.legend  # ensures mpl.legend submodule is imported
-import matplotlib.pyplot as plt
-from matplotlib import cycler  # type: ignore[ty:unresolved-import]
-
-from tif1.fuzzy import fuzzy_matcher
 from tif1.plotting_constants import (
     DEFAULT_COMPOUND_COLORS,
     TEAM_CODES,
@@ -24,8 +27,38 @@ from tif1.plotting_constants import (
 )
 
 if TYPE_CHECKING:
+    from matplotlib import RcParams
     from matplotlib.axes import Axes
     from matplotlib.legend import Legend
+
+#: Module attributes this module used to bind at import time, now imported on
+#: first access (see the module docstring): name -> (module, attribute).
+_LAZY_MATPLOTLIB_ATTRIBUTES = {
+    "mpl": ("matplotlib", None),
+    "plt": ("matplotlib.pyplot", None),
+    "cycler": ("matplotlib", "cycler"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``mpl``/``plt``/``cycler`` lazily (backward compatibility)."""
+    target = _LAZY_MATPLOTLIB_ATTRIBUTES.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    value = importlib.import_module(module_name)
+    if attribute is not None:
+        value = getattr(value, attribute)
+    globals()[name] = value
+    return value
+
+
+def _rc_params() -> RcParams:
+    """matplotlib's global ``rcParams`` (the object ``pyplot.rcParams`` is)."""
+    import matplotlib as mpl
+
+    return mpl.rcParams
+
 
 # Default colormap
 _DEFAULT_COLORMAP: Literal["fastf1", "official"] = "fastf1"
@@ -298,18 +331,19 @@ def apply_plot_style(
     if text_color is None:
         text_color = str(DEFAULT_PLOT_CONFIG["colors"]["text"])
 
+    rc = _rc_params()
     if transparent:
-        plt.rcParams["figure.facecolor"] = "none"
-        plt.rcParams["axes.facecolor"] = "none"
+        rc["figure.facecolor"] = "none"
+        rc["axes.facecolor"] = "none"
     else:
-        plt.rcParams["figure.facecolor"] = background
-        plt.rcParams["axes.facecolor"] = background
+        rc["figure.facecolor"] = background
+        rc["axes.facecolor"] = background
 
-    plt.rcParams["text.color"] = text_color
-    plt.rcParams["axes.labelcolor"] = text_color
-    plt.rcParams["xtick.color"] = text_color
-    plt.rcParams["ytick.color"] = text_color
-    plt.rcParams["axes.edgecolor"] = text_color
+    rc["text.color"] = text_color
+    rc["axes.labelcolor"] = text_color
+    rc["xtick.color"] = text_color
+    rc["ytick.color"] = text_color
+    rc["axes.edgecolor"] = text_color
 
 
 def load_custom_font(font_path_or_url: str):
@@ -438,29 +472,35 @@ _THEME_RCPARAMS = (
 
 def _reset_theme_rcparams() -> None:
     """Restore matplotlib defaults for every rcParams key a color scheme sets."""
+    import matplotlib as mpl
+
+    rc = mpl.rcParams
     for key in _THEME_RCPARAMS:
-        plt.rcParams[key] = mpl.rcParamsDefault[key]
+        rc[key] = mpl.rcParamsDefault[key]
 
 
 def _enable_fastf1_color_scheme() -> None:
     """Apply FastF1's plotting color scheme."""
-    plt.rcParams["figure.facecolor"] = "#292625"
-    plt.rcParams["axes.edgecolor"] = "#2d2928"
-    plt.rcParams["xtick.color"] = "#f1f2f3"
-    plt.rcParams["ytick.color"] = "#f1f2f3"
-    plt.rcParams["axes.labelcolor"] = "#f1f2f3"
-    plt.rcParams["axes.facecolor"] = "#1e1c1b"
-    plt.rcParams["axes.titlesize"] = "19"
-    plt.rcParams["font.weight"] = "medium"
-    plt.rcParams["text.color"] = "#f1f1f3"
-    plt.rcParams["axes.titlepad"] = 12
-    plt.rcParams["axes.titleweight"] = "light"
-    plt.rcParams["axes.prop_cycle"] = cycler("color", _COLOR_PALETTE)
-    plt.rcParams["legend.fancybox"] = False
-    plt.rcParams["legend.facecolor"] = (0.1, 0.1, 0.1, 0.7)
-    plt.rcParams["legend.edgecolor"] = (0.1, 0.1, 0.1, 0.9)
-    plt.rcParams["savefig.transparent"] = False
-    plt.rcParams["axes.axisbelow"] = True
+    from matplotlib import cycler  # type: ignore[ty:unresolved-import]
+
+    rc = _rc_params()
+    rc["figure.facecolor"] = "#292625"
+    rc["axes.edgecolor"] = "#2d2928"
+    rc["xtick.color"] = "#f1f2f3"
+    rc["ytick.color"] = "#f1f2f3"
+    rc["axes.labelcolor"] = "#f1f2f3"
+    rc["axes.facecolor"] = "#1e1c1b"
+    rc["axes.titlesize"] = "19"
+    rc["font.weight"] = "medium"
+    rc["text.color"] = "#f1f1f3"
+    rc["axes.titlepad"] = 12
+    rc["axes.titleweight"] = "light"
+    rc["axes.prop_cycle"] = cycler("color", _COLOR_PALETTE)
+    rc["legend.fancybox"] = False
+    rc["legend.facecolor"] = (0.1, 0.1, 0.1, 0.7)
+    rc["legend.edgecolor"] = (0.1, 0.1, 0.1, 0.9)
+    rc["savefig.transparent"] = False
+    rc["axes.axisbelow"] = True
 
 
 def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
@@ -476,23 +516,24 @@ def _enable_default_color_scheme(*, background: str, text_color: str) -> None:
     applied globally. The 20x20 race-launch chart still draws its labels at
     the style's 32pt ``label_size`` explicitly.
     """
-    plt.rcParams["axes.facecolor"] = background
-    plt.rcParams["figure.facecolor"] = background
-    plt.rcParams["axes.edgecolor"] = text_color
-    plt.rcParams["axes.labelcolor"] = text_color
-    plt.rcParams["xtick.color"] = text_color
-    plt.rcParams["ytick.color"] = text_color
-    plt.rcParams["text.color"] = text_color
+    rc = _rc_params()
+    rc["axes.facecolor"] = background
+    rc["figure.facecolor"] = background
+    rc["axes.edgecolor"] = text_color
+    rc["axes.labelcolor"] = text_color
+    rc["xtick.color"] = text_color
+    rc["ytick.color"] = text_color
+    rc["text.color"] = text_color
 
-    plt.rcParams["axes.spines.top"] = False
-    plt.rcParams["axes.spines.right"] = False
-    plt.rcParams["axes.spines.left"] = True
-    plt.rcParams["axes.spines.bottom"] = True
-    plt.rcParams["legend.frameon"] = True
-    plt.rcParams["legend.facecolor"] = background
-    plt.rcParams["legend.edgecolor"] = text_color
-    plt.rcParams["legend.fancybox"] = True
-    plt.rcParams["ytick.major.size"] = 0
+    rc["axes.spines.top"] = False
+    rc["axes.spines.right"] = False
+    rc["axes.spines.left"] = True
+    rc["axes.spines.bottom"] = True
+    rc["legend.frameon"] = True
+    rc["legend.facecolor"] = background
+    rc["legend.edgecolor"] = text_color
+    rc["legend.fancybox"] = True
+    rc["ytick.major.size"] = 0
 
 
 def _enable_timple() -> None:
@@ -700,6 +741,19 @@ def _resolve_team_profile(
     )
 
 
+def _column_values(frame: Any, name: str, fallback: str | None, blank: list[Any]) -> list[Any]:
+    """Values of column ``name``, else of ``fallback``, else ``blank``.
+
+    The column-wise twin of ``row.get(name, row.get(fallback, ""))`` over
+    ``frame.iterrows()``.
+    """
+    columns = frame.columns
+    for column in (name, fallback):
+        if column is not None and column in columns:
+            return frame[column].tolist()
+    return blank
+
+
 def _iter_session_rows(session: Any) -> list[dict[str, str]]:
     """Return canonical plotting rows for a session."""
     rows: list[dict[str, str]] = []
@@ -707,16 +761,24 @@ def _iter_session_rows(session: Any) -> list[dict[str, str]]:
     results = getattr(session, "results", None)
     try:
         if results is not None and hasattr(results, "iterrows") and not results.empty:
-            for _, row in results.iterrows():
-                abbreviation = str(row.get("Abbreviation", row.get("Driver", ""))).strip()
-                team_name = str(row.get("TeamName", row.get("Team", ""))).strip()
+            # Whole columns rather than iterrows() (one Series per row, ~5 ms
+            # for a grid): the same values, so the same str() of each.
+            blank = [""] * len(results)
+            abbreviations = _column_values(results, "Abbreviation", "Driver", blank)
+            team_names = _column_values(results, "TeamName", "Team", blank)
+            first_names = _column_values(results, "FirstName", None, blank)
+            last_names = _column_values(results, "LastName", None, blank)
+            full_names = _column_values(results, "FullName", None, blank)
+            for abbreviation_value, team_value, first_value, last_value, full_value in zip(
+                abbreviations, team_names, first_names, last_names, full_names, strict=True
+            ):
+                abbreviation = str(abbreviation_value).strip()
+                team_name = str(team_value).strip()
                 if not abbreviation or not team_name:
                     continue
-                first_name = str(row.get("FirstName", "")).strip()
-                last_name = str(row.get("LastName", "")).strip()
-                full_name = (
-                    str(row.get("FullName", "")).strip() or f"{first_name} {last_name}".strip()
-                )
+                first_name = str(first_value).strip()
+                last_name = str(last_value).strip()
+                full_name = str(full_value).strip() or f"{first_name} {last_name}".strip()
                 rows.append(
                     {
                         "abbreviation": abbreviation,
@@ -867,6 +929,9 @@ def _match_driver(identifier: str, session: Any, *, exact_match: bool = False) -
     if exact_match:
         raise KeyError(f"No driver found for '{identifier}' (exact match only)")
 
+    # Imported here: an exact feature hit (the common case) needs no rapidfuzz.
+    from tif1.fuzzy import fuzzy_matcher
+
     reference = [_driver_features(driver) for driver in mapping.drivers]
     index, exact = fuzzy_matcher(normalized_identifier, reference)
     driver = mapping.drivers[index]
@@ -896,6 +961,8 @@ def _match_team(identifier: str, session: Any, *, exact_match: bool = False) -> 
 
     if exact_match:
         raise KeyError(f"No team found for '{identifier}' (exact match only)")
+
+    from tif1.fuzzy import fuzzy_matcher
 
     reference = [_team_features(team) for team in mapping.teams]
     index, exact = fuzzy_matcher(normalized_identifier, reference)
@@ -1350,8 +1417,10 @@ def _replace_auto_colors(
 
 def add_sorted_driver_legend(ax: Axes, session: Any, *args: Any, **kwargs: Any) -> Legend:
     """Add legend with drivers grouped by team and sorted."""
+    import matplotlib.legend
+
     try:
-        ret = mpl.legend._parse_legend_args([ax], *args, **kwargs)  # type: ignore[ty:unresolved-attribute]
+        ret = matplotlib.legend._parse_legend_args([ax], *args, **kwargs)  # type: ignore[ty:unresolved-attribute]
         if len(ret) == 3:
             handles, labels, kwargs = ret
             extra_args: list[Any] = []

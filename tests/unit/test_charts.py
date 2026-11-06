@@ -8,6 +8,7 @@ the real ``get_session`` is never called.
 from __future__ import annotations
 
 import itertools
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
@@ -490,6 +491,17 @@ def test_driver_laptimes_puts_fastest_laps_on_top(fake_session):
     _, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "R", drivers=["VER"])
 
     assert ax.yaxis_inverted()
+
+
+def test_driver_laptimes_does_not_import_seaborn(fake_session, monkeypatch):
+    # seaborn (and the scipy.stats it imports, ~0.85 s) is not needed for the
+    # scatter: a None entry makes ``import seaborn`` raise ImportError.
+    monkeypatch.setitem(sys.modules, "seaborn", None)
+    _, ax = lap_times.plot_driver_laptimes(2023, "Italian Grand Prix", "R", drivers=["VER"])
+
+    assert len(ax.collections) == 1
+    assert ax.get_legend().get_title().get_text() == "Compound"
+    assert not any(spine.get_visible() for spine in ax.spines.values())
 
 
 @pytest.mark.parametrize(

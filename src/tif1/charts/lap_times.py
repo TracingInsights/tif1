@@ -1,15 +1,23 @@
 """Lap-time based charts.
 
-Contains the seaborn-backed lap time charts plus the qualifying grid, lap
-delta, position changes and track temperature charts.
+Contains the lap time charts (the distribution and heatmap draw with seaborn,
+the driver lap-time scatter reproduces seaborn's scatter without importing
+it) plus the qualifying grid, lap delta, position changes and track
+temperature charts.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import warnings
+from datetime import datetime
+from numbers import Number
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
+from matplotlib.markers import MarkerStyle
 from matplotlib.patches import Patch
 
 from . import _common
@@ -47,6 +55,154 @@ def _team_color_for_driver(sess, driver: str) -> str:
     from tif1.plotting import get_team_color
 
     return get_team_color(team.iloc[0], sess)
+
+
+# ---------------------------------------------------------------------------
+# seaborn-free compound scatter (plot_driver_laptimes)
+# ---------------------------------------------------------------------------
+# ``import seaborn`` imports scipy.stats (~0.85 s, about half of a fresh
+# process's first plot_driver_laptimes) for a single ``sns.scatterplot`` and
+# ``sns.despine``. The helpers below make the matplotlib calls seaborn 0.13
+# makes for that one call, in the same order (``_ScatterPlotter``: ``_attach``
+# seeds the axis units and inverts a categorical y, ``plot`` scatters the
+# unit-converted points, colours them, labels the axes and adds the legend
+# artists), so the figure is the one seaborn drew (artists, colours, limits,
+# units, pixels: tests/unit/test_chart_scatter_parity.py compares them).
+
+
+def _seaborn_variable_type(vector: pd.Series) -> str:
+    """seaborn 0.13 ``variable_type`` (``boolean_type="numeric"``)."""
+    if isinstance(vector.dtype, pd.CategoricalDtype):
+        return "categorical"
+    if pd.isna(vector).all():
+        return "numeric"
+    vector = vector.dropna()
+    with warnings.catch_warnings():
+        warnings.simplefilter(action="ignore", category=(FutureWarning, DeprecationWarning))
+        try:
+            if np.isin(vector, [0, 1]).all():
+                return "numeric"
+        except TypeError:
+            pass
+    if pd.api.types.is_numeric_dtype(vector):
+        return "numeric"
+    if pd.api.types.is_datetime64_dtype(vector):
+        return "datetime"
+    if all(isinstance(value, Number) for value in vector):
+        return "numeric"
+    if all(isinstance(value, (datetime, np.datetime64)) for value in vector):
+        return "datetime"
+    return "categorical"
+
+
+def _seaborn_categorical_order(vector: pd.Series) -> list[Any]:
+    """seaborn 0.13 ``categorical_order`` (no explicit order)."""
+    if isinstance(vector.dtype, pd.CategoricalDtype):
+        order: Any = vector.cat.categories
+    else:
+        order = pd.Series(vector).unique()
+        if _seaborn_variable_type(pd.Series(vector)) == "numeric":
+            order = np.sort(order)
+    return list(filter(pd.notnull, order))
+
+
+def _scatter_by_compound(ax: Axes, laps: pd.DataFrame, palette: dict[str, str]) -> None:
+    """``sns.scatterplot(data=laps, x="LapNumber", y="LapTime", hue="Compound",
+    palette=palette, s=80, linewidth=0, legend="auto", ax=ax)`` without seaborn.
+
+    Raises:
+        ValueError: A compound in ``laps`` has no colour in ``palette`` (as
+            seaborn raises).
+    """
+    plot_data = pd.DataFrame(
+        {"x": laps["LapNumber"], "y": laps["LapTime"], "hue": laps["Compound"]}
+    )
+    names = {"x": "LapNumber", "y": "LapTime", "hue": "Compound"}
+    var_types = {var: _seaborn_variable_type(plot_data[var]) for var in ("x", "y")}
+
+    # map_hue (a dict palette is a categorical mapping)
+    levels: list[Any] = []
+    if plot_data["hue"].isna().all():
+        warnings.warn(
+            "Ignoring `palette` because no `hue` variable has been assigned.",
+            UserWarning,
+            stacklevel=3,
+        )
+    else:
+        levels = _seaborn_categorical_order(plot_data["hue"])
+        missing = set(levels) - set(palette)
+        if any(missing):
+            raise ValueError(f"The palette dictionary is missing keys: {missing}")
+
+    # _attach: seed the axis units; a categorical y runs top-down
+    axes = {"x": ax.xaxis, "y": ax.yaxis}
+    if len(plot_data):
+        for var in ("x", "y"):
+            seed: Any = plot_data[var]
+            if var_types[var] == "categorical":
+                seed = _seaborn_categorical_order(seed)
+            axes[var].update_units(seed)
+    if var_types["y"] == "categorical":
+        ax.yaxis.set_inverted(True)
+
+    # comp_data: numeric x and y after unit conversion and scale transform
+    comp_data = plot_data.copy(deep=False).drop(["x", "y"], axis=1, errors="ignore")
+    for var in ("y", "x"):
+        axis = axes[var]
+        if len(plot_data):
+            orig = plot_data[var]
+            orig = orig.mask(orig.isin([np.inf, -np.inf]), np.nan).dropna()
+            comp = pd.to_numeric(axis.convert_units(orig)).astype(float)
+            transform = axis.get_transform().transform
+            comp_col = pd.Series(transform(comp), orig.index, name=orig.name)
+        else:
+            comp_col = pd.Series(dtype=float, name=var)
+        comp_data.insert(0, var, comp_col)
+
+    data = comp_data.dropna()
+    if data.empty:
+        return
+    kws: dict[str, Any] = {"s": 80, "linewidth": 0, "color": None}
+    if MarkerStyle(kws.get("marker", "o")).is_filled():
+        kws.setdefault("edgecolor", "w")
+    x = ax.xaxis.get_transform().inverted().transform(data["x"])
+    y = ax.yaxis.get_transform().inverted().transform(data["y"])
+    points = ax.scatter(x=x, y=y, **kws)
+    # seaborn calls the ``set_facecolors`` alias, which forwards to set_facecolor.
+    points.set_facecolor([palette[level] for level in data["hue"]])
+
+    # _add_axis_labels
+    if not ax.get_xlabel():
+        x_visible = any(t.get_visible() for t in ax.get_xticklabels())
+        ax.set_xlabel(names["x"], visible=x_visible)
+    if not ax.get_ylabel():
+        y_visible = any(t.get_visible() for t in ax.get_yticklabels())
+        ax.set_ylabel(names["y"], visible=y_visible)
+
+    # add_legend_data with seaborn's scatter legend artist, then the legend
+    common_kws = {key: value for key, value in kws.items() if key != "color"}
+    for level in levels:
+        line_kws: dict[str, Any] = {
+            "linestyle": "",
+            "marker": "o",
+            "markersize": np.sqrt(common_kws["s"]),
+            "markerfacecolor": palette[level],
+            "markeredgewidth": common_kws["linewidth"],
+            "label": level,
+            "color": palette[level],
+            "markeredgecolor": common_kws["edgecolor"],
+        }
+        ax.add_artist(Line2D([], [], **line_kws))
+    handles, _ = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(title=names["hue"])
+
+
+def _despine_all_sides() -> None:
+    """``sns.despine(left=True, bottom=True)``: hide every spine of the current figure."""
+    for ax in plt.gcf().axes:
+        for side in ("top", "right", "left", "bottom"):
+            ax.spines[side].set_visible(False)
 
 
 def plot_driver_laptimes(
@@ -90,9 +246,6 @@ def plot_driver_laptimes(
     Returns:
         The ``(fig, ax)`` pair.
     """
-    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
-    import seaborn as sns
-
     _common.setup_theme(color_scheme)
     sess = _common.load_session(year, event, session, enable_cache=enable_cache, lib=lib)
     drivers = _common.resolve_drivers(sess, drivers, 3)
@@ -108,17 +261,9 @@ def plot_driver_laptimes(
     laps = laps.reset_index(drop=True)
 
     fig, ax = plt.subplots(figsize=figsize if figsize is not None else _DRIVER_LAPTIMES_FIGSIZE)
-    sns.scatterplot(
-        data=laps,
-        x="LapNumber",
-        y="LapTime",
-        ax=ax,
-        hue="Compound",
-        palette=_compound_mapping(sess),
-        s=80,
-        linewidth=0,
-        legend="auto",
-    )
+    # sns.scatterplot(data=laps, x="LapNumber", y="LapTime", hue="Compound",
+    # palette=..., s=80, linewidth=0, legend="auto") without importing seaborn.
+    _scatter_by_compound(ax, laps, _compound_mapping(sess))
     ax.set_xlabel("Lap Number", fontsize=12)
     ax.set_ylabel("Lap Time", fontsize=12)
     # Fastest laps on top. seaborn already inverts a timedelta y-axis, so an
@@ -132,7 +277,7 @@ def plot_driver_laptimes(
         title = f"Top {len(drivers)} Finishers - {sess.event['EventName']} {sess.event.year}"
     fig.suptitle(title, fontsize=14, fontweight="bold")
     ax.grid(color=_common.foreground_color(), which="major", axis="both", alpha=0.3)
-    sns.despine(left=True, bottom=True)
+    _despine_all_sides()
 
     return _common.finalize_figure(
         fig,
@@ -190,7 +335,8 @@ def plot_laptimes_distribution(
     Returns:
         The ``(fig, ax)`` pair.
     """
-    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
+    # seaborn pulls in scipy.stats (~0.85 s); only this chart and its sibling
+    # (distribution / heatmap) need it.
     import seaborn as sns
 
     _common.setup_theme(color_scheme)
@@ -297,7 +443,8 @@ def plot_laptime_heatmap(
     Returns:
         The ``(fig, ax)`` pair.
     """
-    # seaborn pulls in scipy.stats (~0.65 s); only these three charts need it.
+    # seaborn pulls in scipy.stats (~0.85 s); only this chart and its sibling
+    # (distribution / heatmap) need it.
     import seaborn as sns
 
     _common.setup_theme(color_scheme)
