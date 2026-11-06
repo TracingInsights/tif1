@@ -770,8 +770,15 @@ def results_columns() -> tuple[tuple[str, ...], tuple[str, ...]]:
 # -- standings -----------------------------------------------------------------
 
 
-def build_standings_frame(payload: dict[str, Any] | None, kind: str) -> pd.DataFrame:
-    """Driver or constructor standings as a frame (``kind``: ``"driver"``/``"constructor"``)."""
+def standings_records(
+    payload: dict[str, Any] | None, kind: str, *, native: bool = False
+) -> list[dict[str, Any]]:
+    """The rows of :func:`build_standings_frame`, as dicts in standings order.
+
+    ``native``: ``DateOfBirth`` is the ``datetime`` itself (``None`` when
+    unknown) instead of a pandas ``Timestamp``/``NaT``, so the rows are built
+    without pandas (the ``tif1 standings`` table reads them directly).
+    """
     leaf = "DriverStandings" if kind == "driver" else "ConstructorStandings"
     rows: list[dict[str, Any]] = []
     lists = (
@@ -800,9 +807,9 @@ def build_standings_frame(payload: dict[str, Any] | None, kind: str) -> pd.DataF
                     "FirstName": str(driver.get("givenName", "")),
                     "LastName": str(driver.get("familyName", "")),
                     "FullName": f"{driver.get('givenName', '')} {driver.get('familyName', '')}".strip(),
-                    "DateOfBirth": pd.Timestamp(date_of_birth)
-                    if date_of_birth is not None
-                    else pd.NaT,
+                    "DateOfBirth": date_of_birth
+                    if native
+                    else (pd.Timestamp(date_of_birth) if date_of_birth is not None else pd.NaT),
                     "DriverNationality": str(driver.get("nationality", "")),
                     "TeamIds": [str(c.get("constructorId", "")) for c in constructors],
                     "TeamNames": [str(c.get("name", "")) for c in constructors],
@@ -822,6 +829,12 @@ def build_standings_frame(payload: dict[str, Any] | None, kind: str) -> pd.DataF
                 }
             )
         rows.append(out)
+    return rows
+
+
+def build_standings_frame(payload: dict[str, Any] | None, kind: str) -> pd.DataFrame:
+    """Driver or constructor standings as a frame (``kind``: ``"driver"``/``"constructor"``)."""
+    rows = standings_records(payload, kind)
     columns = (
         [
             "Position",
@@ -1046,6 +1059,7 @@ __all__ = [
     "order_driver_rows",
     "results_columns",
     "session_kind",
+    "standings_records",
     "synthesize_driver_row",
     "team_color_map",
     "total_laps_from_rows",

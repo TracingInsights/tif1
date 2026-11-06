@@ -1,7 +1,8 @@
 """CLI tool for tif1."""
 
 import logging
-from typing import Any, cast
+import sys
+from typing import Any, Literal
 
 import typer
 
@@ -9,7 +10,10 @@ import tif1
 
 # pandas and rich are deliberately imported inside the command bodies:
 # module-level imports cost ~500 ms of CLI startup for every invocation,
-# while only data-rendering commands actually need them.
+# while only data-rendering commands actually need them. The session
+# commands load polars sessions when polars is installed (Corinth C7): a
+# polars session never imports pandas (~340 ms of a ~0.5 s command), and the
+# tables print the same text from either backend.
 
 
 def _rprint(*args, **kwargs):
@@ -28,6 +32,74 @@ def _console():
 
         _console_obj = Console()
     return _console_obj
+
+
+def _session_lib() -> Literal["pandas", "polars"]:
+    """Backend of the sessions the table commands load: polars when it is installed.
+
+    ``find_spec`` only locates the package; polars itself is imported inside
+    ``get_session``, after a cold session has started its first-wave fetches.
+    Without polars the commands load pandas sessions, as before.
+    """
+    from importlib.util import find_spec
+
+    return "polars" if find_spec("polars") is not None else "pandas"
+
+
+def _is_polars_frame(frame: Any) -> bool:
+    polars = sys.modules.get("polars")
+    return polars is not None and isinstance(frame, polars.DataFrame)
+
+
+def _polars_rows(frame: Any, columns: tuple[str, ...]) -> list[dict[str, Any]]:
+    """The rows of a polars frame as dicts of the listed ``columns`` it has.
+
+    Durations come back as int nanoseconds, the value a pandas ``Timedelta``
+    holds (a ``datetime.timedelta`` would drop sub-microsecond digits).
+    Series conversions only, no query plan.
+    """
+    import polars as pl
+
+    lists: dict[str, list[Any]] = {}
+    for name in columns:
+        if name in frame.columns:
+            series = frame.get_column(name)
+            if isinstance(series.dtype, pl.Duration):
+                series = series.cast(pl.Duration("ns")).cast(pl.Int64)
+            lists[name] = series.to_list()
+    return [dict(zip(lists, values, strict=True)) for values in zip(*lists.values(), strict=True)]
+
+
+def _is_missing(value: Any) -> bool:
+    """``pd.isna`` for one cell, without importing pandas for ``None`` and floats."""
+    if value is None:
+        return True
+    if isinstance(value, float):
+        return value != value  # noqa: PLR0124 - NaN
+    pandas = sys.modules.get("pandas")
+    return pandas is not None and bool(pandas.isna(value))
+
+
+def _sort_order(values: list[Any]) -> list[int]:
+    """Row positions in the order of pandas' ``sort_values`` (quicksort, missing last).
+
+    ``values`` are int nanoseconds (durations) or float seconds. Without ties
+    every sort agrees and a Python sort answers. numpy's quicksort, pandas'
+    default kind, does not keep tied rows in order, so with a tie the order
+    comes from the numpy call pandas makes (``argsort`` of the present values).
+    """
+    present = [i for i, value in enumerate(values) if not _is_missing(value)]
+    missing = [i for i, value in enumerate(values) if _is_missing(value)]
+    keys = [values[i] for i in present]
+    if len(set(keys)) == len(keys):
+        return sorted(present, key=values.__getitem__) + missing
+    import numpy as np
+
+    if all(type(key) is int for key in keys):
+        array = np.asarray(keys, dtype=np.int64).view("timedelta64[ns]")
+    else:
+        array = np.asarray(keys, dtype=np.float64)
+    return [present[i] for i in array.argsort(kind="quicksort").tolist()] + missing
 
 
 app = typer.Typer(help="tif1 - Fast F1 data access CLI")
@@ -104,9 +176,7 @@ def drivers(
 
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
-        # The table reads pandas rows (a polars default backend would hand
-        # back a polars drivers_df): tables always load the pandas view.
-        sess = tif1.get_session(year, event, session, lib="pandas")
+        sess = tif1.get_session(year, event, session, lib=_session_lib())
         progress.update(task, advance=1)
 
     from rich.table import Table
@@ -117,16 +187,29 @@ def drivers(
 
     # drivers_df is one row per driver in classification order.
     drivers_df = sess.drivers_df
+    if _is_polars_frame(drivers_df):
+        rows = _polars_rows(drivers_df, ("Driver", "Team", "DriverNumber"))
+    else:
+        rows = [row._asdict() for row in drivers_df.itertuples(index=False)]
     table.add_column("No.", style="magenta")
-    for row in drivers_df.itertuples(index=False):
-        table.add_row(str(row.Driver), str(row.Team), str(row.DriverNumber))
+    for row in rows:
+        table.add_row(str(row["Driver"]), str(row["Team"]), str(row["DriverNumber"]))
 
     _console().print(table)
     _console().print(f"\n[bold]Total:[/bold] {len(drivers_df)} drivers")
 
 
 def _seconds(value: Any) -> float:
-    """Lap time as float seconds (pandas keeps ``LapTime`` as a Timedelta)."""
+    """Lap time as float seconds (pandas keeps ``LapTime`` as a Timedelta).
+
+    An int is nanoseconds (a polars duration from :func:`_polars_rows`, as
+    ``pd.Timedelta(int)`` reads it), summed as ``Timedelta.total_seconds``
+    sums it: the whole seconds plus the fraction (not one ``ns / 1e9``, which
+    rounds differently in the last bit).
+    """
+    if type(value) is int:
+        whole, fraction = divmod(value, 1_000_000_000)
+        return whole + fraction / 1_000_000_000
     total_seconds = getattr(value, "total_seconds", None)
     if callable(total_seconds):
         return float(total_seconds())
@@ -156,12 +239,11 @@ def fastest(
     driver: str | None = typer.Option(None, "--driver", "-d", help="Specific driver"),
 ) -> None:
     """Show fastest laps."""
-    import pandas as pd
     from rich.progress import Progress
 
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
-        sess = tif1.get_session(year, event, session)
+        sess = tif1.get_session(year, event, session, lib=_session_lib())
         _adopt_warm_laps(sess)
         progress.update(task, advance=1)
 
@@ -170,15 +252,12 @@ def fastest(
         fastest_lap = drv.get_fastest_lap()
         time_val = None
         if sess.lib == "pandas":
-            fastest_lap_pd = cast(pd.DataFrame, fastest_lap)
-            if not fastest_lap_pd.empty:
-                time_col = "LapTime" if "LapTime" in fastest_lap_pd.columns else "time"
-                time_val = fastest_lap_pd[time_col].iloc[0]
-        else:
-            fastest_lap_pl = fastest_lap
-            if not fastest_lap_pl.is_empty():
-                time_col = "LapTime" if "LapTime" in fastest_lap_pl.columns else "time"
-                time_val = fastest_lap_pl[time_col][0]
+            if not fastest_lap.empty:
+                time_col = "LapTime" if "LapTime" in fastest_lap.columns else "time"
+                time_val = fastest_lap[time_col].iloc[0]
+        elif not fastest_lap.is_empty():
+            time_col = "LapTime" if "LapTime" in fastest_lap.columns else "time"
+            time_val = _polars_rows(fastest_lap.head(1), (time_col,))[0][time_col]
 
         if time_val is not None:
             _rprint(f"[bold]{driver}[/bold] fastest lap: [green]{_seconds(time_val):.3f}s[/green]")
@@ -196,32 +275,38 @@ def fastest(
         table.add_column("Time", style="magenta")
 
         # Sort by time
+        time_col = "LapTime" if "LapTime" in fastest_laps.columns else "time"
         if sess.lib == "pandas":
-            fastest_laps_pd = cast(pd.DataFrame, fastest_laps)
-            time_col = "LapTime" if "LapTime" in fastest_laps_pd.columns else "time"
-            fastest_laps_pd = fastest_laps_pd.sort_values(time_col)
-            for idx, row in enumerate(fastest_laps_pd.itertuples(), 1):
-                time_val = getattr(row, time_col)
-                table.add_row(
-                    str(idx), str(row.Driver), str(row.Team), f"{_seconds(time_val):.3f}s"
-                )
+            fastest_laps = fastest_laps.sort_values(time_col)
+            rows = [row._asdict() for row in fastest_laps.itertuples()]
         else:
-            fastest_laps_pl = fastest_laps
-            time_col = "LapTime" if "LapTime" in fastest_laps_pl.columns else "time"
-            fastest_laps_pl = fastest_laps_pl.sort(time_col)
-            for idx, row in enumerate(fastest_laps_pl.iter_rows(named=True), 1):
-                table.add_row(str(idx), row["Driver"], row["Team"], f"{row[time_col]:.3f}s")
+            # pandas' row order without a query plan (DataFrame.sort is one).
+            rows = _polars_rows(fastest_laps, ("Driver", "Team", time_col))
+            rows = [rows[i] for i in _sort_order([row[time_col] for row in rows])]
+        for idx, row in enumerate(rows, 1):
+            table.add_row(
+                str(idx), str(row["Driver"]), str(row["Team"]), f"{_seconds(row[time_col]):.3f}s"
+            )
 
         _console().print(table)
 
 
 def _fmt_td(value: Any) -> str:
-    """``m:ss.mmm`` / ``h:mm:ss.mmm`` for a Timedelta, blank for missing values."""
-    import pandas as pd
+    """``m:ss.mmm`` / ``h:mm:ss.mmm`` for a Timedelta, blank for missing values.
 
-    if value is None or pd.isna(value):
+    An int is nanoseconds (a polars duration from :func:`_polars_rows`), as
+    ``pd.Timedelta`` reads it; pandas is only imported for pandas values.
+    """
+    if value is None:
         return ""
-    total = float(pd.Timedelta(value).total_seconds())
+    if type(value) is int:
+        total = _seconds(value)
+    else:
+        import pandas as pd
+
+        if pd.isna(value):
+            return ""
+        total = float(pd.Timedelta(value).total_seconds())
     sign = "-" if total < 0 else ""
     total = abs(total)
     hours, rest = divmod(total, 3600)
@@ -232,11 +317,26 @@ def _fmt_td(value: Any) -> str:
 
 
 def _fmt_num(value: Any, digits: int = 0) -> str:
-    import pandas as pd
-
-    if value is None or pd.isna(value):
+    if _is_missing(value):
         return ""
     return f"{float(value):.{digits}f}" if digits else str(int(float(value)))
+
+
+_RESULTS_TABLE_COLUMNS = (
+    "ClassifiedPosition",
+    "Position",
+    "DriverNumber",
+    "Abbreviation",
+    "TeamName",
+    "Q1",
+    "Q2",
+    "Q3",
+    "TimeGap",
+    "Time",
+    "GridPosition",
+    "Status",
+    "Points",
+)
 
 
 @app.command()
@@ -255,15 +355,21 @@ def results(
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading session...", total=1)
         gp: int | str = int(event) if event.isdigit() else event
-        sess = tif1.get_session(year, gp, session, lib="pandas", ergast=not no_ergast)
+        sess = tif1.get_session(year, gp, session, lib=_session_lib(), ergast=not no_ergast)
         frame = sess.results
         progress.update(task, advance=1)
 
-    if frame.empty:
+    if _is_polars_frame(frame):
+        empty = frame.is_empty()
+        rows = _polars_rows(frame, _RESULTS_TABLE_COLUMNS)
+    else:
+        empty = frame.empty
+        rows = [row._asdict() for row in frame.itertuples(index=False)]
+    if empty:
         _rprint(f"[red]No results for {year} {event} {session}[/red]")
         raise typer.Exit(code=1)
 
-    quali = "Q1" in frame.columns and frame["Q1"].notna().any()
+    quali = "Q1" in frame.columns and any(not _is_missing(row["Q1"]) for row in rows)
     table = Table(title=f"{sess.event_name} {year} - {sess.session_name}")
     table.add_column("Pos", style="cyan")
     table.add_column("No.", style="magenta")
@@ -277,25 +383,28 @@ def results(
         table.add_column("Status")
         table.add_column("Points")
         table.add_column("Time / Gap", no_wrap=True)  # never truncate a race time
-    for row in frame.itertuples(index=False):
-        position = getattr(row, "ClassifiedPosition", "") or _fmt_num(
-            getattr(row, "Position", None)
-        )
-        cells = [str(position), str(row.DriverNumber), str(row.Abbreviation), str(row.TeamName)]
+    for row in rows:
+        position = row.get("ClassifiedPosition", "") or _fmt_num(row.get("Position"))
+        cells = [
+            str(position),
+            str(row["DriverNumber"]),
+            str(row["Abbreviation"]),
+            str(row["TeamName"]),
+        ]
         if quali:
-            cells.extend(_fmt_td(getattr(row, segment)) for segment in ("Q1", "Q2", "Q3"))
+            cells.extend(_fmt_td(row[segment]) for segment in ("Q1", "Q2", "Q3"))
         else:
-            gap_text = _fmt_td(getattr(row, "TimeGap", None))
-            time_text = _fmt_td(getattr(row, "Time", None))
-            winner = _fmt_num(getattr(row, "Position", None)) == "1"
+            gap_text = _fmt_td(row.get("TimeGap"))
+            time_text = _fmt_td(row.get("Time"))
+            winner = _fmt_num(row.get("Position")) == "1"
             shown = (
                 time_text if winner or not gap_text or gap_text == "0:00.000" else f"+{gap_text}"
             )
             cells.extend(
                 [
-                    _fmt_num(getattr(row, "GridPosition", None)),
-                    str(getattr(row, "Status", "") or ""),
-                    _fmt_num(getattr(row, "Points", None), 1),
+                    _fmt_num(row.get("GridPosition")),
+                    str(row.get("Status", "") or ""),
+                    _fmt_num(row.get("Points"), 1),
                     shown,
                 ]
             )
@@ -316,15 +425,18 @@ def standings(
     """Show the championship standings after a round (Ergast data)."""
     from rich.table import Table
 
+    from tif1.ergast.standings import standings_rows
+
+    # The rows of get_driver_standings/get_constructor_standings without the
+    # frame: the table needs neither pandas nor polars.
+    rows = standings_rows("constructor" if constructors else "driver", year, round_number)
     if constructors:
-        frame = tif1.get_constructor_standings(year, round_number, lib="pandas")
         title = f"Constructors' standings {year}"
     else:
-        frame = tif1.get_driver_standings(year, round_number, lib="pandas")
         title = f"Drivers' standings {year}"
     if round_number is not None:
         title += f" after round {round_number}"
-    if frame.empty:
+    if not rows:
         _rprint(f"[red]No standings for {year}[/red]")
         raise typer.Exit(code=1)
 
@@ -337,14 +449,14 @@ def standings(
         table.add_column("Team", style="green")
     table.add_column("Points", style="magenta")
     table.add_column("Wins")
-    for row in frame.itertuples(index=False):
-        position = str(getattr(row, "PositionText", "") or _fmt_num(row.Position))
+    for row in rows:
+        position = str(row.get("PositionText", "") or _fmt_num(row["Position"]))
         if constructors:
-            cells = [position, str(row.TeamName)]
+            cells = [position, str(row["TeamName"])]
         else:
-            name = str(row.Abbreviation) or str(row.FullName)
-            cells = [position, name, ", ".join(row.TeamNames)]
-        cells.extend([_fmt_num(row.Points, 1), _fmt_num(row.Wins)])
+            name = str(row["Abbreviation"]) or str(row["FullName"])
+            cells = [position, name, ", ".join(row["TeamNames"])]
+        cells.extend([_fmt_num(row["Points"], 1), _fmt_num(row["Wins"])])
         table.add_row(*cells)
     _console().print(table)
 
