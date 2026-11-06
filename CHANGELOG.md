@@ -310,8 +310,8 @@ backends is unchanged (133 pandas, 131 polars), and the perf gate passes
   tables are the same.
   `tif1 fastest` no longer raises `TypeError` when the configured backend is
   polars, and it lists drivers with exactly equal lap times in the
-  session's order on every platform (a stable sort; pandas' default
-  quicksort ordered such ties differently on Linux and Windows).
+  session's order on both backends (a stable sort; numpy's default
+  quicksort leaves such ties in no defined order).
 - `load()` / `load_async()` accept `telemetry="eager"`: the telemetry of every
   lap now, whatever `load_telemetry_lazy` says (`"lazy"` and `"eager"` are
   case-insensitive; other strings raise `ValueError`).

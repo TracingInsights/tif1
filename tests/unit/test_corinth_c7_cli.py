@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import random
+import re
 import subprocess
 import sys
 import textwrap
@@ -117,14 +118,22 @@ def test_tables_match_across_backends(monkeypatch, args):
 @pytest.mark.usefixtures("cached_session")
 def test_fastest_ties_keep_the_session_order(monkeypatch):
     output = _invoke(monkeypatch, "polars", ["fastest", "2026", "Hungary", "R"])
-    printed = [line.split("│")[2].strip() for line in output.splitlines() if "│ D" in line]
+    printed = _driver_cells(output)
     assert sorted(printed) == sorted(CODES)
     # A stable sort on both backends: the same table on every platform.
-    assert printed == [
-        line.split("│")[2].strip()
-        for line in _invoke(monkeypatch, "pandas", ["fastest", "2026", "Hungary", "R"]).splitlines()
-        if "│ D" in line
-    ]
+    assert printed == _driver_cells(
+        _invoke(monkeypatch, "pandas", ["fastest", "2026", "Hungary", "R"])
+    )
+
+
+def _driver_cells(output: str) -> list[str]:
+    """The Driver column of the table's data rows.
+
+    Matched by the cell value: on Windows rich draws the header row with the
+    same vertical bar as the data rows, so ``"│ D"`` also matches ``Driver``.
+    """
+    cells = (line.split("│") for line in output.splitlines() if line.count("│") >= 3)
+    return [row[2].strip() for row in cells if re.fullmatch(r"D\d{2}", row[2].strip())]
 
 
 def test_session_lib_prefers_polars(monkeypatch):

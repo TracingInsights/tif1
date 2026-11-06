@@ -91,8 +91,8 @@ def _sort_order(values: list[Any]) -> list[int]:
 
     ``values`` are int nanoseconds (durations) or float seconds. The order of
     pandas' ``sort_values(kind="stable")``, which the pandas path uses: tied
-    lap times keep the session's order on every platform (numpy's quicksort
-    breaks ties differently by platform and memory layout).
+    lap times keep the session's order on both backends (numpy's default
+    quicksort leaves ties in no defined order).
     """
     present = [i for i, value in enumerate(values) if not _is_missing(value)]
     missing = [i for i, value in enumerate(values) if _is_missing(value)]
