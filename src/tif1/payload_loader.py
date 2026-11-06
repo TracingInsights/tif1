@@ -105,8 +105,10 @@ class NiquestsTransport:
         A cold load's first-wave file the stdlib fetch of ``get_session``
         brought (Elis E2) is handed over without touching niquests, and until
         a niquests session exists and has connected (Elis E9) a request rides
-        the wave's kept-alive stdlib connections; any answer but a ``200``
-        with a JSON object goes to niquests as before.
+        the wave's kept-alive stdlib connections, which a process that ran no
+        wave builds on demand (Corinth C4: the calendar and the Ergast files
+        of a warm session past their TTL); any answer but a ``200`` with a
+        JSON object goes to niquests as before.
         """
         from . import first_wave, http_session
         from .config import get_config
@@ -115,8 +117,8 @@ class NiquestsTransport:
             timeout = get_config().get("timeout", 30)
         if first_wave.pending(url):
             content = first_wave.take(url)
-        elif first_wave.has_client() and (
-            http_session._shared_session is None or http_session.warm_connections_pending()
+        elif (http_session._shared_session is None and first_wave.ensure_client()) or (
+            first_wave.has_client() and http_session.warm_connections_pending()
         ):
             content = first_wave.fetch(url, timeout=timeout)
         else:

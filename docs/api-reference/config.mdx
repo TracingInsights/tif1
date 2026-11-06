@@ -1027,7 +1027,7 @@ config.set("pool_connections", 1024)
 </ResponseField>
 
 <ResponseField name="cdn_first_wave" type="bool" default="True">
-  Fetch the first files of a cold load (`drivers.json`, the session lap times) with the Python standard library while pandas or polars loads. niquests loads only when a telemetry request needs it, and the first telemetry requests use the standard-library connections until niquests has an open connection. These requests verify the certificate chain and the host name, but they do not do the revocation check (`http_revocation_check`). Has no effect when `cdn_preconnect` is off. Set it to `False` to send every request through niquests.
+  Fetch the first files of a cold load (`drivers.json`, the session lap times) with the Python standard library while pandas or polars loads. niquests loads only when a telemetry request needs it, and the first telemetry requests use the standard-library connections until niquests has an open connection. A process that has not loaded niquests also sends its single requests with the standard library. These include the calendar of the current season (on a cold `get_session()` and at its refresh) and the Ergast files of the current season after `ergast_ttl_hours`. These requests verify the certificate chain and the host name, but they do not do the revocation check (`http_revocation_check`). The cold-load part has no effect when `cdn_preconnect` is off. Set it to `False` to send every request through niquests.
 
   ```python
   config.set("cdn_first_wave", False)  # every request through niquests

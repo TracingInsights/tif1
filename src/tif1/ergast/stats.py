@@ -150,11 +150,19 @@ class StatsSource:
         """True when ``{season}/events.json`` is answered from the cache tiers (no fetch)."""
         return self.loader.is_fresh(season, "", EVENTS_FILE)
 
+    def season_index_stored(self, season: int) -> bool:
+        """True when the cache tiers hold ``{season}/events.json`` (or its missing verdict),
+        fresh or past its TTL."""
+        return self.loader.cached_entry(season, "", EVENTS_FILE) is not None
+
     def season_index(self, season: int) -> dict[int, RoundInfo] | None:
         """``{round: RoundInfo}`` for ``season`` (memoized), or None when unknown to Stats."""
         races = self.races(season)
         if races is None:
             return None
+        return self._index_of(season, races)
+
+    def _index_of(self, season: int, races: list[dict[str, Any]]) -> dict[int, RoundInfo]:
         cached = self._index.get(season)
         if cached is not None and cached[0] is races:
             return cached[1]
@@ -169,7 +177,35 @@ class StatsSource:
         self._index[season] = (races, index)
         return index
 
+    def settled_round(self, season: int, round_number: int) -> RoundInfo | None:
+        """A round from the stored season index, without refreshing it, once it can no longer move.
+
+        Corinth C4: when ``events.json`` was fetched after a round's race
+        had started, that round's number, name and folder (slug) are final,
+        so the stored index answers for it even past ``ergast_ttl_hours`` and
+        a lookup of one finished round needs no ``events.json`` request. A
+        round still ahead when the index was fetched (its date or name can
+        still change) or missing from it returns None: the caller refreshes.
+        """
+        entry = self.loader.cached_entry(season, "", EVENTS_FILE)
+        if entry is None or not isinstance(entry[1], dict):
+            return None
+        fetched_at, payload = entry
+        races = payload.get("MRData", {}).get("RaceTable", {}).get("Races")
+        if not isinstance(races, list):
+            return None
+        info = self._index_of(season, races).get(int(round_number))
+        if info is None:
+            return None
+        start = info.race_datetime
+        if start is None or start.timestamp() > fetched_at:
+            return None
+        return info
+
     def round_info(self, season: int, round_number: int) -> RoundInfo | None:
+        settled = self.settled_round(season, round_number)
+        if settled is not None:
+            return settled
         index = self.season_index(season)
         return None if index is None else index.get(int(round_number))
 
@@ -187,13 +223,18 @@ class StatsSource:
         empty list). ``sprint_only`` keeps sprint rounds. Rounds that have not
         started by ``now`` are dropped: their files cannot exist yet.
         """
-        index = self.season_index(season)
-        if index is None:
-            return None
         if round_number is not None:
-            info = index.get(int(round_number))
+            info = self.settled_round(season, round_number)
+            if info is None:
+                index = self.season_index(season)
+                if index is None:
+                    return None
+                info = index.get(int(round_number))
             selected = [info] if info is not None else []
         else:
+            index = self.season_index(season)
+            if index is None:
+                return None
             selected = [index[key] for key in sorted(index)]
         if sprint_only:
             selected = [info for info in selected if info.has_sprint]

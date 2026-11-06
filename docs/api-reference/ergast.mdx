@@ -49,11 +49,12 @@ A query that Stats can answer never touches Jolpica. A Stats file that is missin
 | Payload | Past season | Current season |
 | :--- | :--- | :--- |
 | Stats files | Cached permanently | Expire after `ergast_ttl_hours` (default 6) |
+| Stats classification of a round (`results`, `quali_results`, `sprint_results`), fetched 14 days or more after its race | Cached permanently | Cached permanently |
 | Jolpica answers | Expire after `ergast_ttl_hours` | Expire after `ergast_ttl_hours` |
 | `current` / `last` resolution | n/a | Expire after one hour |
 | Missing or empty files | Re-probed after `missing_payloads_ttl_days` (default 7) | Re-probed after `ergast_ttl_hours` |
 
-Results get corrected after a weekend (penalties, appeals) and standings move on, so the current season is never held longer than the TTL. `tif1 cache-clear --ergast` drops only this tier.
+Results get corrected after a weekend (penalties, appeals) and standings move on, so the current season is never held longer than the TTL. There is one exception: the classification of a round that tif1 fetched 14 days or more after the race. 14 days is the period in which a team can ask for a review of a result. In the Stats repository, the classification files of each 2026 round were written one time and did not change after that. The latest rounds stay on the TTL. Sometimes a round had started when tif1 fetched the season list (`events.json`). A query for that one round uses the kept list also after its TTL. The round number and the folder of such a round cannot change. A query for the full season gets the list again. `tif1 cache-clear --ergast` drops only this tier.
 
 ---
 

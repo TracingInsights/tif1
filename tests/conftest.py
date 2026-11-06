@@ -175,6 +175,11 @@ def isolate_cache_dir(request, tmp_path_factory, monkeypatch):
     # values can never leak into later tests of the same worker process.
     monkeypatch.setitem(config._config, "cache_dir", str(cache_dir))
     monkeypatch.setitem(config._config, "cdn_preconnect", False)
+    # Corinth C4: single requests never build the stdlib client here (its
+    # sockets are blocked); the first-wave tests turn it back on.
+    from tif1 import first_wave
+
+    monkeypatch.setattr(first_wave, "_on_demand", False)
     # The Ergast classification merge reaches a CDN; the socket-blocked unit
     # suite keeps it off unless a test opts in (config.set("ergast_results", True)).
     monkeypatch.setitem(config._config, "ergast_results", False)

@@ -8,7 +8,9 @@ so freshness is decided at read time:
 - a past season never expires (its files do not change);
 - the current season and every Jolpica answer expire after
   ``ergast_ttl_hours`` (results get corrected, standings move on, the Stats
-  repository catches up a few hours after Jolpica);
+  repository catches up a few hours after Jolpica), except a round's Stats
+  classification fetched 14 days or more after its race, which is settled
+  (:func:`is_settled_classification`) and kept like a past season's;
 - a missing (404 on every CDN) or empty (``total == 0``) Stats file is
   re-probed after ``missing_payloads_ttl_days`` for past seasons and after
   ``ergast_ttl_hours`` for the current one, so later additions upstream are
@@ -131,6 +133,54 @@ def is_empty_payload(payload: Any) -> bool:
     return True
 
 
+#: A current-season classification fetched this long after its race started is
+#: settled (Corinth C4): 14 days is the FIA right-of-review window, and every
+#: 2026 round's Stats ``results.json``/``quali_results.json``/
+#: ``sprint_results.json`` has exactly one commit (written 0-22 days after the
+#: race, never rewritten), so a later fetch cannot return different rows.
+SETTLED_AFTER_SECONDS = 14 * 86400.0
+#: The per-round classification files the settled rule covers.
+_SETTLED_FILES = ("/results.json", "/quali_results.json", "/sprint_results.json")
+
+
+def _race_start_epoch(race: dict[str, Any]) -> float | None:
+    """Epoch seconds of an Ergast race's start (midnight UTC without a time), or None."""
+    date = race.get("date")
+    if not isinstance(date, str) or not date:
+        return None
+    time_part = race.get("time")
+    text = f"{date}T{time_part}" if isinstance(time_part, str) and time_part else f"{date}T00:00:00"
+    try:
+        start = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    return start.timestamp()
+
+
+def is_settled_classification(cache_key: str, payload: Any, fetched_at: float) -> bool:
+    """True when a cached per-round classification can no longer change.
+
+    The entry must be a Stats ``results``/``quali_results``/``sprint_results``
+    file of one round holding rows, fetched at least
+    :data:`SETTLED_AFTER_SECONDS` after that round's race started. The latest
+    round (and any round fetched sooner) keeps ``ergast_ttl_hours``; a
+    missing or empty file is never settled (the repository can add it weeks
+    after the race).
+    """
+    if not cache_key.startswith(STATS_CACHE_PREFIX) or not cache_key.endswith(_SETTLED_FILES):
+        return False
+    if is_empty_payload(payload):
+        return False
+    table = payload["MRData"].get("RaceTable")
+    races = table.get("Races") if isinstance(table, dict) else None
+    if not isinstance(races, list) or len(races) != 1 or not isinstance(races[0], dict):
+        return False
+    start = _race_start_epoch(races[0])
+    return start is not None and fetched_at - start >= SETTLED_AFTER_SECONDS
+
+
 def stats_path(year: int, slug: str, file_name: str) -> str:
     """Repository path of a Stats file (``{year}/{slug}/{file}``; season files have no slug)."""
     if slug:
@@ -251,11 +301,20 @@ class ErgastPayloadLoader:
             logger.debug("Ergast cache write failed for %s: %s", cache_key, exc)
 
     @staticmethod
-    def _entry_ttl(year: int | None, payload: dict | None) -> float:
-        """Seconds an entry stays fresh, by season age and by whether it holds rows."""
+    def _entry_ttl(
+        year: int | None, payload: dict | None, fetched_at: float = 0.0, cache_key: str = ""
+    ) -> float:
+        """Seconds an entry stays fresh, by season age and by whether it holds rows.
+
+        A classification file of the current season fetched at least
+        :data:`SETTLED_AFTER_SECONDS` after its race started is settled and
+        kept like a past season's (Corinth C4, see :func:`is_settled_classification`).
+        """
         if payload is None or is_empty_payload(payload):
             return ergast_ttl_seconds() if is_current_season(year) else missing_ttl_seconds()
         if is_current_season(year):
+            if is_settled_classification(cache_key, payload, fetched_at):
+                return math.inf
             return ergast_ttl_seconds()
         return math.inf
 
@@ -323,9 +382,13 @@ class ErgastPayloadLoader:
         if entry is None:
             return _MISS
         fetched_at, payload = entry
-        if now - fetched_at < self._entry_ttl(year, payload):
+        if now - fetched_at < self._entry_ttl(year, payload, fetched_at, cache_key):
             return payload
         return _MISS
+
+    def cached_entry(self, year: int, slug: str, file_name: str) -> tuple[float, Any] | None:
+        """``(fetched_at, payload)`` of a Stats file from the memo/SQLite tiers, fresh or not."""
+        return self._read_entry(stats_cache_key(year, slug, file_name))
 
     def _fetch_stats(self, path: str, *, fast: bool = False) -> tuple[dict | None, bool]:
         """``(payload, persist)``: the file, or ``(None, all_404)`` when every mirror refused."""
@@ -478,9 +541,11 @@ __all__ = [
     "clear_memo",
     "current_season",
     "ergast_ttl_seconds",
+    "SETTLED_AFTER_SECONDS",
     "get_ergast_loader",
     "is_current_season",
     "is_empty_payload",
+    "is_settled_classification",
     "reset_ergast_loader",
     "stats_cache_key",
     "stats_path",

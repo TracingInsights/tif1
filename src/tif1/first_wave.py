@@ -30,6 +30,16 @@ the rest of the wave and every later one run on it (HTTP/2, hedging, the
 OCSP check). When the wave cannot run (a proxy, no ``wassima``), its thread
 warms niquests connections instead.
 
+A process that never ran a wave builds the same client on demand
+(:func:`ensure_client`, Corinth C4) for its single requests before niquests
+exists: the f1schedule calendar of the current season (fetched on a cold
+``get_session``, refreshed in the background once ``schedule_ttl_hours``
+passed) and the Ergast Stats files of a warm session past
+``ergast_ttl_hours``. Through niquests those paid its import and, for
+raw.githubusercontent.com, a ~250 KB certificate revocation list downloaded
+and parsed in every process (~0.2 s), on the main thread when cold and
+under the GIL beside the pandas import when refreshing.
+
 Security note: the stdlib requests verify the certificate chain and the host
 name against the same roots as niquests, but do not run niquests' OCSP
 revocation check (``http_revocation_check``), which is soft-fail there.
@@ -86,6 +96,12 @@ _warm_timeout = 10.0
 _warm_started = False
 #: Requests the bridge has served (:func:`bridge_open` answered True).
 _bridged = 0
+#: :func:`ensure_client` may build the client (the unit suite turns it off:
+#: its sockets are blocked, so the attempt would only fall back to niquests).
+_on_demand = True
+#: The client cannot be built in this process (a proxy, no ``wassima``).
+_client_unavailable = False
+_client_lock = threading.Lock()
 
 
 def start(urls: list[str], *, timeout: float, wait_limit: float | None = None) -> None:
@@ -202,7 +218,8 @@ def _run_niquests_warmup(urls: list[str], timeout: float) -> None:
 
 def reset() -> None:
     """Forget every slot and the wave's client (tests)."""
-    global _bridged, _client, _warm_started, _warm_urls
+    global _bridged, _client, _client_unavailable, _warm_started, _warm_urls
+    _client_unavailable = False
     _warm_started = False
     _warm_urls = []
     _bridged = 0
@@ -219,13 +236,9 @@ def _release(slots: list[tuple[str, _Slot]]) -> None:
 
 
 def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
-    global _client
-    try:
-        context = _tls_context()
-    except Exception as e:  # never surfaces: niquests fetches the files
-        logger.debug("First wave skipped: %s", e)
-        context = None
-    if context is None:
+    # A cold ``get_session`` that fetched the calendar built the client already.
+    client = _build_client()
+    if client is None:
         _release(slots)
         # The wave cannot match niquests' setup here: warm niquests
         # connections for the same files instead (the Olympia pre-connect).
@@ -236,13 +249,6 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
         except Exception as e:  # best effort, never surfaces
             logger.debug("CDN pre-connect skipped: %s", e)
         return
-    from .http_session import user_agent
-
-    client = _StdlibClient(
-        context,
-        {"User-Agent": user_agent(), "Accept": "*/*", "Accept-Encoding": "gzip, deflate"},
-    )
-    _client = client
     for url, slot in slots[1:]:
         threading.Thread(
             target=_fetch_into,
@@ -251,6 +257,54 @@ def _run_wave(slots: list[tuple[str, _Slot]], timeout: float) -> None:
             daemon=True,
         ).start()
     _fetch_into(client, *slots[0], timeout)
+
+
+def _build_client() -> _StdlibClient | None:
+    """The stdlib client, built once per process (None where it cannot match niquests)."""
+    global _client, _client_unavailable
+    client = _client
+    if client is not None or _client_unavailable:
+        return client
+    with _client_lock:
+        if _client is not None or _client_unavailable:
+            return _client
+        try:
+            context = _tls_context()
+        except Exception as e:  # never surfaces: niquests takes the requests
+            logger.debug("Stdlib client skipped: %s", e)
+            context = None
+        if context is None:
+            _client_unavailable = True
+            return None
+        from .http_session import user_agent
+
+        _client = _StdlibClient(
+            context,
+            {"User-Agent": user_agent(), "Accept": "*/*", "Accept-Encoding": "gzip, deflate"},
+        )
+        return _client
+
+
+def ensure_client() -> bool:
+    """Whether single requests can go over the stdlib client, building it if needed.
+
+    For the sync transport when no niquests session exists (Corinth C4): a
+    process that never ran a first wave (a warm session refreshing its
+    calendar or Ergast files, a cold ``get_session`` fetching the calendar)
+    builds the client here, on the calling thread (the ``ssl`` import and the
+    trust store, a few tens of milliseconds of CPU, once), instead of
+    importing niquests. False with ``cdn_first_wave`` off, a proxy or no
+    ``wassima``; never raises.
+    """
+    if _client is not None:
+        return True
+    if not _on_demand or _client_unavailable:
+        return False
+    from .config import get_config
+
+    if not bool(get_config().get("cdn_first_wave", True)):
+        return False
+    return _build_client() is not None
 
 
 def _tls_context() -> Any:

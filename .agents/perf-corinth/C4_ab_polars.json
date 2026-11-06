@@ -1,0 +1,937 @@
+{
+ "lib": "polars",
+ "summary": {
+  "Mexico City Grand Prix | warm": {
+   "get_session": {
+    "control_median": 170.1,
+    "candidate_median": 192.1,
+    "control_p90": 301.0,
+    "candidate_p90": 231.0,
+    "candidate_faster_pairs": "4/8"
+   },
+   "laps": {
+    "control_median": 7.7,
+    "candidate_median": 7.1,
+    "control_p90": 8.8,
+    "candidate_p90": 14.0,
+    "candidate_faster_pairs": "5/8"
+   },
+   "results": {
+    "control_median": 8.8,
+    "candidate_median": 8.4,
+    "control_p90": 10.5,
+    "candidate_p90": 16.0,
+    "candidate_faster_pairs": "4/8"
+   },
+   "in_process": {
+    "control_median": 203.8,
+    "candidate_median": 216.2,
+    "control_p90": 349.8,
+    "candidate_p90": 291.0,
+    "candidate_faster_pairs": "4/8"
+   },
+   "process_wall": {
+    "control_median": 288.5,
+    "candidate_median": 278.8,
+    "control_p90": 463.6,
+    "candidate_p90": 425.7,
+    "candidate_faster_pairs": "4/8"
+   }
+  },
+  "Mexico City Grand Prix | expired": {
+   "get_session": {
+    "control_median": 430.1,
+    "candidate_median": 370.8,
+    "control_p90": 482.4,
+    "candidate_p90": 507.1,
+    "candidate_faster_pairs": "4/8"
+   },
+   "laps": {
+    "control_median": 22.5,
+    "candidate_median": 9.0,
+    "control_p90": 26.3,
+    "candidate_p90": 10.9,
+    "candidate_faster_pairs": "8/8"
+   },
+   "results": {
+    "control_median": 197.3,
+    "candidate_median": 104.4,
+    "control_p90": 436.2,
+    "candidate_p90": 224.0,
+    "candidate_faster_pairs": "8/8"
+   },
+   "in_process": {
+    "control_median": 652.7,
+    "candidate_median": 533.9,
+    "control_p90": 946.5,
+    "candidate_p90": 751.3,
+    "candidate_faster_pairs": "8/8"
+   },
+   "process_wall": {
+    "control_median": 763.5,
+    "candidate_median": 659.4,
+    "control_p90": 1064.0,
+    "candidate_p90": 937.5,
+    "candidate_faster_pairs": "5/8"
+   }
+  },
+  "Mexico City Grand Prix | expired_offline": {
+   "get_session": {
+    "control_median": 195.7,
+    "candidate_median": 176.7,
+    "control_p90": 228.2,
+    "candidate_p90": 239.3,
+    "candidate_faster_pairs": "5/8"
+   },
+   "laps": {
+    "control_median": 7.1,
+    "candidate_median": 6.7,
+    "control_p90": 9.2,
+    "candidate_p90": 11.8,
+    "candidate_faster_pairs": "4/8"
+   },
+   "results": {
+    "control_median": 10.0,
+    "candidate_median": 7.2,
+    "control_p90": 16.4,
+    "candidate_p90": 13.0,
+    "candidate_faster_pairs": "7/8"
+   },
+   "in_process": {
+    "control_median": 229.2,
+    "candidate_median": 208.1,
+    "control_p90": 289.2,
+    "candidate_p90": 285.0,
+    "candidate_faster_pairs": "4/8"
+   },
+   "process_wall": {
+    "control_median": 300.8,
+    "candidate_median": 334.6,
+    "control_p90": 388.4,
+    "candidate_p90": 399.1,
+    "candidate_faster_pairs": "3/8"
+   }
+  },
+  "British Grand Prix | warm": {
+   "get_session": {
+    "control_median": 226.5,
+    "candidate_median": 203.4,
+    "control_p90": 244.3,
+    "candidate_p90": 298.3,
+    "candidate_faster_pairs": "4/8"
+   },
+   "laps": {
+    "control_median": 7.1,
+    "candidate_median": 7.0,
+    "control_p90": 9.1,
+    "candidate_p90": 12.9,
+    "candidate_faster_pairs": "3/8"
+   },
+   "results": {
+    "control_median": 8.8,
+    "candidate_median": 9.3,
+    "control_p90": 10.6,
+    "candidate_p90": 15.3,
+    "candidate_faster_pairs": "3/8"
+   },
+   "in_process": {
+    "control_median": 264.0,
+    "candidate_median": 237.7,
+    "control_p90": 291.8,
+    "candidate_p90": 347.6,
+    "candidate_faster_pairs": "4/8"
+   },
+   "process_wall": {
+    "control_median": 352.7,
+    "candidate_median": 325.5,
+    "control_p90": 438.7,
+    "candidate_p90": 445.8,
+    "candidate_faster_pairs": "4/8"
+   }
+  },
+  "British Grand Prix | expired": {
+   "get_session": {
+    "control_median": 506.9,
+    "candidate_median": 342.3,
+    "control_p90": 584.2,
+    "candidate_p90": 463.8,
+    "candidate_faster_pairs": "6/8"
+   },
+   "laps": {
+    "control_median": 25.3,
+    "candidate_median": 7.9,
+    "control_p90": 37.9,
+    "candidate_p90": 12.7,
+    "candidate_faster_pairs": "8/8"
+   },
+   "results": {
+    "control_median": 209.7,
+    "candidate_median": 11.8,
+    "control_p90": 269.7,
+    "candidate_p90": 18.9,
+    "candidate_faster_pairs": "8/8"
+   },
+   "in_process": {
+    "control_median": 806.8,
+    "candidate_median": 389.7,
+    "control_p90": 828.5,
+    "candidate_p90": 520.4,
+    "candidate_faster_pairs": "7/8"
+   },
+   "process_wall": {
+    "control_median": 917.9,
+    "candidate_median": 514.4,
+    "control_p90": 933.8,
+    "candidate_p90": 614.7,
+    "candidate_faster_pairs": "7/8"
+   }
+  },
+  "British Grand Prix | expired_offline": {
+   "get_session": {
+    "control_median": 173.7,
+    "candidate_median": 177.7,
+    "control_p90": 198.4,
+    "candidate_p90": 282.1,
+    "candidate_faster_pairs": "3/8"
+   },
+   "laps": {
+    "control_median": 6.8,
+    "candidate_median": 6.6,
+    "control_p90": 8.4,
+    "candidate_p90": 9.2,
+    "candidate_faster_pairs": "5/8"
+   },
+   "results": {
+    "control_median": 9.5,
+    "candidate_median": 7.9,
+    "control_p90": 11.0,
+    "candidate_p90": 11.3,
+    "candidate_faster_pairs": "6/8"
+   },
+   "in_process": {
+    "control_median": 204.3,
+    "candidate_median": 213.2,
+    "control_p90": 232.8,
+    "candidate_p90": 331.7,
+    "candidate_faster_pairs": "3/8"
+   },
+   "process_wall": {
+    "control_median": 281.2,
+    "candidate_median": 309.2,
+    "control_p90": 311.8,
+    "candidate_p90": 431.4,
+    "candidate_faster_pairs": "3/8"
+   }
+  }
+ },
+ "raw": {
+  "Mexico City Grand Prix | warm": {
+   "control": [
+    {
+     "get_session": 131.33,
+     "laps": 6.68,
+     "results": 7.54,
+     "in_process": 157.61,
+     "process_wall": 225.72
+    },
+    {
+     "get_session": 124.11,
+     "laps": 5.0,
+     "results": 5.62,
+     "in_process": 146.85,
+     "process_wall": 218.24
+    },
+    {
+     "get_session": 126.12,
+     "laps": 4.9,
+     "results": 5.63,
+     "in_process": 148.75,
+     "process_wall": 205.2
+    },
+    {
+     "get_session": 247.0,
+     "laps": 8.75,
+     "results": 10.26,
+     "in_process": 281.02,
+     "process_wall": 356.57
+    },
+    {
+     "get_session": 134.78,
+     "laps": 5.25,
+     "results": 5.75,
+     "in_process": 161.44,
+     "process_wall": 232.46
+    },
+    {
+     "get_session": 392.44,
+     "laps": 11.58,
+     "results": 13.3,
+     "in_process": 461.97,
+     "process_wall": 637.37
+    },
+    {
+     "get_session": 205.33,
+     "laps": 8.65,
+     "results": 10.02,
+     "in_process": 246.13,
+     "process_wall": 344.5
+    },
+    {
+     "get_session": 301.04,
+     "laps": 8.72,
+     "results": 10.52,
+     "in_process": 349.84,
+     "process_wall": 463.62
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 123.71,
+     "laps": 4.83,
+     "results": 5.65,
+     "in_process": 146.01,
+     "process_wall": 201.53
+    },
+    {
+     "get_session": 183.84,
+     "laps": 4.89,
+     "results": 5.77,
+     "in_process": 208.82,
+     "process_wall": 271.47
+    },
+    {
+     "get_session": 200.38,
+     "laps": 4.95,
+     "results": 5.68,
+     "in_process": 223.66,
+     "process_wall": 286.06
+    },
+    {
+     "get_session": 128.99,
+     "laps": 8.33,
+     "results": 9.98,
+     "in_process": 159.48,
+     "process_wall": 217.07
+    },
+    {
+     "get_session": 230.98,
+     "laps": 17.52,
+     "results": 22.44,
+     "in_process": 291.02,
+     "process_wall": 425.69
+    },
+    {
+     "get_session": 230.62,
+     "laps": 9.83,
+     "results": 11.85,
+     "in_process": 272.61,
+     "process_wall": 366.16
+    },
+    {
+     "get_session": 148.47,
+     "laps": 5.84,
+     "results": 6.91,
+     "in_process": 176.02,
+     "process_wall": 251.19
+    },
+    {
+     "get_session": 350.28,
+     "laps": 13.96,
+     "results": 15.97,
+     "in_process": 401.48,
+     "process_wall": 496.63
+    }
+   ]
+  },
+  "Mexico City Grand Prix | expired": {
+   "control": [
+    {
+     "get_session": 273.12,
+     "laps": 19.98,
+     "results": 153.17,
+     "in_process": 458.39,
+     "process_wall": 527.04
+    },
+    {
+     "get_session": 421.5,
+     "laps": 22.36,
+     "results": 173.39,
+     "in_process": 632.92,
+     "process_wall": 735.79
+    },
+    {
+     "get_session": 402.21,
+     "laps": 22.55,
+     "results": 193.12,
+     "in_process": 633.46,
+     "process_wall": 715.68
+    },
+    {
+     "get_session": 399.04,
+     "laps": 26.26,
+     "results": 194.91,
+     "in_process": 633.7,
+     "process_wall": 708.62
+    },
+    {
+     "get_session": 482.4,
+     "laps": 23.38,
+     "results": 199.68,
+     "in_process": 725.28,
+     "process_wall": 841.77
+    },
+    {
+     "get_session": 513.4,
+     "laps": 18.77,
+     "results": 450.0,
+     "in_process": 1004.51,
+     "process_wall": 1109.14
+    },
+    {
+     "get_session": 457.22,
+     "laps": 28.55,
+     "results": 436.17,
+     "in_process": 946.45,
+     "process_wall": 1063.98
+    },
+    {
+     "get_session": 438.73,
+     "laps": 11.93,
+     "results": 200.06,
+     "in_process": 671.73,
+     "process_wall": 791.13
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 345.59,
+     "laps": 8.82,
+     "results": 73.22,
+     "in_process": 446.3,
+     "process_wall": 539.29
+    },
+    {
+     "get_session": 254.9,
+     "laps": 8.67,
+     "results": 76.08,
+     "in_process": 353.91,
+     "process_wall": 433.02
+    },
+    {
+     "get_session": 341.44,
+     "laps": 8.86,
+     "results": 91.18,
+     "in_process": 462.82,
+     "process_wall": 558.96
+    },
+    {
+     "get_session": 216.0,
+     "laps": 9.13,
+     "results": 88.61,
+     "in_process": 330.27,
+     "process_wall": 408.85
+    },
+    {
+     "get_session": 507.08,
+     "laps": 10.18,
+     "results": 163.44,
+     "in_process": 720.55,
+     "process_wall": 937.5
+    },
+    {
+     "get_session": 724.22,
+     "laps": 18.47,
+     "results": 223.97,
+     "in_process": 1002.87,
+     "process_wall": 1163.08
+    },
+    {
+     "get_session": 396.07,
+     "laps": 10.88,
+     "results": 320.26,
+     "in_process": 751.26,
+     "process_wall": 905.47
+    },
+    {
+     "get_session": 445.01,
+     "laps": 8.86,
+     "results": 117.7,
+     "in_process": 605.07,
+     "process_wall": 759.74
+    }
+   ]
+  },
+  "Mexico City Grand Prix | expired_offline": {
+   "control": [
+    {
+     "get_session": 221.8,
+     "laps": 11.33,
+     "results": 16.39,
+     "in_process": 271.77,
+     "process_wall": 364.03
+    },
+    {
+     "get_session": 166.96,
+     "laps": 6.07,
+     "results": 10.18,
+     "in_process": 201.85,
+     "process_wall": 268.91
+    },
+    {
+     "get_session": 191.41,
+     "laps": 6.21,
+     "results": 8.23,
+     "in_process": 224.09,
+     "process_wall": 299.73
+    },
+    {
+     "get_session": 161.87,
+     "laps": 6.17,
+     "results": 8.49,
+     "in_process": 195.55,
+     "process_wall": 293.98
+    },
+    {
+     "get_session": 200.06,
+     "laps": 8.08,
+     "results": 12.09,
+     "in_process": 234.28,
+     "process_wall": 301.77
+    },
+    {
+     "get_session": 241.58,
+     "laps": 8.52,
+     "results": 17.19,
+     "in_process": 300.1,
+     "process_wall": 447.46
+    },
+    {
+     "get_session": 145.97,
+     "laps": 5.43,
+     "results": 8.47,
+     "in_process": 175.75,
+     "process_wall": 237.79
+    },
+    {
+     "get_session": 228.22,
+     "laps": 9.24,
+     "results": 9.89,
+     "in_process": 289.2,
+     "process_wall": 388.36
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 157.16,
+     "laps": 6.3,
+     "results": 7.27,
+     "in_process": 185.81,
+     "process_wall": 275.79
+    },
+    {
+     "get_session": 153.88,
+     "laps": 6.65,
+     "results": 6.96,
+     "in_process": 181.7,
+     "process_wall": 340.93
+    },
+    {
+     "get_session": 156.97,
+     "laps": 6.43,
+     "results": 7.06,
+     "in_process": 185.45,
+     "process_wall": 270.88
+    },
+    {
+     "get_session": 239.32,
+     "laps": 11.8,
+     "results": 13.02,
+     "in_process": 285.01,
+     "process_wall": 379.6
+    },
+    {
+     "get_session": 217.38,
+     "laps": 6.95,
+     "results": 7.72,
+     "in_process": 264.08,
+     "process_wall": 399.07
+    },
+    {
+     "get_session": 290.16,
+     "laps": 14.21,
+     "results": 16.4,
+     "in_process": 342.82,
+     "process_wall": 467.33
+    },
+    {
+     "get_session": 144.22,
+     "laps": 5.17,
+     "results": 6.47,
+     "in_process": 176.22,
+     "process_wall": 262.33
+    },
+    {
+     "get_session": 196.15,
+     "laps": 6.7,
+     "results": 7.2,
+     "in_process": 230.36,
+     "process_wall": 328.18
+    }
+   ]
+  },
+  "British Grand Prix | warm": {
+   "control": [
+    {
+     "get_session": 323.38,
+     "laps": 8.12,
+     "results": 10.55,
+     "in_process": 364.45,
+     "process_wall": 451.53
+    },
+    {
+     "get_session": 165.81,
+     "laps": 6.2,
+     "results": 9.61,
+     "in_process": 198.75,
+     "process_wall": 297.29
+    },
+    {
+     "get_session": 228.39,
+     "laps": 9.17,
+     "results": 6.37,
+     "in_process": 266.19,
+     "process_wall": 432.16
+    },
+    {
+     "get_session": 227.16,
+     "laps": 9.07,
+     "results": 11.62,
+     "in_process": 263.52,
+     "process_wall": 349.33
+    },
+    {
+     "get_session": 156.65,
+     "laps": 5.5,
+     "results": 6.67,
+     "in_process": 184.9,
+     "process_wall": 269.8
+    },
+    {
+     "get_session": 244.27,
+     "laps": 6.1,
+     "results": 7.61,
+     "in_process": 291.8,
+     "process_wall": 438.73
+    },
+    {
+     "get_session": 223.83,
+     "laps": 6.35,
+     "results": 8.03,
+     "in_process": 259.06,
+     "process_wall": 350.5
+    },
+    {
+     "get_session": 225.92,
+     "laps": 7.89,
+     "results": 10.15,
+     "in_process": 264.46,
+     "process_wall": 354.81
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 229.86,
+     "laps": 8.51,
+     "results": 11.23,
+     "in_process": 263.84,
+     "process_wall": 344.39
+    },
+    {
+     "get_session": 339.39,
+     "laps": 13.11,
+     "results": 16.33,
+     "in_process": 413.61,
+     "process_wall": 561.01
+    },
+    {
+     "get_session": 127.39,
+     "laps": 4.73,
+     "results": 5.79,
+     "in_process": 150.18,
+     "process_wall": 210.33
+    },
+    {
+     "get_session": 134.98,
+     "laps": 5.19,
+     "results": 6.41,
+     "in_process": 159.19,
+     "process_wall": 215.08
+    },
+    {
+     "get_session": 175.95,
+     "laps": 5.89,
+     "results": 7.73,
+     "in_process": 211.64,
+     "process_wall": 301.55
+    },
+    {
+     "get_session": 298.28,
+     "laps": 12.94,
+     "results": 15.33,
+     "in_process": 347.63,
+     "process_wall": 445.76
+    },
+    {
+     "get_session": 251.83,
+     "laps": 8.19,
+     "results": 10.81,
+     "in_process": 289.07,
+     "process_wall": 374.16
+    },
+    {
+     "get_session": 176.93,
+     "laps": 5.27,
+     "results": 6.69,
+     "in_process": 210.27,
+     "process_wall": 306.69
+    }
+   ]
+  },
+  "British Grand Prix | expired": {
+   "control": [
+    {
+     "get_session": 506.49,
+     "laps": 37.94,
+     "results": 269.68,
+     "in_process": 828.53,
+     "process_wall": 932.13
+    },
+    {
+     "get_session": 532.22,
+     "laps": 27.9,
+     "results": 208.25,
+     "in_process": 801.62,
+     "process_wall": 920.55
+    },
+    {
+     "get_session": 383.04,
+     "laps": 35.5,
+     "results": 211.2,
+     "in_process": 649.0,
+     "process_wall": 731.05
+    },
+    {
+     "get_session": 584.17,
+     "laps": 15.12,
+     "results": 203.73,
+     "in_process": 825.68,
+     "process_wall": 933.79
+    },
+    {
+     "get_session": 502.98,
+     "laps": 22.7,
+     "results": 265.38,
+     "in_process": 811.91,
+     "process_wall": 915.16
+    },
+    {
+     "get_session": 507.25,
+     "laps": 18.05,
+     "results": 196.62,
+     "in_process": 745.93,
+     "process_wall": 853.17
+    },
+    {
+     "get_session": 954.5,
+     "laps": 101.49,
+     "results": 417.55,
+     "in_process": 1491.27,
+     "process_wall": 1594.29
+    },
+    {
+     "get_session": 407.02,
+     "laps": 14.08,
+     "results": 201.56,
+     "in_process": 645.49,
+     "process_wall": 745.5
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 306.97,
+     "laps": 5.82,
+     "results": 8.08,
+     "in_process": 343.91,
+     "process_wall": 450.79
+    },
+    {
+     "get_session": 301.22,
+     "laps": 7.94,
+     "results": 12.28,
+     "in_process": 336.01,
+     "process_wall": 420.55
+    },
+    {
+     "get_session": 625.54,
+     "laps": 13.93,
+     "results": 18.88,
+     "in_process": 689.6,
+     "process_wall": 830.53
+    },
+    {
+     "get_session": 333.25,
+     "laps": 8.57,
+     "results": 11.3,
+     "in_process": 385.5,
+     "process_wall": 538.55
+    },
+    {
+     "get_session": 351.41,
+     "laps": 7.81,
+     "results": 12.71,
+     "in_process": 393.96,
+     "process_wall": 490.25
+    },
+    {
+     "get_session": 411.34,
+     "laps": 7.03,
+     "results": 9.62,
+     "in_process": 454.33,
+     "process_wall": 560.62
+    },
+    {
+     "get_session": 236.3,
+     "laps": 6.01,
+     "results": 7.6,
+     "in_process": 269.76,
+     "process_wall": 338.87
+    },
+    {
+     "get_session": 463.8,
+     "laps": 12.67,
+     "results": 21.49,
+     "in_process": 520.38,
+     "process_wall": 614.7
+    }
+   ]
+  },
+  "British Grand Prix | expired_offline": {
+   "control": [
+    {
+     "get_session": 229.99,
+     "laps": 8.37,
+     "results": 11.31,
+     "in_process": 270.39,
+     "process_wall": 363.89
+    },
+    {
+     "get_session": 177.61,
+     "laps": 7.2,
+     "results": 11.02,
+     "in_process": 211.42,
+     "process_wall": 304.21
+    },
+    {
+     "get_session": 165.34,
+     "laps": 6.5,
+     "results": 9.52,
+     "in_process": 197.12,
+     "process_wall": 270.58
+    },
+    {
+     "get_session": 194.67,
+     "laps": 8.1,
+     "results": 9.54,
+     "in_process": 226.1,
+     "process_wall": 291.8
+    },
+    {
+     "get_session": 165.44,
+     "laps": 6.06,
+     "results": 8.56,
+     "in_process": 195.62,
+     "process_wall": 263.79
+    },
+    {
+     "get_session": 169.82,
+     "laps": 4.75,
+     "results": 7.47,
+     "in_process": 196.71,
+     "process_wall": 255.47
+    },
+    {
+     "get_session": 132.88,
+     "laps": 5.01,
+     "results": 6.55,
+     "in_process": 165.31,
+     "process_wall": 247.62
+    },
+    {
+     "get_session": 198.45,
+     "laps": 8.93,
+     "results": 10.6,
+     "in_process": 232.81,
+     "process_wall": 311.75
+    }
+   ],
+   "candidate": [
+    {
+     "get_session": 174.79,
+     "laps": 6.62,
+     "results": 7.86,
+     "in_process": 210.36,
+     "process_wall": 298.65
+    },
+    {
+     "get_session": 211.82,
+     "laps": 6.96,
+     "results": 8.0,
+     "in_process": 248.94,
+     "process_wall": 343.52
+    },
+    {
+     "get_session": 177.32,
+     "laps": 9.24,
+     "results": 11.29,
+     "in_process": 215.97,
+     "process_wall": 319.67
+    },
+    {
+     "get_session": 147.81,
+     "laps": 5.69,
+     "results": 6.74,
+     "in_process": 175.07,
+     "process_wall": 242.36
+    },
+    {
+     "get_session": 178.17,
+     "laps": 5.16,
+     "results": 6.45,
+     "in_process": 206.77,
+     "process_wall": 280.98
+    },
+    {
+     "get_session": 139.16,
+     "laps": 4.9,
+     "results": 6.0,
+     "in_process": 163.55,
+     "process_wall": 235.72
+    },
+    {
+     "get_session": 282.13,
+     "laps": 11.77,
+     "results": 15.02,
+     "in_process": 331.69,
+     "process_wall": 431.36
+    },
+    {
+     "get_session": 288.57,
+     "laps": 6.53,
+     "results": 8.09,
+     "in_process": 339.09,
+     "process_wall": 481.44
+    }
+   ]
+  }
+ }
+}

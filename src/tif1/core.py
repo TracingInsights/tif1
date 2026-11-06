@@ -4055,8 +4055,9 @@ class Session:
         A thread costs a warm session more than the lookup it would run (GIL
         handoffs on top of a few cache reads), so the payload is resolved
         here whenever the memo/SQLite tiers hold everything it needs and
-        are fresh (the same TTL rules as any lookup). The season index is
-        checked first so a cold cache starts the fetch without delay.
+        are fresh (the same TTL rules as any lookup; a finished round needs
+        only the stored season index, fresh or not: Corinth C4). The season
+        index is checked first so a cold cache starts the fetch without delay.
 
         Returns:
             True when the outcome (payload, ``None`` or the stored error of an
@@ -4066,7 +4067,7 @@ class Session:
         from .ergast.stats import get_stats_source
 
         try:
-            if not get_stats_source().season_index_cached(self.year):
+            if not get_stats_source().season_index_stored(self.year):
                 return False
             with cache_only():
                 self._load_ergast_payload()

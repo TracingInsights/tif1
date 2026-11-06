@@ -373,14 +373,14 @@ export TIF1_CDN_PRECONNECT=false
 
 ### TIF1_CDN_FIRST_WAVE
 
-Fetch the first files of a cold load with the Python standard library. When `TIF1_CDN_PRECONNECT` is on and the session is not cached yet, `get_session()` gets `drivers.json` and the session lap times over `http.client` while pandas or polars loads. The HTTP client (niquests) loads only when a telemetry request needs it. Until niquests has an open connection, single requests and the first telemetry requests also use the standard-library connections. niquests then loads and connects in a background thread. A response other than `200` with a JSON object goes through niquests, so the CDN fallback is the same. Set to `false` to send every request through niquests.
+Fetch the first files of a cold load with the Python standard library. When `TIF1_CDN_PRECONNECT` is on and the session is not cached yet, `get_session()` gets `drivers.json` and the session lap times over `http.client` while pandas or polars loads. The HTTP client (niquests) loads only when a telemetry request needs it. Until niquests has an open connection, single requests and the first telemetry requests also use the standard-library connections. niquests then loads and connects in a background thread. A process that has not loaded niquests also sends its single requests over the standard library. These include the calendar of the current season (on a cold `get_session()` and at its refresh) and the Ergast files of the current season after `TIF1_ERGAST_TTL_HOURS`. A response other than `200` with a JSON object goes through niquests, so the CDN fallback is the same. Set to `false` to send every request through niquests.
 
 ```bash
 export TIF1_CDN_FIRST_WAVE=false
 ```
 
 <Info>
-  Type: `bool`. Default: `true`. Has no effect when `TIF1_CDN_PRECONNECT` is off.
+  Type: `bool`. Default: `true`. The cold-load part has no effect when `TIF1_CDN_PRECONNECT` is off.
 </Info>
 
 <Warning>
