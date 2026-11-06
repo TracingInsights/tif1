@@ -115,11 +115,11 @@ def test_tables_match_across_backends(monkeypatch, args):
 
 
 @pytest.mark.usefixtures("cached_session")
-def test_fastest_ties_keep_pandas_quicksort_order(monkeypatch):
+def test_fastest_ties_keep_the_session_order(monkeypatch):
     output = _invoke(monkeypatch, "polars", ["fastest", "2026", "Hungary", "R"])
     printed = [line.split("│")[2].strip() for line in output.splitlines() if "│ D" in line]
     assert sorted(printed) == sorted(CODES)
-    # pandas' quicksort reorders the tied drivers; the polars table follows it.
+    # A stable sort on both backends: the same table on every platform.
     assert printed == [
         line.split("│")[2].strip()
         for line in _invoke(monkeypatch, "pandas", ["fastest", "2026", "Hungary", "R"]).splitlines()
@@ -161,17 +161,17 @@ def test_config_records_keys_from_the_environment(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("seed", range(40))
-def test_sort_order_is_pandas_sort_values(seed):
+def test_sort_order_is_pandas_stable_sort_values(seed):
     rng = random.Random(seed)
     size = rng.randint(0, 40)
     values: list = [rng.choice([None, *range(6)]) for _ in range(size)]
     ns = [None if v is None else 80_000_000_000 + v * 1_000_000 for v in values]
     frame = pd.DataFrame({"LapTime": pd.to_timedelta(pd.Series(ns, dtype="float64"), unit="ns")})
-    expected = frame.sort_values("LapTime").index.tolist()
+    expected = frame.sort_values("LapTime", kind="stable").index.tolist()
     assert cli._sort_order(ns) == expected
     floats = [None if v is None else 80.0 + v / 1000 for v in values]
     float_frame = pd.DataFrame({"time": pd.Series(floats, dtype="float64")})
-    assert cli._sort_order(floats) == float_frame.sort_values("time").index.tolist()
+    assert cli._sort_order(floats) == float_frame.sort_values("time", kind="stable").index.tolist()
 
 
 def test_polars_rows_return_nanoseconds():
@@ -232,7 +232,21 @@ def test_standings_rows_equal_the_frame(kind):
 def test_tif1_version_matches_importlib_metadata(monkeypatch):
     monkeypatch.setattr(dist_version, "_version_value", None)
     assert dist_version.tif1_version() == importlib.metadata.version("tif1")
-    assert dist_version._find_dist_info("tif1") is not None
+    if sys.platform != "win32":  # the CI layout there is not reproducible here
+        assert dist_version._find_dist_info("tif1") is not None
+
+
+def test_find_dist_info_skips_the_stdlib_zip(tmp_path, monkeypatch):
+    stdlib_zip = tmp_path / "python313.zip"
+    stdlib_zip.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    info = tmp_path / "site" / "tif1-1.2.3.dist-info"
+    info.mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", [str(stdlib_zip), str(tmp_path / "site")])
+    assert dist_version._find_dist_info("tif1") == str(info)
+    other_zip = tmp_path / "bundle.zip"
+    other_zip.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    monkeypatch.setattr(sys, "path", [str(other_zip), str(tmp_path / "site")])
+    assert dist_version._find_dist_info("tif1") is None
 
 
 def _fake_path(tmp_path: Path, monkeypatch, *entries: str) -> None:

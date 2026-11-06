@@ -87,25 +87,16 @@ def _is_missing(value: Any) -> bool:
 
 
 def _sort_order(values: list[Any]) -> list[int]:
-    """Row positions in the order of pandas' ``sort_values`` (quicksort, missing last).
+    """Row positions sorted by ``values``, ties in row order, missing values last.
 
-    ``values`` are int nanoseconds (durations) or float seconds. Without ties
-    every sort agrees and a Python sort answers. numpy's quicksort, pandas'
-    default kind, does not keep tied rows in order, so with a tie the order
-    comes from the numpy call pandas makes (``argsort`` of the present values).
+    ``values`` are int nanoseconds (durations) or float seconds. The order of
+    pandas' ``sort_values(kind="stable")``, which the pandas path uses: tied
+    lap times keep the session's order on every platform (numpy's quicksort
+    breaks ties differently by platform and memory layout).
     """
     present = [i for i, value in enumerate(values) if not _is_missing(value)]
     missing = [i for i, value in enumerate(values) if _is_missing(value)]
-    keys = [values[i] for i in present]
-    if len(set(keys)) == len(keys):
-        return sorted(present, key=values.__getitem__) + missing
-    import numpy as np
-
-    if all(type(key) is int for key in keys):
-        array = np.asarray(keys, dtype=np.int64).view("timedelta64[ns]")
-    else:
-        array = np.asarray(keys, dtype=np.float64)
-    return [present[i] for i in array.argsort(kind="quicksort").tolist()] + missing
+    return sorted(present, key=values.__getitem__) + missing
 
 
 app = typer.Typer(help="tif1 - Fast F1 data access CLI")
@@ -283,7 +274,8 @@ def fastest(
         # Sort by time
         time_col = "LapTime" if "LapTime" in fastest_laps.columns else "time"
         if sess.lib == "pandas":
-            fastest_laps = fastest_laps.sort_values(time_col)
+            # Stable: tied lap times keep the session's order on every platform.
+            fastest_laps = fastest_laps.sort_values(time_col, kind="stable")
             rows = [row._asdict() for row in fastest_laps.itertuples()]
         else:
             # pandas' row order without a query plan (DataFrame.sort is one).

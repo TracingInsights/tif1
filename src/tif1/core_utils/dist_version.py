@@ -21,6 +21,9 @@ import sys
 
 _DIST_NAME = "tif1"
 _UNKNOWN_VERSION = "0.0.0"
+#: CPython's own standard-library zip (``python313.zip``; on Windows it is on
+#: ``sys.path`` ahead of site-packages), which never holds a distribution.
+_STDLIB_ZIP = re.compile(r"python\d+\.zip")
 
 _version_value: str | None = None
 
@@ -66,7 +69,9 @@ def _find_dist_info(name: str) -> str | None:
             # importlib.metadata lists the directory the same way (FastPath).
             children = os.listdir(root)  # noqa: PTH208
         except NotADirectoryError:
-            return None  # a zip on sys.path: importlib reads its entries
+            if _STDLIB_ZIP.fullmatch(os.path.basename(root).lower()):  # noqa: PTH119
+                continue  # the interpreter's stdlib zip holds no distribution
+            return None  # another zip on sys.path: importlib reads its entries
         except OSError:
             continue  # missing entries hold no distributions
         for child in children:

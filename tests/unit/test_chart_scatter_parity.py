@@ -216,7 +216,13 @@ def test_no_compound_warns_like_seaborn(frame):
         _draw_seaborn(laps.copy())
     with pytest.warns(UserWarning, match="Ignoring `palette`") as tif1_warnings:
         _draw_tif1(laps.copy())
-    assert [str(w.message) for w in tif1_warnings] == [str(w.message) for w in seaborn_warnings]
+    # Only the UserWarnings the charts raise: an unrelated warning (an event
+    # loop another test left unclosed, garbage-collected here) is not theirs.
+    assert _user_warnings(tif1_warnings) == _user_warnings(seaborn_warnings)
+
+
+def _user_warnings(record: pytest.WarningsRecorder) -> list[str]:
+    return [str(w.message) for w in record if w.category is UserWarning]
 
 
 def test_scatter_matches_seaborn_under_the_fastf1_theme(converters):
