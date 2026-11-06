@@ -176,6 +176,11 @@ class PriorityFetchStream:
             self._background = queue
             self._kick_locked()
 
+    def holds(self, key: Hashable) -> bool:
+        """Whether ``key`` is queued (either priority), in flight or fetched."""
+        with self._lock:
+            return key in self._state
+
     def results(self) -> dict[Hashable, Any]:
         """Results of the keys fetched so far (failures included, as ``None``)."""
         with self._lock:

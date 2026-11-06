@@ -63,14 +63,21 @@ class TestLazyLoad:
         assert _telemetry_batches(cdn) == []
         assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
 
-    def test_first_lap_access_fetches_the_driver_in_one_wave(self, cdn, lib):
+    def test_first_lap_access_fetches_that_lap_then_the_driver_in_one_wave(self, cdn, lib):
+        # Naxos N11: a lone first touch fetches one file; the next touch of
+        # the driver brings the rest of its laps in one wave.
         session = cdn.session(lib)
         session.load(telemetry="lazy", weather=False, messages=False)
         tel = _lap(session, "VER", 2).telemetry
         assert len(tel) == TEL_SAMPLES
-        assert _telemetry_batches(cdn) == [VER_LAPS]
+        assert _telemetry_batches(cdn) == []
+        assert [url for url in cdn.transport.calls if "_tel" in url][-1].endswith("VER/2_tel.json")
+        assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
         _lap(session, "VER", 3).get_car_data()
-        assert _telemetry_batches(cdn) == [VER_LAPS]
+        assert _telemetry_batches(cdn) == [["VER/1_tel.json", "VER/3_tel.json"]]
+        _lap(session, "VER", 1).get_car_data()
+        assert _telemetry_batches(cdn) == [["VER/1_tel.json", "VER/3_tel.json"]]
+        assert sum("_tel" in url for url in cdn.transport.calls) == 1
         assert set(session._lazy_telemetry_refs) == {"HAM"}
 
     def test_merged_telemetry_is_one_wave(self, cdn, lib):
@@ -91,9 +98,9 @@ class TestLazyLoad:
     def test_fetch_all_after_a_touch_fetches_the_rest_in_one_batch(self, cdn, lib):
         session = cdn.session(lib)
         session.load(telemetry="lazy", weather=False, messages=False)
-        _ = _lap(session, "VER", 1).telemetry
+        _ = _lap(session, "VER", 1).telemetry  # a lone first touch: VER/1 alone
         lazy_all = session.fetch_all_laps_telemetry()
-        assert _telemetry_batches(cdn) == [VER_LAPS, HAM_LAPS]
+        assert _telemetry_batches(cdn) == [["VER/2_tel.json", "VER/3_tel.json", *HAM_LAPS]]
         assert session._lazy_telemetry_refs == {}
 
         eager = cdn.session(lib)
@@ -122,7 +129,7 @@ class TestLazyLoad:
         session.load(weather=False, messages=False)
         assert _telemetry_batches(cdn) == []
         assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
-        _ = _lap(session, "HAM", 1).telemetry
+        _ = session.laps.pick_drivers("HAM").telemetry
         assert _telemetry_batches(cdn) == [HAM_LAPS]
 
     def test_config_key_makes_true_lazy(self, cdn, lib, monkeypatch):
@@ -130,7 +137,7 @@ class TestLazyLoad:
         session = cdn.session(lib)
         session.load(weather=False, messages=False)
         assert _telemetry_batches(cdn) == []
-        _ = _lap(session, "HAM", 1).telemetry
+        _ = session.laps.pick_drivers("HAM").telemetry
         assert _telemetry_batches(cdn) == [HAM_LAPS]
 
     def test_config_key_false_makes_true_eager(self, cdn, lib, monkeypatch):
@@ -170,6 +177,8 @@ def test_third_wave_of_a_cached_session_takes_every_pending_driver(
     """Cached sessions batch the rest on the third wave (Delphi D5, Naxos N2); the CDN never does."""
     session = cdn.session("polars")
     session._lazy_telemetry_refs = {code: [(code, 1), (code, 2)] for code in ("A", "B", "C", "D")}
+    # Each driver's lone first touch is behind it: these touches are waves.
+    session._lazy_lone_drivers = {"A", "B", "C", "D"}
     waves: list[list[str]] = []
     monkeypatch.setattr(
         session,

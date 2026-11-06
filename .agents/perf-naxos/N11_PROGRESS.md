@@ -1,0 +1,9 @@
+- 16:51 start: read brief, N11 section, E1/E10 reports
+- 16:54 harness tools/perf/naxos_n11_cold_bench.py + timeline tool written; first pandas nb4 trace: per wave wait ~400 ms + build 120-210 ms serial
+- 17:03 implemented lone-lap first touch (core._lazy_lone_lap/_fetch_lazy_lone_lap, stream.holds); smoke-testing
+- 17:08 lone-lap rule: unit suite 3987 passed, ruff/ty clean; commit denied -> staging + N11_COMMITS.md; starting cold A/B
+- 17:11 pandas cold A/B lone rule: fastest1 2947->1051 (8/8), fastest4 4236->1124 (8/8), driver_loop 2656->2814 (4/8); snapshot in snap_lone/
+- 17:14 polars lone A/B: fastest1 2774->915 (8/8), fastest4 4439->1493 (8/8), driver_loop 2247->3346 (2/8, bimodal, network noisy). Implemented deferred payload flush (after wave frame build); running nb4 A/B
+- 17:16 deferred flush REJECTED (nb4 pandas 4891->4798 3/6, polars 4313->5312 1/6); reverted to lone-only. Warm parity 0/133, 0/131. Running cold lazy parity + driver_loop rerun
+- 17:19 cold lazy parity: E1 flow 1143/1143 both libs, sequential 1590 pandas, warm read-back 1133, 0 differ; unit 3987 passed; driver_loop/iterlaps rerun
+- 17:24 driver_loop rerun pandas 1831->1990 (2/8), polars 1755->2117 (3/8); iterlaps pandas neutral. Report N11.md written. Verdict PARTIAL: ship lone-lap rule, reject deferred flush. All staged (commit denied).

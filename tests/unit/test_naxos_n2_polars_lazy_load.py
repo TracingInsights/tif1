@@ -163,7 +163,7 @@ def test_a_lap_the_tier_lacks_keeps_the_eager_batch(cache, reads, monkeypatch):
         "_fetch_telemetry_batch_from_refs",
         lambda refs, **_: ([], fetched.append(refs) or [], []),
     )
-    _load(session)
+    _load(session, telemetry="eager")
     assert reads == [["HAM", "LEC", "VER"]]  # the eager batch read every row in load()
     assert fetched == [[("VER", 4)]]
     assert session._lazy_telemetry_refs == {}
@@ -264,6 +264,8 @@ def test_a_walk_on_a_cold_lazy_load_keeps_the_per_driver_waves(reads, monkeypatc
     session = _session()
     session._set_lazy_telemetry_refs([(driver, lap) for driver in DRIVERS for lap in LAPS])
     monkeypatch.setattr(session, "_lazy_telemetry_from_cache", lambda: False)
+    # Each driver's lone first touch (Naxos N11) is behind it: these touches are waves.
+    session._lazy_lone_drivers = set(DRIVERS)
     waves: list[list[str]] = []
     monkeypatch.setattr(
         session,

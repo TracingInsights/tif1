@@ -22,8 +22,9 @@ import pytest
 from tif1 import async_fetch, core
 from tif1.config import get_config
 from tif1.core_utils.telemetry_stream import PriorityFetchStream
+from tif1.exceptions import NetworkError
 
-from .test_polars_session_wiring import _Cdn
+from .test_polars_session_wiring import TEL_SAMPLES, _Cdn
 
 VER_LAPS = ["VER/1_tel.json", "VER/2_tel.json", "VER/3_tel.json"]
 HAM_LAPS = ["HAM/1_tel.json", "HAM/2_tel.json", "HAM/3_tel.json"]
@@ -215,7 +216,7 @@ class TestSessionStream:
 
     def test_a_first_wave_queues_nothing(self, cdn, lib):
         session = _lazy_session(cdn, lib, predicted=None)
-        _ = _lap(session, "VER", 1).telemetry
+        _ = session.laps.pick_drivers("VER").telemetry
         assert session._lazy_stream is not None
         assert session._lazy_stream.wait_idle(5)
         assert sorted(_telemetry_paths(cdn)) == VER_LAPS
@@ -223,7 +224,7 @@ class TestSessionStream:
 
     def test_an_unpredicted_wave_queues_nothing(self, cdn, lib):
         session = _lazy_session(cdn, lib, predicted="HAM")
-        _ = _lap(session, "VER", 1).telemetry
+        _ = session.laps.pick_drivers("VER").telemetry
         assert session._lazy_stream is not None
         assert session._lazy_stream.wait_idle(5)
         assert sorted(_telemetry_paths(cdn)) == VER_LAPS
@@ -231,7 +232,7 @@ class TestSessionStream:
     def test_frames_equal_the_eager_load(self, cdn, lib):
         lazy = _lazy_session(cdn, lib, predicted="VER")
         eager = cdn.session(lib)
-        eager.load(weather=False, messages=False)
+        eager.load(telemetry="eager", weather=False, messages=False)
         for driver in ("VER", "HAM"):
             for number in (1, 2, 3):
                 _assert_same_frame(
@@ -255,7 +256,7 @@ class TestSessionStream:
         assert Counter(_telemetry_paths(cdn)) == Counter(VER_LAPS + HAM_LAPS)
 
         eager = cdn.session(lib)
-        eager.load(weather=False, messages=False)
+        eager.load(telemetry="eager", weather=False, messages=False)
         _ = _lap(eager, "VER", 1).telemetry
         eager_all = eager.fetch_all_laps_telemetry()
         assert list(lazy_all) == list(eager_all)
@@ -272,7 +273,7 @@ class TestSessionStream:
         lazy_all = session.fetch_all_laps_telemetry()
         assert Counter(_telemetry_paths(cdn)) == Counter(VER_LAPS + HAM_LAPS)
         eager = cdn.session(lib)
-        eager.load(weather=False, messages=False)
+        eager.load(telemetry="eager", weather=False, messages=False)
         assert list(lazy_all) == list(eager.fetch_all_laps_telemetry())
 
     def test_every_pending_driver_with_lookahead_minus_one(self, cdn, lib, monkeypatch):
@@ -282,6 +283,101 @@ class TestSessionStream:
         assert session._lazy_stream is not None
         assert session._lazy_stream.wait_idle(5)
         assert Counter(_telemetry_paths(cdn)) == Counter(VER_LAPS + HAM_LAPS)
+
+
+def _lone_paths(cdn: _Cdn) -> list[str]:
+    """Telemetry files fetched one at a time (the sync transport), as ``DRIVER/N_tel.json``."""
+    return ["/".join(url.rsplit("/", 2)[-2:]) for url in cdn.transport.calls if "_tel" in url]
+
+
+@pytest.mark.parametrize("lib", ["pandas", "polars"])
+class TestLoneFirstTouch:
+    """Naxos N11: a cold driver's first touch asking for one lap fetches that lap only."""
+
+    def test_one_lap_then_the_rest_in_one_wave(self, cdn, lib):
+        session = _lazy_session(cdn, lib, predicted=None)
+        tel = _lap(session, "VER", 2).telemetry
+        assert len(tel) == TEL_SAMPLES
+        assert _lone_paths(cdn) == ["VER/2_tel.json"]
+        assert _telemetry_paths(cdn) == []
+        assert session._lazy_stream is None
+        assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
+        _ = _lap(session, "VER", 1).telemetry  # the second touch: the wave
+        assert session._lazy_stream is not None
+        assert session._lazy_stream.wait_idle(5)
+        assert sorted(_telemetry_paths(cdn)) == ["VER/1_tel.json", "VER/3_tel.json"]
+        assert set(session._lazy_telemetry_refs) == {"HAM"}
+        _ = _lap(session, "VER", 3).get_car_data()
+        assert _lone_paths(cdn) == ["VER/2_tel.json"]
+        assert sorted(_telemetry_paths(cdn)) == ["VER/1_tel.json", "VER/3_tel.json"]
+
+    def test_frames_equal_the_eager_load(self, cdn, lib):
+        lazy = _lazy_session(cdn, lib, predicted=None)
+        eager = cdn.session(lib)
+        eager.load(telemetry="eager", weather=False, messages=False)
+        _assert_same_frame(_lap(eager, "HAM", 3).telemetry, _lap(lazy, "HAM", 3).telemetry, lib)
+        _assert_same_frame(
+            _lap(eager, "VER", 2).get_car_data(), _lap(lazy, "VER", 2).get_car_data(), lib
+        )
+        assert _lone_paths(cdn) == ["HAM/3_tel.json", "VER/2_tel.json"]
+        # The merged frame takes the lone lap's memoized frame and a wave for the rest.
+        _assert_same_frame(
+            eager.laps.pick_drivers("HAM").telemetry, lazy.laps.pick_drivers("HAM").telemetry, lib
+        )
+        assert _lone_paths(cdn) == ["HAM/3_tel.json", "VER/2_tel.json"]
+
+    def test_the_predicted_driver_takes_the_wave(self, cdn, lib):
+        session = _lazy_session(cdn, lib, predicted="VER")
+        _ = _lap(session, "VER", 2).telemetry
+        assert _lone_paths(cdn) == []
+        assert session._lazy_stream is not None
+        assert session._lazy_stream.wait_idle(5)
+
+    def test_a_lap_the_stream_holds_joins_it(self, cdn, lib):
+        session = _lazy_session(cdn, lib, predicted="VER")
+        _ = _lap(session, "VER", 1).telemetry  # sequential: HAM is queued behind it
+        assert session._lazy_stream is not None
+        assert session._lazy_stream.wait_idle(5)
+        session._lazy_lookahead_next = None  # not the predicted driver any more
+        _ = _lap(session, "HAM", 2).telemetry
+        assert _lone_paths(cdn) == []
+        assert Counter(_telemetry_paths(cdn)) == Counter(VER_LAPS + HAM_LAPS)
+
+    def test_which_touches_are_lone(self, cdn, lib, monkeypatch):
+        session = _lazy_session(cdn, lib, predicted=None)
+        assert session._lazy_lone_lap([("VER", 1), ("VER", 2)]) is None  # two laps
+        assert session._lazy_lone_lap([("XXX", 1)]) is None  # not pending
+        monkeypatch.setattr(session, "_lazy_telemetry_from_cache", lambda: True)
+        assert session._lazy_lone_lap([("VER", 1)]) is None  # the cache serves it
+        monkeypatch.setattr(session, "_lazy_telemetry_from_cache", lambda: False)
+        assert session._lazy_lone_lap([("VER", 1)]) == ("VER", 1)
+        assert session._lazy_lone_lap([("VER", 2)]) is None  # the driver's second touch
+        assert session._lazy_lone_lap([("HAM", 1)]) == ("HAM", 1)
+
+    def test_a_failed_lone_fetch_leaves_the_driver_to_its_wave(self, cdn, lib):
+        cdn.transport.add("VER/2_tel.json", NetworkError(url="VER/2_tel.json"))
+        session = _lazy_session(cdn, lib, predicted=None)
+        session._ensure_lazy_telemetry([("VER", 2)])
+        assert set(_lone_paths(cdn)) == {"VER/2_tel.json"}  # each CDN once
+        assert not session._memo.contains("telemetry_df", ("VER", 2))
+        assert set(session._lazy_telemetry_refs) == {"VER", "HAM"}
+        session._ensure_lazy_telemetry([("VER", 1)])
+        assert session._lazy_stream is not None
+        assert session._lazy_stream.wait_idle(5)
+        assert sorted(_telemetry_paths(cdn)) == VER_LAPS
+        assert session._memo.contains("telemetry_df", ("VER", 2))
+
+
+def test_a_lone_lap_payload_goes_to_the_telemetry_tier_writer(cdn, monkeypatch):
+    flushed: list[list[tuple[Any, ...]]] = []
+    monkeypatch.setattr(async_fetch, "schedule_telemetry_writes", flushed.append)
+    session = _lazy_session(cdn, "pandas", predicted=None)
+    monkeypatch.setattr(session, "enable_cache", True)
+    monkeypatch.setattr(session, "_session_cache_available", lambda: False)
+    session._ensure_lazy_telemetry([("VER", 2)])
+    assert [row[3:5] for batch in flushed for row in batch] == [("VER", 2)]
+    assert session._memo.contains("telemetry_df", ("VER", 2))
+    assert session._get_telemetry_payload("VER", 2) is not None
 
 
 def test_lookahead_zero_keeps_one_batch_per_driver(cdn, monkeypatch):
@@ -314,7 +410,7 @@ def test_stream_writes_are_handed_to_the_background_writer(cdn, monkeypatch):
 
     monkeypatch.setattr(core, "fetch_multiple_async", fetch_multiple)
     session = _lazy_session(cdn, "pandas", predicted=None)
-    _ = _lap(session, "VER", 1).telemetry
+    _ = session.laps.pick_drivers("VER").telemetry
     assert len(seen) == 3
     assert all(kwargs["telemetry_writes"] is session._lazy_stream_writes for kwargs in seen)
     assert session._lazy_stream is not None
